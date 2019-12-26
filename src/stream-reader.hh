@@ -81,7 +81,7 @@ class StreamReader {
     (void)pad_;
   }
 
-  bool seek_set(const uint64_t offset) {
+  bool seek_set(const uint64_t offset) const {
     if (offset > length_) {
       return false;
     }
@@ -90,7 +90,7 @@ class StreamReader {
     return true;
   }
 
-  bool seek_from_currect(const int64_t offset) {
+  bool seek_from_currect(const int64_t offset) const {
     if ((int64_t(idx_) + offset) < 0) {
       return false;
     }
@@ -103,7 +103,7 @@ class StreamReader {
     return true;
   }
 
-  size_t read(const size_t n, const uint64_t dst_len, uint8_t *dst) {
+  size_t read(const size_t n, const uint64_t dst_len, uint8_t *dst) const {
     size_t len = n;
     if ((idx_ + len) > length_) {
       len = length_ - idx_;
@@ -124,7 +124,7 @@ class StreamReader {
     }
   }
 
-  bool read1(uint8_t *ret) {
+  bool read1(uint8_t *ret) const {
     if ((idx_ + 1) > length_) {
       return false;
     }
@@ -137,7 +137,7 @@ class StreamReader {
     return true;
   }
 
-  bool read_bool(bool *ret) {
+  bool read_bool(bool *ret) const {
     if ((idx_ + 1) > length_) {
       return false;
     }
@@ -150,7 +150,7 @@ class StreamReader {
     return true;
   }
 
-  bool read1(char *ret) {
+  bool read1(char *ret) const {
     if ((idx_ + 1) > length_) {
       return false;
     }
@@ -163,7 +163,7 @@ class StreamReader {
     return true;
   }
 
-  bool read2(unsigned short *ret) {
+  bool read2(unsigned short *ret) const {
     if ((idx_ + 2) > length_) {
       return false;
     }
@@ -181,7 +181,7 @@ class StreamReader {
     return true;
   }
 
-  bool read4(uint32_t *ret) {
+  bool read4(uint32_t *ret) const {
     if ((idx_ + 4) > length_) {
       return false;
     }
@@ -198,7 +198,7 @@ class StreamReader {
     return true;
   }
 
-  bool read4(int *ret) {
+  bool read4(int *ret) const {
     if ((idx_ + 4) > length_) {
       return false;
     }
@@ -215,7 +215,7 @@ class StreamReader {
     return true;
   }
 
-  bool read8(uint64_t *ret) {
+  bool read8(uint64_t *ret) const {
     if ((idx_ + 8) > length_) {
       return false;
     }
@@ -232,7 +232,7 @@ class StreamReader {
     return true;
   }
 
-  bool read8(int64_t *ret) {
+  bool read8(int64_t *ret) const {
     if ((idx_ + 8) > length_) {
       return false;
     }
@@ -249,7 +249,7 @@ class StreamReader {
     return true;
   }
 
-  bool read_float(float *ret) {
+  bool read_float(float *ret) const {
     if (!ret) {
       return false;
     }
@@ -264,7 +264,7 @@ class StreamReader {
     return true;
   }
 
-  bool read_double(double *ret) {
+  bool read_double(double *ret) const {
     if (!ret) {
       return false;
     }
@@ -321,7 +321,7 @@ class StreamReader {
   const size_t length_;
   bool swap_endian_;
   char pad_[7];
-  uint64_t idx_;
+  mutable uint64_t idx_;
 };
 
 } // namespace tinyusdz

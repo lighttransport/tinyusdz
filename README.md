@@ -13,6 +13,14 @@ USDZ contains usdc(binary) and resources(e.g. image file)
 
 ## Build
 
+### Meson
+
+```
+$ meson builddir
+$ cd builddir
+$ ninja
+```
+
 ### Build options
 
 * TINYUSDZ_USE_SYSTEM_LIBZ : Use zlib installed on the system instead of miniz
@@ -24,3 +32,9 @@ USDZ contains usdc(binary) and resources(e.g. image file)
 ## License
 
 MIT license
+
+### Third party licenses
+
+* miniz : public domain.
+* USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
+* lz4 : BSD-2 license. http://www.lz4.org
