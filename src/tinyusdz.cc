@@ -1,5 +1,8 @@
+#include <algorithm>
 #include <cassert>
 #include <fstream>
+#include <map>
+#include <sstream>
 #include <vector>
 
 #include "integerCoding.h"
@@ -14,6 +17,270 @@ namespace tinyusdz {
 namespace {
 
 constexpr size_t kSectionNameMaxLength = 15;
+
+struct DataType {
+  DataType() : name("Invalid"), id(0), supports_array(false) {}
+  DataType(const std::string &n, uint32_t i, bool a)
+      : name(n), id(i), supports_array(a) {}
+
+  std::string name;
+  uint32_t id{0};
+  bool supports_array{false};
+};
+
+const DataType &GetDataType(uint32_t type_id) {
+  static std::map<uint32_t, DataType> table;
+  if (table.size() == 0) {
+    // Register data types
+    // TODO(syoyo): Use template
+
+#define ADD_DATA_TYPE(NAME_STR, TYPE_ID, SUPPORTS_ARRAY) \
+  { assert(table.count(TYPE_ID) == 0); \
+     table[TYPE_ID] = DataType(NAME_STR, TYPE_ID, SUPPORTS_ARRAY); }
+
+    ADD_DATA_TYPE("InvaldOrUnsupported", 0, false);
+
+    // Array types.
+    ADD_DATA_TYPE("Bool", 1, true);
+
+    ADD_DATA_TYPE("UChar", 2, true);
+    ADD_DATA_TYPE("Int", 3, true);
+    ADD_DATA_TYPE("UInt", 4, true);
+    ADD_DATA_TYPE("Int64", 5, true);
+    ADD_DATA_TYPE("UInt64", 6, true);
+
+    ADD_DATA_TYPE("Half", 7, true);
+    ADD_DATA_TYPE("Float", 8, true);
+    ADD_DATA_TYPE("Double", 9, true);
+
+    ADD_DATA_TYPE("String", 10, true);
+    ADD_DATA_TYPE("Token", 11, true);
+    ADD_DATA_TYPE("AssetPath", 12, true);
+
+    ADD_DATA_TYPE("Quatd", 16, true);
+    ADD_DATA_TYPE("Quatf", 17, true);
+    ADD_DATA_TYPE("Quath", 18, true);
+
+    ADD_DATA_TYPE("Vec2d", 19, true);
+    ADD_DATA_TYPE("Vec2f", 20, true);
+    ADD_DATA_TYPE("Vec2h", 21, true);
+    ADD_DATA_TYPE("Vec2i", 22, true);
+
+    ADD_DATA_TYPE("Vec3d", 23, true);
+    ADD_DATA_TYPE("Vec3f", 24, true);
+    ADD_DATA_TYPE("Vec3h", 25, true);
+    ADD_DATA_TYPE("Vec3i", 26, true);
+
+    ADD_DATA_TYPE("Vec4d", 27, true);
+    ADD_DATA_TYPE("Vec4f", 28, true);
+    ADD_DATA_TYPE("Vec4h", 29, true);
+    ADD_DATA_TYPE("Vec4i", 30, true);
+
+    ADD_DATA_TYPE("Matrix2d", 13, true);
+    ADD_DATA_TYPE("Matrix3d", 14, true);
+    ADD_DATA_TYPE("Matrix4d", 15, true);
+
+    // Non-array types.
+    ADD_DATA_TYPE("Dictionary", 31, false);
+
+    ADD_DATA_TYPE("TokenListOp", 32, false);
+    ADD_DATA_TYPE("StringListOp", 33, false);
+    ADD_DATA_TYPE("PathListOp", 34, false);
+    ADD_DATA_TYPE("ReferenceListOp", 35, false);
+    ADD_DATA_TYPE("IntListOp", 36, false);
+    ADD_DATA_TYPE("Int64ListOp", 37, false);
+    ADD_DATA_TYPE("UIntListOp", 38, false);
+    ADD_DATA_TYPE("UInt64ListOp", 39, false);
+
+    ADD_DATA_TYPE("PathVector", 40, false);
+    ADD_DATA_TYPE("TokenVector", 41, false);
+
+    ADD_DATA_TYPE("Specifier", 42, false);
+    ADD_DATA_TYPE("Permission", 43, false);
+    ADD_DATA_TYPE("Variability", 44, false);
+
+    ADD_DATA_TYPE("VariantSelectionMap", 45, false);
+    ADD_DATA_TYPE("TimeSamples",         46, false);
+    ADD_DATA_TYPE("Payload",             47, false);
+    ADD_DATA_TYPE("DoubleVector",        48, false);
+    ADD_DATA_TYPE("LayerOffsetVector",   49, false);
+    ADD_DATA_TYPE("StringVector",        50, false);
+    ADD_DATA_TYPE("ValueBlock",          51, false);
+    ADD_DATA_TYPE("Value",               52, false);
+    ADD_DATA_TYPE("UnregisteredValue",   53, false);
+    ADD_DATA_TYPE("UnregisteredValueListOp", 54, false);
+    ADD_DATA_TYPE("PayloadListOp",       55, false);
+    ADD_DATA_TYPE("TimeCode", 56, true);
+  }
+#undef ADD_DATA_TYPE
+
+  if (table.count(type_id)) {
+    // Invalid or unsupported.
+    return table.at(0);
+  }
+
+  return table.at(type_id);
+}
+
+enum SpecType {
+  SpecTypeUnknown = 0,
+  SpecTypeAttribute,
+  SpecTypeConnection,
+  SpecTypeExpression,
+  SpecTypeMapper,
+  SpecTypeMapperArg,
+  SpecTypePrim,
+  SpecTypePseudoRoot,
+  SpecTypeRelationship,
+  SpecTypeRelationshipTarget,
+  SpecTypeVariant,
+  SpecTypeVariantSet,
+  NumSpecTypes
+};
+
+std::string GetSpecTypeString(SpecType ty) {
+  if (SpecTypeUnknown == ty) {
+    return "SpecTypeUnknown";
+  } else if (SpecTypeAttribute == ty) {
+    return "SpecTypeAttribute";
+  } else if (SpecTypeConnection == ty) {
+    return "SpecTypeConection";
+  } else if (SpecTypeExpression == ty) {
+    return "SpecTypeExpression";
+  } else if (SpecTypeMapper == ty) {
+    return "SpecTypeMapper";
+  } else if (SpecTypeMapperArg == ty) {
+    return "SpecTypeMapperArg";
+  } else if (SpecTypePrim == ty) {
+    return "SpecTypePrim";
+  } else if (SpecTypePseudoRoot == ty) {
+    return "SpecTypePseudoRoot";
+  } else if (SpecTypeRelationship == ty) {
+    return "SpecTypeRelationship";
+  } else if (SpecTypeRelationshipTarget == ty) {
+    return "SpecTypeRelationshipTarget";
+  } else if (SpecTypeVariant == ty) {
+    return "SpecTypeVariant";
+  } else if (SpecTypeVariantSet == ty) {
+    return "SpecTypeVariantSet";
+  }
+  return "??? SpecType " + std::to_string(ty);
+}
+
+///
+/// We don't need performance and for USDZ, so use naiive implementation
+/// to represents Path.
+/// Path is something like Unix path, delimited by `/`, ':' and '.'
+///
+/// Example:
+///
+/// `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+///
+/// ':' is a namespce delimiter(example `input:muda`).
+///
+/// Limitations:
+///
+/// Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
+/// supported.
+///
+/// variant chars('{' '}') is not supported.
+/// '..' is not supported
+///
+/// and have more limitatons.
+///
+class Path {
+ public:
+  Path() : valid(true) {}
+  Path(const std::string &prim) : prim_part(prim) {}
+  Path(const std::string &prim, const std::string &prop)
+      : prim_part(prim), prop_part(prop) {}
+
+  std::string name() const {
+    std::string s;
+    if (!valid) {
+      s += "INVALID#";
+    }
+
+    s += prim_part;
+    if (prop_part.empty()) {
+      return s;
+    }
+
+    s += "." + prop_part;
+
+    return s;
+  }
+
+  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
+
+  static Path AbsoluteRootPath() { return Path("/"); }
+
+  Path AppendProperty(const std::string &elem) {
+    Path p = (*this);
+
+    if (elem.empty()) {
+      p.valid = false;
+      return p;
+    }
+
+    if (elem[0] == '{') {
+      // variant chars are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '[') {
+      // relational attrib are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '.') {
+      std::cerr << "???. elem[0] is '.'\n";
+      // For a while, make this valid.
+      p.valid = false;
+      return p;
+    } else {
+      p.prop_part = elem;
+      return p;
+    }
+  }
+
+  Path AppendElement(const std::string &elem) {
+    Path p = (*this);
+
+    if (elem.empty()) {
+      p.valid = false;
+      return p;
+    }
+
+    if (elem[0] == '{') {
+      // variant chars are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '[') {
+      // relational attrib are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '.') {
+      std::cerr << "???. elem[0] is '.'\n";
+      // For a while, make this valid.
+      p.valid = false;
+      return p;
+    } else {
+      std::cout << "elem " << elem << "\n";
+      if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
+        p.prim_part += elem;
+      } else {
+        p.prim_part += '/' + elem;
+      }
+      return p;
+    }
+  }
+
+  bool IsValid() const { return valid; }
+
+ private:
+  std::string prim_part;
+  std::string prop_part;
+  bool valid{true};
+};
 
 // -- from USD ----------------------------------------------------------------
 
@@ -48,6 +315,7 @@ struct Index {
   explicit Index(uint32_t value) : value(value) {}
   bool operator==(const Index &other) const { return value == other.value; }
   bool operator!=(const Index &other) const { return !(*this == other); }
+  bool operator<(const Index &other) const { return value < other.value; }
   uint32_t value;
 };
 
@@ -105,8 +373,17 @@ struct ValueRep {
   bool operator==(ValueRep other) const { return data == other.data; }
   bool operator!=(ValueRep other) const { return !(*this == other); }
 
-  friend inline size_t hash_value(ValueRep v) {
-    return static_cast<size_t>(v.data);
+  // friend inline size_t hash_value(ValueRep v) {
+  //  return static_cast<size_t>(v.data);
+  //}
+
+  std::string GetStringRepr() const {
+    std::stringstream ss;
+    ss << "ty: " << static_cast<int>(GetType()) << ", isArray: " << IsArray()
+       << ", isInlined: " << IsInlined() << ", isCompressed: " << IsCompressed()
+       << ", payload: " << GetPayload();
+
+    return ss.str();
   }
 
  private:
@@ -127,21 +404,24 @@ struct Field {
 };
 
 //
-// Describes connection of a path(i.e. node) and field(e.g. vertex data)
+// Spec describes the relation of a path(i.e. node) and field(e.g. vertex data)
 //
 struct Spec {
   Index path_index;
   Index fieldset_index;
-  uint32_t spec_type;  // SdfSpecType enum?
+  SpecType spec_type;
 };
 
 struct Section {
   Section() { memset(this, 0, sizeof(*this)); }
   Section(char const *name, int64_t start, int64_t size);
   char name[kSectionNameMaxLength + 1];
-  int64_t start, size;
+  int64_t start, size;  // byte offset to section info and its data size
 };
 
+//
+// TOC = list of sections.
+//
 struct TableOfContents {
   // Section const *GetSection(SectionName) const;
   // int64_t GetMinimumSectionStart() const;
@@ -204,12 +484,106 @@ class Parser {
   ///
   bool ReadSection(Section *s);
 
+  std::string GetToken(Index token_index) {
+    if ((token_index.value >= 0) || (token_index.value <= _tokens.size())) {
+      return _tokens[token_index.value];
+    } else {
+      // TODO(syoyo): Report an error
+      return std::string();
+    }
+  }
+
+  // Get string from string index.
+  std::string GetString(Index string_index) {
+    if ((string_index.value >= 0) || (string_index.value <= _tokens.size())) {
+      return _tokens[string_index.value];
+    } else {
+      // TODO(syoyo): Report an error
+      return std::string();
+    }
+  }
+
+  const bool HasField(const std::string &key) {
+    // Simple linear search
+    for (const auto &field : _fields) {
+      std::string field_name = GetToken(field.token_index);
+      if (field_name.compare(key) == 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const bool GetField(Index index, Field &&field) const {
+    if ((index.value >= 0) || (index.value <= _fields.size())) {
+      field = _fields[index.value];
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  std::string GetFieldString(Index index) {
+    if ((index.value >= 0) || (index.value <= _fields.size())) {
+      // ok
+    } else {
+      return "#INVALID field index#";
+    }
+
+    const Field &f = _fields[index.value];
+
+    std::string s = GetToken(f.token_index) + ":" + f.value_rep.GetStringRepr();
+
+    return s;
+  }
+
+  std::string GetFieldSetString(Index index) {
+    if ((index.value >= 0) || (index.value <= _fieldset_indices.size())) {
+      // ok
+    } else {
+      return "#INVALID fieldset index#";
+    }
+
+    return std::to_string(_fieldset_indices[index.value].value);
+  }
+
+  std::string GetPathString(Index index) {
+    if ((index.value >= 0) || (index.value <= _fields.size())) {
+      // ok
+    } else {
+      return "#INVALID path index#";
+    }
+
+    const Path &p = _paths[index.value];
+
+    return p.name();
+  }
+
+  std::string GetSpecString(Index index) {
+    if ((index.value >= 0) || (index.value <= _fields.size())) {
+      // ok
+    } else {
+      return "#INVALID spec index#";
+    }
+
+    const Spec &spec = _specs[index.value];
+
+    std::string path_str = GetPathString(spec.path_index);
+    std::string fieldset_str = GetFieldSetString(spec.fieldset_index);
+    std::string specty_str = GetSpecTypeString(spec.spec_type);
+
+    return "[Spec] path: " + path_str + ", fieldset: " + fieldset_str +
+           ", spec_type: " + specty_str;
+  }
+
+  bool BuildLiveFieldSets();
+
   // TODO PrefetchStructuralSections
 
   std::string GetError() { return _err; }
 
  private:
-  bool ReadCompressedPaths();
+  bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
   const StreamReader *_sr = nullptr;
   std::string _err;
@@ -234,9 +608,79 @@ class Parser {
   std::vector<Field> _fields;
   std::vector<Index> _fieldset_indices;
   std::vector<Spec> _specs;
+  std::vector<Path> _paths;
+
+  bool _BuildDecompressedPathsImpl(
+      std::vector<uint32_t> const &pathIndexes,
+      std::vector<int32_t> const &elementTokenIndexes,
+      std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
+
+  bool _UnpackValueRep(const ValueRep &rep, Value &&value);
 };
 
-bool Parser::ReadCompressedPaths() {
+bool Parser::_UnpackValueRep(const ValueRep &rep, Value &&value) {
+  if (rep.IsInlined()) {
+  }
+
+  return false;
+}
+
+bool Parser::_BuildDecompressedPathsImpl(
+    std::vector<uint32_t> const &pathIndexes,
+    std::vector<int32_t> const &elementTokenIndexes,
+    std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath) {
+  bool hasChild = false, hasSibling = false;
+  do {
+    auto thisIndex = curIndex++;
+    if (parentPath.IsEmpty()) {
+      parentPath = Path::AbsoluteRootPath();
+      _paths[pathIndexes[thisIndex]] = parentPath;
+    } else {
+      int32_t tokenIndex = elementTokenIndexes[thisIndex];
+      bool isPrimPropertyPath = tokenIndex < 0;
+      tokenIndex = std::abs(tokenIndex);
+
+      std::cout << "tokenIndex = " << tokenIndex << "\n";
+      if (tokenIndex >= _tokens.size()) {
+        _err += "Invalid tokenIndex in _BuildDecompressedPathsImpl.\n";
+        return false;
+      }
+      auto const &elemToken = _tokens[tokenIndex];
+      std::cout << "elemToken = " << elemToken << "\n";
+      _paths[pathIndexes[thisIndex]] =
+          isPrimPropertyPath ? parentPath.AppendProperty(elemToken)
+                             : parentPath.AppendElement(elemToken);
+    }
+
+    // If we have either a child or a sibling but not both, then just
+    // continue to the neighbor.  If we have both then spawn a task for the
+    // sibling and do the child ourself.  We think that our path trees tend
+    // to be broader more often than deep.
+
+    hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
+    hasSibling = (jumps[thisIndex] >= 0);
+
+    if (hasChild) {
+      if (hasSibling) {
+        // TODO(syoyo) parallel processing?
+        auto siblingIndex = thisIndex + jumps[thisIndex];
+        if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes,
+                                         jumps, siblingIndex, parentPath)) {
+          return false;
+        }
+      }
+      // Have a child (may have also had a sibling). Reset parent path.
+      parentPath = _paths[pathIndexes[thisIndex]];
+    }
+    // If we had only a sibling, we just continue since the parent path is
+    // unchanged and the next thing in the reader stream is the sibling's
+    // header.
+  } while (hasChild || hasSibling);
+
+  return true;
+}
+
+bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
   std::vector<uint32_t> pathIndexes;
   std::vector<int32_t> elementTokenIndexes;
   std::vector<int32_t> jumps;
@@ -247,6 +691,13 @@ bool Parser::ReadCompressedPaths() {
     _err += "Failed to read the number of paths.\n";
     return false;
   }
+
+  if (ref_num_paths != numPaths) {
+    _err += "Size mismatch of numPaths at `PATHS` section.\n";
+    return false;
+  }
+
+  std::cout << "numPaths : " << numPaths << "\n";
 
   pathIndexes.resize(numPaths);
   elementTokenIndexes.resize(numPaths);
@@ -273,12 +724,15 @@ bool Parser::ReadCompressedPaths() {
       return false;
     }
 
+    std::cout << "comBuffer.size = " << compBuffer.size() << "\n";
+    std::cout << "pathIndexesSize = " << pathIndexesSize << "\n";
+
     std::string err;
     Usd_IntegerCompression::DecompressFromBuffer(
         compBuffer.data(), pathIndexesSize, pathIndexes.data(), numPaths, &err,
         workingSpace.data());
     if (!err.empty()) {
-      _err += err;
+      _err += "Failed to decode pathIndexes\n" + err;
       return false;
     }
   }
@@ -304,7 +758,7 @@ bool Parser::ReadCompressedPaths() {
         numPaths, &err, workingSpace.data());
 
     if (!err.empty()) {
-      _err += err;
+      _err += "Failed to decode elementTokenIndexes\n" + err;
       return false;
     }
   }
@@ -330,18 +784,18 @@ bool Parser::ReadCompressedPaths() {
                                                  workingSpace.data());
 
     if (!err.empty()) {
-      _err += err;
+      _err += "Failed to decode jumps\n" + err;
       return false;
     }
   }
 
-#if 0  // TODO
-    // Now build the paths.
-    _BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, 0,
-                                SdfPath(), dispatcher);
+  _paths.resize(numPaths);
 
-    //dispatcher.Wait();
-#endif
+  // Now build the paths.
+  if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, 0,
+                                   Path())) {
+    return false;
+  }
 
   for (uint32_t item : pathIndexes) {
     std::cout << "pathIndexes " << item << "\n";
@@ -587,6 +1041,13 @@ bool Parser::ReadFields() {
     }
   }
 
+  std::cout << "num_fields = " << num_fields << "\n";
+  for (size_t i = 0; i < num_fields; i++) {
+    std::cout << "field[" << i
+              << "] name = " << GetToken(_fields[i].token_index)
+              << ", value = " << _fields[i].value_rep.GetStringRepr() << "\n";
+  }
+
   return true;
 }
 
@@ -663,6 +1124,43 @@ bool Parser::ReadFieldSets() {
   return true;
 }
 
+bool Parser::BuildLiveFieldSets() {
+  // In-memory storage for a single "spec" -- prim, property, etc.
+  typedef std::pair<std::string, ValueRep> FieldValuePair;
+  typedef std::vector<FieldValuePair> FieldValuePairVector;
+
+  // TODO(syoyo): Use unordered_map(need hash function)
+  std::map<Index, FieldValuePairVector> live_fieldsets;
+
+  for (auto fsBegin = _fieldset_indices.begin(),
+            fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index());
+       fsBegin != _fieldset_indices.end(); fsBegin = fsEnd + 1,
+            fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index())) {
+    auto &pairs = live_fieldsets[Index(fsBegin - _fieldset_indices.begin())];
+
+    pairs.resize(fsEnd - fsBegin);
+    std::cout << "range size = " << (fsEnd - fsBegin) << "\n";
+    for (size_t i = 0; fsBegin != fsEnd; ++fsBegin, ++i) {
+      assert((fsBegin->value >= 0) && (fsBegin->value < _fields.size()));
+      std::cout << "fieldIndex = " << (fsBegin->value) << "\n";
+      auto const &field = _fields[fsBegin->value];
+      pairs[i].first = GetToken(field.token_index);
+      // TODO(syoyo) Unpack
+      pairs[i].second = field.value_rep;
+    }
+  }
+
+  size_t sum = 0;
+  for (const auto &item : live_fieldsets) {
+    std::cout << "livefieldsets[" << item.first.value
+              << "].count = " << item.second.size() << "\n";
+    sum += item.second.size();
+  }
+  std::cout << "Total fields used = " << sum << "\n";
+
+  return true;
+}
+
 bool Parser::ReadSpecs() {
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `SPECS` section.\n";
@@ -718,7 +1216,17 @@ bool Parser::ReadSpecs() {
       return false;
     }
 
-    for (size_t i = 0; i != num_specs; ++i) {
+    std::string err;
+    if (!Usd_IntegerCompression::DecompressFromBuffer(
+            comp_buffer.data(), path_indexes_size, tmp.data(), num_specs, &err,
+            working_space.data())) {
+      _err += "Failed to decode pathIndexes at `SPECS` section.\n";
+      _err += err;
+      return false;
+    }
+
+    for (size_t i = 0; i < num_specs; ++i) {
+      std::cout << "tmp = " << tmp[i] << "\n";
       _specs[i].path_index.value = tmp[i];
     }
   }
@@ -740,7 +1248,17 @@ bool Parser::ReadSpecs() {
       return false;
     }
 
+    std::string err;
+    if (!Usd_IntegerCompression::DecompressFromBuffer(
+            comp_buffer.data(), fset_indexes_size, tmp.data(), num_specs, &err,
+            working_space.data())) {
+      _err += "Failed to decode fieldset indices at `SPECS` section.\n";
+      _err += err;
+      return false;
+    }
+
     for (size_t i = 0; i != num_specs; ++i) {
+      std::cout << "fieldset = " << tmp[i] << "\n";
       _specs[i].fieldset_index.value = tmp[i];
     }
   }
@@ -762,10 +1280,27 @@ bool Parser::ReadSpecs() {
       return false;
     }
 
-    // TODO(syoyo): convert to SdfSpecType
-    for (size_t i = 0; i != num_specs; ++i) {
-      _specs[i].spec_type = tmp[i];
+    std::string err;
+    if (!Usd_IntegerCompression::DecompressFromBuffer(
+            comp_buffer.data(), spectype_size, tmp.data(), num_specs, &err,
+            working_space.data())) {
+      _err += "Failed to decode fieldset indices at `SPECS` section.\n";
+      _err += err;
+      return false;
     }
+
+    for (size_t i = 0; i != num_specs; ++i) {
+      std::cout << "spectype = " << tmp[i] << "\n";
+      _specs[i].spec_type = static_cast<SpecType>(tmp[i]);
+    }
+  }
+
+  for (size_t i = 0; i != num_specs; ++i) {
+    std::cout << "spec[" << i << "].pathIndex  = " << _specs[i].path_index.value
+              << ", fieldset_index = " << _specs[i].fieldset_index.value
+              << ", spec_type = " << _specs[i].spec_type << "\n";
+    std::cout << "spec[" << i << "] string_repr = " << GetSpecString(Index(i))
+              << "\n";
   }
 
   return true;
@@ -791,19 +1326,22 @@ bool Parser::ReadPaths() {
     return false;
   }
 
-  // # of paths.
-  uint64_t n;
-  if (!_sr->read8(&n)) {
-    _err += "Failed to read # of paths.\n";
+  uint64_t num_paths;
+  if (!_sr->read8(&num_paths)) {
+    _err += "Failed to read # of paths at `PATHS` section.\n";
     return false;
   }
 
-  if (!ReadCompressedPaths()) {
+  if (!ReadCompressedPaths(num_paths)) {
     _err += "Failed to read compressed paths.\n";
     return false;
   }
 
-  std::cout << "# of paths " << n << "\n";
+  std::cout << "# of paths " << _paths.size() << "\n";
+
+  for (size_t i = 0; i < _paths.size(); i++) {
+    std::cout << "path[" << i << "] = " << _paths[i].name() << "\n";
+  }
 
   return true;
 }
@@ -979,13 +1517,6 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *err,
 
   // Read known sections
 
-  if (!parser.ReadPaths()) {
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
   if (!parser.ReadTokens()) {
     if (err) {
       (*err) = parser.GetError();
@@ -1014,6 +1545,13 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *err,
     return false;
   }
 
+  if (!parser.ReadPaths()) {
+    if (err) {
+      (*err) = parser.GetError();
+    }
+    return false;
+  }
+
   if (!parser.ReadSpecs()) {
     if (err) {
       (*err) = parser.GetError();
@@ -1021,8 +1559,79 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *err,
     return false;
   }
 
+  ///
+  /// Reconstruct C++ representation of USD scene graph.
+  ///
+  if (!parser.BuildLiveFieldSets()) {
+    if (err) {
+      (*err) = parser.GetError();
+    }
+  }
+
   // TODO(syoyo): Read unknown sections
   return true;
+}
+
+float half_to_float(float16 h) {
+  static const FP32 magic = {113 << 23};
+  static const unsigned int shifted_exp = 0x7c00
+                                          << 13;  // exponent mask after shift
+  FP32 o;
+
+  o.u = (h.u & 0x7fffU) << 13U;           // exponent/mantissa bits
+  unsigned int exp_ = shifted_exp & o.u;  // just the exponent
+  o.u += (127 - 15) << 23;                // exponent adjust
+
+  // handle exponent special cases
+  if (exp_ == shifted_exp)    // Inf/NaN?
+    o.u += (128 - 16) << 23;  // extra exp adjust
+  else if (exp_ == 0)         // Zero/Denormal?
+  {
+    o.u += 1 << 23;  // extra exp adjust
+    o.f -= magic.f;  // renormalize
+  }
+
+  o.u |= (h.u & 0x8000U) << 16U;  // sign bit
+  return o.f;
+}
+
+float16 float_to_half_full(float _f) {
+  FP32 f;
+  f.f = _f;
+  float16 o = {0};
+
+  // Based on ISPC reference code (with minor modifications)
+  if (f.s.Exponent == 0)  // Signed zero/denormal (which will underflow)
+    o.s.Exponent = 0;
+  else if (f.s.Exponent == 255)  // Inf or NaN (all exponent bits set)
+  {
+    o.s.Exponent = 31;
+    o.s.Mantissa = f.s.Mantissa ? 0x200 : 0;  // NaN->qNaN and Inf->Inf
+  } else                                      // Normalized number
+  {
+    // Exponent unbias the single, then bias the halfp
+    int newexp = f.s.Exponent - 127 + 15;
+    if (newexp >= 31)  // Overflow, return signed infinity
+      o.s.Exponent = 31;
+    else if (newexp <= 0)  // Underflow
+    {
+      if ((14 - newexp) <= 24)  // Mantissa might be non-zero
+      {
+        unsigned int mant = f.s.Mantissa | 0x800000;  // Hidden 1 bit
+        o.s.Mantissa = mant >> (14 - newexp);
+        if ((mant >> (13 - newexp)) & 1)  // Check for rounding
+          o.u++;  // Round, might overflow into exp bit, but this is OK
+      }
+    } else {
+      o.s.Exponent = static_cast<unsigned int>(newexp);
+      o.s.Mantissa = f.s.Mantissa >> 13;
+      if (f.s.Mantissa & 0x1000)  // Check for rounding
+        o.u++;                    // Round, might overflow to inf, this is OK
+    }
+  }
+
+  o.s.Sign = f.s.Sign;
+  return o;
 }
 
 static_assert(sizeof(Field) == 16, "");
