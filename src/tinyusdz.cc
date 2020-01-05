@@ -18,108 +18,109 @@ namespace {
 
 constexpr size_t kSectionNameMaxLength = 15;
 
-struct DataType {
-  DataType() : name("Invalid"), id(0), supports_array(false) {}
-  DataType(const std::string &n, uint32_t i, bool a)
-      : name(n), id(i), supports_array(a) {}
-
-  std::string name;
-  uint32_t id{0};
-  bool supports_array{false};
-};
-
-const DataType &GetDataType(uint32_t type_id) {
-  static std::map<uint32_t, DataType> table;
+const ValueType &GetValueType(int32_t type_id) {
+  static std::map<uint32_t, ValueType> table;
   if (table.size() == 0) {
     // Register data types
-    // TODO(syoyo): Use template
+    // NOTE(syoyo): We can use C++11 template to create compile-time table for data types, but
+    // this way(use std::map) is easier to read and maintain, I think.
 
-#define ADD_DATA_TYPE(NAME_STR, TYPE_ID, SUPPORTS_ARRAY) \
+    // reference: crateDataTypes.h
+
+#define ADD_VALUE_TYPE(NAME_STR, TYPE_ID, SUPPORTS_ARRAY) \
   { assert(table.count(TYPE_ID) == 0); \
-     table[TYPE_ID] = DataType(NAME_STR, TYPE_ID, SUPPORTS_ARRAY); }
+     table[TYPE_ID] = ValueType(NAME_STR, TYPE_ID, SUPPORTS_ARRAY); }
 
-    ADD_DATA_TYPE("InvaldOrUnsupported", 0, false);
+    ADD_VALUE_TYPE("InvaldOrUnsupported", 0, false);
 
     // Array types.
-    ADD_DATA_TYPE("Bool", 1, true);
+    ADD_VALUE_TYPE("Bool", VALUE_TYPE_BOOL, true);
 
-    ADD_DATA_TYPE("UChar", 2, true);
-    ADD_DATA_TYPE("Int", 3, true);
-    ADD_DATA_TYPE("UInt", 4, true);
-    ADD_DATA_TYPE("Int64", 5, true);
-    ADD_DATA_TYPE("UInt64", 6, true);
+    ADD_VALUE_TYPE("UChar", VALUE_TYPE_UCHAR, true);
+    ADD_VALUE_TYPE("Int", VALUE_TYPE_INT, true);
+    ADD_VALUE_TYPE("UInt", VALUE_TYPE_UINT, true);
+    ADD_VALUE_TYPE("Int64", VALUE_TYPE_INT64, true);
+    ADD_VALUE_TYPE("UInt64", VALUE_TYPE_UINT64, true);
 
-    ADD_DATA_TYPE("Half", 7, true);
-    ADD_DATA_TYPE("Float", 8, true);
-    ADD_DATA_TYPE("Double", 9, true);
+    ADD_VALUE_TYPE("Half", VALUE_TYPE_HALF, true);
+    ADD_VALUE_TYPE("Float", VALUE_TYPE_FLOAT, true);
+    ADD_VALUE_TYPE("Double", VALUE_TYPE_DOUBLE, true);
 
-    ADD_DATA_TYPE("String", 10, true);
-    ADD_DATA_TYPE("Token", 11, true);
-    ADD_DATA_TYPE("AssetPath", 12, true);
+    ADD_VALUE_TYPE("String", VALUE_TYPE_STRING, true);
+    ADD_VALUE_TYPE("Token", VALUE_TYPE_TOKEN, true);
+    ADD_VALUE_TYPE("AssetPath", VALUE_TYPE_ASSET_PATH, true);
 
-    ADD_DATA_TYPE("Quatd", 16, true);
-    ADD_DATA_TYPE("Quatf", 17, true);
-    ADD_DATA_TYPE("Quath", 18, true);
+    ADD_VALUE_TYPE("Quatd", VALUE_TYPE_QUATD, true);
+    ADD_VALUE_TYPE("Quatf", VALUE_TYPE_QUATF, true);
+    ADD_VALUE_TYPE("Quath", VALUE_TYPE_QUATH, true);
 
-    ADD_DATA_TYPE("Vec2d", 19, true);
-    ADD_DATA_TYPE("Vec2f", 20, true);
-    ADD_DATA_TYPE("Vec2h", 21, true);
-    ADD_DATA_TYPE("Vec2i", 22, true);
+    ADD_VALUE_TYPE("Vec2d", VALUE_TYPE_VEC2D, true);
+    ADD_VALUE_TYPE("Vec2f", VALUE_TYPE_VEC2F, true);
+    ADD_VALUE_TYPE("Vec2h", VALUE_TYPE_VEC2H, true);
+    ADD_VALUE_TYPE("Vec2i", VALUE_TYPE_VEC2I, true);
 
-    ADD_DATA_TYPE("Vec3d", 23, true);
-    ADD_DATA_TYPE("Vec3f", 24, true);
-    ADD_DATA_TYPE("Vec3h", 25, true);
-    ADD_DATA_TYPE("Vec3i", 26, true);
+    ADD_VALUE_TYPE("Vec3d", VALUE_TYPE_VEC3D, true);
+    ADD_VALUE_TYPE("Vec3f", VALUE_TYPE_VEC3F, true);
+    ADD_VALUE_TYPE("Vec3h", VALUE_TYPE_VEC3H, true);
+    ADD_VALUE_TYPE("Vec3i", VALUE_TYPE_VEC3I, true);
 
-    ADD_DATA_TYPE("Vec4d", 27, true);
-    ADD_DATA_TYPE("Vec4f", 28, true);
-    ADD_DATA_TYPE("Vec4h", 29, true);
-    ADD_DATA_TYPE("Vec4i", 30, true);
+    ADD_VALUE_TYPE("Vec4d", VALUE_TYPE_VEC4D, true);
+    ADD_VALUE_TYPE("Vec4f", VALUE_TYPE_VEC4F, true);
+    ADD_VALUE_TYPE("Vec4h", VALUE_TYPE_VEC4H, true);
+    ADD_VALUE_TYPE("Vec4i", VALUE_TYPE_VEC4I, true);
 
-    ADD_DATA_TYPE("Matrix2d", 13, true);
-    ADD_DATA_TYPE("Matrix3d", 14, true);
-    ADD_DATA_TYPE("Matrix4d", 15, true);
+    ADD_VALUE_TYPE("Matrix2d", VALUE_TYPE_MATRIX2D, true);
+    ADD_VALUE_TYPE("Matrix3d", VALUE_TYPE_MATRIX3D, true);
+    ADD_VALUE_TYPE("Matrix4d", VALUE_TYPE_MATRIX4D, true);
 
     // Non-array types.
-    ADD_DATA_TYPE("Dictionary", 31, false);
+    ADD_VALUE_TYPE("Dictionary", VALUE_TYPE_DICTIONARY, false);
 
-    ADD_DATA_TYPE("TokenListOp", 32, false);
-    ADD_DATA_TYPE("StringListOp", 33, false);
-    ADD_DATA_TYPE("PathListOp", 34, false);
-    ADD_DATA_TYPE("ReferenceListOp", 35, false);
-    ADD_DATA_TYPE("IntListOp", 36, false);
-    ADD_DATA_TYPE("Int64ListOp", 37, false);
-    ADD_DATA_TYPE("UIntListOp", 38, false);
-    ADD_DATA_TYPE("UInt64ListOp", 39, false);
+    ADD_VALUE_TYPE("TokenListOp", VALUE_TYPE_TOKEN_LIST_OP, false);
+    ADD_VALUE_TYPE("StringListOp", VALUE_TYPE_STRING_LIST_OP, false);
+    ADD_VALUE_TYPE("PathListOp", VALUE_TYPE_PATH_LIST_OP, false);
+    ADD_VALUE_TYPE("ReferenceListOp", VALUE_TYPE_REFERENCE_LIST_OP, false);
+    ADD_VALUE_TYPE("IntListOp", VALUE_TYPE_INT_LIST_OP, false);
+    ADD_VALUE_TYPE("Int64ListOp", VALUE_TYPE_INT64_LIST_OP, false);
+    ADD_VALUE_TYPE("UIntListOp", VALUE_TYPE_UINT_LIST_OP, false);
+    ADD_VALUE_TYPE("UInt64ListOp", VALUE_TYPE_UINT64_LIST_OP, false);
 
-    ADD_DATA_TYPE("PathVector", 40, false);
-    ADD_DATA_TYPE("TokenVector", 41, false);
+    ADD_VALUE_TYPE("PathVector", VALUE_TYPE_PATH_VECTOR, false);
+    ADD_VALUE_TYPE("TokenVector", VALUE_TYPE_TOKEN_VECTOR, false);
 
-    ADD_DATA_TYPE("Specifier", 42, false);
-    ADD_DATA_TYPE("Permission", 43, false);
-    ADD_DATA_TYPE("Variability", 44, false);
+    ADD_VALUE_TYPE("Specifier", VALUE_TYPE_SPECIFIER, false);
+    ADD_VALUE_TYPE("Permission", VALUE_TYPE_PERMISSION, false);
+    ADD_VALUE_TYPE("Variability", VALUE_TYPE_VARIABILITY, false);
 
-    ADD_DATA_TYPE("VariantSelectionMap", 45, false);
-    ADD_DATA_TYPE("TimeSamples",         46, false);
-    ADD_DATA_TYPE("Payload",             47, false);
-    ADD_DATA_TYPE("DoubleVector",        48, false);
-    ADD_DATA_TYPE("LayerOffsetVector",   49, false);
-    ADD_DATA_TYPE("StringVector",        50, false);
-    ADD_DATA_TYPE("ValueBlock",          51, false);
-    ADD_DATA_TYPE("Value",               52, false);
-    ADD_DATA_TYPE("UnregisteredValue",   53, false);
-    ADD_DATA_TYPE("UnregisteredValueListOp", 54, false);
-    ADD_DATA_TYPE("PayloadListOp",       55, false);
-    ADD_DATA_TYPE("TimeCode", 56, true);
+    ADD_VALUE_TYPE("VariantSelectionMap", VALUE_TYPE_VARIANT_SELECTION_MAP, false);
+    ADD_VALUE_TYPE("TimeSamples",         VALUE_TYPE_TIME_SAMPLES, false);
+    ADD_VALUE_TYPE("Payload",             VALUE_TYPE_PAYLOAD, false);
+    ADD_VALUE_TYPE("DoubleVector",        VALUE_TYPE_DOUBLE_VECTOR, false);
+    ADD_VALUE_TYPE("LayerOffsetVector",   VALUE_TYPE_LAYER_OFFSET_VECTOR, false);
+    ADD_VALUE_TYPE("StringVector",        VALUE_TYPE_STRING_VECTOR, false);
+    ADD_VALUE_TYPE("ValueBlock",          VALUE_TYPE_VALUE_BLOCK, false);
+    ADD_VALUE_TYPE("Value",               VALUE_TYPE_VALUE, false);
+    ADD_VALUE_TYPE("UnregisteredValue",   VALUE_TYPE_UNREGISTERED_VALUE, false);
+    ADD_VALUE_TYPE("UnregisteredValueListOp", VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP, false);
+    ADD_VALUE_TYPE("PayloadListOp",       VALUE_TYPE_PAYLOAD_LIST_OP, false);
+    ADD_VALUE_TYPE("TimeCode", VALUE_TYPE_TIME_CODE, true);
   }
-#undef ADD_DATA_TYPE
+#undef ADD_VALUE_TYPE
 
-  if (table.count(type_id)) {
+  if (!table.count(type_id)) {
     // Invalid or unsupported.
     return table.at(0);
   }
 
   return table.at(type_id);
+}
+
+std::string GetValueTypeRepr(int32_t type_id) {
+  ValueType dty = GetValueType(type_id);
+
+  std::stringstream ss;
+  ss << "ValueType: " << dty.name << "(" << dty.id << "}, supports_array = " << dty.supports_array;
+  return ss.str();
 }
 
 enum SpecType {
@@ -282,6 +283,43 @@ class Path {
   bool valid{true};
 };
 
+///
+/// Node represents scene graph node.
+///
+class Node
+{
+ public:
+  Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
+
+  const int64_t GetParent() const {
+    return _parent;
+  }
+
+  const std::vector<int64_t> &GetChildren() const {
+    return _children;
+  }
+
+  ///
+  /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and this node is `bora`)
+  ///
+  std::string GetFullPath() const;
+  
+
+ private:
+  int64_t _parent;  // -1 = this node is the root node.
+  std::vector<int64_t> _children; // index to child nodes.
+
+  Path _path; // local path
+
+};
+
+class Scene
+{
+ public:
+
+  std::vector<Node> _nodes;
+};
+
 // -- from USD ----------------------------------------------------------------
 
 //
@@ -319,8 +357,6 @@ struct Index {
   uint32_t value;
 };
 
-enum class TypeEnum : int32_t;
-
 // Value in file representation.  Consists of a 2 bytes of type information
 // (type enum value, array bit, and inlined-value bit) and 6 bytes of data.
 // If possible, we attempt to store certain values directly in the local
@@ -335,7 +371,7 @@ struct ValueRep {
 
   explicit constexpr ValueRep(uint64_t data) : data(data) {}
 
-  constexpr ValueRep(TypeEnum t, bool isInlined, bool isArray, uint64_t payload)
+  constexpr ValueRep(int32_t t, bool isInlined, bool isArray, uint64_t payload)
       : data(_Combine(t, isInlined, isArray, payload)) {}
 
   static const uint64_t _IsArrayBit = 1ull << 63;
@@ -353,10 +389,10 @@ struct ValueRep {
   inline bool IsCompressed() const { return data & _IsCompressedBit; }
   inline void SetIsCompressed() { data |= _IsCompressedBit; }
 
-  inline TypeEnum GetType() const {
-    return static_cast<TypeEnum>((data >> 48) & 0xFF);
+  inline int32_t GetType() const {
+    return static_cast<int32_t>((data >> 48) & 0xFF);
   }
-  inline void SetType(TypeEnum t) {
+  inline void SetType(int32_t t) {
     data &= ~(0xFFull << 48);                  // clear type byte in data.
     data |= (static_cast<uint64_t>(t) << 48);  // set it.
   }
@@ -387,7 +423,7 @@ struct ValueRep {
   }
 
  private:
-  static constexpr uint64_t _Combine(TypeEnum t, bool isInlined, bool isArray,
+  static constexpr uint64_t _Combine(int32_t t, bool isInlined, bool isArray,
                                      uint64_t payload) {
     return (isArray ? _IsArrayBit : 0) | (isInlined ? _IsInlinedBit : 0) |
            (static_cast<uint64_t>(t) << 48) | (payload & _PayloadMask);
@@ -489,16 +525,19 @@ class Parser {
       return _tokens[token_index.value];
     } else {
       // TODO(syoyo): Report an error
+      std::cerr << "Token index out of range\n";
       return std::string();
     }
   }
 
   // Get string from string index.
   std::string GetString(Index string_index) {
-    if ((string_index.value >= 0) || (string_index.value <= _tokens.size())) {
-      return _tokens[string_index.value];
+    if ((string_index.value >= 0) || (string_index.value <= _string_indices.size())) {
+      Index s_idx = _string_indices[string_index.value];
+      return GetToken(s_idx);
     } else {
       // TODO(syoyo): Report an error
+      std::cerr << "String index out of range\n";
       return std::string();
     }
   }
@@ -615,12 +654,68 @@ class Parser {
       std::vector<int32_t> const &elementTokenIndexes,
       std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
 
-  bool _UnpackValueRep(const ValueRep &rep, Value &&value);
+  bool _UnpackValueRep(const ValueRep &rep, Value *value);
 };
 
-bool Parser::_UnpackValueRep(const ValueRep &rep, Value &&value) {
+bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
+  ValueType ty = GetValueType(rep.GetType());
+  std::cout << GetValueTypeRepr(rep.GetType()) << "\n";
   if (rep.IsInlined()) {
+    uint64_t d = rep.GetPayload();
+    std::cout << "ty.id = " << ty.id << "\n";
+    if (ty.id == VALUE_TYPE_STRING) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      std::string str = GetString(Index(d));
+      std::cout << "value.string = " << str << "\n";
+      return true;
+    } else {
+      //  ???
+        
+      return false; 
+    }
+  } else {
+    // payload is the offset to data.
+    int64_t offset = rep.GetPayload();
+    if (!_sr->seek_set(offset)) {
+      std::cerr << "Invalid offset\n";
+      return false;
+    }
+
+    if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
+        assert(!rep.IsCompressed()); 
+        // std::vector<Index>
+        size_t n;
+        if (!_sr->read8(&n)) {
+          std::cerr << "Failed to read TokenVector value\n";
+          return false;
+        }
+        std::cout << "n = " << n << "\n";
+
+        std::vector<Index> indices(n);
+        if (!_sr->read(n * sizeof(Index), n * sizeof(Index), reinterpret_cast<uint8_t *>(indices.data()))) {
+          std::cerr << "Failed to read TokenVector value\n";
+          return false;
+        }         
+
+        for (size_t i = 0; i < indices.size(); i++) {
+          std::cout << "tokenIndex[" << i << "] = " << int(indices[i].value) << "\n";
+        }
+
+        // TODO(syoyo): Fill value
+
+        return true;
+        
+    } else {
+      // TODO(syoyo)
+      std::cerr << "TODO\n";
+      return false;
+    }
+    
+
+
   }
+
+  (void)value;
 
   return false;
 }
@@ -1126,7 +1221,7 @@ bool Parser::ReadFieldSets() {
 
 bool Parser::BuildLiveFieldSets() {
   // In-memory storage for a single "spec" -- prim, property, etc.
-  typedef std::pair<std::string, ValueRep> FieldValuePair;
+  typedef std::pair<std::string, Value> FieldValuePair;
   typedef std::vector<FieldValuePair> FieldValuePairVector;
 
   // TODO(syoyo): Use unordered_map(need hash function)
@@ -1146,7 +1241,11 @@ bool Parser::BuildLiveFieldSets() {
       auto const &field = _fields[fsBegin->value];
       pairs[i].first = GetToken(field.token_index);
       // TODO(syoyo) Unpack
-      pairs[i].second = field.value_rep;
+      if (!_UnpackValueRep(field.value_rep, &pairs[i].second)) {
+        std::cerr << "Failed to unpack ValueRep : " << field.value_rep.GetStringRepr() << "\n";
+        return false;
+      }
+      
     }
   }
 

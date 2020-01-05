@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <cstring>
 
 namespace tinyusdz {
 
@@ -134,16 +135,142 @@ struct USDCWriteOptions
 
 };
 
+enum ValueTypeId
+{
+  VALUE_TYPE_INVALID = 0,
+
+  VALUE_TYPE_BOOL = 1,
+  VALUE_TYPE_UCHAR = 2,
+  VALUE_TYPE_INT = 3,
+  VALUE_TYPE_UINT = 4,
+  VALUE_TYPE_INT64 = 5,
+  VALUE_TYPE_UINT64 = 6,
+
+  VALUE_TYPE_HALF = 7,
+  VALUE_TYPE_FLOAT = 8,
+  VALUE_TYPE_DOUBLE = 9,
+
+  VALUE_TYPE_STRING = 10,
+  VALUE_TYPE_TOKEN = 11,
+  VALUE_TYPE_ASSET_PATH = 12,
+
+  VALUE_TYPE_MATRIX2D = 13,
+  VALUE_TYPE_MATRIX3D = 14,
+  VALUE_TYPE_MATRIX4D = 15,
+
+  VALUE_TYPE_QUATD = 16,
+  VALUE_TYPE_QUATF = 17,
+  VALUE_TYPE_QUATH = 18,
+
+  VALUE_TYPE_VEC2D = 19,
+  VALUE_TYPE_VEC2F = 20,
+  VALUE_TYPE_VEC2H = 21,
+  VALUE_TYPE_VEC2I = 22,
+
+  VALUE_TYPE_VEC3D = 23,
+  VALUE_TYPE_VEC3F = 24,
+  VALUE_TYPE_VEC3H = 25,
+  VALUE_TYPE_VEC3I = 26,
+
+  VALUE_TYPE_VEC4D = 27,
+  VALUE_TYPE_VEC4F = 28,
+  VALUE_TYPE_VEC4H = 29,
+  VALUE_TYPE_VEC4I = 30,
+
+  VALUE_TYPE_DICTIONARY = 31,
+  VALUE_TYPE_TOKEN_LIST_OP = 32,
+  VALUE_TYPE_STRING_LIST_OP = 33,
+  VALUE_TYPE_PATH_LIST_OP = 34,
+  VALUE_TYPE_REFERENCE_LIST_OP = 35,
+  VALUE_TYPE_INT_LIST_OP = 36,
+  VALUE_TYPE_INT64_LIST_OP = 37,
+  VALUE_TYPE_UINT_LIST_OP = 38,
+  VALUE_TYPE_UINT64_LIST_OP = 39,
+
+  VALUE_TYPE_PATH_VECTOR = 40,
+  VALUE_TYPE_TOKEN_VECTOR = 41,
+
+  VALUE_TYPE_SPECIFIER = 42,
+  VALUE_TYPE_PERMISSION = 43,
+  VALUE_TYPE_VARIABILITY = 44,
+
+  VALUE_TYPE_VARIANT_SELECTION_MAP = 45,
+  VALUE_TYPE_TIME_SAMPLES = 46,
+  VALUE_TYPE_PAYLOAD = 47,
+  VALUE_TYPE_DOUBLE_VECTOR = 48,
+  VALUE_TYPE_LAYER_OFFSET_VECTOR = 49,
+  VALUE_TYPE_STRING_VECTOR = 50,
+  VALUE_TYPE_VALUE_BLOCK = 51,
+  VALUE_TYPE_VALUE = 52,
+  VALUE_TYPE_UNREGISTERED_VALUE = 53,
+  VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP = 54,
+  VALUE_TYPE_PAYLOAD_LIST_OP = 55,
+  VALUE_TYPE_TIME_CODE = 56,
+};
+
+struct ValueType {
+  ValueType() : name("Invalid"), id(VALUE_TYPE_INVALID), supports_array(false) {}
+  ValueType(const std::string &n, uint32_t i, bool a)
+      : name(n), id(ValueTypeId(i)), supports_array(a) {}
+
+  std::string name;
+  ValueTypeId id{VALUE_TYPE_INVALID};
+  bool supports_array{false};
+};
+
 ///
 /// Represent value.
 /// multi-dimensional type is not supported(e.g. float[][])
 ///
 class Value {
  public:
+  Value() = default;
+
+  Value(const ValueType &_dtype, const std::vector<uint8_t> &_data) :
+    dtype(_dtype), data(_data), array_length(-1) {}
+  Value(const ValueType &_dtype, const std::vector<uint8_t> &_data, uint64_t _array_length) :
+    dtype(_dtype), data(_data), array_length(int64_t(_array_length)) {}
+  bool IsArray();
+
+  // Setter for frequently used types.
+
+  void SetString(const std::string &s) {
+    dtype.name = "String";   
+    dtype.id = VALUE_TYPE_STRING;
+    memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
+  }
+
+  // Getter for frequently used types.
+  std::string GetString() {
+    if (dtype.id == VALUE_TYPE_STRING) {
+      std::string s(reinterpret_cast<const char *>(data.data()), data.size());
+      return s;
+    }
+    return std::string();
+  }
+
+  size_t GetArrayLength() const {
+    return array_length;
+  }
+
+  const std::vector<uint8_t> &GetData() const {
+    return data;
+  }
+
+  const std::string &GetTypeName() const {
+    return dtype.name;
+  }
+
+  const ValueTypeId &GetTypeId() const {
+    return dtype.id;
+  }
+
+ private:
+  ValueType dtype;
+  std::string string_value;
   std::vector<uint8_t> data; // value as opaque binary data.
-  bool is_array{false};
-  uint64_t array_length{0};
-  std::string type;
+  int64_t array_length{-1};
+
 };
 
 ///
