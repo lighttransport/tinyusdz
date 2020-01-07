@@ -20,6 +20,7 @@ constexpr size_t kSectionNameMaxLength = 15;
 
 const ValueType &GetValueType(int32_t type_id) {
   static std::map<uint32_t, ValueType> table;
+  std::cout << "type_id = " << type_id << "\n";
   if (table.size() == 0) {
     // Register data types
     // NOTE(syoyo): We can use C++11 template to create compile-time table for data types, but
@@ -74,7 +75,7 @@ const ValueType &GetValueType(int32_t type_id) {
     ADD_VALUE_TYPE("Matrix4d", VALUE_TYPE_MATRIX4D, true);
 
     // Non-array types.
-    ADD_VALUE_TYPE("Dictionary", VALUE_TYPE_DICTIONARY, false);
+    ADD_VALUE_TYPE("Dictionary", VALUE_TYPE_DICTIONARY, false); // std::map<std::string, Value>
 
     ADD_VALUE_TYPE("TokenListOp", VALUE_TYPE_TOKEN_LIST_OP, false);
     ADD_VALUE_TYPE("StringListOp", VALUE_TYPE_STRING_LIST_OP, false);
@@ -109,6 +110,7 @@ const ValueType &GetValueType(int32_t type_id) {
 
   if (!table.count(type_id)) {
     // Invalid or unsupported.
+    std::cerr << "Unknonw type id: " << type_id << "\n";
     return table.at(0);
   }
 
@@ -524,8 +526,7 @@ class Parser {
     if ((token_index.value >= 0) || (token_index.value <= _tokens.size())) {
       return _tokens[token_index.value];
     } else {
-      // TODO(syoyo): Report an error
-      std::cerr << "Token index out of range\n";
+      _err += "Token index out of range: " + std::to_string(token_index.value) + "\n";
       return std::string();
     }
   }
@@ -536,8 +537,7 @@ class Parser {
       Index s_idx = _string_indices[string_index.value];
       return GetToken(s_idx);
     } else {
-      // TODO(syoyo): Report an error
-      std::cerr << "String index out of range\n";
+      _err += "String index out of range: " + std::to_string(string_index.value) + "\n";
       return std::string();
     }
   }
@@ -655,21 +655,167 @@ class Parser {
       std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
 
   bool _UnpackValueRep(const ValueRep &rep, Value *value);
+
+  //
+  // Reader util functions
+  //
+  bool _ReadIndex(Index *i);
+
+  bool _ReadString(std::string *s);
+
+  bool _ReadValueRep(ValueRep *rep);
+
+  // Dictionary
+  bool _ReadDictionary(Value::Dictionary *d);
+
 };
+
+bool Parser::_ReadIndex(Index *i) {
+  // string is serialized as StringIndex
+  uint32_t value;
+  if (!_sr->read4(&value)) {
+    _err += "Failed to read Index\n";
+    return false;
+  }
+  (*i) = Index(value);
+  return true;
+}
+
+bool Parser::_ReadString(std::string *s) {
+  // string is serialized as StringIndex
+  Index string_index;
+  if (!_ReadIndex(&string_index)) {
+    _err += "Failed to read Index for string data.\n";
+    return false;
+  }
+
+  (*s) = GetString(string_index);
+
+  return true;
+}
+
+bool Parser::_ReadValueRep(ValueRep *rep) {
+  
+  if (!_sr->read8(reinterpret_cast<uint64_t *>(rep))) {
+    _err += "Failed to read ValueRep.\n";
+    return false;
+  }
+
+  std::cout << "value = " << rep->GetData() << "\n";
+
+  return true;
+}
+
+
+bool Parser::_ReadDictionary(Value::Dictionary *d) {
+  Value::Dictionary dict;
+  uint64_t sz;
+  if (!_sr->read8(&sz)) {
+    _err += "Failed to read the number of elements for Dictionary data.\n";
+    return false;
+  }
+
+  std::cout << "# of elements in dict " << sz << "\n";
+  
+  while (sz--) {
+      // key(StringIndex)
+      std::string key;
+      std::cout << "key before tell = " << _sr->tell() << "\n";
+      if (!_ReadString(&key)) {
+        _err += "Failed to read key string for Dictionary element.\n";
+        return false;
+      }
+
+      std::cout << "offt before tell = " << _sr->tell() << "\n";
+
+      // 8byte for the offset for recursive value. See _RecursiveRead() in crateFile.cpp for details.
+      int64_t offset{0};
+      if (!_sr->read8(&offset)) {
+        _err += "Failed to read the offset for value in Dictionary.\n";
+        return false;
+      }
+
+      std::cout << "value offset = " << offset << "\n";
+
+      std::cout << "tell = " << _sr->tell() << "\n";
+
+      // -8 to compensate sizeof(offset)
+      if (!_sr->seek_from_currect(offset - 8)) {
+        _err += "Failed to seek. Invalid offset value: " + std::to_string(offset) + "\n";
+        return false;
+      }
+
+      std::cout << "+offset tell = " << _sr->tell() << "\n";
+
+      std::cout << "key = " << key << "\n";
+
+      ValueRep rep{0};
+      if (!_ReadValueRep(&rep)) {
+        _err += "Failed to read value for Dictionary element.\n";
+        return false;
+      }
+
+      std::cout << "vrep.ty = " << rep.GetType() << "\n";
+      std::cout << "vrep = " << GetValueTypeRepr(rep.GetType()) << "\n";
+
+      Value value;
+      if (!_UnpackValueRep(rep, &value)) {
+        _err += "Failed to unpack value of Dictionary element.\n";
+        return false;
+      }
+
+      dict[key] = value;
+  }
+
+  (*d) = dict;
+  return true;
+}
 
 bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
   ValueType ty = GetValueType(rep.GetType());
   std::cout << GetValueTypeRepr(rep.GetType()) << "\n";
   if (rep.IsInlined()) {
-    uint64_t d = rep.GetPayload();
+
+    uint32_t d = (rep.GetPayload() &
+                    ((1ull << (sizeof(uint32_t) * 8))-1));
+
+
     std::cout << "ty.id = " << ty.id << "\n";
-    if (ty.id == VALUE_TYPE_STRING) {
+    if (ty.id == VALUE_TYPE_TOKEN) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      std::string str = GetToken(Index(d));
+      std::cout << "value.token = " << str << "\n";
+
+      value->SetToken(str);
+
+      return true;
+       
+    } else if (ty.id == VALUE_TYPE_STRING) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       std::string str = GetString(Index(d));
       std::cout << "value.string = " << str << "\n";
+
+      value->SetString(str);
+
       return true;
+
+    } else if (ty.id == VALUE_TYPE_DOUBLE) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      // Value is saved as float
+      float f;
+      memcpy(&f, &d, sizeof(float));
+      double v = double(f);
+      
+      std::cout << "value.double = " << v << "\n";
+
+      value->SetDouble(v);
+
+      return true;
+    
+    
     } else {
-      //  ???
+      // TODO(syoyo)
+      std::cerr << "TODO: Inlined Value: " << GetValueTypeRepr(rep.GetType()) << "\n";
         
       return false; 
     }
@@ -680,6 +826,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       std::cerr << "Invalid offset\n";
       return false;
     }
+
+    printf("rep = 0x%016lx\n", rep.GetData());
 
     if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
         assert(!rep.IsCompressed()); 
@@ -705,9 +853,41 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
         return true;
         
+    } else if (ty.id == VALUE_TYPE_DOUBLE) {
+        assert(!rep.IsCompressed()); 
+        assert(!rep.IsArray()); 
+
+        double v;
+        if (!_sr->read_double(&v)) {
+          _err += "Failed to read Double value\n";
+          return false;
+        }         
+
+        std::cout << "Double " << v << "\n";
+
+        value->SetDouble(v);
+
+        return true;
+    } else if (ty.id == VALUE_TYPE_DICTIONARY) {
+        assert(!rep.IsCompressed()); 
+        assert(!rep.IsArray()); 
+
+        Value::Dictionary dict;
+
+        if (!_ReadDictionary(&dict)) {
+          _err += "Failed to read Dictionary value\n";
+          return false;
+        }         
+
+        std::cout << "Dict. nelems = " << dict.size() << "\n";
+
+        value->SetDictionary(dict);
+
+        return true;
+        
     } else {
       // TODO(syoyo)
-      std::cerr << "TODO\n";
+      std::cerr << "TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
       return false;
     }
     
@@ -1735,5 +1915,6 @@ float16 float_to_half_full(float _f) {
 
 static_assert(sizeof(Field) == 16, "");
 static_assert(sizeof(Spec) == 12, "");
+static_assert(sizeof(Index) == 4, "");
 
 }  // namespace tinyusdz

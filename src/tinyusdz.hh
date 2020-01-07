@@ -5,6 +5,7 @@
 #include <vector>
 #include <array>
 #include <cstring>
+#include <map>
 
 namespace tinyusdz {
 
@@ -31,6 +32,7 @@ union FP32 {
 #pragma clang diagnostic ignored "-Wpadded"
 #endif
 
+// NOTE: usually sizeof(float16) == 4, not 2
 union float16 {
   unsigned short u;
   struct {
@@ -80,7 +82,7 @@ using Vec4d = std::array<double, 4>;
 using Vec3d = std::array<double, 3>;
 using Vec2d = std::array<double, 2>;
 
-using Quath = std::array<float16, 4>;
+using Quath = std::array<uint16_t, 4>;
 using Quatf = std::array<float, 4>;
 using Quatd = std::array<double, 4>;
 using Quaternion = std::array<double, 4>; // Storage layout is same with Quadd, so we can delete this
@@ -224,6 +226,8 @@ struct ValueType {
 ///
 class Value {
  public:
+  typedef std::map<std::string, Value> Dictionary;
+
   Value() = default;
 
   Value(const ValueType &_dtype, const std::vector<uint8_t> &_data) :
@@ -233,14 +237,84 @@ class Value {
   bool IsArray();
 
   // Setter for frequently used types.
+  void SetInt(const int32_t i) {
+    static_assert(sizeof(int32_t) == 4, "");
+    dtype.name = "Int";   
+    dtype.id = VALUE_TYPE_INT;
+    data.resize(sizeof(int32_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(int32_t));
+  }
+
+  void SetUInt(const uint32_t i) {
+    static_assert(sizeof(uint32_t) == 4, "");
+    dtype.name = "UInt";   
+    dtype.id = VALUE_TYPE_UINT;
+    data.resize(sizeof(uint32_t));
+    memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(uint32_t));
+  }
+
+  void SetInt64(const int64_t i) {
+    static_assert(sizeof(int64_t) == 8, "");
+    dtype.name = "Int64";   
+    dtype.id = VALUE_TYPE_INT64;
+    data.resize(sizeof(int64_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(int64_t));
+  }
+
+  void SetUInt64(const uint64_t i) {
+    static_assert(sizeof(uint64_t) == 8, "");
+    dtype.name = "UInt64";   
+    dtype.id = VALUE_TYPE_UINT64;
+    data.resize(sizeof(uint64_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(uint64_t));
+  }
+
+  void SetDouble(const double d) {
+    static_assert(sizeof(double) == 8, "");
+    dtype.name = "Double";   
+    dtype.id = VALUE_TYPE_DOUBLE;
+    data.resize(sizeof(double)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(double));
+  }
+
+  void SetFloat(const float d) {
+    static_assert(sizeof(float) == 4, "");
+    dtype.name = "Float";   
+    dtype.id = VALUE_TYPE_FLOAT;
+    data.resize(sizeof(float));
+    memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(float));
+  }
+
+  void SetHalf(const float16 d) {
+    dtype.name = "Half";   
+    dtype.id = VALUE_TYPE_HALF;
+    data.resize(sizeof(uint16_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&d.u), sizeof(uint16_t));
+  }
+
+  void SetToken(const std::string &s) {
+    dtype.name = "Token";   
+    dtype.id = VALUE_TYPE_TOKEN;
+    data.resize(s.size()); // No '\0' 
+    memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
+  }
 
   void SetString(const std::string &s) {
     dtype.name = "String";   
-    dtype.id = VALUE_TYPE_STRING;
+    dtype.id = VALUE_TYPE_STRING; // we treat String as std::string, not StringIndex 
+    data.resize(s.size()); // No '\0' 
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
   // Getter for frequently used types.
+  std::string GetToken() {
+    if (dtype.id == VALUE_TYPE_TOKEN) {
+      std::string s(reinterpret_cast<const char *>(data.data()), data.size());
+      return s;
+    }
+    return std::string();
+  }
+
   std::string GetString() {
     if (dtype.id == VALUE_TYPE_STRING) {
       std::string s(reinterpret_cast<const char *>(data.data()), data.size());
@@ -254,6 +328,7 @@ class Value {
   }
 
   const std::vector<uint8_t> &GetData() const {
+    // TODO(syoyo): Report error for Dictionary type. 
     return data;
   }
 
@@ -265,11 +340,29 @@ class Value {
     return dtype.id;
   }
 
+  bool IsDictionary() const {
+    return dtype.id == VALUE_TYPE_DICTIONARY;
+  }
+
+  void SetDictionary(const Dictionary &d) {
+    // Dictonary has separated storage
+    dict = d;
+  }
+
+  const Dictionary &GetDictionary() const {
+    return dict;
+  }
+    
+
  private:
   ValueType dtype;
   std::string string_value;
   std::vector<uint8_t> data; // value as opaque binary data.
   int64_t array_length{-1};
+
+  // Dictonary has separated storage
+  Dictionary dict;
+  
 
 };
 
