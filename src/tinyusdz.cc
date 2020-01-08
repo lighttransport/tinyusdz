@@ -3,6 +3,7 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <tuple>
 #include <vector>
 
 #include "integerCoding.h"
@@ -23,14 +24,17 @@ const ValueType &GetValueType(int32_t type_id) {
   std::cout << "type_id = " << type_id << "\n";
   if (table.size() == 0) {
     // Register data types
-    // NOTE(syoyo): We can use C++11 template to create compile-time table for data types, but
-    // this way(use std::map) is easier to read and maintain, I think.
+    // NOTE(syoyo): We can use C++11 template to create compile-time table for
+    // data types, but this way(use std::map) is easier to read and maintain, I
+    // think.
 
     // reference: crateDataTypes.h
 
-#define ADD_VALUE_TYPE(NAME_STR, TYPE_ID, SUPPORTS_ARRAY) \
-  { assert(table.count(TYPE_ID) == 0); \
-     table[TYPE_ID] = ValueType(NAME_STR, TYPE_ID, SUPPORTS_ARRAY); }
+#define ADD_VALUE_TYPE(NAME_STR, TYPE_ID, SUPPORTS_ARRAY)          \
+  {                                                                \
+    assert(table.count(TYPE_ID) == 0);                             \
+    table[TYPE_ID] = ValueType(NAME_STR, TYPE_ID, SUPPORTS_ARRAY); \
+  }
 
     ADD_VALUE_TYPE("InvaldOrUnsupported", 0, false);
 
@@ -75,7 +79,8 @@ const ValueType &GetValueType(int32_t type_id) {
     ADD_VALUE_TYPE("Matrix4d", VALUE_TYPE_MATRIX4D, true);
 
     // Non-array types.
-    ADD_VALUE_TYPE("Dictionary", VALUE_TYPE_DICTIONARY, false); // std::map<std::string, Value>
+    ADD_VALUE_TYPE("Dictionary", VALUE_TYPE_DICTIONARY,
+                   false);  // std::map<std::string, Value>
 
     ADD_VALUE_TYPE("TokenListOp", VALUE_TYPE_TOKEN_LIST_OP, false);
     ADD_VALUE_TYPE("StringListOp", VALUE_TYPE_STRING_LIST_OP, false);
@@ -93,17 +98,19 @@ const ValueType &GetValueType(int32_t type_id) {
     ADD_VALUE_TYPE("Permission", VALUE_TYPE_PERMISSION, false);
     ADD_VALUE_TYPE("Variability", VALUE_TYPE_VARIABILITY, false);
 
-    ADD_VALUE_TYPE("VariantSelectionMap", VALUE_TYPE_VARIANT_SELECTION_MAP, false);
-    ADD_VALUE_TYPE("TimeSamples",         VALUE_TYPE_TIME_SAMPLES, false);
-    ADD_VALUE_TYPE("Payload",             VALUE_TYPE_PAYLOAD, false);
-    ADD_VALUE_TYPE("DoubleVector",        VALUE_TYPE_DOUBLE_VECTOR, false);
-    ADD_VALUE_TYPE("LayerOffsetVector",   VALUE_TYPE_LAYER_OFFSET_VECTOR, false);
-    ADD_VALUE_TYPE("StringVector",        VALUE_TYPE_STRING_VECTOR, false);
-    ADD_VALUE_TYPE("ValueBlock",          VALUE_TYPE_VALUE_BLOCK, false);
-    ADD_VALUE_TYPE("Value",               VALUE_TYPE_VALUE, false);
-    ADD_VALUE_TYPE("UnregisteredValue",   VALUE_TYPE_UNREGISTERED_VALUE, false);
-    ADD_VALUE_TYPE("UnregisteredValueListOp", VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP, false);
-    ADD_VALUE_TYPE("PayloadListOp",       VALUE_TYPE_PAYLOAD_LIST_OP, false);
+    ADD_VALUE_TYPE("VariantSelectionMap", VALUE_TYPE_VARIANT_SELECTION_MAP,
+                   false);
+    ADD_VALUE_TYPE("TimeSamples", VALUE_TYPE_TIME_SAMPLES, false);
+    ADD_VALUE_TYPE("Payload", VALUE_TYPE_PAYLOAD, false);
+    ADD_VALUE_TYPE("DoubleVector", VALUE_TYPE_DOUBLE_VECTOR, false);
+    ADD_VALUE_TYPE("LayerOffsetVector", VALUE_TYPE_LAYER_OFFSET_VECTOR, false);
+    ADD_VALUE_TYPE("StringVector", VALUE_TYPE_STRING_VECTOR, false);
+    ADD_VALUE_TYPE("ValueBlock", VALUE_TYPE_VALUE_BLOCK, false);
+    ADD_VALUE_TYPE("Value", VALUE_TYPE_VALUE, false);
+    ADD_VALUE_TYPE("UnregisteredValue", VALUE_TYPE_UNREGISTERED_VALUE, false);
+    ADD_VALUE_TYPE("UnregisteredValueListOp",
+                   VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP, false);
+    ADD_VALUE_TYPE("PayloadListOp", VALUE_TYPE_PAYLOAD_LIST_OP, false);
     ADD_VALUE_TYPE("TimeCode", VALUE_TYPE_TIME_CODE, true);
   }
 #undef ADD_VALUE_TYPE
@@ -121,7 +128,8 @@ std::string GetValueTypeRepr(int32_t type_id) {
   ValueType dty = GetValueType(type_id);
 
   std::stringstream ss;
-  ss << "ValueType: " << dty.name << "(" << dty.id << "}, supports_array = " << dty.supports_array;
+  ss << "ValueType: " << dty.name << "(" << dty.id
+     << "}, supports_array = " << dty.supports_array;
   return ss.str();
 }
 
@@ -288,37 +296,29 @@ class Path {
 ///
 /// Node represents scene graph node.
 ///
-class Node
-{
+class Node {
  public:
   Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
 
-  const int64_t GetParent() const {
-    return _parent;
-  }
+  const int64_t GetParent() const { return _parent; }
 
-  const std::vector<int64_t> &GetChildren() const {
-    return _children;
-  }
+  const std::vector<int64_t> &GetChildren() const { return _children; }
 
   ///
-  /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and this node is `bora`)
+  /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
+  /// this node is `bora`)
   ///
   std::string GetFullPath() const;
-  
 
  private:
-  int64_t _parent;  // -1 = this node is the root node.
-  std::vector<int64_t> _children; // index to child nodes.
+  int64_t _parent;                 // -1 = this node is the root node.
+  std::vector<int64_t> _children;  // index to child nodes.
 
-  Path _path; // local path
-
+  Path _path;  // local path
 };
 
-class Scene
-{
+class Scene {
  public:
-
   std::vector<Node> _nodes;
 };
 
@@ -526,18 +526,22 @@ class Parser {
     if ((token_index.value >= 0) || (token_index.value <= _tokens.size())) {
       return _tokens[token_index.value];
     } else {
-      _err += "Token index out of range: " + std::to_string(token_index.value) + "\n";
+      _err += "Token index out of range: " + std::to_string(token_index.value) +
+              "\n";
       return std::string();
     }
   }
 
   // Get string from string index.
   std::string GetString(Index string_index) {
-    if ((string_index.value >= 0) || (string_index.value <= _string_indices.size())) {
+    if ((string_index.value >= 0) ||
+        (string_index.value <= _string_indices.size())) {
       Index s_idx = _string_indices[string_index.value];
       return GetToken(s_idx);
     } else {
-      _err += "String index out of range: " + std::to_string(string_index.value) + "\n";
+      _err +=
+          "String index out of range: " + std::to_string(string_index.value) +
+          "\n";
       return std::string();
     }
   }
@@ -667,7 +671,6 @@ class Parser {
 
   // Dictionary
   bool _ReadDictionary(Value::Dictionary *d);
-
 };
 
 bool Parser::_ReadIndex(Index *i) {
@@ -695,7 +698,6 @@ bool Parser::_ReadString(std::string *s) {
 }
 
 bool Parser::_ReadValueRep(ValueRep *rep) {
-  
   if (!_sr->read8(reinterpret_cast<uint64_t *>(rep))) {
     _err += "Failed to read ValueRep.\n";
     return false;
@@ -706,7 +708,6 @@ bool Parser::_ReadValueRep(ValueRep *rep) {
   return true;
 }
 
-
 bool Parser::_ReadDictionary(Value::Dictionary *d) {
   Value::Dictionary dict;
   uint64_t sz;
@@ -716,55 +717,58 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
   }
 
   std::cout << "# of elements in dict " << sz << "\n";
-  
+
   while (sz--) {
-      // key(StringIndex)
-      std::string key;
-      std::cout << "key before tell = " << _sr->tell() << "\n";
-      if (!_ReadString(&key)) {
-        _err += "Failed to read key string for Dictionary element.\n";
-        return false;
-      }
+    // key(StringIndex)
+    std::string key;
+    std::cout << "key before tell = " << _sr->tell() << "\n";
+    if (!_ReadString(&key)) {
+      _err += "Failed to read key string for Dictionary element.\n";
+      return false;
+    }
 
-      std::cout << "offt before tell = " << _sr->tell() << "\n";
+    std::cout << "offt before tell = " << _sr->tell() << "\n";
 
-      // 8byte for the offset for recursive value. See _RecursiveRead() in crateFile.cpp for details.
-      int64_t offset{0};
-      if (!_sr->read8(&offset)) {
-        _err += "Failed to read the offset for value in Dictionary.\n";
-        return false;
-      }
+    // 8byte for the offset for recursive value. See _RecursiveRead() in
+    // crateFile.cpp for details.
+    int64_t offset{0};
+    if (!_sr->read8(&offset)) {
+      _err += "Failed to read the offset for value in Dictionary.\n";
+      return false;
+    }
 
-      std::cout << "value offset = " << offset << "\n";
+    std::cout << "value offset = " << offset << "\n";
 
-      std::cout << "tell = " << _sr->tell() << "\n";
+    std::cout << "tell = " << _sr->tell() << "\n";
 
-      // -8 to compensate sizeof(offset)
-      if (!_sr->seek_from_currect(offset - 8)) {
-        _err += "Failed to seek. Invalid offset value: " + std::to_string(offset) + "\n";
-        return false;
-      }
+    // -8 to compensate sizeof(offset)
+    if (!_sr->seek_from_currect(offset - 8)) {
+      _err +=
+          "Failed to seek. Invalid offset value: " + std::to_string(offset) +
+          "\n";
+      return false;
+    }
 
-      std::cout << "+offset tell = " << _sr->tell() << "\n";
+    std::cout << "+offset tell = " << _sr->tell() << "\n";
 
-      std::cout << "key = " << key << "\n";
+    std::cout << "key = " << key << "\n";
 
-      ValueRep rep{0};
-      if (!_ReadValueRep(&rep)) {
-        _err += "Failed to read value for Dictionary element.\n";
-        return false;
-      }
+    ValueRep rep{0};
+    if (!_ReadValueRep(&rep)) {
+      _err += "Failed to read value for Dictionary element.\n";
+      return false;
+    }
 
-      std::cout << "vrep.ty = " << rep.GetType() << "\n";
-      std::cout << "vrep = " << GetValueTypeRepr(rep.GetType()) << "\n";
+    std::cout << "vrep.ty = " << rep.GetType() << "\n";
+    std::cout << "vrep = " << GetValueTypeRepr(rep.GetType()) << "\n";
 
-      Value value;
-      if (!_UnpackValueRep(rep, &value)) {
-        _err += "Failed to unpack value of Dictionary element.\n";
-        return false;
-      }
+    Value value;
+    if (!_UnpackValueRep(rep, &value)) {
+      _err += "Failed to unpack value of Dictionary element.\n";
+      return false;
+    }
 
-      dict[key] = value;
+    dict[key] = value;
   }
 
   (*d) = dict;
@@ -775,10 +779,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
   ValueType ty = GetValueType(rep.GetType());
   std::cout << GetValueTypeRepr(rep.GetType()) << "\n";
   if (rep.IsInlined()) {
-
-    uint32_t d = (rep.GetPayload() &
-                    ((1ull << (sizeof(uint32_t) * 8))-1));
-
+    uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
     std::cout << "ty.id = " << ty.id << "\n";
     if (ty.id == VALUE_TYPE_TOKEN) {
@@ -789,7 +790,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       value->SetToken(str);
 
       return true;
-       
+
     } else if (ty.id == VALUE_TYPE_STRING) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       std::string str = GetString(Index(d));
@@ -805,19 +806,19 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       float f;
       memcpy(&f, &d, sizeof(float));
       double v = double(f);
-      
+
       std::cout << "value.double = " << v << "\n";
 
       value->SetDouble(v);
 
       return true;
-    
-    
+
     } else {
       // TODO(syoyo)
-      std::cerr << "TODO: Inlined Value: " << GetValueTypeRepr(rep.GetType()) << "\n";
-        
-      return false; 
+      std::cerr << "TODO: Inlined Value: " << GetValueTypeRepr(rep.GetType())
+                << "\n";
+
+      return false;
     }
   } else {
     // payload is the offset to data.
@@ -830,69 +831,68 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     printf("rep = 0x%016lx\n", rep.GetData());
 
     if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
-        assert(!rep.IsCompressed()); 
-        // std::vector<Index>
-        size_t n;
-        if (!_sr->read8(&n)) {
-          std::cerr << "Failed to read TokenVector value\n";
-          return false;
-        }
-        std::cout << "n = " << n << "\n";
+      assert(!rep.IsCompressed());
+      // std::vector<Index>
+      size_t n;
+      if (!_sr->read8(&n)) {
+        std::cerr << "Failed to read TokenVector value\n";
+        return false;
+      }
+      std::cout << "n = " << n << "\n";
 
-        std::vector<Index> indices(n);
-        if (!_sr->read(n * sizeof(Index), n * sizeof(Index), reinterpret_cast<uint8_t *>(indices.data()))) {
-          std::cerr << "Failed to read TokenVector value\n";
-          return false;
-        }         
+      std::vector<Index> indices(n);
+      if (!_sr->read(n * sizeof(Index), n * sizeof(Index),
+                     reinterpret_cast<uint8_t *>(indices.data()))) {
+        std::cerr << "Failed to read TokenVector value\n";
+        return false;
+      }
 
-        for (size_t i = 0; i < indices.size(); i++) {
-          std::cout << "tokenIndex[" << i << "] = " << int(indices[i].value) << "\n";
-        }
+      for (size_t i = 0; i < indices.size(); i++) {
+        std::cout << "tokenIndex[" << i << "] = " << int(indices[i].value)
+                  << "\n";
+      }
 
-        // TODO(syoyo): Fill value
+      // TODO(syoyo): Fill value
 
-        return true;
-        
+      return true;
+
     } else if (ty.id == VALUE_TYPE_DOUBLE) {
-        assert(!rep.IsCompressed()); 
-        assert(!rep.IsArray()); 
+      assert(!rep.IsCompressed());
+      assert(!rep.IsArray());
 
-        double v;
-        if (!_sr->read_double(&v)) {
-          _err += "Failed to read Double value\n";
-          return false;
-        }         
+      double v;
+      if (!_sr->read_double(&v)) {
+        _err += "Failed to read Double value\n";
+        return false;
+      }
 
-        std::cout << "Double " << v << "\n";
+      std::cout << "Double " << v << "\n";
 
-        value->SetDouble(v);
+      value->SetDouble(v);
 
-        return true;
+      return true;
     } else if (ty.id == VALUE_TYPE_DICTIONARY) {
-        assert(!rep.IsCompressed()); 
-        assert(!rep.IsArray()); 
+      assert(!rep.IsCompressed());
+      assert(!rep.IsArray());
 
-        Value::Dictionary dict;
+      Value::Dictionary dict;
 
-        if (!_ReadDictionary(&dict)) {
-          _err += "Failed to read Dictionary value\n";
-          return false;
-        }         
+      if (!_ReadDictionary(&dict)) {
+        _err += "Failed to read Dictionary value\n";
+        return false;
+      }
 
-        std::cout << "Dict. nelems = " << dict.size() << "\n";
+      std::cout << "Dict. nelems = " << dict.size() << "\n";
 
-        value->SetDictionary(dict);
+      value->SetDictionary(dict);
 
-        return true;
-        
+      return true;
+
     } else {
       // TODO(syoyo)
       std::cerr << "TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
       return false;
     }
-    
-
-
   }
 
   (void)value;
@@ -916,7 +916,7 @@ bool Parser::_BuildDecompressedPathsImpl(
       tokenIndex = std::abs(tokenIndex);
 
       std::cout << "tokenIndex = " << tokenIndex << "\n";
-      if (tokenIndex >= _tokens.size()) {
+      if (tokenIndex >= int32_t(_tokens.size())) {
         _err += "Invalid tokenIndex in _BuildDecompressedPathsImpl.\n";
         return false;
       }
@@ -1422,10 +1422,10 @@ bool Parser::BuildLiveFieldSets() {
       pairs[i].first = GetToken(field.token_index);
       // TODO(syoyo) Unpack
       if (!_UnpackValueRep(field.value_rep, &pairs[i].second)) {
-        std::cerr << "Failed to unpack ValueRep : " << field.value_rep.GetStringRepr() << "\n";
+        std::cerr << "Failed to unpack ValueRep : "
+                  << field.value_rep.GetStringRepr() << "\n";
         return false;
       }
-      
     }
   }
 
@@ -1911,6 +1911,120 @@ float16 float_to_half_full(float _f) {
 
   o.s.Sign = f.s.Sign;
   return o;
+}
+
+bool LoadUSDZFromFile(const std::string &filename, std::string *err,
+                      const USDZLoadOptions &options) {
+  // <filename, byte_begin, byte_end>
+  std::vector<std::tuple<std::string, size_t, size_t>> assets;
+
+  std::vector<uint8_t> data;
+  {
+    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
+    if (!ifs) {
+      if (err) {
+        (*err) = "File not found or cannot open file : " + filename;
+      }
+      return false;
+    }
+
+    // TODO(syoyo): Use mmap
+    ifs.seekg(0, ifs.end);
+    size_t sz = static_cast<size_t>(ifs.tellg());
+    if (int64_t(sz) < 0) {
+      // Looks reading directory, not a file.
+      if (err) {
+        (*err) += "Looks like filename is a directory : \"" + filename + "\"\n";
+      }
+      return false;
+    }
+
+    if (sz < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
+      // ???
+      if (err) {
+        (*err) +=
+            "File size too short. Looks like this file is not a USDZ : \"" +
+            filename + "\"\n";
+      }
+      return false;
+    }
+
+    data.resize(sz);
+
+    ifs.seekg(0, ifs.beg);
+    ifs.read(reinterpret_cast<char *>(&data.at(0)),
+             static_cast<std::streamsize>(sz));
+  }
+
+  size_t offset = 0;
+  while ((offset + 30) < data.size()) {
+    //
+    // PK zip format:
+    // https://users.cs.jmu.edu/buchhofp/forensics/formats/pkzip.html
+    //
+    std::vector<char> local_header(30);
+    memcpy(local_header.data(), data.data() + offset, 30);
+
+    // if we've reached the global header, stop reading
+    if (local_header[2] != 0x03 || local_header[3] != 0x04) break;
+
+    offset += 30;
+
+    // read in the variable name
+    uint16_t name_len = *(uint16_t *)&local_header[26];
+    if ((offset + name_len) > data.size()) {
+      if (err) {
+        (*err) += "Invalid ZIP data\n";
+      }
+      return false;
+    }
+
+    std::string varname(name_len, ' ');
+    memcpy(&varname[0], data.data() + offset, name_len);
+
+    offset += name_len;
+
+    std::cout << "varname = " << varname << "\n";
+
+    // read in the extra field
+    uint16_t extra_field_len = *(uint16_t *)&local_header[28];
+    if (extra_field_len > 0) {
+      if (offset + extra_field_len > data.size()) {
+        if (err) {
+          (*err) += "Invalid extra field length in ZIP data\n";
+        }
+        return false;
+      }
+    }
+
+    offset += extra_field_len;
+
+    uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
+    // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
+    uint32_t uncompr_bytes =
+        *reinterpret_cast<uint32_t *>(&local_header[0] + 22);
+
+    // USDZ only supports uncompressed ZIP
+    if (compr_method != 0) {
+      if (err) {
+        (*err) += "Compressed ZIP is not supported for USDZ\n";
+      }
+      return false;
+    }
+
+    // [offset, uncompr_bytes]
+    assets.push_back({varname, offset, offset + uncompr_bytes});
+
+    offset += uncompr_bytes;
+  }
+
+  for (size_t i = 0; i < assets.size(); i++) {
+    std::cout << "[" << i << "] " << std::get<0>(assets[i]) << " : byte range ("
+              << std::get<1>(assets[i]) << ", " << std::get<2>(assets[i])
+              << ")\n";
+  }
+
+  return true;
 }
 
 static_assert(sizeof(Field) == 16, "");

@@ -8,7 +8,7 @@ tinyusdz is dependency-free(depends only on STL. Yes, you don't need USD library
 
 ## USDZ file format
 
-USDZ is a zip file.
+USDZ is a uncompressed zip file.
 USDZ contains usdc(binary) and resources(e.g. image file)
 
 ## Build
@@ -28,6 +28,7 @@ $ ninja
 ## TODO
 
 * [ ] USDZ saver
+* [ ] Support compressed USDZ?
 
 ## License
 
@@ -38,3 +39,4 @@ MIT license
 * miniz : public domain.
 * USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
 * lz4 : BSD-2 license. http://www.lz4.org
+* cnpy(uncompressed ZIP decode/encode) : MIT license https://github.com/rogersce/cnpy

@@ -367,7 +367,7 @@ class Value {
 };
 
 ///
-/// Load USDZ file from a file.
+/// Load USDZ(zip) from a file.
 ///
 /// @param[in] filename USDZ filename
 /// @param[out] err Error message(filled when the function returns false)
@@ -378,7 +378,7 @@ class Value {
 bool LoadUSDZFromFile(const std::string &filename, std::string *err, const USDZLoadOptions &options = USDZLoadOptions());
 
 ///
-/// Load USDC(binary) file from a file.
+/// Load USDC(binary) from a file.
 ///
 /// @param[in] filename USDC filename
 /// @param[out] err Error message(filled when the function returns false)
@@ -387,6 +387,18 @@ bool LoadUSDZFromFile(const std::string &filename, std::string *err, const USDZL
 /// @return true upon success
 ///
 bool LoadUSDCFromFile(const std::string &filename, std::string *err, const USDCLoadOptions &options = USDCLoadOptions());
+
+///
+/// Load USDC(binary) from a memory.
+///
+/// @param[in] addr Memory address of USDC data
+/// @param[in] length Byte length of USDC data
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *err, const USDCLoadOptions &options = USDCLoadOptions());
 
 ///
 /// Write scene as USDC to a file.
