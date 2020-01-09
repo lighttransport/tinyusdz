@@ -15,9 +15,80 @@
 
 namespace tinyusdz {
 
+float half_to_float(float16 h) {
+  static const FP32 magic = {113 << 23};
+  static const unsigned int shifted_exp = 0x7c00
+                                          << 13;  // exponent mask after shift
+  FP32 o;
+
+  o.u = (h.u & 0x7fffU) << 13U;           // exponent/mantissa bits
+  unsigned int exp_ = shifted_exp & o.u;  // just the exponent
+  o.u += (127 - 15) << 23;                // exponent adjust
+
+  // handle exponent special cases
+  if (exp_ == shifted_exp)    // Inf/NaN?
+    o.u += (128 - 16) << 23;  // extra exp adjust
+  else if (exp_ == 0)         // Zero/Denormal?
+  {
+    o.u += 1 << 23;  // extra exp adjust
+    o.f -= magic.f;  // renormalize
+  }
+
+  o.u |= (h.u & 0x8000U) << 16U;  // sign bit
+  return o.f;
+}
+
+float16 float_to_half_full(float _f) {
+  FP32 f;
+  f.f = _f;
+  float16 o = {0};
+
+  // Based on ISPC reference code (with minor modifications)
+  if (f.s.Exponent == 0)  // Signed zero/denormal (which will underflow)
+    o.s.Exponent = 0;
+  else if (f.s.Exponent == 255)  // Inf or NaN (all exponent bits set)
+  {
+    o.s.Exponent = 31;
+    o.s.Mantissa = f.s.Mantissa ? 0x200 : 0;  // NaN->qNaN and Inf->Inf
+  } else                                      // Normalized number
+  {
+    // Exponent unbias the single, then bias the halfp
+    int newexp = f.s.Exponent - 127 + 15;
+    if (newexp >= 31)  // Overflow, return signed infinity
+      o.s.Exponent = 31;
+    else if (newexp <= 0)  // Underflow
+    {
+      if ((14 - newexp) <= 24)  // Mantissa might be non-zero
+      {
+        unsigned int mant = f.s.Mantissa | 0x800000;  // Hidden 1 bit
+        o.s.Mantissa = mant >> (14 - newexp);
+        if ((mant >> (13 - newexp)) & 1)  // Check for rounding
+          o.u++;  // Round, might overflow into exp bit, but this is OK
+      }
+    } else {
+      o.s.Exponent = static_cast<unsigned int>(newexp);
+      o.s.Mantissa = f.s.Mantissa >> 13;
+      if (f.s.Mantissa & 0x1000)  // Check for rounding
+        o.u++;                    // Round, might overflow to inf, this is OK
+    }
+  }
+
+  o.s.Sign = f.s.Sign;
+  return o;
+}
+
+
+
 namespace {
 
+constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
+
+float to_float(uint16_t h) {
+  float16 f;
+  f.u = h;
+  return half_to_float(f);
+}
 
 const ValueType &GetValueType(int32_t type_id) {
   static std::map<uint32_t, ValueType> table;
@@ -149,6 +220,27 @@ enum SpecType {
   NumSpecTypes
 };
 
+// For PrimSpec
+enum Specifier {
+  SpecifierDef, // 0 
+  SpecifierOver, 
+  SpecifierClass, 
+  NumSpecifiers
+};
+
+enum Permission {
+  PermissionPublic,  // 0
+  PermissionPrivate,
+  NumPermissions
+};
+
+enum Variability {
+  VariabilityVarying, // 0
+  VariabilityUniform,
+  VariabilityConfig,
+  NumVariabilities 
+};
+
 std::string GetSpecTypeString(SpecType ty) {
   if (SpecTypeUnknown == ty) {
     return "SpecTypeUnknown";
@@ -177,6 +269,38 @@ std::string GetSpecTypeString(SpecType ty) {
   }
   return "??? SpecType " + std::to_string(ty);
 }
+
+std::string GetSpecifierString(Specifier ty) {
+  if (SpecifierDef == ty) {
+    return "SpecifierDef";
+  } else if (SpecifierOver == ty) {
+    return "SpecifierOver";
+  } else if (SpecifierClass == ty) {
+    return "SpecifierClass";
+  }
+  return "??? Specifier " + std::to_string(ty);
+}
+
+std::string GetPermissionString(Permission ty) {
+  if (PermissionPublic == ty) {
+    return "PermissionPublic";
+  } else if (PermissionPrivate == ty) {
+    return "PermissionPrivate";
+  }
+  return "??? Permission " + std::to_string(ty);
+}
+
+std::string GetVariabilityString(Variability ty) {
+  if (VariabilityVarying == ty) {
+    return "VariabilityVarying";
+  } else if (VariabilityUniform == ty) {
+    return "VariabilityUniform";
+  } else if (VariabilityConfig == ty) {
+    return "VariabilityConfig";
+  }
+  return "??? Variability " + std::to_string(ty);
+}
+
 
 ///
 /// We don't need performance and for USDZ, so use naiive implementation
@@ -467,7 +591,7 @@ struct TableOfContents {
 };
 
 template <class Int>
-static inline void _ReadCompressedInts(const StreamReader *sr, Int *out,
+static inline bool _ReadCompressedInts(const StreamReader *sr, Int *out,
                                        size_t size) {
   // TODO(syoyo): Error check
   using Compressor =
@@ -475,10 +599,18 @@ static inline void _ReadCompressedInts(const StreamReader *sr, Int *out,
                                 Usd_IntegerCompression64>::type;
   std::vector<char> compBuffer(Compressor::GetCompressedBufferSize(size));
   uint64_t compSize;
-  sr->read8(&compSize);
+  if (!sr->read8(&compSize)) {
+    return false;
+  }
 
-  sr->read(compSize, compSize, reinterpret_cast<uint8_t *>(compBuffer.data()));
-  Compressor::DecompressFromBuffer(compBuffer.data(), compSize, out, size);
+  if (!sr->read(compSize, compSize, reinterpret_cast<uint8_t *>(compBuffer.data()))) {
+    return false;
+  }
+  std::string err;
+  bool ret = Compressor::DecompressFromBuffer(compBuffer.data(), compSize, out, size, &err);
+  (void)err;
+
+  return ret;
 }
 
 static inline bool ReadIndices(const StreamReader *sr,
@@ -671,6 +803,12 @@ class Parser {
 
   // Dictionary
   bool _ReadDictionary(Value::Dictionary *d);
+
+  // int array
+  template<typename T>
+  bool _ReadIntArray(bool is_compressed, std::vector<T> *d);
+
+
 };
 
 bool Parser::_ReadIndex(Index *i) {
@@ -707,6 +845,51 @@ bool Parser::_ReadValueRep(ValueRep *rep) {
 
   return true;
 }
+
+template<typename T>
+bool Parser::_ReadIntArray(bool is_compressed, std::vector<T> *d) {
+  if (!is_compressed) {
+    // TODO read uncompressed array
+    return false;
+  } 
+
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if ((_version[0] == 0) && ((_version[1] < 7))) {
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+
+    length = size_t(n);
+  }
+
+  std::cout << "array.len = " << length << "\n";
+
+  d->resize(length);
+
+  if (length < kMinCompressedArraySize) {
+    size_t sz = sizeof(T) * length;
+      // Not stored in compressed.
+      //reader.ReadContiguous(odata, osize);
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+    return true;
+  }
+
+  return _ReadCompressedInts(_sr, d->data(), d->size());
+}
+
 
 bool Parser::_ReadDictionary(Value::Dictionary *d) {
   Value::Dictionary dict;
@@ -781,8 +964,57 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
   if (rep.IsInlined()) {
     uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
+    std::cout << "d = " << d << "\n";
     std::cout << "ty.id = " << ty.id << "\n";
-    if (ty.id == VALUE_TYPE_TOKEN) {
+    if (ty.id == VALUE_TYPE_BOOL) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      std::cout << "Bool: " << d << "\n";
+
+      value->SetBool(d ? true : false);
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_SPECIFIER) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      std::cout << "Specifier: " << GetSpecifierString(static_cast<Specifier>(d)) << "\n";
+        
+      if (d >= NumSpecifiers) {
+        _err += "Invalid value for Specifier\n";
+        return false;
+      }
+
+      value->SetSpecifier(d);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_PERMISSION) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      std::cout << "Permission: " << GetPermissionString(static_cast<Permission>(d)) << "\n";
+        
+      if (d >= NumPermissions) {
+        _err += "Invalid value for Permission\n";
+        return false;
+      }
+
+      value->SetPermission(d);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_VARIABILITY) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      std::cout << "Variability: " << GetVariabilityString(static_cast<Variability>(d)) << "\n";
+        
+        
+      if (d >= NumVariabilities) {
+        _err += "Invalid value for Variability\n";
+        return false;
+      }
+
+      value->SetVariability(d);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_TOKEN) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       std::string str = GetToken(Index(d));
       std::cout << "value.token = " << str << "\n";
@@ -813,6 +1045,42 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
 
+    } else if (ty.id == VALUE_TYPE_VEC3I) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      Vec3i v;
+      v[0] = static_cast<int32_t>(data[0]);
+      v[1] = static_cast<int32_t>(data[1]);
+      v[2] = static_cast<int32_t>(data[2]);
+
+      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+
+      value->SetVec3i(v);
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_VEC3F) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      Vec3f v;
+      v[0] = static_cast<float>(data[0]);
+      v[1] = static_cast<float>(data[1]);
+      v[2] = static_cast<float>(data[2]);
+
+      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+
+      value->SetVec3f(v);
+
+      return true;
+
     } else {
       // TODO(syoyo)
       std::cerr << "TODO: Inlined Value: " << GetValueTypeRepr(rep.GetType())
@@ -830,7 +1098,18 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
     printf("rep = 0x%016lx\n", rep.GetData());
 
-    if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
+    if (ty.id == VALUE_TYPE_INT) {
+      std::vector<int32_t> v;
+      if (!_ReadIntArray(rep.IsCompressed(), &v)) {
+        std::cerr << "Failed to read Int array\n";
+        return false;
+      }
+
+      for (size_t i = 0; i < v.size(); i++) {
+        std::cout << "Int[" << i << "] = " << v[i] << "\n";
+      }
+
+    } else if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
       assert(!rep.IsCompressed());
       // std::vector<Index>
       size_t n;
@@ -869,6 +1148,62 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       std::cout << "Double " << v << "\n";
 
       value->SetDouble(v);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_VEC3I) {
+      assert(!rep.IsCompressed());
+      assert(rep.IsArray());
+
+      Vec3i v;
+      if (!_sr->read(sizeof(Vec3i), sizeof(Vec3i), reinterpret_cast<uint8_t *>(&v))) {
+        _err += "Failed to read Vec3i value\n";
+        return false;
+      }
+
+      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      value->SetVec3i(v);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_VEC3F) {
+      assert(!rep.IsCompressed());
+      assert(rep.IsArray());
+
+      Vec3f v;
+      if (!_sr->read(sizeof(Vec3f), sizeof(Vec3f), reinterpret_cast<uint8_t *>(&v))) {
+        _err += "Failed to read Vec3f value\n";
+        return false;
+      }
+
+      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      value->SetVec3f(v);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_VEC3D) {
+      assert(!rep.IsCompressed());
+      assert(rep.IsArray());
+
+      Vec3d v;
+      if (!_sr->read(sizeof(Vec3d), sizeof(Vec3d), reinterpret_cast<uint8_t *>(&v))) {
+        _err += "Failed to read Vec3d value\n";
+        return false;
+      }
+
+      std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      value->SetVec3d(v);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_VEC3H) {
+      assert(!rep.IsCompressed());
+      assert(rep.IsArray());
+
+      Vec3h v;
+      if (!_sr->read(sizeof(Vec3h), sizeof(Vec3h), reinterpret_cast<uint8_t *>(&v))) {
+        _err += "Failed to read Vec3h value\n";
+        return false;
+      }
+
+      std::cout << "value.vec3d = " << to_float(v[0]) << ", " << to_float(v[1]) << ", " << to_float(v[2]) << "\n";
+      value->SetVec3h(v);
 
       return true;
     } else if (ty.id == VALUE_TYPE_DICTIONARY) {
@@ -1734,49 +2069,12 @@ bool Parser::ReadTOC() {
 
 }  // namespace
 
-bool LoadUSDCFromFile(const std::string &filename, std::string *err,
-                      const USDCLoadOptions &options) {
-  std::vector<uint8_t> data;
-  {
-    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
-    if (!ifs) {
-      if (err) {
-        (*err) = "File not found or cannot open file : " + filename;
-      }
-      return false;
-    }
-
-    // TODO(syoyo): Use mmap
-    ifs.seekg(0, ifs.end);
-    size_t sz = static_cast<size_t>(ifs.tellg());
-    if (int64_t(sz) < 0) {
-      // Looks reading directory, not a file.
-      if (err) {
-        (*err) += "Looks like filename is a directory : \"" + filename + "\"\n";
-      }
-      return false;
-    }
-
-    if (sz < (11 * 8)) {
-      // ???
-      if (err) {
-        (*err) +=
-            "File size too short. Looks like this file is not a USDC : \"" +
-            filename + "\"\n";
-      }
-      return false;
-    }
-
-    data.resize(sz);
-
-    ifs.seekg(0, ifs.beg);
-    ifs.read(reinterpret_cast<char *>(&data.at(0)),
-             static_cast<std::streamsize>(sz));
-  }
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *warn, std::string *err,
+                      const USDLoadOptions &options) {
 
   bool swap_endian = false;  // @FIXME
 
-  StreamReader sr(data.data(), data.size(), swap_endian);
+  StreamReader sr(addr, length, swap_endian);
 
   Parser parser(&sr);
 
@@ -1838,6 +2136,8 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *err,
     return false;
   }
 
+  // TODO(syoyo): Read unknown sections
+
   ///
   /// Reconstruct C++ representation of USD scene graph.
   ///
@@ -1847,74 +2147,77 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *err,
     }
   }
 
-  // TODO(syoyo): Read unknown sections
   return true;
 }
 
-float half_to_float(float16 h) {
-  static const FP32 magic = {113 << 23};
-  static const unsigned int shifted_exp = 0x7c00
-                                          << 13;  // exponent mask after shift
-  FP32 o;
-
-  o.u = (h.u & 0x7fffU) << 13U;           // exponent/mantissa bits
-  unsigned int exp_ = shifted_exp & o.u;  // just the exponent
-  o.u += (127 - 15) << 23;                // exponent adjust
-
-  // handle exponent special cases
-  if (exp_ == shifted_exp)    // Inf/NaN?
-    o.u += (128 - 16) << 23;  // extra exp adjust
-  else if (exp_ == 0)         // Zero/Denormal?
+bool LoadUSDCFromFile(const std::string &filename, std::string *warn, std::string *err,
+                      const USDLoadOptions &options) {
+  std::vector<uint8_t> data;
   {
-    o.u += 1 << 23;  // extra exp adjust
-    o.f -= magic.f;  // renormalize
-  }
-
-  o.u |= (h.u & 0x8000U) << 16U;  // sign bit
-  return o.f;
-}
-
-float16 float_to_half_full(float _f) {
-  FP32 f;
-  f.f = _f;
-  float16 o = {0};
-
-  // Based on ISPC reference code (with minor modifications)
-  if (f.s.Exponent == 0)  // Signed zero/denormal (which will underflow)
-    o.s.Exponent = 0;
-  else if (f.s.Exponent == 255)  // Inf or NaN (all exponent bits set)
-  {
-    o.s.Exponent = 31;
-    o.s.Mantissa = f.s.Mantissa ? 0x200 : 0;  // NaN->qNaN and Inf->Inf
-  } else                                      // Normalized number
-  {
-    // Exponent unbias the single, then bias the halfp
-    int newexp = f.s.Exponent - 127 + 15;
-    if (newexp >= 31)  // Overflow, return signed infinity
-      o.s.Exponent = 31;
-    else if (newexp <= 0)  // Underflow
-    {
-      if ((14 - newexp) <= 24)  // Mantissa might be non-zero
-      {
-        unsigned int mant = f.s.Mantissa | 0x800000;  // Hidden 1 bit
-        o.s.Mantissa = mant >> (14 - newexp);
-        if ((mant >> (13 - newexp)) & 1)  // Check for rounding
-          o.u++;  // Round, might overflow into exp bit, but this is OK
+    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
+    if (!ifs) {
+      if (err) {
+        (*err) = "File not found or cannot open file : " + filename;
       }
-    } else {
-      o.s.Exponent = static_cast<unsigned int>(newexp);
-      o.s.Mantissa = f.s.Mantissa >> 13;
-      if (f.s.Mantissa & 0x1000)  // Check for rounding
-        o.u++;                    // Round, might overflow to inf, this is OK
+      return false;
     }
+
+    // TODO(syoyo): Use mmap
+    ifs.seekg(0, ifs.end);
+    size_t sz = static_cast<size_t>(ifs.tellg());
+    if (int64_t(sz) < 0) {
+      // Looks reading directory, not a file.
+      if (err) {
+        (*err) += "Looks like filename is a directory : \"" + filename + "\"\n";
+      }
+      return false;
+    }
+
+    if (sz < (11 * 8)) {
+      // ???
+      if (err) {
+        (*err) +=
+            "File size too short. Looks like this file is not a USDC : \"" +
+            filename + "\"\n";
+      }
+      return false;
+    }
+
+    data.resize(sz);
+
+    ifs.seekg(0, ifs.beg);
+    ifs.read(reinterpret_cast<char *>(&data.at(0)),
+             static_cast<std::streamsize>(sz));
   }
 
-  o.s.Sign = f.s.Sign;
-  return o;
+  return LoadUSDCFromMemory(data.data(), data.size(), warn, err, options);
+
 }
 
-bool LoadUSDZFromFile(const std::string &filename, std::string *err,
-                      const USDZLoadOptions &options) {
+namespace {
+
+static std::string GetFileExtension(const std::string &filename) {
+  if (filename.find_last_of(".") != std::string::npos)
+    return filename.substr(filename.find_last_of(".") + 1);
+  return "";
+}
+
+static std::string str_tolower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), 
+                // static_cast<int(*)(int)>(std::tolower)         // wrong
+                // [](int c){ return std::tolower(c); }           // wrong
+                // [](char c){ return std::tolower(c); }          // wrong
+                   [](unsigned char c){ return std::tolower(c); } // correct
+                  );
+    return s;
+}
+
+} // namespace
+
+bool LoadUSDZFromFile(const std::string &filename, std::string *warn, std::string *err,
+                      const USDLoadOptions &options) {
+
+
   // <filename, byte_begin, byte_end>
   std::vector<std::tuple<std::string, size_t, size_t>> assets;
 
@@ -2022,6 +2325,49 @@ bool LoadUSDZFromFile(const std::string &filename, std::string *err,
     std::cout << "[" << i << "] " << std::get<0>(assets[i]) << " : byte range ("
               << std::get<1>(assets[i]) << ", " << std::get<2>(assets[i])
               << ")\n";
+  }
+
+  int32_t usdc_index = -1;
+  {
+    bool warned = false; // to report single warning message.
+    for (size_t i = 0; i < assets.size(); i++) {
+      std::string ext = str_tolower(GetFileExtension(std::get<0>(assets[i])));
+      if (ext.compare("usdc") == 0) {
+        if ((usdc_index > -1) && (!warned)) {
+          if (warn) {
+            (*warn) += "Multiple USDC files were found in USDZ. Use the first found one: " + std::get<0>(assets[size_t(usdc_index)]) + "]\n";
+          }
+          warned = true;
+        }
+
+        if (usdc_index == -1) {
+          usdc_index = int32_t(i);
+        }
+      }
+    }
+  }
+
+  if (usdc_index == -1) {
+    if (err) {
+      (*err) += "USDC file not found in USDZ\n";
+    }
+    return false;
+  }
+
+  {
+    const size_t start_addr = std::get<1>(assets[usdc_index]);
+    const size_t end_addr = std::get<2>(assets[usdc_index]);
+    const size_t usdc_size = end_addr - start_addr;
+    const uint8_t *usdc_addr = &data[start_addr];
+    bool ret = LoadUSDCFromMemory(usdc_addr, usdc_size, warn, err, options);
+
+    if (!ret) {
+      if (err) {
+        (*err) += "Failed to load USDC.\n";
+      }
+
+      return false;
+    }
   }
 
   return true;

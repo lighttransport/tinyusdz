@@ -70,9 +70,11 @@ using Vec4i = std::array<int32_t, 4>;
 using Vec3i = std::array<int32_t, 3>;
 using Vec2i = std::array<int32_t, 2>;
 
-using Vec4h = std::array<float16, 4>;
-using Vec3h = std::array<float16, 3>;
-using Vec2h = std::array<float16, 2>;
+// Use uint16_t for storage class.
+// Need to decode/encode value through half converter functions
+using Vec4h = std::array<uint16_t, 4>;
+using Vec3h = std::array<uint16_t, 3>;
+using Vec2h = std::array<uint16_t, 2>;
 
 using Vec4f = std::array<float, 4>;
 using Vec3f = std::array<float, 3>;
@@ -119,19 +121,13 @@ using Quaternion = std::array<double, 4>; // Storage layout is same with Quadd, 
 
 */
 
-struct USDZLoadOptions
+struct USDLoadOptions
 {
 
 
 };
 
-struct USDCLoadOptions
-{
-
-
-};
-
-struct USDCWriteOptions
+struct USDWriteOptions
 {
 
 
@@ -236,7 +232,24 @@ class Value {
     dtype(_dtype), data(_data), array_length(int64_t(_array_length)) {}
   bool IsArray();
 
-  // Setter for frequently used types.
+  // Setter for primitive types.
+  void SetBool(const bool d) {
+    dtype.name = "Bool";   
+    dtype.id = VALUE_TYPE_BOOL;
+
+    uint8_t value = d ? 1 : 0;
+    data.resize(1);
+    data[0] = value;
+  }
+
+  void SetUChar(const unsigned char d) {
+    dtype.name = "UChar";   
+    dtype.id = VALUE_TYPE_UCHAR;
+
+    data.resize(1);
+    data[0] = d;
+  }
+
   void SetInt(const int32_t i) {
     static_assert(sizeof(int32_t) == 4, "");
     dtype.name = "Int";   
@@ -292,6 +305,102 @@ class Value {
     memcpy(data.data(), reinterpret_cast<const void *>(&d.u), sizeof(uint16_t));
   }
 
+  void SetVec2i(const Vec2i v) {
+    static_assert(sizeof(Vec2i) == 8, "");
+    dtype.name = "Vec2i";   
+    dtype.id = VALUE_TYPE_VEC2I;
+    data.resize(sizeof(Vec2i)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2i));
+  }
+
+  void SetVec2f(const Vec2f v) {
+    static_assert(sizeof(Vec2f) == 8, "");
+    dtype.name = "Vec2f";   
+    dtype.id = VALUE_TYPE_VEC2F;
+    data.resize(sizeof(Vec2f)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2f));
+  }
+
+  void SetVec2d(const Vec2d v) {
+    static_assert(sizeof(Vec2d) == 16, "");
+    dtype.name = "Vec2d";   
+    dtype.id = VALUE_TYPE_VEC2D;
+    data.resize(sizeof(Vec2d)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2d));
+  }
+
+  void SetVec2h(const Vec2h v) {
+    static_assert(sizeof(Vec2h) == 4, "");
+    dtype.name = "Vec2h";   
+    dtype.id = VALUE_TYPE_VEC2H;
+    data.resize(sizeof(Vec2h)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2h));
+  }
+
+  void SetVec3i(const Vec3i v) {
+    static_assert(sizeof(Vec3i) == 12, "");
+    dtype.name = "Vec3i";   
+    dtype.id = VALUE_TYPE_VEC3I;
+    data.resize(sizeof(Vec3i)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3i));
+  }
+
+  void SetVec3f(const Vec3f v) {
+    static_assert(sizeof(Vec3f) == 12, "");
+    dtype.name = "Vec3f";   
+    dtype.id = VALUE_TYPE_VEC3F;
+    data.resize(sizeof(Vec3f)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3f));
+  }
+
+  void SetVec3d(const Vec3d v) {
+    static_assert(sizeof(Vec3d) == 24, "");
+    dtype.name = "Vec3d";   
+    dtype.id = VALUE_TYPE_VEC3D;
+    data.resize(sizeof(Vec3d)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3d));
+  }
+
+  void SetVec3h(const Vec3h v) {
+    static_assert(sizeof(Vec3h) == 6, "");
+    dtype.name = "Vec3h";   
+    dtype.id = VALUE_TYPE_VEC3H;
+    data.resize(sizeof(Vec3h)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3h));
+  }
+
+  void SetVec4i(const Vec4i v) {
+    static_assert(sizeof(Vec4i) == 16, "");
+    dtype.name = "Vec4i";   
+    dtype.id = VALUE_TYPE_VEC4I;
+    data.resize(sizeof(Vec4i)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec4i));
+  }
+
+  void SetVec4f(const Vec4f v) {
+    static_assert(sizeof(Vec4f) == 16, "");
+    dtype.name = "Vec4f";   
+    dtype.id = VALUE_TYPE_VEC4F;
+    data.resize(sizeof(Vec4f)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec4f));
+  }
+
+  void SetVec4d(const Vec4d v) {
+    static_assert(sizeof(Vec4d) == 32, "");
+    dtype.name = "Vec4d";   
+    dtype.id = VALUE_TYPE_VEC4D;
+    data.resize(sizeof(Vec4d)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec4d));
+  }
+
+  void SetVec4h(const Vec4h v) {
+    static_assert(sizeof(Vec4h) == 8, "");
+    dtype.name = "Vec4h";   
+    dtype.id = VALUE_TYPE_VEC4H;
+    data.resize(sizeof(Vec4h)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3h));
+  }
+
   void SetToken(const std::string &s) {
     dtype.name = "Token";   
     dtype.id = VALUE_TYPE_TOKEN;
@@ -304,6 +413,30 @@ class Value {
     dtype.id = VALUE_TYPE_STRING; // we treat String as std::string, not StringIndex 
     data.resize(s.size()); // No '\0' 
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
+  }
+
+  void SetPermission(const uint32_t d) {
+    // TODO(syoyo): range check
+    dtype.name = "Permission";   
+    dtype.id = VALUE_TYPE_PERMISSION;
+    data.resize(sizeof(uint32_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint32_t));
+  }
+
+  void SetSpecifier(const uint32_t d) {
+    // TODO(syoyo): range check
+    dtype.name = "Specifier";   
+    dtype.id = VALUE_TYPE_SPECIFIER;
+    data.resize(sizeof(uint32_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint32_t));
+  }
+
+  void SetVariability(const uint32_t d) {
+    // TODO(syoyo): range check
+    dtype.name = "Variability";   
+    dtype.id = VALUE_TYPE_VARIABILITY;
+    data.resize(sizeof(uint32_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint32_t));
   }
 
   // Getter for frequently used types.
@@ -370,36 +503,40 @@ class Value {
 /// Load USDZ(zip) from a file.
 ///
 /// @param[in] filename USDZ filename
+/// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDZFromFile(const std::string &filename, std::string *err, const USDZLoadOptions &options = USDZLoadOptions());
+bool LoadUSDZFromFile(const std::string &filename, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
 
 ///
 /// Load USDC(binary) from a file.
 ///
 /// @param[in] filename USDC filename
+/// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromFile(const std::string &filename, std::string *err, const USDCLoadOptions &options = USDCLoadOptions());
+bool LoadUSDCFromFile(const std::string &filename, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
 
 ///
 /// Load USDC(binary) from a memory.
 ///
 /// @param[in] addr Memory address of USDC data
 /// @param[in] length Byte length of USDC data
+/// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *err, const USDCLoadOptions &options = USDCLoadOptions());
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
 
+#if 0 // TODO
 ///
 /// Write scene as USDC to a file.
 ///
@@ -411,6 +548,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *e
 ///
 bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDCWriteOptions &options = USDCWriteOptions());
 
+#endif
 
 } // namespace tinyusdz
 

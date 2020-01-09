@@ -27,12 +27,17 @@ int main(int argc, char **argv)
   }
 
   std::string filepath = argv[1];
+  std::string warn;
   std::string err;
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
   if (ext.compare("usdz") == 0) {
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &err);
+    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+      return EXIT_FAILURE;
+    }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
       return EXIT_FAILURE;
@@ -43,7 +48,11 @@ int main(int argc, char **argv)
       return EXIT_FAILURE;
     }
   } else { // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &err);
+    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+      return EXIT_FAILURE;
+    }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
       return EXIT_FAILURE;
