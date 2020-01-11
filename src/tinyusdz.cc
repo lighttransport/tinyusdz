@@ -77,8 +77,6 @@ float16 float_to_half_full(float _f) {
   return o;
 }
 
-
-
 namespace {
 
 constexpr size_t kMinCompressedArraySize = 16;
@@ -222,9 +220,9 @@ enum SpecType {
 
 // For PrimSpec
 enum Specifier {
-  SpecifierDef, // 0 
-  SpecifierOver, 
-  SpecifierClass, 
+  SpecifierDef,  // 0
+  SpecifierOver,
+  SpecifierClass,
   NumSpecifiers
 };
 
@@ -235,10 +233,10 @@ enum Permission {
 };
 
 enum Variability {
-  VariabilityVarying, // 0
+  VariabilityVarying,  // 0
   VariabilityUniform,
   VariabilityConfig,
-  NumVariabilities 
+  NumVariabilities
 };
 
 std::string GetSpecTypeString(SpecType ty) {
@@ -300,122 +298,6 @@ std::string GetVariabilityString(Variability ty) {
   }
   return "??? Variability " + std::to_string(ty);
 }
-
-
-///
-/// We don't need performance and for USDZ, so use naiive implementation
-/// to represents Path.
-/// Path is something like Unix path, delimited by `/`, ':' and '.'
-///
-/// Example:
-///
-/// `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
-///
-/// ':' is a namespce delimiter(example `input:muda`).
-///
-/// Limitations:
-///
-/// Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
-/// supported.
-///
-/// variant chars('{' '}') is not supported.
-/// '..' is not supported
-///
-/// and have more limitatons.
-///
-class Path {
- public:
-  Path() : valid(true) {}
-  Path(const std::string &prim) : prim_part(prim) {}
-  Path(const std::string &prim, const std::string &prop)
-      : prim_part(prim), prop_part(prop) {}
-
-  std::string name() const {
-    std::string s;
-    if (!valid) {
-      s += "INVALID#";
-    }
-
-    s += prim_part;
-    if (prop_part.empty()) {
-      return s;
-    }
-
-    s += "." + prop_part;
-
-    return s;
-  }
-
-  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
-
-  static Path AbsoluteRootPath() { return Path("/"); }
-
-  Path AppendProperty(const std::string &elem) {
-    Path p = (*this);
-
-    if (elem.empty()) {
-      p.valid = false;
-      return p;
-    }
-
-    if (elem[0] == '{') {
-      // variant chars are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '[') {
-      // relational attrib are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '.') {
-      std::cerr << "???. elem[0] is '.'\n";
-      // For a while, make this valid.
-      p.valid = false;
-      return p;
-    } else {
-      p.prop_part = elem;
-      return p;
-    }
-  }
-
-  Path AppendElement(const std::string &elem) {
-    Path p = (*this);
-
-    if (elem.empty()) {
-      p.valid = false;
-      return p;
-    }
-
-    if (elem[0] == '{') {
-      // variant chars are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '[') {
-      // relational attrib are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '.') {
-      std::cerr << "???. elem[0] is '.'\n";
-      // For a while, make this valid.
-      p.valid = false;
-      return p;
-    } else {
-      std::cout << "elem " << elem << "\n";
-      if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
-        p.prim_part += elem;
-      } else {
-        p.prim_part += '/' + elem;
-      }
-      return p;
-    }
-  }
-
-  bool IsValid() const { return valid; }
-
- private:
-  std::string prim_part;
-  std::string prop_part;
-  bool valid{true};
-};
 
 ///
 /// Node represents scene graph node.
@@ -603,11 +485,13 @@ static inline bool _ReadCompressedInts(const StreamReader *sr, Int *out,
     return false;
   }
 
-  if (!sr->read(compSize, compSize, reinterpret_cast<uint8_t *>(compBuffer.data()))) {
+  if (!sr->read(compSize, compSize,
+                reinterpret_cast<uint8_t *>(compBuffer.data()))) {
     return false;
   }
   std::string err;
-  bool ret = Compressor::DecompressFromBuffer(compBuffer.data(), compSize, out, size, &err);
+  bool ret = Compressor::DecompressFromBuffer(compBuffer.data(), compSize, out,
+                                              size, &err);
   (void)err;
 
   return ret;
@@ -722,6 +606,19 @@ class Parser {
     return std::to_string(_fieldset_indices[index.value].value);
   }
 
+  Path GetPath(Index index) {
+    if ((index.value >= 0) || (index.value <= _fields.size())) {
+      // ok
+    } else {
+      // TODO(syoyo): Report error
+      return Path();
+    }
+
+    const Path &p = _paths[index.value];
+
+    return p;
+  }
+
   std::string GetPathString(Index index) {
     if ((index.value >= 0) || (index.value <= _fields.size())) {
       // ok
@@ -797,18 +694,26 @@ class Parser {
   //
   bool _ReadIndex(Index *i);
 
+  bool _ReadToken(std::string *s);
   bool _ReadString(std::string *s);
 
   bool _ReadValueRep(ValueRep *rep);
 
+  bool _ReadPathArray(std::vector<Path> *d);
+
   // Dictionary
   bool _ReadDictionary(Value::Dictionary *d);
 
-  // int array
-  template<typename T>
+  // integral array
+  template <typename T>
   bool _ReadIntArray(bool is_compressed, std::vector<T> *d);
 
+  bool _ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d);
+  bool _ReadFloatArray(bool is_compressed, std::vector<float> *d);
+  bool _ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
+  // PathListOp
+  bool _ReadPathListOp(ListOp<Path> *d);
 };
 
 bool Parser::_ReadIndex(Index *i) {
@@ -819,6 +724,18 @@ bool Parser::_ReadIndex(Index *i) {
     return false;
   }
   (*i) = Index(value);
+  return true;
+}
+
+bool Parser::_ReadToken(std::string *s) {
+  Index token_index;
+  if (!_ReadIndex(&token_index)) {
+    _err += "Failed to read Index for token data.\n";
+    return false;
+  }
+
+  (*s) = GetToken(token_index);
+
   return true;
 }
 
@@ -846,12 +763,37 @@ bool Parser::_ReadValueRep(ValueRep *rep) {
   return true;
 }
 
-template<typename T>
+template <typename T>
 bool Parser::_ReadIntArray(bool is_compressed, std::vector<T> *d) {
   if (!is_compressed) {
-    // TODO read uncompressed array
-    return false;
-  } 
+    size_t length;
+    // < ver 0.7.0  use 32bit
+    if ((_version[0] == 0) && ((_version[1] < 7))) {
+      uint32_t n;
+      if (!_sr->read4(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+      length = size_t(n);
+    } else {
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+
+      length = size_t(n);
+    }
+
+    d->resize(length);
+
+    // TODO(syoyo): Zero-copy
+    if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read integer array data.\n";
+      return false;
+    }
+  }
 
   size_t length;
   // < ver 0.7.0  use 32bit
@@ -878,18 +820,479 @@ bool Parser::_ReadIntArray(bool is_compressed, std::vector<T> *d) {
 
   if (length < kMinCompressedArraySize) {
     size_t sz = sizeof(T) * length;
-      // Not stored in compressed.
-      //reader.ReadContiguous(odata, osize);
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-        _err += "Failed to read uncompressed array data.\n";
-        return false;
-      }
+    // Not stored in compressed.
+    // reader.ReadContiguous(odata, osize);
+    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read uncompressed array data.\n";
+      return false;
+    }
     return true;
   }
 
   return _ReadCompressedInts(_sr, d->data(), d->size());
 }
 
+bool Parser::_ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
+  if (!is_compressed) {
+    size_t length;
+    // < ver 0.7.0  use 32bit
+    if ((_version[0] == 0) && ((_version[1] < 7))) {
+      uint32_t n;
+      if (!_sr->read4(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+      length = size_t(n);
+    } else {
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+
+      length = size_t(n);
+    }
+
+    d->resize(length);
+
+    // TODO(syoyo): Zero-copy
+    if (!_sr->read(sizeof(uint16_t) * length, sizeof(uint16_t) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read half array data.\n";
+      return false;
+    }
+
+    return true;
+  }
+
+  //
+  // compressed data is represented by integers or look-up table.
+  //
+
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if ((_version[0] == 0) && ((_version[1] < 7))) {
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+
+    length = size_t(n);
+  }
+
+  std::cout << "array.len = " << length << "\n";
+
+  d->resize(length);
+
+  if (length < kMinCompressedArraySize) {
+    size_t sz = sizeof(uint16_t) * length;
+    // Not stored in compressed.
+    // reader.ReadContiguous(odata, osize);
+    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read uncompressed array data.\n";
+      return false;
+    }
+    return true;
+  }
+
+  // Read the code
+  char code;
+  if (!_sr->read1(&code)) {
+    _err += "Failed to read the code.\n";
+    return false;
+  }
+
+  if (code == 'i') {
+    // Compressed integers.
+    std::vector<int32_t> ints(length);
+    if (!_ReadCompressedInts(_sr, ints.data(), ints.size())) {
+      _err += "Failed to read compressed ints in ReadHalfArray.\n";
+      return false;
+    }
+    for (size_t i = 0; i < length; i++) {
+      float f = float(ints[i]);
+      float16 h = float_to_half_full(f);
+      (*d)[i] = h.u;
+    }
+  } else if (code == 't') {
+    // Lookup table & indexes.
+    uint32_t lutSize;
+    if (!_sr->read4(&lutSize)) {
+      _err += "Failed to read lutSize in ReadHalfArray.\n";
+      return false;
+    }
+
+    std::vector<uint16_t> lut(lutSize);
+    if (!_sr->read(sizeof(uint16_t) * lutSize, sizeof(uint16_t) * lutSize,
+                   reinterpret_cast<uint8_t *>(lut.data()))) {
+      _err += "Failed to read lut table in ReadHalfArray.\n";
+      return false;
+    }
+
+    std::vector<uint32_t> indexes(length);
+    if (!_ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
+      _err += "Failed to read lut indices in ReadHalfArray.\n";
+      return false;
+    }
+
+    auto o = d->data();
+    for (auto index : indexes) {
+      *o++ = lut[index];
+    }
+  } else {
+    _err += "Invalid code. Data is currupted\n";
+    return false;
+  }
+
+  return true;
+}
+
+bool Parser::_ReadFloatArray(bool is_compressed, std::vector<float> *d) {
+  if (!is_compressed) {
+    size_t length;
+    // < ver 0.7.0  use 32bit
+    if ((_version[0] == 0) && ((_version[1] < 7))) {
+      uint32_t n;
+      if (!_sr->read4(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+      length = size_t(n);
+    } else {
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+
+      length = size_t(n);
+    }
+
+    d->resize(length);
+
+    // TODO(syoyo): Zero-copy
+    if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read float array data.\n";
+      return false;
+    }
+
+    return true;
+  }
+
+  //
+  // compressed data is represented by integers or look-up table.
+  //
+
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if ((_version[0] == 0) && ((_version[1] < 7))) {
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+
+    length = size_t(n);
+  }
+
+  std::cout << "array.len = " << length << "\n";
+
+  d->resize(length);
+
+  if (length < kMinCompressedArraySize) {
+    size_t sz = sizeof(float) * length;
+    // Not stored in compressed.
+    // reader.ReadContiguous(odata, osize);
+    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read uncompressed array data.\n";
+      return false;
+    }
+    return true;
+  }
+
+  // Read the code
+  char code;
+  if (!_sr->read1(&code)) {
+    _err += "Failed to read the code.\n";
+    return false;
+  }
+
+  if (code == 'i') {
+    // Compressed integers.
+    std::vector<int32_t> ints(length);
+    if (!_ReadCompressedInts(_sr, ints.data(), ints.size())) {
+      _err += "Failed to read compressed ints in ReadFloatArray.\n";
+      return false;
+    }
+    std::copy(ints.begin(), ints.end(), d->data());
+  } else if (code == 't') {
+    // Lookup table & indexes.
+    uint32_t lutSize;
+    if (!_sr->read4(&lutSize)) {
+      _err += "Failed to read lutSize in ReadFloatArray.\n";
+      return false;
+    }
+
+    std::vector<float> lut(lutSize);
+    if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+                   reinterpret_cast<uint8_t *>(lut.data()))) {
+      _err += "Failed to read lut table in ReadFloatArray.\n";
+      return false;
+    }
+
+    std::vector<uint32_t> indexes(length);
+    if (!_ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
+      _err += "Failed to read lut indices in ReadFloatArray.\n";
+      return false;
+    }
+
+    auto o = d->data();
+    for (auto index : indexes) {
+      *o++ = lut[index];
+    }
+  } else {
+    _err += "Invalid code. Data is currupted\n";
+    return false;
+  }
+
+  return true;
+}
+
+bool Parser::_ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
+  if (!is_compressed) {
+    size_t length;
+    // < ver 0.7.0  use 32bit
+    if ((_version[0] == 0) && ((_version[1] < 7))) {
+      uint32_t n;
+      if (!_sr->read4(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+      length = size_t(n);
+    } else {
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+
+      length = size_t(n);
+    }
+
+    d->resize(length);
+
+    // TODO(syoyo): Zero-copy
+    if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read double array data.\n";
+      return false;
+    }
+
+    return true;
+  }
+
+  //
+  // compressed data is represented by integers or look-up table.
+  //
+
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if ((_version[0] == 0) && ((_version[1] < 7))) {
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+
+    length = size_t(n);
+  }
+
+  std::cout << "array.len = " << length << "\n";
+
+  d->resize(length);
+
+  if (length < kMinCompressedArraySize) {
+    size_t sz = sizeof(double) * length;
+    // Not stored in compressed.
+    // reader.ReadContiguous(odata, osize);
+    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read uncompressed array data.\n";
+      return false;
+    }
+    return true;
+  }
+
+  // Read the code
+  char code;
+  if (!_sr->read1(&code)) {
+    _err += "Failed to read the code.\n";
+    return false;
+  }
+
+  if (code == 'i') {
+    // Compressed integers.
+    std::vector<int32_t> ints(length);
+    if (!_ReadCompressedInts(_sr, ints.data(), ints.size())) {
+      _err += "Failed to read compressed ints in ReadDoubleArray.\n";
+      return false;
+    }
+    std::copy(ints.begin(), ints.end(), d->data());
+  } else if (code == 't') {
+    // Lookup table & indexes.
+    uint32_t lutSize;
+    if (!_sr->read4(&lutSize)) {
+      _err += "Failed to read lutSize in ReadDoubleArray.\n";
+      return false;
+    }
+
+    std::vector<double> lut(lutSize);
+    if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+                   reinterpret_cast<uint8_t *>(lut.data()))) {
+      _err += "Failed to read lut table in ReadDoubleArray.\n";
+      return false;
+    }
+
+    std::vector<uint32_t> indexes(length);
+    if (!_ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
+      _err += "Failed to read lut indices in ReadDoubleArray.\n";
+      return false;
+    }
+
+    auto o = d->data();
+    for (auto index : indexes) {
+      *o++ = lut[index];
+    }
+  } else {
+    _err += "Invalid code. Data is currupted\n";
+    return false;
+  }
+
+  return true;
+}
+
+bool Parser::_ReadPathListOp(ListOp<Path> *d) {
+  // read ListOpHeader
+  ListOpHeader h;
+  if (!_sr->read1(&h.bits)) {
+    _err += "Failed to read ListOpHeader\n";
+    return false;
+  }
+
+  if (h.IsExplicit()) {
+    std::cout << "Explicit\n";
+    d->ClearAndMakeExplicit();
+  }
+
+  // array data is not compressed
+  auto ReadFn = [this](std::vector<Path> &result) -> bool {
+    size_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read # of elements in ListOp.\n";
+      return false;
+    }
+
+    std::vector<Index> ivalue(n);
+
+    if (!_sr->read(n * sizeof(Index), n * sizeof(Index),
+                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+      _err += "Failed to read ListOp data.\n";
+      return false;
+    }
+
+    // reconstruct
+    result.resize(n);
+    for (size_t i = 0; i < n; i++) {
+      result[i] = GetPath(ivalue[i]);
+    }
+
+    return true;
+  };
+
+  if (h.HasExplicitItems()) {
+    std::vector<Path> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::ExplicitItems.\n";
+      return false;
+    }
+
+    d->SetExplicitItems(items);
+  }
+
+  if (h.HasAddedItems()) {
+    std::vector<Path> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AddedItems.\n";
+      return false;
+    }
+
+    d->SetAddedItems(items);
+  }
+
+  if (h.HasPrependedItems()) {
+    std::vector<Path> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::PrependedItems.\n";
+      return false;
+    }
+
+    d->SetPrependedItems(items);
+  }
+
+  if (h.HasAppendedItems()) {
+    std::vector<Path> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AppendedItems.\n";
+      return false;
+    }
+
+    d->SetAppendedItems(items);
+  }
+
+  if (h.HasDeletedItems()) {
+    std::vector<Path> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::DeletedItems.\n";
+      return false;
+    }
+
+    d->SetDeletedItems(items);
+  }
+
+  if (h.HasOrderedItems()) {
+    std::vector<Path> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::OrderedItems.\n";
+      return false;
+    }
+
+    d->SetOrderedItems(items);
+  }
+
+  return true;
+}
 
 bool Parser::_ReadDictionary(Value::Dictionary *d) {
   Value::Dictionary dict;
@@ -974,11 +1377,21 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
 
+    } else if (ty.id == VALUE_TYPE_ASSET_PATH) {
+      // AssetPath = std::string(storage format is TokenIndex).
+
+      std::string str = GetToken(Index(d));
+
+      value->SetAssetPath(str);
+
+      return true;
+
     } else if (ty.id == VALUE_TYPE_SPECIFIER) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      std::cout << "Specifier: " << GetSpecifierString(static_cast<Specifier>(d)) << "\n";
-        
+      std::cout << "Specifier: "
+                << GetSpecifierString(static_cast<Specifier>(d)) << "\n";
+
       if (d >= NumSpecifiers) {
         _err += "Invalid value for Specifier\n";
         return false;
@@ -990,8 +1403,9 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_PERMISSION) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      std::cout << "Permission: " << GetPermissionString(static_cast<Permission>(d)) << "\n";
-        
+      std::cout << "Permission: "
+                << GetPermissionString(static_cast<Permission>(d)) << "\n";
+
       if (d >= NumPermissions) {
         _err += "Invalid value for Permission\n";
         return false;
@@ -1003,9 +1417,9 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_VARIABILITY) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      std::cout << "Variability: " << GetVariabilityString(static_cast<Variability>(d)) << "\n";
-        
-        
+      std::cout << "Variability: "
+                << GetVariabilityString(static_cast<Variability>(d)) << "\n";
+
       if (d >= NumVariabilities) {
         _err += "Invalid value for Variability\n";
         return false;
@@ -1057,7 +1471,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v[1] = static_cast<int32_t>(data[1]);
       v[2] = static_cast<int32_t>(data[2]);
 
-      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2]
+                << "\n";
 
       value->SetVec3i(v);
 
@@ -1075,7 +1490,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v[1] = static_cast<float>(data[1]);
       v[2] = static_cast<float>(data[2]);
 
-      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2]
+                << "\n";
 
       value->SetVec3f(v);
 
@@ -1098,16 +1514,162 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
     printf("rep = 0x%016lx\n", rep.GetData());
 
-    if (ty.id == VALUE_TYPE_INT) {
+    if (ty.id == VALUE_TYPE_TOKEN) {
+      // Guess array of Token
+      assert(!rep.IsCompressed());
+      assert(rep.IsArray());
+
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        std::cerr << "Failed to read the number of array elements\n";
+        return false;
+      }
+
+      std::vector<Index> v(n);
+      if (!_sr->read(n * sizeof(Index), n * sizeof(Index),
+                     reinterpret_cast<uint8_t *>(v.data()))) {
+        std::cerr << "Failed to read TokenIndex array\n";
+        return false;
+      }
+
+
+      std::vector<std::string> tokens(n);
+
+      for (size_t i = 0; i < n; i++) {
+        std::cout << "Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value << ")\n";
+        tokens[i] = GetToken(v[i]);
+      }
+
+      value->SetTokenArray(tokens);
+
+      return true;
+
+    } if (ty.id == VALUE_TYPE_INT) {
       std::vector<int32_t> v;
       if (!_ReadIntArray(rep.IsCompressed(), &v)) {
         std::cerr << "Failed to read Int array\n";
         return false;
       }
 
+      if (v.empty()) {
+        std::cerr << "Empty Int array\n";
+        return false;
+      }
+
       for (size_t i = 0; i < v.size(); i++) {
         std::cout << "Int[" << i << "] = " << v[i] << "\n";
       }
+
+      if (rep.IsArray()) {
+        value->SetIntArray(v.data(), v.size());
+      } else {
+        value->SetInt(v[0]);
+      }
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_VEC2F) {
+      assert(!rep.IsCompressed());
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          std::cerr << "Failed to read the number of array elements\n";
+          return false;
+        }
+
+        std::vector<Vec2f> v(n);
+        if (!_sr->read(n * sizeof(Vec2f), n * sizeof(Vec2f),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          std::cerr << "Failed to read Vec2f array\n";
+          return false;
+        }
+
+        value->SetVec2fArray(v.data(), v.size());
+
+      } else {
+        Vec2f v;
+        if (!_sr->read(sizeof(Vec2f), sizeof(Vec2f),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          std::cerr << "Failed to read Vec2f\n";
+          return false;
+        }
+
+        std::cout << "Vec2f = " << v[0] << ", " << v[1] << "\n";
+
+        value->SetVec2f(v);
+      }
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_VEC3F) {
+      assert(!rep.IsCompressed());
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          std::cerr << "Failed to read the number of array elements\n";
+          return false;
+        }
+
+        std::vector<Vec3f> v(n);
+        if (!_sr->read(n * sizeof(Vec3f), n * sizeof(Vec3f),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          std::cerr << "Failed to read Vec3f array\n";
+          return false;
+        }
+
+        std::cout << "n = " << n << "\n";
+        value->SetVec3fArray(v.data(), v.size());
+
+      } else {
+        Vec3f v;
+        if (!_sr->read(sizeof(Vec3f), sizeof(Vec3f),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          std::cerr << "Failed to read Vec3f\n";
+          return false;
+        }
+
+        std::cout << "Vec3f = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+
+        value->SetVec3f(v);
+      }
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_VEC4F) {
+      assert(!rep.IsCompressed());
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          std::cerr << "Failed to read the number of array elements\n";
+          return false;
+        }
+
+        std::vector<Vec4f> v(n);
+        if (!_sr->read(n * sizeof(Vec4f), n * sizeof(Vec4f),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          std::cerr << "Failed to read Vec4f array\n";
+          return false;
+        }
+
+        value->SetVec4fArray(v.data(), v.size());
+
+      } else {
+        Vec4f v;
+        if (!_sr->read(sizeof(Vec4f), sizeof(Vec4f),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          std::cerr << "Failed to read Vec4f\n";
+          return false;
+        }
+
+        std::cout << "Vec4f = " << v[0] << ", " << v[1] << ", " << v[2] << ", "
+                  << v[3] << "\n";
+
+        value->SetVec4f(v);
+      }
+
+      return true;
 
     } else if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
       assert(!rep.IsCompressed());
@@ -1155,12 +1717,14 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       assert(rep.IsArray());
 
       Vec3i v;
-      if (!_sr->read(sizeof(Vec3i), sizeof(Vec3i), reinterpret_cast<uint8_t *>(&v))) {
+      if (!_sr->read(sizeof(Vec3i), sizeof(Vec3i),
+                     reinterpret_cast<uint8_t *>(&v))) {
         _err += "Failed to read Vec3i value\n";
         return false;
       }
 
-      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2]
+                << "\n";
       value->SetVec3i(v);
 
       return true;
@@ -1169,12 +1733,14 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       assert(rep.IsArray());
 
       Vec3f v;
-      if (!_sr->read(sizeof(Vec3f), sizeof(Vec3f), reinterpret_cast<uint8_t *>(&v))) {
+      if (!_sr->read(sizeof(Vec3f), sizeof(Vec3f),
+                     reinterpret_cast<uint8_t *>(&v))) {
         _err += "Failed to read Vec3f value\n";
         return false;
       }
 
-      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2]
+                << "\n";
       value->SetVec3f(v);
 
       return true;
@@ -1183,12 +1749,14 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       assert(rep.IsArray());
 
       Vec3d v;
-      if (!_sr->read(sizeof(Vec3d), sizeof(Vec3d), reinterpret_cast<uint8_t *>(&v))) {
+      if (!_sr->read(sizeof(Vec3d), sizeof(Vec3d),
+                     reinterpret_cast<uint8_t *>(&v))) {
         _err += "Failed to read Vec3d value\n";
         return false;
       }
 
-      std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
+      std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2]
+                << "\n";
       value->SetVec3d(v);
 
       return true;
@@ -1197,12 +1765,14 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       assert(rep.IsArray());
 
       Vec3h v;
-      if (!_sr->read(sizeof(Vec3h), sizeof(Vec3h), reinterpret_cast<uint8_t *>(&v))) {
+      if (!_sr->read(sizeof(Vec3h), sizeof(Vec3h),
+                     reinterpret_cast<uint8_t *>(&v))) {
         _err += "Failed to read Vec3h value\n";
         return false;
       }
 
-      std::cout << "value.vec3d = " << to_float(v[0]) << ", " << to_float(v[1]) << ", " << to_float(v[2]) << "\n";
+      std::cout << "value.vec3d = " << to_float(v[0]) << ", " << to_float(v[1])
+                << ", " << to_float(v[2]) << "\n";
       value->SetVec3h(v);
 
       return true;
@@ -1220,6 +1790,20 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       std::cout << "Dict. nelems = " << dict.size() << "\n";
 
       value->SetDictionary(dict);
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_PATH_LIST_OP) {
+      // SdfListOp<class SdfPath>
+      // => underliying storage is the array of ListOp[PathIndex]
+      ListOp<Path> lst;
+
+      if (!_ReadPathListOp(&lst)) {
+        _err += "Failed to read PathListOp data\n";
+        return false;
+      }
+
+      value->SetPathListOp(lst);
 
       return true;
 
@@ -2069,9 +2653,9 @@ bool Parser::ReadTOC() {
 
 }  // namespace
 
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *warn, std::string *err,
-                      const USDLoadOptions &options) {
-
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options) {
   bool swap_endian = false;  // @FIXME
 
   StreamReader sr(addr, length, swap_endian);
@@ -2150,8 +2734,8 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *w
   return true;
 }
 
-bool LoadUSDCFromFile(const std::string &filename, std::string *warn, std::string *err,
-                      const USDLoadOptions &options) {
+bool LoadUSDCFromFile(const std::string &filename, std::string *warn,
+                      std::string *err, const USDLoadOptions &options) {
   std::vector<uint8_t> data;
   {
     std::ifstream ifs(filename.c_str(), std::ifstream::binary);
@@ -2191,7 +2775,6 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *warn, std::strin
   }
 
   return LoadUSDCFromMemory(data.data(), data.size(), warn, err, options);
-
 }
 
 namespace {
@@ -2203,21 +2786,19 @@ static std::string GetFileExtension(const std::string &filename) {
 }
 
 static std::string str_tolower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), 
-                // static_cast<int(*)(int)>(std::tolower)         // wrong
-                // [](int c){ return std::tolower(c); }           // wrong
-                // [](char c){ return std::tolower(c); }          // wrong
-                   [](unsigned char c){ return std::tolower(c); } // correct
-                  );
-    return s;
+  std::transform(s.begin(), s.end(), s.begin(),
+                 // static_cast<int(*)(int)>(std::tolower)         // wrong
+                 // [](int c){ return std::tolower(c); }           // wrong
+                 // [](char c){ return std::tolower(c); }          // wrong
+                 [](unsigned char c) { return std::tolower(c); }  // correct
+  );
+  return s;
 }
 
-} // namespace
+}  // namespace
 
-bool LoadUSDZFromFile(const std::string &filename, std::string *warn, std::string *err,
-                      const USDLoadOptions &options) {
-
-
+bool LoadUSDZFromFile(const std::string &filename, std::string *warn,
+                      std::string *err, const USDLoadOptions &options) {
   // <filename, byte_begin, byte_end>
   std::vector<std::tuple<std::string, size_t, size_t>> assets;
 
@@ -2329,13 +2910,16 @@ bool LoadUSDZFromFile(const std::string &filename, std::string *warn, std::strin
 
   int32_t usdc_index = -1;
   {
-    bool warned = false; // to report single warning message.
+    bool warned = false;  // to report single warning message.
     for (size_t i = 0; i < assets.size(); i++) {
       std::string ext = str_tolower(GetFileExtension(std::get<0>(assets[i])));
       if (ext.compare("usdc") == 0) {
         if ((usdc_index > -1) && (!warned)) {
           if (warn) {
-            (*warn) += "Multiple USDC files were found in USDZ. Use the first found one: " + std::get<0>(assets[size_t(usdc_index)]) + "]\n";
+            (*warn) +=
+                "Multiple USDC files were found in USDZ. Use the first found "
+                "one: " +
+                std::get<0>(assets[size_t(usdc_index)]) + "]\n";
           }
           warned = true;
         }
@@ -2376,5 +2960,8 @@ bool LoadUSDZFromFile(const std::string &filename, std::string *warn, std::strin
 static_assert(sizeof(Field) == 16, "");
 static_assert(sizeof(Spec) == 12, "");
 static_assert(sizeof(Index) == 4, "");
+static_assert(sizeof(Vec4h) == 8, "");
+static_assert(sizeof(Vec4f) == 16, "");
+static_assert(sizeof(Vec4d) == 32, "");
 
 }  // namespace tinyusdz
