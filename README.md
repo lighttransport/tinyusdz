@@ -30,6 +30,10 @@ $ ninja
 * [ ] USDZ saver
 * [ ] Support compressed USDZ?
 
+## Fuzzing test
+
+See `tests/fuzzer/` 
+
 ## License
 
 MIT license
