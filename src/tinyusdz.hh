@@ -133,6 +133,257 @@ struct USDWriteOptions
 
 };
 
+template <typename T>
+class ListOp
+{
+ public:
+  ListOp() : is_explicit(false) {}
+
+  void ClearAndMakeExplicit() {
+    explicit_items.clear();
+    added_items.clear();
+    prepended_items.clear();
+    appended_items.clear();
+    deleted_items.clear();
+    ordered_items.clear();
+
+    is_explicit = true;
+  }
+
+  bool HasExplicitItems() const {
+    return explicit_items.size();
+  }
+
+  bool HasAddedItems() const {
+    return added_items.size();
+  }
+
+  bool HasPrependedItems() const {
+    return prepended_items.size();
+  }
+
+  bool HasAppendedItems() const {
+    return appended_items.size();
+  }
+
+  bool HasDeletedItems() const {
+    return deleted_items.size();
+  }
+
+  bool HasOrderedItems() const {
+    return deleted_items.size();
+  }
+
+  const std::vector<T> &GetExplicitItems() const {
+    return explicit_items;
+  }
+
+  const std::vector<T> &GetAddedItems() const {
+    return added_items;
+  }
+
+  const std::vector<T> &GetPrependedItems() const {
+    return prepended_items;
+  }
+
+  const std::vector<T> &GetAppendedItems() const {
+    return appended_items;
+  }
+
+  const std::vector<T> &GetDeletedItems() const {
+    return deleted_items;
+  }
+
+  const std::vector<T> &GetOrderedItems() const {
+    return ordered_items;
+  }
+
+  void SetExplicitItems(const std::vector<T> &v) {
+    explicit_items = v;
+  }
+
+  void SetAddedItems(const std::vector<T> &v) {
+    added_items = v;
+  }
+
+  void SetPrependedItems(const std::vector<T> &v) {
+    prepended_items = v;
+  }
+
+  void SetAppendedItems(const std::vector<T> &v) {
+    appended_items = v;
+  }
+
+  void SetDeletedItems(const std::vector<T> &v) {
+    deleted_items = v;
+  }
+
+  void SetOrderedItems(const std::vector<T> &v) {
+    ordered_items = v;
+  }
+
+ private:
+
+  bool is_explicit{false};
+  std::vector<T> explicit_items;
+  std::vector<T> added_items;
+  std::vector<T> prepended_items;
+  std::vector<T> appended_items;
+  std::vector<T> deleted_items;
+  std::vector<T> ordered_items;
+};
+
+struct ListOpHeader {
+    enum Bits { IsExplicitBit = 1 << 0,
+                 HasExplicitItemsBit = 1 << 1,
+                 HasAddedItemsBit = 1 << 2,
+                 HasDeletedItemsBit = 1 << 3,
+                 HasOrderedItemsBit = 1 << 4,
+                 HasPrependedItemsBit = 1 << 5,
+                 HasAppendedItemsBit = 1 << 6 };
+
+    ListOpHeader() : bits(0) {}
+
+    explicit ListOpHeader(uint8_t b) : bits(b) { }
+
+    explicit ListOpHeader(ListOpHeader const &op) : bits(0) {
+        bits |= op.IsExplicit() ? IsExplicitBit : 0;
+        bits |= op.HasExplicitItems() ? HasExplicitItemsBit : 0;
+        bits |= op.HasAddedItems() ? HasAddedItemsBit : 0;
+        bits |= op.HasPrependedItems() ? HasPrependedItemsBit : 0;
+        bits |= op.HasAppendedItems() ? HasAppendedItemsBit : 0;
+        bits |= op.HasDeletedItems() ? HasDeletedItemsBit : 0;
+        bits |= op.HasOrderedItems() ? HasOrderedItemsBit : 0;
+    }
+
+    bool IsExplicit() const { return bits & IsExplicitBit; }
+
+    bool HasExplicitItems() const { return bits & HasExplicitItemsBit; }
+    bool HasAddedItems() const { return bits & HasAddedItemsBit; }
+    bool HasPrependedItems() const { return bits & HasPrependedItemsBit; }
+    bool HasAppendedItems() const { return bits & HasAppendedItemsBit; }
+    bool HasDeletedItems() const { return bits & HasDeletedItemsBit; }
+    bool HasOrderedItems() const { return bits & HasOrderedItemsBit; }
+
+    uint8_t bits;
+};
+
+///
+/// We don't need performance and for USDZ, so use naiive implementation
+/// to represent Path.
+/// Path is something like Unix path, delimited by `/`, ':' and '.'
+///
+/// Example:
+///
+/// `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+///
+/// ':' is a namespce delimiter(example `input:muda`).
+///
+/// Limitations:
+///
+/// Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
+/// supported.
+///
+/// variant chars('{' '}') is not supported.
+/// '..' is not supported
+///
+/// and have more limitatons.
+///
+class Path {
+ public:
+  Path() : valid(true) {}
+  Path(const std::string &prim) : prim_part(prim) {}
+  Path(const std::string &prim, const std::string &prop)
+      : prim_part(prim), prop_part(prop) {}
+
+  std::string name() const {
+    std::string s;
+    if (!valid) {
+      s += "INVALID#";
+    }
+
+    s += prim_part;
+    if (prop_part.empty()) {
+      return s;
+    }
+
+    s += "." + prop_part;
+
+    return s;
+  }
+
+  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
+
+  static Path AbsoluteRootPath() { return Path("/"); }
+
+  Path AppendProperty(const std::string &elem) {
+    Path p = (*this);
+
+    if (elem.empty()) {
+      p.valid = false;
+      return p;
+    }
+
+    if (elem[0] == '{') {
+      // variant chars are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '[') {
+      // relational attrib are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '.') {
+      //std::cerr << "???. elem[0] is '.'\n";
+      // For a while, make this valid.
+      p.valid = false;
+      return p;
+    } else {
+      p.prop_part = elem;
+      return p;
+    }
+  }
+
+  Path AppendElement(const std::string &elem) {
+    Path p = (*this);
+
+    if (elem.empty()) {
+      p.valid = false;
+      return p;
+    }
+
+    if (elem[0] == '{') {
+      // variant chars are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '[') {
+      // relational attrib are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '.') {
+      //std::cerr << "???. elem[0] is '.'\n";
+      // For a while, make this valid.
+      p.valid = false;
+      return p;
+    } else {
+      //std::cout << "elem " << elem << "\n";
+      if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
+        p.prim_part += elem;
+      } else {
+        p.prim_part += '/' + elem;
+      }
+      return p;
+    }
+  }
+
+  bool IsValid() const { return valid; }
+
+ private:
+  std::string prim_part;
+  std::string prop_part;
+  bool valid{true};
+};
+
+
 enum ValueTypeId
 {
   VALUE_TYPE_INVALID = 0,
@@ -230,7 +481,13 @@ class Value {
     dtype(_dtype), data(_data), array_length(-1) {}
   Value(const ValueType &_dtype, const std::vector<uint8_t> &_data, uint64_t _array_length) :
     dtype(_dtype), data(_data), array_length(int64_t(_array_length)) {}
-  bool IsArray();
+
+  bool IsArray() {
+    if ((array_length > 0) || string_array.size() || (dtype.id == VALUE_TYPE_PATH_LIST_OP)) {
+      return true;
+    }
+    return false;
+  }
 
   // Setter for primitive types.
   void SetBool(const bool d) {
@@ -415,6 +672,13 @@ class Value {
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
+  void SetAssetPath(const std::string &s) {
+    dtype.name = "AssetPath";
+    dtype.id = VALUE_TYPE_ASSET_PATH; // we treat AssetPath as std::string, not TokenIndex 
+    data.resize(s.size()); // No '\0' 
+    memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
+  }
+
   void SetPermission(const uint32_t d) {
     // TODO(syoyo): range check
     dtype.name = "Permission";   
@@ -437,6 +701,69 @@ class Value {
     dtype.id = VALUE_TYPE_VARIABILITY;
     data.resize(sizeof(uint32_t)); 
     memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint32_t));
+  }
+
+  void SetIntArray(const int *d, const size_t n) {
+    dtype.name = "IntArray";
+    dtype.id = VALUE_TYPE_INT;
+    array_length = n;
+    data.resize(n * sizeof(uint32_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(uint32_t));
+  }
+
+  void SetFloatArray(const float *d, const size_t n) {
+    dtype.name = "FloatArray";
+    dtype.id = VALUE_TYPE_FLOAT;
+    array_length = n;
+    data.resize(n * sizeof(float)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(float));
+  }
+
+  void SetDoubleArray(const double *d, const size_t n) {
+    dtype.name = "DoubleArray";
+    dtype.id = VALUE_TYPE_DOUBLE;
+    array_length = n;
+    data.resize(n * sizeof(double)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(double));
+  }
+
+  void SetVec2fArray(const Vec2f *d, const size_t n) {
+    static_assert(sizeof(Vec2f) == 8, "");
+    dtype.name = "Vec2fArray";   
+    dtype.id = VALUE_TYPE_VEC2F;
+    array_length = n;
+    data.resize(n * sizeof(Vec2f)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec2f));
+  }
+
+  void SetVec3fArray(const Vec3f *d, const size_t n) {
+    static_assert(sizeof(Vec3f) == 12, "");
+    dtype.name = "Vec3fArray";   
+    dtype.id = VALUE_TYPE_VEC3F;
+    array_length = n;
+    data.resize(n * sizeof(Vec3f)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec3f));
+  }
+
+  void SetVec4fArray(const Vec4f *d, const size_t n) {
+    static_assert(sizeof(Vec4f) == 16, "");
+    dtype.name = "Vec4fArray";   
+    dtype.id = VALUE_TYPE_VEC4F;
+    array_length = n;
+    data.resize(n * sizeof(Vec4f)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec4f));
+  }
+
+  void SetTokenArray(const std::vector<std::string> &d) {
+    dtype.name = "TokenArray";   
+    dtype.id = VALUE_TYPE_TOKEN;
+    string_array = d;
+  }
+
+  void SetPathListOp(const ListOp<Path> &d) {
+    dtype.name = "PathListOp";
+    dtype.id = VALUE_TYPE_PATH_LIST_OP;
+    path_list_op = d;
   }
 
   // Getter for frequently used types.
@@ -493,10 +820,18 @@ class Value {
   std::vector<uint8_t> data; // value as opaque binary data.
   int64_t array_length{-1};
 
-  // Dictonary has separated storage
+  // Dictonary, ListOp and array of string has separated storage
+  std::vector<std::string> string_array;
   Dictionary dict;
-  
+  ListOp<Path> path_list_op;
+  ListOp<std::string> token_list_op;
+  // TODO(syoyo): Reference
 
+  // TODO(syoyo): Use single representation for integral types
+  ListOp<int32_t> int_list_op;
+  ListOp<uint32_t> int64_list_op;
+  ListOp<int64_t> uint_list_op;
+  ListOp<uint64_t> uint64_list_op;
 };
 
 ///
