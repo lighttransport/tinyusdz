@@ -1545,6 +1545,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       return true;
 
     } if (ty.id == VALUE_TYPE_INT) {
+      assert(rep.IsArray());
+
       std::vector<int32_t> v;
       if (!_ReadIntArray(rep.IsCompressed(), &v)) {
         std::cerr << "Failed to read Int array\n";
@@ -1585,6 +1587,10 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
           return false;
         }
 
+        for (size_t i = 0; i < v.size(); i++) {
+          std::cout << "Vec2f[" << i << "] = " << v[i][0] << ", " << v[i][1] << "\n";
+        }
+
         value->SetVec2fArray(v.data(), v.size());
 
       } else {
@@ -1618,7 +1624,9 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
           return false;
         }
 
-        std::cout << "n = " << n << "\n";
+        for (size_t i = 0; i < v.size(); i++) {
+          std::cout << "Vec3f[" << i << "] = " << v[i][0] << ", " << v[i][1] << ", " << v[i][2] << "\n";
+        }
         value->SetVec3fArray(v.data(), v.size());
 
       } else {
@@ -1693,25 +1701,91 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
                   << "\n";
       }
 
-      // TODO(syoyo): Fill value
+      std::vector<std::string> tokens(indices.size());
+      for (size_t i = 0; i < indices.size(); i++) {
+        tokens[i] = GetToken(indices[i]);
+        std::cout << "tokenVector[" << i << "] = " << tokens[i] << ", (" << int(indices[i].value)
+                  << ")\n";
+      }
+
+      value->SetTokenArray(tokens);
 
       return true;
+    } else if (ty.id == VALUE_TYPE_HALF) {
+      if (rep.IsArray()) {
+        std::vector<uint16_t> v;
+        if (!_ReadHalfArray(rep.IsCompressed(), &v)) {
+          _err += "Failed to read half array value\n";
+          return false;
+        }
 
-    } else if (ty.id == VALUE_TYPE_DOUBLE) {
-      assert(!rep.IsCompressed());
-      assert(!rep.IsArray());
+        value->SetHalfArray(v.data(), v.size());
 
-      double v;
-      if (!_sr->read_double(&v)) {
-        _err += "Failed to read Double value\n";
+        return true;
+      } else {
+      
+        assert(!rep.IsCompressed());
+
+        // ???
+        _err += "Non-inlined, non-array Half value is not supported.\n";
+        return false;
+      }
+    } else if (ty.id == VALUE_TYPE_FLOAT) {
+      if (rep.IsArray()) {
+        std::vector<float> v;
+        if (!_ReadFloatArray(rep.IsCompressed(), &v)) {
+          _err += "Failed to read float array value\n";
+          return false;
+        }
+
+        for (size_t i = 0; i < v.size(); i++) {
+          std::cout << "Float[" << i << "] = " << v[i] << "\n";
+        }
+
+        value->SetFloatArray(v.data(), v.size());
+
+        return true;
+      } else {
+      
+        assert(!rep.IsCompressed());
+
+        // ???
+        _err += "Non-inlined, non-array Float value is not supported.\n";
         return false;
       }
 
-      std::cout << "Double " << v << "\n";
+    } else if (ty.id == VALUE_TYPE_DOUBLE) {
+      if (rep.IsArray()) {
+        std::vector<double> v;
+        if (!_ReadDoubleArray(rep.IsCompressed(), &v)) {
+          _err += "Failed to read Double value\n";
+          return false;
+        }
 
-      value->SetDouble(v);
+        for (size_t i = 0; i < v.size(); i++) {
+          std::cout << "Double[" << i << "] = " << v[i] << "\n";
+        }
 
-      return true;
+
+        value->SetDoubleArray(v.data(), v.size());
+
+        return true;
+      } else {
+      
+        assert(!rep.IsCompressed());
+
+        double v;
+        if (!_sr->read_double(&v)) {
+          _err += "Failed to read Double value\n";
+          return false;
+        }
+
+        std::cout << "Double " << v << "\n";
+
+        value->SetDouble(v);
+
+        return true;
+      }
     } else if (ty.id == VALUE_TYPE_VEC3I) {
       assert(!rep.IsCompressed());
       assert(rep.IsArray());
