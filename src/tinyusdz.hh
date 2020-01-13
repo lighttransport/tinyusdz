@@ -711,6 +711,14 @@ class Value {
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(uint32_t));
   }
 
+  void SetHalfArray(const uint16_t *d, const size_t n) {
+    dtype.name = "HalfArray";
+    dtype.id = VALUE_TYPE_HALF;
+    array_length = n;
+    data.resize(n * sizeof(uint16_t)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(uint16_t));
+  }
+
   void SetFloatArray(const float *d, const size_t n) {
     dtype.name = "FloatArray";
     dtype.id = VALUE_TYPE_FLOAT;

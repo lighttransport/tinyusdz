@@ -30,6 +30,10 @@ $ ninja
 * [ ] USDZ saver
 * [ ] Support Nested USDZ
 
+## Fuzzing test
+
+See `tests/fuzzer/` 
+
 ## License
 
 MIT license
