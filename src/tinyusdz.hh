@@ -6,6 +6,7 @@
 #include <array>
 #include <cstring>
 #include <map>
+#include <limits>
 
 namespace tinyusdz {
 
@@ -120,18 +121,6 @@ using Quaternion = std::array<double, 4>; // Storage layout is same with Quadd, 
 ((      GfMultiInterval,     MultiInterval))
 
 */
-
-struct USDLoadOptions
-{
-
-
-};
-
-struct USDWriteOptions
-{
-
-
-};
 
 template <typename T>
 class ListOp
@@ -465,6 +454,71 @@ struct ValueType {
   std::string name;
   ValueTypeId id{VALUE_TYPE_INVALID};
   bool supports_array{false};
+};
+
+enum SpecType {
+  SpecTypeUnknown = 0,
+  SpecTypeAttribute,
+  SpecTypeConnection,
+  SpecTypeExpression,
+  SpecTypeMapper,
+  SpecTypeMapperArg,
+  SpecTypePrim,
+  SpecTypePseudoRoot,
+  SpecTypeRelationship,
+  SpecTypeRelationshipTarget,
+  SpecTypeVariant,
+  SpecTypeVariantSet,
+  NumSpecTypes
+};
+
+enum Orientation
+{
+  OrientationRightHanded, // 0
+  OrientationLeftHanded,
+};
+
+enum Visibility
+{
+  VisibilityInherited, // 0
+  VisibilityInvisible,
+};
+
+enum Purpose
+{
+  PurposeDefault, // 0
+  PurposeRender,
+  PurposeProxy,
+  PurposeGuide,
+};
+
+enum SubdivisionScheme
+{
+  SubdivisionSchemeCatmullClark, // 0
+  SubdivisionSchemeLoop,
+  SubdivisionSchemeBilinear,
+  SubdivisionSchemeNone,
+};
+
+// For PrimSpec
+enum Specifier {
+  SpecifierDef,  // 0
+  SpecifierOver,
+  SpecifierClass,
+  NumSpecifiers
+};
+
+enum Permission {
+  PermissionPublic,  // 0
+  PermissionPrivate,
+  NumPermissions
+};
+
+enum Variability {
+  VariabilityVarying,  // 0
+  VariabilityUniform,
+  VariabilityConfig,
+  NumVariabilities
 };
 
 ///
@@ -840,6 +894,312 @@ class Value {
   ListOp<uint32_t> int64_list_op;
   ListOp<int64_t> uint_list_op;
   ListOp<uint64_t> uint64_list_op;
+};
+
+//
+// Data structure for rendering pipeline.
+//
+// Similar to OpenGL BufferData
+// 
+//
+struct BufferData
+{
+  enum Type {
+    BUFFER_DATA_TYPE_UNSIGNED_BYTE,
+    BUFFER_DATA_TYPE_UNSIGNED_SHORT,
+    BUFFER_DATA_TYPE_UNSIGNED_INT,
+    BUFFER_DATA_TYPE_UNSIGNED_INT64,
+    BUFFER_DATA_TYPE_BYTE,
+    BUFFER_DATA_TYPE_SHORT,
+    BUFFER_DATA_TYPE_INT,
+    BUFFER_DATA_TYPE_INT64,
+    BUFFER_DATA_TYPE_HALF,
+    BUFFER_DATA_TYPE_FLOAT,
+    BUFFER_DATA_TYPE_DOUBLE,
+  };
+
+  std::vector<uint8_t> data;   // Opaque byte data.
+  size_t stride{0};  // byte stride for each element. e.g. 12 for XYZXYZXYZ... data. 0 = app should calculate byte stride from type and `num_coords`.
+  int32_t num_coords{-1}; // The number of coordinates. e.g. 3 for XYZ, RGB data, 4 for RGBA. -1 = invalid
+  Type type;
+
+  size_t GetTypeByteSize(Type ty) {
+    switch (ty) {
+      case BUFFER_DATA_TYPE_BYTE: return 1;
+      case BUFFER_DATA_TYPE_UNSIGNED_BYTE: return 1;
+      case BUFFER_DATA_TYPE_SHORT: return 2;
+      case BUFFER_DATA_TYPE_UNSIGNED_SHORT: return 2;
+      case BUFFER_DATA_TYPE_INT: return 4;
+      case BUFFER_DATA_TYPE_UNSIGNED_INT: return 4;
+      case BUFFER_DATA_TYPE_INT64: return 8;
+      case BUFFER_DATA_TYPE_UNSIGNED_INT64: return 8;
+      case BUFFER_DATA_TYPE_HALF: return 2;
+      case BUFFER_DATA_TYPE_FLOAT: return 4;
+      case BUFFER_DATA_TYPE_DOUBLE: return 8;
+    };
+  }
+
+  size_t GetElementByteSize() {
+    if (num_coords <= 0) {
+      // TODO(syoyo): Report error
+      return 0;
+    }
+
+    return GetTypeByteSize(type) * num_coords;
+  }
+
+  size_t GetNumElements() {
+    size_t n = data.size() / GetElementByteSize(); 
+    return n;
+  }
+
+};
+
+struct PrimAttrib
+{
+  std::string name;
+  BufferData buffer;
+  Variability variability;
+
+};
+
+// Predefined node class
+struct Xform
+{
+  int64_t parent_id{-1};  // Index to xform node
+
+  Matrix4d matrix;
+
+  //double world_bbox;  // bounding box in world coordinate.
+
+  Orientation orientation{OrientationRightHanded};
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  char order[3] = {'x', 'y', 'z'}; char _pad;
+
+};
+
+struct UVCoords
+{
+  std::string name;
+  BufferData buffer;
+  Variability variability;
+
+  // TODO: 64bit index?
+  std::vector<uint32_t> indices; // UV indices. Usually varying 
+};
+
+struct Extent
+{
+  std::array<float, 3> lower[3] = {{
+    std::numeric_limits<float>::infinity(),
+    std::numeric_limits<float>::infinity(),
+    std::numeric_limits<float>::infinity()
+  }};
+
+  std::array<float, 3> upper[3] = {{
+    -std::numeric_limits<float>::infinity(),
+    -std::numeric_limits<float>::infinity(),
+    -std::numeric_limits<float>::infinity()
+  }};
+
+};
+
+// Polygon mesh geometry
+struct GeomMesh
+{
+  int64_t parent_id{-1};  // Index to xform node
+
+  //
+  // Predefined attribs.
+  //
+
+  // Vertex data would use various data types, byte strides, etc, so use PrimAttrib to represent it.
+  PrimAttrib points; // Usually float3[]
+  PrimAttrib normals; // Usually float3[], varying
+
+  UVCoords st;
+
+  PrimAttrib velocitiess; // Usually float3[], varying
+
+  std::vector<int32_t> faceVertexCounts;
+  std::vector<int32_t> faceVertexIndices;
+
+  //
+  // Properties
+  //
+  Extent extent; // bounding extent(in local coord?).
+  std::string facevaryingLinearInterpolation = "cornerPlus1";
+  bool doubleSided{true};
+  Orientation orientation{OrientationRightHanded};
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+  
+
+  //
+  // SubD attribs.
+  //
+  std::vector<int32_t> cornerIndices;
+  std::vector<float> cornerSharpnesses;
+  std::vector<int32_t> creaseIndices;
+  std::vector<int32_t> creaseLengths;
+  std::vector<float> creaseSharpnesses;
+  std::vector<int32_t> holeIndices;
+  std::string interpolateBoundary = "edgeAndCorner"; // "none", "edgeAndCorner" or "edgeOnly"
+
+
+  // User defined attribs
+  std::map<std::string, PrimAttrib> custom_attrs;
+
+};
+
+//
+// Similar to Maya's ShadingGroup
+struct Material
+{
+  std::string name;
+
+  int64_t parent_id{-1};
+
+  int64_t surface_shader_id{-1}; // Index to shader object
+  int64_t volume_shader_id{-1}; // Index to shader object
+  int64_t displacement_shader_id{-1}; // Index to shader object
+
+};
+
+struct Color3OrTexture
+{
+  Color3OrTexture(float x, float y, float z) {
+    color[0] = x;
+    color[1] = y;
+    color[2] = z;
+  }
+
+  std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
+  int64_t texture_id{-1};
+
+  bool HasTexture() const {
+    return texture_id > -1;
+  }
+
+};
+
+struct FloatOrTexture
+{
+  FloatOrTexture(float x) {
+    value = x;
+  }
+
+  float value{0.0f};
+  int64_t texture_id{-1};
+
+  bool HasTexture() const {
+    return texture_id > -1;
+  }
+
+};
+
+enum TextureWrap
+{
+  TextureWrapUseMetadata, // look for wrapS and wrapT metadata in the texture file itself
+  TextureWrapBlack,
+  TextureWrapClamp,
+  TextureWrapRepeat,
+  TextureWrapMirror,
+};
+
+// UsdUvTexture
+struct UVTexture {
+  
+  int64_t image_id{-1}; // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
+
+  std::array<float, 2> st; // texture coordinate orientation. https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
+  TextureWrap wrapS;
+  TextureWrap wrapT;
+
+  std::array<float, 4> fallback{0.0f, 0.0f, 0.0f, 1.0f}; // fallback color used when texture cannot be read.
+  std::array<float, 4> scale{1.0f, 1.0f, 1.0f, 1.0f}; // scale to be applied to output texture value
+  std::array<float, 4> bias{0.0f, 0.0f, 0.0f, 0.0f}; // bias to be applied to output texture value
+
+};
+
+// USD's default? PBR shader
+// https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
+struct PreviewSurface
+{
+  std::string doc;
+
+  //
+  // Inputs
+  //
+  // Currently we don't support nested shader description.
+  //
+  Color3OrTexture diffuseColor{0.18f, 0.18f, 0.18f};
+  Color3OrTexture emissiveColor{0.18f, 0.18f, 0.18f};
+  int usdSpecularWorkflow{0}; // 0 = metalness workflow, 1 = specular workflow
+
+  // specular workflow
+  Color3OrTexture specularColor{0.0f, 0.0f, 0.0f};
+
+  // metalness workflow
+  FloatOrTexture metallic{0.0f};
+
+  FloatOrTexture roughness{0.5f};
+  FloatOrTexture clearcoat{0.0f};
+  FloatOrTexture clearcoatRoughness{0.01f};
+  FloatOrTexture opacity{1.0f};
+  FloatOrTexture opacityThreshold{0.0f};
+  FloatOrTexture ior{1.5f};
+  Color3OrTexture normal{0.0f, 0.0f, 1.0f};
+  FloatOrTexture displacement{0.0f};
+  FloatOrTexture occlusion{0.0f};
+  
+  //
+  // Outputs
+  //
+  int64_t surface_id{-1}; // index to `Scene::shaders`
+  int64_t displacement_id{-1}; // index to `Scene::shaders`
+
+};
+
+// Corresponds to USD's Scope.
+// `Scope` is uncommon term in graphics community, so we use `Group`.
+// From USD doc: Scope is the simplest grouping primitive, and does not carry the baggage of transformability.
+struct Group
+{
+  std::string name;
+
+  int64_t parent_id{-1};
+
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+};
+
+
+struct Scene
+{
+  std::string name; // Scene name
+  int64_t root_node{-1}; // index to `xforms`(root Xform node)
+
+  std::vector<Xform> xforms;
+  std::vector<GeomMesh> geom_meshes;
+  std::vector<Material> materials;
+  std::vector<PreviewSurface> shaders; // TODO(syoyo): Support othre shaders
+  std::vector<Group> groups;
+  
+};
+
+struct USDLoadOptions
+{
+
+
+};
+
+struct USDWriteOptions
+{
+
+
 };
 
 ///
