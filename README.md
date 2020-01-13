@@ -28,7 +28,7 @@ $ ninja
 ## TODO
 
 * [ ] USDZ saver
-* [ ] Support compressed USDZ?
+* [ ] Support Nested USDZ
 
 ## License
 
