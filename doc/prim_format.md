@@ -25,6 +25,14 @@ velocities : usually vec3f[]
 * xformOpOrder : ty: token. uniform.
 
 * material:binding : Path
+* proxyPrim : ty: relation. uniform
+
+#### Optional property
+
+* primvars:displayColor : ty: float3[], varying
+  * Usually array len = 1(constant color over the mesh)
+* primvars:displayOpacity : ty: float[], varying
+  * Usually array len = 1(constant opacity over the mesh)
 
 ### SubD property
 
