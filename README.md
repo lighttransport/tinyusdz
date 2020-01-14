@@ -29,6 +29,7 @@ $ ninja
 
 * [ ] USDZ saver
 * [ ] Support Nested USDZ
+* [ ] UDIM texture support
 
 ## Fuzzing test
 
