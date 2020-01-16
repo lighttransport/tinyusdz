@@ -712,6 +712,30 @@ class Value {
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3h));
   }
 
+  void SetMatrix2d(const Matrix2d v) {
+    static_assert(sizeof(Matrix2d) == (2*2*8), "");
+    dtype.name = "Matrix2d";   
+    dtype.id = VALUE_TYPE_MATRIX2D;
+    data.resize(sizeof(Matrix2d)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(v.m), sizeof(Matrix2d));
+  }
+
+  void SetMatrix3d(const Matrix3d v) {
+    static_assert(sizeof(Matrix3d) == (3*3*8), "");
+    dtype.name = "Matrix3d";   
+    dtype.id = VALUE_TYPE_MATRIX3D;
+    data.resize(sizeof(Matrix3d)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(v.m), sizeof(Matrix3d));
+  }
+
+  void SetMatrix4d(const Matrix4d v) {
+    static_assert(sizeof(Matrix4d) == (4*4*8), "");
+    dtype.name = "Matrix4d";   
+    dtype.id = VALUE_TYPE_MATRIX4D;
+    data.resize(sizeof(Matrix4d)); 
+    memcpy(data.data(), reinterpret_cast<const void *>(v.m), sizeof(Matrix4d));
+  }
+
   void SetToken(const std::string &s) {
     dtype.name = "Token";   
     dtype.id = VALUE_TYPE_TOKEN;
@@ -976,7 +1000,7 @@ struct Xform
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
-  char order[3] = {'x', 'y', 'z'}; char _pad;
+  std::vector<int32_t> xformOpOrder; // T.B.D.
 
 };
 

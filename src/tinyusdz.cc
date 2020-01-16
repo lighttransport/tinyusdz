@@ -1446,6 +1446,17 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
 
+    } else if (ty.id == VALUE_TYPE_FLOAT) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      float f;
+      memcpy(&f, &d, sizeof(float));
+
+      std::cout << "value.float = " << f << "\n";
+
+      value->SetFloat(f);
+
+      return true;
+
     } else if (ty.id == VALUE_TYPE_DOUBLE) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       // Value is saved as float
@@ -1497,6 +1508,62 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
 
+    } else if (ty.id == VALUE_TYPE_MATRIX2D) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Matrix contains diagnonal components only, and values are represented in int8
+      int8_t data[2];
+      memcpy(&data, &d, 2);
+
+      Matrix2d v;
+      memset(v.m, 0, sizeof(Matrix2d));
+      v.m[0][0] = static_cast<double>(data[0]);
+      v.m[1][1] = static_cast<double>(data[1]);
+
+      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << "\n";
+
+      value->SetMatrix2d(v);
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_MATRIX3D) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Matrix contains diagnonal components only, and values are represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      Matrix3d v;
+      memset(v.m, 0, sizeof(Matrix3d));
+      v.m[0][0] = static_cast<double>(data[0]);
+      v.m[1][1] = static_cast<double>(data[1]);
+      v.m[2][2] = static_cast<double>(data[2]);
+
+      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", " << data[2] << "\n";
+
+      value->SetMatrix3d(v);
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_MATRIX4D) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Matrix contains diagnonal components only, and values are represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      Matrix4d v;
+      memset(v.m, 0, sizeof(Matrix4d));
+      v.m[0][0] = static_cast<double>(data[0]);
+      v.m[1][1] = static_cast<double>(data[1]);
+      v.m[2][2] = static_cast<double>(data[2]);
+      v.m[3][3] = static_cast<double>(data[3]);
+
+      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", " << data[2] << ", " << data[3] << "\n";
+
+      value->SetMatrix4d(v);
+
+      return true;
     } else {
       // TODO(syoyo)
       std::cerr << "TODO: Inlined Value: " << GetValueTypeRepr(rep.GetType())
@@ -1850,6 +1917,34 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       value->SetVec3h(v);
 
       return true;
+    } else if (ty.id == VALUE_TYPE_MATRIX4D) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      static_assert(sizeof(Matrix4d) == (8*16), "");
+
+      Matrix4d v;
+      if (!_sr->read(sizeof(Matrix4d), sizeof(Matrix4d),
+                     reinterpret_cast<uint8_t *>(v.m))) {
+        _err += "Failed to read Matrix4d value\n";
+        return false;
+      }
+
+      std::cout << "value.matrix4d = ";
+      for (size_t i = 0; i < 4; i++) {
+        for (size_t j = 0; j < 4; j++) {
+          std::cout << v.m[i][j];
+          if ((i == 3) && (j == 3)) {
+          } else {
+            std::cout << ", ";
+          }
+        }
+      }
+      std::cout << "\n";
+
+      value->SetMatrix4d(v);
+
+      return true;
+
     } else if (ty.id == VALUE_TYPE_DICTIONARY) {
       assert(!rep.IsCompressed());
       assert(!rep.IsArray());
