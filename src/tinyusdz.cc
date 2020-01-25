@@ -654,11 +654,19 @@ class Parser {
 
   std::string GetError() { return _err; }
 
+  // Approximated memory usage in [mb]
+  size_t GetMemoryUsage() const {
+    return memory_used / (1024 * 1024);
+  }
+
  private:
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
   const StreamReader *_sr = nullptr;
   std::string _err;
+
+  // Tracks the memory used(In advisorily manner since counting memory usage is done by manually, so not all memory consumption could be tracked)
+  size_t memory_used{0}; // in bytes.
 
   // Header(bootstrap)
   uint8_t _version[3] = {0, 0, 0};
@@ -1511,7 +1519,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_MATRIX2D) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      // Matrix contains diagnonal components only, and values are represented in int8
+      // Matrix contains diagnonal components only, and values are represented
+      // in int8
       int8_t data[2];
       memcpy(&data, &d, 2);
 
@@ -1520,7 +1529,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v.m[0][0] = static_cast<double>(data[0]);
       v.m[1][1] = static_cast<double>(data[1]);
 
-      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << "\n";
+      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1]
+                << "\n";
 
       value->SetMatrix2d(v);
 
@@ -1529,7 +1539,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_MATRIX3D) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      // Matrix contains diagnonal components only, and values are represented in int8
+      // Matrix contains diagnonal components only, and values are represented
+      // in int8
       int8_t data[3];
       memcpy(&data, &d, 3);
 
@@ -1539,7 +1550,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v.m[1][1] = static_cast<double>(data[1]);
       v.m[2][2] = static_cast<double>(data[2]);
 
-      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", " << data[2] << "\n";
+      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", "
+                << data[2] << "\n";
 
       value->SetMatrix3d(v);
 
@@ -1548,7 +1560,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_MATRIX4D) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      // Matrix contains diagnonal components only, and values are represented in int8
+      // Matrix contains diagnonal components only, and values are represented
+      // in int8
       int8_t data[4];
       memcpy(&data, &d, 4);
 
@@ -1559,7 +1572,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v.m[2][2] = static_cast<double>(data[2]);
       v.m[3][3] = static_cast<double>(data[3]);
 
-      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", " << data[2] << ", " << data[3] << "\n";
+      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", "
+                << data[2] << ", " << data[3] << "\n";
 
       value->SetMatrix4d(v);
 
@@ -1599,19 +1613,19 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
         return false;
       }
 
-
       std::vector<std::string> tokens(n);
 
       for (size_t i = 0; i < n; i++) {
-        std::cout << "Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value << ")\n";
+        std::cout << "Token[" << i << "] = " << GetToken(v[i]) << " ("
+                  << v[i].value << ")\n";
         tokens[i] = GetToken(v[i]);
       }
 
       value->SetTokenArray(tokens);
 
       return true;
-
-    } if (ty.id == VALUE_TYPE_INT) {
+    }
+    if (ty.id == VALUE_TYPE_INT) {
       assert(rep.IsArray());
 
       std::vector<int32_t> v;
@@ -1655,7 +1669,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
         }
 
         for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Vec2f[" << i << "] = " << v[i][0] << ", " << v[i][1] << "\n";
+          std::cout << "Vec2f[" << i << "] = " << v[i][0] << ", " << v[i][1]
+                    << "\n";
         }
 
         value->SetVec2fArray(v.data(), v.size());
@@ -1692,7 +1707,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
         }
 
         for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Vec3f[" << i << "] = " << v[i][0] << ", " << v[i][1] << ", " << v[i][2] << "\n";
+          std::cout << "Vec3f[" << i << "] = " << v[i][0] << ", " << v[i][1]
+                    << ", " << v[i][2] << "\n";
         }
         value->SetVec3fArray(v.data(), v.size());
 
@@ -1771,8 +1787,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       std::vector<std::string> tokens(indices.size());
       for (size_t i = 0; i < indices.size(); i++) {
         tokens[i] = GetToken(indices[i]);
-        std::cout << "tokenVector[" << i << "] = " << tokens[i] << ", (" << int(indices[i].value)
-                  << ")\n";
+        std::cout << "tokenVector[" << i << "] = " << tokens[i] << ", ("
+                  << int(indices[i].value) << ")\n";
       }
 
       value->SetTokenArray(tokens);
@@ -1790,7 +1806,6 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
         return true;
       } else {
-      
         assert(!rep.IsCompressed());
 
         // ???
@@ -1813,7 +1828,6 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
         return true;
       } else {
-      
         assert(!rep.IsCompressed());
 
         // ???
@@ -1833,12 +1847,10 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
           std::cout << "Double[" << i << "] = " << v[i] << "\n";
         }
 
-
         value->SetDoubleArray(v.data(), v.size());
 
         return true;
       } else {
-      
         assert(!rep.IsCompressed());
 
         double v;
@@ -1920,7 +1932,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_MATRIX4D) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      static_assert(sizeof(Matrix4d) == (8*16), "");
+      static_assert(sizeof(Matrix4d) == (8 * 16), "");
 
       Matrix4d v;
       if (!_sr->read(sizeof(Matrix4d), sizeof(Matrix4d),
@@ -2827,6 +2839,15 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
                         const USDLoadOptions &options) {
   bool swap_endian = false;  // @FIXME
 
+  if (length > options.max_memory_limit) {
+    if (err) {
+      (*err) += "USDZ data is too large(exceeds memory limit " +
+                std::to_string(options.max_memory_limit) + " [mb]).\n";
+    }
+
+    return false;
+  }
+
   StreamReader sr(addr, length, swap_endian);
 
   Parser parser(&sr);
@@ -2933,6 +2954,15 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *warn,
             "File size too short. Looks like this file is not a USDC : \"" +
             filename + "\"\n";
       }
+      return false;
+    }
+
+    if (sz > options.max_memory_limit) {
+      if (err) {
+        (*err) += "USDZ file is too large(exceeds memory limit " +
+                  std::to_string(options.max_memory_limit) + " [mb]).\n";
+      }
+
       return false;
     }
 
