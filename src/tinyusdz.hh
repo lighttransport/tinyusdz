@@ -1218,7 +1218,7 @@ struct USDLoadOptions
 {
   // Set the maximum memory limit advisorily(including image data).
   // This feature would be helpful if you want to load USDZ model in mobile device.
-  int32_t max_memory_limit{10000}; // in [mb] Default 10GB
+  int32_t max_memory_limit_in_mb{10000}; // in [mb] Default 10GB
 
 };
 

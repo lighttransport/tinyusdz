@@ -2839,10 +2839,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
                         const USDLoadOptions &options) {
   bool swap_endian = false;  // @FIXME
 
-  if (length > options.max_memory_limit) {
+  if (length > (1024 * options.max_memory_limit_in_mb)) {
     if (err) {
       (*err) += "USDZ data is too large(exceeds memory limit " +
-                std::to_string(options.max_memory_limit) + " [mb]).\n";
+                std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
     }
 
     return false;
@@ -2957,10 +2957,10 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *warn,
       return false;
     }
 
-    if (sz > options.max_memory_limit) {
+    if (sz > (1024 * options.max_memory_limit_in_mb)) {
       if (err) {
         (*err) += "USDZ file is too large(exceeds memory limit " +
-                  std::to_string(options.max_memory_limit) + " [mb]).\n";
+                  std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
       }
 
       return false;
