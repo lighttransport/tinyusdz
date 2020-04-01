@@ -71,7 +71,7 @@ using Vec4i = std::array<int32_t, 4>;
 using Vec3i = std::array<int32_t, 3>;
 using Vec2i = std::array<int32_t, 2>;
 
-// Use uint16_t for storage class.
+// Use uint16_t for storage of half type.
 // Need to decode/encode value through half converter functions
 using Vec4h = std::array<uint16_t, 4>;
 using Vec3h = std::array<uint16_t, 3>;
@@ -258,7 +258,7 @@ struct ListOpHeader {
 };
 
 ///
-/// We don't need performance and for USDZ, so use naiive implementation
+/// We don't need the performance for USDZ, so use naiive implementation
 /// to represent Path.
 /// Path is something like Unix path, delimited by `/`, ':' and '.'
 ///
@@ -1256,6 +1256,10 @@ struct USDLoadOptions
   /// -1 = use # of system threads(CPU cores/threads).
   ///
   int num_threads{-1};
+
+  // Set the maximum memory limit advisorily(including image data).
+  // This feature would be helpful if you want to load USDZ model in mobile device.
+  int32_t max_memory_limit_in_mb{10000}; // in [mb] Default 10GB
 
 };
 

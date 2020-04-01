@@ -666,6 +666,11 @@ class Parser {
 
   std::string GetError() { return _err; }
 
+  // Approximated memory usage in [mb]
+  size_t GetMemoryUsage() const {
+    return memory_used / (1024 * 1024);
+  }
+
  private:
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
@@ -673,6 +678,9 @@ class Parser {
   std::string _err;
 
   int _num_threads{1};
+
+  // Tracks the memory used(In advisorily manner since counting memory usage is done by manually, so not all memory consumption could be tracked)
+  size_t memory_used{0}; // in bytes.
 
   // Header(bootstrap)
   uint8_t _version[3] = {0, 0, 0};
@@ -2854,6 +2862,15 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
                         const USDLoadOptions &options) {
   bool swap_endian = false;  // @FIXME
 
+  if (length > (1024 * options.max_memory_limit_in_mb)) {
+    if (err) {
+      (*err) += "USDZ data is too large(exceeds memory limit " +
+                std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
+    }
+
+    return false;
+  }
+
   StreamReader sr(addr, length, swap_endian);
 
   Parser parser(&sr, options.num_threads);
@@ -2960,6 +2977,15 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *warn,
             "File size too short. Looks like this file is not a USDC : \"" +
             filename + "\"\n";
       }
+      return false;
+    }
+
+    if (sz > (1024 * options.max_memory_limit_in_mb)) {
+      if (err) {
+        (*err) += "USDZ file is too large(exceeds memory limit " +
+                  std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
+      }
+
       return false;
     }
 
