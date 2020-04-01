@@ -1,6 +1,6 @@
 # Tiny USDZ loader
 
-tinyusdz is dependency-free(depends only on STL. Yes, you don't need USD library!) USDZ loader library written in C++11
+`TinyUSDZ` is dependency-free(depends only on C++ STL. Yes, you don't need USD library!) USDZ loader library written in C++11.
 
 ## Requirements
 
@@ -13,7 +13,13 @@ USDZ contains usdc(binary) and resources(e.g. image file)
 
 ## Build
 
+### Integrate to your app
+
+Simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
+
 ### Meson
+
+Meson build is provided for testing compilation.
 
 ```
 $ meson builddir
@@ -21,12 +27,19 @@ $ cd builddir
 $ ninja
 ```
 
+###
+
 ### Build options
 
-* TINYUSDZ_USE_SYSTEM_LIBZ : Use zlib installed on the system instead of miniz
+* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
 
 ## TODO
 
+* [ ] Android example
+* [ ] CPU raytracer viewer
+* [ ] Viewer with Vulkan API.
+* [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
+* [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
 * [ ] USDZ saver
 * [ ] Support Nested USDZ
 * [ ] UDIM texture support
@@ -37,11 +50,11 @@ See `tests/fuzzer/`
 
 ## License
 
-MIT license
+TinyUSDZ is licensed under MIT license.
 
 ### Third party licenses
 
-* miniz : public domain.
 * USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
 * lz4 : BSD-2 license. http://www.lz4.org
 * cnpy(uncompressed ZIP decode/encode) : MIT license https://github.com/rogersce/cnpy
+

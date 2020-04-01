@@ -1080,6 +1080,7 @@ struct GeomMesh
 
 //
 // Similar to Maya's ShadingGroup
+//
 struct Material
 {
   std::string name;
@@ -1200,31 +1201,69 @@ struct Group
   Purpose purpose{PurposeDefault};
 };
 
+enum NodeType {
+  NODE_TYPE_NULL = 0,
+  NODE_TYPE_XFORM,
+  NODE_TYPE_GROUP,
+  NODE_TYPE_GEOM_MESH,
+  NODE_TYPE_MATERIAL,
+  NODE_TYPE_SHADER,
+  NODE_TYPE_CUSTOM,   // Uer defined custom node
+
+};
+
+struct Node
+{
+  std::string name;
+
+  NodeType type{NODE_TYPE_NULL};
+
+  //
+  // index to a scene object.
+  // For example, Lookup `xforms[node_idx]` When node type is XFORM
+  //
+  int64_t index{-1}; 
+
+  int64_t parent; // parent node index. Example: `nodes[parent]`  
+  std::vector<int64_t> children; // child node indices.
+
+};
 
 struct Scene
 {
   std::string name; // Scene name
   int64_t root_node{-1}; // index to `xforms`(root Xform node)
 
+  std::vector<Node> nodes; // Node hierarchies
+
+  //
+  // Scene objects
+  //
   std::vector<Xform> xforms;
   std::vector<GeomMesh> geom_meshes;
   std::vector<Material> materials;
   std::vector<PreviewSurface> shaders; // TODO(syoyo): Support othre shaders
   std::vector<Group> groups;
+
+  // TODO(syoyo): User defined custom node.
   
 };
 
 struct USDLoadOptions
 {
-
-
-};
-
-struct USDWriteOptions
-{
-
+  ///
+  /// Set the number of threads to use when parsing USD scene.
+  /// -1 = use # of system threads(CPU cores/threads).
+  ///
+  int num_threads{-1};
 
 };
+
+//struct USDWriteOptions
+//{
+//
+//
+//};
 
 ///
 /// Load USDZ(zip) from a file.
