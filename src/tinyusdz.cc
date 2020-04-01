@@ -6,9 +6,9 @@
 #include <tuple>
 #include <vector>
 
-#include <thread>
 #include <atomic>
 #include <chrono>
+#include <thread>
 
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -327,11 +327,6 @@ class Node {
   Path _path;  // local path
 };
 
-class Scene {
- public:
-  std::vector<Node> _nodes;
-};
-
 // -- from USD ----------------------------------------------------------------
 
 //
@@ -531,7 +526,6 @@ class Parser {
 
     // Limit to 1024 threads.
     _num_threads = std::min(1024, num_threads);
-
   }
 
   bool ReadBootStrap();
@@ -667,9 +661,7 @@ class Parser {
   std::string GetError() { return _err; }
 
   // Approximated memory usage in [mb]
-  size_t GetMemoryUsage() const {
-    return memory_used / (1024 * 1024);
-  }
+  size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
 
  private:
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
@@ -679,8 +671,9 @@ class Parser {
 
   int _num_threads{1};
 
-  // Tracks the memory used(In advisorily manner since counting memory usage is done by manually, so not all memory consumption could be tracked)
-  size_t memory_used{0}; // in bytes.
+  // Tracks the memory used(In advisorily manner since counting memory usage is
+  // done by manually, so not all memory consumption could be tracked)
+  size_t memory_used{0};  // in bytes.
 
   // Header(bootstrap)
   uint8_t _version[3] = {0, 0, 0};
@@ -721,7 +714,7 @@ class Parser {
   //
   bool _ReadIndex(Index *i);
 
-  //bool _ReadToken(std::string *s);
+  // bool _ReadToken(std::string *s);
   bool _ReadString(std::string *s);
 
   bool _ReadValueRep(ValueRep *rep);
@@ -2857,7 +2850,7 @@ bool Parser::ReadTOC() {
 
 }  // namespace
 
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   bool swap_endian = false;  // @FIXME
@@ -2947,8 +2940,9 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   return true;
 }
 
-bool LoadUSDCFromFile(const std::string &filename, std::string *warn,
-                      std::string *err, const USDLoadOptions &options) {
+bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options) {
   std::vector<uint8_t> data;
   {
     std::ifstream ifs(filename.c_str(), std::ifstream::binary);
@@ -2996,7 +2990,7 @@ bool LoadUSDCFromFile(const std::string &filename, std::string *warn,
              static_cast<std::streamsize>(sz));
   }
 
-  return LoadUSDCFromMemory(data.data(), data.size(), warn, err, options);
+  return LoadUSDCFromMemory(data.data(), data.size(), scene, warn, err, options);
 }
 
 namespace {
@@ -3019,8 +3013,9 @@ static std::string str_tolower(std::string s) {
 
 }  // namespace
 
-bool LoadUSDZFromFile(const std::string &filename, std::string *warn,
-                      std::string *err, const USDLoadOptions &options) {
+bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options) {
   // <filename, byte_begin, byte_end>
   std::vector<std::tuple<std::string, size_t, size_t>> assets;
 
@@ -3090,7 +3085,7 @@ bool LoadUSDZFromFile(const std::string &filename, std::string *warn,
 
     offset += name_len;
 
-    std::cout << "varname = " << varname << "\n";
+    // std::cout << "varname = " << varname << "\n";
 
     // read in the extra field
     uint16_t extra_field_len = *(uint16_t *)&local_header[28];
@@ -3165,7 +3160,7 @@ bool LoadUSDZFromFile(const std::string &filename, std::string *warn,
     const size_t end_addr = std::get<2>(assets[usdc_index]);
     const size_t usdc_size = end_addr - start_addr;
     const uint8_t *usdc_addr = &data[start_addr];
-    bool ret = LoadUSDCFromMemory(usdc_addr, usdc_size, warn, err, options);
+    bool ret = LoadUSDCFromMemory(usdc_addr, usdc_size, scene, warn, err, options);
 
     if (!ret) {
       if (err) {

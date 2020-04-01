@@ -1273,38 +1273,41 @@ struct USDLoadOptions
 /// Load USDZ(zip) from a file.
 ///
 /// @param[in] filename USDZ filename
+/// @param[out] scene USD scene.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDZFromFile(const std::string &filename, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
+bool LoadUSDZFromFile(const std::string &filename, Scene *scene, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
 
 ///
 /// Load USDC(binary) from a file.
 ///
 /// @param[in] filename USDC filename
+/// @param[out] scene USD scene.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromFile(const std::string &filename, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
+bool LoadUSDCFromFile(const std::string &filename, Scene *scene, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
 
 ///
 /// Load USDC(binary) from a memory.
 ///
 /// @param[in] addr Memory address of USDC data
 /// @param[in] length Byte length of USDC data
+/// @param[out] scene USD scene.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
 
 #if 0 // TODO
 ///

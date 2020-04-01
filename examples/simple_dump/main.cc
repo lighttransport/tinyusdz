@@ -20,6 +20,11 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
+static void Dump()
+{
+
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Need input.usdz\n" << std::endl;
@@ -32,8 +37,10 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
+  tinyusdz::Scene scene;
+
   if (ext.compare("usdz") == 0) {
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &warn, &err);
+    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
       return EXIT_FAILURE;
@@ -48,7 +55,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &warn, &err);
+    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
       return EXIT_FAILURE;
