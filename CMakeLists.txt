@@ -8,6 +8,7 @@ project(${BUILD_TARGET} CXX)
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
+option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
 
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -63,6 +64,10 @@ target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS}
 IF (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set_source_files_properties(${TINYUSDZ_SOURCES} PROPERTIES COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation")
 ENDIF ()
+
+if (TINYUSDZ_BUILD_EXAMPLES)
+  add_subdirectory(examples/simple_dump)
+endif (TINYUSDZ_BUILD_EXAMPLES)
 
 if (TINYUSDZ_BUILD_TESTS)
 

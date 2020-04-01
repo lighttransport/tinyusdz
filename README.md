@@ -15,7 +15,24 @@ USDZ contains usdc(binary) and resources(e.g. image file)
 
 ### Integrate to your app
 
-Simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
+Recomended way is simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
+
+### CMake
+
+cmake build is still provided, but not recommended
+
+```
+$ mkdir build
+$ cd build
+$ cmake ..
+$ make
+```
+
+#### Build options
+
+* `TINYUSDZ_BUILD_TESTS` : Build tests
+* `TINYUSDZ_BUILD_EXAMPLES` : Build examples(note that not all examples in `examples` folder are built)
+* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
 
 ### Meson
 
@@ -27,11 +44,10 @@ $ cd builddir
 $ ninja
 ```
 
-###
+### Examples
 
-### Build options
+See `examples` directory.
 
-* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
 
 ## TODO
 
