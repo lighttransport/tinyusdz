@@ -9,6 +9,7 @@ project(${BUILD_TARGET} CXX)
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
+option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. Set `osd_DIR` to specify the path to OpenSubdiv)" OFF)
 
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -54,11 +55,47 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
   )
 
+if (TINYUSDZ_WITH_OPENSUBDIV)
+
+  # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
+  function ( ADD_OSD_LIB )
+
+    set(NO_TUTORIALS ON CACHE INTERNAL "" FORCE)
+    set(NO_EXAMPLES ON CACHE INTERNAL "" FORCE)
+    set(NO_REGRESSION ON CACHE INTERNAL "" FORCE)
+    set(NO_DOC ON CACHE INTERNAL "" FORCE)
+    set(NO_OMP ON CACHE INTERNAL "" FORCE)
+    set(NO_TBB ON CACHE INTERNAL "" FORCE)
+    set(NO_CUDA ON CACHE INTERNAL "" FORCE)
+    set(NO_OPENCL ON CACHE INTERNAL "" FORCE)
+    set(NO_OPENGL ON CACHE INTERNAL "" FORCE)
+    set(NO_TESTS ON CACHE INTERNAL "" FORCE)
+    set(NO_GLTESTS ON CACHE INTERNAL "" FORCE)
+    set(NO_GLFW ON CACHE INTERNAL "" FORCE)
+    set(NO_PTEX ON CACHE INTERNAL "" FORCE)
+
+    # Only build libosdCPU.a
+    set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
+
+    add_subdirectory(${osd_DIR})
+
+  endfunction ()
+
+  ADD_OSD_LIB()
+  list(APPEND TINYUSDZ_EXT_LIBRARIES osd_static_cpu) 
+
+endif (TINYUSDZ_WITH_OPENSUBDIV)
+
 add_library(${BUILD_TARGET} ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
+
+if (TINYUSDZ_WITH_OPENSUBDIV)
+  target_include_directories(${BUILD_TARGET} PRIVATE ${osd_DIR})
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+endif (TINYUSDZ_WITH_OPENSUBDIV)
 
 # Increase warning level for clang.
 IF (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -80,7 +117,12 @@ if (TINYUSDZ_BUILD_TESTS)
 
   target_include_directories(${TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
                                                     ${PROJECT_SOURCE_DIR}/tests)
-  target_link_libraries(${TEST_TARGET} ${BUILD_TARGET})
+  target_link_libraries(${TEST_TARGET} PRIVATE ${BUILD_TARGET})
+
+  if (TINYUSDZ_WITH_OPENSUBDIV)
+    target_compile_definitions(${TEST_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+  endif (TINYUSDZ_WITH_OPENSUBDIV)
+
 endif (TINYUSDZ_BUILD_TESTS)
 
 # [VisualStudio]

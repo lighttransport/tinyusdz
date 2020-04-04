@@ -17,6 +17,10 @@ USDZ contains usdc(binary) and resources(e.g. image file)
 
 Recomended way is simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
 
+### Compiler defines
+
+* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv for subdivision surface(to get smooth mesh from USD(Z) primitive).
+
 ### CMake
 
 cmake build is still provided, but not recommended
@@ -28,11 +32,12 @@ $ cmake ..
 $ make
 ```
 
-#### Build options
+#### CMake build options
 
 * `TINYUSDZ_BUILD_TESTS` : Build tests
 * `TINYUSDZ_BUILD_EXAMPLES` : Build examples(note that not all examples in `examples` folder are built)
-* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
+* `TINYUSDZ_WITH_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
+  * `osd_DIR` to specify the path to OpenSubdiv repo(I recommend to use https://github.com/syoyo/OpenSubdiv-aarch64 )
 
 ### Meson
 

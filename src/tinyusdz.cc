@@ -15,6 +15,22 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
+#if defined(TINYUSDZ_USE_OPENSUBDIV)
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include <opensubdiv/far/primvarRefiner.h>
+#include <opensubdiv/far/topologyDescriptor.h>
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+#endif
+
 #include <iostream>  // dbg
 
 namespace tinyusdz {
