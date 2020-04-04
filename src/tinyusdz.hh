@@ -1237,7 +1237,7 @@ struct Scene
   std::vector<Node> nodes; // Node hierarchies
 
   //
-  // Scene objects
+  // glTF-like scene objects
   //
   std::vector<Xform> xforms;
   std::vector<GeomMesh> geom_meshes;

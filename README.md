@@ -57,10 +57,10 @@ $ ninja
 
 See `examples` directory.
 
-
 ## TODO
 
 * [ ] Android example
+* [ ] iOS example?
 * [ ] CPU raytracer viewer
 * [ ] Viewer with Vulkan API.
 * [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
@@ -68,6 +68,7 @@ See `examples` directory.
 * [ ] USDZ saver
 * [ ] Support Nested USDZ
 * [ ] UDIM texture support
+* [ ] Support big endian
 
 ## Fuzzing test
 

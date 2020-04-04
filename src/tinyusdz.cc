@@ -17,17 +17,7 @@
 
 #if defined(TINYUSDZ_USE_OPENSUBDIV)
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include <opensubdiv/far/primvarRefiner.h>
-#include <opensubdiv/far/topologyDescriptor.h>
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
+#include "subdiv.hh"
 
 #endif
 
@@ -321,14 +311,21 @@ std::string GetVariabilityString(Variability ty) {
 
 ///
 /// Node represents scene graph node.
+/// This does not contain leaf node inormation.
 ///
 class Node {
  public:
+  Node() : _parent(-2) {}
+
   Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
 
   const int64_t GetParent() const { return _parent; }
 
-  const std::vector<int64_t> &GetChildren() const { return _children; }
+  const std::vector<size_t> &GetChildren() const { return _children; }
+
+  void AddChildren(size_t node_index) {
+    _children.push_back(node_index);
+  }
 
   ///
   /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
@@ -337,8 +334,8 @@ class Node {
   std::string GetFullPath() const;
 
  private:
-  int64_t _parent;                 // -1 = this node is the root node.
-  std::vector<int64_t> _children;  // index to child nodes.
+  int64_t _parent;                 // -1 = this node is the root node. -2 = invalid or leaf node
+  std::vector<size_t> _children;  // index to child nodes.
 
   Path _path;  // local path
 };
@@ -679,6 +676,14 @@ class Parser {
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
 
+  //
+  // APIs valid after successfull Parse()
+  //
+
+  size_t NumPaths() const {
+    return _paths.size();
+  }
+
  private:
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
@@ -713,17 +718,22 @@ class Parser {
   std::vector<Spec> _specs;
   std::vector<Path> _paths;
 
-  std::vector<int64_t> _node_hierarchy;
+  std::vector<Node> _nodes; // [0] = root node
 
-  //
-  // Also construct node hierarchy.
-  //
   bool _BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
       std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
 
   bool _UnpackValueRep(const ValueRep &rep, Value *value);
+
+  //
+  // Construct node hierarchy.
+  //
+  bool _BuildNodeHierarchy(
+      std::vector<uint32_t> const &pathIndexes,
+      std::vector<int32_t> const &elementTokenIndexes,
+      std::vector<int32_t> const &jumps, size_t curIndex, size_t parentNodeIndex);
 
   //
   // Reader util functions
@@ -2038,6 +2048,9 @@ bool Parser::_BuildDecompressedPathsImpl(
   do {
     auto thisIndex = curIndex++;
     if (parentPath.IsEmpty()) {
+      // root node.
+      // Assume single root node in the scene.
+      std::cout << "paths[" << pathIndexes[thisIndex] << "] is parent. name = " << parentPath.name() << "\n";
       parentPath = Path::AbsoluteRootPath();
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
@@ -2067,7 +2080,7 @@ bool Parser::_BuildDecompressedPathsImpl(
 
     if (hasChild) {
       if (hasSibling) {
-        // TODO(syoyo): parallel processing
+        // NOTE(syoyo): This recursive call can be parallelized
         auto siblingIndex = thisIndex + jumps[thisIndex];
         if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes,
                                          jumps, siblingIndex, parentPath)) {
@@ -2076,6 +2089,57 @@ bool Parser::_BuildDecompressedPathsImpl(
       }
       // Have a child (may have also had a sibling). Reset parent path.
       parentPath = _paths[pathIndexes[thisIndex]];
+    }
+    // If we had only a sibling, we just continue since the parent path is
+    // unchanged and the next thing in the reader stream is the sibling's
+    // header.
+  } while (hasChild || hasSibling);
+
+  return true;
+}
+
+// TODO(syoyo): Refactor
+bool Parser::_BuildNodeHierarchy(
+    std::vector<uint32_t> const &pathIndexes,
+    std::vector<int32_t> const &elementTokenIndexes,
+    std::vector<int32_t> const &jumps, size_t curIndex, size_t parentNodeIndex) {
+
+  bool hasChild = false, hasSibling = false;
+  do {
+    auto thisIndex = curIndex++;
+    if (parentNodeIndex == -1) {
+      // root node.
+      // Assume single root node in the scene.
+      assert(thisIndex == 0);
+      parentNodeIndex = thisIndex;
+
+    } else {
+
+      Node child(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
+
+      if (parentNodeIndex >= _nodes.size()) {
+        return false;
+      }
+
+      std::cout << "parent[" << parentNodeIndex << "].child = " << thisIndex << "\n";
+
+      _nodes[parentNodeIndex].AddChildren(thisIndex);
+
+    }
+
+    hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
+    hasSibling = (jumps[thisIndex] >= 0);
+
+    if (hasChild) {
+      if (hasSibling) {
+        auto siblingIndex = thisIndex + jumps[thisIndex];
+        if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes,
+                                         jumps, siblingIndex, parentNodeIndex)) {
+          return false;
+        }
+      }
+      // Have a child (may have also had a sibling). Reset parent node index
+      parentNodeIndex = thisIndex;
     }
     // If we had only a sibling, we just continue since the parent path is
     // unchanged and the next thing in the reader stream is the sibling's
@@ -2196,16 +2260,21 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
 
   _paths.resize(numPaths);
 
-  _node_hierarchy.resize(numPaths);
+  _nodes.resize(numPaths);
 
   // Now build the paths.
-  if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, 0,
+  if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, /* curIndex */0,
                                    Path())) {
     return false;
   }
 
-  for (uint32_t item : pathIndexes) {
-    std::cout << "pathIndexes " << item << "\n";
+  // Now build node hierarchy.
+  if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, /* curIndex */0, /* parent node index */-1)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < pathIndexes.size(); i++) {
+    std::cout << "pathIndexes[" << i << "] = " << pathIndexes[i] << "\n";
   }
 
   for (uint32_t item : elementTokenIndexes) {
@@ -2547,12 +2616,12 @@ bool Parser::BuildLiveFieldSets() {
 
     pairs.resize(fsEnd - fsBegin);
     std::cout << "range size = " << (fsEnd - fsBegin) << "\n";
+    // TODO(syoyo): Parallelize.
     for (size_t i = 0; fsBegin != fsEnd; ++fsBegin, ++i) {
       assert((fsBegin->value >= 0) && (fsBegin->value < _fields.size()));
       std::cout << "fieldIndex = " << (fsBegin->value) << "\n";
       auto const &field = _fields[fsBegin->value];
       pairs[i].first = GetToken(field.token_index);
-      // TODO(syoyo) Unpack
       if (!_UnpackValueRep(field.value_rep, &pairs[i].second)) {
         std::cerr << "Failed to unpack ValueRep : "
                   << field.value_rep.GetStringRepr() << "\n";
@@ -2951,6 +3020,13 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
     if (err) {
       (*err) = parser.GetError();
     }
+  }
+
+  std::cout << "num_paths: " << parser.NumPaths() << "\n";
+
+  for (size_t i = 0; i < parser.NumPaths(); i++) {
+    Path path = parser.GetPath(Index(i));
+    std::cout << "path[" << i << "].name = " << path.name() << "\n";
   }
 
   return true;

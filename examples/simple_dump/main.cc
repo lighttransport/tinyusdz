@@ -20,8 +20,18 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
-static void Dump()
+static void DumpScene(const tinyusdz::Scene &scene)
 {
+
+  std::cout << "Scene.name: " << scene.name << "\n";
+  std::cout << "Scene.root_node: " << scene.root_node << "\n";
+
+  std::cout << "# of nodes: " << scene.nodes.size() << "\n";
+  std::cout << "# of xforms: " << scene.xforms.size() << "\n";
+  std::cout << "# of geom_meshes: " << scene.geom_meshes.size() << "\n";
+  std::cout << "# of materials: " << scene.geom_meshes.size() << "\n";
+  std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
+  std::cout << "# of groups: " << scene.groups.size() << "\n";
 
 }
 
@@ -70,6 +80,8 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   }
+
+  DumpScene(scene);
 
   return EXIT_SUCCESS;
 }
