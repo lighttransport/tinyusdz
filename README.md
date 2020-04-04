@@ -39,6 +39,10 @@ $ make
 * `TINYUSDZ_WITH_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
   * `osd_DIR` to specify the path to OpenSubdiv repo(I recommend to use https://github.com/syoyo/OpenSubdiv-aarch64 )
 
+#### Build with OpenSubdiv
+
+Recommended way is to run `scripts/clone_osd.sh` to clone OpenSubdiv-aarch64 repo to `deps/OpenSudiv`, then run `scripts/bootstrap-cmake-linux-with-osd.sh` .
+
 ### Meson
 
 Meson build is provided for testing compilation.
