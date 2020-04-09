@@ -10,6 +10,8 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. Set `osd_DIR` to specify the path to OpenSubdiv)" OFF)
+option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
+option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -55,6 +57,12 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
   )
 
+if (TINYUSDZ_WITH_EXR)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/tinyexr.cc)
+endif (TINYUSDZ_WITH_EXR)
+
+
+
 if (TINYUSDZ_WITH_OPENSUBDIV)
 
   # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
@@ -94,6 +102,14 @@ add_sanitizers(${BUILD_TARGET})
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
 
+if (TINYUSDZ_WITH_EXR)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_SUPPORT_EXR")
+endif (TINYUSDZ_WITH_EXR)
+
+if (TINYUSDZ_WITH_AUDIO)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_SUPPORT_AUDIO")
+endif (TINYUSDZ_WITH_AUDIO)
+
 if (TINYUSDZ_WITH_OPENSUBDIV)
   target_include_directories(${BUILD_TARGET} PRIVATE ${osd_DIR})
   target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
@@ -101,7 +117,7 @@ endif (TINYUSDZ_WITH_OPENSUBDIV)
 
 # Increase warning level for clang.
 IF (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set_source_files_properties(${TINYUSDZ_SOURCES} PROPERTIES COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation")
+  set_source_files_properties(${TINYUSDZ_SOURCES} PROPERTIES COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function")
 ENDIF ()
 
 if (TINYUSDZ_BUILD_EXAMPLES)

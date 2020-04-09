@@ -1,24 +1,62 @@
+#include "tinyusdz.hh"
+
 #include <algorithm>
+#include <atomic>
 #include <cassert>
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <thread>
 #include <tuple>
 #include <vector>
-
-#include <atomic>
-#include <chrono>
-#include <thread>
 
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "stream-reader.hh"
-#include "tinyusdz.hh"
+
+#if defined(TINYUSDZ_SUPPORT_AUDIO)
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#define DR_WAV_IMPLEMENTATION
+#include "dr_wav.h"
+
+#define DR_MP3_IMPLEMENTATION
+#include "dr_mp3.h"
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#endif  // TINYUSDZ_SUPPORT_AUDIO
 
 #if defined(TINYUSDZ_USE_OPENSUBDIV)
 
 #include "subdiv.hh"
 
+#endif
+
+#if defined(TINYUSDZ_SUPPORT_EXR)
+#include "tinyexr.h"
+#endif
+
+#ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#endif
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "stb_image.h"
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
 #endif
 
 #include <iostream>  // dbg
@@ -98,6 +136,10 @@ float to_float(uint16_t h) {
   return half_to_float(f);
 }
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
 const ValueType &GetValueType(int32_t type_id) {
   static std::map<uint32_t, ValueType> table;
   std::cout << "type_id = " << type_id << "\n";
@@ -115,93 +157,101 @@ const ValueType &GetValueType(int32_t type_id) {
     table[TYPE_ID] = ValueType(NAME_STR, TYPE_ID, SUPPORTS_ARRAY); \
   }
 
-    ADD_VALUE_TYPE("InvaldOrUnsupported", 0, false);
+    ADD_VALUE_TYPE("InvaldOrUnsupported", 0, false)
 
     // Array types.
-    ADD_VALUE_TYPE("Bool", VALUE_TYPE_BOOL, true);
+    ADD_VALUE_TYPE("Bool", VALUE_TYPE_BOOL, true)
 
-    ADD_VALUE_TYPE("UChar", VALUE_TYPE_UCHAR, true);
-    ADD_VALUE_TYPE("Int", VALUE_TYPE_INT, true);
-    ADD_VALUE_TYPE("UInt", VALUE_TYPE_UINT, true);
-    ADD_VALUE_TYPE("Int64", VALUE_TYPE_INT64, true);
-    ADD_VALUE_TYPE("UInt64", VALUE_TYPE_UINT64, true);
+    ADD_VALUE_TYPE("UChar", VALUE_TYPE_UCHAR, true)
+    ADD_VALUE_TYPE("Int", VALUE_TYPE_INT, true)
+    ADD_VALUE_TYPE("UInt", VALUE_TYPE_UINT, true)
+    ADD_VALUE_TYPE("Int64", VALUE_TYPE_INT64, true)
+    ADD_VALUE_TYPE("UInt64", VALUE_TYPE_UINT64, true)
 
-    ADD_VALUE_TYPE("Half", VALUE_TYPE_HALF, true);
-    ADD_VALUE_TYPE("Float", VALUE_TYPE_FLOAT, true);
-    ADD_VALUE_TYPE("Double", VALUE_TYPE_DOUBLE, true);
+    ADD_VALUE_TYPE("Half", VALUE_TYPE_HALF, true)
+    ADD_VALUE_TYPE("Float", VALUE_TYPE_FLOAT, true)
+    ADD_VALUE_TYPE("Double", VALUE_TYPE_DOUBLE, true)
 
-    ADD_VALUE_TYPE("String", VALUE_TYPE_STRING, true);
-    ADD_VALUE_TYPE("Token", VALUE_TYPE_TOKEN, true);
-    ADD_VALUE_TYPE("AssetPath", VALUE_TYPE_ASSET_PATH, true);
+    ADD_VALUE_TYPE("String", VALUE_TYPE_STRING, true)
+    ADD_VALUE_TYPE("Token", VALUE_TYPE_TOKEN, true)
+    ADD_VALUE_TYPE("AssetPath", VALUE_TYPE_ASSET_PATH, true)
 
-    ADD_VALUE_TYPE("Quatd", VALUE_TYPE_QUATD, true);
-    ADD_VALUE_TYPE("Quatf", VALUE_TYPE_QUATF, true);
-    ADD_VALUE_TYPE("Quath", VALUE_TYPE_QUATH, true);
+    ADD_VALUE_TYPE("Quatd", VALUE_TYPE_QUATD, true)
+    ADD_VALUE_TYPE("Quatf", VALUE_TYPE_QUATF, true)
+    ADD_VALUE_TYPE("Quath", VALUE_TYPE_QUATH, true)
 
-    ADD_VALUE_TYPE("Vec2d", VALUE_TYPE_VEC2D, true);
-    ADD_VALUE_TYPE("Vec2f", VALUE_TYPE_VEC2F, true);
-    ADD_VALUE_TYPE("Vec2h", VALUE_TYPE_VEC2H, true);
-    ADD_VALUE_TYPE("Vec2i", VALUE_TYPE_VEC2I, true);
+    ADD_VALUE_TYPE("Vec2d", VALUE_TYPE_VEC2D, true)
+    ADD_VALUE_TYPE("Vec2f", VALUE_TYPE_VEC2F, true)
+    ADD_VALUE_TYPE("Vec2h", VALUE_TYPE_VEC2H, true)
+    ADD_VALUE_TYPE("Vec2i", VALUE_TYPE_VEC2I, true)
 
-    ADD_VALUE_TYPE("Vec3d", VALUE_TYPE_VEC3D, true);
-    ADD_VALUE_TYPE("Vec3f", VALUE_TYPE_VEC3F, true);
-    ADD_VALUE_TYPE("Vec3h", VALUE_TYPE_VEC3H, true);
-    ADD_VALUE_TYPE("Vec3i", VALUE_TYPE_VEC3I, true);
+    ADD_VALUE_TYPE("Vec3d", VALUE_TYPE_VEC3D, true)
+    ADD_VALUE_TYPE("Vec3f", VALUE_TYPE_VEC3F, true)
+    ADD_VALUE_TYPE("Vec3h", VALUE_TYPE_VEC3H, true)
+    ADD_VALUE_TYPE("Vec3i", VALUE_TYPE_VEC3I, true)
 
-    ADD_VALUE_TYPE("Vec4d", VALUE_TYPE_VEC4D, true);
-    ADD_VALUE_TYPE("Vec4f", VALUE_TYPE_VEC4F, true);
-    ADD_VALUE_TYPE("Vec4h", VALUE_TYPE_VEC4H, true);
-    ADD_VALUE_TYPE("Vec4i", VALUE_TYPE_VEC4I, true);
+    ADD_VALUE_TYPE("Vec4d", VALUE_TYPE_VEC4D, true)
+    ADD_VALUE_TYPE("Vec4f", VALUE_TYPE_VEC4F, true)
+    ADD_VALUE_TYPE("Vec4h", VALUE_TYPE_VEC4H, true)
+    ADD_VALUE_TYPE("Vec4i", VALUE_TYPE_VEC4I, true)
 
-    ADD_VALUE_TYPE("Matrix2d", VALUE_TYPE_MATRIX2D, true);
-    ADD_VALUE_TYPE("Matrix3d", VALUE_TYPE_MATRIX3D, true);
-    ADD_VALUE_TYPE("Matrix4d", VALUE_TYPE_MATRIX4D, true);
+    ADD_VALUE_TYPE("Matrix2d", VALUE_TYPE_MATRIX2D, true)
+    ADD_VALUE_TYPE("Matrix3d", VALUE_TYPE_MATRIX3D, true)
+    ADD_VALUE_TYPE("Matrix4d", VALUE_TYPE_MATRIX4D, true)
 
     // Non-array types.
     ADD_VALUE_TYPE("Dictionary", VALUE_TYPE_DICTIONARY,
-                   false);  // std::map<std::string, Value>
+                   false)  // std::map<std::string, Value>
 
-    ADD_VALUE_TYPE("TokenListOp", VALUE_TYPE_TOKEN_LIST_OP, false);
-    ADD_VALUE_TYPE("StringListOp", VALUE_TYPE_STRING_LIST_OP, false);
-    ADD_VALUE_TYPE("PathListOp", VALUE_TYPE_PATH_LIST_OP, false);
-    ADD_VALUE_TYPE("ReferenceListOp", VALUE_TYPE_REFERENCE_LIST_OP, false);
-    ADD_VALUE_TYPE("IntListOp", VALUE_TYPE_INT_LIST_OP, false);
-    ADD_VALUE_TYPE("Int64ListOp", VALUE_TYPE_INT64_LIST_OP, false);
-    ADD_VALUE_TYPE("UIntListOp", VALUE_TYPE_UINT_LIST_OP, false);
-    ADD_VALUE_TYPE("UInt64ListOp", VALUE_TYPE_UINT64_LIST_OP, false);
+    ADD_VALUE_TYPE("TokenListOp", VALUE_TYPE_TOKEN_LIST_OP, false)
+    ADD_VALUE_TYPE("StringListOp", VALUE_TYPE_STRING_LIST_OP, false)
+    ADD_VALUE_TYPE("PathListOp", VALUE_TYPE_PATH_LIST_OP, false)
+    ADD_VALUE_TYPE("ReferenceListOp", VALUE_TYPE_REFERENCE_LIST_OP, false)
+    ADD_VALUE_TYPE("IntListOp", VALUE_TYPE_INT_LIST_OP, false)
+    ADD_VALUE_TYPE("Int64ListOp", VALUE_TYPE_INT64_LIST_OP, false)
+    ADD_VALUE_TYPE("UIntListOp", VALUE_TYPE_UINT_LIST_OP, false)
+    ADD_VALUE_TYPE("UInt64ListOp", VALUE_TYPE_UINT64_LIST_OP, false)
 
-    ADD_VALUE_TYPE("PathVector", VALUE_TYPE_PATH_VECTOR, false);
-    ADD_VALUE_TYPE("TokenVector", VALUE_TYPE_TOKEN_VECTOR, false);
+    ADD_VALUE_TYPE("PathVector", VALUE_TYPE_PATH_VECTOR, false)
+    ADD_VALUE_TYPE("TokenVector", VALUE_TYPE_TOKEN_VECTOR, false)
 
-    ADD_VALUE_TYPE("Specifier", VALUE_TYPE_SPECIFIER, false);
-    ADD_VALUE_TYPE("Permission", VALUE_TYPE_PERMISSION, false);
-    ADD_VALUE_TYPE("Variability", VALUE_TYPE_VARIABILITY, false);
+    ADD_VALUE_TYPE("Specifier", VALUE_TYPE_SPECIFIER, false)
+    ADD_VALUE_TYPE("Permission", VALUE_TYPE_PERMISSION, false)
+    ADD_VALUE_TYPE("Variability", VALUE_TYPE_VARIABILITY, false)
 
     ADD_VALUE_TYPE("VariantSelectionMap", VALUE_TYPE_VARIANT_SELECTION_MAP,
-                   false);
-    ADD_VALUE_TYPE("TimeSamples", VALUE_TYPE_TIME_SAMPLES, false);
-    ADD_VALUE_TYPE("Payload", VALUE_TYPE_PAYLOAD, false);
-    ADD_VALUE_TYPE("DoubleVector", VALUE_TYPE_DOUBLE_VECTOR, false);
-    ADD_VALUE_TYPE("LayerOffsetVector", VALUE_TYPE_LAYER_OFFSET_VECTOR, false);
-    ADD_VALUE_TYPE("StringVector", VALUE_TYPE_STRING_VECTOR, false);
-    ADD_VALUE_TYPE("ValueBlock", VALUE_TYPE_VALUE_BLOCK, false);
-    ADD_VALUE_TYPE("Value", VALUE_TYPE_VALUE, false);
-    ADD_VALUE_TYPE("UnregisteredValue", VALUE_TYPE_UNREGISTERED_VALUE, false);
+                   false)
+    ADD_VALUE_TYPE("TimeSamples", VALUE_TYPE_TIME_SAMPLES, false)
+    ADD_VALUE_TYPE("Payload", VALUE_TYPE_PAYLOAD, false)
+    ADD_VALUE_TYPE("DoubleVector", VALUE_TYPE_DOUBLE_VECTOR, false)
+    ADD_VALUE_TYPE("LayerOffsetVector", VALUE_TYPE_LAYER_OFFSET_VECTOR, false)
+    ADD_VALUE_TYPE("StringVector", VALUE_TYPE_STRING_VECTOR, false)
+    ADD_VALUE_TYPE("ValueBlock", VALUE_TYPE_VALUE_BLOCK, false)
+    ADD_VALUE_TYPE("Value", VALUE_TYPE_VALUE, false)
+    ADD_VALUE_TYPE("UnregisteredValue", VALUE_TYPE_UNREGISTERED_VALUE, false)
     ADD_VALUE_TYPE("UnregisteredValueListOp",
-                   VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP, false);
-    ADD_VALUE_TYPE("PayloadListOp", VALUE_TYPE_PAYLOAD_LIST_OP, false);
-    ADD_VALUE_TYPE("TimeCode", VALUE_TYPE_TIME_CODE, true);
+                   VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP, false)
+    ADD_VALUE_TYPE("PayloadListOp", VALUE_TYPE_PAYLOAD_LIST_OP, false)
+    ADD_VALUE_TYPE("TimeCode", VALUE_TYPE_TIME_CODE, true)
   }
 #undef ADD_VALUE_TYPE
 
-  if (!table.count(type_id)) {
+  if (type_id < 0) {
+    std::cerr << "Unknonw type id: " << type_id << "\n";
+    return table.at(0);
+  }
+
+  if (!table.count(uint32_t(type_id))) {
     // Invalid or unsupported.
     std::cerr << "Unknonw type id: " << type_id << "\n";
     return table.at(0);
   }
 
-  return table.at(type_id);
+  return table.at(uint32_t(type_id));
 }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 std::string GetValueTypeRepr(int32_t type_id) {
   ValueType dty = GetValueType(type_id);
@@ -315,17 +365,16 @@ std::string GetVariabilityString(Variability ty) {
 ///
 class Node {
  public:
+  // -2 = initialize as invalid node
   Node() : _parent(-2) {}
 
   Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
 
-  const int64_t GetParent() const { return _parent; }
+  // int64_t GetParent() const { return _parent; }
 
   const std::vector<size_t> &GetChildren() const { return _children; }
 
-  void AddChildren(size_t node_index) {
-    _children.push_back(node_index);
-  }
+  void AddChildren(size_t node_index) { _children.push_back(node_index); }
 
   ///
   /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
@@ -333,8 +382,19 @@ class Node {
   ///
   std::string GetFullPath() const;
 
+  ///
+  /// Get local path
+  ///
+  std::string GetLocalPath() const { return _path.name(); }
+
+
+  const Path &GetPath() const {
+    return _path;
+  }
+
  private:
-  int64_t _parent;                 // -1 = this node is the root node. -2 = invalid or leaf node
+  int64_t
+      _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
   std::vector<size_t> _children;  // index to child nodes.
 
   Path _path;  // local path
@@ -369,8 +429,8 @@ class Node {
 // type-safety so we don't accidentally use one kind of index with the wrong
 // kind of table.
 struct Index {
-  Index() : value(~0) {}
-  explicit Index(uint32_t value) : value(value) {}
+  Index() : value(~0u) {}
+  explicit Index(uint32_t v) : value(v) {}
   bool operator==(const Index &other) const { return value == other.value; }
   bool operator!=(const Index &other) const { return !(*this == other); }
   bool operator<(const Index &other) const { return value < other.value; }
@@ -389,7 +449,7 @@ struct ValueRep {
 
   ValueRep() = default;
 
-  explicit constexpr ValueRep(uint64_t data) : data(data) {}
+  explicit constexpr ValueRep(uint64_t d) : data(d) {}
 
   constexpr ValueRep(int32_t t, bool isInlined, bool isArray, uint64_t payload)
       : data(_Combine(t, isInlined, isArray, payload)) {}
@@ -557,8 +617,8 @@ class Parser {
   ///
   bool ReadSection(Section *s);
 
-  std::string GetToken(Index token_index) {
-    if ((token_index.value >= 0) || (token_index.value <= _tokens.size())) {
+  const std::string GetToken(Index token_index) {
+    if (token_index.value <= _tokens.size()) {
       return _tokens[token_index.value];
     } else {
       _err += "Token index out of range: " + std::to_string(token_index.value) +
@@ -567,10 +627,17 @@ class Parser {
     }
   }
 
+  const std::string GetToken(Index token_index) const {
+    if (token_index.value <= _tokens.size()) {
+      return _tokens[token_index.value];
+    } else {
+      return std::string();
+    }
+  }
+
   // Get string from string index.
   std::string GetString(Index string_index) {
-    if ((string_index.value >= 0) ||
-        (string_index.value <= _string_indices.size())) {
+    if (string_index.value <= _string_indices.size()) {
       Index s_idx = _string_indices[string_index.value];
       return GetToken(s_idx);
     } else {
@@ -581,10 +648,10 @@ class Parser {
     }
   }
 
-  const bool HasField(const std::string &key) {
+  bool HasField(const std::string &key) const {
     // Simple linear search
     for (const auto &field : _fields) {
-      std::string field_name = GetToken(field.token_index);
+      const std::string field_name = GetToken(field.token_index);
       if (field_name.compare(key) == 0) {
         return true;
       }
@@ -592,8 +659,8 @@ class Parser {
     return false;
   }
 
-  const bool GetField(Index index, Field &&field) const {
-    if ((index.value >= 0) || (index.value <= _fields.size())) {
+  bool GetField(Index index, Field &&field) const {
+    if (index.value <= _fields.size()) {
       field = _fields[index.value];
       return true;
     } else {
@@ -602,7 +669,7 @@ class Parser {
   }
 
   std::string GetFieldString(Index index) {
-    if ((index.value >= 0) || (index.value <= _fields.size())) {
+    if (index.value <= _fields.size()) {
       // ok
     } else {
       return "#INVALID field index#";
@@ -616,7 +683,7 @@ class Parser {
   }
 
   std::string GetFieldSetString(Index index) {
-    if ((index.value >= 0) || (index.value <= _fieldset_indices.size())) {
+    if (index.value <= _fieldset_indices.size()) {
       // ok
     } else {
       return "#INVALID fieldset index#";
@@ -626,7 +693,7 @@ class Parser {
   }
 
   Path GetPath(Index index) {
-    if ((index.value >= 0) || (index.value <= _fields.size())) {
+    if (index.value <= _fields.size()) {
       // ok
     } else {
       // TODO(syoyo): Report error
@@ -639,7 +706,7 @@ class Parser {
   }
 
   std::string GetPathString(Index index) {
-    if ((index.value >= 0) || (index.value <= _fields.size())) {
+    if (index.value <= _fields.size()) {
       // ok
     } else {
       return "#INVALID path index#";
@@ -651,7 +718,7 @@ class Parser {
   }
 
   std::string GetSpecString(Index index) {
-    if ((index.value >= 0) || (index.value <= _fields.size())) {
+    if (index.value <= _fields.size()) {
       // ok
     } else {
       return "#INVALID spec index#";
@@ -669,9 +736,17 @@ class Parser {
 
   bool BuildLiveFieldSets();
 
+  ///
+  /// Reconstruct `Scene` object
+  ///
+  bool ReconstructScene(Scene *scene);
+  bool _ReconstructSceneRecursively(int parent_id, int level, Scene *scene);
+
   // TODO PrefetchStructuralSections
 
   std::string GetError() { return _err; }
+
+  std::string GetWarning() { return _warn; }
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
@@ -680,15 +755,14 @@ class Parser {
   // APIs valid after successfull Parse()
   //
 
-  size_t NumPaths() const {
-    return _paths.size();
-  }
+  size_t NumPaths() const { return _paths.size(); }
 
  private:
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
   const StreamReader *_sr = nullptr;
   std::string _err;
+  std::string _warn;
 
   int _num_threads{1};
 
@@ -718,7 +792,7 @@ class Parser {
   std::vector<Spec> _specs;
   std::vector<Path> _paths;
 
-  std::vector<Node> _nodes; // [0] = root node
+  std::vector<Node> _nodes;  // [0] = root node
 
   bool _BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
@@ -730,10 +804,10 @@ class Parser {
   //
   // Construct node hierarchy.
   //
-  bool _BuildNodeHierarchy(
-      std::vector<uint32_t> const &pathIndexes,
-      std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps, size_t curIndex, size_t parentNodeIndex);
+  bool _BuildNodeHierarchy(std::vector<uint32_t> const &pathIndexes,
+                           std::vector<int32_t> const &elementTokenIndexes,
+                           std::vector<int32_t> const &jumps, size_t curIndex,
+                           int64_t parentNodeIndex);
 
   //
   // Reader util functions
@@ -1627,7 +1701,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     }
   } else {
     // payload is the offset to data.
-    int64_t offset = rep.GetPayload();
+    uint64_t offset = rep.GetPayload();
     if (!_sr->seek_set(offset)) {
       std::cerr << "Invalid offset\n";
       return false;
@@ -2034,10 +2108,6 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       return false;
     }
   }
-
-  (void)value;
-
-  return false;
 }
 
 bool Parser::_BuildDecompressedPathsImpl(
@@ -2050,7 +2120,8 @@ bool Parser::_BuildDecompressedPathsImpl(
     if (parentPath.IsEmpty()) {
       // root node.
       // Assume single root node in the scene.
-      std::cout << "paths[" << pathIndexes[thisIndex] << "] is parent. name = " << parentPath.name() << "\n";
+      std::cout << "paths[" << pathIndexes[thisIndex]
+                << "] is parent. name = " << parentPath.name() << "\n";
       parentPath = Path::AbsoluteRootPath();
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
@@ -2063,7 +2134,7 @@ bool Parser::_BuildDecompressedPathsImpl(
         _err += "Invalid tokenIndex in _BuildDecompressedPathsImpl.\n";
         return false;
       }
-      auto const &elemToken = _tokens[tokenIndex];
+      auto const &elemToken = _tokens[size_t(tokenIndex)];
       std::cout << "elemToken = " << elemToken << "\n";
       _paths[pathIndexes[thisIndex]] =
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken)
@@ -2081,7 +2152,7 @@ bool Parser::_BuildDecompressedPathsImpl(
     if (hasChild) {
       if (hasSibling) {
         // NOTE(syoyo): This recursive call can be parallelized
-        auto siblingIndex = thisIndex + jumps[thisIndex];
+        auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
         if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes,
                                          jumps, siblingIndex, parentPath)) {
           return false;
@@ -2102,8 +2173,8 @@ bool Parser::_BuildDecompressedPathsImpl(
 bool Parser::_BuildNodeHierarchy(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps, size_t curIndex, size_t parentNodeIndex) {
-
+    std::vector<int32_t> const &jumps, size_t curIndex,
+    int64_t parentNodeIndex) {
   bool hasChild = false, hasSibling = false;
   do {
     auto thisIndex = curIndex++;
@@ -2111,20 +2182,21 @@ bool Parser::_BuildNodeHierarchy(
       // root node.
       // Assume single root node in the scene.
       assert(thisIndex == 0);
-      parentNodeIndex = thisIndex;
+      parentNodeIndex = int64_t(thisIndex);
 
     } else {
-
-      Node child(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
-
-      if (parentNodeIndex >= _nodes.size()) {
+      if (parentNodeIndex >= int64_t(_nodes.size())) {
         return false;
       }
 
-      std::cout << "parent[" << parentNodeIndex << "].child = " << thisIndex << "\n";
+      std::cout << "parent[" << parentNodeIndex << "].child = " << thisIndex
+                << "\n";
 
-      _nodes[parentNodeIndex].AddChildren(thisIndex);
+      Node node(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
 
+      _nodes[size_t(thisIndex)] = node;
+
+      _nodes[size_t(parentNodeIndex)].AddChildren(thisIndex);
     }
 
     hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
@@ -2132,14 +2204,14 @@ bool Parser::_BuildNodeHierarchy(
 
     if (hasChild) {
       if (hasSibling) {
-        auto siblingIndex = thisIndex + jumps[thisIndex];
-        if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes,
-                                         jumps, siblingIndex, parentNodeIndex)) {
+        auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
+        if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+                                 siblingIndex, parentNodeIndex)) {
           return false;
         }
       }
       // Have a child (may have also had a sibling). Reset parent node index
-      parentNodeIndex = thisIndex;
+      parentNodeIndex = int64_t(thisIndex);
     }
     // If we had only a sibling, we just continue since the parent path is
     // unchanged and the next thing in the reader stream is the sibling's
@@ -2263,13 +2335,14 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
   _nodes.resize(numPaths);
 
   // Now build the paths.
-  if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, /* curIndex */0,
-                                   Path())) {
+  if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps,
+                                   /* curIndex */ 0, Path())) {
     return false;
   }
 
   // Now build node hierarchy.
-  if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, /* curIndex */0, /* parent node index */-1)) {
+  if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+                           /* curIndex */ 0, /* parent node index */ -1)) {
     return false;
   }
 
@@ -2277,11 +2350,11 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
     std::cout << "pathIndexes[" << i << "] = " << pathIndexes[i] << "\n";
   }
 
-  for (uint32_t item : elementTokenIndexes) {
+  for (auto item : elementTokenIndexes) {
     std::cout << "elementTokenIndexes " << item << "\n";
   }
 
-  for (uint32_t item : jumps) {
+  for (auto item : jumps) {
     std::cout << "jumps " << item << "\n";
   }
 
@@ -2323,8 +2396,8 @@ bool Parser::ReadTokens() {
     return false;
   }
 
-  const Section &s = _toc.sections[_tokens_index];
-  if (!_sr->seek_set(s.start)) {
+  const Section &s = _toc.sections[size_t(_tokens_index)];
+  if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `TOKENS` section.\n";
     return false;
   }
@@ -2396,9 +2469,9 @@ bool Parser::ReadStrings() {
     return false;
   }
 
-  const Section &s = _toc.sections[_strings_index];
+  const Section &s = _toc.sections[size_t(_strings_index)];
 
-  if (!_sr->seek_set(s.start)) {
+  if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `STRINGS` section.\n";
     return false;
   }
@@ -2429,9 +2502,9 @@ bool Parser::ReadFields() {
     return false;
   }
 
-  const Section &s = _toc.sections[_fields_index];
+  const Section &s = _toc.sections[size_t(_fields_index)];
 
-  if (!_sr->seek_set(s.start)) {
+  if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `FIELDS` section.\n";
     return false;
   }
@@ -2541,9 +2614,9 @@ bool Parser::ReadFieldSets() {
     return false;
   }
 
-  const Section &s = _toc.sections[_fieldsets_index];
+  const Section &s = _toc.sections[size_t(_fieldsets_index)];
 
-  if (!_sr->seek_set(s.start)) {
+  if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `FIELDSETS` section.\n";
     return false;
   }
@@ -2612,9 +2685,10 @@ bool Parser::BuildLiveFieldSets() {
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index());
        fsBegin != _fieldset_indices.end(); fsBegin = fsEnd + 1,
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index())) {
-    auto &pairs = live_fieldsets[Index(fsBegin - _fieldset_indices.begin())];
+    auto &pairs =
+        live_fieldsets[Index(uint32_t(fsBegin - _fieldset_indices.begin()))];
 
-    pairs.resize(fsEnd - fsBegin);
+    pairs.resize(size_t(fsEnd - fsBegin));
     std::cout << "range size = " << (fsEnd - fsBegin) << "\n";
     // TODO(syoyo): Parallelize.
     for (size_t i = 0; fsBegin != fsEnd; ++fsBegin, ++i) {
@@ -2641,6 +2715,48 @@ bool Parser::BuildLiveFieldSets() {
   return true;
 }
 
+bool Parser::_ReconstructSceneRecursively(int parent, int level, Scene *scene) {
+  if ((parent < 0) || (parent >= int(_nodes.size()))) {
+    _err += "Invalid parent node id: " + std::to_string(parent) +
+            ". Must be in range [0, " + std::to_string(_nodes.size()) + "]\n";
+    return false;
+  }
+
+  const Node &node = _nodes[size_t(parent)];
+
+  auto IndentStr = [](int l) -> std::string {
+    std::string indent;
+    for (size_t i = 0; i < size_t(l); i++) {
+      indent += "  ";
+    }
+
+    return indent;
+  };
+
+  std::cout << IndentStr(level) << std::to_string(node.GetPath().IsValid())
+            << ", " << node.GetLocalPath() << " ==\n";
+
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    if (!_ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
+                                      scene)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool Parser::ReconstructScene(Scene *scene) {
+  if (_nodes.empty()) {
+    _warn += "Empty scene.\n";
+    return true;
+  }
+
+  int root_node_id = 0;
+
+  return _ReconstructSceneRecursively(root_node_id, /* level */ 0, scene);
+}
+
 bool Parser::ReadSpecs() {
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `SPECS` section.\n";
@@ -2654,9 +2770,9 @@ bool Parser::ReadSpecs() {
     return false;
   }
 
-  const Section &s = _toc.sections[_specs_index];
+  const Section &s = _toc.sections[size_t(_specs_index)];
 
-  if (!_sr->seek_set(s.start)) {
+  if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `SPECS` section.\n";
     return false;
   }
@@ -2779,7 +2895,8 @@ bool Parser::ReadSpecs() {
     std::cout << "spec[" << i << "].pathIndex  = " << _specs[i].path_index.value
               << ", fieldset_index = " << _specs[i].fieldset_index.value
               << ", spec_type = " << _specs[i].spec_type << "\n";
-    std::cout << "spec[" << i << "] string_repr = " << GetSpecString(Index(i))
+    std::cout << "spec[" << i
+              << "] string_repr = " << GetSpecString(Index(uint32_t(i)))
               << "\n";
   }
 
@@ -2799,9 +2916,9 @@ bool Parser::ReadPaths() {
     return false;
   }
 
-  const Section &s = _toc.sections[_paths_index];
+  const Section &s = _toc.sections[size_t(_paths_index)];
 
-  if (!_sr->seek_set(s.start)) {
+  if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `PATHS` section.\n";
     return false;
   }
@@ -2834,8 +2951,17 @@ bool Parser::ReadBootStrap() {
     return false;
   }
 
+  std::cout << int(magic[0]) << "\n";
+  std::cout << int(magic[1]) << "\n";
+  std::cout << int(magic[2]) << "\n";
+  std::cout << int(magic[3]) << "\n";
+  std::cout << int(magic[4]) << "\n";
+  std::cout << int(magic[5]) << "\n";
+  std::cout << int(magic[6]) << "\n";
+  std::cout << int(magic[7]) << "\n";
+
   if (memcmp(magic, "PXR-USDC", 8)) {
-    _err += "Invalid magic number.\n";
+    _err += "Invalid magic number. Expected 'PXR-USDC' but got '" + std::string(magic, magic + 8) + "'\n";
     return false;
   }
 
@@ -2884,7 +3010,7 @@ bool Parser::ReadTOC() {
     return false;
   }
 
-  if (!_sr->seek_set(_toc_offset)) {
+  if (!_sr->seek_set(uint64_t(_toc_offset))) {
     _err += "Failed to move to TOC offset\n";
     return false;
   }
@@ -2911,22 +3037,22 @@ bool Parser::ReadTOC() {
 
     // find index
     if (0 == strncmp(_toc.sections[i].name, "TOKENS", kSectionNameMaxLength)) {
-      _tokens_index = i;
+      _tokens_index = int64_t(i);
     } else if (0 == strncmp(_toc.sections[i].name, "STRINGS",
                             kSectionNameMaxLength)) {
-      _strings_index = i;
+      _strings_index = int64_t(i);
     } else if (0 == strncmp(_toc.sections[i].name, "FIELDS",
                             kSectionNameMaxLength)) {
-      _fields_index = i;
+      _fields_index = int64_t(i);
     } else if (0 == strncmp(_toc.sections[i].name, "FIELDSETS",
                             kSectionNameMaxLength)) {
-      _fieldsets_index = i;
+      _fieldsets_index = int64_t(i);
     } else if (0 ==
                strncmp(_toc.sections[i].name, "SPECS", kSectionNameMaxLength)) {
-      _specs_index = i;
+      _specs_index = int64_t(i);
     } else if (0 ==
                strncmp(_toc.sections[i].name, "PATHS", kSectionNameMaxLength)) {
-      _paths_index = i;
+      _paths_index = int64_t(i);
     }
   }
 
@@ -2938,9 +3064,16 @@ bool Parser::ReadTOC() {
 bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
+  if (scene == nullptr) {
+    if (err) {
+      (*err) = "null pointer for `scene` argument.\n";
+    }
+    return false;
+  }
+
   bool swap_endian = false;  // @FIXME
 
-  if (length > (1024 * options.max_memory_limit_in_mb)) {
+  if (length > size_t(1024 * options.max_memory_limit_in_mb)) {
     if (err) {
       (*err) += "USDZ data is too large(exceeds memory limit " +
                 std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
@@ -2954,6 +3087,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   Parser parser(&sr, options.num_threads);
 
   if (!parser.ReadBootStrap()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -2961,6 +3098,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   if (!parser.ReadTOC()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -2970,6 +3111,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   // Read known sections
 
   if (!parser.ReadTokens()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -2977,6 +3122,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   if (!parser.ReadStrings()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -2984,6 +3133,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   if (!parser.ReadFields()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -2991,6 +3144,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   if (!parser.ReadFieldSets()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -2998,6 +3155,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   if (!parser.ReadPaths()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -3005,6 +3166,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   if (!parser.ReadSpecs()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -3017,6 +3182,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   /// Reconstruct C++ representation of USD scene graph.
   ///
   if (!parser.BuildLiveFieldSets()) {
+    if (warn) {
+      (*warn) = parser.GetWarning();
+    }
+
     if (err) {
       (*err) = parser.GetError();
     }
@@ -3025,8 +3194,17 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   std::cout << "num_paths: " << parser.NumPaths() << "\n";
 
   for (size_t i = 0; i < parser.NumPaths(); i++) {
-    Path path = parser.GetPath(Index(i));
+    Path path = parser.GetPath(Index(uint32_t(i)));
     std::cout << "path[" << i << "].name = " << path.name() << "\n";
+  }
+
+  // Create `Scene` object
+  if (!parser.ReconstructScene(scene)) {
+    return false;
+  }
+
+  if (warn) {
+    (*warn) = parser.GetWarning();
   }
 
   return true;
@@ -3066,7 +3244,7 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
       return false;
     }
 
-    if (sz > (1024 * options.max_memory_limit_in_mb)) {
+    if (sz > size_t(1024 * options.max_memory_limit_in_mb)) {
       if (err) {
         (*err) += "USDZ file is too large(exceeds memory limit " +
                   std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
@@ -3082,7 +3260,8 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
              static_cast<std::streamsize>(sz));
   }
 
-  return LoadUSDCFromMemory(data.data(), data.size(), scene, warn, err, options);
+  return LoadUSDCFromMemory(data.data(), data.size(), scene, warn, err,
+                            options);
 }
 
 namespace {
@@ -3164,7 +3343,8 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
     offset += 30;
 
     // read in the variable name
-    uint16_t name_len = *(uint16_t *)&local_header[26];
+    uint16_t name_len;
+    memcpy(&name_len, &local_header[26], sizeof(uint16_t));
     if ((offset + name_len) > data.size()) {
       if (err) {
         (*err) += "Invalid ZIP data\n";
@@ -3180,7 +3360,8 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
     // std::cout << "varname = " << varname << "\n";
 
     // read in the extra field
-    uint16_t extra_field_len = *(uint16_t *)&local_header[28];
+    uint16_t extra_field_len;
+    memcpy(&extra_field_len, &local_header[28], sizeof(uint16_t));
     if (extra_field_len > 0) {
       if (offset + extra_field_len > data.size()) {
         if (err) {
@@ -3191,6 +3372,14 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
     }
 
     offset += extra_field_len;
+
+    // In usdz, data must be aligned at 64bytes boundary.
+    if ((offset % 64) != 0) {
+        if (err) {
+          (*err) += "Data offset must be mulitple of 64bytes for USDZ, but got " + std::to_string(offset) + ".\n";
+        }
+        return false;
+    }
 
     uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
     // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
@@ -3204,6 +3393,8 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
       }
       return false;
     }
+
+    std::cout << "offset = " << offset << "\n";
 
     // [offset, uncompr_bytes]
     assets.push_back({varname, offset, offset + uncompr_bytes});
@@ -3248,11 +3439,12 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
   }
 
   {
-    const size_t start_addr = std::get<1>(assets[usdc_index]);
-    const size_t end_addr = std::get<2>(assets[usdc_index]);
+    const size_t start_addr = std::get<1>(assets[size_t(usdc_index)]);
+    const size_t end_addr = std::get<2>(assets[size_t(usdc_index)]);
     const size_t usdc_size = end_addr - start_addr;
     const uint8_t *usdc_addr = &data[start_addr];
-    bool ret = LoadUSDCFromMemory(usdc_addr, usdc_size, scene, warn, err, options);
+    bool ret =
+        LoadUSDCFromMemory(usdc_addr, usdc_size, scene, warn, err, options);
 
     if (!ret) {
       if (err) {

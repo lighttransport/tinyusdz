@@ -1,3 +1,5 @@
+# TODO(syoyo): OSD support, audio support, tinyexr support
+
 project('tinyusdz', 'cpp', default_options : ['cpp_std=c++11'])
 
 incdirs = include_directories('src')

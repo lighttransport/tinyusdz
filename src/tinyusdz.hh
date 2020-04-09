@@ -285,6 +285,16 @@ class Path {
   Path(const std::string &prim, const std::string &prop)
       : prim_part(prim), prop_part(prop) {}
 
+  Path(const Path &rhs) = default;
+
+  Path &operator=(const Path &rhs) {
+    this->valid = rhs.valid;
+    this->prim_part = rhs.prim_part;
+    this->prop_part = rhs.prop_part;
+
+    return (*this);
+  }
+
   std::string name() const {
     std::string s;
     if (!valid) {
@@ -545,7 +555,7 @@ class Value {
 
   // Setter for primitive types.
   void SetBool(const bool d) {
-    dtype.name = "Bool";   
+    dtype.name = "Bool";
     dtype.id = VALUE_TYPE_BOOL;
 
     uint8_t value = d ? 1 : 0;
@@ -554,7 +564,7 @@ class Value {
   }
 
   void SetUChar(const unsigned char d) {
-    dtype.name = "UChar";   
+    dtype.name = "UChar";
     dtype.id = VALUE_TYPE_UCHAR;
 
     data.resize(1);
@@ -563,15 +573,15 @@ class Value {
 
   void SetInt(const int32_t i) {
     static_assert(sizeof(int32_t) == 4, "");
-    dtype.name = "Int";   
+    dtype.name = "Int";
     dtype.id = VALUE_TYPE_INT;
-    data.resize(sizeof(int32_t)); 
+    data.resize(sizeof(int32_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(int32_t));
   }
 
   void SetUInt(const uint32_t i) {
     static_assert(sizeof(uint32_t) == 4, "");
-    dtype.name = "UInt";   
+    dtype.name = "UInt";
     dtype.id = VALUE_TYPE_UINT;
     data.resize(sizeof(uint32_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(uint32_t));
@@ -579,269 +589,269 @@ class Value {
 
   void SetInt64(const int64_t i) {
     static_assert(sizeof(int64_t) == 8, "");
-    dtype.name = "Int64";   
+    dtype.name = "Int64";
     dtype.id = VALUE_TYPE_INT64;
-    data.resize(sizeof(int64_t)); 
+    data.resize(sizeof(int64_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(int64_t));
   }
 
   void SetUInt64(const uint64_t i) {
     static_assert(sizeof(uint64_t) == 8, "");
-    dtype.name = "UInt64";   
+    dtype.name = "UInt64";
     dtype.id = VALUE_TYPE_UINT64;
-    data.resize(sizeof(uint64_t)); 
+    data.resize(sizeof(uint64_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&i), sizeof(uint64_t));
   }
 
   void SetDouble(const double d) {
     static_assert(sizeof(double) == 8, "");
-    dtype.name = "Double";   
+    dtype.name = "Double";
     dtype.id = VALUE_TYPE_DOUBLE;
-    data.resize(sizeof(double)); 
+    data.resize(sizeof(double));
     memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(double));
   }
 
   void SetFloat(const float d) {
     static_assert(sizeof(float) == 4, "");
-    dtype.name = "Float";   
+    dtype.name = "Float";
     dtype.id = VALUE_TYPE_FLOAT;
     data.resize(sizeof(float));
     memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(float));
   }
 
   void SetHalf(const float16 d) {
-    dtype.name = "Half";   
+    dtype.name = "Half";
     dtype.id = VALUE_TYPE_HALF;
-    data.resize(sizeof(uint16_t)); 
+    data.resize(sizeof(uint16_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&d.u), sizeof(uint16_t));
   }
 
   void SetVec2i(const Vec2i v) {
     static_assert(sizeof(Vec2i) == 8, "");
-    dtype.name = "Vec2i";   
+    dtype.name = "Vec2i";
     dtype.id = VALUE_TYPE_VEC2I;
-    data.resize(sizeof(Vec2i)); 
+    data.resize(sizeof(Vec2i));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2i));
   }
 
   void SetVec2f(const Vec2f v) {
     static_assert(sizeof(Vec2f) == 8, "");
-    dtype.name = "Vec2f";   
+    dtype.name = "Vec2f";
     dtype.id = VALUE_TYPE_VEC2F;
-    data.resize(sizeof(Vec2f)); 
+    data.resize(sizeof(Vec2f));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2f));
   }
 
   void SetVec2d(const Vec2d v) {
     static_assert(sizeof(Vec2d) == 16, "");
-    dtype.name = "Vec2d";   
+    dtype.name = "Vec2d";
     dtype.id = VALUE_TYPE_VEC2D;
-    data.resize(sizeof(Vec2d)); 
+    data.resize(sizeof(Vec2d));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2d));
   }
 
   void SetVec2h(const Vec2h v) {
     static_assert(sizeof(Vec2h) == 4, "");
-    dtype.name = "Vec2h";   
+    dtype.name = "Vec2h";
     dtype.id = VALUE_TYPE_VEC2H;
-    data.resize(sizeof(Vec2h)); 
+    data.resize(sizeof(Vec2h));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec2h));
   }
 
   void SetVec3i(const Vec3i v) {
     static_assert(sizeof(Vec3i) == 12, "");
-    dtype.name = "Vec3i";   
+    dtype.name = "Vec3i";
     dtype.id = VALUE_TYPE_VEC3I;
-    data.resize(sizeof(Vec3i)); 
+    data.resize(sizeof(Vec3i));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3i));
   }
 
   void SetVec3f(const Vec3f v) {
     static_assert(sizeof(Vec3f) == 12, "");
-    dtype.name = "Vec3f";   
+    dtype.name = "Vec3f";
     dtype.id = VALUE_TYPE_VEC3F;
-    data.resize(sizeof(Vec3f)); 
+    data.resize(sizeof(Vec3f));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3f));
   }
 
   void SetVec3d(const Vec3d v) {
     static_assert(sizeof(Vec3d) == 24, "");
-    dtype.name = "Vec3d";   
+    dtype.name = "Vec3d";
     dtype.id = VALUE_TYPE_VEC3D;
-    data.resize(sizeof(Vec3d)); 
+    data.resize(sizeof(Vec3d));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3d));
   }
 
   void SetVec3h(const Vec3h v) {
     static_assert(sizeof(Vec3h) == 6, "");
-    dtype.name = "Vec3h";   
+    dtype.name = "Vec3h";
     dtype.id = VALUE_TYPE_VEC3H;
-    data.resize(sizeof(Vec3h)); 
+    data.resize(sizeof(Vec3h));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3h));
   }
 
   void SetVec4i(const Vec4i v) {
     static_assert(sizeof(Vec4i) == 16, "");
-    dtype.name = "Vec4i";   
+    dtype.name = "Vec4i";
     dtype.id = VALUE_TYPE_VEC4I;
-    data.resize(sizeof(Vec4i)); 
+    data.resize(sizeof(Vec4i));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec4i));
   }
 
   void SetVec4f(const Vec4f v) {
     static_assert(sizeof(Vec4f) == 16, "");
-    dtype.name = "Vec4f";   
+    dtype.name = "Vec4f";
     dtype.id = VALUE_TYPE_VEC4F;
-    data.resize(sizeof(Vec4f)); 
+    data.resize(sizeof(Vec4f));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec4f));
   }
 
   void SetVec4d(const Vec4d v) {
     static_assert(sizeof(Vec4d) == 32, "");
-    dtype.name = "Vec4d";   
+    dtype.name = "Vec4d";
     dtype.id = VALUE_TYPE_VEC4D;
-    data.resize(sizeof(Vec4d)); 
+    data.resize(sizeof(Vec4d));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec4d));
   }
 
   void SetVec4h(const Vec4h v) {
     static_assert(sizeof(Vec4h) == 8, "");
-    dtype.name = "Vec4h";   
+    dtype.name = "Vec4h";
     dtype.id = VALUE_TYPE_VEC4H;
-    data.resize(sizeof(Vec4h)); 
+    data.resize(sizeof(Vec4h));
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3h));
   }
 
   void SetMatrix2d(const Matrix2d v) {
     static_assert(sizeof(Matrix2d) == (2*2*8), "");
-    dtype.name = "Matrix2d";   
+    dtype.name = "Matrix2d";
     dtype.id = VALUE_TYPE_MATRIX2D;
-    data.resize(sizeof(Matrix2d)); 
+    data.resize(sizeof(Matrix2d));
     memcpy(data.data(), reinterpret_cast<const void *>(v.m), sizeof(Matrix2d));
   }
 
   void SetMatrix3d(const Matrix3d v) {
     static_assert(sizeof(Matrix3d) == (3*3*8), "");
-    dtype.name = "Matrix3d";   
+    dtype.name = "Matrix3d";
     dtype.id = VALUE_TYPE_MATRIX3D;
-    data.resize(sizeof(Matrix3d)); 
+    data.resize(sizeof(Matrix3d));
     memcpy(data.data(), reinterpret_cast<const void *>(v.m), sizeof(Matrix3d));
   }
 
   void SetMatrix4d(const Matrix4d v) {
     static_assert(sizeof(Matrix4d) == (4*4*8), "");
-    dtype.name = "Matrix4d";   
+    dtype.name = "Matrix4d";
     dtype.id = VALUE_TYPE_MATRIX4D;
-    data.resize(sizeof(Matrix4d)); 
+    data.resize(sizeof(Matrix4d));
     memcpy(data.data(), reinterpret_cast<const void *>(v.m), sizeof(Matrix4d));
   }
 
   void SetToken(const std::string &s) {
-    dtype.name = "Token";   
+    dtype.name = "Token";
     dtype.id = VALUE_TYPE_TOKEN;
-    data.resize(s.size()); // No '\0' 
+    data.resize(s.size()); // No '\0'
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
   void SetString(const std::string &s) {
-    dtype.name = "String";   
-    dtype.id = VALUE_TYPE_STRING; // we treat String as std::string, not StringIndex 
-    data.resize(s.size()); // No '\0' 
+    dtype.name = "String";
+    dtype.id = VALUE_TYPE_STRING; // we treat String as std::string, not StringIndex
+    data.resize(s.size()); // No '\0'
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
   void SetAssetPath(const std::string &s) {
     dtype.name = "AssetPath";
-    dtype.id = VALUE_TYPE_ASSET_PATH; // we treat AssetPath as std::string, not TokenIndex 
-    data.resize(s.size()); // No '\0' 
+    dtype.id = VALUE_TYPE_ASSET_PATH; // we treat AssetPath as std::string, not TokenIndex
+    data.resize(s.size()); // No '\0'
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
   void SetPermission(const uint32_t d) {
     // TODO(syoyo): range check
-    dtype.name = "Permission";   
+    dtype.name = "Permission";
     dtype.id = VALUE_TYPE_PERMISSION;
-    data.resize(sizeof(uint32_t)); 
+    data.resize(sizeof(uint32_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint32_t));
   }
 
   void SetSpecifier(const uint32_t d) {
     // TODO(syoyo): range check
-    dtype.name = "Specifier";   
+    dtype.name = "Specifier";
     dtype.id = VALUE_TYPE_SPECIFIER;
-    data.resize(sizeof(uint32_t)); 
+    data.resize(sizeof(uint32_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint32_t));
   }
 
   void SetVariability(const uint32_t d) {
     // TODO(syoyo): range check
-    dtype.name = "Variability";   
+    dtype.name = "Variability";
     dtype.id = VALUE_TYPE_VARIABILITY;
-    data.resize(sizeof(uint32_t)); 
+    data.resize(sizeof(uint32_t));
     memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint32_t));
   }
 
   void SetIntArray(const int *d, const size_t n) {
     dtype.name = "IntArray";
     dtype.id = VALUE_TYPE_INT;
-    array_length = n;
-    data.resize(n * sizeof(uint32_t)); 
+    array_length = int64_t(n);
+    data.resize(n * sizeof(uint32_t));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(uint32_t));
   }
 
   void SetHalfArray(const uint16_t *d, const size_t n) {
     dtype.name = "HalfArray";
     dtype.id = VALUE_TYPE_HALF;
-    array_length = n;
-    data.resize(n * sizeof(uint16_t)); 
+    array_length = int64_t(n);
+    data.resize(n * sizeof(uint16_t));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(uint16_t));
   }
 
   void SetFloatArray(const float *d, const size_t n) {
     dtype.name = "FloatArray";
     dtype.id = VALUE_TYPE_FLOAT;
-    array_length = n;
-    data.resize(n * sizeof(float)); 
+    array_length = int64_t(n);
+    data.resize(n * sizeof(float));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(float));
   }
 
   void SetDoubleArray(const double *d, const size_t n) {
     dtype.name = "DoubleArray";
     dtype.id = VALUE_TYPE_DOUBLE;
-    array_length = n;
-    data.resize(n * sizeof(double)); 
+    array_length = int64_t(n);
+    data.resize(n * sizeof(double));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(double));
   }
 
   void SetVec2fArray(const Vec2f *d, const size_t n) {
     static_assert(sizeof(Vec2f) == 8, "");
-    dtype.name = "Vec2fArray";   
+    dtype.name = "Vec2fArray";
     dtype.id = VALUE_TYPE_VEC2F;
-    array_length = n;
-    data.resize(n * sizeof(Vec2f)); 
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Vec2f));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec2f));
   }
 
   void SetVec3fArray(const Vec3f *d, const size_t n) {
     static_assert(sizeof(Vec3f) == 12, "");
-    dtype.name = "Vec3fArray";   
+    dtype.name = "Vec3fArray";
     dtype.id = VALUE_TYPE_VEC3F;
-    array_length = n;
-    data.resize(n * sizeof(Vec3f)); 
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Vec3f));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec3f));
   }
 
   void SetVec4fArray(const Vec4f *d, const size_t n) {
     static_assert(sizeof(Vec4f) == 16, "");
-    dtype.name = "Vec4fArray";   
+    dtype.name = "Vec4fArray";
     dtype.id = VALUE_TYPE_VEC4F;
-    array_length = n;
-    data.resize(n * sizeof(Vec4f)); 
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Vec4f));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec4f));
   }
 
   void SetTokenArray(const std::vector<std::string> &d) {
-    dtype.name = "TokenArray";   
+    dtype.name = "TokenArray";
     dtype.id = VALUE_TYPE_TOKEN;
     string_array = d;
   }
@@ -870,11 +880,11 @@ class Value {
   }
 
   size_t GetArrayLength() const {
-    return array_length;
+    return size_t(array_length);
   }
 
   const std::vector<uint8_t> &GetData() const {
-    // TODO(syoyo): Report error for Dictionary type. 
+    // TODO(syoyo): Report error for Dictionary type.
     return data;
   }
 
@@ -898,7 +908,7 @@ class Value {
   const Dictionary &GetDictionary() const {
     return dict;
   }
-    
+
 
  private:
   ValueType dtype;
@@ -924,7 +934,7 @@ class Value {
 // Data structure for rendering pipeline.
 //
 // Similar to OpenGL BufferData
-// 
+//
 //
 struct BufferData
 {
@@ -960,7 +970,7 @@ struct BufferData
       case BUFFER_DATA_TYPE_HALF: return 2;
       case BUFFER_DATA_TYPE_FLOAT: return 4;
       case BUFFER_DATA_TYPE_DOUBLE: return 8;
-    };
+    }
   }
 
   size_t GetElementByteSize() {
@@ -969,11 +979,11 @@ struct BufferData
       return 0;
     }
 
-    return GetTypeByteSize(type) * num_coords;
+    return GetTypeByteSize(type) * size_t(num_coords);
   }
 
   size_t GetNumElements() {
-    size_t n = data.size() / GetElementByteSize(); 
+    size_t n = data.size() / GetElementByteSize();
     return n;
   }
 
@@ -1011,7 +1021,7 @@ struct UVCoords
   Variability variability;
 
   // TODO: 64bit index?
-  std::vector<uint32_t> indices; // UV indices. Usually varying 
+  std::vector<uint32_t> indices; // UV indices. Usually varying
 };
 
 struct Extent
@@ -1059,7 +1069,7 @@ struct GeomMesh
   Orientation orientation{OrientationRightHanded};
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
-  
+
 
   //
   // SubD attribs.
@@ -1087,12 +1097,13 @@ struct Material
 
   int64_t parent_id{-1};
 
-  int64_t surface_shader_id{-1}; // Index to shader object
-  int64_t volume_shader_id{-1}; // Index to shader object
-  int64_t displacement_shader_id{-1}; // Index to shader object
+  int64_t surface_shader_id{-1}; // Index to `Scene::shaders`
+  int64_t volume_shader_id{-1}; // Index to `Scene::shaders`
+  //int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
 
 };
 
+// result = (texture_id == -1) ? use color : lookup texture
 struct Color3OrTexture
 {
   Color3OrTexture(float x, float y, float z) {
@@ -1134,9 +1145,17 @@ enum TextureWrap
   TextureWrapMirror,
 };
 
+// For texture transform
+// result = in * scale * rotate * translation
+struct UsdTranform2d {
+  float rotation = 0.0f; // counter-clockwise rotation in degrees around the origin.
+  std::array<float, 2> scale{1.0f, 1.0f};
+  std::array<float, 2> translation{0.0f, 0.0f};
+};
+
 // UsdUvTexture
 struct UVTexture {
-  
+
   int64_t image_id{-1}; // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
 
   std::array<float, 2> st; // texture coordinate orientation. https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
@@ -1147,7 +1166,9 @@ struct UVTexture {
   std::array<float, 4> scale{1.0f, 1.0f, 1.0f, 1.0f}; // scale to be applied to output texture value
   std::array<float, 4> bias{0.0f, 0.0f, 0.0f, 0.0f}; // bias to be applied to output texture value
 
+  UsdTranform2d texture_transfom;
 };
+
 
 // USD's default? PBR shader
 // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
@@ -1161,7 +1182,7 @@ struct PreviewSurface
   // Currently we don't support nested shader description.
   //
   Color3OrTexture diffuseColor{0.18f, 0.18f, 0.18f};
-  Color3OrTexture emissiveColor{0.18f, 0.18f, 0.18f};
+  Color3OrTexture emissiveColor{0.0f, 0.0f, 0.0f};
   int usdSpecularWorkflow{0}; // 0 = metalness workflow, 1 = specular workflow
 
   // specular workflow
@@ -1179,7 +1200,7 @@ struct PreviewSurface
   Color3OrTexture normal{0.0f, 0.0f, 1.0f};
   FloatOrTexture displacement{0.0f};
   FloatOrTexture occlusion{0.0f};
-  
+
   //
   // Outputs
   //
@@ -1222,9 +1243,9 @@ struct Node
   // index to a scene object.
   // For example, Lookup `xforms[node_idx]` When node type is XFORM
   //
-  int64_t index{-1}; 
+  int64_t index{-1};
 
-  int64_t parent; // parent node index. Example: `nodes[parent]`  
+  int64_t parent; // parent node index. Example: `nodes[parent]`
   std::vector<int64_t> children; // child node indices.
 
 };
@@ -1246,7 +1267,7 @@ struct Scene
   std::vector<Group> groups;
 
   // TODO(syoyo): User defined custom node.
-  
+
 };
 
 struct USDLoadOptions
