@@ -38,6 +38,8 @@ $ make
 * `TINYUSDZ_BUILD_EXAMPLES` : Build examples(note that not all examples in `examples` folder are built)
 * `TINYUSDZ_WITH_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
   * `osd_DIR` to specify the path to OpenSubdiv repo(I recommend to use https://github.com/syoyo/OpenSubdiv-aarch64 )
+* `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
+* `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture.
 
 #### Build with OpenSubdiv
 
@@ -57,8 +59,20 @@ $ ninja
 
 See `examples` directory.
 
+### Data format
+
+#### Primitive
+
+* [x] `visibility`
+* [x] `position`(FLOAT3 only)
+
 ## TODO
 
+* [ ] Audio play support
+  * [ ] Play audio using SoLoud or miniaudio(or Oboe for Android)
+  * [ ] wav(dr_wav)
+  * [ ] mp3(dr_mp3)
+  * [ ] m4a?
 * [ ] Android example
 * [ ] iOS example?
 * [ ] CPU raytracer viewer
@@ -83,4 +97,7 @@ TinyUSDZ is licensed under MIT license.
 * USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
 * lz4 : BSD-2 license. http://www.lz4.org
 * cnpy(uncompressed ZIP decode/encode) : MIT license https://github.com/rogersce/cnpy
+* tinyexr: BSD license.
+* stb_image: public domain. 
+* dr_libs: public domain. https://github.com/mackron/dr_libs
 

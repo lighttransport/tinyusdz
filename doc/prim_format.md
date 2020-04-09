@@ -59,6 +59,12 @@ velocities : usually vec3f[]
 * inputs:file : @filename@
 
 
+## TODO
+
+* [ ] non-vec3f `position`
+* [ ] vertex color
+* [ ] xformOpOrder
+* [ ] Multi texcoord UVs
 
 
 

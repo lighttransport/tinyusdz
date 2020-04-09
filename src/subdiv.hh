@@ -22,7 +22,7 @@ typedef struct {
   std::vector<float>
       facevarying_uvs;  /// [xy]  * 3(triangle) * num_triangle_faces
 
-  std::vector<uint32_t> material_ids;  /// index x num_triangle_faces
+  std::vector<int32_t> material_ids;  /// per face materials. -1 = no material. index x num_triangle_faces
 
   // List of triangle vertex indices. For NanoRT BVH
   std::vector<uint32_t>
@@ -72,7 +72,7 @@ struct Vertex {
     _position[2] = src._position[2];
   }
 
-  void Clear(void * = 0) { _position[0] = _position[1] = _position[2] = 0.0f; }
+  void Clear(void * = nullptr) { _position[0] = _position[1] = _position[2] = 0.0f; }
 
   void AddWithWeight(Vertex const &src, float weight) {
     _position[0] += weight * src._position[0];

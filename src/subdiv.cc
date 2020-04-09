@@ -85,8 +85,8 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
 
   // Populate a topology descriptor with our raw data
   Descriptor desc;
-  desc.numVertices = in_mesh.vertices.size() / 3;
-  desc.numFaces = in_mesh.verts_per_faces.size();
+  desc.numVertices = int(in_mesh.vertices.size() / 3);
+  desc.numFaces = int(in_mesh.verts_per_faces.size());
   desc.numVertsPerFace = in_mesh.verts_per_faces.data();
   desc.vertIndicesPerFace = in_mesh.indices.data();
 
@@ -126,10 +126,10 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
 
   // Allocate and initialize the 'vertex' primvar data (see tutorial 2 for
   // more details).
-  std::vector<Vertex> vbuffer(refiner->GetNumVerticesTotal());
+  std::vector<Vertex> vbuffer(size_t(refiner->GetNumVerticesTotal()));
   Vertex *verts = &vbuffer[0];
 
-  for (int i = 0; i < in_mesh.vertices.size() / 3; ++i) {
+  for (size_t i = 0; i < in_mesh.vertices.size() / 3; ++i) {
     verts[i].SetPosition(in_mesh.vertices[3 * i + 0],
                          in_mesh.vertices[3 * i + 1],
                          in_mesh.vertices[3 * i + 2]);
@@ -198,10 +198,10 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
     // Print vertex positions
     int firstOfLastVerts = refiner->GetNumVerticesTotal() - nverts;
 
-    out_mesh->vertices.resize(nverts * 3);
+    out_mesh->vertices.resize(size_t(nverts) * 3);
 
-    for (int vert = 0; vert < nverts; ++vert) {
-      float const *pos = verts[firstOfLastVerts + vert].GetPosition();
+    for (size_t vert = 0; vert < size_t(nverts); ++vert) {
+      float const *pos = verts[size_t(firstOfLastVerts) + vert].GetPosition();
       ofs << "v " << pos[0] << " " << pos[1] << " " << pos[2] << "\n";
       out_mesh->vertices[3 * vert + 0] = pos[0];
       out_mesh->vertices[3 * vert + 1] = pos[1];
@@ -242,15 +242,15 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
       // assert(fverts.size()==4 && fuvs.size()==4);
       assert(fverts.size() == 4);
 
-      out_mesh->face_index_offsets.push_back(out_mesh->face_num_verts.size());
+      out_mesh->face_index_offsets.push_back(uint32_t(out_mesh->face_num_verts.size()));
 
-      out_mesh->face_num_verts.push_back(fverts.size());
+      out_mesh->face_num_verts.push_back(uint8_t(fverts.size()));
 
       if (dump) {
         ofs << "f";
       }
       for (int vert = 0; vert < fverts.size(); ++vert) {
-        out_mesh->face_indices.push_back(fverts[vert]);
+        out_mesh->face_indices.push_back(uint8_t(fverts[vert]));
 
         if (dump) {
           // OBJ uses 1-based arrays...
@@ -263,17 +263,17 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
       }
 
       // triangulated face
-      out_mesh->triangulated_indices.push_back(fverts[0]);
-      out_mesh->triangulated_indices.push_back(fverts[1]);
-      out_mesh->triangulated_indices.push_back(fverts[2]);
+      out_mesh->triangulated_indices.push_back(uint8_t(fverts[0]));
+      out_mesh->triangulated_indices.push_back(uint8_t(fverts[1]));
+      out_mesh->triangulated_indices.push_back(uint8_t(fverts[2]));
 
-      out_mesh->triangulated_indices.push_back(fverts[2]);
-      out_mesh->triangulated_indices.push_back(fverts[3]);
-      out_mesh->triangulated_indices.push_back(fverts[0]);
+      out_mesh->triangulated_indices.push_back(uint8_t(fverts[2]));
+      out_mesh->triangulated_indices.push_back(uint8_t(fverts[3]));
+      out_mesh->triangulated_indices.push_back(uint8_t(fverts[0]));
 
       // some face attribs.
-      out_mesh->face_ids.push_back(face);
-      out_mesh->face_ids.push_back(face);
+      out_mesh->face_ids.push_back(uint32_t(face));
+      out_mesh->face_ids.push_back(uint32_t(face));
 
       out_mesh->face_triangle_ids.push_back(0);
       out_mesh->face_triangle_ids.push_back(1);
