@@ -10,6 +10,7 @@
 #include <thread>
 #include <tuple>
 #include <vector>
+#include <unordered_map>
 
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -129,6 +130,74 @@ namespace {
 
 constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
+
+#if 0
+// Decode image(png, jpg, ...)
+static bool DecodeImage(const uint8_t *bytes, const size_t size, const std::string &uri, Image *image, std::string *warn, std::string *err)
+{
+  (void)warn;
+
+  int w = 0, h = 0, comp = 0, req_comp = 0;
+
+  unsigned char *data = nullptr;
+
+  // force 32-bit textures for common Vulkan compatibility. It appears that
+  // some GPU drivers do not support 24-bit images for Vulkan
+  req_comp = 4;
+  int bits = 8;
+
+  // It is possible that the image we want to load is a 16bit per channel image
+  // We are going to attempt to load it as 16bit per channel, and if it worked,
+  // set the image data accodingly. We are casting the returned pointer into
+  // unsigned char, because we are representing "bytes". But we are updating
+  // the Image metadata to signal that this image uses 2 bytes (16bits) per
+  // channel:
+  if (stbi_is_16_bit_from_memory(bytes, int(size))) {
+    data = reinterpret_cast<unsigned char *>(
+        stbi_load_16_from_memory(bytes, int(size), &w, &h, &comp, req_comp));
+    if (data) {
+      bits = 16;
+    }
+  }
+
+  // at this point, if data is still NULL, it means that the image wasn't
+  // 16bit per channel, we are going to load it as a normal 8bit per channel
+  // mage as we used to do:
+  // if image cannot be decoded, ignore parsing and keep it by its path
+  // don't break in this case
+  // FIXME we should only enter this function if the image is embedded. If
+  // `uri` references an image file, it should be left as it is. Image loading should not be
+  // mandatory (to support other formats)
+  if (!data) data = stbi_load_from_memory(bytes, int(size), &w, &h, &comp, req_comp);
+  if (!data) {
+    // NOTE: you can use `warn` instead of `err`
+    if (err) {
+      (*err) +=
+          "Unknown image format. STB cannot decode image data for image: " + uri + "\".\n";
+    }
+    return false;
+  }
+
+  if ((w < 1) || (h < 1)) {
+    stbi_image_free(data);
+    if (err) {
+      (*err) += "Invalid image data for image: " + uri + "\"\n";
+    }
+    return false;
+  }
+
+  image->width = w;
+  image->height = h;
+  image->channels = req_comp;
+  image->bpp = bits;
+  image->data.resize(static_cast<size_t>(w * h * req_comp) * size_t(bits / 8));
+  std::copy(data, data + w * h * req_comp * (bits / 8), image->data.begin());
+  stbi_image_free(data);
+
+  return true;
+
+};
+#endif
 
 float to_float(uint16_t h) {
   float16 f;
@@ -392,12 +461,18 @@ class Node {
     return _path;
   }
 
+  NodeType GetNodeType() const {
+    return _node_type;
+  }
+
  private:
   int64_t
       _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
   std::vector<size_t> _children;  // index to child nodes.
 
   Path _path;  // local path
+
+  NodeType _node_type;
 };
 
 // -- from USD ----------------------------------------------------------------
@@ -739,6 +814,12 @@ class Parser {
   ///
   /// Reconstruct `Scene` object
   ///
+
+  ///
+  /// Build path_index -> spec_index mapping table
+  ///
+  void _BuildPathIndexToSpecIndex();
+
   bool ReconstructScene(Scene *scene);
   bool _ReconstructSceneRecursively(int parent_id, int level, Scene *scene);
 
@@ -793,6 +874,8 @@ class Parser {
   std::vector<Path> _paths;
 
   std::vector<Node> _nodes;  // [0] = root node
+
+  std::unordered_map<uint32_t, uint32_t> _path_index_to_spec_index_map; // path_index -> spec_index
 
   bool _BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
@@ -2733,8 +2816,7 @@ bool Parser::_ReconstructSceneRecursively(int parent, int level, Scene *scene) {
     return indent;
   };
 
-  std::cout << IndentStr(level) << std::to_string(node.GetPath().IsValid())
-            << ", " << node.GetLocalPath() << " ==\n";
+  std::cout << IndentStr(level) << "node_index[" << parent << "] " << node.GetLocalPath() << " ==\n";
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     if (!_ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
@@ -2745,6 +2827,19 @@ bool Parser::_ReconstructSceneRecursively(int parent, int level, Scene *scene) {
 
   return true;
 }
+
+void Parser::_BuildPathIndexToSpecIndex() {
+  for (size_t i = 0; i < _specs.size(); i++) {
+    if (_specs[i].path_index.value == ~0u) {
+      continue;
+    }
+
+    // path_index should be unique.
+    assert(_path_index_to_spec_index_map.count(_specs[i].path_index.value) == 0);
+    _path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
+  }
+}
+
 
 bool Parser::ReconstructScene(Scene *scene) {
   if (_nodes.empty()) {
@@ -2822,7 +2917,7 @@ bool Parser::ReadSpecs() {
     }
 
     for (size_t i = 0; i < num_specs; ++i) {
-      std::cout << "tmp = " << tmp[i] << "\n";
+      //std::cout << "tmp = " << tmp[i] << "\n";
       _specs[i].path_index.value = tmp[i];
     }
   }
@@ -3199,8 +3294,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   // Create `Scene` object
-  if (!parser.ReconstructScene(scene)) {
-    return false;
+  {
+    parser._BuildPathIndexToSpecIndex();
+    if (!parser.ReconstructScene(scene)) {
+      return false;
+    }
   }
 
   if (warn) {

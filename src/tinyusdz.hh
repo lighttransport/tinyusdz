@@ -10,6 +10,21 @@
 
 namespace tinyusdz {
 
+// Simple image class.
+// No colorspace conversion will be applied when decoding image data(e.g. from .jpg, .png).
+// TODO(syoyo): Add option to decode image into linear space.
+struct Image {
+
+  std::string uri; // filename or uri;
+
+  int width{-1}; // -1 = invalid
+  int height{-1}; // -1 = invalid
+  int channels{-1}; // Image channels. 3=RGB, 4=RGBA. -1 = invalid
+  int bpp{-1}; // bits per pixel. 8=LDR, 16=HDR
+
+  std::vector<uint8_t> data;
+};
+
 // TODO(syoyo): Support Big Endian
 // https://gist.github.com/rygorous/2156668
 union FP32 {
