@@ -1,8 +1,17 @@
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif 
+
 #include "lz4-compression.hh"
 
 #include <cstring>
 #include <cstdlib>
 #include <memory>
+#include <algorithm>
+
+
 
 // LZ4Compression based on USD's TfFastCompression class
 
