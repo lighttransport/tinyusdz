@@ -561,7 +561,7 @@ class Value {
   Value(const ValueType &_dtype, const std::vector<uint8_t> &_data, uint64_t _array_length) :
     dtype(_dtype), data(_data), array_length(int64_t(_array_length)) {}
 
-  bool IsArray() {
+  bool IsArray() const {
     if ((array_length > 0) || string_array.size() || (dtype.id == VALUE_TYPE_PATH_LIST_OP)) {
       return true;
     }
@@ -867,18 +867,37 @@ class Value {
 
   void SetTokenArray(const std::vector<std::string> &d) {
     dtype.name = "TokenArray";
-    dtype.id = VALUE_TYPE_TOKEN;
+    dtype.id = VALUE_TYPE_TOKEN_VECTOR;
+    array_length = int64_t(d.size());
     string_array = d;
   }
 
   void SetPathListOp(const ListOp<Path> &d) {
     dtype.name = "PathListOp";
     dtype.id = VALUE_TYPE_PATH_LIST_OP;
+    // FIXME(syoyo): How to determine array length?
+    // array_length = int64_t(d.size());
     path_list_op = d;
   }
 
   // Getter for frequently used types.
-  std::string GetToken() {
+  Specifier GetSpecifier() const {
+    if (dtype.id == VALUE_TYPE_SPECIFIER) {
+      uint32_t d = *reinterpret_cast<const uint32_t *>(data.data());
+      return static_cast<Specifier>(d);
+    }
+    return NumSpecifiers; // invalid
+  }
+
+  double GetDouble() const {
+    if (dtype.id == VALUE_TYPE_DOUBLE) {
+      double d = *reinterpret_cast<const double *>(data.data());
+      return static_cast<double>(d);
+    }
+    return std::numeric_limits<double>::quiet_NaN(); // invalid
+  }
+
+  std::string GetToken() const {
     if (dtype.id == VALUE_TYPE_TOKEN) {
       std::string s(reinterpret_cast<const char *>(data.data()), data.size());
       return s;
@@ -886,7 +905,7 @@ class Value {
     return std::string();
   }
 
-  std::string GetString() {
+  std::string GetString() const {
     if (dtype.id == VALUE_TYPE_STRING) {
       std::string s(reinterpret_cast<const char *>(data.data()), data.size());
       return s;
@@ -896,6 +915,10 @@ class Value {
 
   size_t GetArrayLength() const {
     return size_t(array_length);
+  }
+
+  const std::vector<std::string> &GetStringArray() const {
+    return string_array;
   }
 
   const std::vector<uint8_t> &GetData() const {
@@ -1272,6 +1295,11 @@ struct Scene
 
   std::vector<Node> nodes; // Node hierarchies
 
+  // Scene global setting
+  std::string upAxis = "Y"; 
+  double metersPerUnit = 1.0;  // default [m]
+  double timeCodesPerSecond = 24.0;  // default 24 fps
+
   //
   // glTF-like scene objects
   //
@@ -1281,7 +1309,8 @@ struct Scene
   std::vector<PreviewSurface> shaders; // TODO(syoyo): Support othre shaders
   std::vector<Group> groups;
 
-  // TODO(syoyo): User defined custom node.
+  // TODO(syoyo): User defined custom layer data
+  // "customLayerData" 
 
 };
 

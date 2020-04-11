@@ -100,4 +100,5 @@ TinyUSDZ is licensed under MIT license.
 * tinyexr: BSD license.
 * stb_image: public domain. 
 * dr_libs: public domain. https://github.com/mackron/dr_libs
+* miniaudio: public domain or MIT no attribution. https://github.com/dr-soft/miniaudio
 

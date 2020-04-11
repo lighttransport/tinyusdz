@@ -9,8 +9,8 @@
 #include <sstream>
 #include <thread>
 #include <tuple>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -331,43 +331,6 @@ std::string GetValueTypeRepr(int32_t type_id) {
   return ss.str();
 }
 
-enum SpecType {
-  SpecTypeUnknown = 0,
-  SpecTypeAttribute,
-  SpecTypeConnection,
-  SpecTypeExpression,
-  SpecTypeMapper,
-  SpecTypeMapperArg,
-  SpecTypePrim,
-  SpecTypePseudoRoot,
-  SpecTypeRelationship,
-  SpecTypeRelationshipTarget,
-  SpecTypeVariant,
-  SpecTypeVariantSet,
-  NumSpecTypes
-};
-
-// For PrimSpec
-enum Specifier {
-  SpecifierDef,  // 0
-  SpecifierOver,
-  SpecifierClass,
-  NumSpecifiers
-};
-
-enum Permission {
-  PermissionPublic,  // 0
-  PermissionPrivate,
-  NumPermissions
-};
-
-enum Variability {
-  VariabilityVarying,  // 0
-  VariabilityUniform,
-  VariabilityConfig,
-  NumVariabilities
-};
-
 std::string GetSpecTypeString(SpecType ty) {
   if (SpecTypeUnknown == ty) {
     return "SpecTypeUnknown";
@@ -439,7 +402,7 @@ class Node {
 
   Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
 
-  // int64_t GetParent() const { return _parent; }
+  int64_t GetParent() const { return _parent; }
 
   const std::vector<size_t> &GetChildren() const { return _children; }
 
@@ -456,14 +419,9 @@ class Node {
   ///
   std::string GetLocalPath() const { return _path.name(); }
 
+  const Path &GetPath() const { return _path; }
 
-  const Path &GetPath() const {
-    return _path;
-  }
-
-  NodeType GetNodeType() const {
-    return _node_type;
-  }
+  NodeType GetNodeType() const { return _node_type; }
 
  private:
   int64_t
@@ -757,16 +715,6 @@ class Parser {
     return s;
   }
 
-  std::string GetFieldSetString(Index index) {
-    if (index.value <= _fieldset_indices.size()) {
-      // ok
-    } else {
-      return "#INVALID fieldset index#";
-    }
-
-    return std::to_string(_fieldset_indices[index.value].value);
-  }
-
   Path GetPath(Index index) {
     if (index.value <= _fields.size()) {
       // ok
@@ -802,28 +750,37 @@ class Parser {
     const Spec &spec = _specs[index.value];
 
     std::string path_str = GetPathString(spec.path_index);
-    std::string fieldset_str = GetFieldSetString(spec.fieldset_index);
     std::string specty_str = GetSpecTypeString(spec.spec_type);
 
-    return "[Spec] path: " + path_str + ", fieldset: " + fieldset_str +
+    return "[Spec] path: " + path_str + ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
            ", spec_type: " + specty_str;
   }
 
-  bool BuildLiveFieldSets();
-
   ///
-  /// Reconstruct `Scene` object
+  /// Methods for reconstructing `Scene` object
   ///
 
-  ///
-  /// Build path_index -> spec_index mapping table
-  ///
-  void _BuildPathIndexToSpecIndex();
+  // In-memory storage for a single "spec" -- prim, property, etc.
+  typedef std::pair<std::string, Value> FieldValuePair;
+  typedef std::vector<FieldValuePair> FieldValuePairVector;
+
+  // `_live_fieldsets` contains unpacked value keyed by fieldset index.
+  // Used for reconstructing Scene object
+  // TODO(syoyo): Use unordered_map(need hash function)
+  std::map<Index, FieldValuePairVector>
+      _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
+
+  bool _BuildLiveFieldSets();
 
   bool ReconstructScene(Scene *scene);
-  bool _ReconstructSceneRecursively(int parent_id, int level, Scene *scene);
+  bool _ReconstructSceneRecursively(int parent_id, int level,
+                                    const std::unordered_map<uint32_t, uint32_t>
+                                        &path_index_to_spec_index_map,
+                                    Scene *scene);
 
-  // TODO PrefetchStructuralSections
+  ///
+  /// --------------------------------------------------
+  ///
 
   std::string GetError() { return _err; }
 
@@ -874,8 +831,6 @@ class Parser {
   std::vector<Path> _paths;
 
   std::vector<Node> _nodes;  // [0] = root node
-
-  std::unordered_map<uint32_t, uint32_t> _path_index_to_spec_index_map; // path_index -> spec_index
 
   bool _BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
@@ -2219,6 +2174,7 @@ bool Parser::_BuildDecompressedPathsImpl(
       }
       auto const &elemToken = _tokens[size_t(tokenIndex)];
       std::cout << "elemToken = " << elemToken << "\n";
+      std::cout << "[" << pathIndexes[thisIndex] << "].append = " << elemToken << "\n";
       _paths[pathIndexes[thisIndex]] =
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken)
                              : parentPath.AppendElement(elemToken);
@@ -2259,12 +2215,20 @@ bool Parser::_BuildNodeHierarchy(
     std::vector<int32_t> const &jumps, size_t curIndex,
     int64_t parentNodeIndex) {
   bool hasChild = false, hasSibling = false;
+
+  // NOTE: Need to indirectly lookup index through pathIndexes[] when accessing `_nodes`
   do {
     auto thisIndex = curIndex++;
+    std::cout << "thisIndex = " << thisIndex << ", curIndex = " << curIndex << "\n";
     if (parentNodeIndex == -1) {
       // root node.
       // Assume single root node in the scene.
       assert(thisIndex == 0);
+
+      Node root(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
+
+      _nodes[pathIndexes[thisIndex]] = root;
+
       parentNodeIndex = int64_t(thisIndex);
 
     } else {
@@ -2272,14 +2236,16 @@ bool Parser::_BuildNodeHierarchy(
         return false;
       }
 
-      std::cout << "parent[" << parentNodeIndex << "].child = " << thisIndex
+      std::cout << "Hierarhy. parent[" << pathIndexes[size_t(parentNodeIndex)] << "].add_child = " << pathIndexes[thisIndex]
                 << "\n";
 
       Node node(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
 
-      _nodes[size_t(thisIndex)] = node;
+      assert(_nodes[size_t(pathIndexes[thisIndex])].GetParent() == -2);
 
-      _nodes[size_t(parentNodeIndex)].AddChildren(thisIndex);
+      _nodes[size_t(pathIndexes[thisIndex])] = node;
+
+      _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(pathIndexes[thisIndex]);
     }
 
     hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
@@ -2295,6 +2261,7 @@ bool Parser::_BuildNodeHierarchy(
       }
       // Have a child (may have also had a sibling). Reset parent node index
       parentNodeIndex = int64_t(thisIndex);
+      std::cout << "parentNodeIndex = " << parentNodeIndex << "\n";
     }
     // If we had only a sibling, we just continue since the parent path is
     // unchanged and the next thing in the reader stream is the sibling's
@@ -2750,26 +2717,20 @@ bool Parser::ReadFieldSets() {
   }
 
   for (size_t i = 0; i != num_fieldsets; ++i) {
+    std::cout << "fieldset_index[" << i << "] = " << tmp[i] << "\n";
     _fieldset_indices[i].value = tmp[i];
   }
 
   return true;
 }
 
-bool Parser::BuildLiveFieldSets() {
-  // In-memory storage for a single "spec" -- prim, property, etc.
-  typedef std::pair<std::string, Value> FieldValuePair;
-  typedef std::vector<FieldValuePair> FieldValuePairVector;
-
-  // TODO(syoyo): Use unordered_map(need hash function)
-  std::map<Index, FieldValuePairVector> live_fieldsets;
-
+bool Parser::_BuildLiveFieldSets() {
   for (auto fsBegin = _fieldset_indices.begin(),
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index());
        fsBegin != _fieldset_indices.end(); fsBegin = fsEnd + 1,
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index())) {
     auto &pairs =
-        live_fieldsets[Index(uint32_t(fsBegin - _fieldset_indices.begin()))];
+        _live_fieldsets[Index(uint32_t(fsBegin - _fieldset_indices.begin()))];
 
     pairs.resize(size_t(fsEnd - fsBegin));
     std::cout << "range size = " << (fsEnd - fsBegin) << "\n";
@@ -2787,18 +2748,27 @@ bool Parser::BuildLiveFieldSets() {
     }
   }
 
+  std::cout << "# of live fieldsets = " << _live_fieldsets.size() << "\n";
+
   size_t sum = 0;
-  for (const auto &item : live_fieldsets) {
+  for (const auto &item : _live_fieldsets) {
     std::cout << "livefieldsets[" << item.first.value
               << "].count = " << item.second.size() << "\n";
     sum += item.second.size();
+
+    for (size_t i = 0; i < item.second.size(); i++) {
+      std::cout << " [" << i << "] name = " << item.second[i].first << "\n";
+    }
   }
   std::cout << "Total fields used = " << sum << "\n";
 
   return true;
 }
 
-bool Parser::_ReconstructSceneRecursively(int parent, int level, Scene *scene) {
+bool Parser::_ReconstructSceneRecursively(
+    int parent, int level,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    Scene *scene) {
   if ((parent < 0) || (parent >= int(_nodes.size()))) {
     _err += "Invalid parent node id: " + std::to_string(parent) +
             ". Must be in range [0, " + std::to_string(_nodes.size()) + "]\n";
@@ -2816,11 +2786,68 @@ bool Parser::_ReconstructSceneRecursively(int parent, int level, Scene *scene) {
     return indent;
   };
 
-  std::cout << IndentStr(level) << "node_index[" << parent << "] " << node.GetLocalPath() << " ==\n";
+  std::cout << IndentStr(level) << "lv[" << level << "] node_index[" << parent << "] "
+            << node.GetLocalPath() << " ==\n";
+  std::cout << IndentStr(level) << " childs = [";
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    std::cout << node.GetChildren()[i];
+    if (i != (node.GetChildren().size() - 1)) {
+      std::cout << ", ";
+    }
+  }
+  std::cout << "]\n";
+
+  if (!path_index_to_spec_index_map.count(uint32_t(parent))) {
+    // No specifier assigned to this node.
+    _err += "No specifier found for node id: " + std::to_string(parent) + "\n";
+    return false;
+  }
+
+  uint32_t spec_index = path_index_to_spec_index_map.at(uint32_t(parent));
+  if (spec_index >= _specs.size()) {
+    _err += "Invalid specifier id: " + std::to_string(spec_index) +
+            ". Must be in range [0, " + std::to_string(_specs.size()) + "]\n";
+    return false;
+  }
+
+  const Spec &spec = _specs[spec_index];
+  std::cout << IndentStr(level)
+            << "  specTy = " << GetSpecTypeString(spec.spec_type) << "\n";
+  std::cout << IndentStr(level)
+            << "  fieldSetIndex = " << spec.fieldset_index.value << "\n";
+
+  if (!_live_fieldsets.count(spec.fieldset_index)) {
+    _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+            " must exist in live fieldsets.\n";
+    return false;
+  }
+
+  const FieldValuePairVector &fields = _live_fieldsets.at(spec.fieldset_index);
+  for (const auto &fv : fields) {
+    std::cout << IndentStr(level) << "  \"" << fv.first << "\" : ty = " << fv.second.GetTypeName() << "\n";
+    if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
+      std::cout << IndentStr(level) << "    specifier = " << GetSpecifierString(fv.second.GetSpecifier()) << "\n";
+    } else if (fv.second.GetTypeId() == VALUE_TYPE_TOKEN) {
+      std::cout << IndentStr(level) << "    token = " << fv.second.GetToken() << "\n";
+
+    } else if (fv.second.GetTypeId() == VALUE_TYPE_STRING) {
+      std::cout << IndentStr(level) << "    string = " << fv.second.GetString() << "\n";
+
+    } else if (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) {
+      std::cout << IndentStr(level) << "    double = " << fv.second.GetDouble() << "\n";
+
+    } else if (fv.second.GetTypeName() == "TokenArray") {
+      assert(fv.second.IsArray());
+      const auto &strs = fv.second.GetStringArray();
+      for (const auto &str : strs) {
+        std::cout << IndentStr(level + 2) << str << "\n";
+      }
+    }
+  }
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     if (!_ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
-                                      scene)) {
+                                      path_index_to_spec_index_map, scene)) {
       return false;
     }
   }
@@ -2828,28 +2855,32 @@ bool Parser::_ReconstructSceneRecursively(int parent, int level, Scene *scene) {
   return true;
 }
 
-void Parser::_BuildPathIndexToSpecIndex() {
-  for (size_t i = 0; i < _specs.size(); i++) {
-    if (_specs[i].path_index.value == ~0u) {
-      continue;
-    }
-
-    // path_index should be unique.
-    assert(_path_index_to_spec_index_map.count(_specs[i].path_index.value) == 0);
-    _path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
-  }
-}
-
-
 bool Parser::ReconstructScene(Scene *scene) {
   if (_nodes.empty()) {
     _warn += "Empty scene.\n";
     return true;
   }
 
+  std::unordered_map<uint32_t, uint32_t>
+      path_index_to_spec_index_map;  // path_index -> spec_index
+
+  {
+    for (size_t i = 0; i < _specs.size(); i++) {
+      if (_specs[i].path_index.value == ~0u) {
+        continue;
+      }
+
+      // path_index should be unique.
+      assert(path_index_to_spec_index_map.count(_specs[i].path_index.value) ==
+             0);
+      path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
+    }
+  }
+
   int root_node_id = 0;
 
-  return _ReconstructSceneRecursively(root_node_id, /* level */ 0, scene);
+  return _ReconstructSceneRecursively(root_node_id, /* level */ 0,
+                                      path_index_to_spec_index_map, scene);
 }
 
 bool Parser::ReadSpecs() {
@@ -2917,7 +2948,7 @@ bool Parser::ReadSpecs() {
     }
 
     for (size_t i = 0; i < num_specs; ++i) {
-      //std::cout << "tmp = " << tmp[i] << "\n";
+      // std::cout << "tmp = " << tmp[i] << "\n";
       _specs[i].path_index.value = tmp[i];
     }
   }
@@ -2949,7 +2980,7 @@ bool Parser::ReadSpecs() {
     }
 
     for (size_t i = 0; i != num_specs; ++i) {
-      std::cout << "fieldset = " << tmp[i] << "\n";
+      std::cout << "specs[" << i << "].fieldset_index = " << tmp[i] << "\n";
       _specs[i].fieldset_index.value = tmp[i];
     }
   }
@@ -3056,7 +3087,8 @@ bool Parser::ReadBootStrap() {
   std::cout << int(magic[7]) << "\n";
 
   if (memcmp(magic, "PXR-USDC", 8)) {
-    _err += "Invalid magic number. Expected 'PXR-USDC' but got '" + std::string(magic, magic + 8) + "'\n";
+    _err += "Invalid magic number. Expected 'PXR-USDC' but got '" +
+            std::string(magic, magic + 8) + "'\n";
     return false;
   }
 
@@ -3276,7 +3308,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   ///
   /// Reconstruct C++ representation of USD scene graph.
   ///
-  if (!parser.BuildLiveFieldSets()) {
+  if (!parser._BuildLiveFieldSets()) {
     if (warn) {
       (*warn) = parser.GetWarning();
     }
@@ -3295,8 +3327,14 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   // Create `Scene` object
   {
-    parser._BuildPathIndexToSpecIndex();
     if (!parser.ReconstructScene(scene)) {
+      if (warn) {
+        (*warn) = parser.GetWarning();
+      }
+
+      if (err) {
+        (*err) = parser.GetError();
+      }
       return false;
     }
   }
@@ -3473,10 +3511,11 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
 
     // In usdz, data must be aligned at 64bytes boundary.
     if ((offset % 64) != 0) {
-        if (err) {
-          (*err) += "Data offset must be mulitple of 64bytes for USDZ, but got " + std::to_string(offset) + ".\n";
-        }
-        return false;
+      if (err) {
+        (*err) += "Data offset must be mulitple of 64bytes for USDZ, but got " +
+                  std::to_string(offset) + ".\n";
+      }
+      return false;
     }
 
     uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
