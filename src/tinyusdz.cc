@@ -1,3 +1,29 @@
+/*
+Copyright (c) 2019 - 2020, Syoyo Fujita.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the Syoyo Fujita nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
 #include "tinyusdz.hh"
 
 #include <algorithm>
@@ -10,6 +36,7 @@
 #include <thread>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "integerCoding.h"
@@ -406,27 +433,39 @@ class Node {
 
   const std::vector<size_t> &GetChildren() const { return _children; }
 
-  void AddChildren(size_t node_index) { _children.push_back(node_index); }
+  ///
+  /// child_name is used when reconstructing scene graph.
+  ///
+  void AddChildren(const std::string &child_name, size_t node_index) {
+    assert(_primChildren.count(child_name) == 0);
+    _primChildren.emplace(child_name);
+    _children.push_back(node_index);
+  }
 
   ///
   /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
   /// this node is `bora`)
   ///
-  std::string GetFullPath() const;
+  //std::string GetFullPath() const { return _path.full_path_name(); }
 
   ///
   /// Get local path
   ///
-  std::string GetLocalPath() const { return _path.name(); }
+  std::string GetLocalPath() const { return _path.full_path_name(); }
 
   const Path &GetPath() const { return _path; }
 
   NodeType GetNodeType() const { return _node_type; }
 
+  const std::unordered_set<std::string> &GetPrimChildren() const {
+    return _primChildren;
+  }
+
  private:
   int64_t
       _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
   std::vector<size_t> _children;  // index to child nodes.
+  std::unordered_set<std::string> _primChildren; // List of name of child nodes
 
   Path _path;  // local path
 
@@ -737,7 +776,7 @@ class Parser {
 
     const Path &p = _paths[index.value];
 
-    return p.name();
+    return p.full_path_name();
   }
 
   std::string GetSpecString(Index index) {
@@ -2159,7 +2198,7 @@ bool Parser::_BuildDecompressedPathsImpl(
       // root node.
       // Assume single root node in the scene.
       std::cout << "paths[" << pathIndexes[thisIndex]
-                << "] is parent. name = " << parentPath.name() << "\n";
+                << "] is parent. name = " << parentPath.full_path_name() << "\n";
       parentPath = Path::AbsoluteRootPath();
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
@@ -2175,9 +2214,14 @@ bool Parser::_BuildDecompressedPathsImpl(
       auto const &elemToken = _tokens[size_t(tokenIndex)];
       std::cout << "elemToken = " << elemToken << "\n";
       std::cout << "[" << pathIndexes[thisIndex] << "].append = " << elemToken << "\n";
+
+      // full path
       _paths[pathIndexes[thisIndex]] =
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken)
                              : parentPath.AppendElement(elemToken);
+
+      // also set local path for 'primChildren' check
+      _paths[pathIndexes[thisIndex]].SetLocalPath(elemToken);
     }
 
     // If we have either a child or a sibling but not both, then just
@@ -2245,7 +2289,9 @@ bool Parser::_BuildNodeHierarchy(
 
       _nodes[size_t(pathIndexes[thisIndex])] = node;
 
-      _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(pathIndexes[thisIndex]);
+      std::string name = _paths[pathIndexes[thisIndex]].local_path_name();
+      std::cout << "childName = " << name << "\n";
+      _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(name, pathIndexes[thisIndex]);
     }
 
     hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
@@ -2823,7 +2869,31 @@ bool Parser::_ReconstructSceneRecursively(
   }
 
   const FieldValuePairVector &fields = _live_fieldsets.at(spec.fieldset_index);
+
+  // root only attributes.
+  if (parent == 0) {
+    for (const auto &fv : fields) {
+      if ((fv.first == "upAxis") && (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
+        std::string v = fv.second.GetToken();
+        if ((v != "Y")) {
+          _err += "Currently upAxis must be 'Y' but got '" + v + "'\n";
+          return false;
+        }
+        scene->upAxis = v;
+      } else if ((fv.first == "metersPerUnit") && (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE)) {
+        scene->metersPerUnit = fv.second.GetDouble();
+      } else if ((fv.first == "timeCodesPerSecond") && (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE)) {
+        scene->timeCodesPerSecond = fv.second.GetDouble();
+      } else if ((fv.first == "defaultPrim") && (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
+        scene->defaultPrim = fv.second.GetToken();
+      } else {
+        // TODO(syoyo): `customLayerData`
+      }
+    }
+  }
+
   for (const auto &fv : fields) {
+
     std::cout << IndentStr(level) << "  \"" << fv.first << "\" : ty = " << fv.second.GetTypeName() << "\n";
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
       std::cout << IndentStr(level) << "    specifier = " << GetSpecifierString(fv.second.GetSpecifier()) << "\n";
@@ -2836,6 +2906,18 @@ bool Parser::_ReconstructSceneRecursively(
     } else if (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) {
       std::cout << IndentStr(level) << "    double = " << fv.second.GetDouble() << "\n";
 
+    } else if ((fv.first == "primChildren") && (fv.second.GetTypeName() == "TokenArray")) {
+      // Check if TokenArray contains known child nodes 
+      const auto &tokens = fv.second.GetStringArray();
+      
+      bool valid = true;
+      for (const auto &token : tokens) {
+        if (!node.GetPrimChildren().count(token)) {
+          _err += "primChild '" + token + "' not found in node '" + node.GetPath().full_path_name() + "'\n";
+          valid = false;
+          break;
+        }
+      }
     } else if (fv.second.GetTypeName() == "TokenArray") {
       assert(fv.second.IsArray());
       const auto &strs = fv.second.GetStringArray();
@@ -3063,7 +3145,7 @@ bool Parser::ReadPaths() {
   std::cout << "# of paths " << _paths.size() << "\n";
 
   for (size_t i = 0; i < _paths.size(); i++) {
-    std::cout << "path[" << i << "] = " << _paths[i].name() << "\n";
+    std::cout << "path[" << i << "] = " << _paths[i].full_path_name() << "\n";
   }
 
   return true;
@@ -3322,7 +3404,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   for (size_t i = 0; i < parser.NumPaths(); i++) {
     Path path = parser.GetPath(Index(uint32_t(i)));
-    std::cout << "path[" << i << "].name = " << path.name() << "\n";
+    std::cout << "path[" << i << "].name = " << path.full_path_name() << "\n";
   }
 
   // Create `Scene` object

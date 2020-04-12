@@ -1,3 +1,30 @@
+/*
+Copyright (c) 2019 - 2020, Syoyo Fujita.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the Syoyo Fujita nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
 #ifndef TINYUSDZ_HH_
 #define TINYUSDZ_HH_
 
@@ -295,22 +322,24 @@ struct ListOpHeader {
 ///
 class Path {
  public:
-  Path() : valid(true) {}
-  Path(const std::string &prim) : prim_part(prim) {}
-  Path(const std::string &prim, const std::string &prop)
-      : prim_part(prim), prop_part(prop) {}
+  Path() : valid(false) {}
+  Path(const std::string &prim) : prim_part(prim), local_part(prim), valid(true) {}
+  //Path(const std::string &prim, const std::string &prop)
+  //    : prim_part(prim), prop_part(prop) {}
 
   Path(const Path &rhs) = default;
 
   Path &operator=(const Path &rhs) {
     this->valid = rhs.valid;
+
     this->prim_part = rhs.prim_part;
     this->prop_part = rhs.prop_part;
+    this->local_part = rhs.local_part;
 
     return (*this);
   }
 
-  std::string name() const {
+  std::string full_path_name() const {
     std::string s;
     if (!valid) {
       s += "INVALID#";
@@ -326,9 +355,27 @@ class Path {
     return s;
   }
 
+  std::string local_path_name() const {
+    std::string s;
+    if (!valid) {
+      s += "INVALID#";
+    }
+
+    s += local_part;
+
+    return s;
+  }
+
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
   static Path AbsoluteRootPath() { return Path("/"); }
+
+  void SetLocalPath(const Path &rhs) {
+    //assert(rhs.valid == true);
+    
+    this->local_part = rhs.local_part;
+    this->valid = rhs.valid;
+  }
 
   Path AppendProperty(const std::string &elem) {
     Path p = (*this);
@@ -353,6 +400,7 @@ class Path {
       return p;
     } else {
       p.prop_part = elem;
+
       return p;
     }
   }
@@ -385,6 +433,7 @@ class Path {
       } else {
         p.prim_part += '/' + elem;
       }
+
       return p;
     }
   }
@@ -392,9 +441,10 @@ class Path {
   bool IsValid() const { return valid; }
 
  private:
-  std::string prim_part;
-  std::string prop_part;
-  bool valid{true};
+  std::string prim_part; // full path
+  std::string prop_part; // full path
+  std::string local_part;
+  bool valid{false};
 };
 
 
@@ -1297,6 +1347,7 @@ struct Scene
 
   // Scene global setting
   std::string upAxis = "Y"; 
+  std::string defaultPrim;  // prim node name
   double metersPerUnit = 1.0;  // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
 
