@@ -2,14 +2,38 @@
 
 `TinyUSDZ` is dependency-free(depends only on C++ STL. Yes, you don't need USD library!) USDZ loader library written in C++11.
 
+## Status
+
+TinyUSDZ is currently in alpha stage. Not usable.
+
+* [x] USDC data parse
+* [ ] Reconstuct scene graph representaion(2020 April expected)
+* [ ] Write simple OpenGL viewer example(2020 April expected)
+* [ ] Animation(usdSkel) support(2020 Summer expected)
+* [ ] Vulkan raytracing viewer example
+* [ ] USDZ writer
+
+## Supported platforms
+
+* [x] Linux 64bit or later
+  * [x] ARM AARCH64
+  * [x] x86-64
+  * [ ] RISC-V(Should work)
+  * [ ] SPARC, POWER(Big endian machine). Would work
+* [x] Android arm64v8a
+* [ ] iOS(Should work)
+* [x] macOS
+* [x] Windows 10 64bit or later
+  * [x] Windows ARM should work
+
 ## Requirements
 
 * C++11
 
 ## USDZ file format
 
-USDZ is a uncompressed zip file.
-USDZ contains usdc(binary) and resources(e.g. image file)
+USDZ is actually the uncompressed zip file.
+USDZ(ZIP) contains usdc(binary) and resources(e.g. image/auduo files)
 
 ## Build
 
@@ -23,7 +47,7 @@ Recomended way is simply copy `src` and `include` folder to your app, and add `*
 
 ### CMake
 
-cmake build is still provided, but not recommended
+cmake build is still provided for CI build. Cmake project is not recommended for embedding TinyUSDZ to your app.
 
 ```
 $ mkdir build
@@ -39,15 +63,15 @@ $ make
 * `TINYUSDZ_WITH_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
   * `osd_DIR` to specify the path to OpenSubdiv repo(I recommend to use https://github.com/syoyo/OpenSubdiv-aarch64 )
 * `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
-* `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture.
+* `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture through TinyEXR.
 
 #### Build with OpenSubdiv
 
-Recommended way is to run `scripts/clone_osd.sh` to clone OpenSubdiv-aarch64 repo to `deps/OpenSudiv`, then run `scripts/bootstrap-cmake-linux-with-osd.sh` .
+Recommended way is to run `scripts/clone_osd.sh` to clone OpenSubdiv-aarch64 repo to `deps/OpenSudiv`, then run `scripts/bootstrap-cmake-linux-with-osd.sh`.
 
 ### Meson
 
-Meson build is provided for testing compilation.
+Meson build is provided for compile tests.
 
 ```
 $ meson builddir
@@ -61,10 +85,7 @@ See `examples` directory.
 
 ### Data format
 
-#### Primitive
-
-* [x] `visibility`
-* [x] `position`(FLOAT3 only)
+See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
 
 ## TODO
 
@@ -96,7 +117,7 @@ TinyUSDZ is licensed under MIT license.
 
 * USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
 * lz4 : BSD-2 license. http://www.lz4.org
-* cnpy(uncompressed ZIP decode/encode) : MIT license https://github.com/rogersce/cnpy
+* cnpy(uncompressed ZIP decode/encode code) : MIT license https://github.com/rogersce/cnpy
 * tinyexr: BSD license.
 * stb_image: public domain. 
 * dr_libs: public domain. https://github.com/mackron/dr_libs

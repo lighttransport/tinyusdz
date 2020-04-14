@@ -1407,7 +1407,7 @@ bool Parser::_ReadPathListOp(ListOp<Path> *d) {
 
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
-    size_t n;
+    uint64_t n;
     if (!_sr->read8(&n)) {
       _err += "Failed to read # of elements in ListOp.\n";
       return false;
@@ -1784,7 +1784,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       return false;
     }
 
-    printf("rep = 0x%016lx\n", rep.GetData());
+    //printf("rep = 0x%016lx\n", rep.GetData());
 
     if (ty.id == VALUE_TYPE_TOKEN) {
       // Guess array of Token
@@ -1956,7 +1956,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
       assert(!rep.IsCompressed());
       // std::vector<Index>
-      size_t n;
+      uint64_t n;
       if (!_sr->read8(&n)) {
         std::cerr << "Failed to read TokenVector value\n";
         return false;
