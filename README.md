@@ -19,7 +19,7 @@ TinyUSDZ is currently in alpha stage. Not usable.
   * [x] ARM AARCH64
   * [x] x86-64
   * [ ] RISC-V(Should work)
-  * [ ] SPARC, POWER(Big endian machine). Would work
+  * [ ] SPARC, POWER(Big endian machine). May work(theoretically)
 * [x] Android arm64v8a
 * [ ] iOS(Should work)
 * [x] macOS
@@ -81,7 +81,10 @@ $ ninja
 
 ### Examples
 
-See `examples` directory.
+[Simple dump](examples/simple_dump/)
+[Simple OpenGL viewer](examples/openglviewer/)
+
+See `examples` directory for more examples.
 
 ### Data format
 
