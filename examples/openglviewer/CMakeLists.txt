@@ -1,8 +1,9 @@
+# Assume this project is a root project
 cmake_minimum_required(VERSION 3.5.1)
 
-set(BUILD_TARGET "openglviewer")
-
 project(${BUILD_TARGET} C CXX)
+
+set(BUILD_TARGET "openglviewer")
 
 set(CMAKE_CXX_STANDARD 11)
 
@@ -20,6 +21,12 @@ set(SOURCES
     main.cc
     #render.cc
     #render-config.cc
+
+    # tinyusdz
+    ../../src/tinyusdz.cc
+    ../../src/integerCoding.cpp
+    ../../src/pxrLZ4/lz4.cpp
+    ../../src/lz4-compression.cc
 )
 
 set(GUI_SOURCES

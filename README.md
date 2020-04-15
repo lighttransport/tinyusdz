@@ -68,6 +68,12 @@ See `examples` directory.
 
 ## TODO
 
+* [ ] USDA(USD Ascii) support
+  * [ ] Write our own USDA parser with PEG.
+* [ ] Animation
+  * [ ] Skinning(usdSkel)
+  * [ ] Blend shapes
+    * [ ] In-between blend shapes
 * [ ] Audio play support
   * [ ] Play audio using SoLoud or miniaudio(or Oboe for Android)
   * [ ] wav(dr_wav)
