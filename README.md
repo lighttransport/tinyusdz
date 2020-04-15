@@ -13,6 +13,12 @@ TinyUSDZ is currently in alpha stage. Not usable.
 * [ ] Vulkan raytracing viewer example
 * [ ] USDZ writer
 
+## Other related projects
+
+* TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
+* TinyObjLoader: Wavefront .obj loader ( https://github.com/tinyobjloader/tinyobjloader )
+* USD-build-aarch64: Full USD build for AARCH64(Linux and Android): https://github.com/syoyo/USD-build-aarch64
+
 ## Supported platforms
 
 * [x] Linux 64bit or later
@@ -65,7 +71,7 @@ $ make
 * `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
 * `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture through TinyEXR.
 
-#### Build with OpenSubdiv
+#### Build with OpenSubdiv(optional)
 
 Recommended way is to run `scripts/clone_osd.sh` to clone OpenSubdiv-aarch64 repo to `deps/OpenSudiv`, then run `scripts/bootstrap-cmake-linux-with-osd.sh`.
 

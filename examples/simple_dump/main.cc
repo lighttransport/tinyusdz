@@ -20,10 +20,44 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
+static void PrintValue(const tinyusdz::Value &v) {
+
+  std::cout << "data type = " << v.GetTypeName() << "\n";
+
+}
+
+static std::string PrintNodeType(tinyusdz::NodeType ty)
+{
+  if (ty == tinyusdz::NODE_TYPE_XFORM) {
+    return "node:xform";
+  } else if (ty == tinyusdz::NODE_TYPE_GROUP) {
+    return "node:group";
+  } else if (ty == tinyusdz::NODE_TYPE_GEOM_MESH) {
+    return "node:geom_mesh";
+  } else if (ty == tinyusdz::NODE_TYPE_MATERIAL) {
+    return "node:material";
+  } else if (ty == tinyusdz::NODE_TYPE_SHADER) {
+    return "node:shader";
+  } else if (ty == tinyusdz::NODE_TYPE_CUSTOM) {
+    return "node:custom";
+  } else {
+    return "node:???";
+  }
+}
+
+static void DumpNode(const tinyusdz::Node &node, int level) {
+  for (const auto &child : node.children) {
+    //child.GetNodeType();
+  }
+}
+
 static void DumpScene(const tinyusdz::Scene &scene)
 {
 
   std::cout << "Scene.name: " << scene.name << "\n";
+  std::cout << "Scene.metersPerUnit: " << scene.metersPerUnit << "\n";
+  std::cout << "Scene.timeCodesPerSecond: " << scene.timeCodesPerSecond << "\n";
+  std::cout << "Scene.defaultPrim: " << scene.defaultPrim << "\n";
   std::cout << "Scene.root_node: " << scene.root_node << "\n";
 
   std::cout << "# of nodes: " << scene.nodes.size() << "\n";
@@ -32,6 +66,10 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "# of materials: " << scene.geom_meshes.size() << "\n";
   std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
   std::cout << "# of groups: " << scene.groups.size() << "\n";
+
+  if (scene.root_node > -1) {
+    DumpNode(scene.nodes[scene.root_node], 0);
+  }
 
 }
 
@@ -50,6 +88,7 @@ int main(int argc, char **argv) {
   tinyusdz::Scene scene;
 
   if (ext.compare("usdz") == 0) {
+    std::cout << "usdz\n";
     bool ret = tinyusdz::LoadUSDZFromFile(filepath, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
