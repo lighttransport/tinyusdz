@@ -943,7 +943,10 @@ class Value {
     if (dtype.id == VALUE_TYPE_DOUBLE) {
       double d = *reinterpret_cast<const double *>(data.data());
       return static_cast<double>(d);
-    }
+    } else if (dtype.id == VALUE_TYPE_FLOAT) {
+      float d = *reinterpret_cast<const float *>(data.data());
+      return static_cast<double>(d);
+    } 
     return std::numeric_limits<double>::quiet_NaN(); // invalid
   }
 

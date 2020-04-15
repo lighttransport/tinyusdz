@@ -1407,7 +1407,7 @@ bool Parser::_ReadPathListOp(ListOp<Path> *d) {
 
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
-    size_t n;
+    uint64_t n;
     if (!_sr->read8(&n)) {
       _err += "Failed to read # of elements in ListOp.\n";
       return false;
@@ -1784,7 +1784,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       return false;
     }
 
-    printf("rep = 0x%016lx\n", rep.GetData());
+    //printf("rep = 0x%016lx\n", rep.GetData());
 
     if (ty.id == VALUE_TYPE_TOKEN) {
       // Guess array of Token
@@ -1956,7 +1956,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
       assert(!rep.IsCompressed());
       // std::vector<Index>
-      size_t n;
+      uint64_t n;
       if (!_sr->read8(&n)) {
         std::cerr << "Failed to read TokenVector value\n";
         return false;
@@ -2875,15 +2875,25 @@ bool Parser::_ReconstructSceneRecursively(
     for (const auto &fv : fields) {
       if ((fv.first == "upAxis") && (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
         std::string v = fv.second.GetToken();
-        if ((v != "Y")) {
-          _err += "Currently upAxis must be 'Y' but got '" + v + "'\n";
+        if ((v != "Y") && (v != "Z" ) && (v != "X")) {
+          _err += "Currently `upAxis` must be 'X', 'Y' or 'Z' but got '" + v + "'\n";
           return false;
         }
         scene->upAxis = v;
-      } else if ((fv.first == "metersPerUnit") && (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE)) {
-        scene->metersPerUnit = fv.second.GetDouble();
-      } else if ((fv.first == "timeCodesPerSecond") && (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE)) {
-        scene->timeCodesPerSecond = fv.second.GetDouble();
+      } else if (fv.first == "metersPerUnit") {
+        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) || (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
+          scene->metersPerUnit = fv.second.GetDouble();
+        } else {
+          _err += "Currently `metersPerUnit` value must be double or float type, but got '" + fv.second.GetTypeName() + "'\n";
+          return false;
+        }
+      } else if (fv.first == "timeCodesPerSecond") {
+        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) || (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
+          scene->timeCodesPerSecond = fv.second.GetDouble();
+        } else {
+          _err += "Currently `timeCodesPerSecond` value must be double or float type, but got '" + fv.second.GetTypeName() + "'\n";
+          return false;
+        }
       } else if ((fv.first == "defaultPrim") && (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
         scene->defaultPrim = fv.second.GetToken();
       } else {
@@ -2899,13 +2909,12 @@ bool Parser::_ReconstructSceneRecursively(
       std::cout << IndentStr(level) << "    specifier = " << GetSpecifierString(fv.second.GetSpecifier()) << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_TOKEN) {
       std::cout << IndentStr(level) << "    token = " << fv.second.GetToken() << "\n";
-
     } else if (fv.second.GetTypeId() == VALUE_TYPE_STRING) {
       std::cout << IndentStr(level) << "    string = " << fv.second.GetString() << "\n";
-
     } else if (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) {
       std::cout << IndentStr(level) << "    double = " << fv.second.GetDouble() << "\n";
-
+    } else if (fv.second.GetTypeId() == VALUE_TYPE_FLOAT) {
+      std::cout << IndentStr(level) << "    float  = " << fv.second.GetDouble() << "\n";
     } else if ((fv.first == "primChildren") && (fv.second.GetTypeName() == "TokenArray")) {
       // Check if TokenArray contains known child nodes 
       const auto &tokens = fv.second.GetStringArray();
