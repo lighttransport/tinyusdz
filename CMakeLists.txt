@@ -17,7 +17,11 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
+
+# Require strict C++11 mode(e.g. `-std=c++11`)
 set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # [ccache]
 if(TINYUSDZ_USE_CCACHE)
