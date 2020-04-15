@@ -1,11 +1,11 @@
 
 # Mesh prim
 
-points : usually vec3f[]
-normals : usually vec3f[] varying
-primvars:st : usually vec2f[] varying
-primvars:st:indices : usually int[]  varying
-velocities : usually vec3f[]
+* points : usually vec3f[]
+* normals : usually vec3f[] varying
+* primvars:st : usually vec2f[] varying
+* primvars:st:indices : usually int[]  varying
+* velocities : usually vec3f[]
 
 
 ### Mesh property
