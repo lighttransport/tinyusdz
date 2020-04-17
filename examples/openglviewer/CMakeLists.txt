@@ -1,9 +1,9 @@
 # Assume this project is a root project
 cmake_minimum_required(VERSION 3.5.1)
 
-project(${BUILD_TARGET} C CXX)
+project(${BUILD_TARGET} CXX)
 
-set(BUILD_TARGET "openglviewer")
+set(BUILD_TARGET "usdz_glview")
 
 set(CMAKE_CXX_STANDARD 11)
 
@@ -36,6 +36,7 @@ set(GUI_SOURCES
     ../common/imgui/imgui_draw.cpp
     ../common/imgui/imgui_widgets.cpp
     ../common/imgui/imgui_impl_glfw.cpp
+    ../common/imgui/imgui_impl_opengl2.cpp
     ../common/glad/src/glad.c
     )
 
@@ -45,7 +46,7 @@ set(GLFW_BUILD_TESTS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_INSTALL OFF CACHE INTERNAL "" FORCE)
 #option(GLFW_VULKAN_STATIC "Assume the Vulkan loader is linked with the application" OFF)
-add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.2" glfw-3.3.2)
+add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.2" glfw-3.3.2 EXCLUDE_FROM_ALL)
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
 
