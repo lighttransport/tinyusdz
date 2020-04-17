@@ -1132,6 +1132,7 @@ struct Extent
 };
 
 // Polygon mesh geometry
+// TODO(syoyo): Points, Curves, Volumes, ...
 struct GeomMesh
 {
   int64_t parent_id{-1};  // Index to xform node
@@ -1143,6 +1144,18 @@ struct GeomMesh
   // Vertex data would use various data types, byte strides, etc, so use PrimAttrib to represent it.
   PrimAttrib points; // Usually float3[]
   PrimAttrib normals; // Usually float3[], varying
+
+  //
+  // Utility functions
+  //
+
+  // Get `points` as float3 array
+  // Return false if `points` is not float3[] type
+  bool GetPoints(std::vector<float> *v);
+
+  // Get `normals` as float3 array + facevarying
+  // Return false if `normals` is neither float3[] type nor `varying` 
+  bool GetFavevaryingNormals(std::vector<float> *v);
 
   UVCoords st;
 

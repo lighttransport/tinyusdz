@@ -3686,6 +3686,46 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
   return true;
 }
 
+bool GeomMesh::GetPoints(std::vector<float> *v) {
+
+  if (points.buffer.type != BufferData::BUFFER_DATA_TYPE_FLOAT) {
+    return false;
+  }
+
+  size_t n = points.buffer.GetNumElements();
+  if ((n % 3) != 0) {
+    return false;
+  }
+  
+  v->resize(n);
+
+  memcpy(v->data(), points.buffer.data.data(), n * sizeof(float));
+
+  return true;
+}
+
+bool GeomMesh::GetFavevaryingNormals(std::vector<float> *v) {
+
+  if (normals.variability != VariabilityVarying) {
+    return false;
+  }
+
+  if (points.buffer.type != BufferData::BUFFER_DATA_TYPE_FLOAT) {
+    return false;
+  }
+
+  size_t n = points.buffer.GetNumElements();
+  if ((n % 3) != 0) {
+    return false;
+  }
+  
+  v->resize(n);
+
+  memcpy(v->data(), points.buffer.data.data(), n * sizeof(float));
+
+  return true;
+}
+
 static_assert(sizeof(Field) == 16, "");
 static_assert(sizeof(Spec) == 12, "");
 static_assert(sizeof(Index) == 4, "");
