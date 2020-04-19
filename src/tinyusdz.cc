@@ -3625,7 +3625,7 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
     std::cout << "offset = " << offset << "\n";
 
     // [offset, uncompr_bytes]
-    assets.push_back({varname, offset, offset + uncompr_bytes});
+    assets.push_back(std::make_tuple(varname, offset, offset + uncompr_bytes));
 
     offset += uncompr_bytes;
   }
