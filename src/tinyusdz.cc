@@ -29,6 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <cctype> // std::tolower
 #include <chrono>
 #include <fstream>
 #include <map>

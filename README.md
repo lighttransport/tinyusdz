@@ -56,7 +56,9 @@ Recomended way is simply copy `src` and `include` folder to your app, and add `*
 
 ### CMake
 
-cmake build is still provided for CI build. Cmake project is not recommended for embedding TinyUSDZ to your app.
+cmake build is still provided for CI build. `CMakeSettings.json` is provided for Visual Studio 2019.
+
+Cmake project is not recommended for embedding TinyUSDZ to your app.
 
 ```
 $ mkdir build
