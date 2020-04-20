@@ -199,7 +199,8 @@ Scheme<SCHEME_LOOP>::assignSmoothMaskForVertex(VERTEX const& vertex, MASK& mask)
 
         double dValence   = (double) valence;
         double invValence = 1.0f / dValence;
-        double cosTheta   = std::cos(M_PI * 2.0f * invValence);
+        double cosTheta =
+            std::cos(3.14159265358979323846f * 2.0f * invValence);
 
         double beta = 0.25f * cosTheta + 0.375f;
 
