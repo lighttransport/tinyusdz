@@ -12,6 +12,5 @@ mkdir ${builddir}
 cd ${builddir} && cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DTINYUSDZ_WITH_OPENSUBDIV=On \
-  -Dosd_DIR=${osd_path} \
   ..
 
