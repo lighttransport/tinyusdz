@@ -131,6 +131,7 @@ TinyUSDZ is licensed under MIT license.
 ### Third party licenses
 
 * USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
+* OpenSubdiv : Apache 2.0 license. https://github.com/PixarAnimationStudios/OpenSubdiv
 * lz4 : BSD-2 license. http://www.lz4.org
 * cnpy(uncompressed ZIP decode/encode code) : MIT license https://github.com/rogersce/cnpy
 * tinyexr: BSD license.

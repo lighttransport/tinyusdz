@@ -44,6 +44,17 @@ jobs:
             cd build-cross
             make VERBOSE=1
 
+  # Build with OpenSubdiv
+  build-osd:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure
+      run: ./scripts/bootstrap-cmake-linux-with-osd.sh
+    - name: make
+      run: cd build && make
 
   build:
 
