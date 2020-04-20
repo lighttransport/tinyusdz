@@ -7,6 +7,26 @@ on:
     branches: [ master ]
 
 jobs:
+
+  # Cross-compile for aarch64 linux target
+  build-cross-aarch64:
+
+    runs-on: ubuntu-18.04
+    name: Build on cross aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: CmakeAndBuild
+        run: |
+            sudo apt-get update
+            sudo apt-get install -y build-essential
+            sudo apt-get install -y gcc-8-aarch64-linux-gnu g++-8-aarch64-linux-gnu
+            ./scripts/bootstrap-gcc-aarch64-cross.sh
+            cd build-cross
+            make VERBOSE=1
+
+
   build:
 
     runs-on: ubuntu-latest
