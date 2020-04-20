@@ -1,7 +1,9 @@
 curdir=`pwd`
 
-# Set path to OpenSubdiv
-osd_path=${curdir}/deps/OpenSubdiv
+# You can choose your own OpenSubdiv repo path if required.
+# osd_path=${curdir}/deps/OpenSubdiv
+#
+# -Dosd_DIR=${osd_path}
 
 builddir=${curdir}/build
 
