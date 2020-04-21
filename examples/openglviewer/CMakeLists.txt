@@ -63,6 +63,9 @@ endif()
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common")
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/imgui")
 
+# tinyusdz dir
+target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
+
 target_link_libraries(
     ${BUILD_TARGET}
     ${OPENGL_LIBRARIES}

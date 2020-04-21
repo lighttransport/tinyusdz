@@ -20,6 +20,8 @@
 
 #include "trackball.h"
 
+#include "tinyusdz.hh"
+
 struct GUIContext {
   enum AOV {
     AOV_COLOR = 0,
@@ -81,6 +83,29 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action,
 
   if (key == GLFW_KEY_Q && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL)) {
     glfwSetWindowShouldClose(window, GLFW_TRUE);
+  }
+}
+
+static void DrawGeomMesh(tinyusdz::GeomMesh &mesh)
+{
+
+}
+
+static void DrawNode(const tinyusdz::Scene &scene, const tinyusdz::Node &node)
+{
+  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
+    const tinyusdz::Xform &xform = scene.xforms.at(node.index);
+    glPushMatrix();
+
+    glMultMatrixd(reinterpret_cast<const double *>(&(xform.matrix.m)));
+  }
+
+  for (const auto &child : node.children) {
+    DrawNode(scene, scene.nodes.at(child));
+  }
+
+  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
+    glPopMatrix();
   }
 }
 
