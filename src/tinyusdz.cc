@@ -159,7 +159,6 @@ namespace {
 constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
 
-#if 0
 // Decode image(png, jpg, ...)
 static bool DecodeImage(const uint8_t *bytes, const size_t size, const std::string &uri, Image *image, std::string *warn, std::string *err)
 {
@@ -225,7 +224,6 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size, const std::stri
   return true;
 
 };
-#endif
 
 float to_float(uint16_t h) {
   float16 f;
@@ -3684,6 +3682,41 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
     }
   }
 
+  // Decode images
+  for (size_t i = 0; i < assets.size(); i++) {
+
+    const std::string &uri= std::get<0>(assets[i]);
+    const std::string ext = GetFileExtension(uri);
+
+    if ((ext.compare("png") == 0) || (ext.compare("jpg") == 0) || (ext.compare("jpeg") == 0)) {
+   
+      const size_t start_addr = std::get<1>(assets[i]);
+      const size_t end_addr = std::get<2>(assets[i]);
+      const size_t usdc_size = end_addr - start_addr;
+      const uint8_t *usdc_addr = &data[start_addr];
+
+      Image image;
+      std::string _warn, _err;
+      bool ret = DecodeImage(usdc_addr, usdc_size, uri, &image, &_warn, &_err);
+
+      if (!_warn.empty()) {
+        if (warn) {
+          (*warn) += _warn;
+        }
+      }
+
+      if (!_err.empty()) {
+        if (err) {
+          (*err) += _err;
+        }
+      }
+
+      if (!ret) {
+      }
+    }
+
+  }
+
   return true;
 }
 
@@ -3733,5 +3766,6 @@ static_assert(sizeof(Index) == 4, "");
 static_assert(sizeof(Vec4h) == 8, "");
 static_assert(sizeof(Vec4f) == 16, "");
 static_assert(sizeof(Vec4d) == 32, "");
+static_assert(sizeof(Matrix4d) == (8 * 16), "");
 
 }  // namespace tinyusdz
