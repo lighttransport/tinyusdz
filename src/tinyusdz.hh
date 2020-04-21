@@ -1101,7 +1101,7 @@ struct Xform
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
-  std::vector<int32_t> xformOpOrder; // T.B.D.
+  //std::vector<int32_t> xformOpOrder; // T.B.D.
 
 };
 
@@ -1369,6 +1369,7 @@ struct Scene
 
   //
   // glTF-like scene objects
+  // TODO(syoyo): Use std::variant(C++17) like static polymorphism
   //
   std::vector<Xform> xforms;
   std::vector<GeomMesh> geom_meshes;
