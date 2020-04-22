@@ -5,6 +5,7 @@
 
 #include <atomic>  // C++11
 #include <chrono>  // C++11
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -116,6 +117,8 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
+  tinyusdz::Scene scene;
+
 #ifdef _DEBUG_OPENGL
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 #endif
@@ -189,6 +192,13 @@ int main(int argc, char** argv) {
     glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
     glEnable(GL_DEPTH_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Draw scene
+    if ((scene.root_node >= 0) && (scene.root_node < scene.nodes.size())) {
+      DrawNode(scene, scene.nodes[scene.root_node]);
+    }
+
+    // Imgui
 
     ImGui::Render();
     ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
