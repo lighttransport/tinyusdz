@@ -811,11 +811,17 @@ class Parser {
 
   bool _BuildLiveFieldSets();
 
-  bool ReconstructScene(Scene *scene);
+  bool _ReconstructGeomMesh(const Node &node,
+    const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    GeomMesh *mesh);
+
   bool _ReconstructSceneRecursively(int parent_id, int level,
                                     const std::unordered_map<uint32_t, uint32_t>
                                         &path_index_to_spec_index_map,
                                     Scene *scene);
+
+  bool ReconstructScene(Scene *scene);
 
   ///
   /// --------------------------------------------------
@@ -2811,13 +2817,144 @@ bool Parser::_BuildLiveFieldSets() {
   return true;
 }
 
+bool Parser::_ReconstructGeomMesh(
+    const Node &node,
+    const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    GeomMesh *mesh) {
+
+  (void)mesh;
+
+  bool has_position{false};
+
+  auto ParseGeomMeshAttribute = [](const FieldValuePairVector &fvs, PrimAttrib *attr) -> bool {
+    std::string type_name;
+    Variability variability{VariabilityVarying};
+    bool facevarying{false};
+
+    for (const auto &fv : fvs) {
+      if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
+        type_name = fv.second.GetToken();
+
+        (void)attr;
+      } else if ((fv.first == "variablity") && (fv.second.GetTypeName() == "Variability")) {
+        variability = fv.second.GetVariability();
+      } else if ((fv.first == "interpolation") && (fv.second.GetTypeName() == "Token")) {
+        if (fv.second.GetToken() == "faceVarying") {
+          facevarying = true;
+        }
+      }
+    }
+
+    // Decode value(stored in "default" field)
+    for (const auto &fv : fvs) {
+      if (fv.first == "default") {
+        if (fv.second.GetTypeName() == "FloatArray") {
+          attr->name = "TODO";
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2, /* stride */sizeof(float) * 2, fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+        } else if (fv.second.GetTypeName() == "Vec2fArray") {
+          attr->name = "TODO";
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2, /* stride */sizeof(float) * 2, fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+        } else if (fv.second.GetTypeName() == "Vec3fArray") {
+          attr->name = "TODO";
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3, /* stride */sizeof(float) * 3, fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+        } else if (fv.second.GetTypeName() == "Vec4fArray") {
+          attr->name = "TODO";
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4, /* stride */sizeof(float) * 4, fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+        }
+      }
+    }
+
+    return false;
+  };
+
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+      assert(fv.second.IsArray());
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+        if (fv.second.GetStringArray()[i] == "points") {
+
+          has_position = true;
+
+        }
+      }
+    }
+  }
+
+  if (!has_position) {
+    _err += "No `position` field exist for Mesh node: " + node.GetLocalPath() + ".\n";
+    return false;
+  }
+
+  //
+  // NOTE: Currently we assume one deeper node has GeomMesh's attribute
+  //
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    //const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      _err += "No specifier found for node id: " + std::to_string(child_index) + "\n";
+      return false;
+    }
+
+    uint32_t spec_index = path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields = _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      PrimAttrib attr;
+      bool ret = ParseGeomMeshAttribute(child_fields, &attr);
+      if (ret) {
+      }
+    }
+
+  }
+
+  return true;
+}
+
 bool Parser::_ReconstructSceneRecursively(
     int parent, int level,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Scene *scene) {
   if ((parent < 0) || (parent >= int(_nodes.size()))) {
     _err += "Invalid parent node id: " + std::to_string(parent) +
-            ". Must be in range [0, " + std::to_string(_nodes.size()) + "]\n";
+            ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
     return false;
   }
 
@@ -2852,7 +2989,7 @@ bool Parser::_ReconstructSceneRecursively(
   uint32_t spec_index = path_index_to_spec_index_map.at(uint32_t(parent));
   if (spec_index >= _specs.size()) {
     _err += "Invalid specifier id: " + std::to_string(spec_index) +
-            ". Must be in range [0, " + std::to_string(_specs.size()) + "]\n";
+            ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
     return false;
   }
 
@@ -2902,12 +3039,18 @@ bool Parser::_ReconstructSceneRecursively(
     }
   }
 
+  std::string node_type;
+
   for (const auto &fv : fields) {
 
     std::cout << IndentStr(level) << "  \"" << fv.first << "\" : ty = " << fv.second.GetTypeName() << "\n";
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
       std::cout << IndentStr(level) << "    specifier = " << GetSpecifierString(fv.second.GetSpecifier()) << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_TOKEN) {
+
+      if (fv.first == "typeName") {
+        node_type = fv.second.GetToken();
+      }
       std::cout << IndentStr(level) << "    token = " << fv.second.GetToken() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_STRING) {
       std::cout << IndentStr(level) << "    string = " << fv.second.GetString() << "\n";
@@ -2915,10 +3058,12 @@ bool Parser::_ReconstructSceneRecursively(
       std::cout << IndentStr(level) << "    double = " << fv.second.GetDouble() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_FLOAT) {
       std::cout << IndentStr(level) << "    float  = " << fv.second.GetDouble() << "\n";
+    } else if (fv.second.GetTypeId() == VALUE_TYPE_VARIABILITY) {
+      std::cout << IndentStr(level) << "    variability  = " << GetVariabilityString(fv.second.GetVariability()) << "\n";
     } else if ((fv.first == "primChildren") && (fv.second.GetTypeName() == "TokenArray")) {
-      // Check if TokenArray contains known child nodes 
+      // Check if TokenArray contains known child nodes
       const auto &tokens = fv.second.GetStringArray();
-      
+
       bool valid = true;
       for (const auto &token : tokens) {
         if (!node.GetPrimChildren().count(token)) {
@@ -2933,6 +3078,14 @@ bool Parser::_ReconstructSceneRecursively(
       for (const auto &str : strs) {
         std::cout << IndentStr(level + 2) << str << "\n";
       }
+    }
+  }
+
+  if (node_type == "Mesh") {
+    GeomMesh mesh;
+    if (!_ReconstructGeomMesh(node, fields, path_index_to_spec_index_map, &mesh)) {
+      _err += "Failed to reconstruct GeomMesh.\n";
+      return false;
     }
   }
 
@@ -3696,7 +3849,7 @@ bool GeomMesh::GetPoints(std::vector<float> *v) {
   if ((n % 3) != 0) {
     return false;
   }
-  
+
   v->resize(n);
 
   memcpy(v->data(), points.buffer.data.data(), n * sizeof(float));
@@ -3718,7 +3871,7 @@ bool GeomMesh::GetFavevaryingNormals(std::vector<float> *v) {
   if ((n % 3) != 0) {
     return false;
   }
-  
+
   v->resize(n);
 
   memcpy(v->data(), points.buffer.data.data(), n * sizeof(float));
