@@ -939,6 +939,14 @@ class Value {
     return NumSpecifiers; // invalid
   }
 
+  Variability GetVariability() const {
+    if (dtype.id == VALUE_TYPE_VARIABILITY) {
+      uint32_t d = *reinterpret_cast<const uint32_t *>(data.data());
+      return static_cast<Variability>(d);
+    }
+    return NumVariabilities; // invalid
+  }
+
   double GetDouble() const {
     if (dtype.id == VALUE_TYPE_DOUBLE) {
       double d = *reinterpret_cast<const double *>(data.data());
@@ -1048,6 +1056,13 @@ struct BufferData
   int32_t num_coords{-1}; // The number of coordinates. e.g. 3 for XYZ, RGB data, 4 for RGBA. -1 = invalid
   Type type;
 
+  void Set(Type ty, int32_t c, size_t _stride, const std::vector<uint8_t> &_data) {
+    type = ty;
+    num_coords = c;
+    stride = _stride;
+    data = _data;
+  }
+
   size_t GetTypeByteSize(Type ty) {
     switch (ty) {
       case BUFFER_DATA_TYPE_BYTE: return 1;
@@ -1085,7 +1100,7 @@ struct PrimAttrib
   std::string name;
   BufferData buffer;
   Variability variability;
-
+  bool facevarying{false};
 };
 
 // Predefined node class
