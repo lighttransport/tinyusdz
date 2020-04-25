@@ -7,6 +7,71 @@ on:
     branches: [ master ]
 
 jobs:
+
+  # compile with older gcc4.8
+  build-gcc48:
+
+    runs-on: ubuntu-18.04
+    name: Build with gcc 4.8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: CmakeAndBuild
+        run: |
+            sudo apt-get update
+            sudo apt-get install -y build-essential
+            sudo apt-get install -y gcc-4.8 g++-4.8
+            ./scripts/bootstrap-gcc-4.8.sh
+            cd build-gcc4.8
+            make VERBOSE=1
+
+  # Cross-compile for aarch64 linux target
+  build-cross-aarch64:
+
+    runs-on: ubuntu-18.04
+    name: Build on cross aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: CmakeAndBuild
+        run: |
+            sudo apt-get update
+            sudo apt-get install -y build-essential
+            sudo apt-get install -y gcc-8-aarch64-linux-gnu g++-8-aarch64-linux-gnu
+            ./scripts/bootstrap-gcc-aarch64-cross.sh
+            cd build-cross
+            make VERBOSE=1
+
+  # Windows(x64) + Visual Studio 2019 build
+  build-windows-msvc:
+
+    runs-on: windows-latest
+    name: Build for Windows(x64, MSVC)
+
+    # Use system installed cmake
+    # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: Configure
+        run: .\vcsetup-2019.bat
+      - name: Build
+        run: cmake --build build --config Release
+
+  # Build with OpenSubdiv
+  build-osd:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure
+      run: ./scripts/bootstrap-cmake-linux-with-osd.sh
+    - name: make
+      run: cd build && make
+
   build:
 
     runs-on: ubuntu-latest

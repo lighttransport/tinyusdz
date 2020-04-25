@@ -34,7 +34,10 @@ TinyUSDZ is currently in alpha stage. Not usable.
 
 ## Requirements
 
-* C++11
+* C++11 compiler
+  * [x] gcc 4.8.5(CentOS 7 default) or later
+  * [x] Visual Studio 2017 or later(2015 may OK)
+  * [x] clang 3.8 or later
 
 ## USDZ file format
 
@@ -53,7 +56,9 @@ Recomended way is simply copy `src` and `include` folder to your app, and add `*
 
 ### CMake
 
-cmake build is still provided for CI build. Cmake project is not recommended for embedding TinyUSDZ to your app.
+cmake build is still provided for CI build. `CMakeSettings.json` is provided for Visual Studio 2019.
+
+Cmake project is not recommended for embedding TinyUSDZ to your app.
 
 ```
 $ mkdir build
@@ -67,13 +72,9 @@ $ make
 * `TINYUSDZ_BUILD_TESTS` : Build tests
 * `TINYUSDZ_BUILD_EXAMPLES` : Build examples(note that not all examples in `examples` folder are built)
 * `TINYUSDZ_WITH_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
-  * `osd_DIR` to specify the path to OpenSubdiv repo(I recommend to use https://github.com/syoyo/OpenSubdiv-aarch64 )
+  * OpenSubdiv code is included in TinyUSDZ repo. If you want to use external OpenSubdiv repo, specity the path to OpenSubdiv using `osd_DIR` cmake environment variable.
 * `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
 * `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture through TinyEXR.
-
-#### Build with OpenSubdiv(optional)
-
-Recommended way is to run `scripts/clone_osd.sh` to clone OpenSubdiv-aarch64 repo to `deps/OpenSudiv`, then run `scripts/bootstrap-cmake-linux-with-osd.sh`.
 
 ### Meson
 
@@ -98,6 +99,8 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 
 ## TODO
 
+* [ ] Subdivision surface using OpenSubdiv.
+  * [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
 * [ ] USDA(USD Ascii) support
   * [ ] Write our own USDA parser with PEG.
 * [ ] Animation
@@ -113,7 +116,6 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 * [ ] iOS example?
 * [ ] CPU raytracer viewer
 * [ ] Viewer with Vulkan API.
-* [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
 * [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
 * [ ] USDZ saver
 * [ ] Support Nested USDZ
@@ -131,6 +133,7 @@ TinyUSDZ is licensed under MIT license.
 ### Third party licenses
 
 * USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
+* OpenSubdiv : Apache 2.0 license. https://github.com/PixarAnimationStudios/OpenSubdiv
 * lz4 : BSD-2 license. http://www.lz4.org
 * cnpy(uncompressed ZIP decode/encode code) : MIT license https://github.com/rogersce/cnpy
 * tinyexr: BSD license.
