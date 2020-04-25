@@ -5,6 +5,7 @@
 
 #include <atomic>  // C++11
 #include <chrono>  // C++11
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -19,6 +20,8 @@
 #include "imgui_impl_opengl2.h"
 
 #include "trackball.h"
+
+#include "tinyusdz.hh"
 
 struct GUIContext {
   enum AOV {
@@ -84,12 +87,37 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action,
   }
 }
 
+static void DrawGeomMesh(tinyusdz::GeomMesh &mesh)
+{
+
+}
+
+static void DrawNode(const tinyusdz::Scene &scene, const tinyusdz::Node &node)
+{
+  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
+    const tinyusdz::Xform &xform = scene.xforms.at(node.index);
+    glPushMatrix();
+
+    glMultMatrixd(reinterpret_cast<const double *>(&(xform.matrix.m)));
+  }
+
+  for (const auto &child : node.children) {
+    DrawNode(scene, scene.nodes.at(child));
+  }
+
+  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
+    glPopMatrix();
+  }
+}
+
 int main(int argc, char** argv) {
   // Setup window
   glfwSetErrorCallback(error_callback);
   if (!glfwInit()) {
     exit(EXIT_FAILURE);
   }
+
+  tinyusdz::Scene scene;
 
 #ifdef _DEBUG_OPENGL
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
@@ -164,6 +192,13 @@ int main(int argc, char** argv) {
     glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
     glEnable(GL_DEPTH_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Draw scene
+    if ((scene.root_node >= 0) && (scene.root_node < scene.nodes.size())) {
+      DrawNode(scene, scene.nodes[scene.root_node]);
+    }
+
+    // Imgui
 
     ImGui::Render();
     ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());

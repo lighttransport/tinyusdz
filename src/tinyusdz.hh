@@ -1116,7 +1116,7 @@ struct Xform
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
-  std::vector<int32_t> xformOpOrder; // T.B.D.
+  //std::vector<int32_t> xformOpOrder; // T.B.D.
 
 };
 
@@ -1132,13 +1132,13 @@ struct UVCoords
 
 struct Extent
 {
-  std::array<float, 3> lower[3] = {{
+  std::array<float, 3> lower = {{
     std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::infinity()
   }};
 
-  std::array<float, 3> upper[3] = {{
+  std::array<float, 3> upper = {{
     -std::numeric_limits<float>::infinity(),
     -std::numeric_limits<float>::infinity(),
     -std::numeric_limits<float>::infinity()
@@ -1268,8 +1268,8 @@ enum TextureWrap
 // result = in * scale * rotate * translation
 struct UsdTranform2d {
   float rotation = 0.0f; // counter-clockwise rotation in degrees around the origin.
-  std::array<float, 2> scale{1.0f, 1.0f};
-  std::array<float, 2> translation{0.0f, 0.0f};
+  std::array<float, 2> scale{{1.0f, 1.0f}};
+  std::array<float, 2> translation{{0.0f, 0.0f}};
 };
 
 // UsdUvTexture
@@ -1281,9 +1281,9 @@ struct UVTexture {
   TextureWrap wrapS;
   TextureWrap wrapT;
 
-  std::array<float, 4> fallback{0.0f, 0.0f, 0.0f, 1.0f}; // fallback color used when texture cannot be read.
-  std::array<float, 4> scale{1.0f, 1.0f, 1.0f, 1.0f}; // scale to be applied to output texture value
-  std::array<float, 4> bias{0.0f, 0.0f, 0.0f, 0.0f}; // bias to be applied to output texture value
+  std::array<float, 4> fallback{{0.0f, 0.0f, 0.0f, 1.0f}}; // fallback color used when texture cannot be read.
+  std::array<float, 4> scale{{1.0f, 1.0f, 1.0f, 1.0f}}; // scale to be applied to output texture value
+  std::array<float, 4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // bias to be applied to output texture value
 
   UsdTranform2d texture_transfom;
 };
@@ -1384,6 +1384,7 @@ struct Scene
 
   //
   // glTF-like scene objects
+  // TODO(syoyo): Use std::variant(C++17) like static polymorphism
   //
   std::vector<Xform> xforms;
   std::vector<GeomMesh> geom_meshes;

@@ -10,6 +10,9 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. Set `osd_DIR` to specify the path to OpenSubdiv)" OFF)
+# Use embedded version of OpenSubdiv code by default
+set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd) 
+
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 
