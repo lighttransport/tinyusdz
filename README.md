@@ -37,7 +37,9 @@ TinyUSDZ is currently in alpha stage. Not usable.
 * C++11 compiler
   * [x] gcc 4.8.5(CentOS 7 default) or later
   * [x] Visual Studio 2017 or later(2015 may OK)
+    * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2017)
   * [x] clang 3.8 or later
+  * [x] llvm-ming(clang) supported
 
 ## USDZ file format
 
@@ -66,6 +68,17 @@ $ cd build
 $ cmake ..
 $ make
 ```
+
+#### LLVM-MinGW build
+
+MinGW native and cross-compiling example using llvm-mingw(clang) is provided.
+See `scripts/bootstrap-cmake-mingw-win.sh` and `scripts/bootstrap-cmake-llvm-mingw-cross.sh` for details. 
+
+One of benefit to use llvm-mingw is address sanitizer support on Windows app.
+
+To run app(`.exe`, you'll need `libunwind.dll` and `libc++.dll` on your working directory or search path)
+
+For Windows native build, we assume `ninja.exe` is installed on your system(You can use it from Meson package)
 
 #### CMake build options
 
