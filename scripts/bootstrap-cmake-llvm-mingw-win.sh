@@ -2,15 +2,17 @@
 # Assume Ninja is installed on your system
 curdir=`pwd`
 
-builddir=${curdir}/build
+# Set path to llvm-mingw in env var.
+set LLVM_MINGW_DIR=/d/local/llvm-mingw-20200325-ubuntu-18.04/
+
+builddir=${curdir}/build-llvm-mingw
 
 rm -rf ${builddir}
 mkdir ${builddir}
 
-# Change the path to llvm-mingw to fit into your system.
 cd ${builddir} && cmake \
+  -DCMAKE_TOOLCHAIN_FILE=${curdir}/cmake/llvm-mingw-win64.cmake \
   -G "Ninja" \
-  -DCMAKE_CXX_COMPILER=/d/local/llvm-mingw/bin/x86_64-w64-mingw32-g++.exe \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   ..
 
