@@ -60,6 +60,46 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+  # Android(aarch64) build
+  build-android:
+
+    runs-on: ubuntu-18.04
+    name: Build for Android(arm64v8a)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: Show android sdk root
+        run: |
+            env | grep ANDROID
+            echo $ANDROID_SDK_ROOT
+      - name: Setup
+        run: |
+            sudo apt-get install -y ninja-build
+      - name: CmakeAndBuild
+        run: |
+            ./scripts/bootstrap-android-cmake-linux.sh
+            cd build-android
+            ninja -v
+
+  # iOS build
+  build-ios:
+
+    runs-on: macos-latest
+    name: Build for iOS
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: List up iPhone platform
+        run: |
+            ls -la /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs
+      - name: CmakeAndBuild
+        run: |
+            ./scripts/bootstrap-aarch64-ios.sh
+            cd build-aarch64-cross
+            make VERBOSE=1
+
+
   # Build with OpenSubdiv
   build-osd:
 
