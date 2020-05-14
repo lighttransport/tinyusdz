@@ -2554,7 +2554,7 @@ bool Parser::ReadTokens() {
     size_t len = strlen(p);
     if (len == 0) {
       // No empty string
-      rerturn false;
+      return false;
     }
 
     if ((p + len) > pe) {
@@ -3854,7 +3854,7 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
     const std::string ext = GetFileExtension(uri);
 
     if ((ext.compare("png") == 0) || (ext.compare("jpg") == 0) || (ext.compare("jpeg") == 0)) {
-   
+
       const size_t start_addr = std::get<1>(assets[i]);
       const size_t end_addr = std::get<2>(assets[i]);
       const size_t usdc_size = end_addr - start_addr;
