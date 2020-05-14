@@ -2551,10 +2551,22 @@ bool Parser::ReadTokens() {
   const char *p = chars.data();
   const char *pe = chars.data() + chars.size();
   for (size_t i = 0; i < n; i++) {
-    // TODO(syoyo): Range check
+    size_t len = strlen(p);
+    if (len == 0) {
+      // No empty string
+      rerturn false;
+    }
+
+    if ((p + len) > pe) {
+      return false;
+    }
+
     std::string token = std::string(p, strlen(p));
     p += strlen(p) + 1;
     assert(p <= pe);
+    if (p > pe) {
+      return false;
+    }
 
     std::cout << "token[" << i << "] = " << token << "\n";
     _tokens.push_back(token);
