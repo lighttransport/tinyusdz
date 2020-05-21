@@ -7,14 +7,15 @@
 TinyUSDZ is currently in alpha stage. Not usable.
 
 * [x] USDC data parse
-* [ ] Reconstuct scene graph representaion(2020 April expected)
-* [ ] Write simple OpenGL viewer example(2020 April expected)
+* [ ] Reconstuct scene graph representaion(2020 May expected)
+* [ ] Write simple OpenGL viewer example(2020 May expected)
 * [ ] Animation(usdSkel) support(2020 Summer expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] USDZ writer
 
 ## Other related projects
 
+* UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
 * TinyObjLoader: Wavefront .obj loader ( https://github.com/tinyobjloader/tinyobjloader )
 * USD-build-aarch64: Full USD build for AARCH64(Linux and Android): https://github.com/syoyo/USD-build-aarch64
