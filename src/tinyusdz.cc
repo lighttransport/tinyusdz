@@ -2544,6 +2544,7 @@ bool Parser::ReadTokens() {
   if (uncompressedSize != LZ4Compression::DecompressFromBuffer(
                               compressed.data(), chars.data(), compressedSize,
                               uncompressedSize, &_err)) {
+    _err += "Failed to decompress data of Tokens.\n";
     return false;
   }
 
@@ -2553,11 +2554,17 @@ bool Parser::ReadTokens() {
   for (size_t i = 0; i < n; i++) {
     size_t len = strlen(p);
     if (len == 0) {
-      // No empty string
-      return false;
+      if (i == 0) {
+        // OK. first char may be null(#1)
+      } else {
+        // There should be no empty string
+        _err += "Empty token found.\n";
+        return false;
+      }
     }
 
     if ((p + len) > pe) {
+      _err += "Invalid token string array.\n";
       return false;
     }
 
@@ -2565,6 +2572,7 @@ bool Parser::ReadTokens() {
     p += strlen(p) + 1;
     assert(p <= pe);
     if (p > pe) {
+      _err += "Invalid token string array.\n";
       return false;
     }
 
@@ -3455,9 +3463,9 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   bool swap_endian = false;  // @FIXME
 
-  if (length > size_t(1024 * options.max_memory_limit_in_mb)) {
+  if (length > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
     if (err) {
-      (*err) += "USDZ data is too large(exceeds memory limit " +
+      (*err) += "USDZ data is too large(size = " + std::to_string(length) + ", which exceeds memory limit " +
                 std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
     }
 
@@ -3635,9 +3643,9 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
       return false;
     }
 
-    if (sz > size_t(1024 * options.max_memory_limit_in_mb)) {
+    if (sz > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
       if (err) {
-        (*err) += "USDZ file is too large(exceeds memory limit " +
+        (*err) += "USDZ file is too large(size = " + std::to_string(sz) + ", which exceeds memory limit " +
                   std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
       }
 
