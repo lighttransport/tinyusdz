@@ -3340,14 +3340,14 @@ bool Parser::ReadBootStrap() {
     return false;
   }
 
-  std::cout << int(magic[0]) << "\n";
-  std::cout << int(magic[1]) << "\n";
-  std::cout << int(magic[2]) << "\n";
-  std::cout << int(magic[3]) << "\n";
-  std::cout << int(magic[4]) << "\n";
-  std::cout << int(magic[5]) << "\n";
-  std::cout << int(magic[6]) << "\n";
-  std::cout << int(magic[7]) << "\n";
+  //std::cout << int(magic[0]) << "\n";
+  //std::cout << int(magic[1]) << "\n";
+  //std::cout << int(magic[2]) << "\n";
+  //std::cout << int(magic[3]) << "\n";
+  //std::cout << int(magic[4]) << "\n";
+  //std::cout << int(magic[5]) << "\n";
+  //std::cout << int(magic[6]) << "\n";
+  //std::cout << int(magic[7]) << "\n";
 
   if (memcmp(magic, "PXR-USDC", 8)) {
     _err += "Invalid magic number. Expected 'PXR-USDC' but got '" +
