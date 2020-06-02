@@ -1077,6 +1077,7 @@ struct BufferData
       case BUFFER_DATA_TYPE_FLOAT: return 4;
       case BUFFER_DATA_TYPE_DOUBLE: return 8;
     }
+    return 0; // Should not reach here.
   }
 
   size_t GetElementByteSize() {
