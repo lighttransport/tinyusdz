@@ -1,0 +1,3 @@
+path_classifiers:
+  legacy:
+    - exclude: src/stb_image.h "src/dr_*" 
