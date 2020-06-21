@@ -2497,13 +2497,13 @@ bool Parser::ReadTokens() {
     return false;
   }
 
-  const Section &s = _toc.sections[size_t(_tokens_index)];
-  if (!_sr->seek_set(uint64_t(s.start))) {
+  const Section &sec = _toc.sections[size_t(_tokens_index)];
+  if (!_sr->seek_set(uint64_t(sec.start))) {
     _err += "Failed to move to `TOKENS` section.\n";
     return false;
   }
 
-  std::cout << "s.start = " << s.start << "\n";
+  std::cout << "sec.start = " << sec.start << "\n";
 
   // # of tokens.
   uint64_t n;
@@ -2562,14 +2562,14 @@ bool Parser::ReadTokens() {
       if (s[i] == '\0') {
         return i;
       }
-    }   
+    }
 
     // null character not found.
     return i;
   };
 
 
-  // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null characters) 
+  // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null characters)
   for (size_t i = 0; i < n; i++) {
     size_t len = my_strnlen(p, n_remain);
 
@@ -2584,7 +2584,7 @@ bool Parser::ReadTokens() {
     }
 
     p += len + 1; // +1 = '\0'
-    n_remain = pe - p;
+    n_remain = size_t(pe - p);
     assert(p <= pe);
     if (p > pe) {
       _err += "Invalid token string array.\n";
@@ -3694,20 +3694,6 @@ static std::string str_tolower(std::string s) {
                  [](unsigned char c) { return std::tolower(c); }  // correct
   );
   return s;
-}
-
-size_t my_strnlen(const char *s, const size_t max_length) {
-  if (!s) return 0;
-
-  size_t i = 0;
-  for (; i < max_length; i++) {
-    if (s[i] == '\0') {
-      return i;
-    }
-  }   
-
-  // null character not found.
-  return i;
 }
 
 }  // namespace
