@@ -35,6 +35,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <limits>
 
+#include <iostream> // dbg
+
 namespace tinyusdz {
 
 // Simple image class.
@@ -364,6 +366,14 @@ class Path {
     s += local_part;
 
     return s;
+  }
+
+  std::string GetPrimPart() const {
+    return prim_part;
+  }
+
+  std::string GetPropPart() const {
+    return prop_part;
   }
 
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
@@ -1037,7 +1047,8 @@ class Value {
 //
 struct BufferData
 {
-  enum Type {
+  enum DataType {
+    BUFFER_DATA_TYPE_INVALID,
     BUFFER_DATA_TYPE_UNSIGNED_BYTE,
     BUFFER_DATA_TYPE_UNSIGNED_SHORT,
     BUFFER_DATA_TYPE_UNSIGNED_INT,
@@ -1054,16 +1065,24 @@ struct BufferData
   std::vector<uint8_t> data;   // Opaque byte data.
   size_t stride{0};  // byte stride for each element. e.g. 12 for XYZXYZXYZ... data. 0 = app should calculate byte stride from type and `num_coords`.
   int32_t num_coords{-1}; // The number of coordinates. e.g. 3 for XYZ, RGB data, 4 for RGBA. -1 = invalid
-  Type type;
+  DataType data_type{BUFFER_DATA_TYPE_INVALID};
 
-  void Set(Type ty, int32_t c, size_t _stride, const std::vector<uint8_t> &_data) {
-    type = ty;
+  void Set(DataType ty, int32_t c, size_t _stride, const std::vector<uint8_t> &_data) {
+    data_type = ty;
     num_coords = c;
     stride = _stride;
     data = _data;
   }
 
-  size_t GetTypeByteSize(Type ty) {
+  bool Valid() {
+    if (data_type == BUFFER_DATA_TYPE_INVALID) {
+      return false;
+    }
+ 
+    return (data.size() > 0) && (num_coords > 0);
+  }
+
+  size_t GetDataTypeByteSize(DataType ty) const {
     switch (ty) {
       case BUFFER_DATA_TYPE_BYTE: return 1;
       case BUFFER_DATA_TYPE_UNSIGNED_BYTE: return 1;
@@ -1080,20 +1099,38 @@ struct BufferData
     return 0; // Should not reach here.
   }
 
-  size_t GetElementByteSize() {
+  size_t GetElementByteSize() const {
     if (num_coords <= 0) {
       // TODO(syoyo): Report error
       return 0;
     }
 
-    return GetTypeByteSize(type) * size_t(num_coords);
+    return GetDataTypeByteSize(data_type) * size_t(num_coords);
   }
 
-  size_t GetNumElements() {
+  size_t GetNumElements() const { 
+    std::cout << "numc = " << num_coords << "\n";
+    if (num_coords <= 0) {
+      // TODO(syoyo): Report error
+      return 0;
+    }
+
     size_t n = data.size() / GetElementByteSize();
     return n;
   }
 
+  int32_t GetNumCoords() const {
+    return num_coords;
+  }
+
+  DataType GetDataType() const {
+    return data_type;
+  }
+
+  size_t GetStride() const {
+    return stride;
+  }
+  
 };
 
 struct PrimAttrib
@@ -1165,13 +1202,17 @@ struct GeomMesh
   // Utility functions
   //
 
+  size_t GetNumPoints() const;
+  size_t GetNumFacevaryingNormals() const;
+
+
   // Get `points` as float3 array
   // Return false if `points` is not float3[] type
-  bool GetPoints(std::vector<float> *v);
+  bool GetPoints(std::vector<float> *v) const;
 
   // Get `normals` as float3 array + facevarying
   // Return false if `normals` is neither float3[] type nor `varying` 
-  bool GetFavevaryingNormals(std::vector<float> *v);
+  bool GetFavevaryingNormals(std::vector<float> *v) const;
 
   UVCoords st;
 

@@ -35,7 +35,7 @@ TinyUSDZ is currently in alpha stage. Not usable.
 * [ ] iOS(Should work)
 * [x] macOS
 * [x] Windows 10 64bit or later
-  * [x] Windows ARM should work
+  * [ ] Windows ARM(should work)
 
 ## Requirements
 
@@ -106,8 +106,9 @@ $ ninja
 
 ### Examples
 
-[Simple dump](examples/simple_dump/)
-[Simple OpenGL viewer](examples/openglviewer/)
+* [Simple dump](examples/simple_dump/)
+* [Simple OpenGL viewer](examples/openglviewer/)
+  * Separated CMake build : See [Readme](examples/openglviewer/README.md)
 
 See `examples` directory for more examples.
 
