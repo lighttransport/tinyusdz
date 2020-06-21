@@ -2861,14 +2861,21 @@ bool Parser::_ReconstructGeomMesh(
 
   bool has_position{false};
 
-  auto ParseGeomMeshAttribute = [](const FieldValuePairVector &fvs, PrimAttrib *attr) -> bool {
+  auto ParseGeomMeshAttribute = [](const FieldValuePairVector &fvs, PrimAttrib *attr, const std::string &prop_name) -> bool {
+
+    bool success = false;
+
+    std::cout << "fvs.size = " << fvs.size() << "\n";
+
     std::string type_name;
     Variability variability{VariabilityVarying};
     bool facevarying{false};
 
     for (const auto &fv : fvs) {
       if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
+
         type_name = fv.second.GetToken();
+        std::cout << "aaa: typeName: " << type_name << "\n";
 
         (void)attr;
       } else if ((fv.first == "variablity") && (fv.second.GetTypeName() == "Variability")) {
@@ -2883,31 +2890,32 @@ bool Parser::_ReconstructGeomMesh(
     // Decode value(stored in "default" field)
     for (const auto &fv : fvs) {
       if (fv.first == "default") {
+        attr->name = prop_name;
         if (fv.second.GetTypeName() == "FloatArray") {
-          attr->name = "TODO";
           attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2, /* stride */sizeof(float) * 2, fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
+          success = true;
         } else if (fv.second.GetTypeName() == "Vec2fArray") {
-          attr->name = "TODO";
           attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2, /* stride */sizeof(float) * 2, fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
+          success = true;
         } else if (fv.second.GetTypeName() == "Vec3fArray") {
-          attr->name = "TODO";
           attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3, /* stride */sizeof(float) * 3, fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
+          success = true;
         } else if (fv.second.GetTypeName() == "Vec4fArray") {
-          attr->name = "TODO";
           attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4, /* stride */sizeof(float) * 4, fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
+          success = true;
         }
       }
     }
 
-    return false;
+    return success;
   };
 
 
@@ -2962,6 +2970,9 @@ bool Parser::_ReconstructGeomMesh(
 
     const Spec &spec = _specs[spec_index];
 
+    Path path = GetPath(spec.path_index);
+    std::cout << "Path prim part: " << path.GetPrimPart() << ", prop part: " << path.GetPropPart() << "\n";
+
     if (!_live_fieldsets.count(spec.fieldset_index)) {
       _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
               " must exist in live fieldsets.\n";
@@ -2971,9 +2982,28 @@ bool Parser::_ReconstructGeomMesh(
     const FieldValuePairVector &child_fields = _live_fieldsets.at(spec.fieldset_index);
 
     {
+      std::string prop_name = path.GetPropPart();
+
       PrimAttrib attr;
-      bool ret = ParseGeomMeshAttribute(child_fields, &attr);
+      bool ret = ParseGeomMeshAttribute(child_fields, &attr, prop_name);
+      std::cout << "prop: " << prop_name << ", ret = " << ret  << "\n";
       if (ret) {
+        // TODO(syoyo): Support more prop names
+        if (prop_name == "points") {
+          std::cout << "got point\n";
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 3)) {
+            mesh->points = std::move(attr);
+          }
+        } else if (prop_name == "normals") {
+        } else if (prop_name == "primvars:UVMap") {
+        } else if (prop_name == "faceVertexCounts") {
+          //Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
+          // aaa: typeName: int[]
+        } else if (prop_name == "faceVertexIndices") {
+        } else if (prop_name == "subdivisionScheme") {
+        }
+
       }
     }
 
@@ -3115,12 +3145,14 @@ bool Parser::_ReconstructSceneRecursively(
     }
   }
 
+
   if (node_type == "Mesh") {
     GeomMesh mesh;
     if (!_ReconstructGeomMesh(node, fields, path_index_to_spec_index_map, &mesh)) {
       _err += "Failed to reconstruct GeomMesh.\n";
       return false;
     }
+    scene->geom_meshes.push_back(mesh);
   }
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
@@ -3604,6 +3636,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   // Create `Scene` object
+  std::cout << "reconstruct scene:\n";
   {
     if (!parser.ReconstructScene(scene)) {
       if (warn) {
@@ -3908,42 +3941,68 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
   return true;
 }
 
-bool GeomMesh::GetPoints(std::vector<float> *v) {
-
-  if (points.buffer.type != BufferData::BUFFER_DATA_TYPE_FLOAT) {
-    return false;
-  }
+size_t GeomMesh::GetNumPoints() const {
 
   size_t n = points.buffer.GetNumElements();
-  if ((n % 3) != 0) {
+
+  return n;
+
+}
+
+bool GeomMesh::GetPoints(std::vector<float> *v) const {
+
+  // Currently we only support float3[]
+  if (points.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
     return false;
   }
 
-  v->resize(n);
+  if ((points.buffer.GetNumCoords() < 0) || (points.buffer.GetNumCoords() != 3)) {
+    return false;
+  }
 
-  memcpy(v->data(), points.buffer.data.data(), n * sizeof(float));
+  if ((points.buffer.GetStride() != (3 * sizeof(float)))) {
+    return false;
+  }
+
+  size_t c = size_t(points.buffer.GetNumCoords());
+  size_t n = points.buffer.GetNumElements();
+
+  v->resize(n * c);
+
+  memcpy(v->data(), points.buffer.data.data(), n * c * sizeof(float));
 
   return true;
 }
 
-bool GeomMesh::GetFavevaryingNormals(std::vector<float> *v) {
+bool GeomMesh::GetFavevaryingNormals(std::vector<float> *v) const {
 
   if (normals.variability != VariabilityVarying) {
     return false;
   }
 
-  if (points.buffer.type != BufferData::BUFFER_DATA_TYPE_FLOAT) {
+  // Currently we only support float3[]
+  if (normals.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
+    return false;
+  }
+
+  if ((normals.buffer.GetNumCoords() < 0) || (normals.buffer.GetNumCoords() != 3)) {
+    return false;
+  }
+
+  if ((normals.buffer.GetStride() != (3 * sizeof(float)))) {
+    return false;
+  }
+
+  if (normals.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
     return false;
   }
 
   size_t n = points.buffer.GetNumElements();
-  if ((n % 3) != 0) {
-    return false;
-  }
+  size_t c = size_t(points.buffer.GetNumCoords());
 
-  v->resize(n);
+  v->resize(n * c);
 
-  memcpy(v->data(), points.buffer.data.data(), n * sizeof(float));
+  memcpy(v->data(), normals.buffer.data.data(), n * c * sizeof(float));
 
   return true;
 }

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <sstream>
 
 #include "tinyusdz.hh"
 
@@ -18,6 +19,14 @@ static std::string str_tolower(std::string s) {
                  [](unsigned char c) { return std::tolower(c); }  // correct
   );
   return s;
+}
+
+std::string indent(const int val) {
+  std::stringstream ss;
+  for(int i = 0; i < val; i++) {
+    ss << "  ";
+  }
+  return ss.str();
 }
 
 static void PrintValue(const tinyusdz::Value &v) {
@@ -51,6 +60,16 @@ static void DumpNode(const tinyusdz::Node &node, int level) {
   }
 }
 
+static void DumpGeomMesh(const tinyusdz::GeomMesh &mesh, int level) {
+  std::cout << indent(level) << "# of points: " << mesh.GetNumPoints() << "\n";
+  std::vector<float> points;
+  mesh.GetPoints(&points);
+
+  for (size_t i = 0; i < points.size(); i++) {
+    std::cout << points[i] << "\n";
+  }
+}
+
 static void DumpScene(const tinyusdz::Scene &scene)
 {
 
@@ -71,6 +90,10 @@ static void DumpScene(const tinyusdz::Scene &scene)
     DumpNode(scene.nodes[scene.root_node], 0);
   }
 
+  // HACK
+  for (size_t i = 0; i < scene.geom_meshes.size(); i++) {
+    DumpGeomMesh(scene.geom_meshes[i], 0);
+  }
 }
 
 int main(int argc, char **argv) {

@@ -1,27 +1,24 @@
 // glad must be included before glfw3.h
 #include <glad/glad.h>
-
+//
 #include <GLFW/glfw3.h>
 
 #include <atomic>  // C++11
-#include <chrono>  // C++11
 #include <cassert>
+#include <chrono>  // C++11
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>   // C++11
 #include <thread>  // C++11
+#include <algorithm>
 
 // common
 #include "imgui.h"
-
 #include "imgui_impl_glfw.h"
-
 #include "imgui_impl_opengl2.h"
-
-#include "trackball.h"
-
 #include "tinyusdz.hh"
+#include "trackball.h"
 
 struct GUIContext {
   enum AOV {
@@ -38,22 +35,25 @@ struct GUIContext {
   int width = 1024;
   int height = 768;
 
-  int mouse_pos_x = -1;
-  int mouse_pos_y = -1;
+  int mouse_x = -1;
+  int mouse_y = -1;
 
   bool mouse_left_down = false;
   bool shift_pressed = false;
   bool ctrl_pressed = false;
-
-  // float gShowPositionScale = 1.0f;
-  // float gShowDepthRange[2] = {10.0f, 20.f};
-  // bool gShowDepthPeseudoColor = true;
+  bool tab_pressed = false;
 
   float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   float prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+  std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
+  std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
+  std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 };
 
 GUIContext gCtx;
+
+// --- glfw ----------------------------------------------------
 
 static void error_callback(int error, const char* description) {
   std::cerr << "GLFW Error : " << error << ", " << description << std::endl;
@@ -87,21 +87,92 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action,
   }
 }
 
-static void DrawGeomMesh(tinyusdz::GeomMesh &mesh)
-{
+static void mouse_move_callback(GLFWwindow* window, double x, double y) {
+  auto param = reinterpret_cast<GUIContext*>(glfwGetWindowUserPointer(window));
+  assert(param);
 
-}
+  if (param->mouse_left_down) {
+    float w = static_cast<float>(param->width);
+    float h = static_cast<float>(param->height);
 
-static void DrawNode(const tinyusdz::Scene &scene, const tinyusdz::Node &node)
-{
-  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
-    const tinyusdz::Xform &xform = scene.xforms.at(node.index);
-    glPushMatrix();
+    float x_offset = param->width - w;
+    float y_offset = param->height - h;
 
-    glMultMatrixd(reinterpret_cast<const double *>(&(xform.matrix.m)));
+    if (param->ctrl_pressed) {
+      const float dolly_scale = 0.1f;
+      param->eye[2] += dolly_scale * (param->mouse_y - static_cast<float>(y));
+      param->lookat[2] +=
+          dolly_scale * (param->mouse_y - static_cast<float>(y));
+    } else if (param->shift_pressed) {
+      const float trans_scale = 0.02f;
+      param->eye[0] += trans_scale * (param->mouse_x - static_cast<float>(x));
+      param->eye[1] -= trans_scale * (param->mouse_y - static_cast<float>(y));
+      param->lookat[0] +=
+          trans_scale * (param->mouse_x - static_cast<float>(x));
+      param->lookat[1] -=
+          trans_scale * (param->mouse_y - static_cast<float>(y));
+
+    } else {
+      // Adjust y.
+      trackball(param->prev_quat,
+                (2.f * (param->mouse_x - x_offset) - w) / static_cast<float>(w),
+                (h - 2.f * (param->mouse_y - y_offset)) / static_cast<float>(h),
+                (2.f * (static_cast<float>(x) - x_offset) - w) /
+                    static_cast<float>(w),
+                (h - 2.f * (static_cast<float>(y) - y_offset)) /
+                    static_cast<float>(h));
+      add_quats(param->prev_quat, param->curr_quat, param->curr_quat);
+    }
   }
 
-  for (const auto &child : node.children) {
+  param->mouse_x = static_cast<int>(x);
+  param->mouse_y = static_cast<int>(y);
+}
+
+static void mouse_button_callback(GLFWwindow* window, int button, int action,
+                                  int mods) {
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.WantCaptureMouse || io.WantCaptureKeyboard) {
+    return;
+  }
+
+  auto param = reinterpret_cast<GUIContext*>(glfwGetWindowUserPointer(window));
+  assert(param);
+
+  // left button
+  if (button == 0) {
+    if (action) {
+      param->mouse_left_down = true;
+      trackball(param->prev_quat, 0.0f, 0.0f, 0.0f, 0.0f);
+    } else {
+      param->mouse_left_down = false;
+    }
+  }
+}
+
+static void resize_callback(GLFWwindow* window, int width, int height) {
+  auto param = reinterpret_cast<GUIContext*>(glfwGetWindowUserPointer(window));
+  assert(param);
+
+  param->width = width;
+  param->height = height;
+}
+
+// ------------------------------------------------
+
+namespace {
+
+static void DrawGeomMesh(tinyusdz::GeomMesh& mesh) {}
+
+static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
+  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
+    const tinyusdz::Xform& xform = scene.xforms.at(node.index);
+    glPushMatrix();
+
+    glMultMatrixd(reinterpret_cast<const double*>(&(xform.matrix.m)));
+  }
+
+  for (const auto& child : node.children) {
     DrawNode(scene, scene.nodes.at(child));
   }
 
@@ -110,14 +181,87 @@ static void DrawNode(const tinyusdz::Scene &scene, const tinyusdz::Node &node)
   }
 }
 
+static void Proc(const tinyusdz::Scene &scene)
+{
+  std::cout << "num geom_meshes = " << scene.geom_meshes.size();
+
+  for (auto &mesh : scene.geom_meshes) {
+  }
+}
+
+static std::string GetFileExtension(const std::string &filename) {
+  if (filename.find_last_of(".") != std::string::npos)
+    return filename.substr(filename.find_last_of(".") + 1);
+  return "";
+}
+
+static std::string str_tolower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(),
+                 // static_cast<int(*)(int)>(std::tolower)         // wrong
+                 // [](int c){ return std::tolower(c); }           // wrong
+                 // [](char c){ return std::tolower(c); }          // wrong
+                 [](unsigned char c) { return std::tolower(c); }  // correct
+  );
+  return s;
+}
+
+} // namespace
+
 int main(int argc, char** argv) {
+
   // Setup window
   glfwSetErrorCallback(error_callback);
   if (!glfwInit()) {
     exit(EXIT_FAILURE);
   }
 
+  std::string filename = "../../../models/suzanne.usdc";
+
+  if (argc > 1) {
+    filename = std::string(argv[1]);
+  }
+
+  std::cout << "Loading file " << filename << "\n";
+  std::string ext = str_tolower(GetFileExtension(filename));
+
+  std::string warn;
+  std::string err;
   tinyusdz::Scene scene;
+
+  if (ext.compare("usdz") == 0) {
+    std::cout << "usdz\n";
+    bool ret = tinyusdz::LoadUSDZFromFile(filename, &scene, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+      return EXIT_FAILURE;
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDZ file: " << filename << "\n";
+      return EXIT_FAILURE;
+    }
+  } else {  // assume usdc
+    bool ret = tinyusdz::LoadUSDCFromFile(filename, &scene, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+      return EXIT_FAILURE;
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDC file: " << filename << "\n";
+      return EXIT_FAILURE;
+    }
+  }
+
+  Proc(scene);
 
 #ifdef _DEBUG_OPENGL
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
@@ -148,10 +292,9 @@ int main(int argc, char** argv) {
   std::cout << "OpenGL " << GLVersion.major << '.' << GLVersion.minor << '\n';
 
   if (GLVersion.major < 2) {
-    std::cerr << "OpenGL 2. or later is not available." << std::endl;
+    std::cerr << "OpenGL 2. or later should be available." << std::endl;
     exit(EXIT_FAILURE);
   }
-
 
 #ifdef _DEBUG_OPENGL
   glEnable(GL_DEBUG_OUTPUT);
@@ -161,9 +304,15 @@ int main(int argc, char** argv) {
                         GL_TRUE);
 #endif
 
-
   glfwSwapInterval(1);  // Enable vsync
+
+  GUIContext gui_ctx;
+
+  glfwSetWindowUserPointer(window, &gui_ctx);
   glfwSetKeyCallback(window, key_callback);
+  glfwSetCursorPosCallback(window, mouse_move_callback);
+  glfwSetMouseButtonCallback(window, mouse_button_callback);
+  glfwSetFramebufferSizeCallback(window, resize_callback);
 
   bool done = false;
 
@@ -172,12 +321,10 @@ int main(int argc, char** argv) {
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL2_Init();
 
-
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
 
   while (!done) {
-
     glfwPollEvents();
     ImGui_ImplOpenGL2_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -232,7 +379,6 @@ int main(int argc, char** argv) {
 
   glfwDestroyWindow(window);
   glfwTerminate();
-
 
   return EXIT_SUCCESS;
 }
