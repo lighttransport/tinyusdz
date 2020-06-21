@@ -2549,27 +2549,42 @@ bool Parser::ReadTokens() {
   }
 
   // Split null terminated string into _tokens.
-  const char *p = chars.data();
+  const char *ps = chars.data();
   const char *pe = chars.data() + chars.size();
-  for (size_t i = 0; i < n; i++) {
-    size_t len = strlen(p);
-    if (len == 0) {
-      if (i == 0) {
-        // OK. first char may be null(#1)
-      } else {
-        // There should be no empty string
-        _err += "Empty token found.\n";
-        return false;
+  const char *p = ps;
+  size_t n_remain = n;
+
+  auto my_strnlen = [](const char *s, const size_t max_length) -> size_t {
+    if (!s) return 0;
+
+    size_t i = 0;
+    for (; i < max_length; i++) {
+      if (s[i] == '\0') {
+        return i;
       }
-    }
+    }   
+
+    // null character not found.
+    return i;
+  };
+
+
+  // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null characters) 
+  for (size_t i = 0; i < n; i++) {
+    size_t len = my_strnlen(p, n_remain);
 
     if ((p + len) > pe) {
       _err += "Invalid token string array.\n";
       return false;
     }
 
-    std::string token = std::string(p, strlen(p));
-    p += strlen(p) + 1;
+    std::string token;
+    if (len > 0) {
+      token = std::string(p, len);
+    }
+
+    p += len + 1; // +1 = '\0'
+    n_remain = pe - p;
     assert(p <= pe);
     if (p > pe) {
       _err += "Invalid token string array.\n";
@@ -3679,6 +3694,20 @@ static std::string str_tolower(std::string s) {
                  [](unsigned char c) { return std::tolower(c); }  // correct
   );
   return s;
+}
+
+size_t my_strnlen(const char *s, const size_t max_length) {
+  if (!s) return 0;
+
+  size_t i = 0;
+  for (; i < max_length; i++) {
+    if (s[i] == '\0') {
+      return i;
+    }
+  }   
+
+  // null character not found.
+  return i;
 }
 
 }  // namespace
