@@ -1084,6 +1084,7 @@ struct BufferData
 
   size_t GetDataTypeByteSize(DataType ty) const {
     switch (ty) {
+      case BUFFER_DATA_TYPE_INVALID: return 0;
       case BUFFER_DATA_TYPE_BYTE: return 1;
       case BUFFER_DATA_TYPE_UNSIGNED_BYTE: return 1;
       case BUFFER_DATA_TYPE_SHORT: return 2;
