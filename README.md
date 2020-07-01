@@ -94,6 +94,17 @@ For Windows native build, we assume `ninja.exe` is installed on your system(You 
 * `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
 * `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture through TinyEXR.
 
+#### clang-cl on Windows
+
+Assume ninja.exe is installed and path to ninja.exe is added to your `%PATH%`
+
+Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
+
+```
+> bootstrap-clang-cl-win64.bat
+> ninja.exe
+```
+
 ### Meson
 
 Meson build is provided for compile tests.
