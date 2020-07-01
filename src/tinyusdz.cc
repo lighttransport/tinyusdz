@@ -754,7 +754,7 @@ class Parser {
   }
 
   Path GetPath(Index index) {
-    if (index.value <= _fields.size()) {
+    if (index.value <= _paths.size()) {
       // ok
     } else {
       // TODO(syoyo): Report error
@@ -767,7 +767,7 @@ class Parser {
   }
 
   std::string GetPathString(Index index) {
-    if (index.value <= _fields.size()) {
+    if (index.value <= _paths.size()) {
       // ok
     } else {
       return "#INVALID path index#";
@@ -779,7 +779,7 @@ class Parser {
   }
 
   std::string GetSpecString(Index index) {
-    if (index.value <= _fields.size()) {
+    if (index.value <= _specs.size()) {
       // ok
     } else {
       return "#INVALID spec index#";
