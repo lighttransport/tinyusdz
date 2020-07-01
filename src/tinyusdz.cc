@@ -353,7 +353,7 @@ std::string GetValueTypeRepr(int32_t type_id) {
 
   std::stringstream ss;
   ss << "ValueType: " << dty.name << "(" << dty.id
-     << "}, supports_array = " << dty.supports_array;
+     << "), supports_array = " << dty.supports_array;
   return ss.str();
 }
 
@@ -2676,7 +2676,7 @@ bool Parser::ReadFields() {
 
     std::string err;
     std::cout << "fields_size = " << fields_size
-              << ", tmp.size = " << tmp.size() << ", num_fieds = " << num_fields
+              << ", tmp.size = " << tmp.size() << ", num_fields = " << num_fields
               << "\n";
     Usd_IntegerCompression::DecompressFromBuffer(
         comp_buffer.data(), fields_size, tmp.data(), num_fields, &err);
