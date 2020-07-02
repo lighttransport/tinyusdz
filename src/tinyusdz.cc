@@ -1725,7 +1725,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v.m[0][0] = static_cast<double>(data[0]);
       v.m[1][1] = static_cast<double>(data[1]);
 
-      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1]
+      std::cout << "value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
                 << "\n";
 
       value->SetMatrix2d(v);
@@ -1746,8 +1746,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v.m[1][1] = static_cast<double>(data[1]);
       v.m[2][2] = static_cast<double>(data[2]);
 
-      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", "
-                << data[2] << "\n";
+      std::cout << "value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
+                << ", " << v.m[2][2] << "\n";
 
       value->SetMatrix3d(v);
 
@@ -1768,8 +1768,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       v.m[2][2] = static_cast<double>(data[2]);
       v.m[3][3] = static_cast<double>(data[3]);
 
-      std::cout << "value.matrix(diag) = " << data[0] << ", " << data[1] << ", "
-                << data[2] << ", " << data[3] << "\n";
+      std::cout << "value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
+                << ", " << v.m[2][2] << ", " << v.m[3][3] << "\n";
 
       value->SetMatrix4d(v);
 
