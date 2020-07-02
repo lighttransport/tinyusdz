@@ -35,7 +35,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <limits>
 
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
 #include <iostream> // dbg
+#endif
 
 namespace tinyusdz {
 
@@ -1110,7 +1112,9 @@ struct BufferData
   }
 
   size_t GetNumElements() const { 
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "numc = " << num_coords << "\n";
+#endif
     if (num_coords <= 0) {
       // TODO(syoyo): Report error
       return 0;
