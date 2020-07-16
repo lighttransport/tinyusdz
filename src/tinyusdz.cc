@@ -228,11 +228,13 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size, const std::stri
 
 };
 
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
 float to_float(uint16_t h) {
   float16 f;
   f.u = h;
   return half_to_float(f);
 }
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -357,6 +359,7 @@ const ValueType &GetValueType(int32_t type_id) {
 #pragma clang diagnostic pop
 #endif
 
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
 std::string GetValueTypeRepr(int32_t type_id) {
   ValueType dty = GetValueType(type_id);
 
@@ -365,6 +368,7 @@ std::string GetValueTypeRepr(int32_t type_id) {
      << "), supports_array = " << dty.supports_array;
   return ss.str();
 }
+#endif
 
 std::string GetSpecTypeString(SpecType ty) {
   if (SpecTypeUnknown == ty) {
@@ -395,6 +399,7 @@ std::string GetSpecTypeString(SpecType ty) {
   return "??? SpecType " + std::to_string(ty);
 }
 
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
 std::string GetSpecifierString(Specifier ty) {
   if (SpecifierDef == ty) {
     return "SpecifierDef";
@@ -425,6 +430,7 @@ std::string GetVariabilityString(Variability ty) {
   }
   return "??? Variability " + std::to_string(ty);
 }
+#endif
 
 ///
 /// Node represents scene graph node.
@@ -3223,6 +3229,7 @@ bool Parser::_ReconstructSceneRecursively(
 
   const Node &node = _nodes[size_t(parent)];
 
+#if 0
   auto IndentStr = [](int l) -> std::string {
     std::string indent;
     for (size_t i = 0; i < size_t(l); i++) {
@@ -3231,6 +3238,7 @@ bool Parser::_ReconstructSceneRecursively(
 
     return indent;
   };
+#endif
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << IndentStr(level) << "lv[" << level << "] node_index[" << parent << "] "
@@ -3345,8 +3353,8 @@ bool Parser::_ReconstructSceneRecursively(
       }
     } else if (fv.second.GetTypeName() == "TokenArray") {
       assert(fv.second.IsArray());
-      const auto &strs = fv.second.GetStringArray();
 #if 0
+      const auto &strs = fv.second.GetStringArray();
       for (const auto &str : strs) {
         std::cout << IndentStr(level + 2) << str << "\n";
       }
