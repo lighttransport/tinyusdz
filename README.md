@@ -11,11 +11,14 @@
 TinyUSDZ is currently in alpha stage. Not usable.
 
 * [x] USDC data parse
-* [ ] Reconstuct scene graph representaion(2020 Jun expected)
-* [ ] Write simple OpenGL viewer example(2020 Jun expected)
+* [ ] Reconstuct scene graph representaion(2020 Jul expected)
+  * [ ] GeomMesh
+  * [ ] Xform
+  * [ ] etc.
+* [ ] Write simple OpenGL viewer example(2020 Jul expected)
 * [ ] Animation(usdSkel) support(2020 Fall expected)
 * [ ] Vulkan raytracing viewer example
-* [ ] USDZ writer
+* [ ] USDZ(USDC) writer
 
 ## Other related projects
 
