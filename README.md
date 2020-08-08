@@ -11,12 +11,12 @@
 TinyUSDZ is currently in alpha stage. Not usable.
 
 * [x] USDC data parse
-* [ ] Reconstuct scene graph representaion(2020 Jul expected)
+* [ ] Reconstuct scene graph representaion(2020 Fall expected)
   * [ ] GeomMesh
   * [ ] Xform
   * [ ] etc.
-* [ ] Write simple OpenGL viewer example(2020 Jul expected)
-* [ ] Animation(usdSkel) support(2020 Fall expected)
+* [ ] Write simple OpenGL viewer example(2020 Fall expected)
+* [ ] Animation(usdSkel) support(2020 Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] USDZ(USDC) writer
 
@@ -53,6 +53,14 @@ TinyUSDZ is currently in alpha stage. Not usable.
 
 USDZ is actually the uncompressed zip file.
 USDZ(ZIP) contains usdc(binary) and resources(e.g. image/auduo files)
+
+## Security and memory budget
+
+USDZ(USDC) is a binary format and data are compressed. To avoid out-of-bounds access, out-of-memory, and other security issues when loading malcious USDZ(e.g. USDZ file from unknown origin), TinyUSDZ has a memory budget feature to avoid out-of-memory issue.
+
+To limit a memory usage when loading USDZ file, Please set a value `max_memory_limit_in_mb` in USDLoadOptions.
+
+TinyUSDZ source codes are also checked by Address Sanitizer, CodeQL and Fuzzer.
 
 ## Build
 
