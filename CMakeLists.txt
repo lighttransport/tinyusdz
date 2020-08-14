@@ -89,15 +89,59 @@ if (TINYUSDZ_WITH_OPENSUBDIV)
     set(NO_GLFW ON CACHE INTERNAL "" FORCE)
     set(NO_PTEX ON CACHE INTERNAL "" FORCE)
 
-    # Only build libosdCPU.a
-    set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
+    # CMakeLists of OSD package is problematic,
+    # so provide our own one.
+    list(APPEND OSD_FAR_SOURCES
+      ${osd_DIR}/opensubdiv/far/bilinearPatchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/catmarkPatchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/error.cpp
+      ${osd_DIR}/opensubdiv/far/loopPatchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/patchBasis.cpp
+      ${osd_DIR}/opensubdiv/far/patchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/patchDescriptor.cpp
+      ${osd_DIR}/opensubdiv/far/patchMap.cpp
+      ${osd_DIR}/opensubdiv/far/patchTable.cpp
+      ${osd_DIR}/opensubdiv/far/patchTableFactory.cpp
+      ${osd_DIR}/opensubdiv/far/ptexIndices.cpp
+      ${osd_DIR}/opensubdiv/far/stencilTable.cpp
+      ${osd_DIR}/opensubdiv/far/stencilTableFactory.cpp
+      ${osd_DIR}/opensubdiv/far/stencilBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/topologyDescriptor.cpp
+      ${osd_DIR}/opensubdiv/far/topologyRefiner.cpp
+      ${osd_DIR}/opensubdiv/far/topologyRefinerFactory.cpp
+    )
 
-    add_subdirectory(${osd_DIR})
+    # CPU only
+    list(APPEND OSD_OSD_SOURCES
+      ${osd_DIR}/opensubdiv/osd/cpuEvaluator.cpp
+      ${osd_DIR}/opensubdiv/osd/cpuKernel.cpp
+      ${osd_DIR}/opensubdiv/osd/cpuPatchTable.cpp
+      ${osd_DIR}/opensubdiv/osd/cpuVertexBuffer.cpp
+    )
+
+    list(APPEND OSD_SDC_SOURCES
+      ${osd_DIR}/opensubdiv/sdc/typeTraits.cpp
+      ${osd_DIR}/opensubdiv/sdc/crease.cpp
+    )
+
+    list(APPEND OSD_VTR_SOURCES
+      ${osd_DIR}/opensubdiv/vtr/fvarLevel.cpp
+      ${osd_DIR}/opensubdiv/vtr/fvarRefinement.cpp
+      ${osd_DIR}/opensubdiv/vtr/level.cpp
+      ${osd_DIR}/opensubdiv/vtr/quadRefinement.cpp
+      ${osd_DIR}/opensubdiv/vtr/refinement.cpp
+      ${osd_DIR}/opensubdiv/vtr/sparseSelector.cpp
+      ${osd_DIR}/opensubdiv/vtr/triRefinement.cpp
+    )
+
+
+    add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_OSD_SOURCES})
+    target_include_directories(osd_cpu PRIVATE ${osd_DIR})
 
   endfunction ()
 
   ADD_OSD_LIB()
-  list(APPEND TINYUSDZ_EXT_LIBRARIES osd_static_cpu) 
+  list(APPEND TINYUSDZ_EXT_LIBRARIES osd_cpu) 
 
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
 
