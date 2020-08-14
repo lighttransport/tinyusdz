@@ -60,9 +60,11 @@ USDZ(ZIP) contains usdc(binary) and resources(e.g. image/auduo files)
 
 Recomended way is simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
 
+I do not recommend to use tinyusdz as a git submodule, since the repo contains lots of codes required to build TinyUSDZ examples but these are not required for your app.
+
 ### Compiler defines
 
-* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv for subdivision surface(to get smooth mesh from USD(Z) primitive).
+* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv for subdivision surface(to get smooth mesh from USD(Z) primitive). Default enabled.
 
 ### CMake
 
