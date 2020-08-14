@@ -5,18 +5,57 @@ project(${BUILD_TARGET} CXX)
 
 set(BUILD_TARGET "usdz_view")
 
+option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
+option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
+
+# Use embedded version of OpenSubdiv code by default
+set(osd_DIR ${PROJECT_SOURCE_DIR}/../../src/osd) 
+
 # imgui_sdl requires C++14
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# [ccache]
+if(TINYUSDZ_USE_CCACHE)
+  if(MSVC)
+    # No ccache support
+  else()
+    find_program(CCACHE_EXE ccache)
+    if(CCACHE_EXE)
+
+      message(STATUS "Use ccache : " ${CCACHE_EXE})
+      # CMAKE_C_COMPILER_LAUNCHER = available from cmake 3.4+)
+      if(CMAKE_C_COMPILER_LAUNCHER)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CMAKE_C_COMPILER_LAUNCHER}"
+                                      "${CCACHE_EXE}")
+      else()
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_EXE}")
+      endif()
+
+      if(CMAKE_CXX_COMPILER_LAUNCHER)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}"
+                                        "${CCACHE_EXE}")
+      else()
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_EXE}")
+      endif()
+
+    endif(CCACHE_EXE)
+  endif()
+endif()
+
 #find_package(OpenGL REQUIRED)
 
-# Disable OpenGL
-set(VIDEO_OPENGL OFF CACHE INTERNAL "" FORCE)
-set(VIDEO_OPENGLES OFF CACHE INTERNAL "" FORCE)
-set(VIDEO_WAYLAND OFF CACHE INTERNAL "" FORCE)
-add_subdirectory(../common/SDL2-2.0.12/ SDL2)
+# https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
+function ( ADD_SDL2_LIB )
+  # Disable OpenGL
+  set(VIDEO_OPENGL OFF CACHE INTERNAL "" FORCE)
+  set(VIDEO_OPENGLES OFF CACHE INTERNAL "" FORCE)
+  set(VIDEO_WAYLAND OFF CACHE INTERNAL "" FORCE)
+  add_subdirectory(../common/SDL2-2.0.12/ SDL2)
+endfunction ()
+ADD_SDL2_LIB()
+
 
 if(WIN32)
     # nothing.
@@ -26,7 +65,7 @@ else()
     find_package(X11 REQUIRED)
 endif()
 
-set(SOURCES
+list(APPEND SOURCES
     main.cc
     #render.cc
     #render-config.cc
@@ -60,9 +99,103 @@ target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../com
 # tinyusdz dir
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
 
+if (TINYUSDZ_WITH_OPENSUBDIV)
+
+  # add dummy macros
+  macro(_add_doxy_headers headers)
+  endmacro()
+ 
+  # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
+  function ( ADD_OSD_LIB )
+
+    set(NO_TUTORIALS ON CACHE INTERNAL "" FORCE)
+    set(NO_EXAMPLES ON CACHE INTERNAL "" FORCE)
+    set(NO_REGRESSION ON CACHE INTERNAL "" FORCE)
+    set(NO_DOC ON CACHE INTERNAL "" FORCE)
+    set(NO_OMP ON CACHE INTERNAL "" FORCE)
+    set(NO_TBB ON CACHE INTERNAL "" FORCE)
+    set(NO_CUDA ON CACHE INTERNAL "" FORCE)
+    set(NO_OPENCL ON CACHE INTERNAL "" FORCE)
+    set(NO_OPENGL ON CACHE INTERNAL "" FORCE)
+    set(NO_TESTS ON CACHE INTERNAL "" FORCE)
+    set(NO_GLTESTS ON CACHE INTERNAL "" FORCE)
+    set(NO_GLFW ON CACHE INTERNAL "" FORCE)
+    set(NO_PTEX ON CACHE INTERNAL "" FORCE)
+
+    # Only build libosdCPU.a
+    set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
+
+    # add_subdirectory(${osd_DIR})
+
+    # CMakeLists of OSD package is problematic,
+    # so provide our own one.
+    list(APPEND OSD_FAR_SOURCES
+      ${osd_DIR}/opensubdiv/far/bilinearPatchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/catmarkPatchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/error.cpp
+      ${osd_DIR}/opensubdiv/far/loopPatchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/patchBasis.cpp
+      ${osd_DIR}/opensubdiv/far/patchBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/patchDescriptor.cpp
+      ${osd_DIR}/opensubdiv/far/patchMap.cpp
+      ${osd_DIR}/opensubdiv/far/patchTable.cpp
+      ${osd_DIR}/opensubdiv/far/patchTableFactory.cpp
+      ${osd_DIR}/opensubdiv/far/ptexIndices.cpp
+      ${osd_DIR}/opensubdiv/far/stencilTable.cpp
+      ${osd_DIR}/opensubdiv/far/stencilTableFactory.cpp
+      ${osd_DIR}/opensubdiv/far/stencilBuilder.cpp
+      ${osd_DIR}/opensubdiv/far/topologyDescriptor.cpp
+      ${osd_DIR}/opensubdiv/far/topologyRefiner.cpp
+      ${osd_DIR}/opensubdiv/far/topologyRefinerFactory.cpp
+    )
+
+    # CPU only
+    list(APPEND OSD_OSD_SOURCES
+      ${osd_DIR}/opensubdiv/osd/cpuEvaluator.cpp
+      ${osd_DIR}/opensubdiv/osd/cpuKernel.cpp
+      ${osd_DIR}/opensubdiv/osd/cpuPatchTable.cpp
+      ${osd_DIR}/opensubdiv/osd/cpuVertexBuffer.cpp
+    )
+
+    list(APPEND OSD_SDC_SOURCES
+      ${osd_DIR}/opensubdiv/sdc/typeTraits.cpp
+      ${osd_DIR}/opensubdiv/sdc/crease.cpp
+    )
+
+    list(APPEND OSD_VTR_SOURCES
+      ${osd_DIR}/opensubdiv/vtr/fvarLevel.cpp
+      ${osd_DIR}/opensubdiv/vtr/fvarRefinement.cpp
+      ${osd_DIR}/opensubdiv/vtr/level.cpp
+      ${osd_DIR}/opensubdiv/vtr/quadRefinement.cpp
+      ${osd_DIR}/opensubdiv/vtr/refinement.cpp
+      ${osd_DIR}/opensubdiv/vtr/sparseSelector.cpp
+      ${osd_DIR}/opensubdiv/vtr/triRefinement.cpp
+    )
+
+
+    add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_OSD_SOURCES})
+    target_include_directories(osd_cpu PRIVATE
+      ${osd_DIR}/opensubdiv/far
+      ${osd_DIR}/opensubdiv/osd
+      ${osd_DIR}/opensubdiv/sdc
+      ${osd_DIR}/opensubdiv/hbr
+      ${osd_DIR}/opensubdiv/vtr
+      )
+
+  endfunction ()
+
+  ADD_OSD_LIB()
+
+  list(APPEND EXT_LIBRARIES osd_cpu) 
+
+  list(APPEND SOUECES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
+
+endif (TINYUSDZ_WITH_OPENSUBDIV)
+
 target_link_libraries(
     ${BUILD_TARGET}
     SDL2
+    ${EXT_LIBRARIES}
     ${CMAKE_DL_LIBS}
 )
 
