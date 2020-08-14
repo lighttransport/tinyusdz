@@ -68,9 +68,11 @@ TinyUSDZ source codes are also checked by Address Sanitizer, CodeQL and Fuzzer.
 
 Recomended way is simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
 
+I do not recommend to use tinyusdz as a git submodule, since the repo contains lots of codes required to build TinyUSDZ examples but these are not required for your app.
+
 ### Compiler defines
 
-* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv for subdivision surface(to get smooth mesh from USD(Z) primitive).
+* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv for subdivision surface(to get smooth mesh from USD(Z) primitive). Default enabled.
 
 ### CMake
 
@@ -181,4 +183,5 @@ TinyUSDZ is licensed under MIT license.
 * stb_image: public domain. 
 * dr_libs: public domain. https://github.com/mackron/dr_libs
 * miniaudio: public domain or MIT no attribution. https://github.com/dr-soft/miniaudio
+* SDL2 : zlib license. https://www.libsdl.org/index.php
 
