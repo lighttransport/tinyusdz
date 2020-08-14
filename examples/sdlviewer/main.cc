@@ -12,6 +12,10 @@
 //
 #include <SDL2/SDL.h>
 
+#if defined(SDL_VIDEO_DRIVER_X11)
+#include <SDL2/SDL_syswm.h>
+#endif
+
 // common
 #include "imgui.h"
 #include "imgui_sdl/imgui_sdl.h"
@@ -109,13 +113,36 @@ void UpdateTexutre(SDL_Texture* tex, uint32_t offt) {
                     256 * 4);
 }
 
+// https://discourse.libsdl.org/t/sdl-and-xserver/12610/4
+static void ScreenActivate(SDL_Window *window)
+{
+#if defined(SDL_VIDEO_DRIVER_X11)
+  SDL_SysWMinfo wm;
+
+  // Get window info.
+  SDL_VERSION( &wm.version );
+  SDL_GetWindowWMInfo(window, &wm );
+
+  // Lock to display access.
+  //wm.info.x11.lock_func();
+
+  // Show the window on top.
+  XMapRaised( wm.info.x11.display, wm.info.x11.window );
+
+  // Set the focus on it.
+  XSetInputFocus( wm.info.x11.display, wm.info.x11.window, RevertToParent, CurrentTime );
+#else
+  (void)window;
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   SDL_Init(SDL_INIT_VIDEO);
 
   SDL_Window* window =
-      SDL_CreateWindow("SDL2 ImGui Renderer", SDL_WINDOWPOS_CENTERED,
+      SDL_CreateWindow("Simple USDZ viewer", SDL_WINDOWPOS_CENTERED,
                        SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_RESIZABLE);
   SDL_Renderer* renderer =
       SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
@@ -192,6 +219,8 @@ int main(int argc, char** argv) {
 
     UpdateTexutre(texture, 0);
   }
+
+  ScreenActivate(window);
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};

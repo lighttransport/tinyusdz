@@ -65,40 +65,6 @@ else()
     find_package(X11 REQUIRED)
 endif()
 
-list(APPEND SOURCES
-    main.cc
-    #render.cc
-    #render-config.cc
-
-    # tinyusdz
-    ../../src/tinyusdz.cc
-    ../../src/integerCoding.cpp
-    ../../src/pxrLZ4/lz4.cpp
-    ../../src/lz4-compression.cc
-)
-
-set(GUI_SOURCES
-    ../common/trackball.cc
-    ../common/matrix.cc
-    ../common/imgui/imgui.cpp
-    ../common/imgui/imgui_draw.cpp
-    ../common/imgui/imgui_widgets.cpp
-
-    ../common/imgui_sdl/imgui_sdl.cpp
-    )
-
-add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
-
-if (UNIX)
-  target_include_directories(${BUILD_TARGET} PUBLIC ${X11_INCLUDE_DIR})
-endif()
-
-target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common")
-target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/imgui")
-
-# tinyusdz dir
-target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
-
 if (TINYUSDZ_WITH_OPENSUBDIV)
 
   # add dummy macros
@@ -174,13 +140,7 @@ if (TINYUSDZ_WITH_OPENSUBDIV)
 
 
     add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_OSD_SOURCES})
-    target_include_directories(osd_cpu PRIVATE
-      ${osd_DIR}/opensubdiv/far
-      ${osd_DIR}/opensubdiv/osd
-      ${osd_DIR}/opensubdiv/sdc
-      ${osd_DIR}/opensubdiv/hbr
-      ${osd_DIR}/opensubdiv/vtr
-      )
+    target_include_directories(osd_cpu PRIVATE ${osd_DIR})
 
   endfunction ()
 
@@ -191,6 +151,40 @@ if (TINYUSDZ_WITH_OPENSUBDIV)
   list(APPEND SOUECES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
 
 endif (TINYUSDZ_WITH_OPENSUBDIV)
+
+list(APPEND SOURCES
+    main.cc
+    #render.cc
+    #render-config.cc
+
+    # tinyusdz
+    ../../src/tinyusdz.cc
+    ../../src/integerCoding.cpp
+    ../../src/pxrLZ4/lz4.cpp
+    ../../src/lz4-compression.cc
+)
+
+set(GUI_SOURCES
+    ../common/trackball.cc
+    ../common/matrix.cc
+    ../common/imgui/imgui.cpp
+    ../common/imgui/imgui_draw.cpp
+    ../common/imgui/imgui_widgets.cpp
+
+    ../common/imgui_sdl/imgui_sdl.cpp
+    )
+
+add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
+
+if (UNIX)
+  target_include_directories(${BUILD_TARGET} PUBLIC ${X11_INCLUDE_DIR})
+endif()
+
+target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common")
+target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/imgui")
+
+# tinyusdz dir
+target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
 
 target_link_libraries(
     ${BUILD_TARGET}
