@@ -20,6 +20,10 @@ TinyUSDZ is currently in alpha stage. Not usable.
 * [ ] Vulkan raytracing viewer example
 * [ ] USDZ(USDC) writer
 
+## Notice
+
+TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses proprietary file format and we cannot understand it(so no conversion support from/to Reality also).
+
 ## Other related projects
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
