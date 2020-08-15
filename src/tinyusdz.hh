@@ -1135,6 +1135,89 @@ struct BufferData
   size_t GetStride() const {
     return stride;
   }
+
+  // Utility functions
+  //
+  // Return empty array when required type mismatches.
+  //
+  std::vector<uint32_t> GetAsUInt32Array() const {
+    std::vector<uint32_t> buf;
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(uint32_t))) &&
+        (GetNumCoords() == 1) &&
+        (GetDataType() == BUFFER_DATA_TYPE_UNSIGNED_INT)) {
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(uint32_t));
+    }
+
+    return buf;
+  }
+
+  std::vector<int32_t> GetAsInt32Array() const {
+    std::vector<int32_t> buf;
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(int32_t))) &&
+        (GetNumCoords() == 1) &&
+        (GetDataType() == BUFFER_DATA_TYPE_INT)) {
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(int32_t));
+    }
+
+    return buf;
+  }
+
+  std::vector<float> GetAsFloatArray() const {
+    std::vector<float> buf;
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+        (GetNumCoords() == 1) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+    }
+
+    return buf;
+  }
+
+  std::vector<float> GetAsVec2fArray() const {
+    std::vector<float> buf;
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+        (GetNumCoords() == 2) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * 2 * sizeof(float));
+    }
+
+    return buf;
+  }
+
+  std::vector<float> GetAsVec3fArray() const {
+    std::vector<float> buf;
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+        (GetNumCoords() == 3) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * 3 * sizeof(float));
+    }
+
+    return buf;
+  }
+
+  std::vector<float> GetAsVec4fArray() const {
+    std::vector<float> buf;
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+        (GetNumCoords() == 4) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * 4 * sizeof(float));
+    }
+
+    return buf;
+  }
+  
   
 };
 
@@ -1144,6 +1227,9 @@ struct PrimAttrib
   BufferData buffer;
   Variability variability;
   bool facevarying{false};
+
+  // For TokenString
+  std::string tokenString;
 };
 
 // Predefined node class
