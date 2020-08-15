@@ -40,7 +40,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 
 // local debug flag
-#define TINYUSDZ_LOCAL_DEBUG_PRINT (0)
+#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
 
 #include "tinyusdz.hh"
 
@@ -3069,6 +3069,9 @@ bool Parser::_ReconstructGeomMesh(
     bool facevarying{false};
 
     for (const auto &fv : fvs) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "  fvs.first " << fv.first << "\n";
+#endif
       if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
 
         type_name = fv.second.GetToken();
@@ -3091,7 +3094,7 @@ bool Parser::_ReconstructGeomMesh(
       if (fv.first == "default") {
         attr->name = prop_name;
         if (fv.second.GetTypeName() == "FloatArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2, /* stride */sizeof(float) * 2, fv.second.GetData());
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1, /* stride */sizeof(float), fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
@@ -3110,7 +3113,21 @@ bool Parser::_ReconstructGeomMesh(
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
-        }
+        } else if (fv.second.GetTypeName() == "IntArray") {
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_INT, 1,
+                           /* stride */ sizeof(int32_t), fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+          success = true;
+        } else if (fv.second.GetTypeName() == "Token") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
+#endif
+          attr->tokenString = fv.second.GetToken();
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+          success = true;
+	}
       }
     }
 
@@ -3201,12 +3218,44 @@ bool Parser::_ReconstructGeomMesh(
             mesh->points = std::move(attr);
           }
         } else if (prop_name == "normals") {
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 3)) {
+            mesh->normals = std::move(attr);
+          }
         } else if (prop_name == "primvars:UVMap") {
         } else if (prop_name == "faceVertexCounts") {
           //Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
-          // aaa: typeName: int[]
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+            // aaa: typeName: int[]
+            std::cout << "got faceVertexCounts\n";
+#endif           
+            mesh->faceVertexCounts = attr.buffer.GetAsInt32Array();
+          }
         } else if (prop_name == "faceVertexIndices") {
+         if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+              // aaa: typeName: int[]
+              std::cout << "got faceVertexCounts\n";
+#endif
+          mesh->faceVertexIndices = attr.buffer.GetAsInt32Array();
+        }
+        } else if (prop_name == "holeIndices") {
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            #if TINYUSDZ_LOCAL_DEBUG_PRINT
+                    // aaa: typeName: int[]
+                    std::cout
+                << "got faceVertexCounts\n";
+#endif
+            mesh->holeIndices = attr.buffer.GetAsInt32Array();
+          }
         } else if (prop_name == "subdivisionScheme") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "subdivisionScheme:" << attr.tokenString << "\n";
+#endif
         }
 
       }
@@ -3229,7 +3278,8 @@ bool Parser::_ReconstructSceneRecursively(
 
   const Node &node = _nodes[size_t(parent)];
 
-#if 0
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
   auto IndentStr = [](int l) -> std::string {
     std::string indent;
     for (size_t i = 0; i < size_t(l); i++) {
@@ -3238,9 +3288,6 @@ bool Parser::_ReconstructSceneRecursively(
 
     return indent;
   };
-#endif
-
-#if TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << IndentStr(level) << "lv[" << level << "] node_index[" << parent << "] "
             << node.GetLocalPath() << " ==\n";
   std::cout << IndentStr(level) << " childs = [";
