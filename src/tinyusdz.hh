@@ -1333,6 +1333,7 @@ struct GeomMesh
   std::vector<float> creaseSharpnesses;
   std::vector<int32_t> holeIndices;
   std::string interpolateBoundary = "edgeAndCorner"; // "none", "edgeAndCorner" or "edgeOnly"
+  SubdivisionScheme subdivisionScheme;
 
 
   // User defined attribs

@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <algorithm>
 #include <atomic>
 #include <cassert>
-#include <cctype> // std::tolower
+#include <cctype>  // std::tolower
 #include <chrono>
 #include <fstream>
 #include <map>
@@ -42,11 +42,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // local debug flag
 #define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
 
-#include "tinyusdz.hh"
-
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "stream-reader.hh"
+#include "tinyusdz.hh"
 
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
 
@@ -91,7 +90,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
 
 namespace tinyusdz {
 
@@ -163,8 +161,9 @@ constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
 
 // Decode image(png, jpg, ...)
-static bool DecodeImage(const uint8_t *bytes, const size_t size, const std::string &uri, Image *image, std::string *warn, std::string *err)
-{
+static bool DecodeImage(const uint8_t *bytes, const size_t size,
+                        const std::string &uri, Image *image, std::string *warn,
+                        std::string *err) {
   (void)warn;
 
   int w = 0, h = 0, comp = 0, req_comp = 0;
@@ -196,14 +195,16 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size, const std::stri
   // if image cannot be decoded, ignore parsing and keep it by its path
   // don't break in this case
   // FIXME we should only enter this function if the image is embedded. If
-  // `uri` references an image file, it should be left as it is. Image loading should not be
-  // mandatory (to support other formats)
-  if (!data) data = stbi_load_from_memory(bytes, int(size), &w, &h, &comp, req_comp);
+  // `uri` references an image file, it should be left as it is. Image loading
+  // should not be mandatory (to support other formats)
+  if (!data)
+    data = stbi_load_from_memory(bytes, int(size), &w, &h, &comp, req_comp);
   if (!data) {
     // NOTE: you can use `warn` instead of `err`
     if (err) {
       (*err) +=
-          "Unknown image format. STB cannot decode image data for image: " + uri + "\".\n";
+          "Unknown image format. STB cannot decode image data for image: " +
+          uri + "\".\n";
     }
     return false;
   }
@@ -225,7 +226,6 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size, const std::stri
   stbi_image_free(data);
 
   return true;
-
 };
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -460,7 +460,7 @@ class Node {
   /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
   /// this node is `bora`)
   ///
-  //std::string GetFullPath() const { return _path.full_path_name(); }
+  // std::string GetFullPath() const { return _path.full_path_name(); }
 
   ///
   /// Get local path
@@ -478,8 +478,8 @@ class Node {
  private:
   int64_t
       _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
-  std::vector<size_t> _children;  // index to child nodes.
-  std::unordered_set<std::string> _primChildren; // List of name of child nodes
+  std::vector<size_t> _children;                  // index to child nodes.
+  std::unordered_set<std::string> _primChildren;  // List of name of child nodes
 
   Path _path;  // local path
 
@@ -807,7 +807,8 @@ class Parser {
     std::string path_str = GetPathString(spec.path_index);
     std::string specty_str = GetSpecTypeString(spec.spec_type);
 
-    return "[Spec] path: " + path_str + ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
+    return "[Spec] path: " + path_str +
+           ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
            ", spec_type: " + specty_str;
   }
 
@@ -828,9 +829,10 @@ class Parser {
   bool _BuildLiveFieldSets();
 
   bool _ReconstructGeomMesh(const Node &node,
-    const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    GeomMesh *mesh);
+                            const FieldValuePairVector &fields,
+                            const std::unordered_map<uint32_t, uint32_t>
+                                &path_index_to_spec_index_map,
+                            GeomMesh *mesh);
 
   bool _ReconstructSceneRecursively(int parent_id, int level,
                                     const std::unordered_map<uint32_t, uint32_t>
@@ -1864,7 +1866,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       return false;
     }
 
-    //printf("rep = 0x%016lx\n", rep.GetData());
+    // printf("rep = 0x%016lx\n", rep.GetData());
 
     if (ty.id == VALUE_TYPE_TOKEN) {
       // Guess array of Token
@@ -2349,7 +2351,8 @@ bool Parser::_BuildDecompressedPathsImpl(
       // Assume single root node in the scene.
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "paths[" << pathIndexes[thisIndex]
-                << "] is parent. name = " << parentPath.full_path_name() << "\n";
+                << "] is parent. name = " << parentPath.full_path_name()
+                << "\n";
 #endif
       parentPath = Path::AbsoluteRootPath();
       _paths[pathIndexes[thisIndex]] = parentPath;
@@ -2368,7 +2371,8 @@ bool Parser::_BuildDecompressedPathsImpl(
       auto const &elemToken = _tokens[size_t(tokenIndex)];
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "elemToken = " << elemToken << "\n";
-      std::cout << "[" << pathIndexes[thisIndex] << "].append = " << elemToken << "\n";
+      std::cout << "[" << pathIndexes[thisIndex] << "].append = " << elemToken
+                << "\n";
 #endif
 
       // full path
@@ -2416,11 +2420,13 @@ bool Parser::_BuildNodeHierarchy(
     int64_t parentNodeIndex) {
   bool hasChild = false, hasSibling = false;
 
-  // NOTE: Need to indirectly lookup index through pathIndexes[] when accessing `_nodes`
+  // NOTE: Need to indirectly lookup index through pathIndexes[] when accessing
+  // `_nodes`
   do {
     auto thisIndex = curIndex++;
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "thisIndex = " << thisIndex << ", curIndex = " << curIndex << "\n";
+    std::cout << "thisIndex = " << thisIndex << ", curIndex = " << curIndex
+              << "\n";
 #endif
     if (parentNodeIndex == -1) {
       // root node.
@@ -2439,8 +2445,8 @@ bool Parser::_BuildNodeHierarchy(
       }
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Hierarhy. parent[" << pathIndexes[size_t(parentNodeIndex)] << "].add_child = " << pathIndexes[thisIndex]
-                << "\n";
+      std::cout << "Hierarhy. parent[" << pathIndexes[size_t(parentNodeIndex)]
+                << "].add_child = " << pathIndexes[thisIndex] << "\n";
 #endif
 
       Node node(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
@@ -2453,7 +2459,8 @@ bool Parser::_BuildNodeHierarchy(
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "childName = " << name << "\n";
 #endif
-      _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(name, pathIndexes[thisIndex]);
+      _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(
+          name, pathIndexes[thisIndex]);
     }
 
     hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
@@ -2737,8 +2744,8 @@ bool Parser::ReadTokens() {
     return i;
   };
 
-
-  // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null characters)
+  // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null
+  // characters)
   for (size_t i = 0; i < n; i++) {
     size_t len = my_strnlen(p, n_remain);
 
@@ -2752,7 +2759,7 @@ bool Parser::ReadTokens() {
       token = std::string(p, len);
     }
 
-    p += len + 1; // +1 = '\0'
+    p += len + 1;  // +1 = '\0'
     n_remain = size_t(pe - p);
     assert(p <= pe);
     if (p > pe) {
@@ -2850,8 +2857,8 @@ bool Parser::ReadFields() {
     std::string err;
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "fields_size = " << fields_size
-              << ", tmp.size = " << tmp.size() << ", num_fields = " << num_fields
-              << "\n";
+              << ", tmp.size = " << tmp.size()
+              << ", num_fields = " << num_fields << "\n";
 #endif
     Usd_IntegerCompression::DecompressFromBuffer(
         comp_buffer.data(), fields_size, tmp.data(), num_fields, &err);
@@ -3047,17 +3054,16 @@ bool Parser::_BuildLiveFieldSets() {
 }
 
 bool Parser::_ReconstructGeomMesh(
-    const Node &node,
-    const FieldValuePairVector &fields,
+    const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomMesh *mesh) {
-
   (void)mesh;
 
   bool has_position{false};
 
-  auto ParseGeomMeshAttribute = [](const FieldValuePairVector &fvs, PrimAttrib *attr, const std::string &prop_name) -> bool {
-
+  auto ParseGeomMeshAttribute = [](const FieldValuePairVector &fvs,
+                                   PrimAttrib *attr,
+                                   const std::string &prop_name) -> bool {
     bool success = false;
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -3073,16 +3079,17 @@ bool Parser::_ReconstructGeomMesh(
       std::cout << "  fvs.first " << fv.first << "\n";
 #endif
       if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
-
         type_name = fv.second.GetToken();
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cout << "aaa: typeName: " << type_name << "\n";
 #endif
 
         (void)attr;
-      } else if ((fv.first == "variablity") && (fv.second.GetTypeName() == "Variability")) {
+      } else if ((fv.first == "variablity") &&
+                 (fv.second.GetTypeName() == "Variability")) {
         variability = fv.second.GetVariability();
-      } else if ((fv.first == "interpolation") && (fv.second.GetTypeName() == "Token")) {
+      } else if ((fv.first == "interpolation") &&
+                 (fv.second.GetTypeName() == "Token")) {
         if (fv.second.GetToken() == "faceVarying") {
           facevarying = true;
         }
@@ -3094,22 +3101,26 @@ bool Parser::_ReconstructGeomMesh(
       if (fv.first == "default") {
         attr->name = prop_name;
         if (fv.second.GetTypeName() == "FloatArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1, /* stride */sizeof(float), fv.second.GetData());
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1,
+                           /* stride */ sizeof(float), fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
         } else if (fv.second.GetTypeName() == "Vec2fArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2, /* stride */sizeof(float) * 2, fv.second.GetData());
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2,
+                           /* stride */ sizeof(float) * 2, fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
         } else if (fv.second.GetTypeName() == "Vec3fArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3, /* stride */sizeof(float) * 3, fv.second.GetData());
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
+                           /* stride */ sizeof(float) * 3, fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
         } else if (fv.second.GetTypeName() == "Vec4fArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4, /* stride */sizeof(float) * 4, fv.second.GetData());
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4,
+                           /* stride */ sizeof(float) * 4, fv.second.GetData());
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
@@ -3127,13 +3138,12 @@ bool Parser::_ReconstructGeomMesh(
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
-	}
+        }
       }
     }
 
     return success;
   };
-
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
@@ -3144,16 +3154,15 @@ bool Parser::_ReconstructGeomMesh(
       assert(fv.second.IsArray());
       for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
         if (fv.second.GetStringArray()[i] == "points") {
-
           has_position = true;
-
         }
       }
     }
   }
 
   if (!has_position) {
-    _err += "No `position` field exist for Mesh node: " + node.GetLocalPath() + ".\n";
+    _err += "No `position` field exist for Mesh node: " + node.GetLocalPath() +
+            ".\n";
     return false;
   }
 
@@ -3161,7 +3170,6 @@ bool Parser::_ReconstructGeomMesh(
   // NOTE: Currently we assume one deeper node has GeomMesh's attribute
   //
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
-
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
       _err += "Invalid child node id: " + std::to_string(child_index) +
@@ -3169,15 +3177,17 @@ bool Parser::_ReconstructGeomMesh(
       return false;
     }
 
-    //const Node &child_node = _nodes[size_t(child_index)];
+    // const Node &child_node = _nodes[size_t(child_index)];
 
     if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
       // No specifier assigned to this child node.
-      _err += "No specifier found for node id: " + std::to_string(child_index) + "\n";
+      _err += "No specifier found for node id: " + std::to_string(child_index) +
+              "\n";
       return false;
     }
 
-    uint32_t spec_index = path_index_to_spec_index_map.at(uint32_t(child_index));
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
       _err += "Invalid specifier id: " + std::to_string(spec_index) +
               ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
@@ -3188,7 +3198,8 @@ bool Parser::_ReconstructGeomMesh(
 
     Path path = GetPath(spec.path_index);
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart() << ", prop part: " << path.GetPropPart() << "\n";
+    std::cout << "Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart() << "\n";
 #endif
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
@@ -3197,7 +3208,8 @@ bool Parser::_ReconstructGeomMesh(
       return false;
     }
 
-    const FieldValuePairVector &child_fields = _live_fieldsets.at(spec.fieldset_index);
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
 
     {
       std::string prop_name = path.GetPropPart();
@@ -3205,7 +3217,7 @@ bool Parser::_ReconstructGeomMesh(
       PrimAttrib attr;
       bool ret = ParseGeomMeshAttribute(child_fields, &attr, prop_name);
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "prop: " << prop_name << ", ret = " << ret  << "\n";
+      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
 #endif
       if (ret) {
         // TODO(syoyo): Support more prop names
@@ -3213,18 +3225,20 @@ bool Parser::_ReconstructGeomMesh(
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 3)) {
             mesh->points = std::move(attr);
           }
         } else if (prop_name == "normals") {
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 3)) {
             mesh->normals = std::move(attr);
           }
         } else if (prop_name == "primvars:UVMap") {
         } else if (prop_name == "faceVertexCounts") {
-          //Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
+          // Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -3234,33 +3248,71 @@ bool Parser::_ReconstructGeomMesh(
             mesh->faceVertexCounts = attr.buffer.GetAsInt32Array();
           }
         } else if (prop_name == "faceVertexIndices") {
-         if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-              // aaa: typeName: int[]
-              std::cout << "got faceVertexCounts\n";
+            // aaa: typeName: int[]
+            std::cout << "got faceVertexCounts\n";
 #endif
-          mesh->faceVertexIndices = attr.buffer.GetAsInt32Array();
-        }
+            mesh->faceVertexIndices = attr.buffer.GetAsInt32Array();
+          }
         } else if (prop_name == "holeIndices") {
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            #if TINYUSDZ_LOCAL_DEBUG_PRINT
-                    // aaa: typeName: int[]
-                    std::cout
-                << "got faceVertexCounts\n";
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+            // aaa: typeName: int[]
+            std::cout << "got faceVertexCounts\n";
 #endif
             mesh->holeIndices = attr.buffer.GetAsInt32Array();
+          }
+        } else if (prop_name == "cornerIndices") {
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            mesh->cornerIndices = attr.buffer.GetAsInt32Array();
+          }
+        } else if (prop_name == "cornerSharpnesses") {
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            mesh->cornerSharpnesses = attr.buffer.GetAsFloatArray();
+          }
+        } else if (prop_name == "creaseIndices") {
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            mesh->creaseIndices = attr.buffer.GetAsInt32Array();
+          }
+        } else if (prop_name == "creaseLengths") {
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            mesh->creaseLengths = attr.buffer.GetAsInt32Array();
+          }
+        } else if (prop_name == "creaseSharpnesses") {
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            mesh->creaseSharpnesses = attr.buffer.GetAsFloatArray();
           }
         } else if (prop_name == "subdivisionScheme") {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "subdivisionScheme:" << attr.tokenString << "\n";
 #endif
+          if (attr.tokenString.size()) {
+            if ((attr.tokenString.compare("none") == 0)) {
+              mesh->subdivisionScheme = SubdivisionSchemeNone;
+            } else if (attr.tokenString.compare("catmullClark") == 0) {
+              mesh->subdivisionScheme = SubdivisionSchemeCatmullClark;
+            } else if (attr.tokenString.compare("bilinear") == 0) {
+              mesh->subdivisionScheme = SubdivisionSchemeBilinear;
+            } else if (attr.tokenString.compare("loop") == 0) {
+              mesh->subdivisionScheme = SubdivisionSchemeLoop;
+            } else {
+              _err += "Unknown subdivision scheme: " + attr.tokenString + "\n";
+              return false;
+            }
+          }
         }
-
       }
     }
-
   }
 
   return true;
@@ -3278,7 +3330,6 @@ bool Parser::_ReconstructSceneRecursively(
 
   const Node &node = _nodes[size_t(parent)];
 
-
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
   auto IndentStr = [](int l) -> std::string {
     std::string indent;
@@ -3288,8 +3339,8 @@ bool Parser::_ReconstructSceneRecursively(
 
     return indent;
   };
-  std::cout << IndentStr(level) << "lv[" << level << "] node_index[" << parent << "] "
-            << node.GetLocalPath() << " ==\n";
+  std::cout << IndentStr(level) << "lv[" << level << "] node_index[" << parent
+            << "] " << node.GetLocalPath() << " ==\n";
   std::cout << IndentStr(level) << " childs = [";
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     std::cout << node.GetChildren()[i];
@@ -3332,28 +3383,39 @@ bool Parser::_ReconstructSceneRecursively(
   // root only attributes.
   if (parent == 0) {
     for (const auto &fv : fields) {
-      if ((fv.first == "upAxis") && (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
+      if ((fv.first == "upAxis") &&
+          (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
         std::string v = fv.second.GetToken();
-        if ((v != "Y") && (v != "Z" ) && (v != "X")) {
-          _err += "Currently `upAxis` must be 'X', 'Y' or 'Z' but got '" + v + "'\n";
+        if ((v != "Y") && (v != "Z") && (v != "X")) {
+          _err += "Currently `upAxis` must be 'X', 'Y' or 'Z' but got '" + v +
+                  "'\n";
           return false;
         }
         scene->upAxis = v;
       } else if (fv.first == "metersPerUnit") {
-        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) || (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
+        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) ||
+            (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
           scene->metersPerUnit = fv.second.GetDouble();
         } else {
-          _err += "Currently `metersPerUnit` value must be double or float type, but got '" + fv.second.GetTypeName() + "'\n";
+          _err +=
+              "Currently `metersPerUnit` value must be double or float type, "
+              "but got '" +
+              fv.second.GetTypeName() + "'\n";
           return false;
         }
       } else if (fv.first == "timeCodesPerSecond") {
-        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) || (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
+        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) ||
+            (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
           scene->timeCodesPerSecond = fv.second.GetDouble();
         } else {
-          _err += "Currently `timeCodesPerSecond` value must be double or float type, but got '" + fv.second.GetTypeName() + "'\n";
+          _err +=
+              "Currently `timeCodesPerSecond` value must be double or float "
+              "type, but got '" +
+              fv.second.GetTypeName() + "'\n";
           return false;
         }
-      } else if ((fv.first == "defaultPrim") && (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
+      } else if ((fv.first == "defaultPrim") &&
+                 (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
         scene->defaultPrim = fv.second.GetToken();
       } else {
         // TODO(syoyo): `customLayerData`
@@ -3364,36 +3426,43 @@ bool Parser::_ReconstructSceneRecursively(
   std::string node_type;
 
   for (const auto &fv : fields) {
-
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << IndentStr(level) << "  \"" << fv.first << "\" : ty = " << fv.second.GetTypeName() << "\n";
+    std::cout << IndentStr(level) << "  \"" << fv.first
+              << "\" : ty = " << fv.second.GetTypeName() << "\n";
 #endif
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << IndentStr(level) << "    specifier = " << GetSpecifierString(fv.second.GetSpecifier()) << "\n";
+      std::cout << IndentStr(level) << "    specifier = "
+                << GetSpecifierString(fv.second.GetSpecifier()) << "\n";
 #endif
     } else if (fv.second.GetTypeId() == VALUE_TYPE_TOKEN) {
-
       if (fv.first == "typeName") {
         node_type = fv.second.GetToken();
       }
-      //std::cout << IndentStr(level) << "    token = " << fv.second.GetToken() << "\n";
+      // std::cout << IndentStr(level) << "    token = " << fv.second.GetToken()
+      // << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_STRING) {
-      //std::cout << IndentStr(level) << "    string = " << fv.second.GetString() << "\n";
+      // std::cout << IndentStr(level) << "    string = " <<
+      // fv.second.GetString() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) {
-      //std::cout << IndentStr(level) << "    double = " << fv.second.GetDouble() << "\n";
+      // std::cout << IndentStr(level) << "    double = " <<
+      // fv.second.GetDouble() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_FLOAT) {
-      //std::cout << IndentStr(level) << "    float  = " << fv.second.GetDouble() << "\n";
+      // std::cout << IndentStr(level) << "    float  = " <<
+      // fv.second.GetDouble() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_VARIABILITY) {
-      //std::cout << IndentStr(level) << "    variability  = " << GetVariabilityString(fv.second.GetVariability()) << "\n";
-    } else if ((fv.first == "primChildren") && (fv.second.GetTypeName() == "TokenArray")) {
+      // std::cout << IndentStr(level) << "    variability  = " <<
+      // GetVariabilityString(fv.second.GetVariability()) << "\n";
+    } else if ((fv.first == "primChildren") &&
+               (fv.second.GetTypeName() == "TokenArray")) {
       // Check if TokenArray contains known child nodes
       const auto &tokens = fv.second.GetStringArray();
 
       bool valid = true;
       for (const auto &token : tokens) {
         if (!node.GetPrimChildren().count(token)) {
-          _err += "primChild '" + token + "' not found in node '" + node.GetPath().full_path_name() + "'\n";
+          _err += "primChild '" + token + "' not found in node '" +
+                  node.GetPath().full_path_name() + "'\n";
           valid = false;
           break;
         }
@@ -3409,10 +3478,10 @@ bool Parser::_ReconstructSceneRecursively(
     }
   }
 
-
   if (node_type == "Mesh") {
     GeomMesh mesh;
-    if (!_ReconstructGeomMesh(node, fields, path_index_to_spec_index_map, &mesh)) {
+    if (!_ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
+                              &mesh)) {
       _err += "Failed to reconstruct GeomMesh.\n";
       return false;
     }
@@ -3486,7 +3555,6 @@ bool Parser::ReadSpecs() {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << "num_specs " << num_specs << "\n";
 #endif
-
 
   _specs.resize(num_specs);
 
@@ -3591,7 +3659,7 @@ bool Parser::ReadSpecs() {
     }
 
     for (size_t i = 0; i != num_specs; ++i) {
-      //std::cout << "spectype = " << tmp[i] << "\n";
+      // std::cout << "spectype = " << tmp[i] << "\n";
       _specs[i].spec_type = static_cast<SpecType>(tmp[i]);
     }
   }
@@ -3660,14 +3728,14 @@ bool Parser::ReadBootStrap() {
     return false;
   }
 
-  //std::cout << int(magic[0]) << "\n";
-  //std::cout << int(magic[1]) << "\n";
-  //std::cout << int(magic[2]) << "\n";
-  //std::cout << int(magic[3]) << "\n";
-  //std::cout << int(magic[4]) << "\n";
-  //std::cout << int(magic[5]) << "\n";
-  //std::cout << int(magic[6]) << "\n";
-  //std::cout << int(magic[7]) << "\n";
+  // std::cout << int(magic[0]) << "\n";
+  // std::cout << int(magic[1]) << "\n";
+  // std::cout << int(magic[2]) << "\n";
+  // std::cout << int(magic[3]) << "\n";
+  // std::cout << int(magic[4]) << "\n";
+  // std::cout << int(magic[5]) << "\n";
+  // std::cout << int(magic[6]) << "\n";
+  // std::cout << int(magic[7]) << "\n";
 
   if (memcmp(magic, "PXR-USDC", 8)) {
     _err += "Invalid magic number. Expected 'PXR-USDC' but got '" +
@@ -3793,7 +3861,8 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   if (length > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
     if (err) {
-      (*err) += "USDZ data is too large(size = " + std::to_string(length) + ", which exceeds memory limit " +
+      (*err) += "USDZ data is too large(size = " + std::to_string(length) +
+                ", which exceeds memory limit " +
                 std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
     }
 
@@ -3921,7 +3990,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   }
 
   // Create `Scene` object
-  //std::cout << "reconstruct scene:\n";
+  // std::cout << "reconstruct scene:\n";
   {
     if (!parser.ReconstructScene(scene)) {
       if (warn) {
@@ -3978,7 +4047,8 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
 
     if (sz > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
       if (err) {
-        (*err) += "USDZ file is too large(size = " + std::to_string(sz) + ", which exceeds memory limit " +
+        (*err) += "USDZ file is too large(size = " + std::to_string(sz) +
+                  ", which exceeds memory limit " +
                   std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
       }
 
@@ -4127,7 +4197,7 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
       return false;
     }
 
-    //std::cout << "offset = " << offset << "\n";
+    // std::cout << "offset = " << offset << "\n";
 
     // [offset, uncompr_bytes]
     assets.push_back(std::make_tuple(varname, offset, offset + uncompr_bytes));
@@ -4192,12 +4262,11 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
 
   // Decode images
   for (size_t i = 0; i < assets.size(); i++) {
-
-    const std::string &uri= std::get<0>(assets[i]);
+    const std::string &uri = std::get<0>(assets[i]);
     const std::string ext = GetFileExtension(uri);
 
-    if ((ext.compare("png") == 0) || (ext.compare("jpg") == 0) || (ext.compare("jpeg") == 0)) {
-
+    if ((ext.compare("png") == 0) || (ext.compare("jpg") == 0) ||
+        (ext.compare("jpeg") == 0)) {
       const size_t start_addr = std::get<1>(assets[i]);
       const size_t end_addr = std::get<2>(assets[i]);
       const size_t usdc_size = end_addr - start_addr;
@@ -4222,28 +4291,25 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
       if (!ret) {
       }
     }
-
   }
 
   return true;
 }
 
 size_t GeomMesh::GetNumPoints() const {
-
   size_t n = points.buffer.GetNumElements();
 
   return n;
-
 }
 
 bool GeomMesh::GetPoints(std::vector<float> *v) const {
-
   // Currently we only support float3[]
   if (points.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
     return false;
   }
 
-  if ((points.buffer.GetNumCoords() < 0) || (points.buffer.GetNumCoords() != 3)) {
+  if ((points.buffer.GetNumCoords() < 0) ||
+      (points.buffer.GetNumCoords() != 3)) {
     return false;
   }
 
@@ -4262,7 +4328,6 @@ bool GeomMesh::GetPoints(std::vector<float> *v) const {
 }
 
 bool GeomMesh::GetFavevaryingNormals(std::vector<float> *v) const {
-
   if (normals.variability != VariabilityVarying) {
     return false;
   }
@@ -4272,7 +4337,8 @@ bool GeomMesh::GetFavevaryingNormals(std::vector<float> *v) const {
     return false;
   }
 
-  if ((normals.buffer.GetNumCoords() < 0) || (normals.buffer.GetNumCoords() != 3)) {
+  if ((normals.buffer.GetNumCoords() < 0) ||
+      (normals.buffer.GetNumCoords() != 3)) {
     return false;
   }
 
