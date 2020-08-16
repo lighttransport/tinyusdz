@@ -56,10 +56,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 #define DR_WAV_IMPLEMENTATION
-#include "dr_wav.h"
+#include "external/dr_wav.h"
 
 #define DR_MP3_IMPLEMENTATION
-#include "dr_mp3.h"
+#include "external/dr_mp3.h"
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -74,7 +74,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 #if defined(TINYUSDZ_SUPPORT_EXR)
-#include "tinyexr.h"
+#include "external/tinyexr.h"
 #endif
 
 #ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
@@ -86,7 +86,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "stb_image.h"
+#include "external/stb_image.h"
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -3230,7 +3230,7 @@ bool Parser::_ReconstructGeomMesh(
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
             // aaa: typeName: int[]
             std::cout << "got faceVertexCounts\n";
-#endif           
+#endif
             mesh->faceVertexCounts = attr.buffer.GetAsInt32Array();
           }
         } else if (prop_name == "faceVertexIndices") {
