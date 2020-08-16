@@ -22,6 +22,8 @@
 #include "tinyusdz.hh"
 #include "trackball.h"
 
+#include "simple-render.hh"
+
 struct GUIContext {
   enum AOV {
     AOV_COLOR = 0,
@@ -114,23 +116,23 @@ void UpdateTexutre(SDL_Texture* tex, uint32_t offt) {
 }
 
 // https://discourse.libsdl.org/t/sdl-and-xserver/12610/4
-static void ScreenActivate(SDL_Window *window)
-{
+static void ScreenActivate(SDL_Window* window) {
 #if defined(SDL_VIDEO_DRIVER_X11)
   SDL_SysWMinfo wm;
 
   // Get window info.
-  SDL_VERSION( &wm.version );
-  SDL_GetWindowWMInfo(window, &wm );
+  SDL_VERSION(&wm.version);
+  SDL_GetWindowWMInfo(window, &wm);
 
   // Lock to display access.
-  //wm.info.x11.lock_func();
+  // wm.info.x11.lock_func();
 
   // Show the window on top.
-  XMapRaised( wm.info.x11.display, wm.info.x11.window );
+  XMapRaised(wm.info.x11.display, wm.info.x11.window);
 
   // Set the focus on it.
-  XSetInputFocus( wm.info.x11.display, wm.info.x11.window, RevertToParent, CurrentTime );
+  XSetInputFocus(wm.info.x11.display, wm.info.x11.window, RevertToParent,
+                 CurrentTime);
 #else
   (void)window;
 #endif
@@ -153,7 +155,6 @@ int main(int argc, char** argv) {
     filename = std::string(argv[1]);
   }
 
-#if 0
   std::cout << "Loading file " << filename << "\n";
   std::string ext = str_tolower(GetFileExtension(filename));
 
@@ -197,10 +198,14 @@ int main(int argc, char** argv) {
   std::cout << "Loaded USDC file\n";
 
   Proc(scene);
-#endif
+  if (scene.geom_meshes.empty()) {
+    exit(-1);
+  }
 
-  //nanosg::Scene<float, example::Mesh<float> > gScene;
-
+  example::DrawScene draw_scene;
+  // HACK
+  example::DrawMeshGeom draw_mesh(&scene.geom_meshes[0]);
+  //draw_scene.r
 
   GUIContext gui_ctx;
 

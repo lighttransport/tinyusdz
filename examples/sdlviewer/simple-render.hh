@@ -8,8 +8,10 @@ namespace example {
 
 struct DrawMeshGeom {
 
+  DrawMeshGeom(const tinyusdz::GeomMesh *p) : mesh(p) {}
+
   // Pointer to GeomMesh.
-  const tinyusdz::GeomMesh *mesh;
+  const tinyusdz::GeomMesh *mesh = nullptr;
 
   ///
   /// Required accessor API
@@ -24,9 +26,8 @@ struct DrawMeshGeom {
   }
 };
 
-class Scene {
-
-
+class DrawScene {
+  std::vector<DrawMeshGeom> draw_meshes;
 };
 
 
