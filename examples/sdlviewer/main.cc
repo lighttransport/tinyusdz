@@ -199,6 +199,9 @@ int main(int argc, char** argv) {
   Proc(scene);
 #endif
 
+  //nanosg::Scene<float, example::Mesh<float> > gScene;
+
+
   GUIContext gui_ctx;
 
   bool done = false;
