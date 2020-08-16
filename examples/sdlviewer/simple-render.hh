@@ -6,15 +6,15 @@ namespace example {
 
 // Proxy class for tinyusdz::GeomMesh to use the primive for NanoSG/NanoRT.
 
-struct DrawMeshGeom {
+struct DrawGeomMesh {
 
-  DrawMeshGeom(const tinyusdz::GeomMesh *p) : mesh(p) {}
+  DrawGeomMesh(const tinyusdz::GeomMesh *p) : mesh(p) {}
 
   // Pointer to GeomMesh.
   const tinyusdz::GeomMesh *mesh = nullptr;
 
   ///
-  /// Required accessor API
+  /// Required accessor API for NanoSG
   ///
   const float *GetVertices() const {
     // Assume vec3f
@@ -24,10 +24,13 @@ struct DrawMeshGeom {
   size_t GetVertexStrideBytes() const {
     return sizeof(float) * 3;
   }
+
+  std::vector<float> vertices;  // vec3f
+  std::vector<uint32_t> facevarying_indices; // triangulated indices. 3 x num_faces
 };
 
 class DrawScene {
-  std::vector<DrawMeshGeom> draw_meshes;
+  std::vector<DrawGeomMesh> draw_meshes;
 };
 
 
