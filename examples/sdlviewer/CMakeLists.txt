@@ -154,6 +154,7 @@ endif (TINYUSDZ_WITH_OPENSUBDIV)
 
 list(APPEND SOURCES
     main.cc
+    simple-render.cc
     #render.cc
     #render-config.cc
 
