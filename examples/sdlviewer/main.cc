@@ -47,6 +47,9 @@ struct GUIContext {
   bool ctrl_pressed = false;
   bool tab_pressed = false;
 
+  float rot_x = 0.0f;
+  float rot_y = 0.0f;
+
   float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   float prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
@@ -146,8 +149,18 @@ int main(int argc, char** argv) {
   SDL_Window* window =
       SDL_CreateWindow("Simple USDZ viewer", SDL_WINDOWPOS_CENTERED,
                        SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_RESIZABLE);
+  if (!window) {
+    std::cerr << "Failed to create SDL2 window. If you are running on Linux, probably X11 Display is not setup correctly. Check your DISPLAY environment.\n";
+    exit(-1);
+  }
+
   SDL_Renderer* renderer =
       SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+
+  if (!renderer) {
+    std::cerr << "Failed to create SDL2 renderer. If you are running on Linux, probably X11 Display is not setup correctly. Check your DISPLAY environment.\n";
+    exit(-1);
+  }
 
   std::string filename = "../../../models/suzanne.usdc";
 
@@ -272,8 +285,9 @@ int main(int argc, char** argv) {
 
     ImGui::NewFrame();
 
-    ImGui::Begin("Bora");
-    ImGui::Button("muda");
+    ImGui::Begin("Scene");
+    ImGui::SliderFloat("rot x", &gui_ctx.rot_x, -360.0f, 360.0f);
+    ImGui::SliderFloat("rot y", &gui_ctx.rot_y, -360.0f, 360.0f);
     ImGui::End();
 
     ImGui::Begin("Image");
