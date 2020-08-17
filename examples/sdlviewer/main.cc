@@ -9,11 +9,11 @@
 #include <mutex>   // C++11
 #include <thread>  // C++11
 
-//
-#include <SDL2/SDL.h>
+// ../common/SDL2
+#include <SDL.h>
 
 #if defined(SDL_VIDEO_DRIVER_X11)
-#include <SDL2/SDL_syswm.h>
+#include <SDL_syswm.h>
 #endif
 
 // common
@@ -204,7 +204,7 @@ int main(int argc, char** argv) {
 
   example::DrawScene draw_scene;
   // HACK
-  example::DrawMeshGeom draw_mesh(&scene.geom_meshes[0]);
+  example::DrawGeomMesh draw_mesh(&scene.geom_meshes[0]);
   //draw_scene.r
 
   GUIContext gui_ctx;
