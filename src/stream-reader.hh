@@ -137,7 +137,7 @@ class StreamReader {
   size_t read(const size_t n, const uint64_t dst_len, uint8_t *dst) const {
     size_t len = n;
     if ((idx_ + len) > length_) {
-      len = length_ - idx_;
+      len = length_ - size_t(idx_);
     }
 
     if (len > 0) {
@@ -339,7 +339,7 @@ class StreamReader {
   }
 #endif
 
-  size_t tell() const { return idx_; }
+  size_t tell() const { return size_t(idx_); }
 
   const uint8_t *data() const { return binary_; }
 
