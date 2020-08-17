@@ -1303,7 +1303,7 @@ struct GeomMesh
 
   // Get `normals` as float3 array + facevarying
   // Return false if `normals` is neither float3[] type nor `varying` 
-  bool GetFavevaryingNormals(std::vector<float> *v) const;
+  bool GetFacevaryingNormals(std::vector<float> *v) const;
 
   UVCoords st;
 

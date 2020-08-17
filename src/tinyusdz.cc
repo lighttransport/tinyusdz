@@ -4327,7 +4327,7 @@ bool GeomMesh::GetPoints(std::vector<float> *v) const {
   return true;
 }
 
-bool GeomMesh::GetFavevaryingNormals(std::vector<float> *v) const {
+bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
   if (normals.variability != VariabilityVarying) {
     return false;
   }
