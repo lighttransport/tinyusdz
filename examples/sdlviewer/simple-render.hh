@@ -12,11 +12,12 @@ struct AOV {
   //std::vector<float> shading_normal; // 3 x width x height
   //std::vector<float> geometric_normal; // 3 x width x height
 
-  bool Resize(size_t w, size_t h) {
+  void Resize(size_t w, size_t h) {
     width = w;
     height = h;
 
     rgb.resize(width * height * 3);
+    memset(rgb.data(), 0, sizeof(float) * rgb.size());
 
   }
 
