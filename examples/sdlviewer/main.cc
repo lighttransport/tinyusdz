@@ -25,7 +25,7 @@
 #include "simple-render.hh"
 
 struct GUIContext {
-  enum AOV {
+  enum AOVMode {
     AOV_COLOR = 0,
     AOV_NORMAL,
     AOV_POSITION,
@@ -34,7 +34,9 @@ struct GUIContext {
     AOV_VARYCOORD,
     AOV_VERTEXCOLOR
   };
-  AOV aov{AOV_COLOR};
+  AOVMode aov_mode{AOV_COLOR};
+
+  example::AOV aov; // framebuffer
 
   int width = 1024;
   int height = 768;
@@ -50,12 +52,17 @@ struct GUIContext {
   float rot_x = 0.0f;
   float rot_y = 0.0f;
 
-  float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  //float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   float prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-  std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
-  std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
-  std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
+  //std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
+  //std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
+  //std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
+
+  example::RenderScene render_scene;
+
+  example::Camera camera;
+
 };
 
 GUIContext gCtx;
@@ -141,6 +148,12 @@ static void ScreenActivate(SDL_Window* window) {
 #endif
 }
 
+void RenderThread(GUIContext *ctx) {
+
+  example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -215,12 +228,12 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  example::DrawScene draw_scene;
-  // HACK
-  example::DrawGeomMesh draw_mesh(&scene.geom_meshes[0]);
-  //draw_scene.r
 
   GUIContext gui_ctx;
+
+  // HACK
+  example::DrawGeomMesh draw_mesh(&scene.geom_meshes[0]);
+  gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
 
   bool done = false;
 
@@ -230,8 +243,11 @@ int main(int argc, char** argv) {
   // ImGui_ImplGlfw_InitForOpenGL(window, true);
   // ImGui_ImplOpenGL2_Init();
 
+  int render_width = 256;
+  int render_height = 256;
+
   SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_TARGET, 256, 256);
+                                           SDL_TEXTUREACCESS_TARGET, render_width, render_height);
   {
     SDL_SetRenderTarget(renderer, texture);
     SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
@@ -243,8 +259,12 @@ int main(int argc, char** argv) {
 
   ScreenActivate(window);
 
+  gui_ctx.aov.Resize(render_width, render_height);
+
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
+
+  std::thread render_thread(RenderThread, &gui_ctx);
 
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
@@ -301,6 +321,8 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    // Update texture
+
     SDL_SetRenderDrawColor(renderer, 114, 144, 154, 255);
     SDL_RenderClear(renderer);
 
@@ -332,6 +354,8 @@ int main(int argc, char** argv) {
 
     SDL_RenderPresent(renderer);
   };
+
+  render_thread.join();
 
   ImGuiSDL::Deinitialize();
 
