@@ -5,6 +5,7 @@
 #include <chrono>  // C++11
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <mutex>   // C++11
 #include <thread>  // C++11
@@ -108,17 +109,39 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
-void UpdateTexutre(SDL_Texture* tex, uint32_t offt) {
-  std::vector<uint8_t> buf;
-  buf.resize(256 * 256 * 4);
+// TODO: Use pow table for faster conversion.
+inline float linearToSrgb(float x) {
+  if (x <= 0.0f)
+    return 0.0f;
+  else if (x >= 1.0f)
+    return 1.0f;
+  else if (x < 0.0031308f)
+    return x * 12.92f;
+  else
+    return std::pow(x, 1.0f / 2.4f) * 1.055f - 0.055f;
+}
 
-  for (size_t y = 0; y < 256; y++) {
-    for (size_t x = 0; x < 256; x++) {
-      buf[4 * (y * 256 + x) + 0] = x;
-      buf[4 * (y * 256 + x) + 1] = y;
-      buf[4 * (y * 256 + x) + 2] = (10 * offt) % 255;
-      buf[4 * (y * 256 + x) + 3] = 255;
-    }
+inline uint8_t ftouc(float f)
+{
+  int val = int(f * 255.0f);
+  val = std::max(0, std::min(255, val));
+
+  return static_cast<uint8_t>(val);
+}
+
+void UpdateTexutre(SDL_Texture* tex, const example::AOV &aov) {
+  std::vector<uint8_t> buf;
+  buf.resize(aov.width * aov.height * 4);
+
+  for (size_t i = 0; i < aov.width * aov.height; i++) {
+    uint8_t r = ftouc(linearToSrgb(aov.rgb[3 * i + 0]));
+    uint8_t g = ftouc(linearToSrgb(aov.rgb[3 * i + 1]));
+    uint8_t b = ftouc(linearToSrgb(aov.rgb[3 * i + 2]));
+
+    buf[4 * i + 0] = r;
+    buf[4 * i + 1] = g;
+    buf[4 * i + 2] = b;
+    buf[4 * i + 3] = 255;
   }
 
   SDL_UpdateTexture(tex, nullptr, reinterpret_cast<const void*>(buf.data()),
@@ -254,12 +277,13 @@ int main(int argc, char** argv) {
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
 
-    UpdateTexutre(texture, 0);
+    //UpdateTexutre(texture, 0);
   }
 
   ScreenActivate(window);
 
   gui_ctx.aov.Resize(render_width, render_height);
+  UpdateTexutre(texture, gui_ctx.aov);
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
@@ -331,7 +355,7 @@ int main(int argc, char** argv) {
     ImGui::Render();
     ImGuiSDL::Render(ImGui::GetDrawData());
 
-    static int texUpdateCount = 0;
+    //static int texUpdateCount = 0;
     static int frameCount = 0;
     static double currentTime =
         SDL_GetTicks() / 1000.0;  // GetTicks returns milliseconds
@@ -347,9 +371,9 @@ int main(int argc, char** argv) {
       frameCount = 0;
       previousTime = currentTime;
 
-      UpdateTexutre(texture, texUpdateCount);
-      texUpdateCount++;
-      std::cout << "texUpdateCount = " << texUpdateCount << "\n";
+      //UpdateTexutre(texture, texUpdateCount);
+      //texUpdateCount++;
+      //std::cout << "texUpdateCount = " << texUpdateCount << "\n";
     }
 
     SDL_RenderPresent(renderer);
