@@ -2,6 +2,8 @@
 
 #include "tinyusdz.hh"
 
+#include "nanort.h"
+
 namespace example {
 
 struct AOV {
@@ -36,17 +38,17 @@ struct Camera
 
 struct DrawGeomMesh {
 
-  DrawGeomMesh(const tinyusdz::GeomMesh *p) : mesh(p) {}
+  DrawGeomMesh(const tinyusdz::GeomMesh *p) : ref_mesh(p) {}
 
-  // Pointer to GeomMesh.
-  const tinyusdz::GeomMesh *mesh = nullptr;
+  // Pointer to Reference GeomMesh.
+  const tinyusdz::GeomMesh *ref_mesh = nullptr;
 
   ///
   /// Required accessor API for NanoSG
   ///
   const float *GetVertices() const {
     // Assume vec3f
-    return reinterpret_cast<const float *>(mesh->points.buffer.data.data());
+    return reinterpret_cast<const float *>(ref_mesh->points.buffer.data.data());
   }
 
   size_t GetVertexStrideBytes() const {
@@ -55,11 +57,17 @@ struct DrawGeomMesh {
 
   std::vector<float> vertices;  // vec3f
   std::vector<uint32_t> facevarying_indices; // triangulated indices. 3 x num_faces
+  std::vector<float> facevarying_normals; // 3 x 3 x num_faces
+
+  nanort::BVHAccel<float> accel;
 };
 
 class RenderScene {
  public:
   std::vector<DrawGeomMesh> draw_meshes;
+
+  // Convert meshes and build BVH
+  bool Setup();
 };
 
 
