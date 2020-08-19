@@ -198,7 +198,11 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
+#ifdef _WIN32
+  std::string filename = "../../models/suzanne.usdc";
+#else
   std::string filename = "../../../models/suzanne.usdc";
+#endif
 
   if (argc > 1) {
     filename = std::string(argv[1]);
