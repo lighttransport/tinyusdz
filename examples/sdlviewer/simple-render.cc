@@ -1,6 +1,7 @@
 #include "simple-render.hh"
 
 #include <atomic>
+#include <cassert>
 #include <thread>
 
 #include "nanort.h"
@@ -28,28 +29,37 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
   N = vnormalize(N);
 }
 
-// Trianglate mesh
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
-  // vertex points
-  // should be vec3f
+
+  // Trianglate mesh 
+  // vertex points should be vec3f
   dst->vertices = mesh.points.buffer.GetAsVec3fArray();
   if (dst->vertices.size() != (mesh.GetNumPoints() * 3)) {
+    std::cerr << "The number of vertices mismatch. " << dst->vertices.size()
+              << " must be equal to " << mesh.GetNumPoints() * 3 << "\n";
     return false;
   }
 
   std::vector<float> facevarying_normals;
   if (!mesh.GetFacevaryingNormals(&facevarying_normals)) {
-    return false;
+    std::cout << "Warn: failed to retrieve facevarying normals\n";
   }
 
+  std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
+            << "\n";
+
   // Triangulate mesh
+  dst->facevarying_normals.clear();
 
   // Make facevarying indices
-  // TODO(LTE): Make facevarying normal, uvs, ...
+  // TODO(LTE): Make facevarying uvs, ...
   {
+
     size_t face_offset = 0;
     for (size_t fid = 0; fid < mesh.faceVertexCounts.size(); fid++) {
       int f_count = mesh.faceVertexCounts[fid];
+
+      //std::cout << "f_count = " << f_count << "\n";
 
       assert(f_count >= 3);
 
@@ -57,13 +67,28 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
         for (size_t f = 0; f < f_count; f++) {
           dst->facevarying_indices.push_back(
               mesh.faceVertexIndices[face_offset + f]);
+
+          if (facevarying_normals.size()) {
+            size_t fid = mesh.faceVertexIndices[face_offset + f];
+
+            // x, y, z
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid + 0]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid + 1]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid + 2]);
+          }
         }
+
       } else {
+        //std::cout << "f_count " << f_count << "\n";
+
         // Simple triangulation with triangle-fan decomposition
         for (size_t f = 0; f < f_count - 2; f++) {
           size_t f0 = 0;
-          size_t f1 = f;
-          size_t f2 = f + 1;
+          size_t f1 = f + 1;
+          size_t f2 = f + 2;
 
           dst->facevarying_indices.push_back(
               mesh.faceVertexIndices[face_offset + f0]);
@@ -71,12 +96,48 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
               mesh.faceVertexIndices[face_offset + f1]);
           dst->facevarying_indices.push_back(
               mesh.faceVertexIndices[face_offset + f2]);
+
+          if (facevarying_normals.size()) {
+
+            size_t fid0 = mesh.faceVertexIndices[face_offset + f0];
+            size_t fid1 = mesh.faceVertexIndices[face_offset + f1];
+            size_t fid2 = mesh.faceVertexIndices[face_offset + f2];
+
+            //std::cout << "fid0 = " << fid0 << "\n";
+
+            // x, y, z
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid0 + 0]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid0 + 1]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid0 + 2]);
+
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid1 + 0]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid1 + 1]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid1 + 2]);
+
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid2 + 0]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid2 + 1]);
+            dst->facevarying_normals.push_back(
+                facevarying_normals[3 * fid2 + 2]);
+          }
         }
       }
-
       face_offset += f_count;
     }
   }
+
+  std::cout << "num points = " << dst->vertices.size() / 3 << "\n";
+  std::cout << "num triangulated faces = "
+            << dst->facevarying_indices.size() / 3 << "\n";
+
+  return true;
 }
 
 void BuildCameraFrame(float3* origin, float3* corner, float3* u, float3* v,
@@ -211,7 +272,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
           float u0 = 0.5f;
           float u1 = 0.5f;
 
-          dir = corner + (float(x) + u0) * u + (float(height - y - 1) + u1) * v;
+          dir = corner + (float(x) + u0) * u + (float(y) + u1) * v;
 
           dir = vnormalize(dir);
           ray.dir[0] = dir[0];
@@ -220,20 +281,122 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
           size_t pixel_idx = y * width + x;
 
-          // HACK
-          output->rgb[3 * pixel_idx + 0] = ray.dir[0];
-          output->rgb[3 * pixel_idx + 1] = ray.dir[1];
-          output->rgb[3 * pixel_idx + 2] = ray.dir[2];
+          // HACK. Use the first mesh
+          const DrawGeomMesh& mesh = scene.draw_meshes[0];
+
+          // Intersector functor.
+          nanort::TriangleIntersector<> triangle_intersector(
+              mesh.vertices.data(), mesh.facevarying_indices.data(),
+              sizeof(float) * 3);
+          nanort::TriangleIntersection<> isect;  // stores isect info
+
+          bool hit = mesh.accel.Traverse(ray, triangle_intersector, &isect);
+
+          if (hit) {
+            float3 Ns;
+
+            // Currently facevarying_normals does not work well.
+            //if (mesh.facevarying_normals.size()) {
+            if (0) {
+              float3 n0;
+              float3 n1;
+              float3 n2;
+
+              n0[0] = mesh.facevarying_normals[9 * isect.prim_id + 0];
+              n0[1] = mesh.facevarying_normals[9 * isect.prim_id + 1];
+              n0[2] = mesh.facevarying_normals[9 * isect.prim_id + 2];
+
+              n1[0] = mesh.facevarying_normals[9 * isect.prim_id + 3];
+              n1[1] = mesh.facevarying_normals[9 * isect.prim_id + 4];
+              n1[2] = mesh.facevarying_normals[9 * isect.prim_id + 5];
+
+              n2[0] = mesh.facevarying_normals[9 * isect.prim_id + 6];
+              n2[1] = mesh.facevarying_normals[9 * isect.prim_id + 7];
+              n2[2] = mesh.facevarying_normals[9 * isect.prim_id + 8];
+
+              // lerp normal.
+              Ns = vnormalize(Lerp3(n0, n1, n2, isect.u, isect.v));
+
+            } else {
+              // use geometric normal.
+              float3 v0;
+              float3 v1;
+              float3 v2;
+
+              size_t vid0 = mesh.facevarying_indices[3 * isect.prim_id + 0];
+              size_t vid1 = mesh.facevarying_indices[3 * isect.prim_id + 1];
+              size_t vid2 = mesh.facevarying_indices[3 * isect.prim_id + 2];
+
+              v0[0] = mesh.vertices[3 * vid0 + 0];
+              v0[1] = mesh.vertices[3 * vid0 + 1];
+              v0[2] = mesh.vertices[3 * vid0 + 2];
+
+              v1[0] = mesh.vertices[3 * vid1 + 0];
+              v1[1] = mesh.vertices[3 * vid1 + 1];
+              v1[2] = mesh.vertices[3 * vid1 + 2];
+
+              v2[0] = mesh.vertices[3 * vid2 + 0];
+              v2[1] = mesh.vertices[3 * vid2 + 1];
+              v2[2] = mesh.vertices[3 * vid2 + 2];
+
+              CalcNormal(Ns, v0, v1, v2);
+            }
+
+            output->rgb[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+            output->rgb[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+            output->rgb[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+          } else {
+            output->rgb[3 * pixel_idx + 0] = 0.0f;
+            output->rgb[3 * pixel_idx + 1] = 0.0f;
+            output->rgb[3 * pixel_idx + 2] = 0.0f;
+          }
         }
       }
     }));
   }
 
-  for (auto &th : workers) {
+  for (auto& th : workers) {
     th.join();
   }
 
   // auto endT = std::chrono::system_clock::now();
+
+  return true;
+}
+
+bool RenderScene::Setup() {
+  for (size_t i = 0; i < draw_meshes.size(); i++) {
+    if (!ConvertToRenderMesh(*(draw_meshes[i].ref_mesh), &draw_meshes[i])) {
+      return false;
+    }
+
+    DrawGeomMesh& draw_mesh = draw_meshes[i];
+
+    nanort::TriangleMesh<float> triangle_mesh(
+        draw_mesh.vertices.data(), draw_mesh.facevarying_indices.data(),
+        sizeof(float) * 3);
+    nanort::TriangleSAHPred<float> triangle_pred(
+        draw_mesh.vertices.data(), draw_mesh.facevarying_indices.data(),
+        sizeof(float) * 3);
+
+    bool ret = draw_mesh.accel.Build(draw_mesh.facevarying_indices.size() / 3,
+                                     triangle_mesh, triangle_pred);
+    if (!ret) {
+      std::cerr << "Failed to build BVH\n";
+      return false;
+    }
+
+    nanort::BVHBuildStatistics stats = draw_mesh.accel.GetStatistics();
+
+    printf("  BVH statistics:\n");
+    printf("    # of leaf   nodes: %d\n", stats.num_leaf_nodes);
+    printf("    # of branch nodes: %d\n", stats.num_branch_nodes);
+    printf("  Max tree depth     : %d\n", stats.max_tree_depth);
+    float bmin[3], bmax[3];
+    draw_mesh.accel.BoundingBox(bmin, bmax);
+    printf("  Bmin               : %f, %f, %f\n", bmin[0], bmin[1], bmin[2]);
+    printf("  Bmax               : %f, %f, %f\n", bmax[0], bmax[1], bmax[2]);
+  }
 
   return true;
 }
