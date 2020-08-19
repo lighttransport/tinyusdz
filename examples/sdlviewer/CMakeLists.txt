@@ -1,9 +1,9 @@
 # Assume this project is a root project
 cmake_minimum_required(VERSION 3.5.1)
 
-project(${BUILD_TARGET} CXX)
-
 set(BUILD_TARGET "usdz_view")
+
+project(${BUILD_TARGET} CXX)
 
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
@@ -52,6 +52,10 @@ function ( ADD_SDL2_LIB )
   set(VIDEO_OPENGL OFF CACHE INTERNAL "" FORCE)
   set(VIDEO_OPENGLES OFF CACHE INTERNAL "" FORCE)
   set(VIDEO_WAYLAND OFF CACHE INTERNAL "" FORCE)
+
+  # Enable static lib only
+  set(SDL_SAHARED OFF CACHE INTERNAL "" FORCE)
+  set(SDL_STATIC ON CACHE INTERNAL "" FORCE)
   add_subdirectory(../common/SDL2-2.0.12/ SDL2)
 endfunction ()
 ADD_SDL2_LIB()
@@ -191,7 +195,8 @@ target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../
 
 target_link_libraries(
     ${BUILD_TARGET}
-    SDL2
+    SDL2-static
+    SDL2main
     ${EXT_LIBRARIES}
     ${CMAKE_DL_LIBS}
 )
@@ -211,3 +216,18 @@ else()
 endif()
 
 source_group("Source Files" FILES ${SOURCES})
+
+# [VisualStudio]
+if(WIN32)
+  # Set ${LIDIA_BUILD_TARGET} as a startup project for VS IDE
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${BUILD_TARGET})
+
+  # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
+  # directory to ${LIDIA_BUILD_TARGET} git repo root.
+  if(CMAKE_VERSION VERSION_GREATER 3.8.0)
+    set_target_properties(${BUILD_TARGET}
+                          PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
+                                     "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+endif()
+
