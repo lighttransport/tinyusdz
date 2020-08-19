@@ -16,6 +16,11 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# cmake modules
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake)
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
+find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
+
 # [ccache]
 if(TINYUSDZ_USE_CCACHE)
   if(MSVC)
@@ -180,6 +185,7 @@ set(GUI_SOURCES
     )
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
+add_sanitizers(${BUILD_TARGET})
 
 if (UNIX)
   target_include_directories(${BUILD_TARGET} PUBLIC ${X11_INCLUDE_DIR})
