@@ -35,6 +35,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <limits>
 
+//#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
+
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
 #include <iostream> // dbg
 #endif
@@ -1113,7 +1115,7 @@ struct BufferData
 
   size_t GetNumElements() const { 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "numc = " << num_coords << "\n";
+    std::cout << "num_coords = " << num_coords << "\n";
 #endif
     if (num_coords <= 0) {
       // TODO(syoyo): Report error
@@ -1182,11 +1184,11 @@ struct BufferData
   std::vector<float> GetAsVec2fArray() const {
     std::vector<float> buf;
 
-    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+    if (((GetStride() == 0) || (GetStride() == 2 * sizeof(float))) &&
         (GetNumCoords() == 2) &&
         (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      buf.resize(GetNumElements());
-      memcpy(buf.data(), data.data(), buf.size() * 2 * sizeof(float));
+      buf.resize(GetNumElements() * 2);
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
 
     return buf;
@@ -1195,11 +1197,13 @@ struct BufferData
   std::vector<float> GetAsVec3fArray() const {
     std::vector<float> buf;
 
-    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+    //std::cout << "stride = " << GetStride() << ", num_coords = " << GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " << GetNumElements() << "\n";
+
+    if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
         (GetNumCoords() == 3) &&
         (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      buf.resize(GetNumElements());
-      memcpy(buf.data(), data.data(), buf.size() * 3 * sizeof(float));
+      buf.resize(GetNumElements() * 3);
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
 
     return buf;
@@ -1208,7 +1212,7 @@ struct BufferData
   std::vector<float> GetAsVec4fArray() const {
     std::vector<float> buf;
 
-    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+    if (((GetStride() == 0) || (GetStride() == 4 * sizeof(float))) &&
         (GetNumCoords() == 4) &&
         (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
       buf.resize(GetNumElements());

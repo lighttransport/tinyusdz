@@ -3,9 +3,9 @@
 #include <atomic>  // C++11
 #include <cassert>
 #include <chrono>  // C++11
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cmath>
 #include <iostream>
 #include <mutex>   // C++11
 #include <thread>  // C++11
@@ -20,10 +20,9 @@
 // common
 #include "imgui.h"
 #include "imgui_sdl/imgui_sdl.h"
+#include "simple-render.hh"
 #include "tinyusdz.hh"
 #include "trackball.h"
-
-#include "simple-render.hh"
 
 struct GUIContext {
   enum AOVMode {
@@ -37,7 +36,7 @@ struct GUIContext {
   };
   AOVMode aov_mode{AOV_COLOR};
 
-  example::AOV aov; // framebuffer
+  example::AOV aov;  // framebuffer
 
   int width = 1024;
   int height = 768;
@@ -50,25 +49,54 @@ struct GUIContext {
   bool ctrl_pressed = false;
   bool tab_pressed = false;
 
-  float rot_x = 0.0f;
-  float rot_y = 0.0f;
+  float yaw = 0.0f;
+  float pitch = 0.0f;
+  float roll = 0.0f;
 
-  //float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-  float prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  // float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  //std::array<float, 4> prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-  //std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
-  //std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
-  //std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
+  // std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
+  // std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
+  // std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
   example::RenderScene render_scene;
 
   example::Camera camera;
 
+  std::atomic<bool> update_texture{false};
+  std::atomic<bool> redraw{true};  // require redraw
+  std::atomic<bool> quit{false};
 };
 
 GUIContext gCtx;
 
 namespace {
+
+inline double radians(double degree) {
+  return 3.141592653589 * degree / 180.0;
+}
+
+// https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
+std::array<double, 4> ToQuaternion(double yaw, double pitch,
+                                   double roll)  // yaw (Z), pitch (Y), roll (X)
+{
+  // Abbreviations for the various angular functions
+  double cy = std::cos(yaw * 0.5);
+  double sy = std::sin(yaw * 0.5);
+  double cp = std::cos(pitch * 0.5);
+  double sp = std::sin(pitch * 0.5);
+  double cr = std::cos(roll * 0.5);
+  double sr = std::sin(roll * 0.5);
+
+  std::array<double, 4> q;
+  q[0] = cr * cp * cy + sr * sp * sy;
+  q[1] = sr * cp * cy - cr * sp * sy;
+  q[2] = cr * sp * cy + sr * cp * sy;
+  q[3] = cr * cp * sy - sr * sp * cy;
+
+  return q;
+}
 
 static void DrawGeomMesh(tinyusdz::GeomMesh& mesh) {}
 
@@ -87,7 +115,7 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
 }
 
 static void Proc(const tinyusdz::Scene& scene) {
-  std::cout << "num geom_meshes = " << scene.geom_meshes.size();
+  std::cout << "num geom_meshes = " << scene.geom_meshes.size() << "\n";
 
   for (auto& mesh : scene.geom_meshes) {
   }
@@ -121,15 +149,14 @@ inline float linearToSrgb(float x) {
     return std::pow(x, 1.0f / 2.4f) * 1.055f - 0.055f;
 }
 
-inline uint8_t ftouc(float f)
-{
+inline uint8_t ftouc(float f) {
   int val = int(f * 255.0f);
   val = std::max(0, std::min(255, val));
 
   return static_cast<uint8_t>(val);
 }
 
-void UpdateTexutre(SDL_Texture* tex, const example::AOV &aov) {
+void UpdateTexutre(SDL_Texture* tex, const example::AOV& aov) {
   std::vector<uint8_t> buf;
   buf.resize(aov.width * aov.height * 4);
 
@@ -171,10 +198,26 @@ static void ScreenActivate(SDL_Window* window) {
 #endif
 }
 
-void RenderThread(GUIContext *ctx) {
+void RenderThread(GUIContext* ctx) {
+  bool done = false;
 
-  example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+  while (!done) {
+    if (ctx->quit) {
+      return;
+    }
 
+    if (!ctx->redraw) {
+      // Give CPU some cycles.
+      std::this_thread::sleep_for(std::chrono::milliseconds(33));
+      continue;
+    }
+
+    example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+
+    ctx->update_texture = true;
+
+    ctx->redraw = false;
+  }
 };
 
 }  // namespace
@@ -186,7 +229,9 @@ int main(int argc, char** argv) {
       SDL_CreateWindow("Simple USDZ viewer", SDL_WINDOWPOS_CENTERED,
                        SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_RESIZABLE);
   if (!window) {
-    std::cerr << "Failed to create SDL2 window. If you are running on Linux, probably X11 Display is not setup correctly. Check your DISPLAY environment.\n";
+    std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
+                 "probably X11 Display is not setup correctly. Check your "
+                 "DISPLAY environment.\n";
     exit(-1);
   }
 
@@ -194,7 +239,9 @@ int main(int argc, char** argv) {
       SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
 
   if (!renderer) {
-    std::cerr << "Failed to create SDL2 renderer. If you are running on Linux, probably X11 Display is not setup correctly. Check your DISPLAY environment.\n";
+    std::cerr << "Failed to create SDL2 renderer. If you are running on Linux, "
+                 "probably X11 Display is not setup correctly. Check your "
+                 "DISPLAY environment.\n";
     exit(-1);
   }
 
@@ -255,12 +302,17 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-
   GUIContext gui_ctx;
 
   // HACK
   example::DrawGeomMesh draw_mesh(&scene.geom_meshes[0]);
   gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
+
+  // Setup render mesh
+  if (!gui_ctx.render_scene.Setup()) {
+    std::cerr << "Failed to setup render mesh.\n";
+    exit(-1);
+  }
 
   bool done = false;
 
@@ -273,15 +325,16 @@ int main(int argc, char** argv) {
   int render_width = 256;
   int render_height = 256;
 
-  SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_TARGET, render_width, render_height);
+  SDL_Texture* texture =
+      SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                        SDL_TEXTUREACCESS_TARGET, render_width, render_height);
   {
     SDL_SetRenderTarget(renderer, texture);
     SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
 
-    //UpdateTexutre(texture, 0);
+    // UpdateTexutre(texture, 0);
   }
 
   ScreenActivate(window);
@@ -293,6 +346,9 @@ int main(int argc, char** argv) {
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
 
   std::thread render_thread(RenderThread, &gui_ctx);
+
+  // Initial rendering requiest
+  gui_ctx.redraw = true;
 
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
@@ -334,13 +390,42 @@ int main(int argc, char** argv) {
     ImGui::NewFrame();
 
     ImGui::Begin("Scene");
-    ImGui::SliderFloat("rot x", &gui_ctx.rot_x, -360.0f, 360.0f);
-    ImGui::SliderFloat("rot y", &gui_ctx.rot_y, -360.0f, 360.0f);
+    bool update = false;
+
+    // TODO: Validate coordinate definition.
+    if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -360.0f, 360.0f)) {
+      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch), radians(gui_ctx.roll));
+      gui_ctx.camera.quat[0] = q[0];
+      gui_ctx.camera.quat[1] = q[1];
+      gui_ctx.camera.quat[2] = q[2];
+      gui_ctx.camera.quat[3] = q[3];
+      update = true;
+    }
+    if (ImGui::SliderFloat("pitch", &gui_ctx.pitch, -360.0f, 360.0f)) {
+      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch), radians(gui_ctx.roll));
+      gui_ctx.camera.quat[0] = q[0];
+      gui_ctx.camera.quat[1] = q[1];
+      gui_ctx.camera.quat[2] = q[2];
+      gui_ctx.camera.quat[3] = q[3];
+      update = true;
+    }
+    if (ImGui::SliderFloat("roll", &gui_ctx.roll, -360.0f, 360.0f)) {
+      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch), radians(gui_ctx.roll));
+      gui_ctx.camera.quat[0] = q[0];
+      gui_ctx.camera.quat[1] = q[1];
+      gui_ctx.camera.quat[2] = q[2];
+      gui_ctx.camera.quat[3] = q[3];
+      update = true;
+    }
     ImGui::End();
 
     ImGui::Begin("Image");
     ImGui::Image(texture, ImVec2(256, 256));
     ImGui::End();
+
+    if (update) {
+      gui_ctx.redraw = true;
+    }
 
 #if 0
     // Draw scene
@@ -350,6 +435,14 @@ int main(int argc, char** argv) {
 #endif
 
     // Update texture
+    if (gui_ctx.update_texture) {
+      std::cout << "Update tex\n";
+
+      // Update texture for display
+      UpdateTexutre(texture, gui_ctx.aov);
+
+      gui_ctx.update_texture = false;
+    }
 
     SDL_SetRenderDrawColor(renderer, 114, 144, 154, 255);
     SDL_RenderClear(renderer);
@@ -359,7 +452,7 @@ int main(int argc, char** argv) {
     ImGui::Render();
     ImGuiSDL::Render(ImGui::GetDrawData());
 
-    //static int texUpdateCount = 0;
+    // static int texUpdateCount = 0;
     static int frameCount = 0;
     static double currentTime =
         SDL_GetTicks() / 1000.0;  // GetTicks returns milliseconds
@@ -375,13 +468,16 @@ int main(int argc, char** argv) {
       frameCount = 0;
       previousTime = currentTime;
 
-      //UpdateTexutre(texture, texUpdateCount);
-      //texUpdateCount++;
-      //std::cout << "texUpdateCount = " << texUpdateCount << "\n";
+      // UpdateTexutre(texture, texUpdateCount);
+      // texUpdateCount++;
+      std::cout << "update\n";
     }
 
     SDL_RenderPresent(renderer);
   };
+
+  // Notify render thread to exit app
+  gui_ctx.quit = true;
 
   render_thread.join();
 

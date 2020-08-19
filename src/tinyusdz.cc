@@ -648,8 +648,8 @@ static inline bool _ReadCompressedInts(const StreamReader *sr, Int *out,
     return false;
   }
   std::string err;
-  bool ret = Compressor::DecompressFromBuffer(compBuffer.data(), size_t(compSize), out,
-                                              size, &err);
+  bool ret = Compressor::DecompressFromBuffer(
+      compBuffer.data(), size_t(compSize), out, size, &err);
   (void)err;
 
   return ret;
@@ -1018,45 +1018,48 @@ bool Parser::_ReadIntArray(bool is_compressed, std::vector<T> *d) {
       _err += "Failed to read integer array data.\n";
       return false;
     }
-  }
 
-  size_t length;
-  // < ver 0.7.0  use 32bit
-  if ((_version[0] == 0) && ((_version[1] < 7))) {
-    uint32_t n;
-    if (!_sr->read4(&n)) {
-      _err += "Failed to read the number of array elements.\n";
-      return false;
-    }
-    length = size_t(n);
+    return true;
+
   } else {
-    uint64_t n;
-    if (!_sr->read8(&n)) {
-      _err += "Failed to read the number of array elements.\n";
-      return false;
-    }
+    size_t length;
+    // < ver 0.7.0  use 32bit
+    if ((_version[0] == 0) && ((_version[1] < 7))) {
+      uint32_t n;
+      if (!_sr->read4(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+      length = size_t(n);
+    } else {
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
 
-    length = size_t(n);
-  }
+      length = size_t(n);
+    }
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "array.len = " << length << "\n";
+    std::cout << "array.len = " << length << "\n";
 #endif
 
-  d->resize(length);
+    d->resize(length);
 
-  if (length < kMinCompressedArraySize) {
-    size_t sz = sizeof(T) * length;
-    // Not stored in compressed.
-    // reader.ReadContiguous(odata, osize);
-    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-      _err += "Failed to read uncompressed array data.\n";
-      return false;
+    if (length < kMinCompressedArraySize) {
+      size_t sz = sizeof(T) * length;
+      // Not stored in compressed.
+      // reader.ReadContiguous(odata, osize);
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+      return true;
     }
-    return true;
-  }
 
-  return _ReadCompressedInts(_sr, d->data(), d->size());
+    return _ReadCompressedInts(_sr, d->data(), d->size());
+  }
 }
 
 bool Parser::_ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
@@ -2090,7 +2093,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 #endif
 
       std::vector<Index> indices(static_cast<size_t>(n));
-      if (!_sr->read(static_cast<size_t>(n) * sizeof(Index), static_cast<size_t>(n) * sizeof(Index),
+      if (!_sr->read(static_cast<size_t>(n) * sizeof(Index),
+                     static_cast<size_t>(n) * sizeof(Index),
                      reinterpret_cast<uint8_t *>(indices.data()))) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cerr << "Failed to read TokenVector value\n";
@@ -2514,10 +2518,11 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
   jumps.resize(static_cast<size_t>(numPaths));
 
   // Create temporary space for decompressing.
-  std::vector<char> compBuffer(
-      Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(numPaths)));
+  std::vector<char> compBuffer(Usd_IntegerCompression::GetCompressedBufferSize(
+      static_cast<size_t>(numPaths)));
   std::vector<char> workingSpace(
-      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(static_cast<size_t>(numPaths)));
+      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
+          static_cast<size_t>(numPaths)));
 
   // pathIndexes.
   {
@@ -2541,8 +2546,8 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
 
     std::string err;
     Usd_IntegerCompression::DecompressFromBuffer(
-        compBuffer.data(), size_t(pathIndexesSize), pathIndexes.data(), size_t(numPaths), &err,
-        workingSpace.data());
+        compBuffer.data(), size_t(pathIndexesSize), pathIndexes.data(),
+        size_t(numPaths), &err, workingSpace.data());
     if (!err.empty()) {
       _err += "Failed to decode pathIndexes\n" + err;
       return false;
@@ -2558,7 +2563,8 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
     }
 
     if (elementTokenIndexesSize !=
-        _sr->read(size_t(elementTokenIndexesSize), size_t(elementTokenIndexesSize),
+        _sr->read(size_t(elementTokenIndexesSize),
+                  size_t(elementTokenIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       _err += "Failed to read elementTokenIndexes data.\n";
       return false;
@@ -2566,8 +2572,9 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
 
     std::string err;
     Usd_IntegerCompression::DecompressFromBuffer(
-        compBuffer.data(), size_t(elementTokenIndexesSize), elementTokenIndexes.data(),
-        size_t(numPaths), &err, workingSpace.data());
+        compBuffer.data(), size_t(elementTokenIndexesSize),
+        elementTokenIndexes.data(), size_t(numPaths), &err,
+        workingSpace.data());
 
     if (!err.empty()) {
       _err += "Failed to decode elementTokenIndexes\n" + err;
@@ -2591,9 +2598,9 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
     }
 
     std::string err;
-    Usd_IntegerCompression::DecompressFromBuffer(compBuffer.data(), size_t(jumpsSize),
-                                                 jumps.data(), size_t(numPaths), &err,
-                                                 workingSpace.data());
+    Usd_IntegerCompression::DecompressFromBuffer(
+        compBuffer.data(), size_t(jumpsSize), jumps.data(), size_t(numPaths),
+        &err, workingSpace.data());
 
     if (!err.empty()) {
       _err += "Failed to decode jumps\n" + err;
@@ -2717,9 +2724,10 @@ bool Parser::ReadTokens() {
     return false;
   }
 
-  if (uncompressedSize != LZ4Compression::DecompressFromBuffer(
-                              compressed.data(), chars.data(), size_t(compressedSize),
-                              size_t(uncompressedSize), &_err)) {
+  if (uncompressedSize !=
+      LZ4Compression::DecompressFromBuffer(compressed.data(), chars.data(),
+                                           size_t(compressedSize),
+                                           size_t(uncompressedSize), &_err)) {
     _err += "Failed to decompress data of Tokens.\n";
     return false;
   }
@@ -2836,7 +2844,8 @@ bool Parser::ReadFields() {
   // indices
   {
     std::vector<char> comp_buffer(
-        Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(num_fields)));
+        Usd_IntegerCompression::GetCompressedBufferSize(
+            static_cast<size_t>(num_fields)));
     // temp buffer for decompress
     std::vector<uint32_t> tmp;
     tmp.resize(static_cast<size_t>(num_fields));
@@ -2861,7 +2870,8 @@ bool Parser::ReadFields() {
               << ", num_fields = " << num_fields << "\n";
 #endif
     Usd_IntegerCompression::DecompressFromBuffer(
-        comp_buffer.data(), size_t(fields_size), tmp.data(), size_t(num_fields), &err);
+        comp_buffer.data(), size_t(fields_size), tmp.data(), size_t(num_fields),
+        &err);
 
     if (!err.empty()) {
       _err += err;
@@ -2950,12 +2960,13 @@ bool Parser::ReadFieldSets() {
   _fieldset_indices.resize(static_cast<size_t>(num_fieldsets));
 
   // Create temporary space for decompressing.
-  std::vector<char> comp_buffer(
-      Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(num_fieldsets)));
+  std::vector<char> comp_buffer(Usd_IntegerCompression::GetCompressedBufferSize(
+      static_cast<size_t>(num_fieldsets)));
 
   std::vector<uint32_t> tmp(static_cast<size_t>(num_fieldsets));
   std::vector<char> working_space(
-      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(static_cast<size_t>(num_fieldsets)));
+      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
+          static_cast<size_t>(num_fieldsets)));
 
   uint64_t fsets_size;
   if (!_sr->read8(&fsets_size)) {
@@ -2979,9 +2990,9 @@ bool Parser::ReadFieldSets() {
   }
 
   std::string err;
-  Usd_IntegerCompression::DecompressFromBuffer(comp_buffer.data(), size_t(fsets_size),
-                                               tmp.data(), size_t(num_fieldsets), &err,
-                                               working_space.data());
+  Usd_IntegerCompression::DecompressFromBuffer(
+      comp_buffer.data(), size_t(fsets_size), tmp.data(), size_t(num_fieldsets),
+      &err, working_space.data());
 
   if (!err.empty()) {
     _err += err;
@@ -3100,6 +3111,10 @@ bool Parser::_ReconstructGeomMesh(
     for (const auto &fv : fvs) {
       if (fv.first == "default") {
         attr->name = prop_name;
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "fv.second.GetTypeName = " << fv.second.GetTypeName()
+                  << "\n";
+#endif
         if (fv.second.GetTypeName() == "FloatArray") {
           attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1,
                            /* stride */ sizeof(float), fv.second.GetData());
@@ -3130,6 +3145,16 @@ bool Parser::_ReconstructGeomMesh(
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "IntArray"
+                    << "\n";
+
+          const int32_t *ptr =
+              reinterpret_cast<const int32_t *>(attr->buffer.data.data());
+          for (size_t i = 0; i < attr->buffer.GetNumElements(); i++) {
+            std::cout << "[" << i << "] = " << ptr[i] << "\n";
+          }
+#endif
         } else if (fv.second.GetTypeName() == "Token") {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
@@ -3199,7 +3224,8 @@ bool Parser::_ReconstructGeomMesh(
     Path path = GetPath(spec.path_index);
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "Path prim part: " << path.GetPrimPart()
-              << ", prop part: " << path.GetPropPart() << "\n";
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index << "\n";
 #endif
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
@@ -3252,7 +3278,7 @@ bool Parser::_ReconstructGeomMesh(
               (attr.buffer.GetNumCoords() == 1)) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
             // aaa: typeName: int[]
-            std::cout << "got faceVertexCounts\n";
+            std::cout << "got faceVertexIndices\n";
 #endif
             mesh->faceVertexIndices = attr.buffer.GetAsInt32Array();
           }
@@ -3261,7 +3287,7 @@ bool Parser::_ReconstructGeomMesh(
               (attr.buffer.GetNumCoords() == 1)) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
             // aaa: typeName: int[]
-            std::cout << "got faceVertexCounts\n";
+            std::cout << "got holeIdicies\n";
 #endif
             mesh->holeIndices = attr.buffer.GetAsInt32Array();
           }
@@ -3559,12 +3585,13 @@ bool Parser::ReadSpecs() {
   _specs.resize(static_cast<size_t>(num_specs));
 
   // Create temporary space for decompressing.
-  std::vector<char> comp_buffer(
-      Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(num_specs)));
+  std::vector<char> comp_buffer(Usd_IntegerCompression::GetCompressedBufferSize(
+      static_cast<size_t>(num_specs)));
 
   std::vector<uint32_t> tmp(static_cast<size_t>(num_specs));
   std::vector<char> working_space(
-      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(static_cast<size_t>(num_specs)));
+      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
+          static_cast<size_t>(num_specs)));
 
   // path indices
   {
@@ -3585,8 +3612,8 @@ bool Parser::ReadSpecs() {
 
     std::string err;
     if (!Usd_IntegerCompression::DecompressFromBuffer(
-            comp_buffer.data(), size_t(path_indexes_size), tmp.data(), size_t(num_specs), &err,
-            working_space.data())) {
+            comp_buffer.data(), size_t(path_indexes_size), tmp.data(),
+            size_t(num_specs), &err, working_space.data())) {
       _err += "Failed to decode pathIndexes at `SPECS` section.\n";
       _err += err;
       return false;
@@ -3617,8 +3644,8 @@ bool Parser::ReadSpecs() {
 
     std::string err;
     if (!Usd_IntegerCompression::DecompressFromBuffer(
-            comp_buffer.data(), size_t(fset_indexes_size), tmp.data(), size_t(num_specs), &err,
-            working_space.data())) {
+            comp_buffer.data(), size_t(fset_indexes_size), tmp.data(),
+            size_t(num_specs), &err, working_space.data())) {
       _err += "Failed to decode fieldset indices at `SPECS` section.\n";
       _err += err;
       return false;
@@ -3651,8 +3678,8 @@ bool Parser::ReadSpecs() {
 
     std::string err;
     if (!Usd_IntegerCompression::DecompressFromBuffer(
-            comp_buffer.data(), size_t(spectype_size), tmp.data(), size_t(num_specs), &err,
-            working_space.data())) {
+            comp_buffer.data(), size_t(spectype_size), tmp.data(),
+            size_t(num_specs), &err, working_space.data())) {
       _err += "Failed to decode fieldset indices at `SPECS` section.\n";
       _err += err;
       return false;
