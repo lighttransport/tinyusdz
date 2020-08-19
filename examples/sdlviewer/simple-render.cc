@@ -234,6 +234,8 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
   }
 
   // auto endT = std::chrono::system_clock::now();
+
+  return true;
 }
 
 }  // namespace example
