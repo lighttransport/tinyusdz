@@ -5,6 +5,7 @@
 #include <chrono>  // C++11
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <mutex>   // C++11
 #include <thread>  // C++11
@@ -25,7 +26,7 @@
 #include "simple-render.hh"
 
 struct GUIContext {
-  enum AOV {
+  enum AOVMode {
     AOV_COLOR = 0,
     AOV_NORMAL,
     AOV_POSITION,
@@ -34,7 +35,9 @@ struct GUIContext {
     AOV_VARYCOORD,
     AOV_VERTEXCOLOR
   };
-  AOV aov{AOV_COLOR};
+  AOVMode aov_mode{AOV_COLOR};
+
+  example::AOV aov; // framebuffer
 
   int width = 1024;
   int height = 768;
@@ -50,12 +53,17 @@ struct GUIContext {
   float rot_x = 0.0f;
   float rot_y = 0.0f;
 
-  float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  //float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   float prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-  std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
-  std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
-  std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
+  //std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
+  //std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
+  //std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
+
+  example::RenderScene render_scene;
+
+  example::Camera camera;
+
 };
 
 GUIContext gCtx;
@@ -101,17 +109,39 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
-void UpdateTexutre(SDL_Texture* tex, uint32_t offt) {
-  std::vector<uint8_t> buf;
-  buf.resize(256 * 256 * 4);
+// TODO: Use pow table for faster conversion.
+inline float linearToSrgb(float x) {
+  if (x <= 0.0f)
+    return 0.0f;
+  else if (x >= 1.0f)
+    return 1.0f;
+  else if (x < 0.0031308f)
+    return x * 12.92f;
+  else
+    return std::pow(x, 1.0f / 2.4f) * 1.055f - 0.055f;
+}
 
-  for (size_t y = 0; y < 256; y++) {
-    for (size_t x = 0; x < 256; x++) {
-      buf[4 * (y * 256 + x) + 0] = x;
-      buf[4 * (y * 256 + x) + 1] = y;
-      buf[4 * (y * 256 + x) + 2] = (10 * offt) % 255;
-      buf[4 * (y * 256 + x) + 3] = 255;
-    }
+inline uint8_t ftouc(float f)
+{
+  int val = int(f * 255.0f);
+  val = std::max(0, std::min(255, val));
+
+  return static_cast<uint8_t>(val);
+}
+
+void UpdateTexutre(SDL_Texture* tex, const example::AOV &aov) {
+  std::vector<uint8_t> buf;
+  buf.resize(aov.width * aov.height * 4);
+
+  for (size_t i = 0; i < aov.width * aov.height; i++) {
+    uint8_t r = ftouc(linearToSrgb(aov.rgb[3 * i + 0]));
+    uint8_t g = ftouc(linearToSrgb(aov.rgb[3 * i + 1]));
+    uint8_t b = ftouc(linearToSrgb(aov.rgb[3 * i + 2]));
+
+    buf[4 * i + 0] = r;
+    buf[4 * i + 1] = g;
+    buf[4 * i + 2] = b;
+    buf[4 * i + 3] = 255;
   }
 
   SDL_UpdateTexture(tex, nullptr, reinterpret_cast<const void*>(buf.data()),
@@ -140,6 +170,12 @@ static void ScreenActivate(SDL_Window* window) {
   (void)window;
 #endif
 }
+
+void RenderThread(GUIContext *ctx) {
+
+  example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+
+};
 
 }  // namespace
 
@@ -215,12 +251,12 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  example::DrawScene draw_scene;
-  // HACK
-  example::DrawGeomMesh draw_mesh(&scene.geom_meshes[0]);
-  //draw_scene.r
 
   GUIContext gui_ctx;
+
+  // HACK
+  example::DrawGeomMesh draw_mesh(&scene.geom_meshes[0]);
+  gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
 
   bool done = false;
 
@@ -230,21 +266,29 @@ int main(int argc, char** argv) {
   // ImGui_ImplGlfw_InitForOpenGL(window, true);
   // ImGui_ImplOpenGL2_Init();
 
+  int render_width = 256;
+  int render_height = 256;
+
   SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_TARGET, 256, 256);
+                                           SDL_TEXTUREACCESS_TARGET, render_width, render_height);
   {
     SDL_SetRenderTarget(renderer, texture);
     SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
 
-    UpdateTexutre(texture, 0);
+    //UpdateTexutre(texture, 0);
   }
 
   ScreenActivate(window);
 
+  gui_ctx.aov.Resize(render_width, render_height);
+  UpdateTexutre(texture, gui_ctx.aov);
+
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
+
+  std::thread render_thread(RenderThread, &gui_ctx);
 
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
@@ -301,6 +345,8 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    // Update texture
+
     SDL_SetRenderDrawColor(renderer, 114, 144, 154, 255);
     SDL_RenderClear(renderer);
 
@@ -309,7 +355,7 @@ int main(int argc, char** argv) {
     ImGui::Render();
     ImGuiSDL::Render(ImGui::GetDrawData());
 
-    static int texUpdateCount = 0;
+    //static int texUpdateCount = 0;
     static int frameCount = 0;
     static double currentTime =
         SDL_GetTicks() / 1000.0;  // GetTicks returns milliseconds
@@ -325,13 +371,15 @@ int main(int argc, char** argv) {
       frameCount = 0;
       previousTime = currentTime;
 
-      UpdateTexutre(texture, texUpdateCount);
-      texUpdateCount++;
-      std::cout << "texUpdateCount = " << texUpdateCount << "\n";
+      //UpdateTexutre(texture, texUpdateCount);
+      //texUpdateCount++;
+      //std::cout << "texUpdateCount = " << texUpdateCount << "\n";
     }
 
     SDL_RenderPresent(renderer);
   };
+
+  render_thread.join();
 
   ImGuiSDL::Deinitialize();
 
