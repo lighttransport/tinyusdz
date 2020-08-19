@@ -1197,7 +1197,7 @@ struct BufferData
   std::vector<float> GetAsVec3fArray() const {
     std::vector<float> buf;
 
-    std::cout << "stride = " << GetStride() << ", num_coords = " << GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " << GetNumElements() << "\n";
+    //std::cout << "stride = " << GetStride() << ", num_coords = " << GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " << GetNumElements() << "\n";
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
         (GetNumCoords() == 3) &&

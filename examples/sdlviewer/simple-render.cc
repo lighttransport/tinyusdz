@@ -54,9 +54,12 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   // Make facevarying indices
   // TODO(LTE): Make facevarying uvs, ...
   {
+
     size_t face_offset = 0;
     for (size_t fid = 0; fid < mesh.faceVertexCounts.size(); fid++) {
       int f_count = mesh.faceVertexCounts[fid];
+
+      //std::cout << "f_count = " << f_count << "\n";
 
       assert(f_count >= 3);
 
@@ -291,6 +294,8 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
           if (hit) {
             float3 Ns;
+
+            // Currently facevarying_normals does not work well.
             //if (mesh.facevarying_normals.size()) {
             if (0) {
               float3 n0;
