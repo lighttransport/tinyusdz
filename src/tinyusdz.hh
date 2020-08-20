@@ -1114,15 +1114,17 @@ struct BufferData
   }
 
   size_t GetNumElements() const { 
-#if TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "num_coords = " << num_coords << "\n";
-#endif
     if (num_coords <= 0) {
       // TODO(syoyo): Report error
       return 0;
     }
 
     size_t n = data.size() / GetElementByteSize();
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "num_coords = " << num_coords << "\n";
+    std::cout << "ccc: num_elements = " << n << "\n";
+#endif
     return n;
   }
 

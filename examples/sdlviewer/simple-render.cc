@@ -31,7 +31,7 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
 
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 
-  // Trianglate mesh 
+  // Trianglate mesh
   // vertex points should be vec3f
   dst->vertices = mesh.points.buffer.GetAsVec3fArray();
   if (dst->vertices.size() != (mesh.GetNumPoints() * 3)) {
@@ -47,6 +47,12 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 
   std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
             << "\n";
+
+  //for (size_t i = 0; i < facevarying_normals.size() / 3; i++) {
+  //  std::cout << "fid[" << i << "] = " << facevarying_normals[3 * i + 0] << ", " <<
+  //                                        facevarying_normals[3 * i + 1] << ", " <<
+  //                                        facevarying_normals[3 * i + 2] << "\n";
+  //}
 
   // Triangulate mesh
   dst->facevarying_normals.clear();
@@ -69,15 +75,16 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
               mesh.faceVertexIndices[face_offset + f]);
 
           if (facevarying_normals.size()) {
-            size_t fid = mesh.faceVertexIndices[face_offset + f];
 
             // x, y, z
             dst->facevarying_normals.push_back(
-                facevarying_normals[3 * fid + 0]);
+                facevarying_normals[3 * (face_offset + f) + 0]);
             dst->facevarying_normals.push_back(
-                facevarying_normals[3 * fid + 1]);
+                facevarying_normals[3 * (face_offset + f)+ 1]);
             dst->facevarying_normals.push_back(
-                facevarying_normals[3 * fid + 2]);
+                facevarying_normals[3 * (face_offset + f) + 2]);
+
+
           }
         }
 
@@ -99,9 +106,9 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 
           if (facevarying_normals.size()) {
 
-            size_t fid0 = mesh.faceVertexIndices[face_offset + f0];
-            size_t fid1 = mesh.faceVertexIndices[face_offset + f1];
-            size_t fid2 = mesh.faceVertexIndices[face_offset + f2];
+            size_t fid0 = face_offset + f0;
+            size_t fid1 = face_offset + f1;
+            size_t fid2 = face_offset + f2;
 
             //std::cout << "fid0 = " << fid0 << "\n";
 
@@ -295,9 +302,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
           if (hit) {
             float3 Ns;
 
-            // Currently facevarying_normals does not work well.
-            //if (mesh.facevarying_normals.size()) {
-            if (0) {
+            if (mesh.facevarying_normals.size()) {
               float3 n0;
               float3 n1;
               float3 n2;
