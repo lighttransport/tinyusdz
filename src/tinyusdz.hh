@@ -801,6 +801,30 @@ class Value {
     memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Vec3h));
   }
 
+  void SetQuath(const Quath v) {
+    static_assert(sizeof(Quath) == (2*4), "");
+    dtype.name = "Quath";
+    dtype.id = VALUE_TYPE_QUATH;
+    data.resize(sizeof(Quath));
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Quath));
+  }
+
+  void SetQuatf(const Quatf v) {
+    static_assert(sizeof(Quatf) == (4*4), "");
+    dtype.name = "Quatf";
+    dtype.id = VALUE_TYPE_QUATF;
+    data.resize(sizeof(Quatf));
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Quatf));
+  }
+
+  void SetQuatd(const Quatd v) {
+    static_assert(sizeof(Quatd) == (8*4), "");
+    dtype.name = "Quatd";
+    dtype.id = VALUE_TYPE_QUATD;
+    data.resize(sizeof(Quatd));
+    memcpy(data.data(), reinterpret_cast<const void *>(&v), sizeof(Quatd));
+  }
+
   void SetMatrix2d(const Matrix2d v) {
     static_assert(sizeof(Matrix2d) == (2*2*8), "");
     dtype.name = "Matrix2d";
@@ -927,6 +951,60 @@ class Value {
     array_length = int64_t(n);
     data.resize(n * sizeof(Vec4f));
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec4f));
+  }
+
+  void SetVec2dArray(const Vec2d *d, const size_t n) {
+    static_assert(sizeof(Vec2d) == 16, "");
+    dtype.name = "Vec2dArray";
+    dtype.id = VALUE_TYPE_VEC2D;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Vec2d));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec2d));
+  }
+
+  void SetVec3dArray(const Vec3d *d, const size_t n) {
+    static_assert(sizeof(Vec3d) == 24, "");
+    dtype.name = "Vec3dArray";
+    dtype.id = VALUE_TYPE_VEC3D;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Vec3d));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec3d));
+  }
+
+  void SetVec4dArray(const Vec4d *d, const size_t n) {
+    static_assert(sizeof(Vec4d) == 32, "");
+    dtype.name = "Vec4dArray";
+    dtype.id = VALUE_TYPE_VEC4D;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Vec4d));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Vec4d));
+  }
+
+  void SetQuathArray(const Quath *d, const size_t n) {
+    static_assert(sizeof(Quath) == 8, "");
+    dtype.name = "QuathArray";
+    dtype.id = VALUE_TYPE_QUATH;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Quath));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Quath));
+  }
+
+  void SetQuatfArray(const Quatf *d, const size_t n) {
+    static_assert(sizeof(Quatf) == 16, "");
+    dtype.name = "QuatfArray";
+    dtype.id = VALUE_TYPE_QUATF;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Quatf));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Quatf));
+  }
+
+  void SetQuatdArray(const Quatd *d, const size_t n) {
+    static_assert(sizeof(Quatd) == 32, "");
+    dtype.name = "QuatdArray";
+    dtype.id = VALUE_TYPE_QUATD;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Quatd));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Quatd));
   }
 
   void SetTokenArray(const std::vector<std::string> &d) {
@@ -1262,7 +1340,7 @@ struct UVCoords
   Variability variability;
 
   // TODO: 64bit index?
-  std::vector<uint32_t> indices; // UV indices. Usually varying
+  // std::vector<uint32_t> indices; // UV indices. Usually varying
 };
 
 struct Extent
@@ -1311,6 +1389,11 @@ struct GeomMesh
   // Return false if `normals` is neither float3[] type nor `varying` 
   bool GetFacevaryingNormals(std::vector<float> *v) const;
 
+  // Get `texcoords` as float2 array + facevarying
+  // Return false if `texcoords` is neither float2[] type nor `varying` 
+  bool GetFacevaryingTexcoords(std::vector<float> *v) const;
+
+  // PrimVar
   UVCoords st;
 
   PrimAttrib velocitiess; // Usually float3[], varying
