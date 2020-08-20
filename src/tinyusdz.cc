@@ -3128,6 +3128,9 @@ bool Parser::_ReconstructGeomMesh(
           attr->facevarying = facevarying;
           success = true;
         } else if (fv.second.GetTypeName() == "Vec3fArray") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "fv.second.data.size = " << fv.second.GetData().size() << "\n";
+#endif
           attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
                            /* stride */ sizeof(float) * 3, fv.second.GetData());
           attr->variability = variability;
@@ -4377,10 +4380,15 @@ bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
     return false;
   }
 
-  size_t n = points.buffer.GetNumElements();
-  size_t c = size_t(points.buffer.GetNumCoords());
+  size_t n = normals.buffer.GetNumElements();
+  size_t c = size_t(normals.buffer.GetNumCoords());
 
   v->resize(n * c);
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+  std::cout << "fvnormal numelements = " << n << ", numcoords = " << c << "\n";
+#endif
+
 
   memcpy(v->data(), normals.buffer.data.data(), n * c * sizeof(float));
 

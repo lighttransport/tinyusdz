@@ -432,7 +432,6 @@ int main(int argc, char** argv) {
 
     // Update texture
     if (gui_ctx.update_texture) {
-      std::cout << "Update tex\n";
 
       // Update texture for display
       UpdateTexutre(texture, gui_ctx.aov);
@@ -463,10 +462,6 @@ int main(int argc, char** argv) {
       SDL_SetWindowTitle(window, title);
       frameCount = 0;
       previousTime = currentTime;
-
-      // UpdateTexutre(texture, texUpdateCount);
-      // texUpdateCount++;
-      std::cout << "update\n";
     }
 
     SDL_RenderPresent(renderer);
