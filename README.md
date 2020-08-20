@@ -15,7 +15,7 @@ TinyUSDZ is currently in alpha stage. Not usable.
   * [ ] GeomMesh
   * [ ] Xform
   * [ ] etc.
-* [ ] Write simple OpenGL viewer example(2020 Fall expected)
+* [ ] Write simple SDL viewer example(2020 Fall expected)
 * [ ] Animation(usdSkel) support(2020 Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] USDZ(USDC) writer
@@ -135,8 +135,8 @@ $ ninja
 ### Examples
 
 * [Simple dump](examples/simple_dump/)
-* [Simple OpenGL viewer](examples/openglviewer/)
-  * Separated CMake build : See [Readme](examples/openglviewer/README.md)
+* [Simple SDL viewer](examples/sdlviewer/)
+  * Separated CMake build : See [Readme](examples/sdlviewer/README.md)
 
 See `examples` directory for more examples.
 
