@@ -30,7 +30,6 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
 }
 
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
-
   // Trianglate mesh
   // vertex points should be vec3f
   dst->vertices = mesh.points.buffer.GetAsVec3fArray();
@@ -45,13 +44,20 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
     std::cout << "Warn: failed to retrieve facevarying normals\n";
   }
 
+  std::vector<float> facevarying_texcoords;
+  if (!mesh.GetFacevaryingTexcoords(&facevarying_texcoords)) {
+    std::cout << "Warn: failed to retrieve facevarying texcoords\n";
+  }
+
   std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
             << "\n";
 
-  //for (size_t i = 0; i < facevarying_normals.size() / 3; i++) {
-  //  std::cout << "fid[" << i << "] = " << facevarying_normals[3 * i + 0] << ", " <<
-  //                                        facevarying_normals[3 * i + 1] << ", " <<
-  //                                        facevarying_normals[3 * i + 2] << "\n";
+  // for (size_t i = 0; i < facevarying_normals.size() / 3; i++) {
+  //  std::cout << "fid[" << i << "] = " << facevarying_normals[3 * i + 0] << ",
+  //  " <<
+  //                                        facevarying_normals[3 * i + 1] << ",
+  //                                        " << facevarying_normals[3 * i + 2]
+  //                                        << "\n";
   //}
 
   // Triangulate mesh
@@ -60,12 +66,11 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   // Make facevarying indices
   // TODO(LTE): Make facevarying uvs, ...
   {
-
     size_t face_offset = 0;
     for (size_t fid = 0; fid < mesh.faceVertexCounts.size(); fid++) {
       int f_count = mesh.faceVertexCounts[fid];
 
-      //std::cout << "f_count = " << f_count << "\n";
+      // std::cout << "f_count = " << f_count << "\n";
 
       assert(f_count >= 3);
 
@@ -75,21 +80,26 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
               mesh.faceVertexIndices[face_offset + f]);
 
           if (facevarying_normals.size()) {
-
             // x, y, z
             dst->facevarying_normals.push_back(
                 facevarying_normals[3 * (face_offset + f) + 0]);
             dst->facevarying_normals.push_back(
-                facevarying_normals[3 * (face_offset + f)+ 1]);
+                facevarying_normals[3 * (face_offset + f) + 1]);
             dst->facevarying_normals.push_back(
                 facevarying_normals[3 * (face_offset + f) + 2]);
+          }
 
-
+          if (facevarying_texcoords.size()) {
+            // u, v
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * (face_offset + f) + 0]);
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * (face_offset + f) + 1]);
           }
         }
 
       } else {
-        //std::cout << "f_count " << f_count << "\n";
+        // std::cout << "f_count " << f_count << "\n";
 
         // Simple triangulation with triangle-fan decomposition
         for (size_t f = 0; f < f_count - 2; f++) {
@@ -105,12 +115,11 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
               mesh.faceVertexIndices[face_offset + f2]);
 
           if (facevarying_normals.size()) {
-
             size_t fid0 = face_offset + f0;
             size_t fid1 = face_offset + f1;
             size_t fid2 = face_offset + f2;
 
-            //std::cout << "fid0 = " << fid0 << "\n";
+            // std::cout << "fid0 = " << fid0 << "\n";
 
             // x, y, z
             dst->facevarying_normals.push_back(
@@ -133,6 +142,29 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
                 facevarying_normals[3 * fid2 + 1]);
             dst->facevarying_normals.push_back(
                 facevarying_normals[3 * fid2 + 2]);
+          }
+
+          if (facevarying_texcoords.size()) {
+            size_t fid0 = face_offset + f0;
+            size_t fid1 = face_offset + f1;
+            size_t fid2 = face_offset + f2;
+
+            // std::cout << "fid0 = " << fid0 << "\n";
+
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * fid0 + 0]);
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * fid0 + 1]);
+
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * fid1 + 0]);
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * fid1 + 1]);
+
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * fid2 + 0]);
+            dst->facevarying_texcoords.push_back(
+                facevarying_texcoords[2 * fid2 + 1]);
           }
         }
       }
@@ -300,30 +332,9 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
           bool hit = mesh.accel.Traverse(ray, triangle_intersector, &isect);
 
           if (hit) {
-            float3 Ns;
-
-            if (mesh.facevarying_normals.size()) {
-              float3 n0;
-              float3 n1;
-              float3 n2;
-
-              n0[0] = mesh.facevarying_normals[9 * isect.prim_id + 0];
-              n0[1] = mesh.facevarying_normals[9 * isect.prim_id + 1];
-              n0[2] = mesh.facevarying_normals[9 * isect.prim_id + 2];
-
-              n1[0] = mesh.facevarying_normals[9 * isect.prim_id + 3];
-              n1[1] = mesh.facevarying_normals[9 * isect.prim_id + 4];
-              n1[2] = mesh.facevarying_normals[9 * isect.prim_id + 5];
-
-              n2[0] = mesh.facevarying_normals[9 * isect.prim_id + 6];
-              n2[1] = mesh.facevarying_normals[9 * isect.prim_id + 7];
-              n2[2] = mesh.facevarying_normals[9 * isect.prim_id + 8];
-
-              // lerp normal.
-              Ns = vnormalize(Lerp3(n0, n1, n2, isect.u, isect.v));
-
-            } else {
-              // use geometric normal.
+            float3 Ng;
+            {
+              // geometric normal.
               float3 v0;
               float3 v1;
               float3 v2;
@@ -344,16 +355,84 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
               v2[1] = mesh.vertices[3 * vid2 + 1];
               v2[2] = mesh.vertices[3 * vid2 + 2];
 
-              CalcNormal(Ns, v0, v1, v2);
+              CalcNormal(Ng, v0, v1, v2);
+            }
+
+            float3 Ns;
+            if (mesh.facevarying_normals.size()) {
+              float3 n0;
+              float3 n1;
+              float3 n2;
+
+              n0[0] = mesh.facevarying_normals[9 * isect.prim_id + 0];
+              n0[1] = mesh.facevarying_normals[9 * isect.prim_id + 1];
+              n0[2] = mesh.facevarying_normals[9 * isect.prim_id + 2];
+
+              n1[0] = mesh.facevarying_normals[9 * isect.prim_id + 3];
+              n1[1] = mesh.facevarying_normals[9 * isect.prim_id + 4];
+              n1[2] = mesh.facevarying_normals[9 * isect.prim_id + 5];
+
+              n2[0] = mesh.facevarying_normals[9 * isect.prim_id + 6];
+              n2[1] = mesh.facevarying_normals[9 * isect.prim_id + 7];
+              n2[2] = mesh.facevarying_normals[9 * isect.prim_id + 8];
+
+              // lerp normal.
+              Ns = vnormalize(Lerp3(n0, n1, n2, isect.u, isect.v));
+            } else {
+              Ns = Ng;
+            }
+
+            float3 texcoord = {0.0f, 0.0f, 0.0f};
+            if (mesh.facevarying_texcoords.size()) {
+              float3 t0;
+              float3 t1;
+              float3 t2;
+
+              t0[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 0];
+              t0[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 1];
+              t0[2] = 0.0f;
+
+              t1[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 2];
+              t1[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 3];
+              t1[2] = 0.0f;
+
+              t2[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 4];
+              t2[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 5];
+              t2[2] = 0.0f;
+
+              texcoord = Lerp3(t0, t1, t2, isect.u, isect.v);
             }
 
             output->rgb[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
             output->rgb[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
             output->rgb[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+            output->geometric_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+            output->geometric_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+            output->geometric_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+            output->shading_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+            output->shading_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+            output->shading_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+            output->texcoords[2 * pixel_idx + 0] = texcoord[0];
+            output->texcoords[2 * pixel_idx + 1] = texcoord[1];
+
           } else {
             output->rgb[3 * pixel_idx + 0] = 0.0f;
             output->rgb[3 * pixel_idx + 1] = 0.0f;
             output->rgb[3 * pixel_idx + 2] = 0.0f;
+
+            output->geometric_normal[3 * pixel_idx + 0] = 0.0f;
+            output->geometric_normal[3 * pixel_idx + 1] = 0.0f;
+            output->geometric_normal[3 * pixel_idx + 2] = 0.0f;
+
+            output->shading_normal[3 * pixel_idx + 0] = 0.0f;
+            output->shading_normal[3 * pixel_idx + 1] = 0.0f;
+            output->shading_normal[3 * pixel_idx + 2] = 0.0f;
+
+            output->texcoords[2 * pixel_idx + 0] = 0.0f;
+            output->texcoords[2 * pixel_idx + 1] = 0.0f;
           }
         }
       }

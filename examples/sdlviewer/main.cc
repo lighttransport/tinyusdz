@@ -27,14 +27,15 @@
 struct GUIContext {
   enum AOVMode {
     AOV_COLOR = 0,
-    AOV_NORMAL,
+    AOV_SHADING_NORMAL,
+    AOV_GEOMETRIC_NORMAL,
     AOV_POSITION,
     AOV_DEPTH,
     AOV_TEXCOORD,
     AOV_VARYCOORD,
     AOV_VERTEXCOLOR
   };
-  AOVMode aov_mode{AOV_COLOR};
+  int aov_mode{AOV_COLOR};
 
   example::AOV aov;  // framebuffer
 
@@ -156,19 +157,54 @@ inline uint8_t ftouc(float f) {
   return static_cast<uint8_t>(val);
 }
 
-void UpdateTexutre(SDL_Texture* tex, const example::AOV& aov) {
+void UpdateTexutre(SDL_Texture* tex, const GUIContext &ctx, const example::AOV& aov) {
   std::vector<uint8_t> buf;
   buf.resize(aov.width * aov.height * 4);
 
-  for (size_t i = 0; i < aov.width * aov.height; i++) {
-    uint8_t r = ftouc(linearToSrgb(aov.rgb[3 * i + 0]));
-    uint8_t g = ftouc(linearToSrgb(aov.rgb[3 * i + 1]));
-    uint8_t b = ftouc(linearToSrgb(aov.rgb[3 * i + 2]));
+  if (ctx.aov_mode == GUIContext::AOV_COLOR) {
+    for (size_t i = 0; i < aov.width * aov.height; i++) {
+      uint8_t r = ftouc(linearToSrgb(aov.rgb[3 * i + 0]));
+      uint8_t g = ftouc(linearToSrgb(aov.rgb[3 * i + 1]));
+      uint8_t b = ftouc(linearToSrgb(aov.rgb[3 * i + 2]));
 
-    buf[4 * i + 0] = r;
-    buf[4 * i + 1] = g;
-    buf[4 * i + 2] = b;
-    buf[4 * i + 3] = 255;
+      buf[4 * i + 0] = r;
+      buf[4 * i + 1] = g;
+      buf[4 * i + 2] = b;
+      buf[4 * i + 3] = 255;
+    }
+  } else if (ctx.aov_mode == GUIContext::AOV_SHADING_NORMAL) {
+    for (size_t i = 0; i < aov.width * aov.height; i++) {
+      uint8_t r = ftouc(aov.shading_normal[3 * i + 0]);
+      uint8_t g = ftouc(aov.shading_normal[3 * i + 1]);
+      uint8_t b = ftouc(aov.shading_normal[3 * i + 2]);
+
+      buf[4 * i + 0] = r;
+      buf[4 * i + 1] = g;
+      buf[4 * i + 2] = b;
+      buf[4 * i + 3] = 255;
+    }
+  } else if (ctx.aov_mode == GUIContext::AOV_GEOMETRIC_NORMAL) {
+    for (size_t i = 0; i < aov.width * aov.height; i++) {
+      uint8_t r = ftouc(aov.geometric_normal[3 * i + 0]);
+      uint8_t g = ftouc(aov.geometric_normal[3 * i + 1]);
+      uint8_t b = ftouc(aov.geometric_normal[3 * i + 2]);
+
+      buf[4 * i + 0] = r;
+      buf[4 * i + 1] = g;
+      buf[4 * i + 2] = b;
+      buf[4 * i + 3] = 255;
+    }
+  } else if (ctx.aov_mode == GUIContext::AOV_TEXCOORD) {
+    for (size_t i = 0; i < aov.width * aov.height; i++) {
+      uint8_t r = ftouc(aov.texcoords[2 * i + 0]);
+      uint8_t g = ftouc(aov.texcoords[2 * i + 1]);
+      uint8_t b = 255;
+
+      buf[4 * i + 0] = r;
+      buf[4 * i + 1] = g;
+      buf[4 * i + 2] = b;
+      buf[4 * i + 3] = 255;
+    }
   }
 
   SDL_UpdateTexture(tex, nullptr, reinterpret_cast<const void*>(buf.data()),
@@ -336,7 +372,7 @@ int main(int argc, char** argv) {
   ScreenActivate(window);
 
   gui_ctx.aov.Resize(render_width, render_height);
-  UpdateTexutre(texture, gui_ctx.aov);
+  UpdateTexutre(texture, gui_ctx, gui_ctx.aov);
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
@@ -388,6 +424,15 @@ int main(int argc, char** argv) {
     ImGui::Begin("Scene");
     bool update = false;
 
+    bool update_display = false;
+    update_display |= ImGui::RadioButton("color", &gui_ctx.aov_mode, GUIContext::AOV_COLOR);
+    //ImGui::SameLine();
+    update_display |= ImGui::RadioButton("geometric_normal", &gui_ctx.aov_mode, GUIContext::AOV_SHADING_NORMAL);
+    //ImGui::SameLine();
+    update_display |= ImGui::RadioButton("shading_normal", &gui_ctx.aov_mode, GUIContext::AOV_GEOMETRIC_NORMAL);
+    //ImGui::SameLine();
+    update_display |= ImGui::RadioButton("texcoords", &gui_ctx.aov_mode, GUIContext::AOV_TEXCOORD);
+
     // TODO: Validate coordinate definition.
     if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -360.0f, 360.0f)) {
       auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch), radians(gui_ctx.roll));
@@ -431,10 +476,10 @@ int main(int argc, char** argv) {
 #endif
 
     // Update texture
-    if (gui_ctx.update_texture) {
+    if (gui_ctx.update_texture || update_display) {
 
       // Update texture for display
-      UpdateTexutre(texture, gui_ctx.aov);
+      UpdateTexutre(texture, gui_ctx, gui_ctx.aov);
 
       gui_ctx.update_texture = false;
     }
