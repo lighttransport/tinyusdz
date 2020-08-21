@@ -24,6 +24,31 @@
 #include "tinyusdz.hh"
 #include "trackball.h"
 
+template<typename T>
+static bool ImGuiComboUI(const std::string &caption, std::string &current_key,
+                         const std::map<std::string, T> &items) {
+  bool changed = false;
+
+  if (ImGui::BeginCombo(caption.c_str(), current_key.c_str())) {
+    for (const auto &item : items) {
+      bool is_selected = (current_key == item.first);
+      if (ImGui::Selectable(item.first.c_str(), is_selected)) {
+        current_key = item.first;
+        changed = true;
+      }
+      if (is_selected) {
+        // Set the initial focus when opening the combo (scrolling + for
+        // keyboard navigation support in the upcoming navigation branch)
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+
+  return changed;
+}
+
+
 struct GUIContext {
   enum AOVMode {
     AOV_COLOR = 0,
@@ -55,7 +80,7 @@ struct GUIContext {
   float roll = 0.0f;
 
   // float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-  //std::array<float, 4> prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  // std::array<float, 4> prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
   // std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
   // std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
@@ -74,9 +99,7 @@ GUIContext gCtx;
 
 namespace {
 
-inline double radians(double degree) {
-  return 3.141592653589 * degree / 180.0;
-}
+inline double radians(double degree) { return 3.141592653589 * degree / 180.0; }
 
 // https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
 std::array<double, 4> ToQuaternion(double yaw, double pitch,
@@ -157,7 +180,8 @@ inline uint8_t ftouc(float f) {
   return static_cast<uint8_t>(val);
 }
 
-void UpdateTexutre(SDL_Texture* tex, const GUIContext &ctx, const example::AOV& aov) {
+void UpdateTexutre(SDL_Texture* tex, const GUIContext& ctx,
+                   const example::AOV& aov) {
   std::vector<uint8_t> buf;
   buf.resize(aov.width * aov.height * 4);
 
@@ -275,7 +299,8 @@ int main(int argc, char** argv) {
       SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
 
   if (!renderer) {
-    std::cerr << "Failed to create SDL2 renderer. If you are running on Linux, "
+    std::cerr << "Failed to create SDL2 renderer. If you are running on "
+                 "Linux, "
                  "probably X11 Display is not setup correctly. Check your "
                  "DISPLAY environment.\n";
     exit(-1);
@@ -382,6 +407,15 @@ int main(int argc, char** argv) {
   // Initial rendering requiest
   gui_ctx.redraw = true;
 
+  std::map<std::string, int> aov_list = {
+    { "color", GUIContext::AOV_COLOR },
+    { "shading normal", GUIContext::AOV_SHADING_NORMAL },
+    { "geometric normal", GUIContext::AOV_GEOMETRIC_NORMAL },
+    { "texcoord", GUIContext::AOV_TEXCOORD }
+  };
+
+  std::string aov_name = "color";
+
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
 
@@ -409,8 +443,9 @@ int main(int argc, char** argv) {
     int mouseX, mouseY;
     const int buttons = SDL_GetMouseState(&mouseX, &mouseY);
 
-    // Setup low-level inputs (e.g. on Win32, GetKeyboardState(), or write to
-    // those fields from your Windows message loop handlers, etc.)
+    // Setup low-level inputs (e.g. on Win32, GetKeyboardState(), or
+    // write to those fields from your Windows message loop handlers,
+    // etc.)
 
     io.DeltaTime = 1.0f / 60.0f;
     io.MousePos =
@@ -425,17 +460,16 @@ int main(int argc, char** argv) {
     bool update = false;
 
     bool update_display = false;
-    update_display |= ImGui::RadioButton("color", &gui_ctx.aov_mode, GUIContext::AOV_COLOR);
-    //ImGui::SameLine();
-    update_display |= ImGui::RadioButton("geometric_normal", &gui_ctx.aov_mode, GUIContext::AOV_SHADING_NORMAL);
-    //ImGui::SameLine();
-    update_display |= ImGui::RadioButton("shading_normal", &gui_ctx.aov_mode, GUIContext::AOV_GEOMETRIC_NORMAL);
-    //ImGui::SameLine();
-    update_display |= ImGui::RadioButton("texcoords", &gui_ctx.aov_mode, GUIContext::AOV_TEXCOORD);
+      
+    if (ImGuiComboUI("aov", aov_name, aov_list)) {
+      gui_ctx.aov_mode = aov_list[aov_name];
+      update_display = true;
+    }
 
     // TODO: Validate coordinate definition.
     if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -360.0f, 360.0f)) {
-      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch), radians(gui_ctx.roll));
+      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
+                            radians(gui_ctx.roll));
       gui_ctx.camera.quat[0] = q[0];
       gui_ctx.camera.quat[1] = q[1];
       gui_ctx.camera.quat[2] = q[2];
@@ -443,7 +477,8 @@ int main(int argc, char** argv) {
       update = true;
     }
     if (ImGui::SliderFloat("pitch", &gui_ctx.pitch, -360.0f, 360.0f)) {
-      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch), radians(gui_ctx.roll));
+      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
+                            radians(gui_ctx.roll));
       gui_ctx.camera.quat[0] = q[0];
       gui_ctx.camera.quat[1] = q[1];
       gui_ctx.camera.quat[2] = q[2];
@@ -451,7 +486,8 @@ int main(int argc, char** argv) {
       update = true;
     }
     if (ImGui::SliderFloat("roll", &gui_ctx.roll, -360.0f, 360.0f)) {
-      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch), radians(gui_ctx.roll));
+      auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
+                            radians(gui_ctx.roll));
       gui_ctx.camera.quat[0] = q[0];
       gui_ctx.camera.quat[1] = q[1];
       gui_ctx.camera.quat[2] = q[2];
@@ -477,7 +513,6 @@ int main(int argc, char** argv) {
 
     // Update texture
     if (gui_ctx.update_texture || update_display) {
-
       // Update texture for display
       UpdateTexutre(texture, gui_ctx, gui_ctx.aov);
 
