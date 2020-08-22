@@ -24,30 +24,8 @@
 #include "tinyusdz.hh"
 #include "trackball.h"
 
-template<typename T>
-static bool ImGuiComboUI(const std::string &caption, std::string &current_key,
-                         const std::map<std::string, T> &items) {
-  bool changed = false;
-
-  if (ImGui::BeginCombo(caption.c_str(), current_key.c_str())) {
-    for (const auto &item : items) {
-      bool is_selected = (current_key == item.first);
-      if (ImGui::Selectable(item.first.c_str(), is_selected)) {
-        current_key = item.first;
-        changed = true;
-      }
-      if (is_selected) {
-        // Set the initial focus when opening the combo (scrolling + for
-        // keyboard navigation support in the upcoming navigation branch)
-        ImGui::SetItemDefaultFocus();
-      }
-    }
-    ImGui::EndCombo();
-  }
-
-  return changed;
-}
-
+// sdlviewer
+#include "gui.hh"
 
 struct GUIContext {
   enum AOVMode {
@@ -75,7 +53,7 @@ struct GUIContext {
   bool ctrl_pressed = false;
   bool tab_pressed = false;
 
-  float yaw = 0.0f;
+  float yaw = 90.0f; // for Z up scene 
   float pitch = 0.0f;
   float roll = 0.0f;
 
@@ -182,6 +160,14 @@ inline uint8_t ftouc(float f) {
 
 void UpdateTexutre(SDL_Texture* tex, const GUIContext& ctx,
                    const example::AOV& aov) {
+  int w, h;
+  SDL_QueryTexture(tex, nullptr, nullptr, &w, &h);
+
+  if ((aov.width != w) || (aov.height != h)) {
+    std::cerr << "texture size and AOV sized mismatch\n";
+    return;
+  }
+
   std::vector<uint8_t> buf;
   buf.resize(aov.width * aov.height * 4);
 
@@ -232,7 +218,7 @@ void UpdateTexutre(SDL_Texture* tex, const GUIContext& ctx,
   }
 
   SDL_UpdateTexture(tex, nullptr, reinterpret_cast<const void*>(buf.data()),
-                    256 * 4);
+                    aov.width * 4);
 }
 
 // https://discourse.libsdl.org/t/sdl-and-xserver/12610/4
@@ -287,7 +273,7 @@ int main(int argc, char** argv) {
 
   SDL_Window* window =
       SDL_CreateWindow("Simple USDZ viewer", SDL_WINDOWPOS_CENTERED,
-                       SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_RESIZABLE);
+                       SDL_WINDOWPOS_CENTERED, 1600, 800, SDL_WINDOW_RESIZABLE);
   if (!window) {
     std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
                  "probably X11 Display is not setup correctly. Check your "
@@ -375,12 +361,12 @@ int main(int argc, char** argv) {
 
   ImGui::CreateContext();
 
-  ImGuiSDL::Initialize(renderer, 800, 600);
+  ImGuiSDL::Initialize(renderer, 1600, 800);
   // ImGui_ImplGlfw_InitForOpenGL(window, true);
   // ImGui_ImplOpenGL2_Init();
 
-  int render_width = 256;
-  int render_height = 256;
+  int render_width = 512;
+  int render_height = 512;
 
   SDL_Texture* texture =
       SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
@@ -402,6 +388,16 @@ int main(int argc, char** argv) {
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
 
+  // init camera matrix
+  {
+    auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
+                          radians(gui_ctx.roll));
+    gui_ctx.camera.quat[0] = q[0];
+    gui_ctx.camera.quat[1] = q[1];
+    gui_ctx.camera.quat[2] = q[2];
+    gui_ctx.camera.quat[3] = q[3];
+  }
+
   std::thread render_thread(RenderThread, &gui_ctx);
 
   // Initial rendering requiest
@@ -415,6 +411,7 @@ int main(int argc, char** argv) {
   };
 
   std::string aov_name = "color";
+
 
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
@@ -461,7 +458,7 @@ int main(int argc, char** argv) {
 
     bool update_display = false;
       
-    if (ImGuiComboUI("aov", aov_name, aov_list)) {
+    if (example::ImGuiComboUI("aov", aov_name, aov_list)) {
       gui_ctx.aov_mode = aov_list[aov_name];
       update_display = true;
     }
@@ -497,7 +494,7 @@ int main(int argc, char** argv) {
     ImGui::End();
 
     ImGui::Begin("Image");
-    ImGui::Image(texture, ImVec2(256, 256));
+    ImGui::Image(texture, ImVec2(render_width, render_height));
     ImGui::End();
 
     if (update) {
