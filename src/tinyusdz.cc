@@ -1712,6 +1712,20 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
 
+    } else if (ty.id == VALUE_TYPE_INT) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      int ival;
+      memcpy(&ival, &d, sizeof(int));
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "value.int = " << ival << "\n";
+#endif
+
+      value->SetInt(ival);
+
+      return true;
+
+
     } else if (ty.id == VALUE_TYPE_FLOAT) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       float f;
@@ -1779,6 +1793,27 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 #endif
 
       value->SetVec3f(v);
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_VEC3D) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      Vec3d v;
+      v[0] = static_cast<double>(data[0]);
+      v[1] = static_cast<double>(data[1]);
+      v[2] = static_cast<double>(data[2]);
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2]
+                << "\n";
+#endif
+
+      value->SetVec3d(v);
 
       return true;
 
@@ -1906,8 +1941,43 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       value->SetTokenArray(tokens);
 
       return true;
-    }
-    if (ty.id == VALUE_TYPE_INT) {
+    } else if (ty.id == VALUE_TYPE_STRING) {
+      assert(!rep.IsCompressed());
+      assert(rep.IsArray());
+
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cerr << "Failed to read the number of array elements\n";
+#endif
+        return false;
+      }
+
+      std::vector<Index> v(static_cast<size_t>(n));
+      if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+                     reinterpret_cast<uint8_t *>(v.data()))) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cerr << "Failed to read TokenIndex array\n";
+#endif
+        return false;
+      }
+
+      std::vector<std::string> stringArray(static_cast<size_t>(n));
+
+      for (size_t i = 0; i < n; i++) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "String[" << i << "] = " << GetString(v[i]) << " ("
+                  << v[i].value << ")\n";
+#endif
+        stringArray[i] = GetString(v[i]);
+      }
+
+      // In TinyUSDZ, token == string
+      value->SetTokenArray(stringArray);
+
+      return true;
+
+    } else if (ty.id == VALUE_TYPE_INT) {
       assert(rep.IsArray());
 
       std::vector<int32_t> v;
@@ -2236,20 +2306,48 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       return true;
     } else if (ty.id == VALUE_TYPE_VEC3D) {
       assert(!rep.IsCompressed());
-      assert(rep.IsArray());
 
-      Vec3d v;
-      if (!_sr->read(sizeof(Vec3d), sizeof(Vec3d),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        _err += "Failed to read Vec3d value\n";
-        return false;
-      }
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cerr << "Failed to read the number of array elements\n";
+#endif
+          return false;
+        }
+
+        std::vector<Vec3d> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(Vec3d), size_t(n) * sizeof(Vec3d),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cerr << "Failed to read Vec3d array\n";
+#endif
+          return false;
+        }
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2]
-                << "\n";
+        for (size_t i = 0; i < v.size(); i++) {
+          std::cout << "Vec3d[" << i << "] = " << v[i][0] << ", " << v[i][1]
+                    << ", " << v[i][2] << "\n";
+        }
 #endif
-      value->SetVec3d(v);
+        value->SetVec3dArray(v.data(), v.size());
+
+      } else {
+        Vec3d v;
+        if (!_sr->read(sizeof(Vec3d), sizeof(Vec3d),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          _err += "Failed to read Vec3d value\n";
+          return false;
+        }
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2]
+                  << "\n";
+#endif
+        value->SetVec3d(v);
+
+      }
 
       return true;
     } else if (ty.id == VALUE_TYPE_VEC3H) {
@@ -2268,6 +2366,52 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
                 << ", " << to_float(v[2]) << "\n";
 #endif
       value->SetVec3h(v);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_QUATF) {
+      assert(!rep.IsCompressed());
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cerr << "Failed to read the number of array elements\n";
+#endif
+          return false;
+        }
+
+        std::vector<Quatf> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(Quatf), size_t(n) * sizeof(Quatf),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cerr << "Failed to read Quatf array\n";
+#endif
+          return false;
+        }
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        for (size_t i = 0; i < v.size(); i++) {
+          std::cout << "Quatf[" << i << "] = " << v[i][0] << ", " << v[i][1]
+                    << ", " << v[i][2] << "\n";
+        }
+#endif
+        value->SetQuatfArray(v.data(), v.size());
+
+      } else {
+        Quatf v;
+        if (!_sr->read(sizeof(Quatf), sizeof(Quatf),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          _err += "Failed to read Quatf value\n";
+          return false;
+        }
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "value.quatf = " << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3]
+                  << "\n";
+#endif
+        value->SetQuatf(v);
+
+      }
 
       return true;
     } else if (ty.id == VALUE_TYPE_MATRIX4D) {
@@ -2336,7 +2480,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else {
       // TODO(syoyo)
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cerr << "TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
+      std::cerr << "[" << __LINE__ << "] TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
 #endif
       return false;
     }
@@ -3128,6 +3272,9 @@ bool Parser::_ReconstructGeomMesh(
           attr->facevarying = facevarying;
           success = true;
         } else if (fv.second.GetTypeName() == "Vec3fArray") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "fv.second.data.size = " << fv.second.GetData().size() << "\n";
+#endif
           attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
                            /* stride */ sizeof(float) * 3, fv.second.GetData());
           attr->variability = variability;
@@ -3185,11 +3332,13 @@ bool Parser::_ReconstructGeomMesh(
     }
   }
 
-  if (!has_position) {
-    _err += "No `position` field exist for Mesh node: " + node.GetLocalPath() +
-            ".\n";
-    return false;
-  }
+  // Disable has_position check for a while, since Mesh may not have "points", but "position"
+  
+  //if (!has_position) {
+  //  _err += "No `position` field exist for Mesh node: " + node.GetLocalPath() +
+  //          ".\n";
+  //  return false;
+  //}
 
   //
   // NOTE: Currently we assume one deeper node has GeomMesh's attribute
@@ -3263,6 +3412,17 @@ bool Parser::_ReconstructGeomMesh(
             mesh->normals = std::move(attr);
           }
         } else if (prop_name == "primvars:UVMap") {
+          // TODO(syoyo): Write PrimVar parser 
+          
+          // Currently we only support vec2f for uv coords.
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 2)) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+            std::cout << "got UVCoords\n";
+#endif
+            mesh->st.buffer = attr.buffer;
+            mesh->st.variability = attr.variability;
+          }
         } else if (prop_name == "faceVertexCounts") {
           // Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
@@ -4373,16 +4533,51 @@ bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
     return false;
   }
 
-  if (normals.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
-    return false;
-  }
-
-  size_t n = points.buffer.GetNumElements();
-  size_t c = size_t(points.buffer.GetNumCoords());
+  size_t n = normals.buffer.GetNumElements();
+  size_t c = size_t(normals.buffer.GetNumCoords());
 
   v->resize(n * c);
 
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+  std::cout << "fvnormal numelements = " << n << ", numcoords = " << c << "\n";
+#endif
+
+
   memcpy(v->data(), normals.buffer.data.data(), n * c * sizeof(float));
+
+  return true;
+}
+
+bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
+  if (st.variability != VariabilityVarying) {
+    return false;
+  }
+
+  // Currently we only support float3[]
+  if (st.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
+    return false;
+  }
+
+  if ((st.buffer.GetNumCoords() < 0) ||
+      (st.buffer.GetNumCoords() != 2)) {
+    return false;
+  }
+
+  if ((st.buffer.GetStride() != (2 * sizeof(float)))) {
+    return false;
+  }
+
+  size_t n = st.buffer.GetNumElements();
+  size_t c = size_t(st.buffer.GetNumCoords());
+
+  v->resize(n * c);
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+  std::cout << "fvtexcoords numelements = " << n << ", numcoords = " << c << "\n";
+#endif
+
+
+  memcpy(v->data(), st.buffer.data.data(), n * c * sizeof(float));
 
   return true;
 }

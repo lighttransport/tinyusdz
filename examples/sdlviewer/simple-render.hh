@@ -11,8 +11,9 @@ struct AOV {
   size_t height;
 
   std::vector<float> rgb; // 3 x width x height
-  //std::vector<float> shading_normal; // 3 x width x height
-  //std::vector<float> geometric_normal; // 3 x width x height
+  std::vector<float> shading_normal; // 3 x width x height
+  std::vector<float> geometric_normal; // 3 x width x height
+  std::vector<float> texcoords; // 2 x width x height
 
   void Resize(size_t w, size_t h) {
     width = w;
@@ -21,6 +22,14 @@ struct AOV {
     rgb.resize(width * height * 3);
     memset(rgb.data(), 0, sizeof(float) * rgb.size());
 
+    shading_normal.resize(width * height * 3);
+    memset(shading_normal.data(), 0, sizeof(float) * shading_normal.size());
+
+    geometric_normal.resize(width * height * 3);
+    memset(geometric_normal.data(), 0, sizeof(float) * geometric_normal.size());
+
+    texcoords.resize(width * height * 2);
+    memset(texcoords.data(), 0, sizeof(float) * texcoords.size());
   }
 
 };
@@ -58,6 +67,7 @@ struct DrawGeomMesh {
   std::vector<float> vertices;  // vec3f
   std::vector<uint32_t> facevarying_indices; // triangulated indices. 3 x num_faces
   std::vector<float> facevarying_normals; // 3 x 3 x num_faces
+  std::vector<float> facevarying_texcoords; // 2 x 3 x num_faces
 
   nanort::BVHAccel<float> accel;
 };
