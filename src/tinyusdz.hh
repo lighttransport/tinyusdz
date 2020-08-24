@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <limits>
 
-//#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
+#define TINYUSDZ_LOCAL_DEBUG_PRINT (0)
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
 #include <iostream> // dbg
