@@ -147,6 +147,7 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 ## TODO
 
 * [ ] Subdivision surface using OpenSubdiv.
+  * [x] Build TinyUSDZ with OpenSubdiv(CPU)
   * [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
 * [ ] USDA(USD Ascii) support
   * [ ] Write our own USDA parser with PEG.
@@ -159,9 +160,11 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
   * [ ] wav(dr_wav)
   * [ ] mp3(dr_mp3)
   * [ ] m4a?
+* [ ] Support AR related schema(Game-like feature added by Reality Composer?)
 * [ ] Android example
 * [ ] iOS example?
-* [ ] CPU raytracer viewer
+* [x] CPU raytracer viewer
+  * sdlviewer
 * [ ] Viewer with Vulkan API.
 * [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
 * [ ] USDZ saver
