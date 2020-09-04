@@ -1333,14 +1333,23 @@ struct Xform
 
 };
 
+// Vertex attributes. e.g. UV coords, vertex colors, etc.
+struct PrimVar
+{
+  std::string name;
+  BufferData buffer;
+  Variability variability;
+  bool facevarying{false};
+};
+
 struct UVCoords
 {
   std::string name;
   BufferData buffer;
   Variability variability;
 
-  // TODO: 64bit index?
-  // std::vector<uint32_t> indices; // UV indices. Usually varying
+  // non-empty when UV has its own indices.
+  std::vector<uint32_t> indices; // UV indices. Usually varying
 };
 
 struct Extent
@@ -1427,6 +1436,9 @@ struct GeomMesh
 
   // User defined attribs
   std::map<std::string, PrimAttrib> custom_attrs;
+
+  // List of Primitive variables.
+  std::map<std::string, PrimVar> primvars;
 
 };
 
