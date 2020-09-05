@@ -39,8 +39,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unordered_set>
 #include <vector>
 
-// local debug flag
-#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
+// local debug flag(now defined in tinyusdz.hh)
+//#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
 
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -828,11 +828,31 @@ class Parser {
 
   bool _BuildLiveFieldSets();
 
+  ///
+  /// Parse node's attribute from FieldValuePairVector.
+  ///
+  bool _ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
+                             const std::string &prop_name);
+
   bool _ReconstructGeomMesh(const Node &node,
                             const FieldValuePairVector &fields,
                             const std::unordered_map<uint32_t, uint32_t>
                                 &path_index_to_spec_index_map,
                             GeomMesh *mesh);
+
+  bool _ReconstructMaterial(const Node &node,
+                            const FieldValuePairVector &fields,
+                            const std::unordered_map<uint32_t, uint32_t>
+                                &path_index_to_spec_index_map,
+                            Material *material);
+
+  ///
+  /// NOTE: Currently we only support UsdPreviewSurface
+  ///
+  bool _ReconstructShader(const Node &node, const FieldValuePairVector &fields,
+                          const std::unordered_map<uint32_t, uint32_t>
+                              &path_index_to_spec_index_map,
+                          PreviewSurface *shader);
 
   bool _ReconstructSceneRecursively(int parent_id, int level,
                                     const std::unordered_map<uint32_t, uint32_t>
@@ -1725,7 +1745,6 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
 
-
     } else if (ty.id == VALUE_TYPE_FLOAT) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       float f;
@@ -2346,7 +2365,6 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
                   << "\n";
 #endif
         value->SetVec3d(v);
-
       }
 
       return true;
@@ -2406,11 +2424,10 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
         }
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "value.quatf = " << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3]
-                  << "\n";
+        std::cout << "value.quatf = " << v[0] << ", " << v[1] << ", " << v[2]
+                  << ", " << v[3] << "\n";
 #endif
         value->SetQuatf(v);
-
       }
 
       return true;
@@ -2480,7 +2497,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else {
       // TODO(syoyo)
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cerr << "[" << __LINE__ << "] TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
+      std::cerr << "[" << __LINE__
+                << "] TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
 #endif
       return false;
     }
@@ -3208,14 +3226,185 @@ bool Parser::_BuildLiveFieldSets() {
   return true;
 }
 
+bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
+                             const std::string &prop_name) {
+  bool success = false;
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+  std::cout << "fvs.size = " << fvs.size() << "\n";
+#endif
+
+
+  bool has_connection{false};
+
+  Variability variability{VariabilityVarying};
+  bool facevarying{false};
+
+  //
+  // Parse properties
+  //
+  for (const auto &fv : fvs) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "===  fvs.first " << fv.first
+              << ", second: " << fv.second.GetTypeName() << "\n";
+#endif
+    if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
+      attr->type_name = fv.second.GetToken();
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "aaa: typeName: " << attr->type_name << "\n";
+#endif
+
+    } else if (fv.first == "connectionPaths") {
+      // e.g. connection to texture file.
+      const ListOp<Path> paths = fv.second.GetPathListOp();
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      paths.Print();
+#endif
+
+      // Currently we only support single explicit path.
+      if ((paths.GetExplicitItems().size() == 1)) {
+        const Path &path = paths.GetExplicitItems()[0];
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "full path: " << path.full_path_name() << "\n";
+        std::cout << "local path: " << path.local_path_name() << "\n";
+#endif
+
+        attr->path = path;
+        attr->basic_type = "path";
+
+        has_connection = true;
+
+      } else {
+        return false;
+      }
+    } else if ((fv.first == "variablity") &&
+               (fv.second.GetTypeName() == "Variability")) {
+      variability = fv.second.GetVariability();
+    } else if ((fv.first == "interpolation") &&
+               (fv.second.GetTypeName() == "Token")) {
+      if (fv.second.GetToken() == "faceVarying") {
+        facevarying = true;
+      }
+    }
+  }
+
+  attr->facevarying = facevarying;
+  attr->variability = variability;
+
+  //
+  // Decode value(stored in "default" field)
+  //
+  for (const auto &fv : fvs) {
+    if (fv.first == "default") {
+      attr->name = prop_name;
+      attr->basic_type = std::string();
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "fv.second.GetTypeName = " << fv.second.GetTypeName()
+                << "\n";
+#endif
+      if (fv.second.GetTypeName() == "Float") {
+        attr->floatVal = fv.second.GetFloat();
+        attr->basic_type = "float";
+        success = true;
+
+      } else if (fv.second.GetTypeName() == "Bool") {
+        if (!fv.second.GetBool(&attr->boolVal)) {
+          _err += "Failed to decode Int data";
+          return false;
+        }
+
+        attr->basic_type = "bool";
+        success = true;
+
+      } else if (fv.second.GetTypeName() == "Int") {
+        if (!fv.second.GetInt(&attr->intVal)) {
+          _err += "Failed to decode Int data";
+          return false;
+        }
+
+        attr->basic_type = "int";
+        success = true;
+      } else if (fv.second.GetTypeName() == "Vec3f") {
+        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
+                         /* stride */ sizeof(float), fv.second.GetData());
+        // attr->variability = variability;
+        // attr->facevarying = facevarying;
+        success = true;
+
+      } else if (fv.second.GetTypeName() == "FloatArray") {
+        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1,
+                         /* stride */ sizeof(float), fv.second.GetData());
+        attr->variability = variability;
+        attr->facevarying = facevarying;
+        success = true;
+      } else if (fv.second.GetTypeName() == "Vec2fArray") {
+        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2,
+                         /* stride */ sizeof(float) * 2, fv.second.GetData());
+        attr->variability = variability;
+        attr->facevarying = facevarying;
+        success = true;
+      } else if (fv.second.GetTypeName() == "Vec3fArray") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "fv.second.data.size = " << fv.second.GetData().size()
+                  << "\n";
+#endif
+        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
+                         /* stride */ sizeof(float) * 3, fv.second.GetData());
+        attr->variability = variability;
+        attr->facevarying = facevarying;
+        success = true;
+      } else if (fv.second.GetTypeName() == "Vec4fArray") {
+        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4,
+                         /* stride */ sizeof(float) * 4, fv.second.GetData());
+        attr->variability = variability;
+        attr->facevarying = facevarying;
+        success = true;
+      } else if (fv.second.GetTypeName() == "IntArray") {
+        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_INT, 1,
+                         /* stride */ sizeof(int32_t), fv.second.GetData());
+        attr->variability = variability;
+        attr->facevarying = facevarying;
+        success = true;
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "IntArray"
+                  << "\n";
+
+        const int32_t *ptr =
+            reinterpret_cast<const int32_t *>(attr->buffer.data.data());
+        for (size_t i = 0; i < attr->buffer.GetNumElements(); i++) {
+          std::cout << "[" << i << "] = " << ptr[i] << "\n";
+        }
+#endif
+      } else if (fv.second.GetTypeName() == "Token") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
+#endif
+        attr->stringVal = fv.second.GetToken();
+        attr->basic_type = "string";
+        // attr->variability = variability;
+        // attr->facevarying = facevarying;
+        success = true;
+      }
+    }
+  }
+
+  if (!success && has_connection) {
+    // Attribute has a connection(has a path and no `default` field)
+    success = true;
+  }
+
+  return success;
+}
+
 bool Parser::_ReconstructGeomMesh(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomMesh *mesh) {
-  (void)mesh;
-
-  bool has_position{false};
-
+#if 0
+  // TODO(syoyo): Move to Parser's method.
   auto ParseGeomMeshAttribute = [](const FieldValuePairVector &fvs,
                                    PrimAttrib *attr,
                                    const std::string &prop_name) -> bool {
@@ -3225,21 +3414,19 @@ bool Parser::_ReconstructGeomMesh(
     std::cout << "fvs.size = " << fvs.size() << "\n";
 #endif
 
-    std::string type_name;
     Variability variability{VariabilityVarying};
     bool facevarying{false};
 
     for (const auto &fv : fvs) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "  fvs.first " << fv.first << "\n";
+      std::cout << "  fvs.first " << fv.first << ", second: " << fv.second.GetTypeName() << "\n";
 #endif
       if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
-        type_name = fv.second.GetToken();
+        attr->type_name = fv.second.GetToken();
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "aaa: typeName: " << type_name << "\n";
+        std::cout << "aaa: typeName: " << attr->type_name << "\n";
 #endif
 
-        (void)attr;
       } else if ((fv.first == "variablity") &&
                  (fv.second.GetTypeName() == "Variability")) {
         variability = fv.second.GetVariability();
@@ -3306,7 +3493,7 @@ bool Parser::_ReconstructGeomMesh(
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
 #endif
-          attr->tokenString = fv.second.GetToken();
+          attr->stringVal = fv.second.GetToken();
           attr->variability = variability;
           attr->facevarying = facevarying;
           success = true;
@@ -3316,6 +3503,9 @@ bool Parser::_ReconstructGeomMesh(
 
     return success;
   };
+#endif
+
+  bool has_position{false};
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
@@ -3332,10 +3522,12 @@ bool Parser::_ReconstructGeomMesh(
     }
   }
 
-  // Disable has_position check for a while, since Mesh may not have "points", but "position"
-  
-  //if (!has_position) {
-  //  _err += "No `position` field exist for Mesh node: " + node.GetLocalPath() +
+  // Disable has_position check for a while, since Mesh may not have "points",
+  // but "position"
+
+  // if (!has_position) {
+  //  _err += "No `position` field exist for Mesh node: " + node.GetLocalPath()
+  //  +
   //          ".\n";
   //  return false;
   //}
@@ -3390,7 +3582,7 @@ bool Parser::_ReconstructGeomMesh(
       std::string prop_name = path.GetPropPart();
 
       PrimAttrib attr;
-      bool ret = ParseGeomMeshAttribute(child_fields, &attr, prop_name);
+      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
 #endif
@@ -3405,20 +3597,43 @@ bool Parser::_ReconstructGeomMesh(
               (attr.buffer.GetNumCoords() == 3)) {
             mesh->points = std::move(attr);
           }
+        } else if (prop_name == "doubleSided") {
+          if (attr.basic_type == "bool") {
+            mesh->doubleSided = attr.boolVal;
+          }
+        } else if (prop_name == "extent") {
+          // vec3f[2]
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumElements() == 2) &&
+              (attr.buffer.GetNumCoords() == 3)) {
+
+            std::vector<float> buf = attr.buffer.GetAsVec3fArray();
+            mesh->extent.lower[0] = buf[0];
+            mesh->extent.lower[1] = buf[1];
+            mesh->extent.lower[2] = buf[2];
+
+            mesh->extent.upper[0] = buf[3];
+            mesh->extent.upper[1] = buf[4];
+            mesh->extent.upper[2] = buf[5];
+          }
         } else if (prop_name == "normals") {
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 3)) {
             mesh->normals = std::move(attr);
           }
-        } else if (prop_name == "primvars:UVMap") {
-          // TODO(syoyo): Write PrimVar parser 
-          
+        } else if ((prop_name == "primvars:UVMap") &&
+                   (attr.type_name == "texCoord2f[]")) {
+          // Explicit UV coord attribute.
+          // TODO(syoyo): Write PrimVar parser
+
           // Currently we only support vec2f for uv coords.
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 2)) {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-            std::cout << "got UVCoords\n";
+            std::cout << "got explicit UVCoords!\n";
 #endif
             mesh->st.buffer = attr.buffer;
             mesh->st.variability = attr.variability;
@@ -3480,22 +3695,376 @@ bool Parser::_ReconstructGeomMesh(
           }
         } else if (prop_name == "subdivisionScheme") {
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "subdivisionScheme:" << attr.tokenString << "\n";
+          std::cout << "subdivisionScheme:" << attr.stringVal << "\n";
 #endif
-          if (attr.tokenString.size()) {
-            if ((attr.tokenString.compare("none") == 0)) {
+          if (attr.stringVal.size()) {
+            if ((attr.stringVal.compare("none") == 0)) {
               mesh->subdivisionScheme = SubdivisionSchemeNone;
-            } else if (attr.tokenString.compare("catmullClark") == 0) {
+            } else if (attr.stringVal.compare("catmullClark") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeCatmullClark;
-            } else if (attr.tokenString.compare("bilinear") == 0) {
+            } else if (attr.stringVal.compare("bilinear") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeBilinear;
-            } else if (attr.tokenString.compare("loop") == 0) {
+            } else if (attr.stringVal.compare("loop") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeLoop;
             } else {
-              _err += "Unknown subdivision scheme: " + attr.tokenString + "\n";
+              _err += "Unknown subdivision scheme: " + attr.stringVal + "\n";
               return false;
             }
           }
+        } else {
+          // Assume Primvar.
+          if (mesh->attrs.count(prop_name)) {
+            _err += "Duplicated property name found: " + prop_name + "\n";
+            return false;
+          }
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "add [" << prop_name << "] to generic attrs\n";
+#endif
+
+          mesh->attrs[prop_name] = std::move(attr);
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool Parser::_ReconstructMaterial(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    Material *material) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+  std::cout << "Parse mateiral\n";
+#endif
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+      assert(fv.second.IsArray());
+
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      }
+    }
+  }
+
+  //
+  // NOTE: Currently we assume one deeper node has Material's attribute
+  //
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    // const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      _err += "No specifier found for node id: " + std::to_string(child_index) +
+              "\n";
+      return false;
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index << "\n";
+#endif
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "prop: " << prop_name << "\n";
+#endif
+    }
+  }
+
+  return true;
+}
+
+bool Parser::_ReconstructShader(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    PreviewSurface *shader) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+  std::cout << "Parse shader\n";
+#endif
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+      assert(fv.second.IsArray());
+
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      }
+    }
+  }
+
+#if 0
+  auto ParseAttribute = [](const FieldValuePairVector &fvs, PrimAttrib *attr,
+                           const std::string &prop_name) -> bool {
+    bool success = false;
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "fvs.size = " << fvs.size() << "\n";
+#endif
+
+    std::string type_name;
+    Variability variability{VariabilityVarying};
+    bool facevarying{false};
+
+    for (const auto &fv : fvs) {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "  fvs.first " << fv.first
+                << ", second: " << fv.second.GetTypeName() << "\n";
+#endif
+      if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
+        type_name = fv.second.GetToken();
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "aaa: typeName: " << type_name << "\n";
+#endif
+
+        (void)attr;
+      } else if (fv.first == "connectionPaths") {
+        // e.g. connection to texture file.
+        const ListOp<Path> paths = fv.second.GetPathListOp();
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        paths.Print();
+#endif
+
+        // Currently we only support single explicit path.
+        if ((paths.GetExplicitItems().size() == 1)) {
+          const Path &path = paths.GetExplicitItems()[0];
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "full path: " << path.full_path_name() << "\n";
+          std::cout << "local path: " << path.local_path_name() << "\n";
+#endif
+
+        } else {
+          return false;
+        }
+      } else if ((fv.first == "variablity") &&
+                 (fv.second.GetTypeName() == "Variability")) {
+        variability = fv.second.GetVariability();
+      } else if ((fv.first == "interpolation") &&
+                 (fv.second.GetTypeName() == "Token")) {
+        if (fv.second.GetToken() == "faceVarying") {
+          facevarying = true;
+        }
+      }
+    }
+
+    // Decode value(stored in "default" field)
+    for (const auto &fv : fvs) {
+      if (fv.first == "default") {
+        attr->name = prop_name;
+        attr->basic_type = std::string();
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "fv.second.GetTypeName = " << fv.second.GetTypeName()
+                  << "\n";
+#endif
+        if (fv.second.GetTypeName() == "Float") {
+          attr->floatVal = fv.second.GetFloat();
+          attr->basic_type = "float";
+          success = true;
+
+        } else if (fv.second.GetTypeName() == "Int") {
+          if (!fv.second.GetInt(&attr->intVal)) {
+            success = false;
+            break;
+          }
+
+          attr->basic_type = "int";
+          success = true;
+        } else if (fv.second.GetTypeName() == "Vec3f") {
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
+                           /* stride */ sizeof(float), fv.second.GetData());
+          // attr->variability = variability;
+          // attr->facevarying = facevarying;
+          success = true;
+
+        } else if (fv.second.GetTypeName() == "FloatArray") {
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1,
+                           /* stride */ sizeof(float), fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+          success = true;
+        } else if (fv.second.GetTypeName() == "Vec2fArray") {
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2,
+                           /* stride */ sizeof(float) * 2, fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+          success = true;
+        } else if (fv.second.GetTypeName() == "Vec3fArray") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "fv.second.data.size = " << fv.second.GetData().size()
+                    << "\n";
+#endif
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
+                           /* stride */ sizeof(float) * 3, fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+          success = true;
+        } else if (fv.second.GetTypeName() == "Vec4fArray") {
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4,
+                           /* stride */ sizeof(float) * 4, fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+          success = true;
+        } else if (fv.second.GetTypeName() == "IntArray") {
+          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_INT, 1,
+                           /* stride */ sizeof(int32_t), fv.second.GetData());
+          attr->variability = variability;
+          attr->facevarying = facevarying;
+          success = true;
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "IntArray"
+                    << "\n";
+
+          const int32_t *ptr =
+              reinterpret_cast<const int32_t *>(attr->buffer.data.data());
+          for (size_t i = 0; i < attr->buffer.GetNumElements(); i++) {
+            std::cout << "[" << i << "] = " << ptr[i] << "\n";
+          }
+#endif
+        } else if (fv.second.GetTypeName() == "Token") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
+#endif
+          attr->stringVal = fv.second.GetToken();
+          attr->basic_type = "string";
+          // attr->variability = variability;
+          // attr->facevarying = facevarying;
+          success = true;
+        }
+      }
+    }
+
+    return success;
+  };
+#endif
+
+  //
+  // NOTE: Currently we assume one deeper node has Material's attribute
+  //
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    // const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      _err += "No specifier found for node id: " + std::to_string(child_index) +
+              "\n";
+      return false;
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index << "\n";
+#endif
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+      PrimAttrib attr;
+
+      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+#endif
+
+      if (ret) {
+        // Currently we only support predefined PBR attributes.
+
+        if (prop_name.compare("outputs:surface") == 0) {
+          // Surface shader output available
+        } else if (prop_name.compare("outputs:displacement") == 0) {
+          // Displacement shader output available
+        } else if (prop_name.compare("inputs:metallic") == 0) {
+          // type: float
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumElements() == 1) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            shader->metallic.value = attr.buffer.GetAsFloat();
+          }
+        } else if (prop_name.compare("inputs:diffuseColor") == 0) {
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumElements() == 1) &&
+              (attr.buffer.GetNumCoords() == 3)) {
+            shader->diffuseColor.color = attr.buffer.GetAsColor3f();
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+            std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
+                      << ", " << shader->diffuseColor.color[1] << ", "
+                      << shader->diffuseColor.color[2] << "\n";
+#endif
+          }
+        } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
+          // Currently we assume texture is assigned to this attribute.
+          shader->diffuseColor.path = attr.stringVal;
         }
       }
     }
@@ -3672,6 +4241,27 @@ bool Parser::_ReconstructSceneRecursively(
       return false;
     }
     scene->geom_meshes.push_back(mesh);
+  } else if (node_type == "Material") {
+    Material material;
+    if (!_ReconstructMaterial(node, fields, path_index_to_spec_index_map,
+                              &material)) {
+      _err += "Failed to reconstruct Material.\n";
+      return false;
+    }
+    scene->materials.push_back(material);
+  } else if (node_type == "Shader") {
+    PreviewSurface shader;
+    if (!_ReconstructShader(node, fields, path_index_to_spec_index_map,
+                            &shader)) {
+      _err += "Failed to reconstruct PreviewSurface(Shader).\n";
+      return false;
+    }
+    scene->shaders.push_back(shader);
+  } else {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "TODO or we can ignore this node: node_type: " << node_type
+              << "\n";
+#endif
   }
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
@@ -4542,7 +5132,6 @@ bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
   std::cout << "fvnormal numelements = " << n << ", numcoords = " << c << "\n";
 #endif
 
-
   memcpy(v->data(), normals.buffer.data.data(), n * c * sizeof(float));
 
   return true;
@@ -4558,8 +5147,7 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
     return false;
   }
 
-  if ((st.buffer.GetNumCoords() < 0) ||
-      (st.buffer.GetNumCoords() != 2)) {
+  if ((st.buffer.GetNumCoords() < 0) || (st.buffer.GetNumCoords() != 2)) {
     return false;
   }
 
@@ -4573,9 +5161,9 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
   v->resize(n * c);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "fvtexcoords numelements = " << n << ", numcoords = " << c << "\n";
+  std::cout << "fvtexcoords numelements = " << n << ", numcoords = " << c
+            << "\n";
 #endif
-
 
   memcpy(v->data(), st.buffer.data.data(), n * c * sizeof(float));
 
