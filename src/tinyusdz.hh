@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <limits>
 
-//#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
+#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
 #include <iostream> // dbg
@@ -259,6 +259,17 @@ class ListOp
     ordered_items = v;
   }
 
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+  void Print() const {
+    std::cout << "is_explicit:" << is_explicit << "\n";
+    std::cout << "# of explicit_items" << explicit_items.size() << "\n";
+    std::cout << "# of added_items" << added_items.size() << "\n";
+    std::cout << "# of prepended_items" << prepended_items.size() << "\n";
+    std::cout << "# of deleted_items" << deleted_items.size() << "\n";
+    std::cout << "# of ordered_items" << ordered_items.size() << "\n";
+  }
+#endif
+
  private:
 
   bool is_explicit{false};
@@ -386,7 +397,7 @@ class Path {
 
   void SetLocalPath(const Path &rhs) {
     //assert(rhs.valid == true);
-    
+
     this->local_part = rhs.local_part;
     this->valid = rhs.valid;
   }
@@ -1022,6 +1033,10 @@ class Value {
     path_list_op = d;
   }
 
+  const ListOp<Path> &GetPathListOp() const {
+    return path_list_op;
+  }
+
   // Getter for frequently used types.
   Specifier GetSpecifier() const {
     if (dtype.id == VALUE_TYPE_SPECIFIER) {
@@ -1039,6 +1054,20 @@ class Value {
     return NumVariabilities; // invalid
   }
 
+  bool GetBool(bool *ret) const {
+    if (ret == nullptr) {
+      return false;
+    }
+
+    if (dtype.id == VALUE_TYPE_BOOL) {
+      uint8_t d = *reinterpret_cast<const uint8_t *>(data.data());
+      (*ret) = bool(d);
+      return true;
+    }
+
+    return false;
+  }
+
   double GetDouble() const {
     if (dtype.id == VALUE_TYPE_DOUBLE) {
       double d = *reinterpret_cast<const double *>(data.data());
@@ -1046,7 +1075,29 @@ class Value {
     } else if (dtype.id == VALUE_TYPE_FLOAT) {
       float d = *reinterpret_cast<const float *>(data.data());
       return static_cast<double>(d);
-    } 
+    }
+    return std::numeric_limits<double>::quiet_NaN(); // invalid
+  }
+
+  bool GetInt(int *ret) const {
+
+    if (ret == nullptr) {
+      return false;
+    }
+
+    if (dtype.id == VALUE_TYPE_INT) {
+      float d = *reinterpret_cast<const int *>(data.data());
+      (*ret) = d;
+      return true;
+    }
+    return false;
+  }
+
+  float GetFloat() const {
+    if (dtype.id == VALUE_TYPE_FLOAT) {
+      float d = *reinterpret_cast<const float *>(data.data());
+      return d;
+    }
     return std::numeric_limits<double>::quiet_NaN(); // invalid
   }
 
@@ -1160,7 +1211,7 @@ struct BufferData
     if (data_type == BUFFER_DATA_TYPE_INVALID) {
       return false;
     }
- 
+
     return (data.size() > 0) && (num_coords > 0);
   }
 
@@ -1191,7 +1242,7 @@ struct BufferData
     return GetDataTypeByteSize(data_type) * size_t(num_coords);
   }
 
-  size_t GetNumElements() const { 
+  size_t GetNumElements() const {
     if (num_coords <= 0) {
       // TODO(syoyo): Report error
       return 0;
@@ -1218,8 +1269,33 @@ struct BufferData
     return stride;
   }
 
+  //
   // Utility functions
   //
+
+  float GetAsFloat() const {
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+        (GetNumCoords() == 1) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT) &&
+        (GetNumElements() == 1)) {
+
+      return *(reinterpret_cast<const float *>(data.data()));
+    }
+  }
+
+  std::array<float, 3> GetAsColor3f() const {
+    std::array<float, 3> buf;
+
+    if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
+        (GetNumCoords() == 3) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+    }
+
+    return buf;
+  }
+
   // Return empty array when required type mismatches.
   //
   std::vector<uint32_t> GetAsUInt32Array() const {
@@ -1301,19 +1377,49 @@ struct BufferData
 
     return buf;
   }
-  
-  
+
+
 };
 
+// We treat PrimVar as PrimAttrib(attributes) at the moment.
 struct PrimAttrib
 {
-  std::string name;
-  BufferData buffer;
+  std::string name; // attrib name
+
+  std::string type_name; // name of attrib type(e.g. "float', "color3f")
+
+  // For array data types(e.g. FloatArray)
+  BufferData buffer; // raw buffer data
   Variability variability;
   bool facevarying{false};
 
-  // For TokenString
-  std::string tokenString;
+
+  // For basic types(e.g. Bool, Float).
+
+  // "bool", "string", "float", "int", "uint", "int64", "uint64", "double" or "path"
+  // empty = array data type
+  std::string basic_type;
+
+  // TODO: Use union struct
+  bool boolVal;
+  int intVal;
+  uint32_t uintVal;
+  int64_t int64Val;
+  uint64_t uint64Val;
+  float floatVal;
+  double doubleVal;
+  std::string stringVal; // token, string
+  Path path;
+
+};
+
+// UsdPrimvarReader.
+// Currently for UV texture coordinate
+struct PrimvarReader
+{
+  std::string output_type = "float2"; // currently "float2" only.
+
+  int32_t input_id{-1}; // inputs:varname. Index to PrimVar in Primitive
 };
 
 // Predefined node class
@@ -1333,15 +1439,6 @@ struct Xform
 
 };
 
-// Vertex attributes. e.g. UV coords, vertex colors, etc.
-struct PrimVar
-{
-  std::string name;
-  BufferData buffer;
-  Variability variability;
-  bool facevarying{false};
-};
-
 struct UVCoords
 {
   std::string name;
@@ -1354,17 +1451,17 @@ struct UVCoords
 
 struct Extent
 {
-  std::array<float, 3> lower = {{
+  Vec3f lower{
     std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::infinity()
-  }};
+  };
 
-  std::array<float, 3> upper = {{
+  Vec3f upper{
     -std::numeric_limits<float>::infinity(),
     -std::numeric_limits<float>::infinity(),
     -std::numeric_limits<float>::infinity()
-  }};
+  };
 
 };
 
@@ -1395,14 +1492,14 @@ struct GeomMesh
   bool GetPoints(std::vector<float> *v) const;
 
   // Get `normals` as float3 array + facevarying
-  // Return false if `normals` is neither float3[] type nor `varying` 
+  // Return false if `normals` is neither float3[] type nor `varying`
   bool GetFacevaryingNormals(std::vector<float> *v) const;
 
   // Get `texcoords` as float2 array + facevarying
-  // Return false if `texcoords` is neither float2[] type nor `varying` 
+  // Return false if `texcoords` is neither float2[] type nor `varying`
   bool GetFacevaryingTexcoords(std::vector<float> *v) const;
 
-  // PrimVar
+  // PrimVar(TODO: Remove)
   UVCoords st;
 
   PrimAttrib velocitiess; // Usually float3[], varying
@@ -1420,7 +1517,6 @@ struct GeomMesh
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
-
   //
   // SubD attribs.
   //
@@ -1434,11 +1530,8 @@ struct GeomMesh
   SubdivisionScheme subdivisionScheme;
 
 
-  // User defined attribs
-  std::map<std::string, PrimAttrib> custom_attrs;
-
-  // List of Primitive variables.
-  std::map<std::string, PrimVar> primvars;
+  // List of Primitive attributes(primvars)
+  std::map<std::string, PrimAttrib> attrs;
 
 };
 
@@ -1467,6 +1560,8 @@ struct Color3OrTexture
   }
 
   std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
+
+  std::string path; // path to .connect(We only support texture file connection at the moment)
   int64_t texture_id{-1};
 
   bool HasTexture() const {
@@ -1482,6 +1577,8 @@ struct FloatOrTexture
   }
 
   float value{0.0f};
+
+  std::string path; // path to .connect(We only support texture file connection at the moment)
   int64_t texture_id{-1};
 
   bool HasTexture() const {
@@ -1510,6 +1607,7 @@ struct UsdTranform2d {
 // UsdUvTexture
 struct UVTexture {
 
+  std::string asset;  // asset name(usually file path)
   int64_t image_id{-1}; // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
 
   std::array<float, 2> st; // texture coordinate orientation. https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
@@ -1521,6 +1619,13 @@ struct UVTexture {
   std::array<float, 4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // bias to be applied to output texture value
 
   UsdTranform2d texture_transfom;
+
+  // key = connection name: e.g. "outputs:rgb"
+  // item = pair<type, name> : example: <"float3", "outputs:rgb">
+  std::map<std::string, std::pair<std::string, std::string>> outputs;
+
+  // UsdPrimvarReader_float2.
+  PrimvarReader texcoord_reader;
 };
 
 
@@ -1612,7 +1717,7 @@ struct Scene
   std::vector<Node> nodes; // Node hierarchies
 
   // Scene global setting
-  std::string upAxis = "Y"; 
+  std::string upAxis = "Y";
   std::string defaultPrim;  // prim node name
   double metersPerUnit = 1.0;  // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
@@ -1628,7 +1733,7 @@ struct Scene
   std::vector<Group> groups;
 
   // TODO(syoyo): User defined custom layer data
-  // "customLayerData" 
+  // "customLayerData"
 
 };
 
@@ -1644,13 +1749,22 @@ struct USDLoadOptions
   // This feature would be helpful if you want to load USDZ model in mobile device.
   int32_t max_memory_limit_in_mb{10000}; // in [mb] Default 10GB
 
+  ///
+  /// Loads asset data(e.g. texture image, audio). Default is true.
+  /// If you want to load asset data in your own way or don't need asset data to be loaded,
+  /// Set this false.
+  ///
+  bool load_assets{true};
+
 };
 
+#if 0 // TODO
 //struct USDWriteOptions
 //{
 //
 //
 //};
+#endif
 
 ///
 /// Load USDZ(zip) from a file.

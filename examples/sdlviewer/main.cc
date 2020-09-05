@@ -24,6 +24,8 @@
 #include "tinyusdz.hh"
 #include "trackball.h"
 
+#include "roboto_mono_embed.inc.h"
+
 // sdlviewer
 #include "gui.hh"
 
@@ -53,7 +55,7 @@ struct GUIContext {
   bool ctrl_pressed = false;
   bool tab_pressed = false;
 
-  float yaw = 90.0f; // for Z up scene 
+  float yaw = 90.0f; // for Z up scene
   float pitch = 0.0f;
   float roll = 0.0f;
 
@@ -361,6 +363,19 @@ int main(int argc, char** argv) {
 
   ImGui::CreateContext();
 
+  {
+    ImGuiIO& io = ImGui::GetIO();
+
+    ImFontConfig roboto_config;
+    strcpy(roboto_config.Name, "Roboto");
+
+    float font_size = 18.0f;
+    io.Fonts->AddFontFromMemoryCompressedTTF(roboto_mono_compressed_data,
+                                             roboto_mono_compressed_size,
+                                             font_size, &roboto_config);
+  }
+
+
   ImGuiSDL::Initialize(renderer, 1600, 800);
   // ImGui_ImplGlfw_InitForOpenGL(window, true);
   // ImGui_ImplOpenGL2_Init();
@@ -457,7 +472,7 @@ int main(int argc, char** argv) {
     bool update = false;
 
     bool update_display = false;
-      
+
     if (example::ImGuiComboUI("aov", aov_name, aov_list)) {
       gui_ctx.aov_mode = aov_list[aov_name];
       update_display = true;

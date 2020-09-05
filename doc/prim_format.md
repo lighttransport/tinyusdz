@@ -6,6 +6,7 @@
 * primvars:st : usually vec2f[] varying
 * primvars:st:indices : usually int[]  varying
 * velocities : usually vec3f[]
+* texcoord: usually `texCoord2f[]` (Texcoord bound to Mesh prim) 
 
 
 ### Mesh property
@@ -58,6 +59,12 @@
 * inputs:fallback : fallback color(Usually vec4f)
 * inputs:file : @filename@
 
+### Texcoord reader
+
+`UsdPrimvarReader_float2`
+
+* inputs:varname(token) : Name of UV coordinate primvar in Mesh primitive.
+* outputs:<name>(float2) : Output connection name. Usually `outputs:result`
 
 ## TODO
 
