@@ -1104,7 +1104,7 @@ class Value {
     }
 
     if (dtype.id == VALUE_TYPE_INT) {
-      float d = *reinterpret_cast<const int *>(data.data());
+      int d = *reinterpret_cast<const int *>(data.data());
       (*ret) = d;
       return true;
     }
@@ -1302,6 +1302,8 @@ struct BufferData
 
       return *(reinterpret_cast<const float *>(data.data()));
     }
+
+    return std::numeric_limits<float>::quiet_NaN();
   }
 
   std::array<float, 3> GetAsColor3f() const {
@@ -1323,7 +1325,7 @@ struct BufferData
 
     if (((GetStride() == 0) || (GetStride() == sizeof(uint32_t))) &&
         (GetDataType() == BUFFER_DATA_TYPE_UNSIGNED_INT)) {
-      buf.resize(GetNumElements() * GetNumCoords());
+      buf.resize(GetNumElements() * size_t(GetNumCoords()));
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "buf.size = " << buf.size() << "\n";
 #endif
@@ -1338,7 +1340,7 @@ struct BufferData
 
     if (((GetStride() == 0) || (GetStride() == sizeof(int32_t))) &&
         (GetDataType() == BUFFER_DATA_TYPE_INT)) {
-      buf.resize(GetNumElements() * GetNumCoords());
+      buf.resize(GetNumElements() * size_t(GetNumCoords()));
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "buf.size = " << buf.size() << "\n";
 #endif
@@ -1353,7 +1355,7 @@ struct BufferData
 
     if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
         (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      buf.resize(GetNumElements() * GetNumCoords());
+      buf.resize(GetNumElements() * size_t(GetNumCoords()));
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
 
