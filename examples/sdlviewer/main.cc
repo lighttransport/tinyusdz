@@ -312,7 +312,6 @@ int main(int argc, char** argv) {
     bool ret = tinyusdz::LoadUSDZFromFile(filename, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
     }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
@@ -327,7 +326,6 @@ int main(int argc, char** argv) {
     bool ret = tinyusdz::LoadUSDCFromFile(filename, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
     }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
@@ -477,6 +475,12 @@ int main(int argc, char** argv) {
       gui_ctx.aov_mode = aov_list[aov_name];
       update_display = true;
     }
+
+    //update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
+    //update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
+    //update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
+    update |= ImGui::SliderFloat("eye.z", &gui_ctx.camera.eye[2], -1000.0, 1000.0f);
+    update |= ImGui::SliderFloat("fov", &gui_ctx.camera.fov, 0.01f, 140.0f);
 
     // TODO: Validate coordinate definition.
     if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -360.0f, 360.0f)) {

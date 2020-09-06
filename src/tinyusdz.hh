@@ -621,6 +621,16 @@ enum Variability {
   NumVariabilities
 };
 
+// forward decl
+class Value;
+
+struct TimeSamples
+{
+  std::vector<double> times;
+  std::vector<Value> values;
+};
+
+
 ///
 /// Represent value.
 /// multi-dimensional type is not supported(e.g. float[][])
@@ -1033,6 +1043,14 @@ class Value {
     path_list_op = d;
   }
 
+  void SetTimeSamples(const TimeSamples &d) {
+    dtype.name = "TimeSamples";
+    dtype.id = VALUE_TYPE_TIME_SAMPLES;
+    // FIXME(syoyo): How to determine array length?
+    // array_length = int64_t(d.size());
+    time_samples = d;
+  }
+
   const ListOp<Path> &GetPathListOp() const {
     return path_list_op;
   }
@@ -1170,6 +1188,8 @@ class Value {
   ListOp<uint32_t> int64_list_op;
   ListOp<int64_t> uint_list_op;
   ListOp<uint64_t> uint64_list_op;
+
+  TimeSamples time_samples;
 };
 
 //
@@ -1302,9 +1322,11 @@ struct BufferData
     std::vector<uint32_t> buf;
 
     if (((GetStride() == 0) || (GetStride() == sizeof(uint32_t))) &&
-        (GetNumCoords() == 1) &&
         (GetDataType() == BUFFER_DATA_TYPE_UNSIGNED_INT)) {
-      buf.resize(GetNumElements());
+      buf.resize(GetNumElements() * GetNumCoords());
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "buf.size = " << buf.size() << "\n";
+#endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(uint32_t));
     }
 
@@ -1315,9 +1337,11 @@ struct BufferData
     std::vector<int32_t> buf;
 
     if (((GetStride() == 0) || (GetStride() == sizeof(int32_t))) &&
-        (GetNumCoords() == 1) &&
         (GetDataType() == BUFFER_DATA_TYPE_INT)) {
-      buf.resize(GetNumElements());
+      buf.resize(GetNumElements() * GetNumCoords());
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "buf.size = " << buf.size() << "\n";
+#endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(int32_t));
     }
 
@@ -1328,9 +1352,8 @@ struct BufferData
     std::vector<float> buf;
 
     if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
-        (GetNumCoords() == 1) &&
         (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      buf.resize(GetNumElements());
+      buf.resize(GetNumElements() * GetNumCoords());
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
 
@@ -1381,6 +1404,18 @@ struct BufferData
 
 };
 
+struct ConnectionPath
+{
+  bool input{false}; // true: Input connection. false: Ouput connection. 
+
+  Path path; // original Path information in USD
+
+  std::string token; // token(or string) in USD
+  int64_t index{-1}; // corresponding array index(e.g. the array index to `Scene.shaders`)
+};
+
+// PrimAttrib is a struct to hold attributes of the object.
+// (e.g. property, PrimVar).
 // We treat PrimVar as PrimAttrib(attributes) at the moment.
 struct PrimAttrib
 {
@@ -1413,13 +1448,14 @@ struct PrimAttrib
 
 };
 
-// UsdPrimvarReader.
+// UsdPrimvarReader_float2.
 // Currently for UV texture coordinate
 struct PrimvarReader
 {
   std::string output_type = "float2"; // currently "float2" only.
+  std::array<float, 2> fallback{0.0f, 0.0f}; // fallback value
 
-  int32_t input_id{-1}; // inputs:varname. Index to PrimVar in Primitive
+  ConnectionPath varname; // Name of the primvar to be fetched from the geometry.
 };
 
 // Predefined node class
@@ -1531,7 +1567,7 @@ struct GeomMesh
 
 
   // List of Primitive attributes(primvars)
-  std::map<std::string, PrimAttrib> attrs;
+  std::map<std::string, PrimAttrib> attribs;
 
 };
 
@@ -1610,7 +1646,6 @@ struct UVTexture {
   std::string asset;  // asset name(usually file path)
   int64_t image_id{-1}; // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
 
-  std::array<float, 2> st; // texture coordinate orientation. https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
   TextureWrap wrapS;
   TextureWrap wrapT;
 
@@ -1618,14 +1653,18 @@ struct UVTexture {
   std::array<float, 4> scale{{1.0f, 1.0f, 1.0f, 1.0f}}; // scale to be applied to output texture value
   std::array<float, 4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // bias to be applied to output texture value
 
-  UsdTranform2d texture_transfom;
+  UsdTranform2d texture_transfom; // texture coordinate orientation. 
+
 
   // key = connection name: e.g. "outputs:rgb"
   // item = pair<type, name> : example: <"float3", "outputs:rgb">
   std::map<std::string, std::pair<std::string, std::string>> outputs;
 
-  // UsdPrimvarReader_float2.
-  PrimvarReader texcoord_reader;
+  PrimvarReader st; // texture coordinate(`inputs:st`). We assume there is a connection to this.
+
+  // TODO: orientation?
+  // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
+
 };
 
 
