@@ -834,6 +834,12 @@ class Parser {
   bool _ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
                        const std::string &prop_name);
 
+  bool _ReconstructXform(const Node &node,
+                         const FieldValuePairVector &fields,
+                         const std::unordered_map<uint32_t, uint32_t>
+                             &path_index_to_spec_index_map,
+                         Xform *xform);
+
   bool _ReconstructGeomMesh(const Node &node,
                             const FieldValuePairVector &fields,
                             const std::unordered_map<uint32_t, uint32_t>
@@ -3539,6 +3545,80 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
   return success;
 }
 
+bool Parser::_ReconstructXform(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    Xform *xform) {
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+    }
+  }
+
+  //
+  // NOTE: Currently we assume one deeper node has Xform's attribute
+  //
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      // Should we report an error?
+      continue;
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index << "\n";
+#endif
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+      PrimAttrib attr;
+      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "Xform: prop: " << prop_name << ", ret = " << ret << "\n";
+#endif
+      if (ret) {
+        // TODO(syoyo): Implement
+      }
+    }
+  }
+
+  return true;
+}
+
 bool Parser::_ReconstructGeomMesh(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
@@ -4307,7 +4387,15 @@ bool Parser::_ReconstructSceneRecursively(
     }
   }
 
-  if (node_type == "Mesh") {
+  if (node_type == "Xform") {
+    Xform xform;
+    if (!_ReconstructXform(node, fields, path_index_to_spec_index_map,
+                           &xform)) {
+      _err += "Failed to reconstruct Xform.\n";
+      return false;
+    }
+    scene->xforms.push_back(xform);
+  } else if (node_type == "Mesh") {
     GeomMesh mesh;
     if (!_ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
                               &mesh)) {

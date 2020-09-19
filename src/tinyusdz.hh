@@ -28,32 +28,33 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef TINYUSDZ_HH_
 #define TINYUSDZ_HH_
 
-#include <string>
-#include <vector>
 #include <array>
 #include <cstring>
-#include <map>
 #include <limits>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
 
 #define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
-#include <iostream> // dbg
+#include <iostream>  // dbg
 #endif
 
 namespace tinyusdz {
 
 // Simple image class.
-// No colorspace conversion will be applied when decoding image data(e.g. from .jpg, .png).
+// No colorspace conversion will be applied when decoding image data(e.g. from
+// .jpg, .png).
 // TODO(syoyo): Add option to decode image into linear space.
 struct Image {
+  std::string uri;  // filename or uri;
 
-  std::string uri; // filename or uri;
-
-  int width{-1}; // -1 = invalid
-  int height{-1}; // -1 = invalid
-  int channels{-1}; // Image channels. 3=RGB, 4=RGBA. -1 = invalid
-  int bpp{-1}; // bits per pixel. 8=LDR, 16=HDR
+  int width{-1};     // -1 = invalid
+  int height{-1};    // -1 = invalid
+  int channels{-1};  // Image channels. 3=RGB, 4=RGBA. -1 = invalid
+  int bpp{-1};       // bits per pixel. 8=LDR, 16=HDR
 
   std::vector<uint8_t> data;
 };
@@ -100,10 +101,8 @@ union float16 {
 float half_to_float(float16 h);
 float16 float_to_half_full(float f);
 
-
-template<typename T, size_t N>
-struct Matrix
-{
+template <typename T, size_t N>
+struct Matrix {
   T m[N][N];
   constexpr static uint32_t n = N;
 };
@@ -136,7 +135,8 @@ using Vec2d = std::array<double, 2>;
 using Quath = std::array<uint16_t, 4>;
 using Quatf = std::array<float, 4>;
 using Quatd = std::array<double, 4>;
-using Quaternion = std::array<double, 4>; // Storage layout is same with Quadd, so we can delete this
+using Quaternion = std::array<double, 4>;  // Storage layout is same with Quadd,
+                                           // so we can delete this
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
 
@@ -171,8 +171,7 @@ using Quaternion = std::array<double, 4>; // Storage layout is same with Quadd, 
 */
 
 template <typename T>
-class ListOp
-{
+class ListOp {
  public:
   ListOp() : is_explicit(false) {}
 
@@ -187,77 +186,41 @@ class ListOp
     is_explicit = true;
   }
 
-  bool HasExplicitItems() const {
-    return explicit_items.size();
-  }
+  bool HasExplicitItems() const { return explicit_items.size(); }
 
-  bool HasAddedItems() const {
-    return added_items.size();
-  }
+  bool HasAddedItems() const { return added_items.size(); }
 
-  bool HasPrependedItems() const {
-    return prepended_items.size();
-  }
+  bool HasPrependedItems() const { return prepended_items.size(); }
 
-  bool HasAppendedItems() const {
-    return appended_items.size();
-  }
+  bool HasAppendedItems() const { return appended_items.size(); }
 
-  bool HasDeletedItems() const {
-    return deleted_items.size();
-  }
+  bool HasDeletedItems() const { return deleted_items.size(); }
 
-  bool HasOrderedItems() const {
-    return deleted_items.size();
-  }
+  bool HasOrderedItems() const { return deleted_items.size(); }
 
-  const std::vector<T> &GetExplicitItems() const {
-    return explicit_items;
-  }
+  const std::vector<T> &GetExplicitItems() const { return explicit_items; }
 
-  const std::vector<T> &GetAddedItems() const {
-    return added_items;
-  }
+  const std::vector<T> &GetAddedItems() const { return added_items; }
 
-  const std::vector<T> &GetPrependedItems() const {
-    return prepended_items;
-  }
+  const std::vector<T> &GetPrependedItems() const { return prepended_items; }
 
-  const std::vector<T> &GetAppendedItems() const {
-    return appended_items;
-  }
+  const std::vector<T> &GetAppendedItems() const { return appended_items; }
 
-  const std::vector<T> &GetDeletedItems() const {
-    return deleted_items;
-  }
+  const std::vector<T> &GetDeletedItems() const { return deleted_items; }
 
-  const std::vector<T> &GetOrderedItems() const {
-    return ordered_items;
-  }
+  const std::vector<T> &GetOrderedItems() const { return ordered_items; }
 
-  void SetExplicitItems(const std::vector<T> &v) {
-    explicit_items = v;
-  }
+  void SetExplicitItems(const std::vector<T> &v) { explicit_items = v; }
 
-  void SetAddedItems(const std::vector<T> &v) {
-    added_items = v;
-  }
+  void SetAddedItems(const std::vector<T> &v) { added_items = v; }
 
-  void SetPrependedItems(const std::vector<T> &v) {
-    prepended_items = v;
-  }
+  void SetPrependedItems(const std::vector<T> &v) { prepended_items = v; }
 
-  void SetAppendedItems(const std::vector<T> &v) {
-    appended_items = v;
-  }
+  void SetAppendedItems(const std::vector<T> &v) { appended_items = v; }
 
-  void SetDeletedItems(const std::vector<T> &v) {
-    deleted_items = v;
-  }
+  void SetDeletedItems(const std::vector<T> &v) { deleted_items = v; }
 
-  void SetOrderedItems(const std::vector<T> &v) {
-    ordered_items = v;
-  }
+  void SetOrderedItems(const std::vector<T> &v) { ordered_items = v; }
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
   void Print() const {
@@ -271,7 +234,6 @@ class ListOp
 #endif
 
  private:
-
   bool is_explicit{false};
   std::vector<T> explicit_items;
   std::vector<T> added_items;
@@ -282,38 +244,40 @@ class ListOp
 };
 
 struct ListOpHeader {
-    enum Bits { IsExplicitBit = 1 << 0,
-                 HasExplicitItemsBit = 1 << 1,
-                 HasAddedItemsBit = 1 << 2,
-                 HasDeletedItemsBit = 1 << 3,
-                 HasOrderedItemsBit = 1 << 4,
-                 HasPrependedItemsBit = 1 << 5,
-                 HasAppendedItemsBit = 1 << 6 };
+  enum Bits {
+    IsExplicitBit = 1 << 0,
+    HasExplicitItemsBit = 1 << 1,
+    HasAddedItemsBit = 1 << 2,
+    HasDeletedItemsBit = 1 << 3,
+    HasOrderedItemsBit = 1 << 4,
+    HasPrependedItemsBit = 1 << 5,
+    HasAppendedItemsBit = 1 << 6
+  };
 
-    ListOpHeader() : bits(0) {}
+  ListOpHeader() : bits(0) {}
 
-    explicit ListOpHeader(uint8_t b) : bits(b) { }
+  explicit ListOpHeader(uint8_t b) : bits(b) {}
 
-    explicit ListOpHeader(ListOpHeader const &op) : bits(0) {
-        bits |= op.IsExplicit() ? IsExplicitBit : 0;
-        bits |= op.HasExplicitItems() ? HasExplicitItemsBit : 0;
-        bits |= op.HasAddedItems() ? HasAddedItemsBit : 0;
-        bits |= op.HasPrependedItems() ? HasPrependedItemsBit : 0;
-        bits |= op.HasAppendedItems() ? HasAppendedItemsBit : 0;
-        bits |= op.HasDeletedItems() ? HasDeletedItemsBit : 0;
-        bits |= op.HasOrderedItems() ? HasOrderedItemsBit : 0;
-    }
+  explicit ListOpHeader(ListOpHeader const &op) : bits(0) {
+    bits |= op.IsExplicit() ? IsExplicitBit : 0;
+    bits |= op.HasExplicitItems() ? HasExplicitItemsBit : 0;
+    bits |= op.HasAddedItems() ? HasAddedItemsBit : 0;
+    bits |= op.HasPrependedItems() ? HasPrependedItemsBit : 0;
+    bits |= op.HasAppendedItems() ? HasAppendedItemsBit : 0;
+    bits |= op.HasDeletedItems() ? HasDeletedItemsBit : 0;
+    bits |= op.HasOrderedItems() ? HasOrderedItemsBit : 0;
+  }
 
-    bool IsExplicit() const { return bits & IsExplicitBit; }
+  bool IsExplicit() const { return bits & IsExplicitBit; }
 
-    bool HasExplicitItems() const { return bits & HasExplicitItemsBit; }
-    bool HasAddedItems() const { return bits & HasAddedItemsBit; }
-    bool HasPrependedItems() const { return bits & HasPrependedItemsBit; }
-    bool HasAppendedItems() const { return bits & HasAppendedItemsBit; }
-    bool HasDeletedItems() const { return bits & HasDeletedItemsBit; }
-    bool HasOrderedItems() const { return bits & HasOrderedItemsBit; }
+  bool HasExplicitItems() const { return bits & HasExplicitItemsBit; }
+  bool HasAddedItems() const { return bits & HasAddedItemsBit; }
+  bool HasPrependedItems() const { return bits & HasPrependedItemsBit; }
+  bool HasAppendedItems() const { return bits & HasAppendedItemsBit; }
+  bool HasDeletedItems() const { return bits & HasDeletedItemsBit; }
+  bool HasOrderedItems() const { return bits & HasOrderedItemsBit; }
 
-    uint8_t bits;
+  uint8_t bits;
 };
 
 ///
@@ -340,8 +304,9 @@ struct ListOpHeader {
 class Path {
  public:
   Path() : valid(false) {}
-  Path(const std::string &prim) : prim_part(prim), local_part(prim), valid(true) {}
-  //Path(const std::string &prim, const std::string &prop)
+  Path(const std::string &prim)
+      : prim_part(prim), local_part(prim), valid(true) {}
+  // Path(const std::string &prim, const std::string &prop)
   //    : prim_part(prim), prop_part(prop) {}
 
   Path(const Path &rhs) = default;
@@ -383,20 +348,16 @@ class Path {
     return s;
   }
 
-  std::string GetPrimPart() const {
-    return prim_part;
-  }
+  std::string GetPrimPart() const { return prim_part; }
 
-  std::string GetPropPart() const {
-    return prop_part;
-  }
+  std::string GetPropPart() const { return prop_part; }
 
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
   static Path AbsoluteRootPath() { return Path("/"); }
 
   void SetLocalPath(const Path &rhs) {
-    //assert(rhs.valid == true);
+    // assert(rhs.valid == true);
 
     this->local_part = rhs.local_part;
     this->valid = rhs.valid;
@@ -419,7 +380,7 @@ class Path {
       p.valid = false;
       return p;
     } else if (elem[0] == '.') {
-      //std::cerr << "???. elem[0] is '.'\n";
+      // std::cerr << "???. elem[0] is '.'\n";
       // For a while, make this valid.
       p.valid = false;
       return p;
@@ -447,12 +408,12 @@ class Path {
       p.valid = false;
       return p;
     } else if (elem[0] == '.') {
-      //std::cerr << "???. elem[0] is '.'\n";
+      // std::cerr << "???. elem[0] is '.'\n";
       // For a while, make this valid.
       p.valid = false;
       return p;
     } else {
-      //std::cout << "elem " << elem << "\n";
+      // std::cout << "elem " << elem << "\n";
       if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
         p.prim_part += elem;
       } else {
@@ -466,15 +427,13 @@ class Path {
   bool IsValid() const { return valid; }
 
  private:
-  std::string prim_part; // full path
-  std::string prop_part; // full path
+  std::string prim_part;  // full path
+  std::string prop_part;  // full path
   std::string local_part;
   bool valid{false};
 };
 
-
-enum ValueTypeId
-{
+enum ValueTypeId {
   VALUE_TYPE_INVALID = 0,
 
   VALUE_TYPE_BOOL = 1,
@@ -547,7 +506,8 @@ enum ValueTypeId
 };
 
 struct ValueType {
-  ValueType() : name("Invalid"), id(VALUE_TYPE_INVALID), supports_array(false) {}
+  ValueType()
+      : name("Invalid"), id(VALUE_TYPE_INVALID), supports_array(false) {}
   ValueType(const std::string &n, uint32_t i, bool a)
       : name(n), id(ValueTypeId(i)), supports_array(a) {}
 
@@ -572,29 +532,25 @@ enum SpecType {
   NumSpecTypes
 };
 
-enum Orientation
-{
-  OrientationRightHanded, // 0
+enum Orientation {
+  OrientationRightHanded,  // 0
   OrientationLeftHanded,
 };
 
-enum Visibility
-{
-  VisibilityInherited, // 0
+enum Visibility {
+  VisibilityInherited,  // 0
   VisibilityInvisible,
 };
 
-enum Purpose
-{
-  PurposeDefault, // 0
+enum Purpose {
+  PurposeDefault,  // 0
   PurposeRender,
   PurposeProxy,
   PurposeGuide,
 };
 
-enum SubdivisionScheme
-{
-  SubdivisionSchemeCatmullClark, // 0
+enum SubdivisionScheme {
+  SubdivisionSchemeCatmullClark,  // 0
   SubdivisionSchemeLoop,
   SubdivisionSchemeBilinear,
   SubdivisionSchemeNone,
@@ -624,12 +580,10 @@ enum Variability {
 // forward decl
 class Value;
 
-struct TimeSamples
-{
+struct TimeSamples {
   std::vector<double> times;
   std::vector<Value> values;
 };
-
 
 ///
 /// Represent value.
@@ -641,13 +595,15 @@ class Value {
 
   Value() = default;
 
-  Value(const ValueType &_dtype, const std::vector<uint8_t> &_data) :
-    dtype(_dtype), data(_data), array_length(-1) {}
-  Value(const ValueType &_dtype, const std::vector<uint8_t> &_data, uint64_t _array_length) :
-    dtype(_dtype), data(_data), array_length(int64_t(_array_length)) {}
+  Value(const ValueType &_dtype, const std::vector<uint8_t> &_data)
+      : dtype(_dtype), data(_data), array_length(-1) {}
+  Value(const ValueType &_dtype, const std::vector<uint8_t> &_data,
+        uint64_t _array_length)
+      : dtype(_dtype), data(_data), array_length(int64_t(_array_length)) {}
 
   bool IsArray() const {
-    if ((array_length > 0) || string_array.size() || (dtype.id == VALUE_TYPE_PATH_LIST_OP)) {
+    if ((array_length > 0) || string_array.size() ||
+        (dtype.id == VALUE_TYPE_PATH_LIST_OP)) {
       return true;
     }
     return false;
@@ -823,7 +779,7 @@ class Value {
   }
 
   void SetQuath(const Quath v) {
-    static_assert(sizeof(Quath) == (2*4), "");
+    static_assert(sizeof(Quath) == (2 * 4), "");
     dtype.name = "Quath";
     dtype.id = VALUE_TYPE_QUATH;
     data.resize(sizeof(Quath));
@@ -831,7 +787,7 @@ class Value {
   }
 
   void SetQuatf(const Quatf v) {
-    static_assert(sizeof(Quatf) == (4*4), "");
+    static_assert(sizeof(Quatf) == (4 * 4), "");
     dtype.name = "Quatf";
     dtype.id = VALUE_TYPE_QUATF;
     data.resize(sizeof(Quatf));
@@ -839,7 +795,7 @@ class Value {
   }
 
   void SetQuatd(const Quatd v) {
-    static_assert(sizeof(Quatd) == (8*4), "");
+    static_assert(sizeof(Quatd) == (8 * 4), "");
     dtype.name = "Quatd";
     dtype.id = VALUE_TYPE_QUATD;
     data.resize(sizeof(Quatd));
@@ -847,7 +803,7 @@ class Value {
   }
 
   void SetMatrix2d(const Matrix2d v) {
-    static_assert(sizeof(Matrix2d) == (2*2*8), "");
+    static_assert(sizeof(Matrix2d) == (2 * 2 * 8), "");
     dtype.name = "Matrix2d";
     dtype.id = VALUE_TYPE_MATRIX2D;
     data.resize(sizeof(Matrix2d));
@@ -855,7 +811,7 @@ class Value {
   }
 
   void SetMatrix3d(const Matrix3d v) {
-    static_assert(sizeof(Matrix3d) == (3*3*8), "");
+    static_assert(sizeof(Matrix3d) == (3 * 3 * 8), "");
     dtype.name = "Matrix3d";
     dtype.id = VALUE_TYPE_MATRIX3D;
     data.resize(sizeof(Matrix3d));
@@ -863,7 +819,7 @@ class Value {
   }
 
   void SetMatrix4d(const Matrix4d v) {
-    static_assert(sizeof(Matrix4d) == (4*4*8), "");
+    static_assert(sizeof(Matrix4d) == (4 * 4 * 8), "");
     dtype.name = "Matrix4d";
     dtype.id = VALUE_TYPE_MATRIX4D;
     data.resize(sizeof(Matrix4d));
@@ -873,21 +829,23 @@ class Value {
   void SetToken(const std::string &s) {
     dtype.name = "Token";
     dtype.id = VALUE_TYPE_TOKEN;
-    data.resize(s.size()); // No '\0'
+    data.resize(s.size());  // No '\0'
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
   void SetString(const std::string &s) {
     dtype.name = "String";
-    dtype.id = VALUE_TYPE_STRING; // we treat String as std::string, not StringIndex
-    data.resize(s.size()); // No '\0'
+    dtype.id =
+        VALUE_TYPE_STRING;  // we treat String as std::string, not StringIndex
+    data.resize(s.size());  // No '\0'
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
   void SetAssetPath(const std::string &s) {
     dtype.name = "AssetPath";
-    dtype.id = VALUE_TYPE_ASSET_PATH; // we treat AssetPath as std::string, not TokenIndex
-    data.resize(s.size()); // No '\0'
+    dtype.id = VALUE_TYPE_ASSET_PATH;  // we treat AssetPath as std::string, not
+                                       // TokenIndex
+    data.resize(s.size());             // No '\0'
     memcpy(data.data(), reinterpret_cast<const void *>(&s[0]), s.size());
   }
 
@@ -920,7 +878,8 @@ class Value {
     dtype.id = VALUE_TYPE_INT;
     array_length = int64_t(n);
     data.resize(n * sizeof(uint32_t));
-    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(uint32_t));
+    memcpy(data.data(), reinterpret_cast<const void *>(d),
+           n * sizeof(uint32_t));
   }
 
   void SetHalfArray(const uint16_t *d, const size_t n) {
@@ -928,7 +887,8 @@ class Value {
     dtype.id = VALUE_TYPE_HALF;
     array_length = int64_t(n);
     data.resize(n * sizeof(uint16_t));
-    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(uint16_t));
+    memcpy(data.data(), reinterpret_cast<const void *>(d),
+           n * sizeof(uint16_t));
   }
 
   void SetFloatArray(const float *d, const size_t n) {
@@ -1051,9 +1011,7 @@ class Value {
     time_samples = d;
   }
 
-  const ListOp<Path> &GetPathListOp() const {
-    return path_list_op;
-  }
+  const ListOp<Path> &GetPathListOp() const { return path_list_op; }
 
   // Getter for frequently used types.
   Specifier GetSpecifier() const {
@@ -1061,7 +1019,7 @@ class Value {
       uint32_t d = *reinterpret_cast<const uint32_t *>(data.data());
       return static_cast<Specifier>(d);
     }
-    return NumSpecifiers; // invalid
+    return NumSpecifiers;  // invalid
   }
 
   Variability GetVariability() const {
@@ -1069,7 +1027,7 @@ class Value {
       uint32_t d = *reinterpret_cast<const uint32_t *>(data.data());
       return static_cast<Variability>(d);
     }
-    return NumVariabilities; // invalid
+    return NumVariabilities;  // invalid
   }
 
   bool GetBool(bool *ret) const {
@@ -1094,11 +1052,10 @@ class Value {
       float d = *reinterpret_cast<const float *>(data.data());
       return static_cast<double>(d);
     }
-    return std::numeric_limits<double>::quiet_NaN(); // invalid
+    return std::numeric_limits<double>::quiet_NaN();  // invalid
   }
 
   bool GetInt(int *ret) const {
-
     if (ret == nullptr) {
       return false;
     }
@@ -1116,7 +1073,7 @@ class Value {
       float d = *reinterpret_cast<const float *>(data.data());
       return d;
     }
-    return std::numeric_limits<double>::quiet_NaN(); // invalid
+    return std::numeric_limits<double>::quiet_NaN();  // invalid
   }
 
   std::string GetToken() const {
@@ -1135,9 +1092,7 @@ class Value {
     return std::string();
   }
 
-  size_t GetArrayLength() const {
-    return size_t(array_length);
-  }
+  size_t GetArrayLength() const { return size_t(array_length); }
 
   const std::vector<std::string> &GetStringArray() const {
     return string_array;
@@ -1148,32 +1103,23 @@ class Value {
     return data;
   }
 
-  const std::string &GetTypeName() const {
-    return dtype.name;
-  }
+  const std::string &GetTypeName() const { return dtype.name; }
 
-  const ValueTypeId &GetTypeId() const {
-    return dtype.id;
-  }
+  const ValueTypeId &GetTypeId() const { return dtype.id; }
 
-  bool IsDictionary() const {
-    return dtype.id == VALUE_TYPE_DICTIONARY;
-  }
+  bool IsDictionary() const { return dtype.id == VALUE_TYPE_DICTIONARY; }
 
   void SetDictionary(const Dictionary &d) {
     // Dictonary has separated storage
     dict = d;
   }
 
-  const Dictionary &GetDictionary() const {
-    return dict;
-  }
-
+  const Dictionary &GetDictionary() const { return dict; }
 
  private:
   ValueType dtype;
   std::string string_value;
-  std::vector<uint8_t> data; // value as opaque binary data.
+  std::vector<uint8_t> data;  // value as opaque binary data.
   int64_t array_length{-1};
 
   // Dictonary, ListOp and array of string has separated storage
@@ -1198,8 +1144,7 @@ class Value {
 // Similar to OpenGL BufferData
 //
 //
-struct BufferData
-{
+struct BufferData {
   enum DataType {
     BUFFER_DATA_TYPE_INVALID,
     BUFFER_DATA_TYPE_UNSIGNED_BYTE,
@@ -1215,12 +1160,16 @@ struct BufferData
     BUFFER_DATA_TYPE_DOUBLE,
   };
 
-  std::vector<uint8_t> data;   // Opaque byte data.
-  size_t stride{0};  // byte stride for each element. e.g. 12 for XYZXYZXYZ... data. 0 = app should calculate byte stride from type and `num_coords`.
-  int32_t num_coords{-1}; // The number of coordinates. e.g. 3 for XYZ, RGB data, 4 for RGBA. -1 = invalid
+  std::vector<uint8_t> data;  // Opaque byte data.
+  size_t stride{
+      0};  // byte stride for each element. e.g. 12 for XYZXYZXYZ... data. 0 =
+           // app should calculate byte stride from type and `num_coords`.
+  int32_t num_coords{-1};  // The number of coordinates. e.g. 3 for XYZ, RGB
+                           // data, 4 for RGBA. -1 = invalid
   DataType data_type{BUFFER_DATA_TYPE_INVALID};
 
-  void Set(DataType ty, int32_t c, size_t _stride, const std::vector<uint8_t> &_data) {
+  void Set(DataType ty, int32_t c, size_t _stride,
+           const std::vector<uint8_t> &_data) {
     data_type = ty;
     num_coords = c;
     stride = _stride;
@@ -1237,20 +1186,32 @@ struct BufferData
 
   size_t GetDataTypeByteSize(DataType ty) const {
     switch (ty) {
-      case BUFFER_DATA_TYPE_INVALID: return 0;
-      case BUFFER_DATA_TYPE_BYTE: return 1;
-      case BUFFER_DATA_TYPE_UNSIGNED_BYTE: return 1;
-      case BUFFER_DATA_TYPE_SHORT: return 2;
-      case BUFFER_DATA_TYPE_UNSIGNED_SHORT: return 2;
-      case BUFFER_DATA_TYPE_INT: return 4;
-      case BUFFER_DATA_TYPE_UNSIGNED_INT: return 4;
-      case BUFFER_DATA_TYPE_INT64: return 8;
-      case BUFFER_DATA_TYPE_UNSIGNED_INT64: return 8;
-      case BUFFER_DATA_TYPE_HALF: return 2;
-      case BUFFER_DATA_TYPE_FLOAT: return 4;
-      case BUFFER_DATA_TYPE_DOUBLE: return 8;
+      case BUFFER_DATA_TYPE_INVALID:
+        return 0;
+      case BUFFER_DATA_TYPE_BYTE:
+        return 1;
+      case BUFFER_DATA_TYPE_UNSIGNED_BYTE:
+        return 1;
+      case BUFFER_DATA_TYPE_SHORT:
+        return 2;
+      case BUFFER_DATA_TYPE_UNSIGNED_SHORT:
+        return 2;
+      case BUFFER_DATA_TYPE_INT:
+        return 4;
+      case BUFFER_DATA_TYPE_UNSIGNED_INT:
+        return 4;
+      case BUFFER_DATA_TYPE_INT64:
+        return 8;
+      case BUFFER_DATA_TYPE_UNSIGNED_INT64:
+        return 8;
+      case BUFFER_DATA_TYPE_HALF:
+        return 2;
+      case BUFFER_DATA_TYPE_FLOAT:
+        return 4;
+      case BUFFER_DATA_TYPE_DOUBLE:
+        return 8;
     }
-    return 0; // Should not reach here.
+    return 0;  // Should not reach here.
   }
 
   size_t GetElementByteSize() const {
@@ -1277,29 +1238,20 @@ struct BufferData
     return n;
   }
 
-  int32_t GetNumCoords() const {
-    return num_coords;
-  }
+  int32_t GetNumCoords() const { return num_coords; }
 
-  DataType GetDataType() const {
-    return data_type;
-  }
+  DataType GetDataType() const { return data_type; }
 
-  size_t GetStride() const {
-    return stride;
-  }
+  size_t GetStride() const { return stride; }
 
   //
   // Utility functions
   //
 
   float GetAsFloat() const {
-
     if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
-        (GetNumCoords() == 1) &&
-        (GetDataType() == BUFFER_DATA_TYPE_FLOAT) &&
+        (GetNumCoords() == 1) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT) &&
         (GetNumElements() == 1)) {
-
       return *(reinterpret_cast<const float *>(data.data()));
     }
   }
@@ -1308,8 +1260,7 @@ struct BufferData
     std::array<float, 3> buf;
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
-        (GetNumCoords() == 3) &&
-        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+        (GetNumCoords() == 3) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
 
@@ -1364,8 +1315,7 @@ struct BufferData
     std::vector<float> buf;
 
     if (((GetStride() == 0) || (GetStride() == 2 * sizeof(float))) &&
-        (GetNumCoords() == 2) &&
-        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+        (GetNumCoords() == 2) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
       buf.resize(GetNumElements() * 2);
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
@@ -1376,11 +1326,12 @@ struct BufferData
   std::vector<float> GetAsVec3fArray() const {
     std::vector<float> buf;
 
-    //std::cout << "stride = " << GetStride() << ", num_coords = " << GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " << GetNumElements() << "\n";
+    // std::cout << "stride = " << GetStride() << ", num_coords = " <<
+    // GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " <<
+    // GetNumElements() << "\n";
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
-        (GetNumCoords() == 3) &&
-        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+        (GetNumCoords() == 3) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
       buf.resize(GetNumElements() * 3);
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
@@ -1392,47 +1343,42 @@ struct BufferData
     std::vector<float> buf;
 
     if (((GetStride() == 0) || (GetStride() == 4 * sizeof(float))) &&
-        (GetNumCoords() == 4) &&
-        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+        (GetNumCoords() == 4) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
       buf.resize(GetNumElements());
       memcpy(buf.data(), data.data(), buf.size() * 4 * sizeof(float));
     }
 
     return buf;
   }
-
-
 };
 
-struct ConnectionPath
-{
-  bool input{false}; // true: Input connection. false: Ouput connection. 
+struct ConnectionPath {
+  bool input{false};  // true: Input connection. false: Ouput connection.
 
-  Path path; // original Path information in USD
+  Path path;  // original Path information in USD
 
-  std::string token; // token(or string) in USD
-  int64_t index{-1}; // corresponding array index(e.g. the array index to `Scene.shaders`)
+  std::string token;  // token(or string) in USD
+  int64_t index{-1};  // corresponding array index(e.g. the array index to
+                      // `Scene.shaders`)
 };
 
 // PrimAttrib is a struct to hold attributes of the object.
 // (e.g. property, PrimVar).
 // We treat PrimVar as PrimAttrib(attributes) at the moment.
-struct PrimAttrib
-{
-  std::string name; // attrib name
+struct PrimAttrib {
+  std::string name;  // attrib name
 
-  std::string type_name; // name of attrib type(e.g. "float', "color3f")
+  std::string type_name;  // name of attrib type(e.g. "float', "color3f")
 
   // For array data types(e.g. FloatArray)
-  BufferData buffer; // raw buffer data
+  BufferData buffer;  // raw buffer data
   Variability variability;
   bool facevarying{false};
 
-
   // For basic types(e.g. Bool, Float).
 
-  // "bool", "string", "float", "int", "uint", "int64", "uint64", "double" or "path"
-  // empty = array data type
+  // "bool", "string", "float", "int", "uint", "int64", "uint64", "double" or
+  // "path" empty = array data type
   std::string basic_type;
 
   // TODO: Use union struct
@@ -1443,77 +1389,67 @@ struct PrimAttrib
   uint64_t uint64Val;
   float floatVal;
   double doubleVal;
-  std::string stringVal; // token, string
+  std::string stringVal;  // token, string
   Path path;
-
 };
 
 // UsdPrimvarReader_float2.
 // Currently for UV texture coordinate
-struct PrimvarReader
-{
-  std::string output_type = "float2"; // currently "float2" only.
-  std::array<float, 2> fallback{0.0f, 0.0f}; // fallback value
+struct PrimvarReader {
+  std::string output_type = "float2";         // currently "float2" only.
+  std::array<float, 2> fallback{0.0f, 0.0f};  // fallback value
 
-  ConnectionPath varname; // Name of the primvar to be fetched from the geometry.
+  ConnectionPath
+      varname;  // Name of the primvar to be fetched from the geometry.
 };
 
 // Predefined node class
-struct Xform
-{
+struct Xform {
   int64_t parent_id{-1};  // Index to xform node
 
   Matrix4d matrix;
 
-  //double world_bbox;  // bounding box in world coordinate.
+  // double world_bbox;  // bounding box in world coordinate.
 
   Orientation orientation{OrientationRightHanded};
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
-  //std::vector<int32_t> xformOpOrder; // T.B.D.
-
+  // std::vector<int32_t> xformOpOrder; // T.B.D.
 };
 
-struct UVCoords
-{
+struct UVCoords {
   std::string name;
   BufferData buffer;
   Variability variability;
 
   // non-empty when UV has its own indices.
-  std::vector<uint32_t> indices; // UV indices. Usually varying
+  std::vector<uint32_t> indices;  // UV indices. Usually varying
 };
 
-struct Extent
-{
-  Vec3f lower{
-    std::numeric_limits<float>::infinity(),
-    std::numeric_limits<float>::infinity(),
-    std::numeric_limits<float>::infinity()
-  };
+struct Extent {
+  Vec3f lower{std::numeric_limits<float>::infinity(),
+              std::numeric_limits<float>::infinity(),
+              std::numeric_limits<float>::infinity()};
 
-  Vec3f upper{
-    -std::numeric_limits<float>::infinity(),
-    -std::numeric_limits<float>::infinity(),
-    -std::numeric_limits<float>::infinity()
-  };
-
+  Vec3f upper{-std::numeric_limits<float>::infinity(),
+              -std::numeric_limits<float>::infinity(),
+              -std::numeric_limits<float>::infinity()};
 };
 
 // Polygon mesh geometry
 // TODO(syoyo): Points, Curves, Volumes, ...
-struct GeomMesh
-{
+struct GeomMesh {
   int64_t parent_id{-1};  // Index to xform node
 
   //
   // Predefined attribs.
   //
 
-  // Vertex data would use various data types, byte strides, etc, so use PrimAttrib to represent it.
-  PrimAttrib points; // Usually float3[]
-  PrimAttrib normals; // Usually float3[], varying
+  // Vertex data would use various data types, byte strides, etc, so use
+  // PrimAttrib to represent it.
+  PrimAttrib points;   // Usually float3[]
+  PrimAttrib normals;  // Usually float3[], varying
 
   //
   // Utility functions
@@ -1521,7 +1457,6 @@ struct GeomMesh
 
   size_t GetNumPoints() const;
   size_t GetNumFacevaryingNormals() const;
-
 
   // Get `points` as float3 array
   // Return false if `points` is not float3[] type
@@ -1538,7 +1473,7 @@ struct GeomMesh
   // PrimVar(TODO: Remove)
   UVCoords st;
 
-  PrimAttrib velocitiess; // Usually float3[], varying
+  PrimAttrib velocitiess;  // Usually float3[], varying
 
   std::vector<int32_t> faceVertexCounts;
   std::vector<int32_t> faceVertexIndices;
@@ -1546,7 +1481,7 @@ struct GeomMesh
   //
   // Properties
   //
-  Extent extent; // bounding extent(in local coord?).
+  Extent extent;  // bounding extent(in local coord?).
   std::string facevaryingLinearInterpolation = "cornerPlus1";
   bool doubleSided{true};
   Orientation orientation{OrientationRightHanded};
@@ -1562,33 +1497,29 @@ struct GeomMesh
   std::vector<int32_t> creaseLengths;
   std::vector<float> creaseSharpnesses;
   std::vector<int32_t> holeIndices;
-  std::string interpolateBoundary = "edgeAndCorner"; // "none", "edgeAndCorner" or "edgeOnly"
+  std::string interpolateBoundary =
+      "edgeAndCorner";  // "none", "edgeAndCorner" or "edgeOnly"
   SubdivisionScheme subdivisionScheme;
-
 
   // List of Primitive attributes(primvars)
   std::map<std::string, PrimAttrib> attribs;
-
 };
 
 //
 // Similar to Maya's ShadingGroup
 //
-struct Material
-{
+struct Material {
   std::string name;
 
   int64_t parent_id{-1};
 
-  int64_t surface_shader_id{-1}; // Index to `Scene::shaders`
-  int64_t volume_shader_id{-1}; // Index to `Scene::shaders`
-  //int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
-
+  int64_t surface_shader_id{-1};  // Index to `Scene::shaders`
+  int64_t volume_shader_id{-1};   // Index to `Scene::shaders`
+  // int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
 };
 
 // result = (texture_id == -1) ? use color : lookup texture
-struct Color3OrTexture
-{
+struct Color3OrTexture {
   Color3OrTexture(float x, float y, float z) {
     color[0] = x;
     color[1] = y;
@@ -1597,35 +1528,28 @@ struct Color3OrTexture
 
   std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
 
-  std::string path; // path to .connect(We only support texture file connection at the moment)
+  std::string path;  // path to .connect(We only support texture file connection
+                     // at the moment)
   int64_t texture_id{-1};
 
-  bool HasTexture() const {
-    return texture_id > -1;
-  }
-
+  bool HasTexture() const { return texture_id > -1; }
 };
 
-struct FloatOrTexture
-{
-  FloatOrTexture(float x) {
-    value = x;
-  }
+struct FloatOrTexture {
+  FloatOrTexture(float x) { value = x; }
 
   float value{0.0f};
 
-  std::string path; // path to .connect(We only support texture file connection at the moment)
+  std::string path;  // path to .connect(We only support texture file connection
+                     // at the moment)
   int64_t texture_id{-1};
 
-  bool HasTexture() const {
-    return texture_id > -1;
-  }
-
+  bool HasTexture() const { return texture_id > -1; }
 };
 
-enum TextureWrap
-{
-  TextureWrapUseMetadata, // look for wrapS and wrapT metadata in the texture file itself
+enum TextureWrap {
+  TextureWrapUseMetadata,  // look for wrapS and wrapT metadata in the texture
+                           // file itself
   TextureWrapBlack,
   TextureWrapClamp,
   TextureWrapRepeat,
@@ -1635,43 +1559,45 @@ enum TextureWrap
 // For texture transform
 // result = in * scale * rotate * translation
 struct UsdTranform2d {
-  float rotation = 0.0f; // counter-clockwise rotation in degrees around the origin.
+  float rotation =
+      0.0f;  // counter-clockwise rotation in degrees around the origin.
   std::array<float, 2> scale{{1.0f, 1.0f}};
   std::array<float, 2> translation{{0.0f, 0.0f}};
 };
 
 // UsdUvTexture
 struct UVTexture {
-
   std::string asset;  // asset name(usually file path)
-  int64_t image_id{-1}; // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
+  int64_t image_id{
+      -1};  // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
 
   TextureWrap wrapS;
   TextureWrap wrapT;
 
-  std::array<float, 4> fallback{{0.0f, 0.0f, 0.0f, 1.0f}}; // fallback color used when texture cannot be read.
-  std::array<float, 4> scale{{1.0f, 1.0f, 1.0f, 1.0f}}; // scale to be applied to output texture value
-  std::array<float, 4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // bias to be applied to output texture value
+  std::array<float, 4> fallback{
+      {0.0f, 0.0f, 0.0f,
+       1.0f}};  // fallback color used when texture cannot be read.
+  std::array<float, 4> scale{
+      {1.0f, 1.0f, 1.0f, 1.0f}};  // scale to be applied to output texture value
+  std::array<float, 4> bias{
+      {0.0f, 0.0f, 0.0f, 0.0f}};  // bias to be applied to output texture value
 
-  UsdTranform2d texture_transfom; // texture coordinate orientation. 
-
+  UsdTranform2d texture_transfom;  // texture coordinate orientation.
 
   // key = connection name: e.g. "outputs:rgb"
   // item = pair<type, name> : example: <"float3", "outputs:rgb">
   std::map<std::string, std::pair<std::string, std::string>> outputs;
 
-  PrimvarReader st; // texture coordinate(`inputs:st`). We assume there is a connection to this.
+  PrimvarReader st;  // texture coordinate(`inputs:st`). We assume there is a
+                     // connection to this.
 
   // TODO: orientation?
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
-
 };
-
 
 // USD's default? PBR shader
 // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
-struct PreviewSurface
-{
+struct PreviewSurface {
   std::string doc;
 
   //
@@ -1681,7 +1607,7 @@ struct PreviewSurface
   //
   Color3OrTexture diffuseColor{0.18f, 0.18f, 0.18f};
   Color3OrTexture emissiveColor{0.0f, 0.0f, 0.0f};
-  int usdSpecularWorkflow{0}; // 0 = metalness workflow, 1 = specular workflow
+  int usdSpecularWorkflow{0};  // 0 = metalness workflow, 1 = specular workflow
 
   // specular workflow
   Color3OrTexture specularColor{0.0f, 0.0f, 0.0f};
@@ -1702,16 +1628,41 @@ struct PreviewSurface
   //
   // Outputs
   //
-  int64_t surface_id{-1}; // index to `Scene::shaders`
-  int64_t displacement_id{-1}; // index to `Scene::shaders`
+  int64_t surface_id{-1};       // index to `Scene::shaders`
+  int64_t displacement_id{-1};  // index to `Scene::shaders`
+};
 
+using StringOrId = std::pair<std::string, int32_t>;
+
+// Simple bidirectional Path(string) <-> index lookup
+struct StringAndIdMap {
+  void add(int32_t key, const std::string &val) {
+    _i_to_s[key] = val;
+    _s_to_i[val] = key;
+  }
+
+  void add(const std::string &key, int32_t val) {
+    _s_to_i[key] = val;
+    _i_to_s[val] = key;
+  }
+
+  size_t count(int32_t i) const { return _i_to_s.count(i); }
+
+  size_t count(const std::string &s) const { return _s_to_i.count(s); }
+
+  std::string at(int32_t i) const { return _i_to_s.at(i); }
+
+  int32_t at(std::string s) const { return _s_to_i.at(s); }
+
+  std::map<int32_t, std::string> _i_to_s;  // index -> string
+  std::map<std::string, int32_t> _s_to_i;  // string -> index
 };
 
 // Corresponds to USD's Scope.
 // `Scope` is uncommon term in graphics community, so we use `Group`.
-// From USD doc: Scope is the simplest grouping primitive, and does not carry the baggage of transformability.
-struct Group
-{
+// From USD doc: Scope is the simplest grouping primitive, and does not carry
+// the baggage of transformability.
+struct Group {
   std::string name;
 
   int64_t parent_id{-1};
@@ -1727,12 +1678,11 @@ enum NodeType {
   NODE_TYPE_GEOM_MESH,
   NODE_TYPE_MATERIAL,
   NODE_TYPE_SHADER,
-  NODE_TYPE_CUSTOM,   // Uer defined custom node
+  NODE_TYPE_CUSTOM,  // Uer defined custom node
 
 };
 
-struct Node
-{
+struct Node {
   std::string name;
 
   NodeType type{NODE_TYPE_NULL};
@@ -1743,22 +1693,20 @@ struct Node
   //
   int64_t index{-1};
 
-  int64_t parent; // parent node index. Example: `nodes[parent]`
-  std::vector<int64_t> children; // child node indices.
-
+  int64_t parent;                 // parent node index. Example: `nodes[parent]`
+  std::vector<int64_t> children;  // child node indices.
 };
 
-struct Scene
-{
-  std::string name; // Scene name
-  int64_t root_node{-1}; // index to `xforms`(root Xform node)
+struct Scene {
+  std::string name;       // Scene name
+  int64_t root_node{-1};  // index to `xforms`(root Xform node)
 
-  std::vector<Node> nodes; // Node hierarchies
+  std::vector<Node> nodes;  // Node hierarchies
 
   // Scene global setting
   std::string upAxis = "Y";
-  std::string defaultPrim;  // prim node name
-  double metersPerUnit = 1.0;  // default [m]
+  std::string defaultPrim;           // prim node name
+  double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
 
   //
@@ -1768,16 +1716,17 @@ struct Scene
   std::vector<Xform> xforms;
   std::vector<GeomMesh> geom_meshes;
   std::vector<Material> materials;
-  std::vector<PreviewSurface> shaders; // TODO(syoyo): Support othre shaders
+  std::vector<PreviewSurface> shaders;  // TODO(syoyo): Support othre shaders
   std::vector<Group> groups;
+
+  StringAndIdMap geom_meshes_map;  // Path <-> array index map
+  StringAndIdMap materials_map;    // Path <-> array index map
 
   // TODO(syoyo): User defined custom layer data
   // "customLayerData"
-
 };
 
-struct USDLoadOptions
-{
+struct USDLoadOptions {
   ///
   /// Set the number of threads to use when parsing USD scene.
   /// -1 = use # of system threads(CPU cores/threads).
@@ -1785,19 +1734,19 @@ struct USDLoadOptions
   int num_threads{-1};
 
   // Set the maximum memory limit advisorily(including image data).
-  // This feature would be helpful if you want to load USDZ model in mobile device.
-  int32_t max_memory_limit_in_mb{10000}; // in [mb] Default 10GB
+  // This feature would be helpful if you want to load USDZ model in mobile
+  // device.
+  int32_t max_memory_limit_in_mb{10000};  // in [mb] Default 10GB
 
   ///
   /// Loads asset data(e.g. texture image, audio). Default is true.
-  /// If you want to load asset data in your own way or don't need asset data to be loaded,
-  /// Set this false.
+  /// If you want to load asset data in your own way or don't need asset data to
+  /// be loaded, Set this false.
   ///
   bool load_assets{true};
-
 };
 
-#if 0 // TODO
+#if 0  // TODO
 //struct USDWriteOptions
 //{
 //
@@ -1816,7 +1765,9 @@ struct USDLoadOptions
 ///
 /// @return true upon success
 ///
-bool LoadUSDZFromFile(const std::string &filename, Scene *scene, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
+bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options = USDLoadOptions());
 
 ///
 /// Load USDC(binary) from a file.
@@ -1829,7 +1780,9 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene, std::string *wa
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromFile(const std::string &filename, Scene *scene, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
+bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options = USDLoadOptions());
 
 ///
 /// Load USDC(binary) from a memory.
@@ -1843,9 +1796,11 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene, std::string *wa
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene, std::string *warn, std::string *err, const USDLoadOptions &options = USDLoadOptions());
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options = USDLoadOptions());
 
-#if 0 // TODO
+#if 0  // TODO
 ///
 /// Write scene as USDC to a file.
 ///
@@ -1859,6 +1814,6 @@ bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDC
 
 #endif
 
-} // namespace tinyusdz
+}  // namespace tinyusdz
 
-#endif // TINYUSDZ_HH_
+#endif  // TINYUSDZ_HH_
