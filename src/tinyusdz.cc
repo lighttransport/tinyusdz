@@ -4402,6 +4402,7 @@ bool Parser::_ReconstructSceneRecursively(
       _err += "Failed to reconstruct GeomMesh.\n";
       return false;
     }
+    mesh.name = node.GetLocalPath(); // FIXME
     scene->geom_meshes.push_back(mesh);
   } else if (node_type == "Material") {
     Material material;
