@@ -1440,6 +1440,9 @@ struct Extent {
 // Polygon mesh geometry
 // TODO(syoyo): Points, Curves, Volumes, ...
 struct GeomMesh {
+
+  std::string name;
+
   int64_t parent_id{-1};  // Index to xform node
 
   //
