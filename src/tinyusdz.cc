@@ -1458,6 +1458,8 @@ bool Parser::_ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 }
 
 bool Parser::_ReadTimeSamples(TimeSamples *d) {
+  (void)d;
+
   // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
 
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -1552,7 +1554,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
-  if (!_sr->seek_from_currect(sizeof(uint64_t) * num_values)) {
+  if (!_sr->seek_from_currect(int64_t(sizeof(uint64_t) * num_values))) {
     _err += "Failed to seek over TimeSamples's values.\n";
     return false;
   }
@@ -3862,6 +3864,9 @@ bool Parser::_ReconstructMaterial(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Material *material) {
+
+  (void)material;
+
 #if TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << "Parse mateiral\n";
 #endif
@@ -3929,6 +3934,7 @@ bool Parser::_ReconstructMaterial(
     const FieldValuePairVector &child_fields =
         _live_fieldsets.at(spec.fieldset_index);
 
+    (void)child_fields;
     {
       std::string prop_name = path.GetPropPart();
 
