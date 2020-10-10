@@ -82,6 +82,8 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "# of nodes: " << scene.nodes.size() << "\n";
   std::cout << "# of xforms: " << scene.xforms.size() << "\n";
   std::cout << "# of geom_meshes: " << scene.geom_meshes.size() << "\n";
+  std::cout << "# of geom_basis_curves: " << scene.geom_basis_curves.size() << "\n";
+  std::cout << "# of geom_points: " << scene.geom_points.size() << "\n";
   std::cout << "# of materials: " << scene.geom_meshes.size() << "\n";
   std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
   std::cout << "# of groups: " << scene.groups.size() << "\n";

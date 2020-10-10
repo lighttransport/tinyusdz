@@ -1439,6 +1439,75 @@ struct Extent {
               -std::numeric_limits<float>::infinity()};
 };
 
+//
+// Basis Curves(for hair/fur)
+//
+struct GeomBasisCurves {
+
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to xform node
+
+  // Interpolation attribute
+  std::string type = "cubic"; // "linear", "cubic"
+
+  std::string basis = "bspline";  // "bezier", "catmullRom", "bspline" ("hermite" and "power" is not supported in TinyUSDZ)
+
+  std::string wrap = "nonperiodic"; // "nonperiodic", "periodic", "pinned"
+
+  //
+  // Predefined attribs.
+  //
+  std::vector<float> points; // float3
+  std::vector<float> normals; // normal3f
+  std::vector<int> curveVertexCounts;
+  std::vector<float> widths;
+  std::vector<float> velocities; // vector3f
+  std::vector<float> accelerations; // vector3f
+
+  //
+  // Properties
+  //
+  Extent extent;  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
+//
+// Points primitive.
+//
+struct GeomPoints {
+
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to xform node
+
+  //
+  // Predefined attribs.
+  //
+  std::vector<float> points; // float3
+  std::vector<float> normals; // normal3f
+  std::vector<float> widths;
+  std::vector<int64_t> ids; // per-point ids
+  std::vector<float> velocities; // vector3f
+  std::vector<float> accelerations; // vector3f
+
+  //
+  // Properties
+  //
+  Extent extent;  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths` parameter)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
 // Polygon mesh geometry
 // TODO(syoyo): Points, Curves, Volumes, ...
 struct GeomMesh {
@@ -1720,6 +1789,8 @@ struct Scene {
   //
   std::vector<Xform> xforms;
   std::vector<GeomMesh> geom_meshes;
+  std::vector<GeomBasisCurves> geom_basis_curves;
+  std::vector<GeomPoints> geom_points;
   std::vector<Material> materials;
   std::vector<PreviewSurface> shaders;  // TODO(syoyo): Support othre shaders
   std::vector<Group> groups;

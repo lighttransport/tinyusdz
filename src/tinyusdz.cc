@@ -846,6 +846,12 @@ class Parser {
                                 &path_index_to_spec_index_map,
                             GeomMesh *mesh);
 
+  bool _ReconstructGeomBasisCurves(const Node &node,
+                            const FieldValuePairVector &fields,
+                            const std::unordered_map<uint32_t, uint32_t>
+                                &path_index_to_spec_index_map,
+                            GeomBasisCurves *curves);
+
   bool _ReconstructMaterial(const Node &node,
                             const FieldValuePairVector &fields,
                             const std::unordered_map<uint32_t, uint32_t>
@@ -3621,6 +3627,203 @@ bool Parser::_ReconstructXform(
   return true;
 }
 
+bool Parser::_ReconstructGeomBasisCurves(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    GeomBasisCurves *curves) {
+
+  bool has_position{false};
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+      assert(fv.second.IsArray());
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+        if (fv.second.GetStringArray()[i] == "points") {
+          has_position = true;
+        }
+      }
+    }
+  }
+
+  //
+  // NOTE: Currently we assume one deeper node has GeomMesh's attribute
+  //
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    // const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      // Should we report an error?
+#if 0
+      _err += "GeomBasisCurves: No specifier found for node id: " + std::to_string(child_index) +
+              "\n";
+      return false;
+#else
+      continue;
+#endif
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index << "\n";
+#endif
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+      PrimAttrib attr;
+      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+#endif
+      if (ret) {
+        // TODO(syoyo): Support more prop names
+        if (prop_name == "points") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "got point\n";
+#endif
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 3)) {
+            curves->points = attr.buffer.GetAsVec3fArray();
+          }
+        } else if (prop_name == "extent") {
+          // vec3f[2]
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumElements() == 2) &&
+              (attr.buffer.GetNumCoords() == 3)) {
+            std::vector<float> buf = attr.buffer.GetAsVec3fArray();
+            curves->extent.lower[0] = buf[0];
+            curves->extent.lower[1] = buf[1];
+            curves->extent.lower[2] = buf[2];
+
+            curves->extent.upper[0] = buf[3];
+            curves->extent.upper[1] = buf[4];
+            curves->extent.upper[2] = buf[5];
+          }
+        } else if (prop_name == "normals") {
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 3)) {
+            curves->normals = attr.buffer.GetAsVec3fArray();
+          }
+        } else if (prop_name == "widths") {
+          if ((attr.buffer.GetDataType() ==
+               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            curves->widths = attr.buffer.GetAsFloatArray();
+          }
+        } else if (prop_name == "curveVertexCounts") {
+          // Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
+          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
+              (attr.buffer.GetNumCoords() == 1)) {
+            curves->curveVertexCounts = attr.buffer.GetAsInt32Array();
+          }
+        } else if (prop_name == "type") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "type:" << attr.stringVal << "\n";
+#endif
+          if (attr.stringVal.size()) {
+            if ((attr.stringVal.compare("cubic") == 0)) {
+              curves->type = "cubic";
+            } else if (attr.stringVal.compare("linear") == 0) {
+              curves->type = "linear";
+            } else {
+              _err += "Unknown type: " + attr.stringVal + "\n";
+              return false;
+            }
+          }
+        } else if (prop_name == "basis") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "basis:" << attr.stringVal << "\n";
+#endif
+          if (attr.stringVal.size()) {
+            if ((attr.stringVal.compare("bezier") == 0)) {
+              curves->type = "bezier";
+            } else if (attr.stringVal.compare("catmullRom") == 0) {
+              curves->type = "catmullRom";
+            } else if (attr.stringVal.compare("bspline") == 0) {
+              curves->type = "bspline";
+            } else if (attr.stringVal.compare("hermite") == 0) {
+              _err += "`hermite` basis for BasisCurves is not supported in TinyUSDZ\n";
+              return false;
+            } else if (attr.stringVal.compare("power") == 0) {
+              _err += "`power` basis for BasisCurves is not supported in TinyUSDZ\n";
+              return false;
+            } else {
+              _err += "Unknown basis: " + attr.stringVal + "\n";
+              return false;
+            }
+          }
+        } else if (prop_name == "wrap") {
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "wrap:" << attr.stringVal << "\n";
+#endif
+          if (attr.stringVal.size()) {
+            if ((attr.stringVal.compare("nonperiodic") == 0)) {
+              curves->type = "nonperiodic";
+            } else if (attr.stringVal.compare("periodic") == 0) {
+              curves->type = "periodic";
+            } else if (attr.stringVal.compare("pinned") == 0) {
+              curves->type = "pinned";
+            } else {
+              _err += "Unknown wrap: " + attr.stringVal + "\n";
+              return false;
+            }
+          }
+        } else {
+          // Assume Primvar.
+          if (curves->attribs.count(prop_name)) {
+            _err += "Duplicated property name found: " + prop_name + "\n";
+            return false;
+          }
+
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "add [" << prop_name << "] to generic attrs\n";
+#endif
+
+          curves->attribs[prop_name] = std::move(attr);
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
 bool Parser::_ReconstructGeomMesh(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
@@ -4401,6 +4604,15 @@ bool Parser::_ReconstructSceneRecursively(
       return false;
     }
     scene->xforms.push_back(xform);
+  } else if (node_type == "BasisCurves") {
+    GeomBasisCurves curves;
+    if (!_ReconstructGeomBasisCurves(node, fields, path_index_to_spec_index_map,
+                              &curves)) {
+      _err += "Failed to reconstruct GeomBasisCurves.\n";
+      return false;
+    }
+    curves.name = node.GetLocalPath(); // FIXME
+    scene->geom_basis_curves.push_back(curves);
   } else if (node_type == "Mesh") {
     GeomMesh mesh;
     if (!_ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
