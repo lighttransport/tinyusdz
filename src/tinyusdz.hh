@@ -1450,10 +1450,7 @@ struct GeomMesh {
   //
   // Predefined attribs.
   //
-
-  // Vertex data would use various data types, byte strides, etc, so use
-  // PrimAttrib to represent it.
-  PrimAttrib points;   // Usually float3[]
+  std::vector<float> points; // float3
   PrimAttrib normals;  // Usually float3[], varying
 
   //
