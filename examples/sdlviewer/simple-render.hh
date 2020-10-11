@@ -78,8 +78,7 @@ struct DrawGeomMesh {
   /// Required accessor API for NanoSG
   ///
   const float *GetVertices() const {
-    // Assume vec3f
-    return reinterpret_cast<const float *>(ref_mesh->points.buffer.data.data());
+    return ref_mesh->points.data();
   }
 
   size_t GetVertexStrideBytes() const {

@@ -62,8 +62,7 @@ static void DumpNode(const tinyusdz::Node &node, int level) {
 
 static void DumpGeomMesh(const tinyusdz::GeomMesh &mesh, int level) {
   std::cout << indent(level) << "# of points: " << mesh.GetNumPoints() << "\n";
-  std::vector<float> points;
-  mesh.GetPoints(&points);
+  const std::vector<float> &points = mesh.points;
 
   for (size_t i = 0; i < points.size(); i++) {
     std::cout << points[i] << "\n";
