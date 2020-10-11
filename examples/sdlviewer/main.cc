@@ -347,9 +347,10 @@ int main(int argc, char** argv) {
 
   GUIContext gui_ctx;
 
-  // HACK
-  example::DrawGeomMesh draw_mesh(&scene.geom_meshes[0]);
-  gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
+  for (size_t i = 0; i < scene.geom_meshes.size(); i++) {
+    example::DrawGeomMesh draw_mesh(&scene.geom_meshes[i]);
+    gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
+  }
 
   // Setup render mesh
   if (!gui_ctx.render_scene.Setup()) {
