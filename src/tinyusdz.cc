@@ -3924,7 +3924,7 @@ bool Parser::_ReconstructGeomMesh(
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 3)) {
-            mesh->points = std::move(attr);
+            mesh->points = attr.buffer.GetAsVec3fArray();
           }
         } else if (prop_name == "doubleSided") {
           if (attr.basic_type == "bool") {
@@ -5457,34 +5457,9 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
 }
 
 size_t GeomMesh::GetNumPoints() const {
-  size_t n = points.buffer.GetNumElements();
+  size_t n = points.size() / 3;
 
   return n;
-}
-
-bool GeomMesh::GetPoints(std::vector<float> *v) const {
-  // Currently we only support float3[]
-  if (points.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
-    return false;
-  }
-
-  if ((points.buffer.GetNumCoords() < 0) ||
-      (points.buffer.GetNumCoords() != 3)) {
-    return false;
-  }
-
-  if ((points.buffer.GetStride() != (3 * sizeof(float)))) {
-    return false;
-  }
-
-  size_t c = size_t(points.buffer.GetNumCoords());
-  size_t n = points.buffer.GetNumElements();
-
-  v->resize(n * c);
-
-  memcpy(v->data(), points.buffer.data.data(), n * c * sizeof(float));
-
-  return true;
 }
 
 bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {

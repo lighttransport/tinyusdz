@@ -32,7 +32,7 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   // Trianglate mesh
   // vertex points should be vec3f
-  dst->vertices = mesh.points.buffer.GetAsVec3fArray();
+  dst->vertices = mesh.points;
   if (dst->vertices.size() != (mesh.GetNumPoints() * 3)) {
     std::cerr << "The number of vertices mismatch. " << dst->vertices.size()
               << " must be equal to " << mesh.GetNumPoints() * 3 << "\n";
