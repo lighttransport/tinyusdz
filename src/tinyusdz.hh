@@ -1399,7 +1399,7 @@ struct PrimAttrib {
 // Currently for UV texture coordinate
 struct PrimvarReader {
   std::string output_type = "float2";         // currently "float2" only.
-  std::array<float, 2> fallback{0.0f, 0.0f};  // fallback value
+  std::array<float, 2> fallback{{0.0f, 0.0f}};  // fallback value
 
   ConnectionPath
       varname;  // Name of the primvar to be fetched from the geometry.
@@ -1430,13 +1430,13 @@ struct UVCoords {
 };
 
 struct Extent {
-  Vec3f lower{std::numeric_limits<float>::infinity(),
+  Vec3f lower{{std::numeric_limits<float>::infinity(),
               std::numeric_limits<float>::infinity(),
-              std::numeric_limits<float>::infinity()};
+              std::numeric_limits<float>::infinity()}};
 
-  Vec3f upper{-std::numeric_limits<float>::infinity(),
+  Vec3f upper{{-std::numeric_limits<float>::infinity(),
               -std::numeric_limits<float>::infinity(),
-              -std::numeric_limits<float>::infinity()};
+              -std::numeric_limits<float>::infinity()}};
 };
 
 //
