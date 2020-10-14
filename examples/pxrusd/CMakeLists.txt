@@ -47,7 +47,7 @@ target_include_directories(
   PUBLIC ${EXAMPLE_USD_DIR}/include)
 
 target_link_directories(${EXAMPLE_BUILD_TARGET} PRIVATE ${EXAMPLE_USD_DIR}/lib)
-target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd usdGeom usdUtils sdf tf)
+target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd usdGeom usdUtils sdf tf vt)
 
 
 target_link_libraries(${EXAMPLE_BUILD_TARGET} PUBLIC ${EXAMPLE_EXT_LIBRARIES} ${CMAKE_DL_LIBS} Threads::Threads)
