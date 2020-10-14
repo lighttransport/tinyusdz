@@ -3558,6 +3558,9 @@ bool Parser::_ReconstructXform(
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Xform *xform) {
 
+  // TODO
+  (void)xform;
+
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
       if (fv.second.GetTypeName() != "TokenArray") {

@@ -11,13 +11,16 @@
 TinyUSDZ is currently in alpha stage. Not usable.
 
 * [x] USDC data parse
-* [ ] Reconstuct scene graph representaion(2020 Fall expected)
+* [ ] Reconstuct primitive and scene graph representaion(2020 Fall expected)
   * [ ] GeomMesh
+  * [ ] GeomBasisCurves(for hair/fur)
+  * [ ] GeomPoints(for particles)
   * [ ] Xform
   * [ ] etc.
 * [ ] Write simple SDL viewer example(2020 Fall expected)
-* [ ] Animation(usdSkel) support(2020 Winter expected)
+* [ ] Character animation(usdSkel) support(2020 Winter expected)
 * [ ] Vulkan raytracing viewer example
+* [ ] Viewer with Metal ray tracing API?
 * [ ] USDZ(USDC) writer
 
 ## Notice
