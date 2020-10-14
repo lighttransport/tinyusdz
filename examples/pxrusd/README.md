@@ -1,4 +1,4 @@
-# Compare API, data, etc between pxr USD library and TinyUSDZ
+# pxr USD library API experiment
 
 ## Build pxr USD
 

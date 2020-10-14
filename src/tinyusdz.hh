@@ -1529,10 +1529,6 @@ struct GeomMesh {
   size_t GetNumPoints() const;
   size_t GetNumFacevaryingNormals() const;
 
-  // Get `points` as float3 array
-  // Return false if `points` is not float3[] type
-  bool GetPoints(std::vector<float> *v) const;
-
   // Get `normals` as float3 array + facevarying
   // Return false if `normals` is neither float3[] type nor `varying`
   bool GetFacevaryingNormals(std::vector<float> *v) const;
