@@ -29,6 +29,12 @@ struct ErrorDiagnositc
   int line_col = -1;
 };
 
+
+inline bool IsChar(char c)
+{
+  return std::isalpha(int(c));
+}
+
 class USDAParser
 {
  public:
@@ -48,13 +54,14 @@ class USDAParser
       }
 
       if ((c == '\n') || (c == '\r')) {
-        // continue
-      } else {
         break;
+      } else {
+        // continue
       }
     }
 
     _line_row++;
+    _line_col = 0;
     return true;
   }
 
@@ -66,6 +73,7 @@ class USDAParser
         // this should not happen.
         return false;
       }
+      _line_col++;
 
       if ((c == ' ') || (c == '\t') || (c == '\f')) {
         // continue
@@ -78,14 +86,44 @@ class USDAParser
     if (!_sr->seek_from_current(-1)) {
       return false;
     }
+    _line_col--;
 
     return true;
   }
 
+  bool Expect(char expect_c) {
+    if (!SkipWhitespace()) { return false; }
+
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    bool ret = (c == expect_c);
+
+    if (!ret) {
+      ErrorDiagnositc diag;
+      diag.err = "Expected `" + std::string(&expect_c, 1) + "` but got `" + std::string(&c, 1) + "`\n";
+      diag.line_col = _line_col;
+      diag.line_row = _line_row;
+
+      err_stack.push(diag);
+    } else {
+      _line_col++;
+    }
+
+    return ret;
+  }
+
+
+  // Parse magic
   // #usda FLOAT
-  // `#` style comment
-  bool ParseHeader() {
-    SkipWhitespace();
+  bool ParseMagicHeader() {
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
     if (_sr->eof()) {
       return false;
     }
@@ -144,6 +182,17 @@ class USDAParser
     return true;
   }
 
+  // Parse meta
+  // ( metadata_opt )
+  bool ParseMeta() {
+    if (!Expect('(')) {
+      return false;
+    }
+
+
+    return true;
+  }
+
   // `#` style comment
   bool ParseSharpComment() {
     char c;
@@ -188,7 +237,8 @@ class USDAParser
   bool Parse() {
     bool ok{false};
 
-    ok = ParseHeader();
+    ok = ParseMagicHeader();
+    ok &= ParseMeta();
 
     return ok;
   }
@@ -201,7 +251,7 @@ class USDAParser
     ErrorDiagnositc diag = err_stack.top();
 
     std::stringstream ss;
-    ss << "line " << diag.line_row << ", col " << diag.line_col << ": ";
+    ss << "Near line " << diag.line_row << ", col " << diag.line_col << ": ";
     ss << diag.err << "\n";
     return ss.str();
   }
@@ -264,9 +314,9 @@ int main(int argc, char **argv)
     if (!ret) {
       std::cerr << "Failed to parse .usda: \n";
       std::cerr << parser.GetError() << "\n";
+    } else {
+      std::cout << "ok\n";
     }
-
-    std::cout << "ok\n";
   }  
 
   return 0;
