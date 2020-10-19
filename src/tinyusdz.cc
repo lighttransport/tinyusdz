@@ -1486,7 +1486,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
 #endif
 
   // -8 to compensate sizeof(offset)
-  if (!_sr->seek_from_currect(offset - 8)) {
+  if (!_sr->seek_from_current(offset - 8)) {
     _err += "Failed to seek to TimeSample times. Invalid offset value: " +
             std::to_string(offset) + "\n";
     return false;
@@ -1539,7 +1539,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
 #endif
 
   // -8 to compensate sizeof(offset)
-  if (!_sr->seek_from_currect(offset - 8)) {
+  if (!_sr->seek_from_current(offset - 8)) {
     _err += "Failed to seek to TimeSample values. Invalid offset value: " +
             std::to_string(offset) + "\n";
     return false;
@@ -1560,7 +1560,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
-  if (!_sr->seek_from_currect(int64_t(sizeof(uint64_t) * num_values))) {
+  if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
     _err += "Failed to seek over TimeSamples's values.\n";
     return false;
   }
@@ -1712,7 +1712,7 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
 #endif
 
     // -8 to compensate sizeof(offset)
-    if (!_sr->seek_from_currect(offset - 8)) {
+    if (!_sr->seek_from_current(offset - 8)) {
       _err +=
           "Failed to seek. Invalid offset value: " + std::to_string(offset) +
           "\n";
