@@ -53,8 +53,30 @@ class USDAParser
         return false;
       }
 
-      if ((c == '\n') || (c == '\r')) {
+      if (c == '\n') {
         break;
+      } else if (c == '\r') {
+        // CRLF?
+        if (_sr->tell() < (_sr->size() - 1)) {
+          char d;
+          if (!_sr->read1(&d)) {
+            // this should not happen.
+            return false;
+          }     
+        
+          if (d == '\n') {
+            break;
+          }
+
+          // unwind 1 char
+          if (!_sr->seek_from_current(-1)) {
+            // this should not happen.
+            return false;
+          }
+        
+          break;
+        }
+      
       } else {
         // continue
       }
@@ -87,6 +109,59 @@ class USDAParser
       return false;
     }
     _line_col--;
+
+    return true;
+  }
+
+  bool SkipWhitespaceAndNewline() {
+
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        // this should not happen.
+        return false;
+      }
+
+      printf("c = %c\n", c);
+
+      if ((c == ' ') || (c == '\t') || (c == '\f')) {
+        _line_col++;
+        // continue
+      } else if (c == '\n') {
+        _line_col = 0;
+        _line_row++;
+        // continue
+      } else if (c == '\r') {
+        // CRLF?
+        if (_sr->tell() < (_sr->size() - 1)) {
+          char d;
+          if (!_sr->read1(&d)) {
+            // this should not happen.
+            return false;
+          }     
+        
+          if (d == '\n') {
+            // CRLF
+          } else {
+            // unwind 1 char
+            if (!_sr->seek_from_current(-1)) {
+              // this should not happen.
+              return false;
+            }
+          }
+        }
+        _line_col = 0;
+        _line_row++;
+        // continue
+      } else {
+        break;
+      }
+    }
+
+    // unwind 1 char
+    if (!_sr->seek_from_current(-1)) {
+      return false;
+    }
 
     return true;
   }
@@ -188,7 +263,12 @@ class USDAParser
     if (!Expect('(')) {
       return false;
     }
+    if (!SkipWhitespaceAndNewline()) { return false; }
 
+    if (!Expect(')')) {
+      return false;
+    }
+    if (!SkipWhitespaceAndNewline()) { return false; }
 
     return true;
   }
