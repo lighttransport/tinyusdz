@@ -1,10 +1,11 @@
-#include <iostream>
+#include <cassert>
 #include <cstdlib>
 #include <fstream>
-#include <vector>
-#include <cassert>
-#include <stack>
+#include <iostream>
 #include <sstream>
+#include <stack>
+#include <vector>
+#include <map>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -14,6 +15,8 @@
 #include <ryu/ryu.h>
 #include <ryu/ryu_parse.h>
 
+#include <nonstd/variant.hpp>
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
@@ -22,27 +25,114 @@
 
 namespace tinyusdz {
 
-struct ErrorDiagnositc
-{
+struct ErrorDiagnositc {
   std::string err;
   int line_row = -1;
   int line_col = -1;
 };
 
+using Value = nonstd::variant<int, float, std::string>;
 
-inline bool IsChar(char c)
-{
-  return std::isalpha(int(c));
-}
+class Variable {
+ public:
+  std::string type;
+  std::string name;
+  Value value;
 
-class USDAParser
-{
+  Variable() = default;
+  Variable(std::string ty, std::string n) : type(ty), name(n) {}
+};
+
+inline bool IsChar(char c) { return std::isalpha(int(c)); }
+
+class USDAParser {
  public:
   struct ParseState {
-    int64_t loc{-1}; // byte location in StreamReder
+    int64_t loc{-1};  // byte location in StreamReder
   };
 
   USDAParser(tinyusdz::StreamReader *sr) : _sr(sr) {
+    _RegisterBuiltinMeta();
+  }
+
+  bool ReadStringLiteral(std::string &token) {
+    std::stringstream ss;
+
+    char c0;
+    if (!_sr->read1(&c0)) {
+      return false;
+    }
+
+    if (c0 != '"') {
+      ErrorDiagnositc diag;
+      diag.err = "String literal expected but it does not start with '\"'\n";
+      diag.line_col = _line_col;
+      diag.line_row = _line_row;
+
+      err_stack.push(diag);
+      return false;
+    }
+
+    ss << "\"";
+
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        // this should not happen.
+        std::cout << "read err\n";
+        return false;
+      }
+
+      ss << c;
+
+      if (c == '"') {
+        break;
+      }
+    }
+
+    token = ss.str();
+
+    if (token.back() != '"') {
+      ErrorDiagnositc diag;
+      diag.err = "String literal expected but it does not end with '\"'\n";
+      diag.line_col = _line_col;
+      diag.line_row = _line_row;
+
+      err_stack.push(diag);
+      return false;
+    }
+
+    _line_col += token.size();
+
+    return true;
+  }
+
+  bool ReadIdentifier(std::string &token) {
+    std::stringstream ss;
+
+    std::cout << "readtoken\n";
+
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        // this should not happen.
+        return false;
+      }
+
+      if (!std::isalpha(int(c))) {
+        _sr->seek_from_current(-1);
+        break;
+      }
+
+      _line_col++;
+
+      std::cout << c << "\n";
+      ss << c;
+    }
+
+    token = ss.str();
+    std::cout << "token = " << token << "\n";
+    return true;
   }
 
   bool SkipUntilNewline() {
@@ -62,8 +152,8 @@ class USDAParser
           if (!_sr->read1(&d)) {
             // this should not happen.
             return false;
-          }     
-        
+          }
+
           if (d == '\n') {
             break;
           }
@@ -73,10 +163,10 @@ class USDAParser
             // this should not happen.
             return false;
           }
-        
+
           break;
         }
-      
+
       } else {
         // continue
       }
@@ -88,7 +178,6 @@ class USDAParser
   }
 
   bool SkipWhitespace() {
-
     while (!_sr->eof()) {
       char c;
       if (!_sr->read1(&c)) {
@@ -114,7 +203,6 @@ class USDAParser
   }
 
   bool SkipWhitespaceAndNewline() {
-
     while (!_sr->eof()) {
       char c;
       if (!_sr->read1(&c)) {
@@ -122,7 +210,7 @@ class USDAParser
         return false;
       }
 
-      printf("c = %c\n", c);
+      printf("sws c = %c\n", c);
 
       if ((c == ' ') || (c == '\t') || (c == '\f')) {
         _line_col++;
@@ -138,8 +226,8 @@ class USDAParser
           if (!_sr->read1(&d)) {
             // this should not happen.
             return false;
-          }     
-        
+          }
+
           if (d == '\n') {
             // CRLF
           } else {
@@ -154,20 +242,22 @@ class USDAParser
         _line_row++;
         // continue
       } else {
+        std::cout << "unwind\n";
+        // end loop
+        if (!_sr->seek_from_current(-1)) {
+          return false;
+        }
         break;
       }
-    }
-
-    // unwind 1 char
-    if (!_sr->seek_from_current(-1)) {
-      return false;
     }
 
     return true;
   }
 
   bool Expect(char expect_c) {
-    if (!SkipWhitespace()) { return false; }
+    if (!SkipWhitespace()) {
+      return false;
+    }
 
     char c;
     if (!_sr->read1(&c)) {
@@ -179,18 +269,21 @@ class USDAParser
 
     if (!ret) {
       ErrorDiagnositc diag;
-      diag.err = "Expected `" + std::string(&expect_c, 1) + "` but got `" + std::string(&c, 1) + "`\n";
+      diag.err = "Expected `" + std::string(&expect_c, 1) + "` but got `" +
+                 std::string(&c, 1) + "`\n";
       diag.line_col = _line_col;
       diag.line_row = _line_row;
 
       err_stack.push(diag);
+
+      // unwind
+      _sr->seek_from_current(-1);
     } else {
       _line_col++;
     }
 
     return ret;
   }
-
 
   // Parse magic
   // #usda FLOAT
@@ -205,20 +298,20 @@ class USDAParser
 
     {
       char magic[5];
-      if (!_sr->read(5, 5, reinterpret_cast<uint8_t*>(magic))) {
+      if (!_sr->read(5, 5, reinterpret_cast<uint8_t *>(magic))) {
         // eol
         return false;
       }
 
-      if ((magic[0] == '#') && (magic[1] == 'u') &&
-          (magic[2] == 's') && (magic[3] == 'd') &&
-          (magic[4] == 'a')) {
+      if ((magic[0] == '#') && (magic[1] == 'u') && (magic[2] == 's') &&
+          (magic[3] == 'd') && (magic[4] == 'a')) {
         // ok
       } else {
         ErrorDiagnositc diag;
         diag.line_row = _line_row;
         diag.line_col = _line_col;
-        diag.err = "Magic header must be `#usda` but got `" + std::string(magic, 5) + "`\n";
+        diag.err = "Magic header must be `#usda` but got `" +
+                   std::string(magic, 5) + "`\n";
         err_stack.push(diag);
 
         return false;
@@ -233,19 +326,19 @@ class USDAParser
     // current we only accept "1.0"
     {
       char ver[3];
-      if (!_sr->read(3, 3, reinterpret_cast<uint8_t*>(ver))) {
+      if (!_sr->read(3, 3, reinterpret_cast<uint8_t *>(ver))) {
         return false;
       }
 
-      if ((ver[0] == '1') && (ver[1] == '.') &&
-          (ver[2] == '0')) {
+      if ((ver[0] == '1') && (ver[1] == '.') && (ver[2] == '0')) {
         // ok
         _version = 1.0f;
       } else {
         ErrorDiagnositc diag;
         diag.line_row = _line_row;
         diag.line_col = _line_col;
-        diag.err = "Version must be `1.0` but got `" + std::string(ver, 3) + "`\n";
+        diag.err =
+            "Version must be `1.0` but got `" + std::string(ver, 3) + "`\n";
         err_stack.push(diag);
 
         return false;
@@ -263,12 +356,60 @@ class USDAParser
     if (!Expect('(')) {
       return false;
     }
-    if (!SkipWhitespaceAndNewline()) { return false; }
-
-    if (!Expect(')')) {
+    if (!SkipWhitespaceAndNewline()) {
       return false;
     }
-    if (!SkipWhitespaceAndNewline()) { return false; }
+
+    if (Expect(')')) {
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+    } else {
+      // metadata line
+      // var = value
+      std::string varname;
+      if (!ReadIdentifier(varname)) {
+        std::cout << "token " << varname;
+        return false;
+      }
+
+      if (!IsBuiltinMeta(varname)) {
+
+        ErrorDiagnositc diag;
+        diag.line_row = _line_row;
+        diag.line_col = _line_col;
+        diag.err =
+            "'" + varname + "' is not a builtin Metadata variable.\n";
+        err_stack.push(diag);
+        return false;
+      }
+
+      if (!Expect('=')) {
+        ErrorDiagnositc diag;
+        diag.line_row = _line_row;
+        diag.line_col = _line_col;
+        diag.err =
+            "'=' expected in Metadata line.\n";
+        err_stack.push(diag);
+        return false;
+      }
+      SkipWhitespace();
+
+      const Variable &var = _builtin_metas.at(varname); 
+      if (var.type == "string") {
+        std::string value;
+        std::cout << "read string literal\n";
+        if (!ReadStringLiteral(value)) {
+          ErrorDiagnositc diag;
+          diag.line_row = _line_row;
+          diag.line_col = _line_col;
+          diag.err =
+              "String literal expected for `" + var.name + "`.\n";
+          err_stack.push(diag);
+          return false;
+        }
+      }
+    }
 
     return true;
   }
@@ -289,9 +430,8 @@ class USDAParser
   }
 
   bool Push() {
-
     // Stack size must be less than the number of input bytes.
-    assert (parse_stack.size() < _sr->size());
+    assert(parse_stack.size() < _sr->size());
 
     uint64_t loc = _sr->tell();
 
@@ -311,7 +451,7 @@ class USDAParser
 
     parse_stack.pop();
 
-    return true; 
+    return true;
   }
 
   bool Parse() {
@@ -337,7 +477,20 @@ class USDAParser
   }
 
  private:
+
+  bool IsBuiltinMeta(std::string name) {
+    return _builtin_metas.count(name) ? true : false;
+  }
+
+  void _RegisterBuiltinMeta() {
+    _builtin_metas["doc"] = Variable("string", "doc");
+    _builtin_metas["metersPerUnit"] = Variable("float", "metersPerUnit");
+    _builtin_metas["upAxis"] = Variable("string", "upAxis");
+  }
+
   const tinyusdz::StreamReader *_sr = nullptr;
+
+  std::map<std::string, Variable> _builtin_metas;
 
   std::stack<ErrorDiagnositc> err_stack;
   std::stack<ParseState> parse_stack;
@@ -346,13 +499,11 @@ class USDAParser
   int _line_col{0};
 
   float _version{1.0f};
-
 };
 
-}
+}  // namespace tinyusdz
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Need input.usda\n";
     exit(-1);
@@ -374,7 +525,8 @@ int main(int argc, char **argv)
     size_t sz = static_cast<size_t>(ifs.tellg());
     if (int64_t(sz) < 0) {
       // Looks reading directory, not a file.
-      std::cerr << "Looks like filename is a directory : \"" << filename << "\"\n";
+      std::cerr << "Looks like filename is a directory : \"" << filename
+                << "\"\n";
       return -1;
     }
 
@@ -385,7 +537,7 @@ int main(int argc, char **argv)
              static_cast<std::streamsize>(sz));
   }
 
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */false);
+  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
   tinyusdz::USDAParser parser(&sr);
 
   {
@@ -397,7 +549,7 @@ int main(int argc, char **argv)
     } else {
       std::cout << "ok\n";
     }
-  }  
+  }
 
   return 0;
 }
