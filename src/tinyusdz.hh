@@ -1398,7 +1398,7 @@ struct PrimAttrib {
 // UsdPrimvarReader_float2.
 // Currently for UV texture coordinate
 struct PrimvarReader {
-  std::string output_type = "float2";         // currently "float2" only.
+  std::string output_type = "float2";           // currently "float2" only.
   std::array<float, 2> fallback{{0.0f, 0.0f}};  // fallback value
 
   ConnectionPath
@@ -1431,39 +1431,40 @@ struct UVCoords {
 
 struct Extent {
   Vec3f lower{{std::numeric_limits<float>::infinity(),
-              std::numeric_limits<float>::infinity(),
-              std::numeric_limits<float>::infinity()}};
+               std::numeric_limits<float>::infinity(),
+               std::numeric_limits<float>::infinity()}};
 
   Vec3f upper{{-std::numeric_limits<float>::infinity(),
-              -std::numeric_limits<float>::infinity(),
-              -std::numeric_limits<float>::infinity()}};
+               -std::numeric_limits<float>::infinity(),
+               -std::numeric_limits<float>::infinity()}};
 };
 
 //
 // Basis Curves(for hair/fur)
 //
 struct GeomBasisCurves {
-
   std::string name;
 
   int64_t parent_id{-1};  // Index to xform node
 
   // Interpolation attribute
-  std::string type = "cubic"; // "linear", "cubic"
+  std::string type = "cubic";  // "linear", "cubic"
 
-  std::string basis = "bspline";  // "bezier", "catmullRom", "bspline" ("hermite" and "power" is not supported in TinyUSDZ)
+  std::string basis =
+      "bspline";  // "bezier", "catmullRom", "bspline" ("hermite" and "power" is
+                  // not supported in TinyUSDZ)
 
-  std::string wrap = "nonperiodic"; // "nonperiodic", "periodic", "pinned"
+  std::string wrap = "nonperiodic";  // "nonperiodic", "periodic", "pinned"
 
   //
   // Predefined attribs.
   //
-  std::vector<float> points; // float3
-  std::vector<float> normals; // normal3f
+  std::vector<float> points;   // float3
+  std::vector<float> normals;  // normal3f
   std::vector<int> curveVertexCounts;
   std::vector<float> widths;
-  std::vector<float> velocities; // vector3f
-  std::vector<float> accelerations; // vector3f
+  std::vector<float> velocities;     // vector3f
+  std::vector<float> accelerations;  // vector3f
 
   //
   // Properties
@@ -1481,7 +1482,6 @@ struct GeomBasisCurves {
 // Points primitive.
 //
 struct GeomPoints {
-
   std::string name;
 
   int64_t parent_id{-1};  // Index to xform node
@@ -1489,12 +1489,12 @@ struct GeomPoints {
   //
   // Predefined attribs.
   //
-  std::vector<float> points; // float3
-  std::vector<float> normals; // normal3f
+  std::vector<float> points;   // float3
+  std::vector<float> normals;  // normal3f
   std::vector<float> widths;
-  std::vector<int64_t> ids; // per-point ids
-  std::vector<float> velocities; // vector3f
-  std::vector<float> accelerations; // vector3f
+  std::vector<int64_t> ids;          // per-point ids
+  std::vector<float> velocities;     // vector3f
+  std::vector<float> accelerations;  // vector3f
 
   //
   // Properties
@@ -1504,14 +1504,77 @@ struct GeomPoints {
   Purpose purpose{PurposeDefault};
 
   // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths` parameter)
+  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
+  // parameter)
   std::map<std::string, PrimAttrib> attribs;
 };
 
-// Polygon mesh geometry
-// TODO(syoyo): Points, Curves, Volumes, ...
-struct GeomMesh {
+// BlendShapes
+// TODO(syoyo): Blendshape
+struct BlendShape {
+  std::vector<float> offsets;        // required. position offsets. vec3f
+  std::vector<float> normalOffsets;  // required. vec3f
+  std::vector<int>
+      pointIndices;  // optional. vertex indices to the original mesh for each
+                     // values in `offsets` and `normalOffsets`.
+};
 
+struct SkelRoot
+{
+  Extent extent;
+  Purpose purpose{PurposeDefault};
+  Visibility visibility{VisibilityInherited};
+
+  // TODO
+  // std::vector<std::string> xformOpOrder;
+  // ref proxyPrim
+};
+
+// Skelton
+struct Skelton
+{
+  std::vector<Matrix4d> bindTransforms; // bind-pose transform of each joint in world coordinate.
+  Extent extent;
+
+  std::vector<std::string> jointNames;
+  std::vector<std::string> joints;
+
+  std::vector<Matrix4d> restTransforms; // rest-pose transforms of each joint in local coordinate.
+
+  Purpose purpose{PurposeDefault};
+  Visibility visibility{VisibilityInherited};
+
+  // TODO
+  // std::vector<std::string> xformOpOrder;
+  // ref proxyPrim
+};
+
+struct SkelAnimation
+{
+  std::vector<std::string> blendShapes;
+  std::vector<float> blendShapeWeights;
+  std::vector<std::string> joints;
+  std::vector<Quatf> rotations; // Joint-local unit quaternion rotations
+  std::vector<Vec3f> scales; // Joint-local scaling. pxr USD schema uses half3, but we use float3 for convenience.
+  std::vector<Vec3f> translations; // Joint-local translation.
+
+};
+
+// W.I.P.
+struct SkelBindingAPI {
+  Matrix4d geomBindTransform;  // primvars:skel:geomBindTransform
+  std::vector<int> jointIndices; // primvars:skel:jointIndices
+  std::vector<float> jointWeights; // primvars:skel:jointWeights
+  std::vector<std::string> blendShapes; // optional?
+  std::vector<std::string> joints; // optional
+
+  int64_t animationSource{-1}; // index to Scene.animations. ref skel:animationSource
+  int64_t blendShapeTargets{-1}; // index to Scene.blendshapes. ref skel:bindShapeTargets
+  int64_t skeleton{-1}; // index to Scene.skeltons. // ref skel:skelton
+};
+
+// Polygon mesh geometry
+struct GeomMesh {
   std::string name;
 
   int64_t parent_id{-1};  // Index to xform node
@@ -1519,8 +1582,8 @@ struct GeomMesh {
   //
   // Predefined attribs.
   //
-  std::vector<float> points; // float3
-  PrimAttrib normals;  // Usually float3[], varying
+  std::vector<float> points;  // float3
+  PrimAttrib normals;         // Usually float3[], varying
 
   //
   // Utility functions
