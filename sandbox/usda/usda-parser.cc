@@ -55,6 +55,227 @@ class USDAParser {
     _RegisterBuiltinMeta();
   }
 
+  bool ReadToken(std::string *result) {
+    std::stringstream ss;
+
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        return false;
+      }
+
+      if (std::isspace(int(c))) {
+        _sr->seek_from_current(-1);
+        break;
+      }
+
+      ss << c;
+      _line_col++;
+    }
+
+    (*result) = ss.str();
+
+    return true;
+  }
+
+  bool ReadInt(int *value) {
+    std::stringstream ss;
+
+    std::cout << "ReadInt\n";
+
+    // head character
+    bool has_sign = false;
+    bool negative = false;
+    {
+      char sc;
+      if (!_sr->read1(&sc)) {
+        return false;
+      }
+      _line_col++;
+
+      // sign or [0-9]
+      if (sc == '+') {
+        negative = false;
+        has_sign = true;
+      } else if (sc == '-') {
+        negative = true;
+        has_sign = true;
+      } else if ((sc >= '0') && (sc <= '9')) {
+        // ok 
+      } else {
+        _PushError("Sign or 0-9 expected.\n");
+        return false;
+      }
+
+      ss << sc;
+    }
+
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        return false;
+      }
+
+      if ((c >= '0') && (c <= '9')) {
+        ss << c;
+      } else {
+        _sr->seek_from_current(-1);
+        break;
+      }
+    }
+
+    if (has_sign && (ss.str().size() == 1)) {
+      // sign only
+      _PushError("Integer value expected but got sign character only.\n");
+      return false;
+    }
+
+    if ((ss.str().size() >= 1) && (ss.str()[0] == '0')) {
+      _PushError("Zero padded integer value is not allowed.\n");
+      return false;
+    } 
+
+    std::cout << "ReadInt token: " << ss.str() << "\n";
+
+    // TODO(syoyo): Use ryu parse.
+    try {
+      (*value) = std::stoi(ss.str());
+    } catch (const std::invalid_argument &e) {
+      (void)e;
+      _PushError("Not an integer literal.\n");
+      return false;
+    } catch (const std::out_of_range &e) {
+      (void)e;
+      _PushError("Integer value out of range.\n");
+      return false;
+    }
+
+    return true;
+  }
+
+  ///
+  /// Parses 1 or more occurences of int value, separated by `sep`
+  ///
+  bool SepBy1Int(const char sep, std::vector<int> *result) {
+
+    result->clear();
+
+    {
+      int value;
+      if (!ReadInt(&value)) {
+        _PushError("Not starting with integer value.\n");
+        return false;
+      }
+
+      result->push_back(value);
+    }
+
+    std::cout << "sep " << result->back() << "\n";
+
+    while (!_sr->eof()) {
+
+      // sep
+      if (!SkipWhitespaceAndNewline()) {
+        std::cout << "ws failure\n";
+        return false;
+      }
+
+      char c;
+      if (!_sr->read1(&c)) {
+        std::cout << "read1 failure\n";
+        return false;
+      }
+
+      std::cout << "sep c = " << c << "\n";
+
+      if (c != sep) {
+        // end
+        std::cout << "sepBy1 end\n";
+        _sr->seek_from_current(-1); // unwind single char
+        break;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        std::cout << "ws failure\n";
+        return false;
+      }
+
+      std::cout << "go to read int\n";
+
+      int value;
+      if (!ReadInt(&value)) {
+        std::cout << "not a int value\n";
+        break;
+      }
+
+      result->push_back(value);
+    }
+
+    std::cout << "result.size " << result->size() << "\n";
+
+    if (result->empty()) {
+      _PushError("Empty integer array.\n");
+      return false;
+    }
+
+    return true;
+  }
+
+  ///
+  /// Parse '[', Sep1By(','), ']'
+  ///
+  bool ParseIntArray(std::vector<int> *result) {
+    if (!Expect('[')) {
+      return false;
+    }
+    std::cout << "got [\n";
+
+    if (!SepBy1Int(',', result)) {
+      return false;
+    }
+
+    std::cout << "try to parse ]\n";
+
+    if (!Expect(']')) {
+      std::cout << "not ]\n";
+
+      return false;
+    }
+    std::cout << "got ]\n";
+
+    return true;
+  }
+
+  ///
+  /// Parse '(', Sep1By(','), ')'
+  ///
+  bool ParseIntTuple(const size_t num_items, std::vector<int> *result) {
+    if (!Expect('(')) {
+      return false;
+    }
+    std::cout << "got (\n";
+
+    if (!SepBy1Int(',', result)) {
+      return false;
+    }
+
+    std::cout << "try to parse )\n";
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    if (result->size() != num_items) {
+      std::string msg = "The number of tuple elements must be " + std::to_string(num_items) + ", but got " + std::to_string(result->size()) + "\n";
+      _PushError(msg);
+      return false;
+    }
+
+    return true;
+
+  }
+
+
   bool ReadStringLiteral(std::string &token) {
     std::stringstream ss;
 
@@ -268,13 +489,9 @@ class USDAParser {
     bool ret = (c == expect_c);
 
     if (!ret) {
-      ErrorDiagnositc diag;
-      diag.err = "Expected `" + std::string(&expect_c, 1) + "` but got `" +
+      std::string msg = "Expected `" + std::string(&expect_c, 1) + "` but got `" +
                  std::string(&c, 1) + "`\n";
-      diag.line_col = _line_col;
-      diag.line_row = _line_row;
-
-      err_stack.push(diag);
+      _PushError(msg);
 
       // unwind
       _sr->seek_from_current(-1);
@@ -400,13 +617,31 @@ class USDAParser {
         std::string value;
         std::cout << "read string literal\n";
         if (!ReadStringLiteral(value)) {
-          ErrorDiagnositc diag;
-          diag.line_row = _line_row;
-          diag.line_col = _line_col;
-          diag.err =
-              "String literal expected for `" + var.name + "`.\n";
-          err_stack.push(diag);
+          std::string msg = "String literal expected for `" + var.name + "`.\n";
+          _PushError(msg);
           return false;
+        }
+      } else if (var.type == "int[]") {
+        std::vector<int> values;
+        if (!ParseIntArray(&values)) {
+          //std::string msg = "Array of int values expected for `" + var.name + "`.\n";
+          //_PushError(msg);
+          return false;
+        }
+
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "int[" << i << "] = " << values[i] << "\n";
+        }
+      } else if (var.type == "int3") {
+        std::vector<int> values;
+        if (!ParseIntTuple(3, &values)) {
+          //std::string msg = "Array of int values expected for `" + var.name + "`.\n";
+          //_PushError(msg);
+          return false;
+        }
+
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "int[" << i << "] = " << values[i] << "\n";
         }
       }
     }
@@ -478,6 +713,15 @@ class USDAParser {
 
  private:
 
+  void _PushError(const std::string &msg) {
+    ErrorDiagnositc diag;
+    diag.line_row = _line_row;
+    diag.line_col = _line_col;
+    diag.err = msg;
+    err_stack.push(diag);
+  }
+
+
   bool IsBuiltinMeta(std::string name) {
     return _builtin_metas.count(name) ? true : false;
   }
@@ -486,6 +730,8 @@ class USDAParser {
     _builtin_metas["doc"] = Variable("string", "doc");
     _builtin_metas["metersPerUnit"] = Variable("float", "metersPerUnit");
     _builtin_metas["upAxis"] = Variable("string", "upAxis");
+    _builtin_metas["test"] = Variable("int[]", "test");
+    _builtin_metas["testt"] = Variable("int3", "testt");
   }
 
   const tinyusdz::StreamReader *_sr = nullptr;
