@@ -45,6 +45,26 @@ class Variable {
 
 inline bool IsChar(char c) { return std::isalpha(int(c)); }
 
+inline bool ParseFloat(const std::string &s, float *value, std::string *err) {
+  std::cout << "Parse float: " << s << "\n";
+  // Pase with Ryu.
+  Status stat = s2f_n(s.data(), int(s.size()), value);
+  if (stat == SUCCESS) {
+    return true; 
+  }
+
+  if (stat == INPUT_TOO_SHORT) {
+    (*err) = "Input floating point literal is too short\n";
+  } else if (stat == INPUT_TOO_LONG) {
+    (*err) = "Input floating point literal is too long\n";
+  } else if (stat == MALFORMED_INPUT) {
+    (*err) = "Malformed input floating point literal\n";
+  }
+
+  return false;
+
+}
+
 class USDAParser {
  public:
   struct ParseState {
@@ -154,6 +174,7 @@ class USDAParser {
         if ((curr >= '0') && (curr <= '9')) {
           ss << curr;
         } else {
+          _sr->seek_from_current(-1);
           break;
         }
         
@@ -164,6 +185,7 @@ class USDAParser {
     } else {
       // end
       (*result) = ss.str();
+      _sr->seek_from_current(-1);
       return true; 
     }
 
@@ -215,6 +237,7 @@ class USDAParser {
           ss << curr;
           has_exp_sign = true;
         } else {
+          // end
           _sr->seek_from_current(-1);
           break;
         }
@@ -251,7 +274,10 @@ class USDAParser {
     return true;
   }
 
-  bool ReadInt(int *value) {
+  template<typename T> bool ReadBasicType(T *value);
+
+  template<>
+  bool ReadBasicType(int *value) {
     std::stringstream ss;
 
     std::cout << "ReadInt\n";
@@ -326,17 +352,48 @@ class USDAParser {
     return true;
   }
 
+  template<>
+  bool ReadBasicType(float *value) {
+    std::string value_str;
+    std::string err;
+    if (!LexFloat(&value_str, &err)) {
+      std::string msg = "Failed to parse float value literal.\n";
+      if (err.size()) {
+        msg += err;
+      }
+      _PushError(msg);
+      
+      return false;
+    }
+
+    if (!ParseFloat(value_str, value, &err)) {
+      std::string msg = "Failed to parse float value literal.\n";
+      if (err.size()) {
+        msg += err;
+      }
+      _PushError(msg);
+      return false;
+    }
+
+    return true;
+  }
+
   ///
-  /// Parses 1 or more occurences of int value, separated by `sep`
+  /// Parses 1 or more occurences of value with basic type 'T', separated by `sep`
   ///
-  bool SepBy1Int(const char sep, std::vector<int> *result) {
+  template<typename T>
+  bool SepBy1BasicType(const char sep, std::vector<T> *result) {
 
     result->clear();
 
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
     {
-      int value;
-      if (!ReadInt(&value)) {
-        _PushError("Not starting with integer value.\n");
+      T value;
+      if (!ReadBasicType<T>(&value)) {
+        _PushError("Not starting with the value of requested type.\n");
         return false;
       }
 
@@ -375,9 +432,8 @@ class USDAParser {
 
       std::cout << "go to read int\n";
 
-      int value;
-      if (!ReadInt(&value)) {
-        std::cout << "not a int value\n";
+      T value;
+      if (!ReadBasicType<T>(&value)) {
         break;
       }
 
@@ -387,7 +443,77 @@ class USDAParser {
     std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
-      _PushError("Empty integer array.\n");
+      _PushError("Empty array.\n");
+      return false;
+    }
+
+    return true;
+  }
+
+  ///
+  /// Parses 1 or more occurences of value with tuple type 'T', separated by `sep`
+  ///
+  template<typename T, size_t N>
+  bool SepBy1TupleType(const char sep, std::vector<std::array<T, N>> *result) {
+
+    result->clear();
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    {
+      std::array<T, N> value;
+      if (!ParseBasicTypeTuple<T, N>(&value)) {
+        _PushError("Not starting with the tuple value of requested type.\n");
+        return false;
+      }
+
+      result->push_back(value);
+    }
+
+    while (!_sr->eof()) {
+
+      // sep
+      if (!SkipWhitespaceAndNewline()) {
+        std::cout << "ws failure\n";
+        return false;
+      }
+
+      char c;
+      if (!_sr->read1(&c)) {
+        std::cout << "read1 failure\n";
+        return false;
+      }
+
+      std::cout << "sep c = " << c << "\n";
+
+      if (c != sep) {
+        // end
+        std::cout << "sepBy1 end\n";
+        _sr->seek_from_current(-1); // unwind single char
+        break;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        std::cout << "ws failure\n";
+        return false;
+      }
+
+      std::cout << "go to read int\n";
+
+      std::array<T, N> value;
+      if (!ParseBasicTypeTuple<T, N>(&value)) {
+        break;
+      }
+
+      result->push_back(value);
+    }
+
+    std::cout << "result.size " << result->size() << "\n";
+
+    if (result->empty()) {
+      _PushError("Empty array.\n");
       return false;
     }
 
@@ -397,13 +523,14 @@ class USDAParser {
   ///
   /// Parse '[', Sep1By(','), ']'
   ///
-  bool ParseIntArray(std::vector<int> *result) {
+  template<typename T>
+  bool ParseBasicTypeArray(std::vector<T> *result) {
     if (!Expect('[')) {
       return false;
     }
     std::cout << "got [\n";
 
-    if (!SepBy1Int(',', result)) {
+    if (!SepBy1BasicType<T>(',', result)) {
       return false;
     }
 
@@ -422,13 +549,15 @@ class USDAParser {
   ///
   /// Parse '(', Sep1By(','), ')'
   ///
-  bool ParseIntTuple(const size_t num_items, std::vector<int> *result) {
+  template<typename T, size_t N>
+  bool ParseBasicTypeTuple(std::array<T, N> *result) {
     if (!Expect('(')) {
       return false;
     }
     std::cout << "got (\n";
 
-    if (!SepBy1Int(',', result)) {
+    std::vector<T> values;
+    if (!SepBy1BasicType<T>(',', &values)) {
       return false;
     }
 
@@ -438,16 +567,48 @@ class USDAParser {
       return false;
     }
 
-    if (result->size() != num_items) {
-      std::string msg = "The number of tuple elements must be " + std::to_string(num_items) + ", but got " + std::to_string(result->size()) + "\n";
+    if (values.size() != N) {
+      std::string msg = "The number of tuple elements must be " + std::to_string(N) + ", but got " + std::to_string(result->size()) + "\n";
       _PushError(msg);
       return false;
+    }
+
+    for (size_t i = 0; i < N; i++) {
+      (*result)[i] = values[i];
     }
 
     return true;
 
   }
 
+  ///
+  /// Parse the array of tuple(e.g. `float3`: [(0, 1, 2), (2, 3, 4), ...] )
+  ///
+  template<typename T, size_t N>
+  bool ParseTupleArray(std::vector<std::array<T, N>> *result) {
+    (void)result;
+
+    if (!Expect('[')) {
+      return false;
+    }
+    std::cout << "got [\n";
+
+    if (!SepBy1TupleType<T, 3>(',', result)) {
+      return false;
+    }
+
+    if (!Expect(']')) {
+      std::cout << "not ]\n";
+
+      return false;
+    }
+    std::cout << "got ]\n";
+
+    return true;
+
+    return true;
+  }
+  
 
   bool ReadStringLiteral(std::string &token) {
     std::stringstream ss;
@@ -796,7 +957,7 @@ class USDAParser {
         }
       } else if (var.type == "int[]") {
         std::vector<int> values;
-        if (!ParseIntArray(&values)) {
+        if (!ParseBasicTypeArray<int>(&values)) {
           //std::string msg = "Array of int values expected for `" + var.name + "`.\n";
           //_PushError(msg);
           return false;
@@ -804,6 +965,24 @@ class USDAParser {
 
         for (size_t i = 0; i < values.size(); i++) {
           std::cout << "int[" << i << "] = " << values[i] << "\n";
+        }
+      } else if (var.type == "float[]") {
+        std::vector<float> values;
+        if (!ParseBasicTypeArray<float>(&values)) {
+          return false;
+        }
+
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "float[" << i << "] = " << values[i] << "\n";
+        }
+      } else if (var.type == "float3[]") {
+        std::vector<std::array<float, 3>> values;
+        if (!ParseTupleArray<float, 3>(&values)) {
+          return false;
+        }
+
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "float[" << i << "] = " << values[i][0] << ", " << values[i][1] << ", " << values[i][2] << "\n";
         }
       } else if (var.type == "float") {
         std::string fval;
@@ -817,9 +996,20 @@ class USDAParser {
           return false;
         }
         std::cout << "float : " << fval << "\n";
+        float value;
+        if (!ParseFloat(fval, &value, &ferr)) {
+          std::string msg = "Failed to parse floating point literal for `" + var.name + "`.\n";
+          if (!ferr.empty()) {
+            msg += ferr;
+          }
+          _PushError(msg);
+          return false;
+        }
+        std::cout << "parsed float : " << value << "\n";
+
       } else if (var.type == "int3") {
-        std::vector<int> values;
-        if (!ParseIntTuple(3, &values)) {
+        std::array<int, 3> values;
+        if (!ParseBasicTypeTuple<int, 3>(&values)) {
           //std::string msg = "Array of int values expected for `" + var.name + "`.\n";
           //_PushError(msg);
           return false;
@@ -828,6 +1018,7 @@ class USDAParser {
         for (size_t i = 0; i < values.size(); i++) {
           std::cout << "int[" << i << "] = " << values[i] << "\n";
         }
+
       }
     }
 
@@ -918,6 +1109,8 @@ class USDAParser {
     _builtin_metas["test"] = Variable("int[]", "test");
     _builtin_metas["testt"] = Variable("int3", "testt");
     _builtin_metas["testf"] = Variable("float", "testf");
+    _builtin_metas["testfa"] = Variable("float[]", "testfa");
+    _builtin_metas["testfta"] = Variable("float3[]", "testfta");
   }
 
   const tinyusdz::StreamReader *_sr = nullptr;
