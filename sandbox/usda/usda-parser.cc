@@ -55,6 +55,179 @@ class USDAParser {
     _RegisterBuiltinMeta();
   }
 
+
+  bool LexFloat(std::string *result, std::string *err) {
+    // FLOATVAL : ('+' or '-')? FLOAT
+    // FLOAT
+    //     :   ('0'..'9')+ '.' ('0'..'9')* EXPONENT?
+    //     |   '.' ('0'..'9')+ EXPONENT?
+    //     |   ('0'..'9')+ EXPONENT
+    //     ;
+    // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
+
+    std::stringstream ss;
+    
+    bool has_sign{false};
+    bool leading_decimal_dots{false};
+    {
+      char sc;
+      if (!_sr->read1(&sc)) {
+        return false;
+      }
+      _line_col++;
+
+      ss << sc;
+
+      // sign, '.' or [0-9]
+      if ((sc == '+') || (sc == '-')) {
+        has_sign = true;
+
+        char c;
+        if (!_sr->read1(&c)) {
+          return false;
+        }
+
+        if (c == '.') {
+          // ok. something like `+.7`, `-.53`
+          leading_decimal_dots = true;
+          _line_col++;
+          ss << c;
+
+        } else {
+          // unwind and continue
+          _sr->seek_from_current(-1);
+        }
+
+      } else if ((sc >= '0') && (sc <= '9')) {
+        // ok 
+      } else if (sc == '.') {
+        // ok 
+        leading_decimal_dots = true; 
+      } else {
+        (*err) = "Sign or `.` or 0-9 expected.\n";
+        return false;
+      }
+
+    }
+
+    // 1. Read the integer part
+    char curr;
+    if (!leading_decimal_dots) {
+      std::cout << "1 read int part: ss = " << ss.str() << "\n";
+
+      while (!_sr->eof()) {
+        if (!_sr->read1(&curr)) {
+          return false;
+        }
+
+        std::cout << "1 curr = " << curr << "\n";
+        if ((curr >= '0') && (curr <= '9')) {
+          // continue
+          ss << curr;
+        } else {
+          _sr->seek_from_current(-1);
+          break;
+        } 
+      } 
+    }
+
+    if (_sr->eof()) {
+      (*result) = ss.str();
+      return true;
+    }
+
+    if (!_sr->read1(&curr)) {
+      return false;
+    }
+
+    std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr << "\n";
+
+    // 2. Read the decimal part
+    if (curr == '.') {
+      ss << curr;
+
+      while (!_sr->eof()) {
+        if (!_sr->read1(&curr)) {
+          return false;
+        }
+
+        if ((curr >= '0') && (curr <= '9')) {
+          ss << curr;
+        } else {
+          break;
+        }
+        
+      }
+
+    } else if ((curr == 'e') || (curr == 'E')) {
+      // go to 3.
+    } else {
+      // end
+      (*result) = ss.str();
+      return true; 
+    }
+
+    if (_sr->eof()) {
+      (*result) = ss.str();
+      return true;
+    }
+
+    // 3. Read the exponent part
+    bool has_exp_sign{false};
+    if ((curr == 'e') || (curr == 'E')) {
+      ss << curr;
+      
+      if (!_sr->read1(&curr)) {
+        return false;
+      }
+
+      if ((curr == '+') || (curr == '-')) {
+
+        // exp sign
+        ss << curr;
+        has_exp_sign = true;
+
+      } else if ((curr >= '0') && (curr <= '9')) {
+        // ok
+        ss << curr;
+      } else {
+        // Empty E is not allowed.
+        (*err) = "Empty E is not allowed.\n";
+        return false;
+      }
+
+      while (!_sr->eof()) {
+        if (!_sr->read1(&curr)) {
+          return false;
+        }
+        
+        if ((curr >= '0') && (curr <= '9')) {
+          // ok
+          ss << curr;
+
+        } else if ((curr == '+') || (curr == '-')) {
+          if (has_exp_sign) {
+            // No multiple sign characters
+            (*err) = "No multiple exponential sign characters.\n";
+            return false;
+          }
+
+          ss << curr;
+          has_exp_sign = true;
+        } else {
+          _sr->seek_from_current(-1);
+          break;
+        }
+
+      }
+        
+    }
+
+    (*result) = ss.str();
+    return true;
+
+  }
+
   bool ReadToken(std::string *result) {
     std::stringstream ss;
 
@@ -632,6 +805,18 @@ class USDAParser {
         for (size_t i = 0; i < values.size(); i++) {
           std::cout << "int[" << i << "] = " << values[i] << "\n";
         }
+      } else if (var.type == "float") {
+        std::string fval;
+        std::string ferr;
+        if (!LexFloat(&fval, &ferr)) {
+          std::string msg = "Floating point literal expected for `" + var.name + "`.\n";
+          if (!ferr.empty()) {
+            msg += ferr;
+          }
+          _PushError(msg);
+          return false;
+        }
+        std::cout << "float : " << fval << "\n";
       } else if (var.type == "int3") {
         std::vector<int> values;
         if (!ParseIntTuple(3, &values)) {
@@ -732,6 +917,7 @@ class USDAParser {
     _builtin_metas["upAxis"] = Variable("string", "upAxis");
     _builtin_metas["test"] = Variable("int[]", "test");
     _builtin_metas["testt"] = Variable("int3", "testt");
+    _builtin_metas["testf"] = Variable("float", "testf");
   }
 
   const tinyusdz::StreamReader *_sr = nullptr;
