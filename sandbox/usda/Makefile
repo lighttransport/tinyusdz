@@ -15,7 +15,7 @@ all: usda-parser t
 t: usda-parser
 	./usda-parser tests/test.usda
 
-usda-parser: usda-parser.o d2s.o f2s.o
+usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 	
 usda-parser.o: usda-parser.cc
@@ -25,6 +25,12 @@ d2s.o: ../../src/external/ryu/ryu/d2s.c
 	$(CC) $(INCFLAGS) $(CFLAGS) -c -o $@ $<
 
 f2s.o: ../../src/external/ryu/ryu/f2s.c
+	$(CC) $(INCFLAGS) $(CFLAGS) -c -o $@ $<
+
+s2f.o: ../../src/external/ryu/ryu/s2f.c
+	$(CC) $(INCFLAGS) $(CFLAGS) -c -o $@ $<
+
+s2d.o: ../../src/external/ryu/ryu/s2d.c
 	$(CC) $(INCFLAGS) $(CFLAGS) -c -o $@ $<
 
 clean:
