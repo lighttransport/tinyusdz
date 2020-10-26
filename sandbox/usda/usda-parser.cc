@@ -6,6 +6,7 @@
 #include <stack>
 #include <vector>
 #include <map>
+#include <set>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -73,6 +74,7 @@ class USDAParser {
 
   USDAParser(tinyusdz::StreamReader *sr) : _sr(sr) {
     _RegisterBuiltinMeta();
+    _RegisterNodeTypes();
   }
 
 
@@ -610,7 +612,7 @@ class USDAParser {
   }
   
 
-  bool ReadStringLiteral(std::string &token) {
+  bool ReadStringLiteral(std::string *literal) {
     std::stringstream ss;
 
     char c0;
@@ -645,9 +647,9 @@ class USDAParser {
       }
     }
 
-    token = ss.str();
+    (*literal) = ss.str();
 
-    if (token.back() != '"') {
+    if (literal->back() != '"') {
       ErrorDiagnositc diag;
       diag.err = "String literal expected but it does not end with '\"'\n";
       diag.line_col = _line_col;
@@ -657,7 +659,7 @@ class USDAParser {
       return false;
     }
 
-    _line_col += token.size();
+    _line_col += literal->size();
 
     return true;
   }
@@ -950,7 +952,7 @@ class USDAParser {
       if (var.type == "string") {
         std::string value;
         std::cout << "read string literal\n";
-        if (!ReadStringLiteral(value)) {
+        if (!ReadStringLiteral(&value)) {
           std::string msg = "String literal expected for `" + var.name + "`.\n";
           _PushError(msg);
           return false;
@@ -1040,6 +1042,18 @@ class USDAParser {
     return true;
   }
 
+  bool Char1(char *c) {
+    return _sr->read1(c);
+  }
+
+  bool Rewind(size_t offset) {
+    if (!_sr->seek_from_current(-int64_t(offset))) {
+      return false;
+    }
+
+    return true;
+  }
+
   bool Push() {
     // Stack size must be less than the number of input bytes.
     assert(parse_stack.size() < _sr->size());
@@ -1065,11 +1079,108 @@ class USDAParser {
     return true;
   }
 
+  ///
+  /// Parse `def` block.
+  /// `def Xform "root" { ... }
+  ///
+  bool ParseDefBlock() {
+    std::string def;
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (!ReadToken(&def)) {
+      return false;
+    }
+
+    if (def != "def") {
+      _PushError("`def` is expected.");
+      return false;
+    }
+
+    std::cout << "def = " << def << "\n";
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::string prim_type;
+
+    if (!ReadToken(&prim_type)) {
+      return false;
+    }
+
+    if (!_node_types.count(prim_type)) {
+      std::string msg = "`" + prim_type + "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
+      _PushError(msg);
+      return false;
+    }
+
+    std::cout << "prim_type: " << prim_type << "\n";
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::string node_name;
+    if (!ReadStringLiteral(&node_name)) {
+      return false;
+    }
+
+    std::cout << "prim node name: " << node_name << "\n";
+
+    if (!Expect('{')) {
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+
+    {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '}') {
+        // end block
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
+
+        std::string tok;
+        if (!ReadToken(&tok)) {
+          return false;
+        }
+
+        std::cout << "token = " << tok << ", size = " << tok.size() << "\n";
+
+        if (!Rewind(tok.size())) {
+          return false;
+        }
+
+        if (tok == "def") {
+          // recusive call
+          if (!ParseDefBlock()) {
+            return false;
+          }
+        }
+      }
+    }
+
+    return true;
+  }
+
   bool Parse() {
     bool ok{false};
 
     ok = ParseMagicHeader();
-    ok &= ParseMeta();
+    ok &= ParseDefBlock();
+    //ok &= ParseMeta();
 
     return ok;
   }
@@ -1086,6 +1197,7 @@ class USDAParser {
     ss << diag.err << "\n";
     return ss.str();
   }
+
 
  private:
 
@@ -1113,9 +1225,15 @@ class USDAParser {
     _builtin_metas["testfta"] = Variable("float3[]", "testfta");
   }
 
+  void _RegisterNodeTypes() {
+    _node_types.insert("Xform");
+  }
+
+
   const tinyusdz::StreamReader *_sr = nullptr;
 
   std::map<std::string, Variable> _builtin_metas;
+  std::set<std::string> _node_types;
 
   std::stack<ErrorDiagnositc> err_stack;
   std::stack<ParseState> parse_stack;
