@@ -75,6 +75,7 @@ class USDAParser {
   USDAParser(tinyusdz::StreamReader *sr) : _sr(sr) {
     _RegisterBuiltinMeta();
     _RegisterNodeTypes();
+    _RegisterPrimAttrTypes();
   }
 
 
@@ -273,6 +274,57 @@ class USDAParser {
 
     (*result) = ss.str();
 
+    return true;
+  }
+
+  bool ParsePrimAttr() {
+    // prim_attr : uniform type name '=' value
+    //           | type name '=' value
+    //           ;
+
+    bool uniform_qual{false};
+    std::string type_name;
+
+    if (!ReadIdentifier(&type_name)) {
+      return false;
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    if (type_name == "uniform") {
+      uniform_qual = true;
+
+      // next token should be type
+      if (!ReadIdentifier(&type_name)) {
+        _PushError("`type` identifier expected but got non-identifier\n");
+        return false;
+      }
+    }
+
+    if (!_IsRegisteredPrimAttrType(type_name)) {
+      _PushError("Unknown or unsupported primtive attribute type `" + type_name + "`\n");
+      return false;
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    std::string primattr_name;
+    if (!ReadPrimAttrIdentifier(&primattr_name)) {
+      return false;
+    }
+    
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    if (!Expect('=')) {
+      return false;
+    }
+    
     return true;
   }
 
@@ -664,7 +716,9 @@ class USDAParser {
     return true;
   }
 
-  bool ReadIdentifier(std::string &token) {
+  bool ReadPrimAttrIdentifier(std::string *token) {
+    // Example: xformOp:transform
+
     std::stringstream ss;
 
     std::cout << "readtoken\n";
@@ -676,7 +730,15 @@ class USDAParser {
         return false;
       }
 
-      if (!std::isalpha(int(c))) {
+      if (c == '_') {
+        // ok
+      } else if (c == ':') {
+        // ':' must lie in the middle of string literal
+        if (ss.str().size() == 0) {
+          _PushError("PrimAttr name must not starts with `:`\n");
+          return false;
+        }
+      } else if (!std::isalpha(int(c))) {
         _sr->seek_from_current(-1);
         break;
       }
@@ -687,8 +749,44 @@ class USDAParser {
       ss << c;
     }
 
-    token = ss.str();
-    std::cout << "token = " << token << "\n";
+    // ':' must lie in the middle of string literal
+    if (ss.str().back() == ':') {
+      _PushError("PrimAttr name must not ends with `:`\n");
+      return false;
+    }
+
+    (*token) = ss.str();
+    std::cout << "token = " << (*token) << "\n";
+    return true;
+  }
+
+  bool ReadIdentifier(std::string *token) {
+    std::stringstream ss;
+
+    std::cout << "readtoken\n";
+
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        // this should not happen.
+        return false;
+      }
+
+      if (c == '_') {
+        // ok
+      } else if (!std::isalpha(int(c))) {
+        _sr->seek_from_current(-1);
+        break;
+      }
+
+      _line_col++;
+
+      std::cout << c << "\n";
+      ss << c;
+    }
+
+    (*token) = ss.str();
+    std::cout << "token = " << (*token) << "\n";
     return true;
   }
 
@@ -921,12 +1019,12 @@ class USDAParser {
       // metadata line
       // var = value
       std::string varname;
-      if (!ReadIdentifier(varname)) {
+      if (!ReadIdentifier(&varname)) {
         std::cout << "token " << varname;
         return false;
       }
 
-      if (!IsBuiltinMeta(varname)) {
+      if (!_IsBuiltinMeta(varname)) {
 
         ErrorDiagnositc diag;
         diag.line_row = _line_row;
@@ -1139,6 +1237,9 @@ class USDAParser {
     }
 
 
+    // expect = '}'
+    //        | def_block 
+    //        | prim_attr
     {
       char c;
       if (!Char1(&c)) {
@@ -1166,6 +1267,11 @@ class USDAParser {
         if (tok == "def") {
           // recusive call
           if (!ParseDefBlock()) {
+            return false;
+          }
+        } else {
+          // Assume PrimAttr
+          if (!ParsePrimAttr()) {
             return false;
           }
         }
@@ -1201,6 +1307,27 @@ class USDAParser {
 
  private:
 
+  bool _IsRegisteredPrimAttrType(const std::string &ty) {
+    return _registered_prim_attr_types.count(ty);
+  }
+
+  void _RegisterPrimAttrTypes() {
+    _registered_prim_attr_types.insert("float");
+    _registered_prim_attr_types.insert("int");
+
+    _registered_prim_attr_types.insert("float2");
+    _registered_prim_attr_types.insert("float3");
+    _registered_prim_attr_types.insert("normal3f");
+    _registered_prim_attr_types.insert("vector3f");
+    _registered_prim_attr_types.insert("color3f");
+
+    _registered_prim_attr_types.insert("matrix4d");
+
+    _registered_prim_attr_types.insert("token");
+
+    // TODO: array type
+  }
+
   void _PushError(const std::string &msg) {
     ErrorDiagnositc diag;
     diag.line_row = _line_row;
@@ -1210,7 +1337,7 @@ class USDAParser {
   }
 
 
-  bool IsBuiltinMeta(std::string name) {
+  bool _IsBuiltinMeta(std::string name) {
     return _builtin_metas.count(name) ? true : false;
   }
 
@@ -1234,6 +1361,7 @@ class USDAParser {
 
   std::map<std::string, Variable> _builtin_metas;
   std::set<std::string> _node_types;
+  std::set<std::string> _registered_prim_attr_types;
 
   std::stack<ErrorDiagnositc> err_stack;
   std::stack<ParseState> parse_stack;
