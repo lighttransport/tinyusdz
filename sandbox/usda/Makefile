@@ -8,6 +8,12 @@ CXXFLAGS=-std=c++11 -fsanitize=address -g -O0
 CFLAGS=-fsanitize=address -g -O0
 LDFLAGS=-fsanitize=address
 
+# gcc
+#EXTRA_COMPILER_FLAGS=-Wall
+#CXXFLAGS=-std=c++11 -g -O0
+#CFLAGS=-g -O0
+#LDFLAGS=
+
 .PHONY: clean all t
 
 all: usda-parser t
@@ -15,10 +21,13 @@ all: usda-parser t
 t: usda-parser
 	./usda-parser tests/test.usda
 
-usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o
+usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 	
 usda-parser.o: usda-parser.cc
+	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
+
+simple-serialize.o: ../../src/simple-serialize.cc ../../src/simple-serialize.hh
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
 
 d2s.o: ../../src/external/ryu/ryu/d2s.c
@@ -34,5 +43,5 @@ s2d.o: ../../src/external/ryu/ryu/s2d.c
 	$(CC) $(INCFLAGS) $(CFLAGS) -c -o $@ $<
 
 clean:
-	@rm -rf usda-parser usda-parser.o d2s.o f2s.o
+	@rm -rf usda-parser usda-parser.o d2s.o f2s.o s2d.o s2f.o simple-serialize.o
 

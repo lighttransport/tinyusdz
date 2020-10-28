@@ -24,7 +24,33 @@
 
 #include <stream-reader.hh>
 
+#include <simple-serialize.hh>
+
 namespace tinyusdz {
+
+static void test() {
+
+  int i;
+  bool b;
+  uint32_t ui;
+  int64_t i64;
+  uint64_t ui64;
+  float f;
+  double d;
+  char c;
+  std::string s;
+
+  simple_serialize::ObjectHandler h;
+  h.add_property("i", &i);
+  h.add_property("b", &b);
+  h.add_property("ui", &ui);
+  h.add_property("i64", &i64);
+  h.add_property("ui64", &ui64);
+  h.add_property("f", &f);
+  h.add_property("d", &d);
+  h.add_property("c", &c);
+  h.add_property("s", &s);
+}
 
 struct ErrorDiagnositc {
   std::string err;
@@ -51,7 +77,7 @@ inline bool ParseFloat(const std::string &s, float *value, std::string *err) {
   // Pase with Ryu.
   Status stat = s2f_n(s.data(), int(s.size()), value);
   if (stat == SUCCESS) {
-    return true; 
+    return true;
   }
 
   if (stat == INPUT_TOO_SHORT) {
@@ -76,6 +102,9 @@ class USDAParser {
     _RegisterBuiltinMeta();
     _RegisterNodeTypes();
     _RegisterPrimAttrTypes();
+
+    // HACK
+    test();
   }
 
 
@@ -89,7 +118,7 @@ class USDAParser {
     // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
 
     std::stringstream ss;
-    
+
     bool has_sign{false};
     bool leading_decimal_dots{false};
     {
@@ -122,16 +151,18 @@ class USDAParser {
         }
 
       } else if ((sc >= '0') && (sc <= '9')) {
-        // ok 
+        // ok
       } else if (sc == '.') {
-        // ok 
-        leading_decimal_dots = true; 
+        // ok
+        leading_decimal_dots = true;
       } else {
         (*err) = "Sign or `.` or 0-9 expected.\n";
         return false;
       }
 
     }
+
+    (void)has_sign;
 
     // 1. Read the integer part
     char curr;
@@ -150,8 +181,8 @@ class USDAParser {
         } else {
           _sr->seek_from_current(-1);
           break;
-        } 
-      } 
+        }
+      }
     }
 
     if (_sr->eof()) {
@@ -180,7 +211,7 @@ class USDAParser {
           _sr->seek_from_current(-1);
           break;
         }
-        
+
       }
 
     } else if ((curr == 'e') || (curr == 'E')) {
@@ -189,7 +220,7 @@ class USDAParser {
       // end
       (*result) = ss.str();
       _sr->seek_from_current(-1);
-      return true; 
+      return true;
     }
 
     if (_sr->eof()) {
@@ -201,7 +232,7 @@ class USDAParser {
     bool has_exp_sign{false};
     if ((curr == 'e') || (curr == 'E')) {
       ss << curr;
-      
+
       if (!_sr->read1(&curr)) {
         return false;
       }
@@ -225,7 +256,7 @@ class USDAParser {
         if (!_sr->read1(&curr)) {
           return false;
         }
-        
+
         if ((curr >= '0') && (curr <= '9')) {
           // ok
           ss << curr;
@@ -246,7 +277,7 @@ class USDAParser {
         }
 
       }
-        
+
     }
 
     (*result) = ss.str();
@@ -316,7 +347,7 @@ class USDAParser {
     if (!ReadPrimAttrIdentifier(&primattr_name)) {
       return false;
     }
-    
+
     if (!SkipWhitespace()) {
       return false;
     }
@@ -324,7 +355,9 @@ class USDAParser {
     if (!Expect('=')) {
       return false;
     }
-    
+
+    (void)uniform_qual;
+
     return true;
   }
 
@@ -354,7 +387,7 @@ class USDAParser {
         negative = true;
         has_sign = true;
       } else if ((sc >= '0') && (sc <= '9')) {
-        // ok 
+        // ok
       } else {
         _PushError("Sign or 0-9 expected.\n");
         return false;
@@ -386,7 +419,7 @@ class USDAParser {
     if ((ss.str().size() >= 1) && (ss.str()[0] == '0')) {
       _PushError("Zero padded integer value is not allowed.\n");
       return false;
-    } 
+    }
 
     std::cout << "ReadInt token: " << ss.str() << "\n";
 
@@ -416,7 +449,7 @@ class USDAParser {
         msg += err;
       }
       _PushError(msg);
-      
+
       return false;
     }
 
@@ -662,7 +695,7 @@ class USDAParser {
 
     return true;
   }
-  
+
 
   bool ReadStringLiteral(std::string *literal) {
     std::stringstream ss;
@@ -1046,7 +1079,7 @@ class USDAParser {
       }
       SkipWhitespace();
 
-      const Variable &var = _builtin_metas.at(varname); 
+      const Variable &var = _builtin_metas.at(varname);
       if (var.type == "string") {
         std::string value;
         std::cout << "read string literal\n";
@@ -1238,7 +1271,7 @@ class USDAParser {
 
 
     // expect = '}'
-    //        | def_block 
+    //        | def_block
     //        | prim_attr
     {
       char c;
