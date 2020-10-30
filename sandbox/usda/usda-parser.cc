@@ -39,6 +39,12 @@ static void test() {
   double d;
   char c;
   std::string s;
+  std::map<std::string, int> map0;
+  std::vector<float> fvec;
+  std::list<float> flist;
+  std::array<float, 3> fvec3;
+  std::vector<std::array<float, 3>> float3v;
+  std::vector<short> sv;
 
   simple_serialize::ObjectHandler h;
   h.add_property("i", &i);
@@ -50,6 +56,32 @@ static void test() {
   h.add_property("d", &d);
   h.add_property("c", &c);
   h.add_property("s", &s);
+  h.add_property("fvec", &fvec);
+  h.add_property("flist", &flist);
+  h.add_property("map0", &map0);
+  h.add_property("fvec3", &fvec3);
+  h.add_property("float3v", &float3v);
+
+  //simple_serialize::Handler<double> dh(&d);
+  //simple_serialize::Handler<std::vector<std::array<float, 3>>> dh(&float3v);
+  //simple_serialize::Handler<std::map<std::string, int>> dh(&map0);
+  simple_serialize::Handler<std::vector<short>> dh(&sv);
+  simple_serialize::Parse test;
+
+  //std::vector<std::array<float, 3>> ref = {{1,2,3}, {4,5,6}};
+  //std::map<std::string, int> ref0;
+  std::vector<short> ref1 = {1, 4, 5};
+
+  bool ret = test.SetValue(ref1, dh);
+  std::cout << "ret = " << ret << "\n";
+
+  for (size_t x = 0; x < sv.size(); x++) {
+    std::cout << "val = " << sv[x] << "\n";
+  }
+
+  //for (size_t x = 0; x < float3v.size(); x++) {
+  //  std::cout << "val = " << float3v[x][0] << ", " << float3v[x][1] << ", " << float3v[x][2] << "\n";
+  //}
 }
 
 struct ErrorDiagnositc {

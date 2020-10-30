@@ -2,6 +2,39 @@
 
 namespace simple_serialize {
 
+Error* TypeMismatchError(std::string expected_type, std::string actual_type) {
+  return new Error(Error::TYPE_MISMATCH,
+                   "Type mismatch error: type `" + expected_type +
+                       "` expected but got type `" + actual_type + "`");
+}
+
+Error* RequiredFieldMissingError() {
+  return new Error(Error::TYPE_MISMATCH, "Required field(s) is missing: ");
+}
+
+Error* UnknownFieldError(std::string field_name) {
+  return new Error(Error::UNKNOWN_FIELD,
+                   "Unknown field with name: `" + field_name + "`");
+}
+
+Error* ArrayLengthMismatchError() {
+  return new Error(Error::ARRAY_LENGTH_MISMATCH, "Array length mismatch");
+}
+
+Error* ArrayElementError(size_t idx) {
+  return new Error(Error::ARRAY_ELEMENT,
+                   "Error at array element at index " + std::to_string(idx));
+}
+
+Error* ObjectMemberError(std::string key) {
+  return new Error(Error::OBJECT_MEMBER,
+                   "Error at object member with name `" + key + "`");
+}
+
+Error* DuplicateKeyError(std::string key) {
+  return new Error(Error::DUPLICATE_KEYS, "Duplicated key name `" + key + "`");
+}
+
 IHandler::~IHandler() {}
 
 BaseHandler::BaseHandler() {}
@@ -28,25 +61,6 @@ ObjectHandler::~ObjectHandler() {}
 
 std::string ObjectHandler::type_name() const { return "object"; }
 
-namespace {
-
-Error* TypeMismatchError(std::string expected_type, std::string actual_type) {
-  return new Error(Error::TYPE_MISMATCH,
-                   "Type mismatch error: type `" + expected_type +
-                       "` expected but got type `" + actual_type + "`");
-}
-
-Error* RequiredFieldMissingError() {
-  return new Error(Error::TYPE_MISMATCH, "Required field(s) is missing: ");
-}
-
-Error* UnknownFieldError(std::string field_name) {
-  return new Error(Error::UNKNOWN_FIELD,
-                   "Unknown field with name: `" + field_name + "`");
-}
-
-}  // namespace
-
 bool ObjectHandler::precheck(const char* actual_type) {
   if (depth <= 0) {
     the_error.reset(TypeMismatchError(type_name(), actual_type));
@@ -56,7 +70,7 @@ bool ObjectHandler::precheck(const char* actual_type) {
     if (flags & Flags::AllowDuplicateKey) {
       current->handler->prepare_for_reuse();
     } else {
-      // the_error.reset(new error::DuplicateKeyError(current_name));
+      the_error.reset(DuplicateKeyError(current_name));
       return false;
     }
   }
@@ -65,7 +79,7 @@ bool ObjectHandler::precheck(const char* actual_type) {
 
 bool ObjectHandler::postcheck(bool success) {
   if (!success) {
-    // the_error.reset(new error::ObjectMemberError(current_name));
+    the_error.reset(ObjectMemberError(current_name));
   }
   return success;
 }
@@ -83,6 +97,16 @@ void ObjectHandler::set_missing_required(const std::string& name) {
 bool ObjectHandler::Double(double value) {
   if (!precheck("double")) return false;
   return POSTCHECK(current->handler->Double(value));
+}
+
+bool ObjectHandler::Short(short value) {
+  if (!precheck("short")) return false;
+  return POSTCHECK(current->handler->Short(value));
+}
+
+bool ObjectHandler::Ushort(unsigned short value) {
+  if (!precheck("unsigned short")) return false;
+  return POSTCHECK(current->handler->Ushort(value));
 }
 
 bool ObjectHandler::Int(int value) {
@@ -261,9 +285,9 @@ bool ObjectHandler::write(IHandler* output) const {
 
 Handler<bool>::Handler(bool* value) : m_value(value) {}
 Handler<bool>::~Handler() {}
-Handler<int>::Handler(int* i) : IntegerHandler<int>(i) {}
+Handler<short>::~Handler() {}
+Handler<unsigned short>::~Handler() {}
 Handler<int>::~Handler() {}
-Handler<unsigned>::Handler(unsigned* i) : IntegerHandler<unsigned int>(i) {}
 Handler<unsigned>::~Handler() {}
 Handler<int64_t>::~Handler() {}
 Handler<uint64_t>::~Handler() {}
@@ -271,5 +295,45 @@ Handler<float>::~Handler() {}
 Handler<double>::~Handler() {}
 Handler<char>::~Handler() {}
 Handler<std::string>::~Handler() {}
+
+bool Parse::SetValue(bool b, BaseHandler& handler) const {
+  return handler.Bool(b);
+}
+
+bool Parse::SetValue(short i, BaseHandler& handler) const {
+  return handler.Short(i);
+}
+
+bool Parse::SetValue(unsigned short i, BaseHandler& handler) const {
+  return handler.Ushort(i);
+}
+
+bool Parse::SetValue(int i, BaseHandler& handler) const {
+  return handler.Int(i);
+}
+
+bool Parse::SetValue(unsigned int i, BaseHandler& handler) const {
+  return handler.Uint(i);
+}
+
+bool Parse::SetValue(int64_t i, BaseHandler& handler) const {
+  return handler.Int64(i);
+}
+
+bool Parse::SetValue(uint64_t i, BaseHandler& handler) const {
+  return handler.Uint64(i);
+}
+
+bool Parse::SetValue(float f, BaseHandler& handler) const {
+  return handler.Double(double(f));
+}
+
+bool Parse::SetValue(double f, BaseHandler& handler) const {
+  return handler.Double(f);
+}
+
+bool Parse::SetValue(const std::string& s, BaseHandler& handler) const {
+  return handler.String(s.c_str(), s.size(), /* not used */ false);
+}
 
 }  // namespace simple_serialize
