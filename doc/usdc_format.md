@@ -7,6 +7,20 @@
 
 => total 88 bytes
 
+## Version
+
+From pxr/usd/usd/crateFile.cpp
+
+```
+// Version history:
+// 0.9.0: Added support for the timecode and timecode[] value types.
+// 0.8.0: Added support for SdfPayloadListOp values and SdfPayload values with
+//        layer offsets.
+// 0.7.0: Array sizes written as 64 bit ints.
+```
+
+* 0.8.0(USD v20.11)
+  
 ## Compression
 
 version 0.4.0 or later uses LZ4 for compression and interger compression(pxr original? compression. its backend still uses LZ4) for index arrays.
