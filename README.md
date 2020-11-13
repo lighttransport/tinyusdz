@@ -150,6 +150,7 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 
 ## TODO
 
+* [ ] Support Crate(binary) version 0.8.0(USD v20.11 default)
 * [ ] Write parser based on the schema definition.
 * [ ] Subdivision surface using OpenSubdiv.
   * [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.

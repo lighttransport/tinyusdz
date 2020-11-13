@@ -44,6 +44,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace tinyusdz {
 
+constexpr int version_major = 0;
+constexpr int version_minor = 7;
+constexpr int version_micro = 0;
+
 // Simple image class.
 // No colorspace conversion will be applied when decoding image data(e.g. from
 // .jpg, .png).
@@ -433,6 +437,30 @@ class Path {
   bool valid{false};
 };
 
+class TimeCode {
+  TimeCode(double tm = 0.0) : _time(tm) {}
+
+  size_t hash() const { return std::hash<double>{}(_time); }
+
+  double value() const { return _time; }
+
+ private:
+  double _time;
+};
+
+class LayerOffset {
+ private:
+  double _offset;
+  double _scale;
+};
+
+class Payload {
+ private:
+  std::string _asset_path;
+  Path _prim_path;
+  LayerOffset _layer_offset;
+};
+
 enum ValueTypeId {
   VALUE_TYPE_INVALID = 0,
 
@@ -583,6 +611,99 @@ class Value;
 struct TimeSamples {
   std::vector<double> times;
   std::vector<Value> values;
+};
+
+///
+/// Simple type-erased primitive value class for frequently used data types(e.g. `float[]`)
+///
+template <class dtype>
+struct TypeTrait;
+
+// TODO(syoyo): Support `Token` type
+template <>
+struct TypeTrait<std::string> {
+  static constexpr auto type_name = "string";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_STRING;
+};
+
+template <>
+struct TypeTrait<int> {
+  static constexpr auto type_name = "int";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_INT;
+};
+
+template <>
+struct TypeTrait<float16> {
+  static constexpr auto type_name = "half";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_HALF;
+};
+
+template <>
+struct TypeTrait<Vec2f> {
+  static constexpr auto type_name = "vec2f";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2F;
+};
+
+template <>
+struct TypeTrait<Vec3f> {
+  static constexpr auto type_name = "vec3f";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3F;
+};
+
+template <>
+struct TypeTrait<Vec4f> {
+  static constexpr auto type_name = "vec4f";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3F;
+};
+
+template <>
+struct TypeTrait<Matrix4d> {
+  static constexpr auto type_name = "matrix4d";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX4D;
+};
+
+template <class T>
+class PrimValue {
+ private:
+  T m_value;
+
+ public:
+  T value() const { return m_value; }
+
+  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
+                            * = nullptr>
+  PrimValue<T> &operator=(const U &u) {
+    m_value = u;
+
+    return (*this);
+  }
+
+  std::string type_name() { return std::string(TypeTrait<T>::type_name); }
+  bool is_array() const { return false; }
+};
+
+///
+/// array of PrimmValue
+/// multi-dimensional type is not supported(e.g. float[][])
+///
+template <class T>
+class PrimValue<std::vector<T>> {
+ private:
+  std::vector<T> m_value;
+
+  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
+                            * = nullptr>
+  PrimValue<T> &operator=(const std::vector<U> &u) {
+    m_value = u;
+
+    return (*this);
+  }
+
+  std::string type_name() {
+    return std::string(TypeTrait<T>::type_name) + "[]";
+  }
+
+  bool is_array() const { return true; }
 };
 
 ///
@@ -1519,8 +1640,7 @@ struct BlendShape {
                      // values in `offsets` and `normalOffsets`.
 };
 
-struct SkelRoot
-{
+struct SkelRoot {
   Extent extent;
   Purpose purpose{PurposeDefault};
   Visibility visibility{VisibilityInherited};
@@ -1531,15 +1651,16 @@ struct SkelRoot
 };
 
 // Skelton
-struct Skelton
-{
-  std::vector<Matrix4d> bindTransforms; // bind-pose transform of each joint in world coordinate.
+struct Skelton {
+  std::vector<Matrix4d>
+      bindTransforms;  // bind-pose transform of each joint in world coordinate.
   Extent extent;
 
   std::vector<std::string> jointNames;
   std::vector<std::string> joints;
 
-  std::vector<Matrix4d> restTransforms; // rest-pose transforms of each joint in local coordinate.
+  std::vector<Matrix4d> restTransforms;  // rest-pose transforms of each joint
+                                         // in local coordinate.
 
   Purpose purpose{PurposeDefault};
   Visibility visibility{VisibilityInherited};
@@ -1549,28 +1670,29 @@ struct Skelton
   // ref proxyPrim
 };
 
-struct SkelAnimation
-{
+struct SkelAnimation {
   std::vector<std::string> blendShapes;
   std::vector<float> blendShapeWeights;
   std::vector<std::string> joints;
-  std::vector<Quatf> rotations; // Joint-local unit quaternion rotations
-  std::vector<Vec3f> scales; // Joint-local scaling. pxr USD schema uses half3, but we use float3 for convenience.
-  std::vector<Vec3f> translations; // Joint-local translation.
-
+  std::vector<Quatf> rotations;  // Joint-local unit quaternion rotations
+  std::vector<Vec3f> scales;  // Joint-local scaling. pxr USD schema uses half3,
+                              // but we use float3 for convenience.
+  std::vector<Vec3f> translations;  // Joint-local translation.
 };
 
 // W.I.P.
 struct SkelBindingAPI {
-  Matrix4d geomBindTransform;  // primvars:skel:geomBindTransform
-  std::vector<int> jointIndices; // primvars:skel:jointIndices
-  std::vector<float> jointWeights; // primvars:skel:jointWeights
-  std::vector<std::string> blendShapes; // optional?
-  std::vector<std::string> joints; // optional
+  Matrix4d geomBindTransform;            // primvars:skel:geomBindTransform
+  std::vector<int> jointIndices;         // primvars:skel:jointIndices
+  std::vector<float> jointWeights;       // primvars:skel:jointWeights
+  std::vector<std::string> blendShapes;  // optional?
+  std::vector<std::string> joints;       // optional
 
-  int64_t animationSource{-1}; // index to Scene.animations. ref skel:animationSource
-  int64_t blendShapeTargets{-1}; // index to Scene.blendshapes. ref skel:bindShapeTargets
-  int64_t skeleton{-1}; // index to Scene.skeltons. // ref skel:skelton
+  int64_t animationSource{
+      -1};  // index to Scene.animations. ref skel:animationSource
+  int64_t blendShapeTargets{
+      -1};  // index to Scene.blendshapes. ref skel:bindShapeTargets
+  int64_t skeleton{-1};  // index to Scene.skeltons. // ref skel:skelton
 };
 
 // Polygon mesh geometry
