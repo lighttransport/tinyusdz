@@ -24,6 +24,8 @@
 #include "tinyusdz.hh"
 #include "trackball.h"
 
+#include "roboto_mono_embed.inc.h"
+
 // sdlviewer
 #include "gui.hh"
 
@@ -53,7 +55,7 @@ struct GUIContext {
   bool ctrl_pressed = false;
   bool tab_pressed = false;
 
-  float yaw = 90.0f; // for Z up scene 
+  float yaw = 90.0f; // for Z up scene
   float pitch = 0.0f;
   float roll = 0.0f;
 
@@ -314,7 +316,6 @@ int main(int argc, char** argv) {
     bool ret = tinyusdz::LoadUSDZFromFile(filename, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
     }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
@@ -329,7 +330,6 @@ int main(int argc, char** argv) {
     bool ret = tinyusdz::LoadUSDCFromFile(filename, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
     }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
@@ -364,6 +364,19 @@ int main(int argc, char** argv) {
   bool done = false;
 
   ImGui::CreateContext();
+
+  {
+    ImGuiIO& io = ImGui::GetIO();
+
+    ImFontConfig roboto_config;
+    strcpy(roboto_config.Name, "Roboto");
+
+    float font_size = 18.0f;
+    io.Fonts->AddFontFromMemoryCompressedTTF(roboto_mono_compressed_data,
+                                             roboto_mono_compressed_size,
+                                             font_size, &roboto_config);
+  }
+
 
   ImGuiSDL::Initialize(renderer, 1600, 800);
   // ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -461,11 +474,17 @@ int main(int argc, char** argv) {
     bool update = false;
 
     bool update_display = false;
-      
+
     if (example::ImGuiComboUI("aov", aov_name, aov_list)) {
       gui_ctx.aov_mode = aov_list[aov_name];
       update_display = true;
     }
+
+    //update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
+    //update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
+    //update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
+    update |= ImGui::SliderFloat("eye.z", &gui_ctx.camera.eye[2], -1000.0, 1000.0f);
+    update |= ImGui::SliderFloat("fov", &gui_ctx.camera.fov, 0.01f, 140.0f);
 
     // TODO: Validate coordinate definition.
     if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -360.0f, 360.0f)) {

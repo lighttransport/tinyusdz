@@ -54,13 +54,13 @@ size_t LZ4Compression::GetCompressedBufferSize(size_t inputSize) {
 
   // If it fits in one chunk then it's just the compress bound plus 1.
   if (inputSize <= LZ4_MAX_INPUT_SIZE) {
-    return LZ4_compressBound(inputSize) + 1;
+    return size_t(LZ4_compressBound(int(inputSize))) + 1;
   }
   size_t nWholeChunks = inputSize / LZ4_MAX_INPUT_SIZE;
   size_t partChunkSz = inputSize % LZ4_MAX_INPUT_SIZE;
   size_t sz = 1 + nWholeChunks *
-                      (LZ4_compressBound(LZ4_MAX_INPUT_SIZE) + sizeof(int32_t));
-  if (partChunkSz) sz += LZ4_compressBound(partChunkSz) + sizeof(int32_t);
+                      (size_t(LZ4_compressBound(LZ4_MAX_INPUT_SIZE)) + sizeof(int32_t));
+  if (partChunkSz) sz += size_t(LZ4_compressBound(int(partChunkSz))) + sizeof(int32_t);
   return sz;
 }
 
@@ -81,20 +81,28 @@ size_t LZ4Compression::CompressToBuffer(char const *input, char *compressed,
   char const *const origCompressed = compressed;
   if (inputSize <= LZ4_MAX_INPUT_SIZE) {
     compressed[0] = 0;  // < zero byte means one chunk.
-    compressed += 1 + LZ4_compress_default(input, compressed + 1, inputSize,
-                                           GetCompressedBufferSize(inputSize));
+    compressed += 1 + LZ4_compress_default(input, compressed + 1, int(inputSize),
+                                           int(GetCompressedBufferSize(inputSize)));
   } else {
     size_t nWholeChunks = inputSize / LZ4_MAX_INPUT_SIZE;
     size_t partChunkSz = inputSize % LZ4_MAX_INPUT_SIZE;
-    *compressed++ = nWholeChunks + (partChunkSz ? 1 : 0);
-    auto writeChunk = [](char const *&input, char *&output, size_t size) {
-      char *o = output;
-      output += sizeof(int32_t);
+    size_t numChunks = nWholeChunks + (partChunkSz ? 1 : 0);
+
+    if (numChunks > 127) {
+      if (err) {
+        (*err) = "# of chunks must be less than 127 but got " + std::to_string(numChunks) + "\n";
+      }
+      return 0;
+    }
+    *compressed++ = char(numChunks);
+    auto writeChunk = [](char const *&_input, char *&_output, size_t size) {
+      char *o = _output;
+      _output += sizeof(int32_t);
       int32_t n =
-          LZ4_compress_default(input, output, size, LZ4_compressBound(size));
+          LZ4_compress_default(_input, _output, int(size), LZ4_compressBound(int(size)));
       memcpy(o, &n, sizeof(n));
-      output += n;
-      input += size;
+      _output += n;
+      _input += size;
     };
     for (size_t chunk = 0; chunk != nWholeChunks; ++chunk) {
       writeChunk(input, compressed, LZ4_MAX_INPUT_SIZE);
@@ -104,7 +112,7 @@ size_t LZ4Compression::CompressToBuffer(char const *input, char *compressed,
     }
   }
 
-  return compressed - origCompressed;
+  return size_t(compressed - origCompressed);
 }
 
 size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
@@ -112,12 +120,20 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
                                                size_t compressedSize,
                                                size_t maxOutputSize,
                                                std::string *err) {
+  if (compressedSize <= 1) {
+      if (err) {
+        (*err) =
+            "Invalid compressedSize.\n";
+      }
+    return 0;
+  }
+
   // Check first byte for # chunks.
   int nChunks = *compressed++;
   if (nChunks == 0) {
     // Just one.
     int nDecompressed = LZ4_decompress_safe(compressed, output,
-                                            compressedSize - 1, maxOutputSize);
+                                            int(compressedSize - 1), int(maxOutputSize));
     if (nDecompressed < 0) {
       if (err) {
         (*err) =
@@ -127,7 +143,7 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
       }
       return 0;
     }
-    return nDecompressed;
+    return size_t(nDecompressed);
   } else {
     // Do each chunk.
     size_t totalDecompressed = 0;
@@ -137,7 +153,7 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
       compressed += sizeof(chunkSize);
       int nDecompressed = LZ4_decompress_safe(
           compressed, output, chunkSize,
-          std::min<size_t>(LZ4_MAX_INPUT_SIZE, maxOutputSize));
+          int(std::min<size_t>(LZ4_MAX_INPUT_SIZE, maxOutputSize)));
       if (nDecompressed < 0) {
         if (err) {
           (*err) =
@@ -149,8 +165,8 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
       }
       compressed += chunkSize;
       output += nDecompressed;
-      maxOutputSize -= nDecompressed;
-      totalDecompressed += nDecompressed;
+      maxOutputSize -= size_t(nDecompressed);
+      totalDecompressed += size_t(nDecompressed);
     }
     return totalDecompressed;
   }

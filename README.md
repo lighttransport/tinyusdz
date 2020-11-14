@@ -30,6 +30,7 @@ TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
 * TinyObjLoader: Wavefront .obj loader ( https://github.com/tinyobjloader/tinyobjloader )
 * USD-build-aarch64: Full USD build for AARCH64(Linux and Android): https://github.com/syoyo/USD-build-aarch64
+* BlenderUSDZ: It contains their own Python USDC parser/serializer. https://github.com/robmcrosby/BlenderUSDZ
 
 ## Supported platforms
 
@@ -146,6 +147,7 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 
 ## TODO
 
+* [ ] Write parser based on the schema definition.
 * [ ] Subdivision surface using OpenSubdiv.
   * [x] Build TinyUSDZ with OpenSubdiv(CPU)
   * [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
@@ -170,7 +172,7 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 * [ ] USDZ saver
 * [ ] Support Nested USDZ
 * [ ] UDIM texture support
-* [ ] Support big endian
+* [ ] Support big endian architecture.
 
 ## Fuzzing test
 
