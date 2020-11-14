@@ -32,7 +32,7 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   // Trianglate mesh
   // vertex points should be vec3f
-  dst->vertices = mesh.points.buffer.GetAsVec3fArray();
+  dst->vertices = mesh.points;
   if (dst->vertices.size() != (mesh.GetNumPoints() * 3)) {
     std::cerr << "The number of vertices mismatch. " << dst->vertices.size()
               << " must be equal to " << mesh.GetNumPoints() * 3 << "\n";
@@ -497,6 +497,29 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 }
 
 bool RenderScene::Setup() {
+
+  //
+  // Construct scene
+  //
+  {
+    float local_xform[4][4]; // TODO
+
+    for (size_t i = 0; i < draw_meshes.size(); i++) {
+      // Construct Node by passing the pointer to draw_meshes[i]
+      // Pointer address of draw_meshes[i] must be identical during app's lifetime.
+      nanosg::Node<float, example::DrawGeomMesh> node(&draw_meshes[i]);
+
+      std::cout << "SetName: " << draw_meshes[i].ref_mesh->name << "\n";
+
+      node.SetName(draw_meshes[i].ref_mesh->name);
+      node.SetLocalXform(local_xform);
+
+      this->nodes.push_back(node);
+      this->scene.AddNode(node);
+    }
+
+  }
+
   for (size_t i = 0; i < draw_meshes.size(); i++) {
     if (!ConvertToRenderMesh(*(draw_meshes[i].ref_mesh), &draw_meshes[i])) {
       return false;
