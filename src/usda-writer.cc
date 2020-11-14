@@ -6,9 +6,32 @@ namespace tinyusdz {
 
 namespace {
 
+std::string Indent(int level) {
+  std::stringstream ss;
+  for (size_t i = 0; i < level; i++) {
+    ss << "  ";
+  }
+
+  return ss.str();
+}
+
 // TODO
 
-bool WriteNode(std::ostream &ofs, const Node &node, int indent) {
+bool WriteXform(std::ostream &ofs, const Xform &xform, int level) {
+
+  ofs << Indent(level) << "def Xform \"" << xform.name << "\"\n";
+  // TODO: params
+  ofs << Indent(level) << "{\n";
+  ofs << Indent(level) << "}\n";
+}
+
+bool WriteNode(std::ostream &ofs, const Node &node, int level) {
+
+  for (const auto &child: node.children) {
+    if (child.type == NODE_TYPE_XFORM) {
+    }
+  }
+
   return false;
 }
 
@@ -27,8 +50,8 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene, std::string *wa
 
   // TODO
 
-  for (const auto &node : scene.nodes) {
-    if (!WriteNode(ss, node, 0)) {
+  for (const auto &root : scene.nodes) {
+    if (!WriteNode(ss, root, 0)) {
       return false;
     }
   }
