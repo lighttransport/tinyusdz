@@ -3,6 +3,7 @@
 #include "tinyusdz.hh"
 
 #include "nanort.h"
+#include "nanosg.h"
 
 namespace example {
 
@@ -52,8 +53,20 @@ struct Buffer
   std::vector<T> data;
 };
 
-// Proxy class for tinyusdz::GeomMesh to use the primive for NanoSG/NanoRT.
+//
+// Renderable Node class for NanoSG. Includes xform
+//
+struct DrawNode {
 
+  std::array<float, 3> translation{0.0f, 0.0f, 0.0f}; 
+  std::array<float, 3> rotation{0.0f, 0.0f, 0.0f}; // euler rotation 
+  std::array<float, 3> scale{1.0f, 1.0f, 1.0f}; 
+};
+
+//
+// Renderable Mesh class for tinyusdz::GeomMesh
+// Mesh data is converted to triangle meshes.
+//
 struct DrawGeomMesh {
 
   DrawGeomMesh(const tinyusdz::GeomMesh *p) : ref_mesh(p) {}
@@ -65,8 +78,7 @@ struct DrawGeomMesh {
   /// Required accessor API for NanoSG
   ///
   const float *GetVertices() const {
-    // Assume vec3f
-    return reinterpret_cast<const float *>(ref_mesh->points.buffer.data.data());
+    return ref_mesh->points.data();
   }
 
   size_t GetVertexStrideBytes() const {
@@ -150,6 +162,9 @@ class RenderScene {
   std::vector<Material> materials;
   std::vector<Texture> textures;
   std::vector<Image> images;
+
+  std::vector<nanosg::Node<float, DrawGeomMesh>> nodes;
+  nanosg::Scene<float, DrawGeomMesh> scene;
 
   // Convert meshes and build BVH
   bool Setup();

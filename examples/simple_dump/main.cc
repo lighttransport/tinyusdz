@@ -62,8 +62,7 @@ static void DumpNode(const tinyusdz::Node &node, int level) {
 
 static void DumpGeomMesh(const tinyusdz::GeomMesh &mesh, int level) {
   std::cout << indent(level) << "# of points: " << mesh.GetNumPoints() << "\n";
-  std::vector<float> points;
-  mesh.GetPoints(&points);
+  const std::vector<float> &points = mesh.points;
 
   for (size_t i = 0; i < points.size(); i++) {
     std::cout << points[i] << "\n";
@@ -82,6 +81,8 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "# of nodes: " << scene.nodes.size() << "\n";
   std::cout << "# of xforms: " << scene.xforms.size() << "\n";
   std::cout << "# of geom_meshes: " << scene.geom_meshes.size() << "\n";
+  std::cout << "# of geom_basis_curves: " << scene.geom_basis_curves.size() << "\n";
+  std::cout << "# of geom_points: " << scene.geom_points.size() << "\n";
   std::cout << "# of materials: " << scene.geom_meshes.size() << "\n";
   std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
   std::cout << "# of groups: " << scene.groups.size() << "\n";

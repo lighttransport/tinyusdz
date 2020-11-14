@@ -121,7 +121,7 @@ class StreamReader {
     return true;
   }
 
-  bool seek_from_currect(const int64_t offset) const {
+  bool seek_from_current(const int64_t offset) const {
     if ((int64_t(idx_) + offset) < 0) {
       return false;
     }
@@ -340,6 +340,7 @@ class StreamReader {
 #endif
 
   size_t tell() const { return size_t(idx_); }
+  bool eof() const { return idx_ >= length_; }
 
   const uint8_t *data() const { return binary_; }
 
