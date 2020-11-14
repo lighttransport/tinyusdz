@@ -1528,6 +1528,7 @@ struct PrimvarReader {
 
 // Predefined node class
 struct Xform {
+  std::string name;
   int64_t parent_id{-1};  // Index to xform node
 
   Matrix4d matrix;
@@ -1945,15 +1946,17 @@ struct Node {
   //
   int64_t index{-1};
 
-  int64_t parent;                 // parent node index. Example: `nodes[parent]`
-  std::vector<int64_t> children;  // child node indices.
+  //int64_t parent;                 // parent node index. Example: `nodes[parent]`
+  std::vector<Node> children;  // child nodes
 };
 
 struct Scene {
   std::string name;       // Scene name
-  int64_t root_node{-1};  // index to `xforms`(root Xform node)
+  int64_t default_root_node{-1};  // index to default root node
 
-  std::vector<Node> nodes;  // Node hierarchies
+  // Node hierarchies
+  // Scene can have multiple nodes.
+  std::vector<Node> nodes;  
 
   // Scene global setting
   std::string upAxis = "Y";
