@@ -69,6 +69,24 @@ static void DumpGeomMesh(const tinyusdz::GeomMesh &mesh, int level) {
   }
 }
 
+static void DumpGeomCurves(const tinyusdz::GeomBasisCurves &curves, int level) {
+  std::cout << indent(level) << "# of points: " << curves.points.size() << "\n";
+  const std::vector<float> &points = curves.points;
+
+  for (size_t i = 0; i < points.size(); i++) {
+    std::cout << points[i] << "\n";
+  }
+}
+
+static void DumpGeomPoints(const tinyusdz::GeomPoints &pts, int level) {
+  std::cout << indent(level) << "# of points: " << pts.points.size() << "\n";
+  const std::vector<float> &points = pts.points;
+
+  for (size_t i = 0; i < points.size(); i++) {
+    std::cout << points[i] << "\n";
+  }
+}
+
 static void DumpScene(const tinyusdz::Scene &scene)
 {
 
@@ -76,7 +94,7 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "Scene.metersPerUnit: " << scene.metersPerUnit << "\n";
   std::cout << "Scene.timeCodesPerSecond: " << scene.timeCodesPerSecond << "\n";
   std::cout << "Scene.defaultPrim: " << scene.defaultPrim << "\n";
-  std::cout << "Scene.root_node: " << scene.root_node << "\n";
+  std::cout << "Scene.default_root_node: " << scene.default_root_node << "\n";
 
   std::cout << "# of nodes: " << scene.nodes.size() << "\n";
   std::cout << "# of xforms: " << scene.xforms.size() << "\n";
@@ -87,13 +105,23 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
   std::cout << "# of groups: " << scene.groups.size() << "\n";
 
-  if (scene.root_node > -1) {
-    DumpNode(scene.nodes[scene.root_node], 0);
+  if (scene.default_root_node > -1) {
+    DumpNode(scene.nodes[scene.default_root_node], 0);
   }
 
-  // HACK
+  std::cout << "== Meshes ===\n";
   for (size_t i = 0; i < scene.geom_meshes.size(); i++) {
     DumpGeomMesh(scene.geom_meshes[i], 0);
+  }
+
+  std::cout << "== Curves ===\n";
+  for (size_t i = 0; i < scene.geom_basis_curves.size(); i++) {
+    DumpGeomCurves(scene.geom_basis_curves[i], 0);
+  }
+
+  std::cout << "== Points ===\n";
+  for (size_t i = 0; i < scene.geom_points.size(); i++) {
+    DumpGeomPoints(scene.geom_points[i], 0);
   }
 }
 
