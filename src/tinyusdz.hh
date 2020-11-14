@@ -259,6 +259,17 @@ class ListOp
     ordered_items = v;
   }
 
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+  void Print() const {
+    std::cout << "is_explicit:" << is_explicit << "\n";
+    std::cout << "# of explicit_items" << explicit_items.size() << "\n";
+    std::cout << "# of added_items" << added_items.size() << "\n";
+    std::cout << "# of prepended_items" << prepended_items.size() << "\n";
+    std::cout << "# of deleted_items" << deleted_items.size() << "\n";
+    std::cout << "# of ordered_items" << ordered_items.size() << "\n";
+  }
+#endif
+
  private:
 
   bool is_explicit{false};
@@ -386,7 +397,7 @@ class Path {
 
   void SetLocalPath(const Path &rhs) {
     //assert(rhs.valid == true);
-    
+
     this->local_part = rhs.local_part;
     this->valid = rhs.valid;
   }
@@ -609,6 +620,16 @@ enum Variability {
   VariabilityConfig,
   NumVariabilities
 };
+
+// forward decl
+class Value;
+
+struct TimeSamples
+{
+  std::vector<double> times;
+  std::vector<Value> values;
+};
+
 
 ///
 /// Represent value.
@@ -1022,6 +1043,18 @@ class Value {
     path_list_op = d;
   }
 
+  void SetTimeSamples(const TimeSamples &d) {
+    dtype.name = "TimeSamples";
+    dtype.id = VALUE_TYPE_TIME_SAMPLES;
+    // FIXME(syoyo): How to determine array length?
+    // array_length = int64_t(d.size());
+    time_samples = d;
+  }
+
+  const ListOp<Path> &GetPathListOp() const {
+    return path_list_op;
+  }
+
   // Getter for frequently used types.
   Specifier GetSpecifier() const {
     if (dtype.id == VALUE_TYPE_SPECIFIER) {
@@ -1039,6 +1072,20 @@ class Value {
     return NumVariabilities; // invalid
   }
 
+  bool GetBool(bool *ret) const {
+    if (ret == nullptr) {
+      return false;
+    }
+
+    if (dtype.id == VALUE_TYPE_BOOL) {
+      uint8_t d = *reinterpret_cast<const uint8_t *>(data.data());
+      (*ret) = bool(d);
+      return true;
+    }
+
+    return false;
+  }
+
   double GetDouble() const {
     if (dtype.id == VALUE_TYPE_DOUBLE) {
       double d = *reinterpret_cast<const double *>(data.data());
@@ -1046,7 +1093,29 @@ class Value {
     } else if (dtype.id == VALUE_TYPE_FLOAT) {
       float d = *reinterpret_cast<const float *>(data.data());
       return static_cast<double>(d);
-    } 
+    }
+    return std::numeric_limits<double>::quiet_NaN(); // invalid
+  }
+
+  bool GetInt(int *ret) const {
+
+    if (ret == nullptr) {
+      return false;
+    }
+
+    if (dtype.id == VALUE_TYPE_INT) {
+      int d = *reinterpret_cast<const int *>(data.data());
+      (*ret) = d;
+      return true;
+    }
+    return false;
+  }
+
+  float GetFloat() const {
+    if (dtype.id == VALUE_TYPE_FLOAT) {
+      float d = *reinterpret_cast<const float *>(data.data());
+      return d;
+    }
     return std::numeric_limits<double>::quiet_NaN(); // invalid
   }
 
@@ -1119,6 +1188,8 @@ class Value {
   ListOp<uint32_t> int64_list_op;
   ListOp<int64_t> uint_list_op;
   ListOp<uint64_t> uint64_list_op;
+
+  TimeSamples time_samples;
 };
 
 //
@@ -1160,7 +1231,7 @@ struct BufferData
     if (data_type == BUFFER_DATA_TYPE_INVALID) {
       return false;
     }
- 
+
     return (data.size() > 0) && (num_coords > 0);
   }
 
@@ -1191,7 +1262,7 @@ struct BufferData
     return GetDataTypeByteSize(data_type) * size_t(num_coords);
   }
 
-  size_t GetNumElements() const { 
+  size_t GetNumElements() const {
     if (num_coords <= 0) {
       // TODO(syoyo): Report error
       return 0;
@@ -1218,17 +1289,46 @@ struct BufferData
     return stride;
   }
 
+  //
   // Utility functions
   //
+
+  float GetAsFloat() const {
+
+    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+        (GetNumCoords() == 1) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT) &&
+        (GetNumElements() == 1)) {
+
+      return *(reinterpret_cast<const float *>(data.data()));
+    }
+
+    return std::numeric_limits<float>::quiet_NaN();
+  }
+
+  std::array<float, 3> GetAsColor3f() const {
+    std::array<float, 3> buf;
+
+    if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
+        (GetNumCoords() == 3) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+    }
+
+    return buf;
+  }
+
   // Return empty array when required type mismatches.
   //
   std::vector<uint32_t> GetAsUInt32Array() const {
     std::vector<uint32_t> buf;
 
     if (((GetStride() == 0) || (GetStride() == sizeof(uint32_t))) &&
-        (GetNumCoords() == 1) &&
         (GetDataType() == BUFFER_DATA_TYPE_UNSIGNED_INT)) {
-      buf.resize(GetNumElements());
+      buf.resize(GetNumElements() * size_t(GetNumCoords()));
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "buf.size = " << buf.size() << "\n";
+#endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(uint32_t));
     }
 
@@ -1239,9 +1339,11 @@ struct BufferData
     std::vector<int32_t> buf;
 
     if (((GetStride() == 0) || (GetStride() == sizeof(int32_t))) &&
-        (GetNumCoords() == 1) &&
         (GetDataType() == BUFFER_DATA_TYPE_INT)) {
-      buf.resize(GetNumElements());
+      buf.resize(GetNumElements() * size_t(GetNumCoords()));
+#if TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "buf.size = " << buf.size() << "\n";
+#endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(int32_t));
     }
 
@@ -1252,9 +1354,8 @@ struct BufferData
     std::vector<float> buf;
 
     if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
-        (GetNumCoords() == 1) &&
         (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      buf.resize(GetNumElements());
+      buf.resize(GetNumElements() * size_t(GetNumCoords()));
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
     }
 
@@ -1301,19 +1402,62 @@ struct BufferData
 
     return buf;
   }
-  
-  
+
+
 };
 
+struct ConnectionPath
+{
+  bool input{false}; // true: Input connection. false: Ouput connection. 
+
+  Path path; // original Path information in USD
+
+  std::string token; // token(or string) in USD
+  int64_t index{-1}; // corresponding array index(e.g. the array index to `Scene.shaders`)
+};
+
+// PrimAttrib is a struct to hold attributes of the object.
+// (e.g. property, PrimVar).
+// We treat PrimVar as PrimAttrib(attributes) at the moment.
 struct PrimAttrib
 {
-  std::string name;
-  BufferData buffer;
+  std::string name; // attrib name
+
+  std::string type_name; // name of attrib type(e.g. "float', "color3f")
+
+  // For array data types(e.g. FloatArray)
+  BufferData buffer; // raw buffer data
   Variability variability;
   bool facevarying{false};
 
-  // For TokenString
-  std::string tokenString;
+
+  // For basic types(e.g. Bool, Float).
+
+  // "bool", "string", "float", "int", "uint", "int64", "uint64", "double" or "path"
+  // empty = array data type
+  std::string basic_type;
+
+  // TODO: Use union struct
+  bool boolVal;
+  int intVal;
+  uint32_t uintVal;
+  int64_t int64Val;
+  uint64_t uint64Val;
+  float floatVal;
+  double doubleVal;
+  std::string stringVal; // token, string
+  Path path;
+
+};
+
+// UsdPrimvarReader_float2.
+// Currently for UV texture coordinate
+struct PrimvarReader
+{
+  std::string output_type = "float2"; // currently "float2" only.
+  std::array<float, 2> fallback{0.0f, 0.0f}; // fallback value
+
+  ConnectionPath varname; // Name of the primvar to be fetched from the geometry.
 };
 
 // Predefined node class
@@ -1339,23 +1483,23 @@ struct UVCoords
   BufferData buffer;
   Variability variability;
 
-  // TODO: 64bit index?
-  // std::vector<uint32_t> indices; // UV indices. Usually varying
+  // non-empty when UV has its own indices.
+  std::vector<uint32_t> indices; // UV indices. Usually varying
 };
 
 struct Extent
 {
-  std::array<float, 3> lower = {{
+  Vec3f lower{
     std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::infinity()
-  }};
+  };
 
-  std::array<float, 3> upper = {{
+  Vec3f upper{
     -std::numeric_limits<float>::infinity(),
     -std::numeric_limits<float>::infinity(),
     -std::numeric_limits<float>::infinity()
-  }};
+  };
 
 };
 
@@ -1386,14 +1530,14 @@ struct GeomMesh
   bool GetPoints(std::vector<float> *v) const;
 
   // Get `normals` as float3 array + facevarying
-  // Return false if `normals` is neither float3[] type nor `varying` 
+  // Return false if `normals` is neither float3[] type nor `varying`
   bool GetFacevaryingNormals(std::vector<float> *v) const;
 
   // Get `texcoords` as float2 array + facevarying
-  // Return false if `texcoords` is neither float2[] type nor `varying` 
+  // Return false if `texcoords` is neither float2[] type nor `varying`
   bool GetFacevaryingTexcoords(std::vector<float> *v) const;
 
-  // PrimVar
+  // PrimVar(TODO: Remove)
   UVCoords st;
 
   PrimAttrib velocitiess; // Usually float3[], varying
@@ -1411,7 +1555,6 @@ struct GeomMesh
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
-
   //
   // SubD attribs.
   //
@@ -1425,8 +1568,8 @@ struct GeomMesh
   SubdivisionScheme subdivisionScheme;
 
 
-  // User defined attribs
-  std::map<std::string, PrimAttrib> custom_attrs;
+  // List of Primitive attributes(primvars)
+  std::map<std::string, PrimAttrib> attribs;
 
 };
 
@@ -1455,6 +1598,8 @@ struct Color3OrTexture
   }
 
   std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
+
+  std::string path; // path to .connect(We only support texture file connection at the moment)
   int64_t texture_id{-1};
 
   bool HasTexture() const {
@@ -1470,6 +1615,8 @@ struct FloatOrTexture
   }
 
   float value{0.0f};
+
+  std::string path; // path to .connect(We only support texture file connection at the moment)
   int64_t texture_id{-1};
 
   bool HasTexture() const {
@@ -1498,9 +1645,9 @@ struct UsdTranform2d {
 // UsdUvTexture
 struct UVTexture {
 
+  std::string asset;  // asset name(usually file path)
   int64_t image_id{-1}; // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
 
-  std::array<float, 2> st; // texture coordinate orientation. https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
   TextureWrap wrapS;
   TextureWrap wrapT;
 
@@ -1508,7 +1655,18 @@ struct UVTexture {
   std::array<float, 4> scale{{1.0f, 1.0f, 1.0f, 1.0f}}; // scale to be applied to output texture value
   std::array<float, 4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // bias to be applied to output texture value
 
-  UsdTranform2d texture_transfom;
+  UsdTranform2d texture_transfom; // texture coordinate orientation. 
+
+
+  // key = connection name: e.g. "outputs:rgb"
+  // item = pair<type, name> : example: <"float3", "outputs:rgb">
+  std::map<std::string, std::pair<std::string, std::string>> outputs;
+
+  PrimvarReader st; // texture coordinate(`inputs:st`). We assume there is a connection to this.
+
+  // TODO: orientation?
+  // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
+
 };
 
 
@@ -1600,7 +1758,7 @@ struct Scene
   std::vector<Node> nodes; // Node hierarchies
 
   // Scene global setting
-  std::string upAxis = "Y"; 
+  std::string upAxis = "Y";
   std::string defaultPrim;  // prim node name
   double metersPerUnit = 1.0;  // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
@@ -1616,7 +1774,7 @@ struct Scene
   std::vector<Group> groups;
 
   // TODO(syoyo): User defined custom layer data
-  // "customLayerData" 
+  // "customLayerData"
 
 };
 
@@ -1632,13 +1790,22 @@ struct USDLoadOptions
   // This feature would be helpful if you want to load USDZ model in mobile device.
   int32_t max_memory_limit_in_mb{10000}; // in [mb] Default 10GB
 
+  ///
+  /// Loads asset data(e.g. texture image, audio). Default is true.
+  /// If you want to load asset data in your own way or don't need asset data to be loaded,
+  /// Set this false.
+  ///
+  bool load_assets{true};
+
 };
 
+#if 0 // TODO
 //struct USDWriteOptions
 //{
 //
 //
 //};
+#endif
 
 ///
 /// Load USDZ(zip) from a file.

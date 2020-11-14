@@ -6,6 +6,8 @@
 
 namespace example {
 
+using vec3 = std::array<float, 3>;
+
 struct AOV {
   size_t width;
   size_t height;
@@ -36,11 +38,18 @@ struct AOV {
 
 struct Camera
 {
-  float eye[3] = {0.0f, 0.0f, 5.0f};
+  float eye[3] = {0.0f, 0.0f, 25.0f};
   float up[3] = {0.0f, 1.0f, 0.0f};
   float look_at[3] = {0.0f, 0.0f, 0.0f};
   float quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   float fov = 60.0f; // in degree
+};
+
+template<typename T>
+struct Buffer
+{
+  size_t num_coords{1};  // e.g. 3 for vec3 type.  
+  std::vector<T> data;
 };
 
 // Proxy class for tinyusdz::GeomMesh to use the primive for NanoSG/NanoRT.
@@ -69,12 +78,78 @@ struct DrawGeomMesh {
   std::vector<float> facevarying_normals; // 3 x 3 x num_faces
   std::vector<float> facevarying_texcoords; // 2 x 3 x num_faces
 
+  // arbitrary primvars(including texcoords(float2))
+  std::vector<Buffer<float>> float_primvars;
+  std::map<std::string, size_t> float_primvars_map; // <name, index to `float_primvars`>
+
+  // arbitrary primvars in int type(e.g. texcoord indices(int3))
+  std::vector<Buffer<int32_t>> int_primvars;
+  std::map<std::string, size_t> int_primvars_map; // <name, index to `int_primvars`>
+
+  int material_id{-1}; // per-geom material. index to `RenderScene::materials`
+
   nanort::BVHAccel<float> accel;
+};
+
+struct UVReader {
+  int32_t st_id{-1}; // index to DrawGeomMesh::float_primvars
+  int32_t indices_id{-1}; // index to DrawGeomMesh::int_primvars
+
+  // Fetch interpolated UV coordinate
+  std::array<float, 2> fetch_uv(size_t face_id, float varyu, float varyv);
+};
+
+struct Texture {
+  enum Channel {
+    TEXTURE_CHANNEL_R,
+    TEXTURE_CHANNEL_G,
+    TEXTURE_CHANNEL_B,
+    TEXTURE_CHANNEL_RGB,
+    TEXTURE_CHANNEL_RGBA,
+  };
+
+  UVReader uv_reader;  
+  int32_t image_id{-1};
+
+  // NOTE: for single channel(e.g. R), [0] will be filled for the return value.
+  std::array<float, 4> fetch(size_t face_id, float varyu, float varyv, Channel channel);
+
+};
+
+// base color(fallback color) or Texture
+template<typename T>
+struct ShaderParam {
+  T value;
+  int32_t texture_id{-1};
+};
+
+// UsdPreviewSurface 
+struct Shader {
+
+  ShaderParam<vec3> diffuseColor;
+  ShaderParam<float> metallic;
+
+  // TODO: Other PreviewSurface parameters
+};
+
+struct Material {
+  Shader shader;
+};
+
+// Simple LDR texture
+struct Image {
+  std::vector<uint8_t> image;
+  int32_t width{-1};
+  int32_t height{-1};
+  int32_t channels{-1}; // e.g. 3 for RGB.
 };
 
 class RenderScene {
  public:
   std::vector<DrawGeomMesh> draw_meshes;
+  std::vector<Material> materials;
+  std::vector<Texture> textures;
+  std::vector<Image> images;
 
   // Convert meshes and build BVH
   bool Setup();

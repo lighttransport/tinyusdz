@@ -52,6 +52,9 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
             << "\n";
 
+  std::cout << "# of faceVertexCounts: " << mesh.faceVertexCounts.size() << "\n";
+  std::cout << "# of faceVertexIndices: " << mesh.faceVertexIndices.size() << "\n";
+
   // for (size_t i = 0; i < facevarying_normals.size() / 3; i++) {
   //  std::cout << "fid[" << i << "] = " << facevarying_normals[3 * i + 0] << ",
   //  " <<
@@ -170,6 +173,51 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
       }
       face_offset += f_count;
     }
+  }
+
+  // Other facevarying attributes(property, primvars)
+  dst->float_primvars.clear();
+  dst->float_primvars_map.clear();
+
+  dst->int_primvars.clear();
+  dst->int_primvars_map.clear();
+
+  for (const auto &attrib : mesh.attribs) {
+    if (!attrib.second.facevarying) {
+      continue;
+    }
+
+    if (attrib.second.buffer.data.empty()) {
+      continue;
+    }
+
+    if (attrib.second.buffer.GetDataType() == tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT) {
+
+      Buffer<float> buf;
+      buf.num_coords = attrib.second.buffer.GetNumCoords();
+      buf.data = attrib.second.buffer.GetAsFloatArray();
+
+      dst->float_primvars_map[attrib.first] = dst->float_primvars.size();
+      dst->float_primvars.push_back(buf);
+
+      std::cout << "Added [" << attrib.first << "] to float_primvars\n";
+
+    } else if (attrib.second.buffer.GetDataType() == tinyusdz::BufferData::BUFFER_DATA_TYPE_INT) {
+
+      Buffer<int32_t> buf;
+      buf.num_coords = attrib.second.buffer.GetNumCoords();
+      buf.data = attrib.second.buffer.GetAsInt32Array();
+
+      dst->int_primvars_map[attrib.first] = dst->int_primvars.size();
+      dst->int_primvars.push_back(buf);
+
+      std::cout << "Added [" << attrib.first << "] to int_primvars\n";
+
+    } else {
+      // TODO
+    }
+
+
   }
 
   std::cout << "num points = " << dst->vertices.size() / 3 << "\n";
