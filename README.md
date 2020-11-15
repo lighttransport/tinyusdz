@@ -198,4 +198,6 @@ TinyUSDZ is licensed under MIT license.
 * dr_libs: public domain. https://github.com/mackron/dr_libs
 * miniaudio: public domain or MIT no attribution. https://github.com/dr-soft/miniaudio
 * SDL2 : zlib license. https://www.libsdl.org/index.php
+* optional-lite: BSL 1.0 license. https://github.com/martinmoene/optional-lite
+* span-lite: BSL 1.0 license. https://github.com/martinmoene/span-lite
 
