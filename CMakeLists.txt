@@ -174,6 +174,7 @@ ENDIF ()
 
 if (TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_dump)
+  add_subdirectory(examples/save_usda)
 endif (TINYUSDZ_BUILD_EXAMPLES)
 
 if (TINYUSDZ_BUILD_TESTS)
