@@ -1,5 +1,7 @@
 #include "usda-writer.hh"
 
+#include <iostream>
+
 //
 // create dummy scene.
 //

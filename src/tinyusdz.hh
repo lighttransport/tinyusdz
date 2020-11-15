@@ -36,11 +36,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <utility>
 #include <vector>
 
-#define TINYUSDZ_LOCAL_DEBUG_PRINT (0)
-
-#if TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
 #include <iostream>  // dbg
 #endif
+
+#include "nonstd/optional.hpp"
 
 namespace tinyusdz {
 
@@ -235,7 +235,7 @@ class ListOp {
 
   void SetOrderedItems(const std::vector<T> &v) { ordered_items = v; }
 
-#if TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   void Print() const {
     std::cout << "is_explicit:" << is_explicit << "\n";
     std::cout << "# of explicit_items" << explicit_items.size() << "\n";
@@ -1361,7 +1361,7 @@ struct BufferData {
 
     size_t n = data.size() / GetElementByteSize();
 
-#if TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "num_coords = " << num_coords << "\n";
     std::cout << "ccc: num_elements = " << n << "\n";
 #endif
@@ -1407,7 +1407,7 @@ struct BufferData {
     if (((GetStride() == 0) || (GetStride() == sizeof(uint32_t))) &&
         (GetDataType() == BUFFER_DATA_TYPE_UNSIGNED_INT)) {
       buf.resize(GetNumElements() * size_t(GetNumCoords()));
-#if TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "buf.size = " << buf.size() << "\n";
 #endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(uint32_t));
@@ -1422,7 +1422,7 @@ struct BufferData {
     if (((GetStride() == 0) || (GetStride() == sizeof(int32_t))) &&
         (GetDataType() == BUFFER_DATA_TYPE_INT)) {
       buf.resize(GetNumElements() * size_t(GetNumCoords()));
-#if TINYUSDZ_LOCAL_DEBUG_PRINT
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "buf.size = " << buf.size() << "\n";
 #endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(int32_t));
@@ -1431,6 +1431,19 @@ struct BufferData {
     return buf;
   }
 
+  // zero-copy version
+  // tuple: <pointer, # of elements>
+  nonstd::optional<std::tuple<const float *, size_t>> FloatArrayView() const {
+    if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
+        (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      return nonstd::optional<std::tuple<const float *, size_t>>(std::make_tuple(
+          reinterpret_cast<const float *>(data.data()), data.size() / sizeof(float)));
+    }
+
+    return nonstd::nullopt;
+  }
+
+  // this creates new buffer.
   std::vector<float> GetAsFloatArray() const {
     std::vector<float> buf;
 
