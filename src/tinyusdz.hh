@@ -111,6 +111,15 @@ struct Matrix {
   constexpr static uint32_t n = N;
 };
 
+template <typename T, size_t N>
+void Identity(Matrix<T, N> &mat) {
+  memset(&mat.m, 0, sizeof(T) * N * N);
+  for (size_t i = 0; i < N; i++) {
+    mat.m[i][i] = static_cast<T>(1);
+  }
+};
+
+
 using Matrix2f = Matrix<float, 2>;
 using Matrix2d = Matrix<double, 2>;
 using Matrix3f = Matrix<float, 3>;
@@ -1531,7 +1540,7 @@ struct Xform {
   std::string name;
   int64_t parent_id{-1};  // Index to xform node
 
-  Matrix4d matrix;
+  Matrix4d transform; // xformOp:transform
 
   // double world_bbox;  // bounding box in world coordinate.
 
@@ -1540,6 +1549,10 @@ struct Xform {
   Purpose purpose{PurposeDefault};
 
   // std::vector<int32_t> xformOpOrder; // T.B.D.
+
+  Xform() {
+    Identity(transform);
+  }
 };
 
 struct UVCoords {
