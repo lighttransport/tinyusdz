@@ -157,6 +157,7 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
   * [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
 * [ ] USDA(USD Ascii) support
   * [ ] Write our own USDA parser with PEG.
+  * [ ] USDA writer.
 * [ ] Animation
   * [ ] Skinning(usdSkel)
   * [ ] Blend shapes
