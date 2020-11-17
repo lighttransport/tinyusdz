@@ -40,7 +40,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iostream>  // dbg
 #endif
 
+// TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
+#include "nonstd/variant.hpp"
 
 namespace tinyusdz {
 
@@ -145,10 +147,16 @@ using Vec4d = std::array<double, 4>;
 using Vec3d = std::array<double, 3>;
 using Vec2d = std::array<double, 2>;
 
-using Quath = std::array<uint16_t, 4>;
-using Quatf = std::array<float, 4>;
-using Quatd = std::array<double, 4>;
-using Quaternion = std::array<double, 4>;  // Storage layout is same with Quadd,
+template<typename T>
+struct Quat
+{
+  std::array<T, 4> v;
+};
+
+using Quath = Quat<uint16_t>;
+using Quatf = Quat<float>;
+using Quatd = Quat<double>;
+//using Quaternion = Quat<double>;  // Storage layout is same with Quadd,
                                            // so we can delete this
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
@@ -614,12 +622,14 @@ enum Variability {
   NumVariabilities
 };
 
-// forward decl
-class Value;
+///
+/// Curently we only support limited types for time sample values.
+///
+using TimeSampleType = nonstd::variant<double, Vec3f, Quatf, Matrix4d>;
 
 struct TimeSamples {
   std::vector<double> times;
-  std::vector<Value> values;
+  std::vector<TimeSampleType> values;
 };
 
 ///
@@ -642,6 +652,19 @@ struct TypeTrait<int> {
 };
 
 template <>
+struct TypeTrait<float> {
+  static constexpr auto type_name = "float";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_FLOAT;
+};
+
+template <>
+struct TypeTrait<double> {
+  static constexpr auto type_name = "double";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_DOUBLE;
+};
+
+
+template <>
 struct TypeTrait<float16> {
   static constexpr auto type_name = "half";
   static constexpr ValueTypeId type_id = VALUE_TYPE_HALF;
@@ -662,7 +685,19 @@ struct TypeTrait<Vec3f> {
 template <>
 struct TypeTrait<Vec4f> {
   static constexpr auto type_name = "vec4f";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3F;
+  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4F;
+};
+
+template <>
+struct TypeTrait<Quatf> {
+  static constexpr auto type_name = "quatf";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATF;
+};
+
+template <>
+struct TypeTrait<Quatd> {
+  static constexpr auto type_name = "quatd";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATD;
 };
 
 template <>
@@ -1548,23 +1583,85 @@ struct PrimvarReader {
       varname;  // Name of the primvar to be fetched from the geometry.
 };
 
+// Orient: axis/angle expressed as a quaternion.
+// NOTE: no `matrix4f`
+using XformOpValueType = nonstd::variant<float, Vec3f, Quatf, double, Vec3d, Quatd, Matrix4d>;
+
+// TODO: Support precision
+struct XformOp
+{
+  enum PrecisionType {
+    PRECISION_DOUBLE,
+    PRECISION_FLOAT
+    // PRECISION_HALF // TODO
+  };
+
+  enum OpType {
+    // 3D
+    TRANSFORM, TRANSLATE, SCALE, 
+
+    // 1D
+    ROTATE_X, ROTATE_Y, ROTATE_Z,
+
+    // 3D
+    ROTATE_XYZ, ROTATE_XZY, ROTATE_YXZ, ROTATE_YZX, ROTATE_ZXY, ROTATE_ZYX,
+
+    // 4D
+    ORIENT
+  };
+
+  static std::string GetOpTypeName(OpType op) {
+    if (op == TRANSFORM) {
+      return "xformOp:transform";
+    } else if (op == TRANSLATE) {
+      return "xformOp:translate";
+    } else if (op == SCALE) {
+      return "xformOp:scale";
+    } else if (op == ROTATE_X) {
+      return "xformOp:rotateX";
+    } else if (op == ROTATE_Y) {
+      return "xformOp:rotateY";
+    } else if (op == ROTATE_Z) {
+      return "xformOp:rotateZ";
+    } else if (op == ROTATE_XYZ) {
+      return "xformOp:rotateXYZ";
+    } else if (op == ROTATE_XZY) {
+      return "xformOp:rotateXZY";
+    } else if (op == ROTATE_YXZ) {
+      return "xformOp:rotateYXZ";
+    } else if (op == ROTATE_YZX) {
+      return "xformOp:rotateYZX";
+    } else if (op == ROTATE_ZXY) {
+      return "xformOp:rotateZXY";
+    } else if (op == ROTATE_ZYX) {
+      return "xformOp:rotateZYX";
+    } else if (op == ORIENT) {
+      return "xformOp:orient";
+    } else {
+      return "xformOp::???";
+    }
+  }
+  
+  OpType op;
+  PrecisionType precision;
+  XformOpValueType value; // When you look up the value, select basic type based on `precision`
+};
+
+
+
 // Predefined node class
 struct Xform {
+
   std::string name;
   int64_t parent_id{-1};  // Index to xform node
 
-  Matrix4d transform; // xformOp:transform
-
-  // double world_bbox;  // bounding box in world coordinate.
+  std::vector<XformOp> xformOps;
 
   Orientation orientation{OrientationRightHanded};
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
-  // std::vector<int32_t> xformOpOrder; // T.B.D.
-
   Xform() {
-    Identity(transform);
   }
 };
 

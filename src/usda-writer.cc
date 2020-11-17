@@ -10,6 +10,43 @@ namespace {
 
 // TODO: Use ryu print for precise floating point output?
 
+std::ostream &operator<<(std::ostream &ofs, const Vec3f &v) {
+  ofs << "( " << v[0] << ", " << v[1] << ", " << v[2] << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const Vec3d &v) {
+  ofs << "( " << v[0] << ", " << v[1] << ", " << v[2] << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const Quatf &q) {
+  ofs << "( " << q.v[0] << ", " << q.v[1] << ", " << q.v[2] << ", " << q.v[3] << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const Quatd &q) {
+  ofs << "( " << q.v[0] << ", " << q.v[1] << ", " << q.v[2] << ", " << q.v[3] << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const Matrix4f &m) {
+  ofs << "( ";
+
+  ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << ", " << m.m[0][3] << "), ";
+  ofs << "(" << m.m[1][0] << ", " << m.m[1][1] << ", " << m.m[1][2] << ", " << m.m[1][3] << "), ";
+  ofs << "(" << m.m[2][0] << ", " << m.m[2][1] << ", " << m.m[2][2] << ", " << m.m[2][3] << "), ";
+  ofs << "(" << m.m[3][0] << ", " << m.m[3][1] << ", " << m.m[3][2] << ", " << m.m[3][3] << ")";
+
+  ofs << " )";
+
+  return ofs;
+}
+
 std::ostream &operator<<(std::ostream &ofs, const Matrix4d &m) {
   ofs << "( ";
 
@@ -21,6 +58,52 @@ std::ostream &operator<<(std::ostream &ofs, const Matrix4d &m) {
   ofs << " )";
 
   return ofs;
+}
+
+inline std::ostream & operator<<( std::ostream & os, XformOpValueType const & v )
+{
+	switch(v.index())
+		{
+			case 0: os << nonstd::get<0>(v); break;
+			case 1: os << nonstd::get<1>(v); break;
+			case 2: os << nonstd::get<2>(v); break;
+			case 3: os << nonstd::get<3>(v); break;
+			case 4: os << nonstd::get<4>(v); break;
+			case 5: os << nonstd::get<5>(v); break;
+			case 6: os << nonstd::get<6>(v); break;
+			case 7: os << nonstd::get<7>(v); break;
+			default: os << "XformOpValueType:???";
+		}
+
+	return os;
+}
+
+inline std::string GetTypeName(XformOpValueType const &v)
+{
+	if (auto pval = nonstd::get_if<float>(&v)) {
+		(void)pval;
+		return "float";
+	} else if (auto pval = nonstd::get_if<double>(&v)) {
+		(void)pval;
+		return "double";
+	} else if (auto pval = nonstd::get_if<Vec3f>(&v)) {
+		(void)pval;
+		return "float3";
+	} else if (auto pval = nonstd::get_if<Vec3d>(&v)) {
+		(void)pval;
+		return "double3";
+	} else if (auto pval = nonstd::get_if<Matrix4d>(&v)) {
+		(void)pval;
+		return "matrix4d";
+	} else if (auto pval = nonstd::get_if<Quatf>(&v)) {
+		(void)pval;
+		return "quatf";
+	} else if (auto pval = nonstd::get_if<Quatd>(&v)) {
+		(void)pval;
+		return "quatd";
+	} else {
+		return "TypeName(XformOpValueType) = ???";
+	}
 }
 
 std::string PrintIntArray(const std::vector<int32_t> &data) 
@@ -142,10 +225,33 @@ class Writer {
     ofs << Indent(level) << "def Xform \"" << xform.name << "\"\n";
     ofs << Indent(level) << "{\n";
 
-    // TODO: translate, rot, scale, ...
-    ofs << Indent(level + 1) << "matrix4d xformOp:transform = " << xform.transform << "\n";
-    ofs << Indent(level + 1) << "uniform token[] xformOpOrder = [\"xformOp:transform\"]\n";
+    if (xform.xformOps.size()) {
 
+      // xformOpOrder
+      ofs << Indent(level + 1) << "uniform token[] xformOpOrder = [";
+
+      for (size_t i = 0; i < xform.xformOps.size(); i++) {
+        ofs << "\"" << XformOp::GetOpTypeName(xform.xformOps[i].op) << "\"";
+
+        if (i != (xform.xformOps.size() - 1)) {
+          ofs << ", ";
+        }
+      } 
+
+      ofs << "]\n";
+
+      for (size_t i = 0; i < xform.xformOps.size(); i++) {
+        ofs << Indent(level + 1);
+
+        ofs << GetTypeName(xform.xformOps[i].value);
+
+        ofs << " " << XformOp::GetOpTypeName(xform.xformOps[i].op) << " = ";
+
+       	nonstd::visit([&ofs](XformOpValueType &&arg) { ofs << arg; }, xform.xformOps[i].value);
+        ofs << "\n";
+      } 
+
+    }
 
     return true;
   }
