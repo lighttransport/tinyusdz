@@ -2,11 +2,11 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
 #include <stack>
 #include <vector>
-#include <map>
-#include <set>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -22,14 +22,12 @@
 #pragma clang diagnostic pop
 #endif
 
-#include <stream-reader.hh>
-
 #include <simple-serialize.hh>
+#include <stream-reader.hh>
 
 namespace tinyusdz {
 
 static void test() {
-
   int i;
   bool b;
   uint32_t ui;
@@ -62,14 +60,14 @@ static void test() {
   h.add_property("fvec3", &fvec3);
   h.add_property("float3v", &float3v);
 
-  //simple_serialize::Handler<double> dh(&d);
-  //simple_serialize::Handler<std::vector<std::array<float, 3>>> dh(&float3v);
-  //simple_serialize::Handler<std::map<std::string, int>> dh(&map0);
+  // simple_serialize::Handler<double> dh(&d);
+  // simple_serialize::Handler<std::vector<std::array<float, 3>>> dh(&float3v);
+  // simple_serialize::Handler<std::map<std::string, int>> dh(&map0);
   simple_serialize::Handler<std::vector<short>> dh(&sv);
   simple_serialize::Parse test;
 
-  //std::vector<std::array<float, 3>> ref = {{1,2,3}, {4,5,6}};
-  //std::map<std::string, int> ref0;
+  // std::vector<std::array<float, 3>> ref = {{1,2,3}, {4,5,6}};
+  // std::map<std::string, int> ref0;
   std::vector<short> ref1 = {1, 4, 5};
 
   bool ret = test.SetValue(ref1, dh);
@@ -79,8 +77,9 @@ static void test() {
     std::cout << "val = " << sv[x] << "\n";
   }
 
-  //for (size_t x = 0; x < float3v.size(); x++) {
-  //  std::cout << "val = " << float3v[x][0] << ", " << float3v[x][1] << ", " << float3v[x][2] << "\n";
+  // for (size_t x = 0; x < float3v.size(); x++) {
+  //  std::cout << "val = " << float3v[x][0] << ", " << float3v[x][1] << ", " <<
+  //  float3v[x][2] << "\n";
   //}
 }
 
@@ -121,7 +120,6 @@ inline bool ParseFloat(const std::string &s, float *value, std::string *err) {
   }
 
   return false;
-
 }
 
 class USDAParser {
@@ -138,7 +136,6 @@ class USDAParser {
     // HACK
     test();
   }
-
 
   bool LexFloat(std::string *result, std::string *err) {
     // FLOATVAL : ('+' or '-')? FLOAT
@@ -191,7 +188,6 @@ class USDAParser {
         (*err) = "Sign or `.` or 0-9 expected.\n";
         return false;
       }
-
     }
 
     (void)has_sign;
@@ -243,7 +239,6 @@ class USDAParser {
           _sr->seek_from_current(-1);
           break;
         }
-
       }
 
     } else if ((curr == 'e') || (curr == 'E')) {
@@ -270,7 +265,6 @@ class USDAParser {
       }
 
       if ((curr == '+') || (curr == '-')) {
-
         // exp sign
         ss << curr;
         has_exp_sign = true;
@@ -307,14 +301,11 @@ class USDAParser {
           _sr->seek_from_current(-1);
           break;
         }
-
       }
-
     }
 
     (*result) = ss.str();
     return true;
-
   }
 
   bool ReadToken(std::string *result) {
@@ -367,7 +358,8 @@ class USDAParser {
     }
 
     if (!_IsRegisteredPrimAttrType(type_name)) {
-      _PushError("Unknown or unsupported primtive attribute type `" + type_name + "`\n");
+      _PushError("Unknown or unsupported primtive attribute type `" +
+                 type_name + "`\n");
       return false;
     }
 
@@ -393,9 +385,10 @@ class USDAParser {
     return true;
   }
 
-  template<typename T> bool ReadBasicType(T *value);
+  template <typename T>
+  bool ReadBasicType(T *value);
 
-  template<>
+  template <>
   bool ReadBasicType(int *value) {
     std::stringstream ss;
 
@@ -471,7 +464,7 @@ class USDAParser {
     return true;
   }
 
-  template<>
+  template <>
   bool ReadBasicType(float *value) {
     std::string value_str;
     std::string err;
@@ -498,11 +491,11 @@ class USDAParser {
   }
 
   ///
-  /// Parses 1 or more occurences of value with basic type 'T', separated by `sep`
+  /// Parses 1 or more occurences of value with basic type 'T', separated by
+  /// `sep`
   ///
-  template<typename T>
+  template <typename T>
   bool SepBy1BasicType(const char sep, std::vector<T> *result) {
-
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -522,7 +515,6 @@ class USDAParser {
     std::cout << "sep " << result->back() << "\n";
 
     while (!_sr->eof()) {
-
       // sep
       if (!SkipWhitespaceAndNewline()) {
         std::cout << "ws failure\n";
@@ -540,7 +532,7 @@ class USDAParser {
       if (c != sep) {
         // end
         std::cout << "sepBy1 end\n";
-        _sr->seek_from_current(-1); // unwind single char
+        _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
@@ -570,11 +562,11 @@ class USDAParser {
   }
 
   ///
-  /// Parses 1 or more occurences of value with tuple type 'T', separated by `sep`
+  /// Parses 1 or more occurences of value with tuple type 'T', separated by
+  /// `sep`
   ///
-  template<typename T, size_t N>
+  template <typename T, size_t N>
   bool SepBy1TupleType(const char sep, std::vector<std::array<T, N>> *result) {
-
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -592,7 +584,6 @@ class USDAParser {
     }
 
     while (!_sr->eof()) {
-
       // sep
       if (!SkipWhitespaceAndNewline()) {
         std::cout << "ws failure\n";
@@ -610,7 +601,7 @@ class USDAParser {
       if (c != sep) {
         // end
         std::cout << "sepBy1 end\n";
-        _sr->seek_from_current(-1); // unwind single char
+        _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
@@ -642,7 +633,7 @@ class USDAParser {
   ///
   /// Parse '[', Sep1By(','), ']'
   ///
-  template<typename T>
+  template <typename T>
   bool ParseBasicTypeArray(std::vector<T> *result) {
     if (!Expect('[')) {
       return false;
@@ -668,7 +659,7 @@ class USDAParser {
   ///
   /// Parse '(', Sep1By(','), ')'
   ///
-  template<typename T, size_t N>
+  template <typename T, size_t N>
   bool ParseBasicTypeTuple(std::array<T, N> *result) {
     if (!Expect('(')) {
       return false;
@@ -687,7 +678,9 @@ class USDAParser {
     }
 
     if (values.size() != N) {
-      std::string msg = "The number of tuple elements must be " + std::to_string(N) + ", but got " + std::to_string(result->size()) + "\n";
+      std::string msg = "The number of tuple elements must be " +
+                        std::to_string(N) + ", but got " +
+                        std::to_string(result->size()) + "\n";
       _PushError(msg);
       return false;
     }
@@ -697,13 +690,12 @@ class USDAParser {
     }
 
     return true;
-
   }
 
   ///
   /// Parse the array of tuple(e.g. `float3`: [(0, 1, 2), (2, 3, 4), ...] )
   ///
-  template<typename T, size_t N>
+  template <typename T, size_t N>
   bool ParseTupleArray(std::vector<std::array<T, N>> *result) {
     (void)result;
 
@@ -727,7 +719,6 @@ class USDAParser {
 
     return true;
   }
-
 
   bool ReadStringLiteral(std::string *literal) {
     std::stringstream ss;
@@ -988,8 +979,8 @@ class USDAParser {
     bool ret = (c == expect_c);
 
     if (!ret) {
-      std::string msg = "Expected `" + std::string(&expect_c, 1) + "` but got `" +
-                 std::string(&c, 1) + "`\n";
+      std::string msg = "Expected `" + std::string(&expect_c, 1) +
+                        "` but got `" + std::string(&c, 1) + "`\n";
       _PushError(msg);
 
       // unwind
@@ -1066,124 +1057,166 @@ class USDAParser {
     return true;
   }
 
+  // metadata_opt := string_literal '\n'
+  //              |  var '=' value '\n'
+  //
+  bool ParseMetaOpt() {
+    {
+      uint64_t loc = _sr->tell();
+
+      std::string note;
+      if (!ReadStringLiteral(&note)) {
+        // revert
+        if (!SeekTo(loc)) {
+          return false;
+        }
+      } else {
+        // Got note.
+        std::cout << "note = " << note << "\n";
+
+        return true;
+      }
+    }
+
+    std::string varname;
+    if (!ReadIdentifier(&varname)) {
+      std::cout << "token " << varname;
+      return false;
+    }
+
+    if (!_IsBuiltinMeta(varname)) {
+      ErrorDiagnositc diag;
+      diag.line_row = _line_row;
+      diag.line_col = _line_col;
+      diag.err = "'" + varname + "' is not a builtin Metadata variable.\n";
+      err_stack.push(diag);
+      return false;
+    }
+
+    if (!Expect('=')) {
+      ErrorDiagnositc diag;
+      diag.line_row = _line_row;
+      diag.line_col = _line_col;
+      diag.err = "'=' expected in Metadata line.\n";
+      err_stack.push(diag);
+      return false;
+    }
+    SkipWhitespace();
+
+    const Variable &var = _builtin_metas.at(varname);
+    if (var.type == "string") {
+      std::string value;
+      std::cout << "read string literal\n";
+      if (!ReadStringLiteral(&value)) {
+        std::string msg = "String literal expected for `" + var.name + "`.\n";
+        _PushError(msg);
+        return false;
+      }
+    } else if (var.type == "int[]") {
+      std::vector<int> values;
+      if (!ParseBasicTypeArray<int>(&values)) {
+        // std::string msg = "Array of int values expected for `" + var.name +
+        // "`.\n"; _PushError(msg);
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "int[" << i << "] = " << values[i] << "\n";
+      }
+    } else if (var.type == "float[]") {
+      std::vector<float> values;
+      if (!ParseBasicTypeArray<float>(&values)) {
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "float[" << i << "] = " << values[i] << "\n";
+      }
+    } else if (var.type == "float3[]") {
+      std::vector<std::array<float, 3>> values;
+      if (!ParseTupleArray<float, 3>(&values)) {
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "float[" << i << "] = " << values[i][0] << ", "
+                  << values[i][1] << ", " << values[i][2] << "\n";
+      }
+    } else if (var.type == "float") {
+      std::string fval;
+      std::string ferr;
+      if (!LexFloat(&fval, &ferr)) {
+        std::string msg =
+            "Floating point literal expected for `" + var.name + "`.\n";
+        if (!ferr.empty()) {
+          msg += ferr;
+        }
+        _PushError(msg);
+        return false;
+      }
+      std::cout << "float : " << fval << "\n";
+      float value;
+      if (!ParseFloat(fval, &value, &ferr)) {
+        std::string msg =
+            "Failed to parse floating point literal for `" + var.name + "`.\n";
+        if (!ferr.empty()) {
+          msg += ferr;
+        }
+        _PushError(msg);
+        return false;
+      }
+      std::cout << "parsed float : " << value << "\n";
+
+    } else if (var.type == "int3") {
+      std::array<int, 3> values;
+      if (!ParseBasicTypeTuple<int, 3>(&values)) {
+        // std::string msg = "Array of int values expected for `" + var.name +
+        // "`.\n"; _PushError(msg);
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "int[" << i << "] = " << values[i] << "\n";
+      }
+    }
+
+    return true;
+  }
+
   // Parse meta
   // ( metadata_opt )
   bool ParseMeta() {
     if (!Expect('(')) {
       return false;
     }
+
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
 
-    if (Expect(')')) {
+    while (!_sr->eof()) {
+      if (Expect(')')) {
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+
+        // end
+        return true;
+
+      } else {
+        if (!SkipWhitespace()) {
+          // eof
+          return false;
+        }
+
+        if (!ParseMetaOpt()) {
+          // parse error
+          return false;
+        }
+      }
+
       if (!SkipWhitespaceAndNewline()) {
         return false;
-      }
-    } else {
-      // metadata line
-      // var = value
-      std::string varname;
-      if (!ReadIdentifier(&varname)) {
-        std::cout << "token " << varname;
-        return false;
-      }
-
-      if (!_IsBuiltinMeta(varname)) {
-
-        ErrorDiagnositc diag;
-        diag.line_row = _line_row;
-        diag.line_col = _line_col;
-        diag.err =
-            "'" + varname + "' is not a builtin Metadata variable.\n";
-        err_stack.push(diag);
-        return false;
-      }
-
-      if (!Expect('=')) {
-        ErrorDiagnositc diag;
-        diag.line_row = _line_row;
-        diag.line_col = _line_col;
-        diag.err =
-            "'=' expected in Metadata line.\n";
-        err_stack.push(diag);
-        return false;
-      }
-      SkipWhitespace();
-
-      const Variable &var = _builtin_metas.at(varname);
-      if (var.type == "string") {
-        std::string value;
-        std::cout << "read string literal\n";
-        if (!ReadStringLiteral(&value)) {
-          std::string msg = "String literal expected for `" + var.name + "`.\n";
-          _PushError(msg);
-          return false;
-        }
-      } else if (var.type == "int[]") {
-        std::vector<int> values;
-        if (!ParseBasicTypeArray<int>(&values)) {
-          //std::string msg = "Array of int values expected for `" + var.name + "`.\n";
-          //_PushError(msg);
-          return false;
-        }
-
-        for (size_t i = 0; i < values.size(); i++) {
-          std::cout << "int[" << i << "] = " << values[i] << "\n";
-        }
-      } else if (var.type == "float[]") {
-        std::vector<float> values;
-        if (!ParseBasicTypeArray<float>(&values)) {
-          return false;
-        }
-
-        for (size_t i = 0; i < values.size(); i++) {
-          std::cout << "float[" << i << "] = " << values[i] << "\n";
-        }
-      } else if (var.type == "float3[]") {
-        std::vector<std::array<float, 3>> values;
-        if (!ParseTupleArray<float, 3>(&values)) {
-          return false;
-        }
-
-        for (size_t i = 0; i < values.size(); i++) {
-          std::cout << "float[" << i << "] = " << values[i][0] << ", " << values[i][1] << ", " << values[i][2] << "\n";
-        }
-      } else if (var.type == "float") {
-        std::string fval;
-        std::string ferr;
-        if (!LexFloat(&fval, &ferr)) {
-          std::string msg = "Floating point literal expected for `" + var.name + "`.\n";
-          if (!ferr.empty()) {
-            msg += ferr;
-          }
-          _PushError(msg);
-          return false;
-        }
-        std::cout << "float : " << fval << "\n";
-        float value;
-        if (!ParseFloat(fval, &value, &ferr)) {
-          std::string msg = "Failed to parse floating point literal for `" + var.name + "`.\n";
-          if (!ferr.empty()) {
-            msg += ferr;
-          }
-          _PushError(msg);
-          return false;
-        }
-        std::cout << "parsed float : " << value << "\n";
-
-      } else if (var.type == "int3") {
-        std::array<int, 3> values;
-        if (!ParseBasicTypeTuple<int, 3>(&values)) {
-          //std::string msg = "Array of int values expected for `" + var.name + "`.\n";
-          //_PushError(msg);
-          return false;
-        }
-
-        for (size_t i = 0; i < values.size(); i++) {
-          std::cout << "int[" << i << "] = " << values[i] << "\n";
-        }
-
       }
     }
 
@@ -1205,12 +1238,18 @@ class USDAParser {
     return true;
   }
 
-  bool Char1(char *c) {
-    return _sr->read1(c);
-  }
+  bool Char1(char *c) { return _sr->read1(c); }
 
   bool Rewind(size_t offset) {
     if (!_sr->seek_from_current(-int64_t(offset))) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool SeekTo(size_t pos) {
+    if (!_sr->seek_set(pos)) {
       return false;
     }
 
@@ -1275,7 +1314,9 @@ class USDAParser {
     }
 
     if (!_node_types.count(prim_type)) {
-      std::string msg = "`" + prim_type + "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
+      std::string msg =
+          "`" + prim_type +
+          "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
       _PushError(msg);
       return false;
     }
@@ -1300,7 +1341,6 @@ class USDAParser {
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
-
 
     // expect = '}'
     //        | def_block
@@ -1350,8 +1390,10 @@ class USDAParser {
     bool ok{false};
 
     ok = ParseMagicHeader();
-    ok &= ParseDefBlock();
-    //ok &= ParseMeta();
+    // ok &= ParseDefBlock();
+    ok &= ParseMeta();
+
+    std::cout << "Parse Meta done\n";
 
     return ok;
   }
@@ -1369,9 +1411,7 @@ class USDAParser {
     return ss.str();
   }
 
-
  private:
-
   bool _IsRegisteredPrimAttrType(const std::string &ty) {
     return _registered_prim_attr_types.count(ty);
   }
@@ -1401,7 +1441,6 @@ class USDAParser {
     err_stack.push(diag);
   }
 
-
   bool _IsBuiltinMeta(std::string name) {
     return _builtin_metas.count(name) ? true : false;
   }
@@ -1417,10 +1456,7 @@ class USDAParser {
     _builtin_metas["testfta"] = Variable("float3[]", "testfta");
   }
 
-  void _RegisterNodeTypes() {
-    _node_types.insert("Xform");
-  }
-
+  void _RegisterNodeTypes() { _node_types.insert("Xform"); }
 
   const tinyusdz::StreamReader *_sr = nullptr;
 
