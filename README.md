@@ -17,7 +17,7 @@ TinyUSDZ is currently in alpha stage. Not usable.
   * [ ] GeomPoints(for particles)
   * [ ] Xform
   * [ ] etc.
-* [ ] Write simple SDL viewer example(2020 Fall expected)
+* [ ] Write simple SDL viewer example(2020 Winter expected)
 * [ ] Character animation(usdSkel) support(2020 Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] Viewer with Metal ray tracing API?

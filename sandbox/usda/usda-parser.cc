@@ -13,6 +13,12 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#include "lexy/lexeme.hpp"
+#include "lexy/dsl.hpp"
+#include "lexy/parse.hpp"
+#include "lexy/input/file.hpp"
+#include "report_error.hpp"
+
 #include <ryu/ryu.h>
 #include <ryu/ryu_parse.h>
 
@@ -25,7 +31,46 @@
 #include <simple-serialize.hh>
 #include <stream-reader.hh>
 
+namespace grammar {
+
+namespace dsl = lexy::dsl;
+constexpr auto ws = dsl::ascii::blank;
+
+struct string
+{
+  struct invalid_char
+  {
+    static LEXY_CONSTEVAL auto name() {
+      return "invalid character in string literal";
+    }
+  };
+
+  static constexpr auto rule = [] {
+        auto code_point = dsl::try_<invalid_char>(dsl::code_point - dsl::ascii::control);
+        auto escape     = dsl::backslash_escape //
+                          .lit_c<'"'>()
+                          .lit_c<'\\'>()
+                          .lit_c<'/'>()
+                          .lit_c<'b'>(dsl::value_c<'\b'>)
+                          .lit_c<'f'>(dsl::value_c<'\f'>)
+                          .lit_c<'n'>(dsl::value_c<'\n'>)
+                          .lit_c<'r'>(dsl::value_c<'\r'>)
+                          .lit_c<'t'>(dsl::value_c<'\t'>)
+                          .rule(dsl::lit_c<'u'> >> dsl::code_point_id<4>);
+
+        // String of code_point with specified escape sequences, surrounded by ".
+        return dsl::quoted[ws](code_point, escape);
+
+  }();
+
+  static constexpr auto list = lexy::as_string<std::string, lexy::utf8_encoding>;
+};
+
+} // namespace grammer
+
 namespace tinyusdz {
+
+
 
 static void test() {
   int i;
@@ -1482,6 +1527,17 @@ int main(int argc, char **argv) {
   }
 
   std::string filename = argv[1];
+
+  // lexy test
+  {
+    auto file = lexy::read_file<lexy::utf8_encoding>(argv[1]);
+    if (!file)
+    {
+        std::fprintf(stderr, "file '%s' not found", argv[1]);
+        return 1;
+    }
+
+  }
 
   std::vector<uint8_t> data;
   {

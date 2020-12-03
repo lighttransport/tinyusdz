@@ -1,5 +1,9 @@
 #usda 1.0
 (
-  doc = "muda"
-  upAxis = "Z"
+	upAxis = "Z"
+	"This is note"
 )
+
+def Xform "Light" {
+	uniform token bas:is = "bspline"
+}
