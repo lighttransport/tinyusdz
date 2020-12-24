@@ -40,9 +40,18 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iostream>  // dbg
 #endif
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 // TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
 #include "nonstd/variant.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace tinyusdz {
 
@@ -465,14 +474,12 @@ class TimeCode {
   double _time;
 };
 
-class LayerOffset {
- private:
+struct LayerOffset {
   double _offset;
   double _scale;
 };
 
-class Payload {
- private:
+struct Payload {
   std::string _asset_path;
   Path _prim_path;
   LayerOffset _layer_offset;
