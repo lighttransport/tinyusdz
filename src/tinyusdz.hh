@@ -114,10 +114,10 @@ struct Matrix {
 };
 
 template <typename T, size_t N>
-void Identity(Matrix<T, N> &mat) {
-  memset(&mat.m, 0, sizeof(T) * N * N);
+void Identity(Matrix<T, N> *mat) {
+  memset(mat->m, 0, sizeof(T) * N * N);
   for (size_t i = 0; i < N; i++) {
-    mat.m[i][i] = static_cast<T>(1);
+    mat->m[i][i] = static_cast<T>(1);
   }
 };
 
@@ -1587,7 +1587,6 @@ struct PrimvarReader {
 // NOTE: no `matrix4f`
 using XformOpValueType = nonstd::variant<float, Vec3f, Quatf, double, Vec3d, Quatd, Matrix4d>;
 
-// TODO: Support precision
 struct XformOp
 {
   enum PrecisionType {
@@ -1598,7 +1597,7 @@ struct XformOp
 
   enum OpType {
     // 3D
-    TRANSFORM, TRANSLATE, SCALE, 
+    TRANSFORM, TRANSLATE, SCALE,
 
     // 1D
     ROTATE_X, ROTATE_Y, ROTATE_Z,
@@ -1641,7 +1640,7 @@ struct XformOp
       return "xformOp::???";
     }
   }
-  
+
   OpType op;
   PrecisionType precision;
   XformOpValueType value; // When you look up the value, select basic type based on `precision`
@@ -1663,6 +1662,44 @@ struct Xform {
 
   Xform() {
   }
+
+  ///
+  /// Evaluate XformOps and cache the resulting matrix.
+  ///
+  bool EvaluateXformOps(Matrix4d *out_matrix) const {
+    Identity(out_matrix);
+
+    for (const auto &x : xformOps) {
+      Matrix4d m;
+      if (x.op == XformOp::TRANSLATE) {
+      } else {
+        // TODO
+        return false;
+      }
+    }
+
+  }
+
+  ///
+  /// Get concatenated matrix.
+  ///
+  Matrix4d GetMatrix() const {
+    if (_dirty) {
+      Matrix4d m;
+      if (EvaluateXformOps(&m)) {
+        _matrix = m;
+        _dirty = false;
+      } else {
+        // TODO: Report an error.
+      }
+    }
+    return _matrix;
+  }
+
+
+  mutable bool _dirty{true};
+  mutable Matrix4d _matrix; // Resulting matrix of evaluating all XformOps.
+
 };
 
 struct UVCoords {
@@ -2079,7 +2116,7 @@ struct Scene {
 
   // Node hierarchies
   // Scene can have multiple nodes.
-  std::vector<Node> nodes;  
+  std::vector<Node> nodes;
 
   // Scene global setting
   std::string upAxis = "Y";

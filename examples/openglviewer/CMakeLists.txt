@@ -34,6 +34,7 @@ set(GUI_SOURCES
     ../common/matrix.cc
     ../common/imgui/imgui.cpp
     ../common/imgui/imgui_draw.cpp
+    ../common/imgui/imgui_tables.cpp
     ../common/imgui/imgui_widgets.cpp
     ../common/imgui/imgui_impl_glfw.cpp
     ../common/imgui/imgui_impl_opengl2.cpp
