@@ -169,11 +169,14 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
     const tinyusdz::Xform& xform = scene.xforms.at(node.index);
     glPushMatrix();
 
-    glMultMatrixd(reinterpret_cast<const double*>(&(xform.matrix.m)));
+    tinyusdz::Matrix4d matrix = xform.GetMatrix();
+    glMultMatrixd(reinterpret_cast<const double*>(&(matrix.m)));
   }
 
   for (const auto& child : node.children) {
-    DrawNode(scene, scene.nodes.at(child));
+    if ((child.index >= 0) && (child.index < scene.nodes.size())) {
+      DrawNode(scene, scene.nodes.at(size_t(child.index)));
+    }
   }
 
   if (node.type == tinyusdz::NODE_TYPE_XFORM) {
@@ -341,8 +344,16 @@ int main(int argc, char** argv) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Draw scene
-    if ((scene.root_node >= 0) && (scene.root_node < scene.nodes.size())) {
-      DrawNode(scene, scene.nodes[scene.root_node]);
+    if ((scene.default_root_node >= 0) && (scene.default_root_node < scene.nodes.size())) {
+      DrawNode(scene, scene.nodes[scene.default_root_node]);
+    } else {
+      static bool printed = false;
+      if (!printed) {
+        std::cerr << "USD scene does not contain root node. or has invalid root node ID\n";
+        std::cerr << "  # of nodes in the scene: " << scene.nodes.size() << "\n";
+        std::cerr << "  scene.default_root_node: " << scene.default_root_node << "\n";
+        printed = true;
+      }
     }
 
     // Imgui

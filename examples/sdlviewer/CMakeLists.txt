@@ -61,7 +61,7 @@ function ( ADD_SDL2_LIB )
   # Enable static lib only
   set(SDL_SAHARED OFF CACHE INTERNAL "" FORCE)
   set(SDL_STATIC ON CACHE INTERNAL "" FORCE)
-  add_subdirectory(../common/SDL2-2.0.12/ SDL2)
+  add_subdirectory(../common/SDL2-2.0.14/ SDL2)
 endfunction ()
 ADD_SDL2_LIB()
 
