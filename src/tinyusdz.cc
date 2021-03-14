@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019 - 2020, Syoyo Fujita.
+Copyright (c) 2019 - Present, Syoyo Fujita.
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
