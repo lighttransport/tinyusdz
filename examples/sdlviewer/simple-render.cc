@@ -10,6 +10,7 @@
 // common
 #include "matrix.h"
 #include "trackball.h"
+#include "mapbox/earcut.hpp" // For polygon triangulation
 
 const float kPI = 3.141592f;
 

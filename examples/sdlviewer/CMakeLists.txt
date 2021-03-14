@@ -181,6 +181,7 @@ set(GUI_SOURCES
     ../common/imgui/imgui.cpp
     ../common/imgui/imgui_draw.cpp
     ../common/imgui/imgui_widgets.cpp
+    ../common/imgui/imgui_tables.cpp
 
     ../common/imgui_sdl/imgui_sdl.cpp
     )

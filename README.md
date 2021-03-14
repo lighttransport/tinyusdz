@@ -11,16 +11,17 @@
 TinyUSDZ is currently in alpha stage. Not usable.
 
 * [x] USDC data parse
-* [ ] Reconstuct primitive and scene graph representaion(2020 Fall expected)
+* [ ] Reconstuct primitive and scene graph representaion(2021 Spring expected)
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
   * [ ] GeomPoints(for particles)
   * [ ] Xform
   * [ ] etc.
-* [ ] Write simple SDL viewer example(2020 Winter expected)
-* [ ] Character animation(usdSkel) support(2020 Winter expected)
+* [ ] Write simple SDL viewer example(2021 Spring expected)
+* [ ] Character animation(usdSkel) support(2021 Summer expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] Viewer with Metal ray tracing API?
+* [ ] Polygon triangulation using mapxbo/earcut.hpp
 * [ ] USDZ(USDC) writer
 
 ## Notice
@@ -200,4 +201,5 @@ TinyUSDZ is licensed under MIT license.
 * SDL2 : zlib license. https://www.libsdl.org/index.php
 * optional-lite: BSL 1.0 license. https://github.com/martinmoene/optional-lite
 * span-lite: BSL 1.0 license. https://github.com/martinmoene/span-lite
+* mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
 
