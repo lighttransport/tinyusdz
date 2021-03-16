@@ -21,6 +21,41 @@
 #include "trackball.h"
 #include "cuew/cuew.h"
 
+#define OPTIX_DONT_INCLUDE_CUDA
+#include <optix.h>
+
+#define CU_CHECK(cond)                                                 \
+  do {                                                                 \
+    CUresult ret = cond;                                               \
+    if (ret != CUDA_SUCCESS) {                                         \
+      std::cerr << __FILE__ << ":" << __LINE__                         \
+                << " CUDA Device API failed. retcode " << ret << "\n"; \
+      exit(-1);                                                        \
+    }                                                                  \
+  } while (0)
+
+#define CU_SYNC_CHECK()                                                   \
+  do {                                                                    \
+    /* assume cuCtxSynchronize() ~= cudaDeviceSynchronize() */            \
+    CUresult ret = cuCtxSynchronize();                                    \
+    if (ret != CUDA_SUCCESS) {                                            \
+      std::cerr << __FILE__ << ":" << __LINE__                            \
+                << " cuCtxSynchronize() failed. retcode " << ret << "\n"; \
+      exit(-1);                                                           \
+    }                                                                     \
+  } while (0)
+
+#define OPTIX_CHECK(callfun)                                                \
+  do {                                                                      \
+    OptixResult ret = callfun;                                              \
+    if (ret != OPTIX_SUCCESS) {                                             \
+      std::cerr << __FILE__ << ":" << __LINE__ << " Optix call" << #callfun \
+                << " failed. retcode " << ret << "\n";                      \
+      exit(-1);                                                             \
+    }                                                                       \
+  } while (0)
+
+
 struct GUIContext {
   enum AOV {
     AOV_COLOR = 0,
@@ -212,6 +247,69 @@ static std::string str_tolower(std::string s) {
 } // namespace
 
 int main(int argc, char** argv) {
+
+  if (cuewInit(CUEW_INIT_CUDA) != CUEW_SUCCESS) {
+    std::cerr << "Failed to initialize CUDA\n";
+    return -1;
+  }
+
+  printf("CUDA compiler path: %s, compiler version: %d\n", cuewCompilerPath(),
+         cuewCompilerVersion());
+
+  // Currently we require NVRTC to be available for runtime .cu compilation.
+  if (cuewInit(CUEW_INIT_NVRTC) != CUEW_SUCCESS) {
+    std::cerr << "Failed to initialize NVRTC. NVRTC library is not available "
+                 "or not found in the system search path\n";
+    return -1;
+  } else {
+    int major, minor;
+    nvrtcVersion(&major, &minor);
+    std::cout << "Found NVRTC runtime compilation library version " << major
+              << "." << minor << "\n";
+  }
+
+  //
+  // Initialize CUDA and create OptiX context
+  //
+
+  if (cuInit(0) != CUDA_SUCCESS) {
+    std::cerr << "Failed to init CUDA\n";
+    return -1;
+  }
+
+  OptixDeviceContext context = nullptr;
+  CUcontext cuCtx{};
+  {
+    int counts{0};
+    CU_CHECK(cuDeviceGetCount(&counts));
+
+    std::cout << "# of CUDA devices: " << counts << "\n";
+    if (counts < 1) {
+      std::cerr << "No CUDA device found\n";
+      return -1;
+    }
+
+    CUdevice device{};
+    if (CUDA_SUCCESS != cuDeviceGet(&device, /* devid */ 0)) {
+      std::cerr << "Failed to get CUDA device.\n";
+      return -1;
+    }
+
+    {
+      int major, minor;
+      CU_CHECK(cuDeviceComputeCapability(&major, &minor, device));
+      std::cerr << "compute capability: " << major << "." << minor << "\n";
+    }
+
+    if (CUDA_SUCCESS != cuCtxCreate(&cuCtx, /* flags */ 0, device)) {
+      std::cerr << "Failed to get Create CUDA context.\n";
+      return -1;
+    }
+  }
+
+
+  // ======================================
+
 
   // Setup window
   glfwSetErrorCallback(error_callback);

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.5.1)
 
 set(BUILD_TARGET "usdz_optixview")
 
-project(${BUILD_TARGET} CXX)
+project(${BUILD_TARGET} C CXX)
 
 
 if (WIN32)
@@ -17,6 +17,12 @@ set(OptiX_INSTALL_DIR ${DEFAULT_OPTIX_INSTALL_DIR} CACHE PATH "Path to OptiX ins
 set(CMAKE_CXX_STANDARD 11)
 
 find_package(OpenGL REQUIRED)
+
+# local cmake modules
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+
+# Assume looking for `cmake/FindOptiX.cmake`
+find_package(OptiX REQUIRED)
 
 if(WIN32)
     # nothing.
@@ -73,6 +79,8 @@ endif()
 
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common")
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/imgui")
+
+target_include_directories(${BUILD_TARGET} PUBLIC ${OptiX_INCLUDE})
 
 # tinyusdz dir
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
