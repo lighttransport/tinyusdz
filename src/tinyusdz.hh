@@ -35,6 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string>
 #include <utility>
 #include <vector>
+#include <cmath>
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
 #include <iostream>  // dbg
@@ -129,6 +130,26 @@ void Identity(Matrix<T, N> *mat) {
     mat->m[i][i] = static_cast<T>(1);
   }
 };
+
+// ret = m x n
+template <typename T, size_t N>
+Matrix<T, N> Mult(Matrix<T, N> &m, Matrix<T, N> &n) {
+  Matrix<T, N> ret;
+  memset(ret.m, 0, sizeof(T) * N * N);
+
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      T value = static_cast<T>(0);
+      for (size_t k = 0; k < N; k++) {
+        value += m.m[k][i] * n.m[j][k];
+      }
+      ret.m[j][i] = value;
+    }
+  }
+
+  return ret;
+};
+
 
 
 using Matrix2f = Matrix<float, 2>;
@@ -1671,26 +1692,91 @@ struct Xform {
   }
 
   ///
-  /// Evaluate XformOps and cache the resulting matrix.
+  /// Evaluate XformOps
   ///
   bool EvaluateXformOps(Matrix4d *out_matrix) const {
     Identity(out_matrix);
 
+    Matrix4d cm;
+
+    // Concat matrices
     for (const auto &x : xformOps) {
       Matrix4d m;
+      Identity(&m);
       if (x.op == XformOp::TRANSLATE) {
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          Vec3f tx = nonstd::get<Vec3f>(x.value);
+          m.m[3][0] = double(tx[0]);
+          m.m[3][1] = double(tx[1]);
+          m.m[3][2] = double(tx[2]);
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          Vec3d tx = nonstd::get<Vec3d>(x.value);
+          m.m[3][0] = tx[0];
+          m.m[3][1] = tx[1];
+          m.m[3][2] = tx[2];
+        } else {
+          return false;
+        }
+      // FIXME: Validate ROTATE_X, _Y, _Z implementation
+      } else if (x.op == XformOp::ROTATE_X) {
+        double theta;
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          theta = double(nonstd::get<float>(x.value));
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          theta = nonstd::get<double>(x.value);
+        } else {
+          return false;
+        }
+
+        m.m[1][1] = std::cos(theta);
+        m.m[1][2] = std::sin(theta);
+        m.m[2][1] = -std::sin(theta);
+        m.m[2][2] = std::cos(theta);
+      } else if (x.op == XformOp::ROTATE_Y) {
+        double theta;
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          theta = double(nonstd::get<float>(x.value));
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          theta = nonstd::get<double>(x.value);
+        } else {
+          return false;
+        }
+
+        m.m[0][0] = std::cos(theta);
+        m.m[0][2] = -std::sin(theta);
+        m.m[2][0] = std::sin(theta);
+        m.m[2][2] = std::cos(theta);
+      } else if (x.op == XformOp::ROTATE_Z) {
+        double theta;
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          theta = double(nonstd::get<float>(x.value));
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          theta = nonstd::get<double>(x.value);
+        } else {
+          return false;
+        }
+
+        m.m[0][0] = std::cos(theta);
+        m.m[0][1] = std::sin(theta);
+        m.m[1][0] = -std::sin(theta);
+        m.m[1][1] = std::cos(theta);
       } else {
         // TODO
         return false;
       }
+
+      cm = Mult(cm, m);
     }
 
+    (*out_matrix) = cm;
+
+    return true;
   }
 
   ///
   /// Get concatenated matrix.
   ///
-  Matrix4d GetMatrix() const {
+  nonstd::optional<Matrix4d> GetMatrix() const {
     if (_dirty) {
       Matrix4d m;
       if (EvaluateXformOps(&m)) {
@@ -1698,6 +1784,7 @@ struct Xform {
         _dirty = false;
       } else {
         // TODO: Report an error.
+        return nonstd::nullopt;
       }
     }
     return _matrix;
@@ -1705,7 +1792,7 @@ struct Xform {
 
 
   mutable bool _dirty{true};
-  mutable Matrix4d _matrix; // Resulting matrix of evaluating all XformOps.
+  mutable Matrix4d _matrix; // Resulting matrix of evaluated XformOps.
 
 };
 

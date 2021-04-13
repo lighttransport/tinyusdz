@@ -95,6 +95,7 @@ namespace tinyusdz {
 
 namespace {
 
+#if 0
 //
 // Simple MatMul implementation
 //
@@ -109,7 +110,9 @@ void MatrixMult(T dst[4][4], T m0[4][4], T m1[4][4]) {
     }
   }
 }
+#endif
 
+#if 0
 template<typename T>
 void MatrixInverse(T m[4][4]) {
   /*
@@ -208,8 +211,9 @@ void MatrixInverse(T m[4][4]) {
     }
   }
 }
+#endif
 
-
+#if 0
 float half_to_float(float16 h) {
   static const FP32 magic = {113 << 23};
   static const unsigned int shifted_exp = 0x7c00
@@ -232,6 +236,7 @@ float half_to_float(float16 h) {
   o.u |= (h.u & 0x8000U) << 16U;  // sign bit
   return o.f;
 }
+#endif
 
 float16 float_to_half_full(float _f) {
   FP32 f;
