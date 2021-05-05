@@ -1,3 +1,7 @@
-USDA parser experiment.
+# USDA parser experiment.
 
-* uses lexy, so the code is now depends on C++17.
+It uses hand-written USDA parser.
+
+## TODO
+
+* Use lexy parser combinator library(Requires C++17)

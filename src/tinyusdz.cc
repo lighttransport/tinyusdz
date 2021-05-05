@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019 - 2020, Syoyo Fujita.
+Copyright (c) 2019 - Present, Syoyo Fujita.
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -95,6 +95,7 @@ namespace tinyusdz {
 
 namespace {
 
+#if 0
 //
 // Simple MatMul implementation
 //
@@ -109,6 +110,7 @@ void MatrixMult(T dst[4][4], const T m0[4][4], const T m1[4][4]) {
     }
   }
 }
+#endif
 
 #if 0 // TODO
 template<typename T>
