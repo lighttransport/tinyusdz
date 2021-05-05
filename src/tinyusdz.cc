@@ -99,7 +99,7 @@ namespace {
 // Simple MatMul implementation
 //
 template<typename T>
-void MatrixMult(T dst[4][4], T m0[4][4], T m1[4][4]) {
+void MatrixMult(T dst[4][4], const T m0[4][4], const T m1[4][4]) {
   for (int i = 0; i < 4; ++i) {
     for (int j = 0; j < 4; ++j) {
       dst[i][j] = 0;
@@ -110,6 +110,7 @@ void MatrixMult(T dst[4][4], T m0[4][4], T m1[4][4]) {
   }
 }
 
+#if 0 // TODO
 template<typename T>
 void MatrixInverse(T m[4][4]) {
   /*
@@ -208,8 +209,10 @@ void MatrixInverse(T m[4][4]) {
     }
   }
 }
+#endif
 
 
+#if 0 // UNUSED at the moment
 float half_to_float(float16 h) {
   static const FP32 magic = {113 << 23};
   static const unsigned int shifted_exp = 0x7c00
@@ -232,6 +235,7 @@ float half_to_float(float16 h) {
   o.u |= (h.u & 0x8000U) << 16U;  // sign bit
   return o.f;
 }
+#endif
 
 float16 float_to_half_full(float _f) {
   FP32 f;
@@ -5642,6 +5646,64 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
 #endif
 
   memcpy(v->data(), st.buffer.data.data(), n * c * sizeof(float));
+
+  return true;
+}
+
+Matrix4d GetTransform(XformOp xform)
+{
+  Matrix4d m;
+  Identity(&m);
+
+  if (xform.op == XformOp::OpType::TRANSFORM) {
+    m = nonstd::get<Matrix4d>(xform.value);
+  } else if (xform.op == XformOp::OpType::TRANSLATE) {
+    if (xform.precision == XformOp::PRECISION_DOUBLE) {
+      auto s = nonstd::get<Vec3f>(xform.value);
+      m.m[0][0] = double(s[0]);
+      m.m[1][1] = double(s[1]);
+      m.m[2][2] = double(s[2]);
+    } else {
+      auto s = nonstd::get<Vec3d>(xform.value);
+      m.m[0][0] = s[0];
+      m.m[1][1] = s[1];
+      m.m[2][2] = s[2];
+    }
+  } else if (xform.op == XformOp::OpType::SCALE) {
+    if (xform.precision == XformOp::PRECISION_DOUBLE) {
+      auto s = nonstd::get<Vec3f>(xform.value);
+      m.m[0][0] = double(s[0]);
+      m.m[1][1] = double(s[1]);
+      m.m[2][2] = double(s[2]);
+    } else {
+      auto s = nonstd::get<Vec3d>(xform.value);
+      m.m[0][0] = s[0];
+      m.m[1][1] = s[1];
+      m.m[2][2] = s[2];
+    }
+  }
+  // TODO: rotation, orient
+
+  return m;
+}
+
+bool Xform::EvaluateXformOps(Matrix4d *out_matrix) const {
+  Identity(out_matrix);
+
+  Matrix4d dst, src;
+  Identity(&dst);
+  Identity(&src);
+
+  // M = op[N-1] x op[N-2] x ... x op[0]
+  for (const auto &x : xformOps) {
+    Matrix4d t = GetTransform(x);
+
+    MatrixMult(dst.m, t.m, src.m);
+
+    src = dst;
+  }
+
+  (*out_matrix) = dst;
 
   return true;
 }

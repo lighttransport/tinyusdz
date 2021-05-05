@@ -116,6 +116,10 @@ union float16 {
 float half_to_float(float16 h);
 float16 float_to_half_full(float f);
 
+//
+// Colum-major order(e.g. employed in OpenGL).
+// For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to the translation.
+//
 template <typename T, size_t N>
 struct Matrix {
   T m[N][N];
@@ -1654,6 +1658,7 @@ struct XformOp
 };
 
 
+Matrix4d GetTransform(XformOp xform);
 
 // Predefined node class
 struct Xform {
@@ -1673,19 +1678,7 @@ struct Xform {
   ///
   /// Evaluate XformOps and cache the resulting matrix.
   ///
-  bool EvaluateXformOps(Matrix4d *out_matrix) const {
-    Identity(out_matrix);
-
-    for (const auto &x : xformOps) {
-      Matrix4d m;
-      if (x.op == XformOp::TRANSLATE) {
-      } else {
-        // TODO
-        return false;
-      }
-    }
-
-  }
+  bool EvaluateXformOps(Matrix4d *out_matrix) const;
 
   ///
   /// Get concatenated matrix.
