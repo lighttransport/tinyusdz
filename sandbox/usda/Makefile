@@ -1,12 +1,15 @@
-CC=clang-10
-CXX=clang++-10
+CC=clang
+CXX=clang++
 INCFLAGS=-I. -I../../src/external/ryu -I../../src
 
 # only applied to usda-parser.cc
 EXTRA_COMPILER_FLAGS=-Weverything -Werror -Wno-padded -Wno-c++98-compat
-CXXFLAGS=-std=c++17 -fsanitize=address -g -O0
+CXXFLAGS=-std=c++11 -fsanitize=address -g -O0
 CFLAGS=-fsanitize=address -g -O0
 LDFLAGS=-fsanitize=address
+
+# On some macOS
+EXTRA_COMPILER_FLAGS+=-Wno-poison-system-directories
 
 # gcc
 #EXTRA_COMPILER_FLAGS=-Wall
@@ -21,7 +24,7 @@ all: usda-parser t
 t: usda-parser
 	./usda-parser tests/test.usda
 
-usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o file.o
+usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 	
 usda-parser.o: usda-parser.cc ../../src/simple-serialize.hh
@@ -42,9 +45,9 @@ s2f.o: ../../src/external/ryu/ryu/s2f.c
 s2d.o: ../../src/external/ryu/ryu/s2d.c
 	$(CC) $(INCFLAGS) $(CFLAGS) -c -o $@ $<
 
-file.o: lexy/file.cpp
-	$(CXX) $(INCFLAGS) $(CXXFLAGS) -c -o $@ $<
+#file.o: lexy/file.cpp
+#	$(CXX) $(INCFLAGS) $(CXXFLAGS) -c -o $@ $<
 
 clean:
-	@rm -rf usda-parser usda-parser.o d2s.o f2s.o s2d.o s2f.o simple-serialize.o file.o
+	@rm -rf usda-parser usda-parser.o d2s.o f2s.o s2d.o s2f.o simple-serialize.o
 

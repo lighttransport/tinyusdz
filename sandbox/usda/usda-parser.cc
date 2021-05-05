@@ -13,11 +13,13 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#if 0 // TODO(syoyo): Use lexy
 #include "lexy/lexeme.hpp"
 #include "lexy/dsl.hpp"
 #include "lexy/parse.hpp"
 #include "lexy/input/file.hpp"
 #include "report_error.hpp"
+#endif
 
 #include <ryu/ryu.h>
 #include <ryu/ryu_parse.h>
@@ -31,6 +33,7 @@
 #include <simple-serialize.hh>
 #include <stream-reader.hh>
 
+#if 0
 namespace grammar {
 
 namespace dsl = lexy::dsl;
@@ -67,6 +70,7 @@ struct string
 };
 
 } // namespace grammer
+#endif
 
 namespace tinyusdz {
 
@@ -1528,6 +1532,7 @@ int main(int argc, char **argv) {
 
   std::string filename = argv[1];
 
+#if 0
   // lexy test
   {
     auto file = lexy::read_file<lexy::utf8_encoding>(argv[1]);
@@ -1536,8 +1541,8 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "file '%s' not found", argv[1]);
         return 1;
     }
-
   }
+#endif
 
   std::vector<uint8_t> data;
   {

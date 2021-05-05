@@ -110,7 +110,7 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
   }
 
   for (const auto& child : node.children) {
-    DrawNode(scene, scene.nodes.at(child));
+    //DrawNode(scene, scene.nodes.at(child));
   }
 
   if (node.type == tinyusdz::NODE_TYPE_XFORM) {
