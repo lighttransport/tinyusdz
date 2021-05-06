@@ -74,6 +74,47 @@ struct string
 
 namespace tinyusdz {
 
+namespace usda {
+
+// https://stackoverflow.com/questions/13777987/c-error-handling-downside-of-using-stdpair-or-stdtuple-for-returning-err
+template <class T>
+struct Result
+{
+public:
+    enum Status {
+        Success,
+        Error
+    };
+
+    // Feel free to change the default behavior... I use implicit
+    // constructors for type T for syntactic sugar in return statements.
+    Result(T resultValue) : v(resultValue), s(Success) {}
+    explicit Result(Status status, std::string _errMsg = std::string()) : v(), s(status), errMsg(_errMsg) {}
+    Result() : s(Error), v() {} // Error without message
+
+    // Explicit error with message
+    static Result error(std::string errMsg) { return Result(Error, errMsg); }
+
+    // Implicit conversion to type T
+    operator T() const { return v; }
+    // Explicit conversion to type T
+    T value() const { return v; }
+
+    Status status() const { return s; }
+    bool isError() const { return s == Error; }
+    bool isSuccessful() const { return s == Success; }
+    std::string errorMessage() const { return errMsg; }
+
+private:
+    T v;
+    Status s;
+
+    // if you want to provide error messages:
+    std::string errMsg;
+};
+
+} // namespace usda
+
 
 
 static void test() {
@@ -150,7 +191,29 @@ class Variable {
   Variable(std::string ty, std::string n) : type(ty), name(n) {}
 };
 
-inline bool IsChar(char c) { return std::isalpha(int(c)); }
+inline bool IsChar(char c) {
+  return std::isalpha(int(c));
+}
+
+static usda::Result<float> ParseFloatR(const std::string &s) {
+  float value;
+
+  // Pase with Ryu.
+  Status stat = s2f_n(s.data(), int(s.size()), &value);
+  if (stat == SUCCESS) {
+    return value;
+  }
+
+  if (stat == INPUT_TOO_SHORT) {
+    return usda::Result<float>::error("Input floating point literal is too short");
+  } else if (stat == INPUT_TOO_LONG) {
+    return usda::Result<float>::error("Input floating point literal is too long");
+  } else if (stat == MALFORMED_INPUT) {
+    return usda::Result<float>::error("Malformed input floating point literal");
+  }
+
+  return usda::Result<float>::error("Unexpected floating point literal input");
+}
 
 inline bool ParseFloat(const std::string &s, float *value, std::string *err) {
   std::cout << "Parse float: " << s << "\n";
@@ -527,6 +590,7 @@ class USDAParser {
       return false;
     }
 
+#if 0
     if (!ParseFloat(value_str, value, &err)) {
       std::string msg = "Failed to parse float value literal.\n";
       if (err.size()) {
@@ -535,6 +599,19 @@ class USDAParser {
       _PushError(msg);
       return false;
     }
+#else
+    usda::Result<float> flt = ParseFloatR(value_str);
+    if (flt.isSuccessful()) {
+      (*value) = flt.value();
+    } else {
+      std::string msg = "Failed to parse float value literal.\n";
+      if (err.size()) {
+        msg += flt.errorMessage() + "\n";
+      }
+      _PushError(msg);
+      return false;
+    }
+#endif
 
     return true;
   }
@@ -1233,7 +1310,9 @@ class USDAParser {
   }
 
   // Parse meta
-  // ( metadata_opt )
+  // meta = ( metadata_opt )
+  //      | empty
+  //      ;
   bool ParseMeta() {
     if (!Expect('(')) {
       return false;
@@ -1383,13 +1462,21 @@ class USDAParser {
 
     std::cout << "prim node name: " << node_name << "\n";
 
-    if (!Expect('{')) {
+    if (!SkipWhitespaceAndNewline()) {
       return false;
     }
+
+    if (!Expect('{')) {
+      std::cout << "???\n";
+      return false;
+    }
+    std::cout << "bbb\n";
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
+
+    std::cout << "aaa\n";
 
     // expect = '}'
     //        | def_block
@@ -1419,8 +1506,10 @@ class USDAParser {
         }
 
         if (tok == "def") {
+          std::cout << "rec\n";
           // recusive call
           if (!ParseDefBlock()) {
+            std::cout << "rec failed\n";
             return false;
           }
         } else {
@@ -1436,15 +1525,26 @@ class USDAParser {
   }
 
   bool Parse() {
-    bool ok{false};
+    bool header_ok = ParseMagicHeader();
+    if (!header_ok) {
+      _PushError("Failed to parse USDA magic header.\n");
+      return false;
+    }
 
-    ok = ParseMagicHeader();
-    // ok &= ParseDefBlock();
-    ok &= ParseMeta();
+    bool has_meta = ParseMeta();
+    if (has_meta) {
+      // TODO: Process meta info
+    } else {
+      // no meta info accepted.
+    }
 
-    std::cout << "Parse Meta done\n";
-
-    return ok;
+    bool block_ok = ParseDefBlock();
+    if (!block_ok) {
+      _PushError("Failed to parse `def` block.\n");
+      return false;
+    }
+    
+    return true;
   }
 
   std::string GetError() {
@@ -1505,7 +1605,10 @@ class USDAParser {
     _builtin_metas["testfta"] = Variable("float3[]", "testfta");
   }
 
-  void _RegisterNodeTypes() { _node_types.insert("Xform"); }
+  void _RegisterNodeTypes() {
+    _node_types.insert("Xform");
+    _node_types.insert("Sphere");
+   }
 
   const tinyusdz::StreamReader *_sr = nullptr;
 
