@@ -78,7 +78,7 @@ int main(int argc, char **argv)
 
   std::string warn;
   std::string err;
-  bool ret = tinyusdz::SaveAsUSDA("output.udsa", scene, &warn, &err);
+  bool ret = tinyusdz::usda::SaveAsUSDA("output.udsa", scene, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";

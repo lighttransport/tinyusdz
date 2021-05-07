@@ -57,12 +57,15 @@ endif()
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
     )
 
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
     ${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
+    ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
   )
 
 if (TINYUSDZ_WITH_EXR)
@@ -152,6 +155,7 @@ add_library(${BUILD_TARGET} ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
 target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
 
 if (TINYUSDZ_WITH_EXR)
