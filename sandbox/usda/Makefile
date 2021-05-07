@@ -22,7 +22,7 @@ EXTRA_COMPILER_FLAGS+=-Wno-poison-system-directories
 all: usda-parser t
 
 t: usda-parser
-	./usda-parser tests/simple.usda
+	./usda-parser tests/simple-blender-exported.usda
 	#./usda-parser tests/test.usda
 
 usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o
