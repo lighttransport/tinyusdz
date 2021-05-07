@@ -5580,6 +5580,89 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
   return true;
 }
 
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options) {
+  if (addr == nullptr) {
+    if (err) {
+      (*err) = "null pointer for `addr` argument.\n";
+    }
+    return false;
+  }
+
+  if (scene == nullptr) {
+    if (err) {
+      (*err) = "null pointer for `scene` argument.\n";
+    }
+    return false;
+  }
+
+  (void)length;
+  (void)warn;
+  (void)options;
+
+  if (err) {
+    (*err) += "USDA parsing is TODO\n";
+  }
+
+  return false;
+}
+
+bool LoadUSDAFromFile(const std::string &filename, Scene *scene,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options) {
+  std::vector<uint8_t> data;
+  {
+    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
+    if (!ifs) {
+      if (err) {
+        (*err) = "File not found or cannot open file : " + filename;
+      }
+      return false;
+    }
+
+    // TODO(syoyo): Use mmap
+    ifs.seekg(0, ifs.end);
+    size_t sz = static_cast<size_t>(ifs.tellg());
+    if (int64_t(sz) < 0) {
+      // Looks reading directory, not a file.
+      if (err) {
+        (*err) += "Looks like filename is a directory : \"" + filename + "\"\n";
+      }
+      return false;
+    }
+
+    if (sz < 8) {
+      // ???
+      if (err) {
+        (*err) +=
+            "File size too short. Looks like this file is not a USDA : \"" +
+            filename + "\"\n";
+      }
+      return false;
+    }
+
+    if (sz > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
+      if (err) {
+        (*err) += "USDA file is too large(size = " + std::to_string(sz) +
+                  ", which exceeds memory limit " +
+                  std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
+      }
+
+      return false;
+    }
+
+    data.resize(sz);
+
+    ifs.seekg(0, ifs.beg);
+    ifs.read(reinterpret_cast<char *>(&data.at(0)),
+             static_cast<std::streamsize>(sz));
+  }
+
+  return LoadUSDAFromMemory(data.data(), data.size(), scene, warn, err,
+                            options);
+}
+
 size_t GeomMesh::GetNumPoints() const {
   size_t n = points.size() / 3;
 
@@ -5690,22 +5773,80 @@ Matrix4d GetTransform(XformOp xform)
 }
 
 bool Xform::EvaluateXformOps(Matrix4d *out_matrix) const {
-  Identity(out_matrix);
+    Identity(out_matrix);
 
-  Matrix4d dst, src;
-  Identity(&dst);
-  Identity(&src);
+    Matrix4d cm;
 
-  // M = op[N-1] x op[N-2] x ... x op[0]
-  for (const auto &x : xformOps) {
-    Matrix4d t = GetTransform(x);
+    // Concat matrices
+    for (const auto &x : xformOps) {
+      Matrix4d m;
+      Identity(&m);
+      if (x.op == XformOp::TRANSLATE) {
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          Vec3f tx = nonstd::get<Vec3f>(x.value);
+          m.m[3][0] = double(tx[0]);
+          m.m[3][1] = double(tx[1]);
+          m.m[3][2] = double(tx[2]);
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          Vec3d tx = nonstd::get<Vec3d>(x.value);
+          m.m[3][0] = tx[0];
+          m.m[3][1] = tx[1];
+          m.m[3][2] = tx[2];
+        } else {
+          return false;
+        }
+      // FIXME: Validate ROTATE_X, _Y, _Z implementation
+      } else if (x.op == XformOp::ROTATE_X) {
+        double theta;
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          theta = double(nonstd::get<float>(x.value));
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          theta = nonstd::get<double>(x.value);
+        } else {
+          return false;
+        }
 
-    MatrixMult(dst.m, t.m, src.m);
+        m.m[1][1] = std::cos(theta);
+        m.m[1][2] = std::sin(theta);
+        m.m[2][1] = -std::sin(theta);
+        m.m[2][2] = std::cos(theta);
+      } else if (x.op == XformOp::ROTATE_Y) {
+        double theta;
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          theta = double(nonstd::get<float>(x.value));
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          theta = nonstd::get<double>(x.value);
+        } else {
+          return false;
+        }
 
-    src = dst;
-  }
+        m.m[0][0] = std::cos(theta);
+        m.m[0][2] = -std::sin(theta);
+        m.m[2][0] = std::sin(theta);
+        m.m[2][2] = std::cos(theta);
+      } else if (x.op == XformOp::ROTATE_Z) {
+        double theta;
+        if (x.precision == XformOp::PRECISION_FLOAT) {
+          theta = double(nonstd::get<float>(x.value));
+        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
+          theta = nonstd::get<double>(x.value);
+        } else {
+          return false;
+        }
 
-  (*out_matrix) = dst;
+        m.m[0][0] = std::cos(theta);
+        m.m[0][1] = std::sin(theta);
+        m.m[1][0] = -std::sin(theta);
+        m.m[1][1] = std::cos(theta);
+      } else {
+        // TODO
+        return false;
+      }
+
+      cm = Mult(cm, m);
+    }
+
+    (*out_matrix) = cm;
 
   return true;
 }
