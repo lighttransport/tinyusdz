@@ -1699,84 +1699,7 @@ struct Xform {
   ///
   /// Evaluate XformOps
   ///
-  bool EvaluateXformOps(Matrix4d *out_matrix) const {
-    Identity(out_matrix);
-
-    Matrix4d cm;
-
-    // Concat matrices
-    for (const auto &x : xformOps) {
-      Matrix4d m;
-      Identity(&m);
-      if (x.op == XformOp::TRANSLATE) {
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          Vec3f tx = nonstd::get<Vec3f>(x.value);
-          m.m[3][0] = double(tx[0]);
-          m.m[3][1] = double(tx[1]);
-          m.m[3][2] = double(tx[2]);
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          Vec3d tx = nonstd::get<Vec3d>(x.value);
-          m.m[3][0] = tx[0];
-          m.m[3][1] = tx[1];
-          m.m[3][2] = tx[2];
-        } else {
-          return false;
-        }
-      // FIXME: Validate ROTATE_X, _Y, _Z implementation
-      } else if (x.op == XformOp::ROTATE_X) {
-        double theta;
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          theta = double(nonstd::get<float>(x.value));
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          theta = nonstd::get<double>(x.value);
-        } else {
-          return false;
-        }
-
-        m.m[1][1] = std::cos(theta);
-        m.m[1][2] = std::sin(theta);
-        m.m[2][1] = -std::sin(theta);
-        m.m[2][2] = std::cos(theta);
-      } else if (x.op == XformOp::ROTATE_Y) {
-        double theta;
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          theta = double(nonstd::get<float>(x.value));
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          theta = nonstd::get<double>(x.value);
-        } else {
-          return false;
-        }
-
-        m.m[0][0] = std::cos(theta);
-        m.m[0][2] = -std::sin(theta);
-        m.m[2][0] = std::sin(theta);
-        m.m[2][2] = std::cos(theta);
-      } else if (x.op == XformOp::ROTATE_Z) {
-        double theta;
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          theta = double(nonstd::get<float>(x.value));
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          theta = nonstd::get<double>(x.value);
-        } else {
-          return false;
-        }
-
-        m.m[0][0] = std::cos(theta);
-        m.m[0][1] = std::sin(theta);
-        m.m[1][0] = -std::sin(theta);
-        m.m[1][1] = std::cos(theta);
-      } else {
-        // TODO
-        return false;
-      }
-
-      cm = Mult(cm, m);
-    }
-
-    (*out_matrix) = cm;
-
-    return true;
-  }
+  bool EvaluateXformOps(Matrix4d *out_matrix) const;
 
   ///
   /// Get concatenated matrix.
@@ -2313,6 +2236,37 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
 /// @return true upon success
 ///
 bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options = USDLoadOptions());
+
+///
+/// Load USDA(ascii) from a file.
+///
+/// @param[in] filename USDA filename
+/// @param[out] scene USD scene.
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadUSDAFromFile(const std::string &filename, Scene *scene,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options = USDLoadOptions());
+
+///
+/// Load USDA(ascii) from a memory.
+///
+/// @param[in] addr Memory address of USDA data
+/// @param[in] length Byte length of USDA data
+/// @param[out] scene USD scene.
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
 

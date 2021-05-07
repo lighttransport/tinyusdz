@@ -11,18 +11,21 @@
 TinyUSDZ is currently in alpha stage. Not usable.
 
 * [x] USDC data parse
-* [ ] Reconstuct primitive and scene graph representaion(2021 Spring expected)
+* [ ] USDA parse
+  * Initial USDA parser starting to work(see `sandbox/usda/`)
+* [ ] Reconstuct primitive and scene graph representaion(2021 Summer expected)
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
   * [ ] GeomPoints(for particles)
-  * [ ] Xform
+  * [ ] XformOps
   * [ ] etc.
-* [ ] Write simple SDL viewer example(2021 Spring expected)
-* [ ] Character animation(usdSkel) support(2021 Summer expected)
+* [ ] Write simple SDL viewer example(2021 Summer expected)
+* [ ] Character animation(usdSkel) support(2021 Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] Viewer with Metal ray tracing API?
 * [ ] Polygon triangulation using mapxbo/earcut.hpp
 * [ ] USDZ(USDC) writer
+* [ ] USDA writer
 
 ## Notice
 
