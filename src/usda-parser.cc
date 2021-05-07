@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #include <cassert>
 #include <cstdlib>
 #include <fstream>
@@ -13,11 +14,11 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#if 0 // TODO(syoyo): Use lexy
-#include "lexy/lexeme.hpp"
+#if 0  // TODO(syoyo): Use lexy
 #include "lexy/dsl.hpp"
-#include "lexy/parse.hpp"
 #include "lexy/input/file.hpp"
+#include "lexy/lexeme.hpp"
+#include "lexy/parse.hpp"
 #include "report_error.hpp"
 #endif
 
@@ -78,44 +79,39 @@ namespace usda {
 
 // https://stackoverflow.com/questions/13777987/c-error-handling-downside-of-using-stdpair-or-stdtuple-for-returning-err
 template <class T>
-struct Result
-{
-public:
-    enum Status {
-        Success,
-        Error
-    };
+struct Result {
+ public:
+  enum Status { Success, Error };
 
-    // Feel free to change the default behavior... I use implicit
-    // constructors for type T for syntactic sugar in return statements.
-    Result(T resultValue) : v(resultValue), s(Success) {}
-    explicit Result(Status status, std::string _errMsg = std::string()) : v(), s(status), errMsg(_errMsg) {}
-    Result() : s(Error), v() {} // Error without message
+  // Feel free to change the default behavior... I use implicit
+  // constructors for type T for syntactic sugar in return statements.
+  Result(T resultValue) : v(resultValue), s(Success) {}
+  explicit Result(Status status, std::string _errMsg = std::string())
+      : v(), s(status), errMsg(_errMsg) {}
+  Result() : s(Error), v() {}  // Error without message
 
-    // Explicit error with message
-    static Result error(std::string errMsg) { return Result(Error, errMsg); }
+  // Explicit error with message
+  static Result error(std::string errMsg) { return Result(Error, errMsg); }
 
-    // Implicit conversion to type T
-    operator T() const { return v; }
-    // Explicit conversion to type T
-    T value() const { return v; }
+  // Implicit conversion to type T
+  operator T() const { return v; }
+  // Explicit conversion to type T
+  T value() const { return v; }
 
-    Status status() const { return s; }
-    bool isError() const { return s == Error; }
-    bool isSuccessful() const { return s == Success; }
-    std::string errorMessage() const { return errMsg; }
+  Status status() const { return s; }
+  bool isError() const { return s == Error; }
+  bool isSuccessful() const { return s == Success; }
+  std::string errorMessage() const { return errMsg; }
 
-private:
-    T v;
-    Status s;
+ private:
+  T v;
+  Status s;
 
-    // if you want to provide error messages:
-    std::string errMsg;
+  // if you want to provide error messages:
+  std::string errMsg;
 };
 
-} // namespace usda
-
-
+}  // namespace usda
 
 static void test() {
   int i;
@@ -191,13 +187,11 @@ class Variable {
   Variable(std::string ty, std::string n) : type(ty), name(n) {}
 };
 
-inline bool IsChar(char c) {
-  return std::isalpha(int(c));
-}
+inline bool IsChar(char c) { return std::isalpha(int(c)); }
 
-inline bool StartsWith(const std::string &str, const std::string &t)
-{
-  return (str.size() >= t.size()) && std::equal(std::begin(t), std::end(t), std::begin(str));
+inline bool StartsWith(const std::string &str, const std::string &t) {
+  return (str.size() >= t.size()) &&
+         std::equal(std::begin(t), std::end(t), std::begin(str));
 }
 
 static usda::Result<float> ParseFloatR(const std::string &s) {
@@ -210,9 +204,11 @@ static usda::Result<float> ParseFloatR(const std::string &s) {
   }
 
   if (stat == INPUT_TOO_SHORT) {
-    return usda::Result<float>::error("Input floating point literal is too short");
+    return usda::Result<float>::error(
+        "Input floating point literal is too short");
   } else if (stat == INPUT_TOO_LONG) {
-    return usda::Result<float>::error("Input floating point literal is too long");
+    return usda::Result<float>::error(
+        "Input floating point literal is too long");
   } else if (stat == MALFORMED_INPUT) {
     return usda::Result<float>::error("Malformed input floating point literal");
   }
@@ -230,11 +226,14 @@ static usda::Result<double> ParseDoubleR(const std::string &s) {
   }
 
   if (stat == INPUT_TOO_SHORT) {
-    return usda::Result<double>::error("Input floating point literal is too short");
+    return usda::Result<double>::error(
+        "Input floating point literal is too short");
   } else if (stat == INPUT_TOO_LONG) {
-    return usda::Result<double>::error("Input floating point literal is too long");
+    return usda::Result<double>::error(
+        "Input floating point literal is too long");
   } else if (stat == MALFORMED_INPUT) {
-    return usda::Result<double>::error("Malformed input floating point literal");
+    return usda::Result<double>::error(
+        "Malformed input floating point literal");
   }
 
   return usda::Result<double>::error("Unexpected floating point literal input");
@@ -474,7 +473,7 @@ class USDAParser {
     if (!SkipWhitespace()) {
       return false;
     }
-    
+
     // The first character.
     {
       char c;
@@ -508,7 +507,7 @@ class USDAParser {
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
-    
+
     if (!Expect('=')) {
       return false;
     }
@@ -589,7 +588,7 @@ class USDAParser {
           _PushError("Invalid syntax found.\n");
           return false;
         }
-        
+
       } else {
         if (!Rewind(1)) {
           return false;
@@ -632,10 +631,14 @@ class USDAParser {
       }
 
       std::cout << "matrix4d = \n";
-      std::cout << m[0][0] << ", " << m[0][1] << ", " << m[0][2] << ", " << m[0][3] << "\n";
-      std::cout << m[1][0] << ", " << m[1][1] << ", " << m[1][2] << ", " << m[1][3] << "\n";
-      std::cout << m[2][0] << ", " << m[2][1] << ", " << m[2][2] << ", " << m[2][3] << "\n";
-      std::cout << m[3][0] << ", " << m[3][1] << ", " << m[3][2] << ", " << m[3][3] << "\n";
+      std::cout << m[0][0] << ", " << m[0][1] << ", " << m[0][2] << ", "
+                << m[0][3] << "\n";
+      std::cout << m[1][0] << ", " << m[1][1] << ", " << m[1][2] << ", "
+                << m[1][3] << "\n";
+      std::cout << m[2][0] << ", " << m[2][1] << ", " << m[2][2] << ", "
+                << m[2][3] << "\n";
+      std::cout << m[3][0] << ", " << m[3][1] << ", " << m[3][2] << ", "
+                << m[3][3] << "\n";
     } else if (type_name == "token") {
       if (!uniform_qual) {
         _PushError("`uniform` qualifier is missing in type `token`\n");
@@ -645,7 +648,9 @@ class USDAParser {
       if (array_qual) {
         std::vector<std::string> value;
         if (!ParseBasicTypeArray(&value)) {
-          _PushError("Failed to parse array of string literal for `uniform token[]`.\n");
+          _PushError(
+              "Failed to parse array of string literal for `uniform "
+              "token[]`.\n");
         }
       } else {
         std::string value;
@@ -666,6 +671,26 @@ class USDAParser {
           _PushError("Failed to parse int value.\n");
         }
       }
+    } else if (type_name == "double3") {
+      if (array_qual) {
+        std::vector<std::array<double, 3>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse double3 array.\n");
+        }
+        std::cout << "double3 = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
+        }
+      } else {
+        std::array<double, 3> value;
+        if (!ParseBasicTypeTuple<double, 3>(&value)) {
+          _PushError("Failed to parse double3.\n");
+        }
+        std::cout << "double3 = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
+      }
+
     } else if (type_name == "normal3f") {
       if (array_qual) {
         std::vector<std::array<float, 3>> value;
@@ -674,18 +699,20 @@ class USDAParser {
         }
         std::cout << "normal3f = \n";
         for (size_t i = 0; i < value.size(); i++) {
-          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", " << value[i][2] << ")\n";
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
         }
       } else {
         std::array<float, 3> value;
         if (!ParseBasicTypeTuple<float, 3>(&value)) {
           _PushError("Failed to parse normal3f.\n");
         }
-        std::cout << "normal3f = (" << value[0] << ", " << value[1] << ", " << value[2] << ")\n";
+        std::cout << "normal3f = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
       }
 
       // optional: interpolation parameter
-      std::string interpolation; 
+      std::string interpolation;
       ParseInterpolation(&interpolation);
 
       std::cout << "interpolation: " << interpolation << "\n";
@@ -698,15 +725,16 @@ class USDAParser {
         }
         std::cout << "point3f = \n";
         for (size_t i = 0; i < value.size(); i++) {
-          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", " << value[i][2] << ")\n";
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
         }
       } else {
         std::array<float, 3> value;
         if (!ParseBasicTypeTuple<float, 3>(&value)) {
           _PushError("Failed to parse point3f.\n");
         }
-        std::cout << "point3f = (" << value[0] << ", " << value[1] << ", " << value[2] << ")\n";
-
+        std::cout << "point3f = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
       }
 
     } else if (type_name == "texCoord2f") {
@@ -728,14 +756,13 @@ class USDAParser {
       }
 
       // optional: interpolation parameter
-      std::string interpolation; 
+      std::string interpolation;
       ParseInterpolation(&interpolation);
 
       std::cout << "interpolation: " << interpolation << "\n";
 
-    // 'todos'
+      // 'todos'
     } else {
-
       _PushError("TODO: Implement value parser for type: " + type_name + "\n");
       return false;
     }
@@ -745,173 +772,11 @@ class USDAParser {
     return true;
   }
 
-  template <typename T>
-  bool ReadBasicType(T *value);
-
-  template <>
-  bool ReadBasicType(std::string *value) {
-
-    return ReadStringLiteral(value);
-      
-  }
-
-  template <>
-  bool ReadBasicType(int *value) {
-    std::stringstream ss;
-
-    std::cout << "ReadInt\n";
-
-    // head character
-    bool has_sign = false;
-    bool negative = false;
-    {
-      char sc;
-      if (!_sr->read1(&sc)) {
-        return false;
-      }
-      _line_col++;
-
-      // sign or [0-9]
-      if (sc == '+') {
-        negative = false;
-        has_sign = true;
-      } else if (sc == '-') {
-        negative = true;
-        has_sign = true;
-      } else if ((sc >= '0') && (sc <= '9')) {
-        // ok
-      } else {
-        _PushError("Sign or 0-9 expected.\n");
-        return false;
-      }
-
-      ss << sc;
-    }
-
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if ((c >= '0') && (c <= '9')) {
-        ss << c;
-      } else {
-        _sr->seek_from_current(-1);
-        break;
-      }
-    }
-
-    if (has_sign && (ss.str().size() == 1)) {
-      // sign only
-      _PushError("Integer value expected but got sign character only.\n");
-      return false;
-    }
-
-    if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
-      _PushError("Zero padded integer value is not allowed.\n");
-      return false;
-    }
-
-    std::cout << "ReadInt token: " << ss.str() << "\n";
-
-    // TODO(syoyo): Use ryu parse.
-    try {
-      (*value) = std::stoi(ss.str());
-    } catch (const std::invalid_argument &e) {
-      (void)e;
-      _PushError("Not an integer literal.\n");
-      return false;
-    } catch (const std::out_of_range &e) {
-      (void)e;
-      _PushError("Integer value out of range.\n");
-      return false;
-    }
-
-    std::cout << "read int ok\n";
-
-    return true;
-  }
-
-  template <>
-  bool ReadBasicType(float *value) {
-    std::string value_str;
-    std::string err;
-    if (!LexFloat(&value_str, &err)) {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += err;
-      }
-      _PushError(msg);
-
-      return false;
-    }
-
-#if 0
-    if (!ParseFloat(value_str, value, &err)) {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += err;
-      }
-      _PushError(msg);
-      return false;
-    }
-#else
-    usda::Result<float> flt = ParseFloatR(value_str);
-    if (flt.isSuccessful()) {
-      (*value) = flt.value();
-    } else {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += flt.errorMessage() + "\n";
-      }
-      _PushError(msg);
-      return false;
-    }
-#endif
-
-    return true;
-  }
-
-  template <>
-  bool ReadBasicType(double *value) {
-    std::string value_str;
-    std::string err;
-    if (!LexFloat(&value_str, &err)) {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += err;
-      }
-      _PushError(msg);
-
-      return false;
-    }
-
-#if 0
-    if (!ParseFloat(value_str, value, &err)) {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += err;
-      }
-      _PushError(msg);
-      return false;
-    }
-#else
-    usda::Result<double> flt = ParseDoubleR(value_str);
-    if (flt.isSuccessful()) {
-      (*value) = flt.value();
-    } else {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += flt.errorMessage() + "\n";
-      }
-      _PushError(msg);
-      return false;
-    }
-#endif
-
-    return true;
-  }
+  // template <typename T>
+  bool ReadBasicType(std::string *value);
+  bool ReadBasicType(int *value);
+  bool ReadBasicType(float *value);
+  bool ReadBasicType(double *value);
 
   ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
@@ -927,7 +792,7 @@ class USDAParser {
 
     {
       T value;
-      if (!ReadBasicType<T>(&value)) {
+      if (!ReadBasicType(&value)) {
         _PushError("Not starting with the value of requested type.\n");
         return false;
       }
@@ -967,7 +832,7 @@ class USDAParser {
       std::cout << "go to read int\n";
 
       T value;
-      if (!ReadBasicType<T>(&value)) {
+      if (!ReadBasicType(&value)) {
         break;
       }
 
@@ -1116,11 +981,12 @@ class USDAParser {
   }
 
   ///
-  /// Parse matrix4d (e.g. ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+  /// Parse matrix4d (e.g. ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0,
+  /// 1))
   ///
   bool ParseMatrix4d(double result[4][4]) {
     // Assume column major(OpenGL style).
-    
+
     if (!Expect('(')) {
       return false;
     }
@@ -1131,7 +997,8 @@ class USDAParser {
     }
 
     if (content.size() != 4) {
-      _PushError("# of rows in matrix4d must be 4, but got " + std::to_string(content.size()) + "\n");
+      _PushError("# of rows in matrix4d must be 4, but got " +
+                 std::to_string(content.size()) + "\n");
       return false;
     }
 
@@ -1296,7 +1163,7 @@ class USDAParser {
 
       ss << c;
     }
-  
+
     while (!_sr->eof()) {
       char c;
       if (!_sr->read1(&c)) {
@@ -1313,7 +1180,7 @@ class USDAParser {
 
       _line_col++;
 
-      //std::cout << c << "\n";
+      // std::cout << c << "\n";
       ss << c;
     }
 
@@ -1899,7 +1766,7 @@ class USDAParser {
       _PushError("Failed to parse `def` block.\n");
       return false;
     }
-    
+
     return true;
   }
 
@@ -1972,7 +1839,7 @@ class USDAParser {
     _node_types.insert("Xform");
     _node_types.insert("Sphere");
     _node_types.insert("Mesh");
-   }
+  }
 
   const tinyusdz::StreamReader *_sr = nullptr;
 
@@ -1988,6 +1855,168 @@ class USDAParser {
 
   float _version{1.0f};
 };
+
+//
+// Specializations
+//
+bool USDAParser::ReadBasicType(std::string *value) {
+  return ReadStringLiteral(value);
+}
+
+bool USDAParser::ReadBasicType(int *value) {
+  std::stringstream ss;
+
+  std::cout << "ReadInt\n";
+
+  // head character
+  bool has_sign = false;
+  bool negative = false;
+  {
+    char sc;
+    if (!_sr->read1(&sc)) {
+      return false;
+    }
+    _line_col++;
+
+    // sign or [0-9]
+    if (sc == '+') {
+      negative = false;
+      has_sign = true;
+    } else if (sc == '-') {
+      negative = true;
+      has_sign = true;
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else {
+      _PushError("Sign or 0-9 expected.\n");
+      return false;
+    }
+
+    ss << sc;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if ((c >= '0') && (c <= '9')) {
+      ss << c;
+    } else {
+      _sr->seek_from_current(-1);
+      break;
+    }
+  }
+
+  if (has_sign && (ss.str().size() == 1)) {
+    // sign only
+    _PushError("Integer value expected but got sign character only.\n");
+    return false;
+  }
+
+  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+    _PushError("Zero padded integer value is not allowed.\n");
+    return false;
+  }
+
+  std::cout << "ReadInt token: " << ss.str() << "\n";
+
+  // TODO(syoyo): Use ryu parse.
+  try {
+    (*value) = std::stoi(ss.str());
+  } catch (const std::invalid_argument &e) {
+    (void)e;
+    _PushError("Not an integer literal.\n");
+    return false;
+  } catch (const std::out_of_range &e) {
+    (void)e;
+    _PushError("Integer value out of range.\n");
+    return false;
+  }
+
+  std::cout << "read int ok\n";
+
+  return true;
+}
+
+bool USDAParser::ReadBasicType(float *value) {
+  std::string value_str;
+  std::string err;
+  if (!LexFloat(&value_str, &err)) {
+    std::string msg = "Failed to parse float value literal.\n";
+    if (err.size()) {
+      msg += err;
+    }
+    _PushError(msg);
+
+    return false;
+  }
+
+#if 0
+    if (!ParseFloat(value_str, value, &err)) {
+      std::string msg = "Failed to parse float value literal.\n";
+      if (err.size()) {
+        msg += err;
+      }
+      _PushError(msg);
+      return false;
+    }
+#else
+  usda::Result<float> flt = ParseFloatR(value_str);
+  if (flt.isSuccessful()) {
+    (*value) = flt.value();
+  } else {
+    std::string msg = "Failed to parse float value literal.\n";
+    if (err.size()) {
+      msg += flt.errorMessage() + "\n";
+    }
+    _PushError(msg);
+    return false;
+  }
+#endif
+
+  return true;
+}
+
+bool USDAParser::ReadBasicType(double *value) {
+  std::string value_str;
+  std::string err;
+  if (!LexFloat(&value_str, &err)) {
+    std::string msg = "Failed to parse float value literal.\n";
+    if (err.size()) {
+      msg += err;
+    }
+    _PushError(msg);
+
+    return false;
+  }
+
+#if 0
+    if (!ParseFloat(value_str, value, &err)) {
+      std::string msg = "Failed to parse float value literal.\n";
+      if (err.size()) {
+        msg += err;
+      }
+      _PushError(msg);
+      return false;
+    }
+#else
+  usda::Result<double> flt = ParseDoubleR(value_str);
+  if (flt.isSuccessful()) {
+    (*value) = flt.value();
+  } else {
+    std::string msg = "Failed to parse float value literal.\n";
+    if (err.size()) {
+      msg += flt.errorMessage() + "\n";
+    }
+    _PushError(msg);
+    return false;
+  }
+#endif
+
+  return true;
+}
 
 }  // namespace tinyusdz
 

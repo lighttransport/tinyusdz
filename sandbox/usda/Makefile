@@ -9,7 +9,7 @@ CFLAGS=-fsanitize=address -g -O0
 LDFLAGS=-fsanitize=address
 
 # On some macOS
-EXTRA_COMPILER_FLAGS+=-Wno-poison-system-directories
+#EXTRA_COMPILER_FLAGS+=-Wno-poison-system-directories
 
 # gcc
 #EXTRA_COMPILER_FLAGS=-Wall
@@ -28,7 +28,7 @@ t: usda-parser
 usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 	
-usda-parser.o: usda-parser.cc ../../src/simple-serialize.hh
+usda-parser.o: ../../src/usda-parser.cc ../../src/simple-serialize.hh
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
 
 simple-serialize.o: ../../src/simple-serialize.cc ../../src/simple-serialize.hh

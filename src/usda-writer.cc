@@ -5,6 +5,7 @@
 #include <sstream>
 
 namespace tinyusdz {
+namespace usda {
 
 namespace {
 
@@ -387,4 +388,5 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
   return true;
 }
 
+} // namespace usda
 }  // namespace tinyusdz
