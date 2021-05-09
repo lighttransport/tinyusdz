@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
+#include <atomic>
 #include <cassert>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <stack>
-#include <vector>
-#include <iterator>
 #include <thread>
-#include <mutex>
-#include <atomic>
+#include <vector>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -186,15 +186,15 @@ struct Rel {
   friend std::ostream &operator<<(std::ostream &os, const Rel &rel);
 };
 
-std::ostream &operator<<(std::ostream &os, const Rel &rel)
-{
+std::ostream &operator<<(std::ostream &os, const Rel &rel) {
   os << rel.path;
 
   return os;
 }
 
 // monostate = could be `Object` type in Variable class.
-using Value = nonstd::variant<nonstd::monostate, bool, int, float, double,  std::string, Rel>;
+using Value = nonstd::variant<nonstd::monostate, bool, int, float, double,
+                              std::string, Rel>;
 
 class Variable {
  public:
@@ -205,66 +205,50 @@ class Variable {
   typedef std::map<std::string, Variable> Object;
   Object object;
 
-  template<typename T>
+  template <typename T>
   bool is() const {
     return value.index() == Value::index_of<T>();
   }
 
-  bool IsEmpty() const {
-    return type.empty() && is<nonstd::monostate>();
-  }
+  bool IsEmpty() const { return type.empty() && is<nonstd::monostate>(); }
 
-  bool IsBool() const {
-    return type == "bool" && is<bool>();
-  }
+  bool IsBool() const { return type == "bool" && is<bool>(); }
 
-  bool IsInt() const {
-    return type == "int" && is<int>();
-  }
+  bool IsInt() const { return type == "int" && is<int>(); }
 
-  bool IsFloat() const {
-    return type == "float" && is<float>();
-  }
+  bool IsFloat() const { return type == "float" && is<float>(); }
 
-  bool IsDouble() const {
-    return type == "double" && is<double>();
-  }
+  bool IsDouble() const { return type == "double" && is<double>(); }
 
-  bool IsString() const {
-    return type == "string" && is<std::string>();
-  }
+  bool IsString() const { return type == "string" && is<std::string>(); }
 
-  bool IsRel() const {
-    return type == "rel" && is<Rel>();
-  }
+  bool IsRel() const { return type == "rel" && is<Rel>(); }
 
-  bool IsObject() const {
-    return type == "object" && is<nonstd::monostate>();
-  }
+  bool IsObject() const { return type == "object" && is<nonstd::monostate>(); }
 
   bool valid() const {
     // FIXME: Make empty valid?
-    bool ok = IsBool() || IsInt() || IsFloat() || IsDouble() || IsString() || IsRel() || IsObject();
+    bool ok = IsBool() || IsInt() || IsFloat() || IsDouble() || IsString() ||
+              IsRel() || IsObject();
     return ok;
   }
 
   Variable() = default;
   Variable(std::string ty, std::string n) : type(ty), name(n) {}
 
-  //friend std::ostream &operator<<(std::ostream &os, const Object &obj);
+  // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
   friend std::ostream &operator<<(std::ostream &os, const Variable &var);
 
-  //friend std::string str_object(const Object &obj, int indent = 0); // string representation of Object.
+  // friend std::string str_object(const Object &obj, int indent = 0); // string
+  // representation of Object.
 };
 
 namespace {
 
 std::string str_object(const Variable::Object &obj, int indent) {
-
   std::stringstream ss;
 
   auto Indent = [](int _indent) {
-
     std::stringstream _ss;
 
     for (int i = 0; i < _indent; i++) {
@@ -277,15 +261,15 @@ std::string str_object(const Variable::Object &obj, int indent) {
   ss << "{\n";
 
   for (const auto &item : obj) {
-    ss << Indent(indent+1) << item.second.type << " " << item.first << " = ";
+    ss << Indent(indent + 1) << item.second.type << " " << item.first << " = ";
 
     if (item.second.IsObject()) {
-      std::string str = str_object(item.second.object, indent+1); 
+      std::string str = str_object(item.second.object, indent + 1);
       ss << str;
     } else {
       // Value
       ss << item.second;
-    } 
+    }
 
     ss << "\n";
   }
@@ -295,10 +279,9 @@ std::string str_object(const Variable::Object &obj, int indent) {
   return ss.str();
 }
 
-} // namespace
+}  // namespace
 
-std::ostream &operator<<(std::ostream &os, const Variable &var) 
-{
+std::ostream &operator<<(std::ostream &os, const Variable &var) {
   if (var.is<bool>()) {
     os << nonstd::get<bool>(var.value);
   } else if (var.is<int>()) {
@@ -312,7 +295,7 @@ std::ostream &operator<<(std::ostream &os, const Variable &var)
   } else if (var.is<Rel>()) {
     os << nonstd::get<Rel>(var.value);
   } else if (var.IsObject()) {
-    os << str_object( var.object, /* indent */0);
+    os << str_object(var.object, /* indent */ 0);
   } else if (var.IsEmpty()) {
     os << "[Variable is empty]";
   } else {
@@ -334,13 +317,20 @@ inline bool endsWith(const std::string &str, const std::string &suffix) {
          (str.find(suffix, str.size() - suffix.size()) != std::string::npos);
 }
 
-inline bool contains(const std::string &str, char c)
-{
+inline bool contains(const std::string &str, char c) {
   return str.find(c) == std::string::npos;
 }
 
-inline bool hasConnection(const std::string &str) {
-  return endsWith(str, ".connection");
+inline bool hasConnect(const std::string &str) {
+  return endsWith(str, ".connect");
+}
+
+inline bool hasInputs(const std::string &str) {
+  return startsWith(str, "inputs:");
+}
+
+inline bool hasOutputs(const std::string &str) {
+  return startsWith(str, "outputs:");
 }
 
 static usda::Result<float> ParseFloatR(const std::string &s) {
@@ -389,7 +379,7 @@ static usda::Result<double> ParseDoubleR(const std::string &s) {
 }
 
 inline bool ParseFloat(const std::string &s, float *value, std::string *err) {
-  //std::cout << "Parse float: " << s << "\n";
+  // std::cout << "Parse float: " << s << "\n";
   // Pase with Ryu.
   Status stat = s2f_n(s.data(), int(s.size()), value);
   if (stat == SUCCESS) {
@@ -480,14 +470,14 @@ class USDAParser {
     // 1. Read the integer part
     char curr;
     if (!leading_decimal_dots) {
-      //std::cout << "1 read int part: ss = " << ss.str() << "\n";
+      // std::cout << "1 read int part: ss = " << ss.str() << "\n";
 
       while (!_sr->eof()) {
         if (!_sr->read1(&curr)) {
           return false;
         }
 
-        //std::cout << "1 curr = " << curr << "\n";
+        // std::cout << "1 curr = " << curr << "\n";
         if ((curr >= '0') && (curr <= '9')) {
           // continue
           ss << curr;
@@ -507,7 +497,8 @@ class USDAParser {
       return false;
     }
 
-    //std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr << "\n";
+    // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
+    // "\n";
 
     // 2. Read the decimal part
     if (curr == '.') {
@@ -547,7 +538,6 @@ class USDAParser {
       if (!_sr->read1(&curr)) {
         return false;
       }
-      
 
       if ((curr == '+') || (curr == '-')) {
         // exp sign
@@ -782,7 +772,6 @@ class USDAParser {
         // end meta
         break;
       } else {
-
         if (!Rewind(1)) {
           return false;
         }
@@ -793,7 +782,10 @@ class USDAParser {
         }
 
         if ((token != "interpolation") && (token != "customData")) {
-          _PushError("Currently only `interpolation` or `customData` is supported but got: " + token);
+          _PushError(
+              "Currently only `interpolation` or `customData` is supported but "
+              "got: " +
+              token);
           return false;
         }
 
@@ -814,7 +806,7 @@ class USDAParser {
           if (!ReadStringLiteral(&value)) {
             return false;
           }
-          
+
           Variable var("string", "interpolation");
           var.value = value;
 
@@ -822,7 +814,6 @@ class USDAParser {
 
           (*out_meta)["interpolation"] = var;
         } else if (token == "customData") {
-
           std::map<std::string, Variable> dict;
 
           std::cout << "Parse customData\n";
@@ -841,7 +832,6 @@ class USDAParser {
 
           std::cout << "Got customData = " << var << "\n";
 
-
         } else {
           // ???
           return false;
@@ -852,7 +842,6 @@ class USDAParser {
         }
       }
     }
-
 
     return true;
   }
@@ -905,9 +894,8 @@ class USDAParser {
     return false;
   }
 
-
   bool ParseMetaAttr() {
-    // meta_attr : uniform type (array_qual?) name '=' value 
+    // meta_attr : uniform type (array_qual?) name '=' value
     //           | type (array_qual?) name '=' value
     //           ;
 
@@ -1030,8 +1018,7 @@ class USDAParser {
     }
 
     if (!_IsRegisteredPrimAttrType(type_name)) {
-      _PushError("Unknown or unsupported type `" +
-                 type_name + "`\n");
+      _PushError("Unknown or unsupported type `" + type_name + "`\n");
       return false;
     }
 
@@ -1071,8 +1058,7 @@ class USDAParser {
 
     std::string key_name;
     if (!ReadIdentifier(&key_name)) {
-
-      // string literal is also supported. e.g. "0" 
+      // string literal is also supported. e.g. "0"
       if (ReadStringLiteral(&key_name)) {
         // ok
       } else {
@@ -1114,7 +1100,6 @@ class USDAParser {
       std::cout << m[3][0] << ", " << m[3][1] << ", " << m[3][2] << ", "
                 << m[3][3] << "\n";
     } else if (type_name == "bool") {
-
       if (array_qual) {
         // Assume people only use array access to vector<bool>
         std::vector<bool> value;
@@ -1136,9 +1121,7 @@ class USDAParser {
         var.value = value;
       }
     } else if (type_name == "token") {
-
       if (array_qual) {
-
         std::vector<std::string> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError(
@@ -1147,13 +1130,12 @@ class USDAParser {
           return false;
         }
       } else {
-        std::string value; // TODO: Path
+        std::string value;  // TODO: Path
         if (!ReadPathIdentifier(&value)) {
           _PushError("Failed to parse path identifier for `token`.\n");
           return false;
         }
         std::cout << "Path identifier = " << value << "\n";
-
       }
     } else if (type_name == "int") {
       if (array_qual) {
@@ -1196,7 +1178,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
 
     } else if (type_name == "float3") {
@@ -1227,7 +1211,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
     } else if (type_name == "color3f") {
       if (array_qual) {
@@ -1257,7 +1243,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
       if (meta.count("customData")) {
         std::cout << "has customData\n";
@@ -1291,7 +1279,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
 
     } else if (type_name == "normal3f") {
@@ -1322,9 +1312,10 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
-
 
     } else if (type_name == "point3f") {
       if (array_qual) {
@@ -1354,9 +1345,10 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
-
 
     } else if (type_name == "texCoord2f") {
       if (array_qual) {
@@ -1384,7 +1376,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
 
     } else if (type_name == "rel") {
@@ -1396,18 +1390,16 @@ class USDAParser {
       std::cout << "rel: " << rel.path << "\n";
 
     } else if (type_name == "dictionary") {
-
       if (array_qual) {
         _PushError("`dictionary[]` is not supported.");
-        return false; 
+        return false;
       }
 
       std::map<std::string, Variable> dict;
       if (!ParseDict(&dict)) {
         _PushError("Failed to parse `dictionary` data.");
-        return false; 
+        return false;
       }
-
 
       var.type = "object";
       var.name = key_name;
@@ -1418,7 +1410,6 @@ class USDAParser {
       assert(var.valid());
 
       std::cout << "dict = " << var << "\n";
-
 
       // 'todos'
     } else {
@@ -1511,6 +1502,12 @@ class USDAParser {
       return false;
     }
 
+    // output node?
+    if (type_name == "token" && hasOutputs(primattr_name) && !hasConnect(primattr_name)) {
+      // ok
+      return true;
+    }
+
     if (!Expect('=')) {
       return false;
     }
@@ -1539,7 +1536,6 @@ class USDAParser {
       std::cout << m[3][0] << ", " << m[3][1] << ", " << m[3][2] << ", "
                 << m[3][3] << "\n";
     } else if (type_name == "bool") {
-
       if (array_qual) {
         // Assume people only use array access to vector<bool>
         std::vector<bool> value;
@@ -1556,9 +1552,7 @@ class USDAParser {
         std::cout << "bool value = " << value << "\n";
       }
     } else if (type_name == "token") {
-
       if (array_qual) {
-
         if (!uniform_qual) {
           _PushError("TODO: token[]\n");
           return false;
@@ -1572,18 +1566,30 @@ class USDAParser {
         }
       } else {
         if (uniform_qual) {
+          std::cout << "uniform_qual\n";
           std::string value;
           if (!ReadStringLiteral(&value)) {
             _PushError("Failed to parse string literal for `uniform token`.\n");
           }
           std::cout << "StringLiteral = " << value << "\n";
-        } else {
-          std::string value; // TODO: Path
+        } else if (hasConnect(primattr_name)) {
+          std::cout << "hasConnect\n";
+          std::string value;  // TODO: Path
           if (!ReadPathIdentifier(&value)) {
             _PushError("Failed to parse path identifier for `token`.\n");
           }
           std::cout << "Path identifier = " << value << "\n";
 
+        } else if (hasOutputs(primattr_name)) {
+          std::cout << "output\n";
+          // Output node. 
+          // OK
+        } else {
+          std::cout << "??? " << primattr_name << "\n"; 
+          std::string value;
+          if (!ReadStringLiteral(&value)) {
+            _PushError("Failed to parse string literal for `token`.\n");
+          }
         }
       }
     } else if (type_name == "int") {
@@ -1597,6 +1603,42 @@ class USDAParser {
         if (!ReadBasicType(&value)) {
           _PushError("Failed to parse int value.\n");
         }
+      }
+    } else if (type_name == "float") {
+      if (array_qual) {
+        std::vector<float> value;
+        if (!ParseBasicTypeArray(&value)) {
+          _PushError("Failed to parse float array.\n");
+        }
+        std::cout << "float = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << value[i] << "\n";
+        }
+      } else if (hasConnect(primattr_name)) {
+        std::string value;  // TODO: Path
+        if (!ReadPathIdentifier(&value)) {
+          _PushError("Failed to parse path identifier for `token`.\n");
+          return false;
+        }
+        std::cout << "Path identifier = " << value << "\n";
+      } else {
+        float value;
+        if (!ReadBasicType(&value)) {
+          _PushError("Failed to parse float.\n");
+        }
+        std::cout << "float = " << value << "\n";
+      }
+
+      // optional: interpolation parameter
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
     } else if (type_name == "float2") {
       if (array_qual) {
@@ -1623,7 +1665,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
 
     } else if (type_name == "float3") {
@@ -1652,10 +1696,13 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
     } else if (type_name == "color3f") {
       if (array_qual) {
+        // TODO: connection
         std::vector<std::array<float, 3>> value;
         if (!ParseTupleArray(&value)) {
           _PushError("Failed to parse color3f array.\n");
@@ -1665,6 +1712,13 @@ class USDAParser {
           std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
                     << value[i][2] << ")\n";
         }
+      } else if (hasConnect(primattr_name)) {
+        std::string value;  // TODO: Path
+        if (!ReadPathIdentifier(&value)) {
+          _PushError("Failed to parse path identifier for `token`.\n");
+          return false;
+        }
+        std::cout << "Path identifier = " << value << "\n";
       } else {
         std::array<float, 3> value;
         if (!ParseBasicTypeTuple<float, 3>(&value)) {
@@ -1680,7 +1734,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
       if (meta.count("customData")) {
         std::cout << "has customData\n";
@@ -1712,7 +1768,9 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
 
     } else if (type_name == "normal3f") {
@@ -1726,6 +1784,13 @@ class USDAParser {
           std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
                     << value[i][2] << ")\n";
         }
+      } else if (hasConnect(primattr_name)) {
+        std::string value;  // TODO: Path
+        if (!ReadPathIdentifier(&value)) {
+          _PushError("Failed to parse path identifier for `token`.\n");
+          return false;
+        }
+        std::cout << "Path identifier = " << value << "\n";
       } else {
         std::array<float, 3> value;
         if (!ParseBasicTypeTuple<float, 3>(&value)) {
@@ -1741,9 +1806,10 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
-
 
     } else if (type_name == "point3f") {
       if (array_qual) {
@@ -1771,9 +1837,10 @@ class USDAParser {
         return false;
       }
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
-
 
     } else if (type_name == "texCoord2f") {
       if (array_qual) {
@@ -1800,7 +1867,9 @@ class USDAParser {
       }
 
       if (meta.count("interpolation")) {
-        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
       }
 
     } else if (type_name == "rel") {
@@ -1832,7 +1901,6 @@ class USDAParser {
   /// Parse rel string
   ///
   bool ParseRel(Rel *result) {
-
     std::string value;
     if (!ReadPathIdentifier(&value)) {
       return false;
@@ -1869,12 +1937,12 @@ class USDAParser {
       result->push_back(value);
     }
 
-    //std::cout << "sep: " << sep << "\n";
+    // std::cout << "sep: " << sep << "\n";
 
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        //std::cout << "ws failure\n";
+        // std::cout << "ws failure\n";
         return false;
       }
 
@@ -1884,21 +1952,21 @@ class USDAParser {
         return false;
       }
 
-      //std::cout << "sep c = " << c << "\n";
+      // std::cout << "sep c = " << c << "\n";
 
       if (c != sep) {
         // end
-        //std::cout << "sepBy1 end\n";
+        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        //std::cout << "ws failure\n";
+        // std::cout << "ws failure\n";
         return false;
       }
 
-      //std::cout << "go to read int\n";
+      // std::cout << "go to read int\n";
 
       T value;
       if (!ReadBasicType(&value)) {
@@ -1908,7 +1976,7 @@ class USDAParser {
       result->push_back(value);
     }
 
-    //std::cout << "result.size " << result->size() << "\n";
+    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       _PushError("Empty array.\n");
@@ -1942,17 +2010,17 @@ class USDAParser {
 
     while (!_sr->eof()) {
       if (!SkipWhitespaceAndNewline()) {
-        //std::cout << "ws failure\n";
+        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        //std::cout << "read1 failure\n";
+        // std::cout << "read1 failure\n";
         return false;
       }
 
-      //std::cout << "sep c = " << c << "\n";
+      // std::cout << "sep c = " << c << "\n";
 
       if (c != sep) {
         // end
@@ -1962,11 +2030,11 @@ class USDAParser {
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        //std::cout << "ws failure\n";
+        // std::cout << "ws failure\n";
         return false;
       }
 
-      //std::cout << "go to read int\n";
+      // std::cout << "go to read int\n";
 
       std::array<T, N> value;
       if (!ParseBasicTypeTuple<T, N>(&value)) {
@@ -1976,7 +2044,7 @@ class USDAParser {
       result->push_back(value);
     }
 
-    //std::cout << "result.size " << result->size() << "\n";
+    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       _PushError("Empty array.\n");
@@ -1994,20 +2062,20 @@ class USDAParser {
     if (!Expect('[')) {
       return false;
     }
-    //std::cout << "got [\n";
+    // std::cout << "got [\n";
 
     if (!SepBy1BasicType<T>(',', result)) {
       return false;
     }
 
-    //std::cout << "try to parse ]\n";
+    // std::cout << "try to parse ]\n";
 
     if (!Expect(']')) {
-      //std::cout << "not ]\n";
+      // std::cout << "not ]\n";
 
       return false;
     }
-    //std::cout << "got ]\n";
+    // std::cout << "got ]\n";
 
     return true;
   }
@@ -2020,14 +2088,14 @@ class USDAParser {
     if (!Expect('(')) {
       return false;
     }
-    //std::cout << "got (\n";
+    // std::cout << "got (\n";
 
     std::vector<T> values;
     if (!SepBy1BasicType<T>(',', &values)) {
       return false;
     }
 
-    //std::cout << "try to parse )\n";
+    // std::cout << "try to parse )\n";
 
     if (!Expect(')')) {
       return false;
@@ -2179,13 +2247,13 @@ class USDAParser {
 
       if (c == '_') {
         // ok
-      } else if (c == ':') { // namespace
+      } else if (c == ':') {  // namespace
         // ':' must lie in the middle of string literal
         if (ss.str().size() == 0) {
           _PushError("PrimAttr name must not starts with `:`\n");
           return false;
         }
-      } else if (c == '.') { // delimiter for `connect`
+      } else if (c == '.') {  // delimiter for `connect`
         // '.' must lie in the middle of string literal
         if (ss.str().size() == 0) {
           _PushError("PrimAttr name must not starts with `.`\n");
@@ -2219,7 +2287,8 @@ class USDAParser {
 
     if (contains(tok, '.')) {
       if (endsWith(tok, ".connect")) {
-        _PushError("Must ends with `.connect` when a name contains punctuation `.`");
+        _PushError(
+            "Must ends with `.connect` when a name contains punctuation `.`");
         return false;
       }
     }
@@ -2233,7 +2302,7 @@ class USDAParser {
     // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
     std::stringstream ss;
 
-    //std::cout << "readtoken\n";
+    // std::cout << "readtoken\n";
 
     // The first character.
     {
@@ -2275,7 +2344,7 @@ class USDAParser {
     }
 
     (*token) = ss.str();
-    //std::cout << "ReadIdentifier: token = " << (*token) << "\n";
+    // std::cout << "ReadIdentifier: token = " << (*token) << "\n";
     return true;
   }
 
@@ -2392,7 +2461,7 @@ class USDAParser {
         return false;
       }
 
-      //printf("sws c = %c\n", c);
+      // printf("sws c = %c\n", c);
 
       if ((c == ' ') || (c == '\t') || (c == '\f')) {
         _line_col++;
@@ -2424,7 +2493,7 @@ class USDAParser {
         _line_row++;
         // continue
       } else {
-        //std::cout << "unwind\n";
+        // std::cout << "unwind\n";
         // end loop
         if (!_sr->seek_from_current(-1)) {
           return false;
@@ -2532,10 +2601,10 @@ class USDAParser {
     // type identifier '=' value
 
     return ParseMetaAttr();
-
   }
 
-  bool ParseMetaValue(const std::string &vartype, const std::string &varname, Variable *outvar) {
+  bool ParseMetaValue(const std::string &vartype, const std::string &varname,
+                      Variable *outvar) {
     (void)outvar;
 
     if (vartype == "string") {
@@ -2613,14 +2682,12 @@ class USDAParser {
         std::cout << "int[" << i << "] = " << values[i] << "\n";
       }
     } else if (vartype == "object") {
-
       if (!Expect('{')) {
         _PushError("'{' expected.\n");
         return false;
       }
 
       while (!_sr->eof()) {
-
         if (!SkipWhitespaceAndNewline()) {
           return false;
         }
@@ -2644,7 +2711,7 @@ class USDAParser {
           }
         }
       }
- 
+
       return true;
     }
 
@@ -2679,7 +2746,8 @@ class USDAParser {
     }
 
     if (!_IsBuiltinMeta(varname)) {
-      std::string msg = "'" + varname + "' is not a builtin Metadata variable.\n";
+      std::string msg =
+          "'" + varname + "' is not a builtin Metadata variable.\n";
       _PushError(msg);
       return false;
     }
@@ -2940,7 +3008,7 @@ class USDAParser {
 
     std::map<std::string, Variable> args;
     ParseDefArgs(&args);
-    
+
     if (!Expect('{')) {
       std::cout << "???\n";
       return false;
@@ -3084,7 +3152,7 @@ class USDAParser {
     err_stack.push(diag);
   }
 
-  // This function is used to cancel recent parsing error. 
+  // This function is used to cancel recent parsing error.
   void _PopError() {
     if (!err_stack.empty()) {
       err_stack.pop();
@@ -3100,7 +3168,8 @@ class USDAParser {
     _builtin_metas["metersPerUnit"] = Variable("float", "metersPerUnit");
     _builtin_metas["defaultPrim"] = Variable("string", "defaultPrim");
     _builtin_metas["upAxis"] = Variable("string", "upAxis");
-    _builtin_metas["timeCodesPerSecond"] = Variable("float", "timeCodesPerSecond");
+    _builtin_metas["timeCodesPerSecond"] =
+        Variable("float", "timeCodesPerSecond");
     _builtin_metas["customLayerData"] = Variable("object", "customLayerData");
     _builtin_metas["test"] = Variable("int[]", "test");
     _builtin_metas["testt"] = Variable("int3", "testt");
@@ -3169,7 +3238,7 @@ bool USDAParser::ReadBasicType(bool *value) {
 bool USDAParser::ReadBasicType(int *value) {
   std::stringstream ss;
 
-  //std::cout << "ReadInt\n";
+  // std::cout << "ReadInt\n";
 
   // head character
   bool has_sign = false;
@@ -3223,7 +3292,7 @@ bool USDAParser::ReadBasicType(int *value) {
     return false;
   }
 
-  //std::cout << "ReadInt token: " << ss.str() << "\n";
+  // std::cout << "ReadInt token: " << ss.str() << "\n";
 
   // TODO(syoyo): Use ryu parse.
   try {
@@ -3238,7 +3307,7 @@ bool USDAParser::ReadBasicType(int *value) {
     return false;
   }
 
-  //std::cout << "read int ok\n";
+  // std::cout << "read int ok\n";
 
   return true;
 }
@@ -3320,7 +3389,6 @@ bool USDAParser::ReadBasicType(double *value) {
 
   return true;
 }
-
 
 }  // namespace tinyusdz
 
