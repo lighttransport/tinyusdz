@@ -9,6 +9,9 @@
 #include <stack>
 #include <vector>
 #include <iterator>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -179,9 +182,19 @@ struct ErrorDiagnositc {
 struct Rel {
   // TODO: Implement
   std::string path;
+
+  friend std::ostream &operator<<(std::ostream &os, const Rel &rel);
 };
 
-using Value = nonstd::variant<int, float, std::string, Rel>;
+std::ostream &operator<<(std::ostream &os, const Rel &rel)
+{
+  os << rel.path;
+
+  return os;
+}
+
+// monostate = could be `Object` type in Variable class.
+using Value = nonstd::variant<nonstd::monostate, bool, int, float, double,  std::string, Rel>;
 
 class Variable {
  public:
@@ -189,16 +202,125 @@ class Variable {
   std::string name;
   Value value;
 
-  typedef std::map<std::string, Value> Object;
+  typedef std::map<std::string, Variable> Object;
   Object object;
 
+  template<typename T>
+  bool is() const {
+    return value.index() == Value::index_of<T>();
+  }
+
+  bool IsEmpty() const {
+    return type.empty() && is<nonstd::monostate>();
+  }
+
+  bool IsBool() const {
+    return type == "bool" && is<bool>();
+  }
+
+  bool IsInt() const {
+    return type == "int" && is<int>();
+  }
+
+  bool IsFloat() const {
+    return type == "float" && is<float>();
+  }
+
+  bool IsDouble() const {
+    return type == "double" && is<double>();
+  }
+
+  bool IsString() const {
+    return type == "string" && is<std::string>();
+  }
+
+  bool IsRel() const {
+    return type == "rel" && is<Rel>();
+  }
+
   bool IsObject() const {
-    return type == "object";
+    return type == "object" && is<nonstd::monostate>();
+  }
+
+  bool valid() const {
+    // FIXME: Make empty valid?
+    bool ok = IsBool() || IsInt() || IsFloat() || IsDouble() || IsString() || IsRel() || IsObject();
+    return ok;
   }
 
   Variable() = default;
   Variable(std::string ty, std::string n) : type(ty), name(n) {}
+
+  //friend std::ostream &operator<<(std::ostream &os, const Object &obj);
+  friend std::ostream &operator<<(std::ostream &os, const Variable &var);
+
+  //friend std::string str_object(const Object &obj, int indent = 0); // string representation of Object.
 };
+
+namespace {
+
+std::string str_object(const Variable::Object &obj, int indent) {
+
+  std::stringstream ss;
+
+  auto Indent = [](int _indent) {
+
+    std::stringstream _ss;
+
+    for (int i = 0; i < _indent; i++) {
+      _ss << "    ";
+    }
+
+    return _ss.str();
+  };
+
+  ss << "{\n";
+
+  for (const auto &item : obj) {
+    ss << Indent(indent+1) << item.second.type << " " << item.first << " = ";
+
+    if (item.second.IsObject()) {
+      std::string str = str_object(item.second.object, indent+1); 
+      ss << str;
+    } else {
+      // Value
+      ss << item.second;
+    } 
+
+    ss << "\n";
+  }
+
+  ss << Indent(indent) + "}";
+
+  return ss.str();
+}
+
+} // namespace
+
+std::ostream &operator<<(std::ostream &os, const Variable &var) 
+{
+  if (var.is<bool>()) {
+    os << nonstd::get<bool>(var.value);
+  } else if (var.is<int>()) {
+    os << nonstd::get<int>(var.value);
+  } else if (var.is<float>()) {
+    os << nonstd::get<float>(var.value);
+  } else if (var.is<double>()) {
+    os << nonstd::get<double>(var.value);
+  } else if (var.is<std::string>()) {
+    os << nonstd::get<std::string>(var.value);
+  } else if (var.is<Rel>()) {
+    os << nonstd::get<Rel>(var.value);
+  } else if (var.IsObject()) {
+    os << str_object( var.object, /* indent */0);
+  } else if (var.IsEmpty()) {
+    os << "[Variable is empty]";
+  } else {
+    os << "[???Variable???]";
+  }
+
+  return os;
+}
 
 inline bool isChar(char c) { return std::isalpha(int(c)); }
 
@@ -572,8 +694,57 @@ class USDAParser {
     return true;
   }
 
-  bool ParseInterpolation(std::string *interpolation) {
-    // '(' 'interpolation' '=' STRING_LITERAL ')'
+  bool ParseDict(std::map<std::string, Variable> *out_dict) {
+    // '{' (type name '=' value)+ '}'
+    if (!Expect('{')) {
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    while (!_sr->eof()) {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '}') {
+        break;
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
+
+        std::string key;
+        Variable var;
+        if (!ParseDictElement(&key, &var)) {
+          _PushError("Failed to parse dict element.");
+          return false;
+        }
+
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+
+        assert(var.valid());
+
+        (*out_dict)[key] = var;
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool ParseAttrMeta(std::map<std::string, Variable> *out_meta) {
+    // '(' metas ')'
+    //
+    // currently we only support 'interpolation' and 'cutomData'
 
     if (!SkipWhitespace()) {
       return false;
@@ -591,7 +762,9 @@ class USDAParser {
         // ok
       } else {
         _sr->seek_from_current(-1);
-        return false;
+
+        // Still ok. No meta
+        return true;
       }
     }
 
@@ -599,42 +772,87 @@ class USDAParser {
       return false;
     }
 
-    std::string token;
-    if (!ReadToken(&token)) {
-      return false;
+    while (!_sr->eof()) {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == ')') {
+        // end meta
+        break;
+      } else {
+
+        if (!Rewind(1)) {
+          return false;
+        }
+
+        std::string token;
+        if (!ReadToken(&token)) {
+          return false;
+        }
+
+        if ((token != "interpolation") && (token != "customData")) {
+          _PushError("Currently only `interpolation` or `customData` is supported but got: " + token);
+          return false;
+        }
+
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+
+        if (!Expect('=')) {
+          return false;
+        }
+
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+
+        if (token == "interpolation") {
+          std::string value;
+          if (!ReadStringLiteral(&value)) {
+            return false;
+          }
+          
+          Variable var("string", "interpolation");
+          var.value = value;
+
+          assert(var.valid());
+
+          (*out_meta)["interpolation"] = var;
+        } else if (token == "customData") {
+
+          std::map<std::string, Variable> dict;
+
+          std::cout << "Parse customData\n";
+
+          if (!ParseDict(&dict)) {
+            std::cout << "dict parse fail\n";
+            return false;
+          }
+
+          Variable var("object", "customData");
+          var.object = dict;
+
+          assert(var.valid());
+
+          (*out_meta)["customData"] = var;
+
+          std::cout << "Got customData = " << var << "\n";
+
+
+        } else {
+          // ???
+          return false;
+        }
+
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+      }
     }
 
-    if (token != "interpolation") {
-      _PushError("Currently only `interpolation` is supported.\n");
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!Expect('=')) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::string value;
-    if (!ReadStringLiteral(&value)) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!Expect(')')) {
-      return false;
-    }
-
-    (*interpolation) = value;
 
     return true;
   }
@@ -797,6 +1015,424 @@ class USDAParser {
     return true;
   }
 
+  bool ParseDictElement(std::string *out_key, Variable *out_var) {
+    // dict_element: type (array_qual?) name '=' value
+    //           ;
+
+    std::string type_name;
+
+    if (!ReadIdentifier(&type_name)) {
+      return false;
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    if (!_IsRegisteredPrimAttrType(type_name)) {
+      _PushError("Unknown or unsupported type `" +
+                 type_name + "`\n");
+      return false;
+    }
+
+    // Has array qualifier? `[]`
+    bool array_qual = false;
+    {
+      char c0, c1;
+      if (!Char1(&c0)) {
+        return false;
+      }
+
+      if (c0 == '[') {
+        if (!Char1(&c1)) {
+          return false;
+        }
+
+        if (c1 == ']') {
+          array_qual = true;
+        } else {
+          // Invalid syntax
+          _PushError("Invalid syntax found.\n");
+          return false;
+        }
+
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
+      }
+    }
+
+    std::cout << "array_qual " << array_qual << "\n";
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    std::string key_name;
+    if (!ReadIdentifier(&key_name)) {
+
+      // string literal is also supported. e.g. "0" 
+      if (ReadStringLiteral(&key_name)) {
+        // ok
+      } else {
+        _PushError("Failed to parse dictionary key identifier.\n");
+        return false;
+      }
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    if (!Expect('=')) {
+      return false;
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    //
+    // TODO(syoyo): Refactror and implement value parser dispatcher.
+    //
+    Variable var;
+    if (type_name == "matrix4d") {
+      double m[4][4];
+      if (!ParseMatrix4d(m)) {
+        _PushError("Failed to parse value with type `matrix4d`.\n");
+        return false;
+      }
+
+      std::cout << "matrix4d = \n";
+      std::cout << m[0][0] << ", " << m[0][1] << ", " << m[0][2] << ", "
+                << m[0][3] << "\n";
+      std::cout << m[1][0] << ", " << m[1][1] << ", " << m[1][2] << ", "
+                << m[1][3] << "\n";
+      std::cout << m[2][0] << ", " << m[2][1] << ", " << m[2][2] << ", "
+                << m[2][3] << "\n";
+      std::cout << m[3][0] << ", " << m[3][1] << ", " << m[3][2] << ", "
+                << m[3][3] << "\n";
+    } else if (type_name == "bool") {
+
+      if (array_qual) {
+        // Assume people only use array access to vector<bool>
+        std::vector<bool> value;
+        if (!ParseBasicTypeArray(&value)) {
+          _PushError(
+              "Failed to parse array of string literal for `uniform "
+              "bool[]`.\n");
+          return false;
+        }
+      } else {
+        bool value;
+        if (!ReadBasicType(&value)) {
+          _PushError("Failed to parse value for `uniform bool`.\n");
+          return false;
+        }
+        std::cout << "bool value = " << value << "\n";
+
+        var.type = "bool";
+        var.value = value;
+      }
+    } else if (type_name == "token") {
+
+      if (array_qual) {
+
+        std::vector<std::string> value;
+        if (!ParseBasicTypeArray(&value)) {
+          _PushError(
+              "Failed to parse array of string literal for `uniform "
+              "token[]`.\n");
+          return false;
+        }
+      } else {
+        std::string value; // TODO: Path
+        if (!ReadPathIdentifier(&value)) {
+          _PushError("Failed to parse path identifier for `token`.\n");
+          return false;
+        }
+        std::cout << "Path identifier = " << value << "\n";
+
+      }
+    } else if (type_name == "int") {
+      if (array_qual) {
+        std::vector<int> value;
+        if (!ParseBasicTypeArray(&value)) {
+          _PushError("Failed to parse int array.\n");
+          return false;
+        }
+      } else {
+        int value;
+        if (!ReadBasicType(&value)) {
+          _PushError("Failed to parse int value.\n");
+          return false;
+        }
+      }
+    } else if (type_name == "float2") {
+      if (array_qual) {
+        std::vector<std::array<float, 2>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse float2 array.\n");
+          return false;
+        }
+        std::cout << "float2 = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ")\n";
+        }
+      } else {
+        std::array<float, 2> value;
+        if (!ParseBasicTypeTuple<float, 2>(&value)) {
+          _PushError("Failed to parse float2.\n");
+          return false;
+        }
+        std::cout << "float3 = (" << value[0] << ", " << value[1] << ")\n";
+      }
+
+      // optional: interpolation parameter
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+
+    } else if (type_name == "float3") {
+      if (array_qual) {
+        std::vector<std::array<float, 3>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse float3 array.\n");
+          return false;
+        }
+        std::cout << "float3 = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
+        }
+      } else {
+        std::array<float, 3> value;
+        if (!ParseBasicTypeTuple<float, 3>(&value)) {
+          _PushError("Failed to parse float3.\n");
+          return false;
+        }
+        std::cout << "float3 = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+    } else if (type_name == "color3f") {
+      if (array_qual) {
+        std::vector<std::array<float, 3>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse color3f array.\n");
+          return false;
+        }
+        std::cout << "color3f = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
+        }
+      } else {
+        std::array<float, 3> value;
+        if (!ParseBasicTypeTuple<float, 3>(&value)) {
+          _PushError("Failed to parse color3f.\n");
+          return false;
+        }
+        std::cout << "color3f = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+      if (meta.count("customData")) {
+        std::cout << "has customData\n";
+      }
+
+    } else if (type_name == "double3") {
+      if (array_qual) {
+        std::vector<std::array<double, 3>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse double3 array.\n");
+          return false;
+        }
+        std::cout << "double3 = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
+        }
+      } else {
+        std::array<double, 3> value;
+        if (!ParseBasicTypeTuple<double, 3>(&value)) {
+          _PushError("Failed to parse double3.\n");
+          return false;
+        }
+        std::cout << "double3 = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+
+    } else if (type_name == "normal3f") {
+      if (array_qual) {
+        std::vector<std::array<float, 3>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse normal3f array.\n");
+          return false;
+        }
+        std::cout << "normal3f = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
+        }
+      } else {
+        std::array<float, 3> value;
+        if (!ParseBasicTypeTuple<float, 3>(&value)) {
+          _PushError("Failed to parse normal3f.\n");
+          return false;
+        }
+        std::cout << "normal3f = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+
+
+    } else if (type_name == "point3f") {
+      if (array_qual) {
+        std::vector<std::array<float, 3>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse point3f array.\n");
+          return false;
+        }
+        std::cout << "point3f = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
+                    << value[i][2] << ")\n";
+        }
+      } else {
+        std::array<float, 3> value;
+        if (!ParseBasicTypeTuple<float, 3>(&value)) {
+          _PushError("Failed to parse point3f.\n");
+          return false;
+        }
+        std::cout << "point3f = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+
+
+    } else if (type_name == "texCoord2f") {
+      if (array_qual) {
+        std::vector<std::array<float, 2>> value;
+        if (!ParseTupleArray(&value)) {
+          _PushError("Failed to parse texCoord2f array.\n");
+          return false;
+        }
+        std::cout << "texCoord2f = \n";
+        for (size_t i = 0; i < value.size(); i++) {
+          std::cout << "(" << value[i][0] << ", " << value[i][1] << ")\n";
+        }
+      } else {
+        std::array<float, 2> value;
+        if (!ParseBasicTypeTuple<float, 2>(&value)) {
+          _PushError("Failed to parse texCoord2f.\n");
+          return false;
+        }
+        std::cout << "texCoord2f = (" << value[0] << ", " << value[1] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+
+    } else if (type_name == "rel") {
+      Rel rel;
+      if (ParseRel(&rel)) {
+        _PushError("Failed to parse rel.\n");
+      }
+
+      std::cout << "rel: " << rel.path << "\n";
+
+    } else if (type_name == "dictionary") {
+
+      if (array_qual) {
+        _PushError("`dictionary[]` is not supported.");
+        return false; 
+      }
+
+      std::map<std::string, Variable> dict;
+      if (!ParseDict(&dict)) {
+        _PushError("Failed to parse `dictionary` data.");
+        return false; 
+      }
+
+
+      var.type = "object";
+      var.name = key_name;
+      var.object = dict;
+
+      std::cout << "Dict = " << var << "\n";
+
+      assert(var.valid());
+
+      std::cout << "dict = " << var << "\n";
+
+
+      // 'todos'
+    } else {
+      _PushError("TODO: Implement value parser for type: " + type_name + "\n");
+      return false;
+    }
+
+    // TODO
+    (*out_key) = key_name;
+    (*out_var) = var;
+
+    return true;
+  }
+
   bool ParsePrimAttr() {
     // prim_attr : uniform type (array_qual?) name '=' value interpolation?
     //           | type (array_qual?) name '=' value interpolation?
@@ -903,10 +1539,6 @@ class USDAParser {
       std::cout << m[3][0] << ", " << m[3][1] << ", " << m[3][2] << ", "
                 << m[3][3] << "\n";
     } else if (type_name == "bool") {
-      if (!uniform_qual) {
-        _PushError("`uniform` qualifier is missing in type `bool`\n");
-        return false;
-      }
 
       if (array_qual) {
         // Assume people only use array access to vector<bool>
@@ -985,10 +1617,14 @@ class USDAParser {
       }
 
       // optional: interpolation parameter
-      std::string interpolation;
-      ParseInterpolation(&interpolation);
-
-      std::cout << "interpolation: " << interpolation << "\n";
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
 
     } else if (type_name == "float3") {
       if (array_qual) {
@@ -1008,6 +1644,15 @@ class USDAParser {
         }
         std::cout << "float3 = (" << value[0] << ", " << value[1] << ", "
                   << value[2] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
       }
     } else if (type_name == "color3f") {
       if (array_qual) {
@@ -1029,8 +1674,17 @@ class USDAParser {
                   << value[2] << ")\n";
       }
 
-      // optional:
-      ParsePrimOptional();
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+      if (meta.count("customData")) {
+        std::cout << "has customData\n";
+      }
 
     } else if (type_name == "double3") {
       if (array_qual) {
@@ -1050,6 +1704,15 @@ class USDAParser {
         }
         std::cout << "double3 = (" << value[0] << ", " << value[1] << ", "
                   << value[2] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
       }
 
     } else if (type_name == "normal3f") {
@@ -1072,11 +1735,15 @@ class USDAParser {
                   << value[2] << ")\n";
       }
 
-      // optional: interpolation parameter
-      std::string interpolation;
-      ParseInterpolation(&interpolation);
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
 
-      std::cout << "interpolation: " << interpolation << "\n";
 
     } else if (type_name == "point3f") {
       if (array_qual) {
@@ -1098,6 +1765,16 @@ class USDAParser {
                   << value[2] << ")\n";
       }
 
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
+
+
     } else if (type_name == "texCoord2f") {
       if (array_qual) {
         std::vector<std::array<float, 2>> value;
@@ -1116,11 +1793,15 @@ class USDAParser {
         std::cout << "texCoord2f = (" << value[0] << ", " << value[1] << ")\n";
       }
 
-      // optional: interpolation parameter
-      std::string interpolation;
-      ParseInterpolation(&interpolation);
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
 
-      std::cout << "interpolation: " << interpolation << "\n";
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: " << nonstd::get<std::string>(meta.at("interpolation").value) << "\n";
+      }
 
     } else if (type_name == "rel") {
       Rel rel;
@@ -1260,7 +1941,6 @@ class USDAParser {
     }
 
     while (!_sr->eof()) {
-      // sep
       if (!SkipWhitespaceAndNewline()) {
         //std::cout << "ws failure\n";
         return false;
@@ -1276,7 +1956,7 @@ class USDAParser {
 
       if (c != sep) {
         // end
-        //std::cout << "sepBy1 end\n";
+        std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
@@ -1553,7 +2233,7 @@ class USDAParser {
     // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
     std::stringstream ss;
 
-    std::cout << "readtoken\n";
+    //std::cout << "readtoken\n";
 
     // The first character.
     {
@@ -1595,7 +2275,7 @@ class USDAParser {
     }
 
     (*token) = ss.str();
-    std::cout << "ReadIdentifier: token = " << (*token) << "\n";
+    //std::cout << "ReadIdentifier: token = " << (*token) << "\n";
     return true;
   }
 
@@ -1855,16 +2535,18 @@ class USDAParser {
 
   }
 
-  bool ParseMetaValue(const Variable &var) {
-    if (var.type == "string") {
+  bool ParseMetaValue(const std::string &vartype, const std::string &varname, Variable *outvar) {
+    (void)outvar;
+
+    if (vartype == "string") {
       std::string value;
       std::cout << "read string literal\n";
       if (!ReadStringLiteral(&value)) {
-        std::string msg = "String literal expected for `" + var.name + "`.\n";
+        std::string msg = "String literal expected for `" + varname + "`.\n";
         _PushError(msg);
         return false;
       }
-    } else if (var.type == "int[]") {
+    } else if (vartype == "int[]") {
       std::vector<int> values;
       if (!ParseBasicTypeArray<int>(&values)) {
         // std::string msg = "Array of int values expected for `" + var.name +
@@ -1875,7 +2557,7 @@ class USDAParser {
       for (size_t i = 0; i < values.size(); i++) {
         std::cout << "int[" << i << "] = " << values[i] << "\n";
       }
-    } else if (var.type == "float[]") {
+    } else if (vartype == "float[]") {
       std::vector<float> values;
       if (!ParseBasicTypeArray<float>(&values)) {
         return false;
@@ -1884,7 +2566,7 @@ class USDAParser {
       for (size_t i = 0; i < values.size(); i++) {
         std::cout << "float[" << i << "] = " << values[i] << "\n";
       }
-    } else if (var.type == "float3[]") {
+    } else if (vartype == "float3[]") {
       std::vector<std::array<float, 3>> values;
       if (!ParseTupleArray<float, 3>(&values)) {
         return false;
@@ -1894,12 +2576,12 @@ class USDAParser {
         std::cout << "float[" << i << "] = " << values[i][0] << ", "
                   << values[i][1] << ", " << values[i][2] << "\n";
       }
-    } else if (var.type == "float") {
+    } else if (vartype == "float") {
       std::string fval;
       std::string ferr;
       if (!LexFloat(&fval, &ferr)) {
         std::string msg =
-            "Floating point literal expected for `" + var.name + "`.\n";
+            "Floating point literal expected for `" + varname + "`.\n";
         if (!ferr.empty()) {
           msg += ferr;
         }
@@ -1910,7 +2592,7 @@ class USDAParser {
       float value;
       if (!ParseFloat(fval, &value, &ferr)) {
         std::string msg =
-            "Failed to parse floating point literal for `" + var.name + "`.\n";
+            "Failed to parse floating point literal for `" + varname + "`.\n";
         if (!ferr.empty()) {
           msg += ferr;
         }
@@ -1919,7 +2601,7 @@ class USDAParser {
       }
       std::cout << "parsed float : " << value << "\n";
 
-    } else if (var.type == "int3") {
+    } else if (vartype == "int3") {
       std::array<int, 3> values;
       if (!ParseBasicTypeTuple<int, 3>(&values)) {
         // std::string msg = "Array of int values expected for `" + var.name +
@@ -1930,7 +2612,7 @@ class USDAParser {
       for (size_t i = 0; i < values.size(); i++) {
         std::cout << "int[" << i << "] = " << values[i] << "\n";
       }
-    } else if (var.type == "object") {
+    } else if (vartype == "object") {
 
       if (!Expect('{')) {
         _PushError("'{' expected.\n");
@@ -2008,8 +2690,9 @@ class USDAParser {
     }
     SkipWhitespace();
 
-    const Variable &var = _builtin_metas.at(varname);
-    if (!ParseMetaValue(var)) {
+    Variable &refvar = _builtin_metas.at(varname);
+    Variable var;
+    if (!ParseMetaValue(refvar.type, refvar.name, &var)) {
       _PushError("Failed to parse meta value.\n");
       return false;
     }
@@ -2399,6 +3082,13 @@ class USDAParser {
     diag.line_col = _line_col;
     diag.err = msg;
     err_stack.push(diag);
+  }
+
+  // This function is used to cancel recent parsing error. 
+  void _PopError() {
+    if (!err_stack.empty()) {
+      err_stack.pop();
+    }
   }
 
   bool _IsBuiltinMeta(std::string name) {
