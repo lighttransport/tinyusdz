@@ -30,7 +30,6 @@
 #include <ryu/ryu_parse.h>
 
 #include <nonstd/variant.hpp>
-#include <nonstd/any.hpp>
 #include <nonstd/expected.hpp>
 
 #ifdef __clang__
@@ -194,17 +193,36 @@ std::ostream &operator<<(std::ostream &os, const Rel &rel) {
   return os;
 }
 
+typedef std::array<float, 2> float2;
+typedef std::array<float, 3> float3;
+typedef std::array<float, 4> float4;
+
+typedef std::array<double, 2> double2;
+typedef std::array<double, 3> double3;
+typedef std::array<double, 4> double4;
+
 // monostate = could be `Object` type in Variable class.
-using Value = nonstd::variant<nonstd::monostate, bool, int, float, double,
+// If you want to add more items, you need to generate nonstd::variant file,
+// since nonstd::variant has a limited number of types to use.
+using Value = nonstd::variant<nonstd::monostate,
+                              bool, int, float, double,
+                              float2,
+                              float3,
+                              float4,
                               std::string, Rel>;
 
 class Variable {
  public:
   std::string type;
   std::string name;
+
+  // scalar type
   Value value;
 
+  // compound types
+  typedef std::vector<Value> Array;
   typedef std::map<std::string, Variable> Object;
+  Array array;
   Object object;
 
   template <typename T>
@@ -214,11 +232,16 @@ class Variable {
 
   bool IsEmpty() const { return type.empty() && is<nonstd::monostate>(); }
 
+  bool IsArray() const { return array.size(); }
+
   bool IsBool() const { return type == "bool" && is<bool>(); }
 
   bool IsInt() const { return type == "int" && is<int>(); }
 
   bool IsFloat() const { return type == "float" && is<float>(); }
+  bool IsFloat2() const { return type == "float2" && is<float2>(); }
+  bool IsFloat3() const { return type == "float3" && is<float3>(); }
+  bool IsFloat4() const { return type == "float4" && is<float4>(); }
 
   bool IsDouble() const { return type == "double" && is<double>(); }
 
@@ -335,6 +358,7 @@ inline bool hasOutputs(const std::string &str) {
   return startsWith(str, "outputs:");
 }
 
+#if 0
 static usda::Result<float> ParseFloatR(const std::string &s) {
   float value;
 
@@ -356,6 +380,7 @@ static usda::Result<float> ParseFloatR(const std::string &s) {
 
   return usda::Result<float>::error("Unexpected floating point literal input");
 }
+#endif
 
 static usda::Result<double> ParseDoubleR(const std::string &s) {
   double value;
@@ -378,6 +403,26 @@ static usda::Result<double> ParseDoubleR(const std::string &s) {
   }
 
   return usda::Result<double>::error("Unexpected floating point literal input");
+}
+
+static nonstd::expected<float, std::string> ParseFloatE(const std::string &s) {
+  // std::cout << "Parse float: " << s << "\n";
+  // Pase with Ryu.
+  float value;
+  Status stat = s2f_n(s.data(), int(s.size()), &value);
+  if (stat == SUCCESS) {
+    return value;
+  }
+
+  if (stat == INPUT_TOO_SHORT) {
+    return nonstd::make_unexpected("Input floating point literal is too short");
+  } else if (stat == INPUT_TOO_LONG) {
+    return nonstd::make_unexpected("Input floating point literal is too long");
+  } else if (stat == MALFORMED_INPUT) {
+    return nonstd::make_unexpected("Malformed input floating point literal");
+  }
+
+  return nonstd::make_unexpected("Unexpected error in ParseFloat");
 }
 
 inline bool ParseFloat(const std::string &s, float *value, std::string *err) {
@@ -3337,13 +3382,13 @@ bool USDAParser::ReadBasicType(float *value) {
       return false;
     }
 #else
-  usda::Result<float> flt = ParseFloatR(value_str);
-  if (flt.isSuccessful()) {
+  auto flt = ParseFloatE(value_str);
+  if (flt) {
     (*value) = flt.value();
   } else {
     std::string msg = "Failed to parse float value literal.\n";
     if (err.size()) {
-      msg += flt.errorMessage() + "\n";
+      msg += flt.error() + "\n";
     }
     _PushError(msg);
     return false;
