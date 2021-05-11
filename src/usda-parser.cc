@@ -36,8 +36,9 @@
 #pragma clang diagnostic pop
 #endif
 
-#include <simple-serialize.hh>
-#include <stream-reader.hh>
+#include "simple-serialize.hh"
+#include "stream-reader.hh"
+#include "prim-types.hh"
 
 #if 0
 namespace grammar {
