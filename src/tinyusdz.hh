@@ -54,6 +54,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma clang diagnostic pop
 #endif
 
+#include "prim-types.hh"
+
 namespace tinyusdz {
 
 constexpr int version_major = 0;
@@ -756,11 +758,11 @@ class PrimValue {
 
   std::string type_name() { return std::string(TypeTrait<T>::type_name); }
   bool is_array() const { return false; }
+  int array_dim() const { return 0; }
 };
 
 ///
-/// array of PrimmValue
-/// multi-dimensional type is not supported(e.g. float[][])
+/// 1D array of PrimValue
 ///
 template <class T>
 class PrimValue<std::vector<T>> {
@@ -780,11 +782,37 @@ class PrimValue<std::vector<T>> {
   }
 
   bool is_array() const { return true; }
+  int array_dim() const { return 1; }
+};
+
+///
+/// 2D array of PrimValue
+/// TODO: Provide multidim_array implementation
+///
+template <class T>
+class PrimValue<std::vector<std::vector<T>>> {
+ private:
+  std::vector<std::vector<T>> m_value;
+
+  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
+                            * = nullptr>
+  PrimValue<T> &operator=(const std::vector<std::vector<U>> &u) {
+    m_value = u;
+
+    return (*this);
+  }
+
+  std::string type_name() {
+    return std::string(TypeTrait<T>::type_name) + "[][]";
+  }
+
+  bool is_array() const { return true; }
+  int array_dim() const { return 2; }
 };
 
 ///
 /// Represent value.
-/// multi-dimensional type is not supported(e.g. float[][])
+/// array is up to 1D array.
 ///
 class Value {
  public:
