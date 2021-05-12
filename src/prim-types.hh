@@ -44,6 +44,9 @@ Matrix<T, N> Mult(Matrix<T, N> &m, Matrix<T, N> &n) {
   return ret;
 }
 
+typedef uint16_t float16;
+float half_to_float(float16 h);
+float16 float_to_half_full(float f);
 
 
 using Matrix2f = Matrix<float, 2>;
@@ -120,39 +123,6 @@ using Quatd = Quat<double>;
 #pragma clang diagnostic ignored "-Wpadded"
 #endif
 
-// https://www.realtime.bc.ca/articles/endian-safe.html
-union HostEndianness
-{
-  int i;
-  char c[sizeof(int)];
-
-  HostEndianness() : i(1) { }
-
-  bool isBig() const { return c[0] == 0; }
-  bool isLittle() const { return c[0] != 0; }
-};
-
-typedef unsigned short float16;
-
-union float16le {
-  unsigned short u;
-  struct {
-    unsigned int Mantissa : 10;
-    unsigned int Exponent : 5;
-    unsigned int Sign : 1;
-  } s;
-};
-
-union float16be {
-  unsigned short u;
-  struct {
-    unsigned int Sign : 1;
-    unsigned int Exponent : 5;
-    unsigned int Mantissa : 10;
-  } s;
-};
-
-
 enum ValueTypeId {
   VALUE_TYPE_INVALID = 0,
 
@@ -223,6 +193,17 @@ enum ValueTypeId {
   VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP = 54,
   VALUE_TYPE_PAYLOAD_LIST_OP = 55,
   VALUE_TYPE_TIME_CODE = 56
+};
+
+struct ValueType {
+  ValueType()
+      : name("Invalid"), id(VALUE_TYPE_INVALID), supports_array(false) {}
+  ValueType(const std::string &n, uint32_t i, bool a)
+      : name(n), id(ValueTypeId(i)), supports_array(a) {}
+
+  std::string name;
+  ValueTypeId id{VALUE_TYPE_INVALID};
+  bool supports_array{false};
 };
 
 ///

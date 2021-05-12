@@ -77,48 +77,7 @@ struct Image {
   std::vector<uint8_t> data;
 };
 
-// TODO(syoyo): Support Big Endian
-// https://gist.github.com/rygorous/2156668
-union FP32 {
-  unsigned int u;
-  float f;
-  struct {
-#if 1
-    unsigned int Mantissa : 23;
-    unsigned int Exponent : 8;
-    unsigned int Sign : 1;
-#else
-    unsigned int Sign : 1;
-    unsigned int Exponent : 8;
-    unsigned int Mantissa : 23;
-#endif
-  } s;
-};
-
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-#endif
-
-// NOTE: usually sizeof(float16) == 4, not 2
-union float16 {
-  unsigned short u;
-  struct {
-#if 1
-    unsigned int Mantissa : 10;
-    unsigned int Exponent : 5;
-    unsigned int Sign : 1;
-#else
-    unsigned int Sign : 1;
-    unsigned int Exponent : 5;
-    unsigned int Mantissa : 10;
-#endif
-  } s;
-};
-
-float half_to_float(float16 h);
-float16 float_to_half_full(float f);
-
+#if 0
 //
 // Colum-major order(e.g. employed in OpenGL).
 // For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to the translation.
@@ -226,6 +185,8 @@ using Quatd = Quat<double>;
 ((      GfMultiInterval,     MultiInterval))
 
 */
+
+#endif
 
 template <typename T>
 class ListOp {
@@ -512,6 +473,7 @@ struct Payload {
   LayerOffset _layer_offset;
 };
 
+#if 0
 enum ValueTypeId {
   VALUE_TYPE_INVALID = 0,
 
@@ -595,6 +557,8 @@ struct ValueType {
   bool supports_array{false};
 };
 
+#endif
+
 enum SpecType {
   SpecTypeUnknown = 0,
   SpecTypeAttribute,
@@ -666,6 +630,7 @@ struct TimeSamples {
   std::vector<TimeSampleType> values;
 };
 
+#if 0
 ///
 /// Simple type-erased primitive value class for frequently used data types(e.g. `float[]`)
 ///
@@ -809,6 +774,7 @@ class PrimValue<std::vector<std::vector<T>>> {
   bool is_array() const { return true; }
   int array_dim() const { return 2; }
 };
+#endif
 
 ///
 /// Represent value.
@@ -904,7 +870,7 @@ class Value {
     dtype.name = "Half";
     dtype.id = VALUE_TYPE_HALF;
     data.resize(sizeof(uint16_t));
-    memcpy(data.data(), reinterpret_cast<const void *>(&d.u), sizeof(uint16_t));
+    memcpy(data.data(), reinterpret_cast<const void *>(&d), sizeof(uint16_t));
   }
 
   void SetVec2i(const Vec2i v) {

@@ -214,70 +214,6 @@ void MatrixInverse(T m[4][4]) {
 #endif
 
 
-#if 0 // UNUSED at the moment
-float half_to_float(float16 h) {
-  static const FP32 magic = {113 << 23};
-  static const unsigned int shifted_exp = 0x7c00
-                                          << 13;  // exponent mask after shift
-  FP32 o;
-
-  o.u = (h.u & 0x7fffU) << 13U;           // exponent/mantissa bits
-  unsigned int exp_ = shifted_exp & o.u;  // just the exponent
-  o.u += (127 - 15) << 23;                // exponent adjust
-
-  // handle exponent special cases
-  if (exp_ == shifted_exp)    // Inf/NaN?
-    o.u += (128 - 16) << 23;  // extra exp adjust
-  else if (exp_ == 0)         // Zero/Denormal?
-  {
-    o.u += 1 << 23;  // extra exp adjust
-    o.f -= magic.f;  // renormalize
-  }
-
-  o.u |= (h.u & 0x8000U) << 16U;  // sign bit
-  return o.f;
-}
-#endif
-
-float16 float_to_half_full(float _f) {
-  FP32 f;
-  f.f = _f;
-  float16 o = {0};
-
-  // Based on ISPC reference code (with minor modifications)
-  if (f.s.Exponent == 0)  // Signed zero/denormal (which will underflow)
-    o.s.Exponent = 0;
-  else if (f.s.Exponent == 255)  // Inf or NaN (all exponent bits set)
-  {
-    o.s.Exponent = 31;
-    o.s.Mantissa = f.s.Mantissa ? 0x200 : 0;  // NaN->qNaN and Inf->Inf
-  } else                                      // Normalized number
-  {
-    // Exponent unbias the single, then bias the halfp
-    int newexp = f.s.Exponent - 127 + 15;
-    if (newexp >= 31)  // Overflow, return signed infinity
-      o.s.Exponent = 31;
-    else if (newexp <= 0)  // Underflow
-    {
-      if ((14 - newexp) <= 24)  // Mantissa might be non-zero
-      {
-        unsigned int mant = f.s.Mantissa | 0x800000;  // Hidden 1 bit
-        o.s.Mantissa = mant >> (14 - newexp);
-        if ((mant >> (13 - newexp)) & 1)  // Check for rounding
-          o.u++;  // Round, might overflow into exp bit, but this is OK
-      }
-    } else {
-      o.s.Exponent = static_cast<unsigned int>(newexp);
-      o.s.Mantissa = f.s.Mantissa >> 13;
-      if (f.s.Mantissa & 0x1000)  // Check for rounding
-        o.u++;                    // Round, might overflow to inf, this is OK
-    }
-  }
-
-  o.s.Sign = f.s.Sign;
-  return o;
-}
-
 constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
 
@@ -1307,7 +1243,7 @@ bool Parser::_ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
     for (size_t i = 0; i < length; i++) {
       float f = float(ints[i]);
       float16 h = float_to_half_full(f);
-      (*d)[i] = h.u;
+      (*d)[i] = h;
     }
   } else if (code == 't') {
     // Lookup table & indexes.

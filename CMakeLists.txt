@@ -58,6 +58,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     )
 
 set(TINYUSDZ_DEP_SOURCES
