@@ -359,55 +359,7 @@ inline bool hasOutputs(const std::string &str) {
   return startsWith(str, "outputs:");
 }
 
-#if 0
-static usda::Result<float> ParseFloatR(const std::string &s) {
-  float value;
-
-  // Pase with Ryu.
-  Status stat = s2f_n(s.data(), int(s.size()), &value);
-  if (stat == SUCCESS) {
-    return value;
-  }
-
-  if (stat == INPUT_TOO_SHORT) {
-    return usda::Result<float>::error(
-        "Input floating point literal is too short");
-  } else if (stat == INPUT_TOO_LONG) {
-    return usda::Result<float>::error(
-        "Input floating point literal is too long");
-  } else if (stat == MALFORMED_INPUT) {
-    return usda::Result<float>::error("Malformed input floating point literal");
-  }
-
-  return usda::Result<float>::error("Unexpected floating point literal input");
-}
-#endif
-
-static usda::Result<double> ParseDoubleR(const std::string &s) {
-  double value;
-
-  // Pase with Ryu.
-  Status stat = s2d_n(s.data(), int(s.size()), &value);
-  if (stat == SUCCESS) {
-    return value;
-  }
-
-  if (stat == INPUT_TOO_SHORT) {
-    return usda::Result<double>::error(
-        "Input floating point literal is too short");
-  } else if (stat == INPUT_TOO_LONG) {
-    return usda::Result<double>::error(
-        "Input floating point literal is too long");
-  } else if (stat == MALFORMED_INPUT) {
-    return usda::Result<double>::error(
-        "Malformed input floating point literal");
-  }
-
-  return usda::Result<double>::error("Unexpected floating point literal input");
-}
-
-static nonstd::expected<float, std::string> ParseFloatE(const std::string &s) {
-  // std::cout << "Parse float: " << s << "\n";
+static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
   // Pase with Ryu.
   float value;
   Status stat = s2f_n(s.data(), int(s.size()), &value);
@@ -426,24 +378,226 @@ static nonstd::expected<float, std::string> ParseFloatE(const std::string &s) {
   return nonstd::make_unexpected("Unexpected error in ParseFloat");
 }
 
-inline bool ParseFloat(const std::string &s, float *value, std::string *err) {
-  // std::cout << "Parse float: " << s << "\n";
+static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
   // Pase with Ryu.
-  Status stat = s2f_n(s.data(), int(s.size()), value);
+  double value;
+  Status stat = s2d_n(s.data(), int(s.size()), &value);
   if (stat == SUCCESS) {
-    return true;
+    return value;
   }
 
   if (stat == INPUT_TOO_SHORT) {
-    (*err) = "Input floating point literal is too short\n";
+    return nonstd::make_unexpected("Input floating point literal is too short");
   } else if (stat == INPUT_TOO_LONG) {
-    (*err) = "Input floating point literal is too long\n";
+    return nonstd::make_unexpected("Input floating point literal is too long");
   } else if (stat == MALFORMED_INPUT) {
-    (*err) = "Malformed input floating point literal\n";
+    return nonstd::make_unexpected("Malformed input floating point literal");
   }
 
-  return false;
+  return nonstd::make_unexpected("Unexpected error in ParseFloat");
 }
+
+#if 0
+//
+// TODO: multi-threaded value array parser.
+//
+// Strategy.
+// - Divide input string to N items equally.
+// - Skip until valid character found(e.g. `(`)
+// - Parse array items.
+// - Concatenate result.
+
+template<typename T>
+struct LexResult
+{
+  uint64_t n_chars; // # of characters read
+
+  T value;
+};
+
+// Re-entrant LexFloat
+static nonstd::expected<LexResult<std::string>, std::string> LexFloatR(
+  const tinyusdz::StreamReader *sr) {
+
+  // FLOATVAL : ('+' or '-')? FLOAT
+  // FLOAT
+  //     :   ('0'..'9')+ '.' ('0'..'9')* EXPONENT?
+  //     |   '.' ('0'..'9')+ EXPONENT?
+  //     |   ('0'..'9')+ EXPONENT
+  //     ;
+  // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
+
+  std::stringstream ss;
+
+  bool has_sign{false};
+  bool leading_decimal_dots{false};
+  {
+    char sc;
+    if (!sr->read1(&sc)) {
+      return nonstd::make_unexpected("Failed to read a character");
+    }
+
+    ss << sc;
+
+    // sign, '.' or [0-9]
+    if ((sc == '+') || (sc == '-')) {
+      has_sign = true;
+
+      char c;
+      if (!sr->read1(&c)) {
+        return nonstd::make_unexpected("Failed to read a character");
+      }
+
+      if (c == '.') {
+        // ok. something like `+.7`, `-.53`
+        leading_decimal_dots = true;
+        ss << c;
+
+      } else {
+        // unwind and continue
+        sr->seek_from_current(-1);
+      }
+
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else if (sc == '.') {
+      // ok
+      leading_decimal_dots = true;
+    } else {
+      return nonstd::make_unexpected("Sign or `.` or 0-9 expected.");
+    }
+  }
+
+  (void)has_sign;
+
+  // 1. Read the integer part
+  char curr;
+  if (!leading_decimal_dots) {
+    // std::cout << "1 read int part: ss = " << ss.str() << "\n";
+
+    while (!sr->eof()) {
+      if (!sr->read1(&curr)) {
+        return nonstd::make_unexpected("Failed to read a character");
+      }
+
+      // std::cout << "1 curr = " << curr << "\n";
+      if ((curr >= '0') && (curr <= '9')) {
+        // continue
+        ss << curr;
+
+      } else {
+        sr->seek_from_current(-1);
+        break;
+      }
+    }
+  }
+
+  if (sr->eof()) {
+    LexResult<std::string> ret;
+    ret.n_chars = ss.str().size();
+    ret.value = ss.str();
+    return std::move(ret);
+  }
+
+  if (!sr->read1(&curr)) {
+    return nonstd::make_unexpected("Failed to read a character");
+  }
+
+  // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
+  // "\n";
+
+  // 2. Read the decimal part
+  if (curr == '.') {
+    ss << curr;
+
+    while (!sr->eof()) {
+      if (!sr->read1(&curr)) {
+        return nonstd::make_unexpected("Failed to read a character");
+      }
+
+      if ((curr >= '0') && (curr <= '9')) {
+        ss << curr;
+      } else {
+        break;
+      }
+    }
+
+  } else if ((curr == 'e') || (curr == 'E')) {
+    // go to 3.
+  } else {
+    // end
+    sr->seek_from_current(-1);
+
+    LexResult<std::string> ret;
+    ret.n_chars = ss.str().size();
+    ret.value = ss.str();
+    return std::move(ret);
+  }
+
+  if (sr->eof()) {
+    LexResult<std::string> ret;
+    ret.n_chars = ss.str().size();
+    ret.value = ss.str();
+    return std::move(ret);
+  }
+
+  // 3. Read the exponent part
+  bool has_exp_sign{false};
+  if ((curr == 'e') || (curr == 'E')) {
+    ss << curr;
+
+    if (!sr->read1(&curr)) {
+      return nonstd::make_unexpected("Failed to read a character");
+    }
+
+    if ((curr == '+') || (curr == '-')) {
+      // exp sign
+      ss << curr;
+      has_exp_sign = true;
+
+    } else if ((curr >= '0') && (curr <= '9')) {
+      // ok
+      ss << curr;
+    } else {
+      // Empty E is not allowed.
+      std::string msg = "Empty E is not allowed. curr = " + ss.str();
+      return nonstd::make_unexpected(msg);
+    }
+
+    while (!sr->eof()) {
+      if (!sr->read1(&curr)) {
+        return nonstd::make_unexpected("Failed to read a character");
+      }
+
+      if ((curr >= '0') && (curr <= '9')) {
+        // ok
+        ss << curr;
+
+      } else if ((curr == '+') || (curr == '-')) {
+        if (has_exp_sign) {
+          // No multiple sign characters
+          std::string msg = "No multiple exponential sign characters.";
+          return nonstd::make_unexpected(msg);
+        }
+
+        ss << curr;
+        has_exp_sign = true;
+      } else {
+        // end
+        sr->seek_from_current(-1);
+        break;
+      }
+    }
+  } else {
+    sr->seek_from_current(-1);
+  }
+
+  LexResult<std::string> ret;
+  ret.n_chars = ss.str().size();
+  ret.value = ss.str();
+  return std::move(ret);
+}
+#endif
 
 class USDAParser {
  public:
@@ -1630,10 +1784,10 @@ class USDAParser {
 
         } else if (hasOutputs(primattr_name)) {
           std::cout << "output\n";
-          // Output node. 
+          // Output node.
           // OK
         } else {
-          std::cout << "??? " << primattr_name << "\n"; 
+          std::cout << "??? " << primattr_name << "\n";
           std::string value;
           if (!ReadStringLiteral(&value)) {
             _PushError("Failed to parse string literal for `token`.\n");
@@ -2705,18 +2859,19 @@ class USDAParser {
         _PushError(msg);
         return false;
       }
-      std::cout << "float : " << fval << "\n";
-      float value;
-      if (!ParseFloat(fval, &value, &ferr)) {
+      //std::cout << "float : " << fval << "\n";
+      auto ret = ParseFloat(fval);
+      //if (!ParseFloat(fval, &value, &ferr)) {
+      if (!ret) {
         std::string msg =
             "Failed to parse floating point literal for `" + varname + "`.\n";
         if (!ferr.empty()) {
-          msg += ferr;
+          msg += ret.error();
         }
         _PushError(msg);
         return false;
       }
-      std::cout << "parsed float : " << value << "\n";
+      std::cout << "parsed float : " << ret.value() << "\n";
 
     } else if (vartype == "int3") {
       std::array<int, 3> values;
@@ -2888,7 +3043,7 @@ class USDAParser {
         std::cout << "int[" << i << "] = " << values[i] << "\n";
       }
     } else if (var.type == "object") {
-      // TODO: support nested parameter. 
+      // TODO: support nested parameter.
     }
 #endif
 
@@ -3373,17 +3528,7 @@ bool USDAParser::ReadBasicType(float *value) {
     return false;
   }
 
-#if 0
-    if (!ParseFloat(value_str, value, &err)) {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += err;
-      }
-      _PushError(msg);
-      return false;
-    }
-#else
-  auto flt = ParseFloatE(value_str);
+  auto flt = ParseFloat(value_str);
   if (flt) {
     (*value) = flt.value();
   } else {
@@ -3394,7 +3539,6 @@ bool USDAParser::ReadBasicType(float *value) {
     _PushError(msg);
     return false;
   }
-#endif
 
   return true;
 }
@@ -3412,28 +3556,15 @@ bool USDAParser::ReadBasicType(double *value) {
     return false;
   }
 
-#if 0
-    if (!ParseFloat(value_str, value, &err)) {
-      std::string msg = "Failed to parse float value literal.\n";
-      if (err.size()) {
-        msg += err;
-      }
-      _PushError(msg);
-      return false;
-    }
-#else
-  usda::Result<double> flt = ParseDoubleR(value_str);
-  if (flt.isSuccessful()) {
-    (*value) = flt.value();
-  } else {
+  auto flt = ParseDouble(value_str);
+  if (!flt) {
     std::string msg = "Failed to parse float value literal.\n";
-    if (err.size()) {
-      msg += flt.errorMessage() + "\n";
-    }
+    msg += flt.error();
     _PushError(msg);
     return false;
+  } else {
+    (*value) = flt.value();
   }
-#endif
 
   return true;
 }
