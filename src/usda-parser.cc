@@ -398,15 +398,6 @@ static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
 }
 
 #if 0
-//
-// TODO: multi-threaded value array parser.
-//
-// Strategy.
-// - Divide input string to N items equally.
-// - Skip until valid character found(e.g. `(`)
-// - Parse array items.
-// - Concatenate result.
-
 template<typename T>
 struct LexResult
 {
@@ -596,6 +587,67 @@ static nonstd::expected<LexResult<std::string>, std::string> LexFloatR(
   ret.n_chars = ss.str().size();
   ret.value = ss.str();
   return std::move(ret);
+}
+#endif
+
+//
+// TODO: multi-threaded value array parser.
+//
+// Assumption.
+//   - Assume input string is one-line(no newline) and startsWith/endsWith brackets(e.g. `((1,2),(3, 4))`)
+// Strategy.
+//   - Divide input string to N items equally.
+//   - Skip until valid character found(e.g. tuple character `(`)
+//   - Parse array items with delimiter.
+//   - Concatenate result.
+
+#if 0
+static uint32_t GetNumThreads(uint32_t max_threads = 128u)
+{
+  uint32_t nthreads = std::thread::hardware_concurrency();
+  return std::min(std::max(1u, nthreads), max_threads);
+}
+
+typedef struct {
+  size_t pos;
+  size_t len;
+} LineInfo;
+
+inline bool is_line_ending(const char *p, size_t i, size_t end_i) {
+  if (p[i] == '\0') return true;
+  if (p[i] == '\n') return true;  // this includes \r\n
+  if (p[i] == '\r') {
+    if (((i + 1) < end_i) && (p[i + 1] != '\n')) {  // detect only \r case
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool ParseTupleThreaded(
+  const uint8_t *buffer_data,
+  const size_t buffer_len,
+  const char bracket_char,  // Usually `(` or `[`
+  int32_t num_threads, uint32_t max_threads = 128u)
+{
+  uint32_t nthreads = (num_threads <= 0) ? GetNumThreads(max_threads) : std::min(std::max(1u, uint32_t(num_threads)), max_threads); 
+
+  std::vector<std::vector<LineInfo>> line_infos;
+  line_infos.resize(nthreads);
+
+  for (size_t t = 0; t < nthreads; t++) {
+    // Pre allocate enough memory. len / 128 / num_threads is just a heuristic
+    // value.
+    line_infos[t].reserve(buffer_len / 128 / nthreads);
+  }
+
+  // TODO
+  // Find bracket character.
+
+  (void)buffer_data;
+  (void)bracket_char;
+
+  return false;
 }
 #endif
 
