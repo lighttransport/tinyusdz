@@ -4,6 +4,7 @@
 #include <array>
 #include <vector>
 #include <cstdlib>
+#include <string>
 
 namespace tinyusdz {
 
