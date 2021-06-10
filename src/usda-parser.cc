@@ -18,14 +18,6 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#if 0  // TODO(syoyo): Use lexy
-#include "lexy/dsl.hpp"
-#include "lexy/input/file.hpp"
-#include "lexy/lexeme.hpp"
-#include "lexy/parse.hpp"
-#include "report_error.hpp"
-#endif
-
 #include <ryu/ryu.h>
 #include <ryu/ryu_parse.h>
 
@@ -39,45 +31,6 @@
 #include "simple-serialize.hh"
 #include "stream-reader.hh"
 #include "prim-types.hh"
-
-#if 0
-namespace grammar {
-
-namespace dsl = lexy::dsl;
-constexpr auto ws = dsl::ascii::blank;
-
-struct string
-{
-  struct invalid_char
-  {
-    static LEXY_CONSTEVAL auto name() {
-      return "invalid character in string literal";
-    }
-  };
-
-  static constexpr auto rule = [] {
-        auto code_point = dsl::try_<invalid_char>(dsl::code_point - dsl::ascii::control);
-        auto escape     = dsl::backslash_escape //
-                          .lit_c<'"'>()
-                          .lit_c<'\\'>()
-                          .lit_c<'/'>()
-                          .lit_c<'b'>(dsl::value_c<'\b'>)
-                          .lit_c<'f'>(dsl::value_c<'\f'>)
-                          .lit_c<'n'>(dsl::value_c<'\n'>)
-                          .lit_c<'r'>(dsl::value_c<'\r'>)
-                          .lit_c<'t'>(dsl::value_c<'\t'>)
-                          .rule(dsl::lit_c<'u'> >> dsl::code_point_id<4>);
-
-        // String of code_point with specified escape sequences, surrounded by ".
-        return dsl::quoted[ws](code_point, escape);
-
-  }();
-
-  static constexpr auto list = lexy::as_string<std::string, lexy::utf8_encoding>;
-};
-
-} // namespace grammer
-#endif
 
 namespace tinyusdz {
 
@@ -118,62 +71,6 @@ struct Result {
 };
 
 }  // namespace usda
-
-static void test() {
-  int i;
-  bool b;
-  uint32_t ui;
-  int64_t i64;
-  uint64_t ui64;
-  float f;
-  double d;
-  char c;
-  std::string s;
-  std::map<std::string, int> map0;
-  std::vector<float> fvec;
-  std::list<float> flist;
-  std::array<float, 3> fvec3;
-  std::vector<std::array<float, 3>> float3v;
-  std::vector<short> sv;
-
-  simple_serialize::ObjectHandler h;
-  h.add_property("i", &i);
-  h.add_property("b", &b);
-  h.add_property("ui", &ui);
-  h.add_property("i64", &i64);
-  h.add_property("ui64", &ui64);
-  h.add_property("f", &f);
-  h.add_property("d", &d);
-  h.add_property("c", &c);
-  h.add_property("s", &s);
-  h.add_property("fvec", &fvec);
-  h.add_property("flist", &flist);
-  h.add_property("map0", &map0);
-  h.add_property("fvec3", &fvec3);
-  h.add_property("float3v", &float3v);
-
-  // simple_serialize::Handler<double> dh(&d);
-  // simple_serialize::Handler<std::vector<std::array<float, 3>>> dh(&float3v);
-  // simple_serialize::Handler<std::map<std::string, int>> dh(&map0);
-  simple_serialize::Handler<std::vector<short>> dh(&sv);
-  simple_serialize::Parse test;
-
-  // std::vector<std::array<float, 3>> ref = {{1,2,3}, {4,5,6}};
-  // std::map<std::string, int> ref0;
-  std::vector<short> ref1 = {1, 4, 5};
-
-  bool ret = test.SetValue(ref1, dh);
-  std::cout << "ret = " << ret << "\n";
-
-  for (size_t x = 0; x < sv.size(); x++) {
-    std::cout << "val = " << sv[x] << "\n";
-  }
-
-  // for (size_t x = 0; x < float3v.size(); x++) {
-  //  std::cout << "val = " << float3v[x][0] << ", " << float3v[x][1] << ", " <<
-  //  float3v[x][2] << "\n";
-  //}
-}
 
 struct ErrorDiagnositc {
   std::string err;
@@ -359,6 +256,168 @@ inline bool hasOutputs(const std::string &str) {
   return startsWith(str, "outputs:");
 }
 
+inline bool is_digit(char x) {
+  return (static_cast<unsigned int>((x) - '0') < static_cast<unsigned int>(10));
+}
+
+// Tries to parse a floating point number located at s.
+//
+// s_end should be a location in the string where reading should absolutely
+// stop. For example at the end of the string, to prevent buffer overflows.
+//
+// Parses the following EBNF grammar:
+//   sign    = "+" | "-" ;
+//   END     = ? anything not in digit ?
+//   digit   = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+//   integer = [sign] , digit , {digit} ;
+//   decimal = integer , ["." , integer] ;
+//   float   = ( decimal , END ) | ( decimal , ("E" | "e") , integer , END ) ;
+//
+//  Valid strings are for example:
+//   -0  +3.1417e+2  -0.0E-3  1.0324  -1.41   11e2
+//
+// If the parsing is a success, result is set to the parsed value and true
+// is returned.
+//
+// The function is greedy and will parse until any of the following happens:
+//  - a non-conforming character is encountered.
+//  - s_end is reached.
+//
+// The following situations triggers a failure:
+//  - s >= s_end.
+//  - parse failure.
+//
+static bool tryParseDouble(const char *s, const char *s_end, double *result) {
+  if (s >= s_end) {
+    return false;
+  }
+
+  double mantissa = 0.0;
+  // This exponent is base 2 rather than 10.
+  // However the exponent we parse is supposed to be one of ten,
+  // thus we must take care to convert the exponent/and or the
+  // mantissa to a * 2^E, where a is the mantissa and E is the
+  // exponent.
+  // To get the final double we will use ldexp, it requires the
+  // exponent to be in base 2.
+  int exponent = 0;
+
+  // NOTE: THESE MUST BE DECLARED HERE SINCE WE ARE NOT ALLOWED
+  // TO JUMP OVER DEFINITIONS.
+  char sign = '+';
+  char exp_sign = '+';
+  char const *curr = s;
+
+  // How many characters were read in a loop.
+  int read = 0;
+  // Tells whether a loop terminated due to reaching s_end.
+  bool end_not_reached = false;
+  bool leading_decimal_dots = false;
+
+  /*
+          BEGIN PARSING.
+  */
+
+  // Find out what sign we've got.
+  if (*curr == '+' || *curr == '-') {
+    sign = *curr;
+    curr++;
+    if ((curr != s_end) && (*curr == '.')) {
+      // accept. Somethig like `.7e+2`, `-.5234`
+      leading_decimal_dots = true;
+    }
+  } else if (is_digit(*curr)) { /* Pass through. */
+  } else if (*curr == '.') {
+    // accept. Somethig like `.7e+2`, `-.5234`
+    leading_decimal_dots = true;
+  } else {
+    goto fail;
+  }
+
+  // Read the integer part.
+  end_not_reached = (curr != s_end);
+  if (!leading_decimal_dots) {
+    while (end_not_reached && is_digit(*curr)) {
+      mantissa *= 10;
+      mantissa += static_cast<int>(*curr - 0x30);
+      curr++;
+      read++;
+      end_not_reached = (curr != s_end);
+    }
+
+    // We must make sure we actually got something.
+    if (read == 0) goto fail;
+  }
+
+  // We allow numbers of form "#", "###" etc.
+  if (!end_not_reached) goto assemble;
+
+  // Read the decimal part.
+  if (*curr == '.') {
+    curr++;
+    read = 1;
+    end_not_reached = (curr != s_end);
+    while (end_not_reached && is_digit(*curr)) {
+      static const double pow_lut[] = {
+          1.0, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001, 0.0000001,
+      };
+      const int lut_entries = sizeof pow_lut / sizeof pow_lut[0];
+
+      // NOTE: Don't use powf here, it will absolutely murder precision.
+      mantissa += static_cast<int>(*curr - 0x30) *
+                  (read < lut_entries ? pow_lut[read] : std::pow(10.0, -read));
+      read++;
+      curr++;
+      end_not_reached = (curr != s_end);
+    }
+  } else if (*curr == 'e' || *curr == 'E') {
+  } else {
+    goto assemble;
+  }
+
+  if (!end_not_reached) goto assemble;
+
+  // Read the exponent part.
+  if (*curr == 'e' || *curr == 'E') {
+    curr++;
+    // Figure out if a sign is present and if it is.
+    end_not_reached = (curr != s_end);
+    if (end_not_reached && (*curr == '+' || *curr == '-')) {
+      exp_sign = *curr;
+      curr++;
+    } else if (is_digit(*curr)) { /* Pass through. */
+    } else {
+      // Empty E is not allowed.
+      goto fail;
+    }
+
+    read = 0;
+    end_not_reached = (curr != s_end);
+    while (end_not_reached && is_digit(*curr)) {
+      if (exponent > std::numeric_limits<int>::max()/10) {
+        // Integer overflow
+        goto fail;
+      }
+      exponent *= 10;
+      exponent += static_cast<int>(*curr - 0x30);
+      curr++;
+      read++;
+      end_not_reached = (curr != s_end);
+    }
+    exponent *= (exp_sign == '+' ? 1 : -1);
+    if (read == 0) goto fail;
+  }
+
+assemble:
+  *result = (sign == '+' ? 1 : -1) *
+            (exponent ? std::ldexp(mantissa * std::pow(5.0, exponent), exponent)
+                      : mantissa);
+  return true;
+fail:
+  return false;
+}
+
+
 static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
   // Pase with Ryu.
   float value;
@@ -389,12 +448,16 @@ static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
   if (stat == INPUT_TOO_SHORT) {
     return nonstd::make_unexpected("Input floating point literal is too short");
   } else if (stat == INPUT_TOO_LONG) {
-    return nonstd::make_unexpected("Input floating point literal is too long");
+    // fallback to our float parser.
   } else if (stat == MALFORMED_INPUT) {
     return nonstd::make_unexpected("Malformed input floating point literal");
   }
 
-  return nonstd::make_unexpected("Unexpected error in ParseFloat");
+  if (tryParseDouble(s.c_str(), s.c_str() + s.size(), &value)) {
+    return value;
+  }
+
+  return nonstd::make_unexpected("Failed to parse floating-point value.");
 }
 
 #if 0
@@ -661,9 +724,6 @@ class USDAParser {
     _RegisterBuiltinMeta();
     _RegisterNodeTypes();
     _RegisterPrimAttrTypes();
-
-    // HACK
-    test();
   }
 
   bool LexFloat(std::string *result, std::string *err) {
@@ -3630,18 +3690,6 @@ int main(int argc, char **argv) {
   }
 
   std::string filename = argv[1];
-
-#if 0
-  // lexy test
-  {
-    auto file = lexy::read_file<lexy::utf8_encoding>(argv[1]);
-    if (!file)
-    {
-        std::fprintf(stderr, "file '%s' not found", argv[1]);
-        return 1;
-    }
-  }
-#endif
 
   std::vector<uint8_t> data;
   {
