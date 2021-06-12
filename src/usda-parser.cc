@@ -31,46 +31,11 @@
 #include "simple-serialize.hh"
 #include "stream-reader.hh"
 #include "prim-types.hh"
+#include "tinyusdz.hh"
 
 namespace tinyusdz {
 
 namespace usda {
-
-// https://stackoverflow.com/questions/13777987/c-error-handling-downside-of-using-stdpair-or-stdtuple-for-returning-err
-template <class T>
-struct Result {
- public:
-  enum Status { Success, Error };
-
-  // Feel free to change the default behavior... I use implicit
-  // constructors for type T for syntactic sugar in return statements.
-  Result(T resultValue) : v(resultValue), s(Success) {}
-  explicit Result(Status status, std::string _errMsg = std::string())
-      : v(), s(status), errMsg(_errMsg) {}
-  Result() : s(Error), v() {}  // Error without message
-
-  // Explicit error with message
-  static Result error(std::string errMsg) { return Result(Error, errMsg); }
-
-  // Implicit conversion to type T
-  operator T() const { return v; }
-  // Explicit conversion to type T
-  T value() const { return v; }
-
-  Status status() const { return s; }
-  bool isError() const { return s == Error; }
-  bool isSuccessful() const { return s == Success; }
-  std::string errorMessage() const { return errMsg; }
-
- private:
-  T v;
-  Status s;
-
-  // if you want to provide error messages:
-  std::string errMsg;
-};
-
-}  // namespace usda
 
 struct ErrorDiagnositc {
   std::string err;
@@ -3500,6 +3465,7 @@ class USDAParser {
     _node_types.insert("Scope");
     _node_types.insert("Material");
     _node_types.insert("Shader");
+    _node_types.insert("SphereLight");
   }
 
   const tinyusdz::StreamReader *_sr = nullptr;
@@ -3681,8 +3647,11 @@ bool USDAParser::ReadBasicType(double *value) {
   return true;
 }
 
+}  // namespace usda
+
 }  // namespace tinyusdz
 
+#if defined(USDA_MAIN)
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Need input.usda\n";
@@ -3718,7 +3687,7 @@ int main(int argc, char **argv) {
   }
 
   tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::USDAParser parser(&sr);
+  tinyusdz::usda::USDAParser parser(&sr);
 
   {
     bool ret = parser.Parse();
@@ -3733,3 +3702,4 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+#endif

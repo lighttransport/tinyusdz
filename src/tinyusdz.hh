@@ -577,26 +577,26 @@ enum SpecType {
 
 enum Orientation {
   OrientationRightHanded,  // 0
-  OrientationLeftHanded,
+  OrientationLeftHanded
 };
 
 enum Visibility {
   VisibilityInherited,  // 0
-  VisibilityInvisible,
+  VisibilityInvisible
 };
 
 enum Purpose {
   PurposeDefault,  // 0
   PurposeRender,
   PurposeProxy,
-  PurposeGuide,
+  PurposeGuide
 };
 
 enum SubdivisionScheme {
   SubdivisionSchemeCatmullClark,  // 0
   SubdivisionSchemeLoop,
   SubdivisionSchemeBilinear,
-  SubdivisionSchemeNone,
+  SubdivisionSchemeNone
 };
 
 // For PrimSpec
@@ -1348,7 +1348,7 @@ struct BufferData {
     BUFFER_DATA_TYPE_INT64,
     BUFFER_DATA_TYPE_HALF,
     BUFFER_DATA_TYPE_FLOAT,
-    BUFFER_DATA_TYPE_DOUBLE,
+    BUFFER_DATA_TYPE_DOUBLE
   };
 
   std::vector<uint8_t> data;  // Opaque byte data.
@@ -1947,6 +1947,10 @@ struct Material {
   // int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
 };
 
+
+// TODO
+//  - NodeGraph
+
 // result = (texture_id == -1) ? use color : lookup texture
 struct Color3OrTexture {
   Color3OrTexture(float x, float y, float z) {
@@ -1982,7 +1986,7 @@ enum TextureWrap {
   TextureWrapBlack,
   TextureWrapClamp,
   TextureWrapRepeat,
-  TextureWrapMirror,
+  TextureWrapMirror
 };
 
 // For texture transform
@@ -2026,6 +2030,7 @@ struct UVTexture {
 
 // USD's default? PBR shader
 // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
+// $USD/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
 struct PreviewSurface {
   std::string doc;
 
@@ -2052,7 +2057,7 @@ struct PreviewSurface {
   FloatOrTexture ior{1.5f};
   Color3OrTexture normal{0.0f, 0.0f, 1.0f};
   FloatOrTexture displacement{0.0f};
-  FloatOrTexture occlusion{0.0f};
+  FloatOrTexture occlusion{1.0f};
 
   //
   // Outputs
@@ -2107,7 +2112,7 @@ enum NodeType {
   NODE_TYPE_GEOM_MESH,
   NODE_TYPE_MATERIAL,
   NODE_TYPE_SHADER,
-  NODE_TYPE_CUSTOM,  // Uer defined custom node
+  NODE_TYPE_CUSTOM  // Uer defined custom node
 
 };
 
