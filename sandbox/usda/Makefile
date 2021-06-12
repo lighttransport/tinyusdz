@@ -4,7 +4,7 @@ INCFLAGS=-I. -I../../src/external/ryu -I../../src
 
 # only applied to usda-parser.cc
 EXTRA_COMPILER_FLAGS=-Weverything -Werror -Wno-padded -Wno-c++98-compat
-CXXFLAGS=-std=c++11 -fsanitize=address -g -O0
+CXXFLAGS=-std=c++11 -fsanitize=address -g -O0 -DUSDA_MAIN
 CFLAGS=-fsanitize=address -g -O0
 LDFLAGS=-fsanitize=address
 
@@ -22,7 +22,7 @@ LDFLAGS=-fsanitize=address
 all: usda-parser t
 
 t: usda-parser
-	./usda-parser tests/shader.usda
+	./usda-parser tests/suzanne.usda
 	#./usda-parser tests/dict.usda
 	#./usda-parser tests/simple-blender-exported.usda
 	#./usda-parser tests/test.usda
