@@ -72,6 +72,7 @@ using Value = nonstd::variant<nonstd::monostate,
                               float2,
                               float3,
                               float4,
+                              std::vector<float3>,
                               std::string, Rel>;
 
 class Variable {
@@ -1703,7 +1704,7 @@ class USDAParser {
     return true;
   }
 
-  bool ParsePrimAttr() {
+  bool ParsePrimAttr(std::map<std::string, Variable> *props) {
     // prim_attr : uniform type (array_qual?) name '=' value interpolation?
     //           | type (array_qual?) name '=' value interpolation?
     //           ;
@@ -1960,6 +1961,10 @@ class USDAParser {
           std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
                     << value[i][2] << ")\n";
         }
+
+        Variable var;
+        var.value = value;
+        (*props)[primattr_name] = var;
       } else {
         std::array<float, 3> value;
         if (!ParseBasicTypeTuple<float, 3>(&value)) {
@@ -1967,6 +1972,7 @@ class USDAParser {
         }
         std::cout << "float3 = (" << value[0] << ", " << value[1] << ", "
                   << value[2] << ")\n";
+
       }
 
       std::map<std::string, Variable> meta;
@@ -2784,6 +2790,62 @@ class USDAParser {
     return true;
   }
 
+  bool SkipCommentAndWhitespaceAndNewline() {
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        // this should not happen.
+        return false;
+      }
+
+      // printf("sws c = %c\n", c);
+
+      if (c == '#') {
+        if (!SkipUntilNewline()) {
+          return false;
+        }
+      } else if ((c == ' ') || (c == '\t') || (c == '\f')) {
+        _line_col++;
+        // continue
+      } else if (c == '\n') {
+        _line_col = 0;
+        _line_row++;
+        // continue
+      } else if (c == '\r') {
+        // CRLF?
+        if (_sr->tell() < (_sr->size() - 1)) {
+          char d;
+          if (!_sr->read1(&d)) {
+            // this should not happen.
+            return false;
+          }
+
+          if (d == '\n') {
+            // CRLF
+          } else {
+            // unwind 1 char
+            if (!_sr->seek_from_current(-1)) {
+              // this should not happen.
+              return false;
+            }
+          }
+        }
+        _line_col = 0;
+        _line_row++;
+        // continue
+      } else {
+        // std::cout << "unwind\n";
+        // end loop
+        if (!_sr->seek_from_current(-1)) {
+          return false;
+        }
+        break;
+      }
+    }
+
+    return true;
+  }
+
   bool Expect(char expect_c) {
     if (!SkipWhitespace()) {
       return false;
@@ -3339,14 +3401,48 @@ class USDAParser {
           }
         } else {
           // Assume PrimAttr
-          if (!ParsePrimAttr()) {
+          std::map<std::string, Variable> props;
+          if (!ParsePrimAttr(&props)) {
             return false;
+          }
+
+          if (prim_type == "GeomMesh") {
+            GeomMesh mesh;
+            std::cout << "Reconstruct GeomMesh\n";
+            if (!ReconstructGeomMesh(props, &mesh)) {
+              _PushError("Failed to reconstruct GeomMesh.");
+              return false;
+            }
           }
         }
 
         if (!SkipWhitespaceAndNewline()) {
           return false;
         }
+      }
+    }
+
+    return true;
+  }
+
+  bool ReconstructGeomMesh(
+    const std::map<std::string, Variable> &properties,
+    GeomMesh *mesh) {
+
+    for (const auto &prop : properties) {
+      if (prop.first == "points") {
+        if (!prop.second.IsFloat3()) {
+          _PushError("`points` must be float3 type.");
+          return false;
+        }
+
+        const std::vector<float3> p = nonstd::get<std::vector<float3>>(prop.second.value);
+
+        mesh->points.resize(p.size() * 3);
+        memcpy(mesh->points.data(), p.data(), p.size() * 3);
+
+      } else {
+       
       }
     }
 
@@ -3367,10 +3463,18 @@ class USDAParser {
       // no meta info accepted.
     }
 
-    bool block_ok = ParseDefBlock();
-    if (!block_ok) {
-      _PushError("Failed to parse `def` block.\n");
-      return false;
+    // parse blocks
+    while (!_sr->eof()) {
+
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        return false;
+      }
+
+      bool block_ok = ParseDefBlock();
+      if (!block_ok) {
+        _PushError("Failed to parse `def` block.\n");
+        return false;
+      }
     }
 
     return true;
@@ -3466,6 +3570,7 @@ class USDAParser {
     _node_types.insert("Material");
     _node_types.insert("Shader");
     _node_types.insert("SphereLight");
+    _node_types.insert("Camera");
   }
 
   const tinyusdz::StreamReader *_sr = nullptr;
