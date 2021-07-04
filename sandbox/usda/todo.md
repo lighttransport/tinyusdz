@@ -8,3 +8,6 @@
             }
         )
 ```
+
+
+* [ ] Multi-threaded parsing of array values(e.g. `normal3f` array)
