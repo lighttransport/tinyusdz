@@ -1,6 +1,6 @@
-# Tiny USDZ loader
+# Tiny USDZ library 
 
-`TinyUSDZ` is dependency-free(depends only on C++ STL. Yes, you don't need USD library!) USDZ loader library written in C++11.
+`TinyUSDZ` is dependency-free(depends only on C++ STL. Yes, you don't need USD library!) USDZ/USDC/USDA library written in C++11.
 
 ![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)
 
@@ -8,11 +8,12 @@
 
 ## Status
 
-TinyUSDZ is currently in alpha stage. Not usable.
+TinyUSDZ is currently in work-in-progress. It does not compile and run.
 
 * [x] USDC data parse
 * [ ] USDA parse
   * Initial USDA parser starting to work(see `sandbox/usda/`)
+  * Support Blender-exported USDA support in 2021 Summer planned.
 * [ ] Reconstuct primitive and scene graph representaion(2021 Summer expected)
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
