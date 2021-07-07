@@ -3413,7 +3413,11 @@ class USDAParser {
               _PushError("Failed to reconstruct GeomMesh.");
               return false;
             }
-          }
+          } else if (prim_type == "BasisCurves") {
+
+	  } else {
+            std::cout << "TODO:" << prim_type << "\n";
+	  }
         }
 
         if (!SkipWhitespaceAndNewline()) {
@@ -3448,6 +3452,42 @@ class USDAParser {
 
     return true;
   }
+
+  bool ReconstructBasisCurves(
+    const std::map<std::string, Variable> &properties,
+    GeomBasisCurves *curves) {
+
+    for (const auto &prop : properties) {
+      if (prop.first == "points") {
+        if (!prop.second.IsFloat3() && !prop.second.IsArray()) {
+          _PushError("`points` must be float3 array type.");
+          return false;
+        }
+
+        const std::vector<float3> p = nonstd::get<std::vector<float3>>(prop.second.value);
+
+        curves->points.resize(p.size() * 3);
+        memcpy(curves->points.data(), p.data(), p.size() * 3);
+
+      } else if (prop.first == "curveVertexCounts") {
+        if (!prop.second.IsInt() && !prop.second.IsArray()) {
+          _PushError("`curveVertexCounts` must be int array type.");
+          return false;
+        }
+
+        const std::vector<int32_t> p = nonstd::get<std::vector<int32_t>>(prop.second.value);
+
+        curves->curveVertexCounts.resize(p.size());
+        memcpy(curves->curveVertexCounts.data(), p.data(), p.size());
+
+      } else {
+        std::cout << "TODO: " << prop.first << "\n";
+      }
+    }
+
+    return true;
+  }
+
 
   bool Parse() {
     bool header_ok = ParseMagicHeader();
