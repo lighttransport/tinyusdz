@@ -33,6 +33,8 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
+#include "usda-parser.hh"
+
 namespace tinyusdz {
 
 namespace usda {
@@ -3479,6 +3481,10 @@ class USDAParser {
     return true;
   }
 
+  bool CheckHeader() {
+    return ParseMagicHeader();
+  }
+
   bool Parse() {
     bool header_ok = ParseMagicHeader();
     if (!header_ok) {
@@ -3784,6 +3790,40 @@ bool USDAParser::ReadBasicType(double *value) {
   }
 
   return true;
+}
+
+bool IsUSDA(const std::string &filename) {
+
+  std::vector<uint8_t> data;
+  {
+    // TODO(syoyo): Support UTF-8 filename
+    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
+    if (!ifs) {
+      std::cerr << "Failed to open file: " << filename << "\n";
+      return -1;
+    }
+
+    // TODO(syoyo): Use mmap
+    ifs.seekg(0, ifs.end);
+    size_t sz = static_cast<size_t>(ifs.tellg());
+    if (int64_t(sz) < 0) {
+      // Looks reading directory, not a file.
+      std::cerr << "Looks like filename is a directory : \"" << filename
+                << "\"\n";
+      return -1;
+    }
+
+    data.resize(sz);
+
+    ifs.seekg(0, ifs.beg);
+    ifs.read(reinterpret_cast<char *>(&data.at(0)),
+             static_cast<std::streamsize>(sz));
+  }
+
+  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  tinyusdz::usda::USDAParser parser(&sr);
+
+  return parser.CheckHeader();
 }
 
 }  // namespace usda
