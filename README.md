@@ -57,8 +57,8 @@ TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses
 
 * C++11 compiler
   * [x] gcc 4.8.5(CentOS 7 default) or later
-  * [x] Visual Studio 2017 or later(2015 may OK)
-    * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2017)
+  * [x] Visual Studio 2019 or later(2017 may compiles)
+    * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
   * [x] clang 3.8 or later
   * [x] llvm-ming(clang) supported
 
