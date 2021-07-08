@@ -21,16 +21,16 @@
 #include <ryu/ryu.h>
 #include <ryu/ryu_parse.h>
 
-#include <nonstd/variant.hpp>
 #include <nonstd/expected.hpp>
+#include <nonstd/variant.hpp>
 
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
+#include "prim-types.hh"
 #include "simple-serialize.hh"
 #include "stream-reader.hh"
-#include "prim-types.hh"
 #include "tinyusdz.hh"
 
 namespace tinyusdz {
@@ -67,13 +67,9 @@ typedef std::array<double, 4> double4;
 // monostate = could be `Object` type in Variable class.
 // If you want to add more items, you need to generate nonstd::variant file,
 // since nonstd::variant has a limited number of types to use.
-using Value = nonstd::variant<nonstd::monostate,
-                              bool, int, float, double,
-                              float2,
-                              float3,
-                              float4,
-                              std::vector<float3>,
-                              std::string, Rel>;
+using Value =
+    nonstd::variant<nonstd::monostate, bool, int, float, double, float2, float3,
+                    float4, std::vector<float3>, std::string, Rel>;
 
 class Variable {
  public:
@@ -360,7 +356,7 @@ static bool tryParseDouble(const char *s, const char *s_end, double *result) {
     read = 0;
     end_not_reached = (curr != s_end);
     while (end_not_reached && is_digit(*curr)) {
-      if (exponent > std::numeric_limits<int>::max()/10) {
+      if (exponent > std::numeric_limits<int>::max() / 10) {
         // Integer overflow
         goto fail;
       }
@@ -382,7 +378,6 @@ assemble:
 fail:
   return false;
 }
-
 
 static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
   // Pase with Ryu.
@@ -623,7 +618,8 @@ static nonstd::expected<LexResult<std::string>, std::string> LexFloatR(
 // TODO: multi-threaded value array parser.
 //
 // Assumption.
-//   - Assume input string is one-line(no newline) and startsWith/endsWith brackets(e.g. `((1,2),(3, 4))`)
+//   - Assume input string is one-line(no newline) and startsWith/endsWith
+//   brackets(e.g. `((1,2),(3, 4))`)
 // Strategy.
 //   - Divide input string to N items equally.
 //   - Skip until valid character found(e.g. tuple character `(`)
@@ -1783,7 +1779,8 @@ class USDAParser {
     }
 
     // output node?
-    if (type_name == "token" && hasOutputs(primattr_name) && !hasConnect(primattr_name)) {
+    if (type_name == "token" && hasOutputs(primattr_name) &&
+        !hasConnect(primattr_name)) {
       // ok
       return true;
     }
@@ -1972,7 +1969,6 @@ class USDAParser {
         }
         std::cout << "float3 = (" << value[0] << ", " << value[1] << ", "
                   << value[2] << ")\n";
-
       }
 
       std::map<std::string, Variable> meta;
@@ -2998,9 +2994,9 @@ class USDAParser {
         _PushError(msg);
         return false;
       }
-      //std::cout << "float : " << fval << "\n";
+      // std::cout << "float : " << fval << "\n";
       auto ret = ParseFloat(fval);
-      //if (!ParseFloat(fval, &value, &ferr)) {
+      // if (!ParseFloat(fval, &value, &ferr)) {
       if (!ret) {
         std::string msg =
             "Failed to parse floating point literal for `" + varname + "`.\n";
@@ -3361,8 +3357,6 @@ class USDAParser {
       return false;
     }
 
-    std::cout << "aaa\n";
-
     // expect = '}'
     //        | def_block
     //        | prim_attr+
@@ -3414,10 +3408,9 @@ class USDAParser {
               return false;
             }
           } else if (prim_type == "BasisCurves") {
-
-	  } else {
+          } else {
             std::cout << "TODO:" << prim_type << "\n";
-	  }
+          }
         }
 
         if (!SkipWhitespaceAndNewline()) {
@@ -3429,10 +3422,8 @@ class USDAParser {
     return true;
   }
 
-  bool ReconstructGeomMesh(
-    const std::map<std::string, Variable> &properties,
-    GeomMesh *mesh) {
-
+  bool ReconstructGeomMesh(const std::map<std::string, Variable> &properties,
+                           GeomMesh *mesh) {
     for (const auto &prop : properties) {
       if (prop.first == "points") {
         if (!prop.second.IsFloat3()) {
@@ -3440,23 +3431,21 @@ class USDAParser {
           return false;
         }
 
-        const std::vector<float3> p = nonstd::get<std::vector<float3>>(prop.second.value);
+        const std::vector<float3> p =
+            nonstd::get<std::vector<float3>>(prop.second.value);
 
         mesh->points.resize(p.size() * 3);
         memcpy(mesh->points.data(), p.data(), p.size() * 3);
 
       } else {
-       
       }
     }
 
     return true;
   }
 
-  bool ReconstructBasisCurves(
-    const std::map<std::string, Variable> &properties,
-    GeomBasisCurves *curves) {
-
+  bool ReconstructBasisCurves(const std::map<std::string, Variable> &properties,
+                              GeomBasisCurves *curves) {
     for (const auto &prop : properties) {
       if (prop.first == "points") {
         if (!prop.second.IsFloat3() && !prop.second.IsArray()) {
@@ -3464,7 +3453,8 @@ class USDAParser {
           return false;
         }
 
-        const std::vector<float3> p = nonstd::get<std::vector<float3>>(prop.second.value);
+        const std::vector<float3> p =
+            nonstd::get<std::vector<float3>>(prop.second.value);
 
         curves->points.resize(p.size() * 3);
         memcpy(curves->points.data(), p.data(), p.size() * 3);
@@ -3475,7 +3465,8 @@ class USDAParser {
           return false;
         }
 
-        const std::vector<int32_t> p = nonstd::get<std::vector<int32_t>>(prop.second.value);
+        const std::vector<int32_t> p =
+            nonstd::get<std::vector<int32_t>>(prop.second.value);
 
         curves->curveVertexCounts.resize(p.size());
         memcpy(curves->curveVertexCounts.data(), p.data(), p.size());
@@ -3487,7 +3478,6 @@ class USDAParser {
 
     return true;
   }
-
 
   bool Parse() {
     bool header_ok = ParseMagicHeader();
@@ -3505,9 +3495,13 @@ class USDAParser {
 
     // parse blocks
     while (!_sr->eof()) {
-
       if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
+      }
+
+      if (_sr->eof()) {
+        // Whitespaces in the end of line.
+        break;
       }
 
       bool block_ok = ParseDefBlock();
