@@ -153,6 +153,32 @@ See `examples` directory for more examples.
 
 See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
 
+## Blender add-on(W.I.P)
+
+Supprted Blender version
+
+* 2.93 LTS(Python 3.9)
+
+### Linux
+
+Edit path to python interpreter in `scripts/bootstrap-cmake-linux-blender-pymodule.sh`, then
+
+```
+$ ./scripts/bootstrap-cmake-linux-blender-pymodule.sh
+$ cd build
+$ make
+```
+
+Copy `tinyusd_blender.*-linux-gnu.so` to blender's folder.
+Recommended location is `USER` folder(`~/.config/blender/2.xx`)
+
+Create `scripts/addons/modules` folder if required
+
+```
+mkdir -p ~/.config/blender/2.93/scripts/addons/modules
+```
+
+
 ## TODO
 
 * [ ] Support Crate(binary) version 0.8.0(USD v20.11 default)

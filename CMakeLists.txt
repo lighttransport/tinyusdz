@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 set(BUILD_TARGET "tinyusdz") # TODO: drop `z`
 set(BUILD_TARGET_C "c-tinyusd")
 set(BUILD_TARGET_PY "tinyusd")
+set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
 set(TEST_TARGET "test_tinyusdz")
 
 project(${BUILD_TARGET} C CXX)
@@ -19,6 +20,8 @@ set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
+
+option(TINYUSDZ_WITH_BLENDER_ADDON "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON" ON)
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
@@ -67,6 +70,10 @@ if(TINYUSDZ_USE_CCACHE)
   endif()
 endif()
 
+if (TINYUSDZ_WITH_BLENDER_ADDON)
+  set(TINYUSDZ_WITH_PYTHON ON)
+endif ()
+
 if (TINYUSDZ_WITH_PYTHON)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11 pybind11_build)
 endif ()
@@ -93,6 +100,10 @@ set(TINYUSDZ_DEP_SOURCES
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
     ${PROJECT_SOURCE_DIR}/src/python-bindings.cc
+  )
+
+set(TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc
   )
 
 if (TINYUSDZ_WITH_EXR)
@@ -222,7 +233,7 @@ if (TINYUSDZ_WITH_C_API)
   target_link_libraries(${BUILD_TARGET_C} PRIVATE ${BUILD_TARGET})
 endif ()
 
-if (TINYUSDZ_WITH_PYTHON)
+if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES))
   pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
 
@@ -231,6 +242,16 @@ if (TINYUSDZ_WITH_PYTHON)
     COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_PY}>" "${CMAKE_SOURCE_DIR}/python/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
     COMMENT "copying python module file to python/" VERBATIM
   )
+
+endif ()
+
+if (TINYUSDZ_WITH_BLENDER_ADDON)
+  pybind11_add_module(${BUILD_TARGET_BLENDER_PY} ${TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES})
+  add_sanitizers(${BUILD_TARGET_BLENDER_PY})
+
+  # For Python.h header files.
+  # Assume Blender 2.93 LTS(Python 3.9)
+  target_include_directories(${BUILD_TARGET_BLENDER_PY} PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
 
 endif ()
 
