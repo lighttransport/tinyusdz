@@ -84,6 +84,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
     )
 
 set(TINYUSDZ_C_API_SOURCES
@@ -201,6 +202,7 @@ add_sanitizers(${BUILD_TARGET})
 
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
+target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
 
 if (TINYUSDZ_WITH_EXR)
   if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
