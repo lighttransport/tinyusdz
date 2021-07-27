@@ -1,12 +1,15 @@
 cmake_minimum_required(VERSION 3.5)
 
-set(BUILD_TARGET "tinyusdz")
+set(BUILD_TARGET "tinyusdz") # TODO: drop `z`
+set(BUILD_TARGET_C "c-tinyusd")
+set(BUILD_TARGET_PY "tinyusd")
 set(TEST_TARGET "test_tinyusdz")
 
-project(${BUILD_TARGET} CXX)
+project(${BUILD_TARGET} C CXX)
 
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
+option(TINYUSDZ_WITH_C_API "Enable C API." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
@@ -14,12 +17,22 @@ option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set 
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd) 
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
+
+option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
+
+# -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
+option(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB "Use system's zlib instead of miniz for TinyEXR" OFF)
+# ---------
 
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
+
+if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
+  find_package(ZLIB REQUIRED)
+endif ()
 
 # Require strict C++11 mode(e.g. `-std=c++11`)
 set(CMAKE_CXX_STANDARD 11)
@@ -54,11 +67,20 @@ if(TINYUSDZ_USE_CCACHE)
   endif()
 endif()
 
+if (TINYUSDZ_WITH_PYTHON)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11 pybind11_build)
+endif ()
+
+
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    )
+
+set(TINYUSDZ_C_API_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc
     )
 
 set(TINYUSDZ_DEP_SOURCES
@@ -69,7 +91,18 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
   )
 
+set(TINYUSDZ_PYTHON_BINDING_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/python-bindings.cc
+  )
+
 if (TINYUSDZ_WITH_EXR)
+  if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+  else ()
+    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+  endif ()
+
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
 endif (TINYUSDZ_WITH_EXR)
 
@@ -152,11 +185,18 @@ if (TINYUSDZ_WITH_OPENSUBDIV)
 
 endif (TINYUSDZ_WITH_OPENSUBDIV)
 
-add_library(${BUILD_TARGET} ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES})
+add_library(${BUILD_TARGET} ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
+
+if (TINYUSDZ_WITH_EXR)
+  if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
+    list(APPEND ${TINYUSDZ_EXT_LIBRARIES} ZLIB::ZLIB)
+  endif ()
+endif (TINYUSDZ_WITH_EXR)
+
 target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
 
 if (TINYUSDZ_WITH_EXR)
@@ -176,6 +216,24 @@ endif (TINYUSDZ_WITH_OPENSUBDIV)
 IF (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set_source_files_properties(${TINYUSDZ_SOURCES} PROPERTIES COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function")
 ENDIF ()
+
+if (TINYUSDZ_WITH_C_API)
+  add_library(${BUILD_TARGET_C} ${TINYUSDZ_C_API_SOURCES})
+  target_link_libraries(${BUILD_TARGET_C} PRIVATE ${BUILD_TARGET})
+endif ()
+
+if (TINYUSDZ_WITH_PYTHON)
+  pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
+  add_sanitizers(${BUILD_TARGET_PY})
+
+  # copy python binding .so file to python/
+  add_custom_command(TARGET ${BUILD_TARGET_PY} POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_PY}>" "${CMAKE_SOURCE_DIR}/python/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
+    COMMENT "copying python module file to python/" VERBATIM
+  )
+
+endif ()
+
 
 if (TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_dump)
