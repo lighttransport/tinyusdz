@@ -29,6 +29,10 @@
 // sdlviewer
 #include "gui.hh"
 
+#if defined(USDVIEW_USE_NATIVEFILEDIALOG)
+#include "nfd.h"
+#endif
+
 struct GUIContext {
   enum AOVMode {
     AOV_COLOR = 0,
@@ -268,6 +272,39 @@ void RenderThread(GUIContext* ctx) {
   }
 };
 
+
+#if defined(USDVIEW_USE_NATIVEFILEDIALOG)
+// TODO: widechar(UTF-16) support for Windows
+std::string OpenFileDialog() {
+
+  std::string path;
+
+  nfdchar_t *outPath;
+  nfdfilteritem_t filterItem[1] = { { "USD file", "usda,usdc,usdz"} };
+
+  nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+  if ( result == NFD_OKAY )
+  {
+        puts("Success!");
+        path = outPath;
+        NFD_FreePath(outPath);
+    }
+    else if ( result == NFD_CANCEL )
+    {
+        puts("User pressed cancel.");
+    }
+    else
+    {
+        printf("Error: %s\n", NFD_GetError() );
+    }
+
+
+    return path;
+
+}
+#endif
+
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -300,8 +337,15 @@ int main(int argc, char** argv) {
   std::string filename = "../../../models/suzanne.usdc";
 #endif
 
+#if defined(USDVIEW_USE_NATIVEFILEDIALOG)
+  NFD_Init();
+
+#endif
+
   if (argc > 1) {
     filename = std::string(argv[1]);
+  } else {
+
   }
 
   std::cout << "Loading file " << filename << "\n";
@@ -476,6 +520,13 @@ int main(int argc, char** argv) {
 
     bool update_display = false;
 
+#if defined(USDVIEW_USE_NATIVEFILEDIALOG)
+    if (ImGui::Button("Open file ...")) {
+      std::string filename = OpenFileDialog();
+      std::cout << "TODO: Open file" << "\n";
+    }
+#endif
+
     if (example::ImGuiComboUI("aov", aov_name, aov_list)) {
       gui_ctx.aov_mode = aov_list[aov_name];
       update_display = true;
@@ -579,6 +630,10 @@ int main(int argc, char** argv) {
   SDL_DestroyWindow(window);
 
   ImGui::DestroyContext();
+
+#if defined(USDVIEW_USE_NATIVEFILEDIALOG)
+  NFD_Quit();
+#endif
 
   return EXIT_SUCCESS;
 }
