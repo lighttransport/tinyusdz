@@ -1735,6 +1735,28 @@ struct Extent {
   Vec3f upper{{-std::numeric_limits<float>::infinity(),
                -std::numeric_limits<float>::infinity(),
                -std::numeric_limits<float>::infinity()}};
+
+  bool Valid() const {
+    if (lower[0] > upper[0]) return false;
+    if (lower[1] > upper[1]) return false;
+    if (lower[2] > upper[2]) return false;
+
+    return std::isfinite(lower[0]) && std::isfinite(lower[1]) && std::isfinite(lower[2])
+           && std::isfinite(upper[0]) && std::isfinite(upper[1]) && std::isfinite(upper[2]);
+  }
+
+  std::array<std::array<float, 3>, 2> to_array() const {
+    std::array<std::array<float, 3>, 2> ret;
+    ret[0][0] = lower[0];
+    ret[0][1] = lower[1];
+    ret[0][2] = lower[2];
+    ret[1][0] = upper[0];
+    ret[1][1] = upper[1];
+    ret[1][2] = upper[2];
+
+    return ret;
+
+  }
 };
 
 //
