@@ -47,6 +47,58 @@ json ToJSON(tinyusdz::GeomMesh& mesh) {
 
   j["purpose"] = mesh.purpose;
 
+  {
+    std::string v = "inherited";
+    if (mesh.visibility == tinyusdz::VisibilityInvisible) {
+      v = "invisible";
+    }
+    j["visibility"] = v;
+  }
+
+
+  if (mesh.extent.Valid()) {
+    j["extent"] = mesh.extent.to_array();
+  }
+
+  // subd
+  {
+    std::string scheme = "none";
+    if (mesh.subdivisionScheme == tinyusdz::SubdivisionSchemeCatmullClark) {
+      scheme = "catmullClark";
+    } else if (mesh.subdivisionScheme == tinyusdz::SubdivisionSchemeLoop) {
+      scheme = "loop";
+    } else if (mesh.subdivisionScheme == tinyusdz::SubdivisionSchemeBilinear) {
+      scheme = "bilinear";
+    }
+
+    j["subdivisionScheme"] = scheme;
+
+    if (mesh.cornerIndices.size()) {
+      j["cornerIndices"] = mesh.cornerIndices;
+    }
+    if (mesh.cornerSharpnesses.size()) {
+      j["cornerSharpness"] = mesh.cornerSharpnesses;
+    }
+
+    if (mesh.creaseIndices.size()) {
+      j["creaseIndices"] = mesh.creaseIndices;
+    }
+
+    if (mesh.creaseLengths.size()) {
+      j["creaseLengths"] = mesh.creaseLengths;
+    }
+
+    if (mesh.creaseSharpnesses.size()) {
+      j["creaseSharpnesses"] = mesh.creaseSharpnesses;
+    }
+
+    if (mesh.interpolateBoundary.size()) {
+      j["interpolateBoundary"] = mesh.interpolateBoundary;
+    }
+
+  }
+
+
   return j;
 }
 
