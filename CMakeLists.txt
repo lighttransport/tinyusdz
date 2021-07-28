@@ -21,7 +21,7 @@ option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
-option(TINYUSDZ_WITH_BLENDER_ADDON "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON" ON)
+option(TINYUSDZ_WITH_BLENDER_ADDON "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON" OFF)
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
