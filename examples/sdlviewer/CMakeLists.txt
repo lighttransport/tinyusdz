@@ -7,6 +7,7 @@ project(${BUILD_TARGET} CXX)
 
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
+option(USDVIEW_USE_NATIVEFILEDIALOG "Use nativefiledialog. Requires gtk+-3 libs on linux to build" ON)
 
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/../../src/osd) 
@@ -20,6 +21,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
+
+if (USDVIEW_USE_NATIVEFILEDIALOG)
+ add_subdirectory(${PROJECT_SOURCE_DIR}/../common/nativefiledialog-extended nfd_build)
+endif()
 
 # [ccache]
 if(TINYUSDZ_USE_CCACHE)
@@ -173,6 +178,7 @@ list(APPEND SOURCES
     ../../src/integerCoding.cpp
     ../../src/pxrLZ4/lz4.cpp
     ../../src/lz4-compression.cc
+    ../../src/prim-types.cc
 )
 
 set(GUI_SOURCES
@@ -201,8 +207,14 @@ target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../
 
 #target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/SDL2-2.0.12/include"
 
+if (USDVIEW_USE_NATIVEFILEDIALOG)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "USDVIEW_USE_NATIVEFILEDIALOG")
+  list(APPEND EXT_LIBRARIES nfd)
+endif()
+
 target_link_libraries(
     ${BUILD_TARGET}
+    PRIVATE
     SDL2-static
     SDL2main
     ${EXT_LIBRARIES}
