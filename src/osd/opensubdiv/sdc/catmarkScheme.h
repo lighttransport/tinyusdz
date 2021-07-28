@@ -31,6 +31,8 @@
 #include <cassert>
 #include <cmath>
 
+#define kPI (3.14159265358979323846)
+
 namespace OpenSubdiv {
 namespace OPENSUBDIV_VERSION {
 
@@ -397,7 +399,7 @@ Scheme<SCHEME_CATMARK>::assignCreaseLimitTangentMasks(VERTEX const& vertex,
         //  The irregular case -- formulae from Biermann et al:
 
         double k     = (double) (interiorEdgeCount + 1);
-        double theta = M_PI / k;
+        double theta = kPI / k;
 
         double cosTheta = std::cos(theta);
         double sinTheta = std::sin(theta);
@@ -478,7 +480,7 @@ Scheme<SCHEME_CATMARK>::assignSmoothLimitTangentMasks(VERTEX const& vertex,
         tan1Mask.FaceWeight(2) = -1.0f;
         tan1Mask.FaceWeight(3) =  1.0f;
     } else {
-        double theta = 2.0f * M_PI / (double)valence;
+        double theta = 2.0f * kPI / (double)valence;
 
         double cosTheta     = std::cos(theta);
         double cosHalfTheta = std::cos(theta * 0.5f);
