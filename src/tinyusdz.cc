@@ -63,7 +63,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #endif // __GLIBCXX__
 
+#elif !defined(__ANDROID__)
+
+// Assume Posix
+#include <wordexp.h>
+
 #endif // _WIN32
+
+
 
 
 // local debug flag(now defined in tinyusdz.hh)
@@ -5749,7 +5756,7 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
   return true;
 }
 
-#if _WIN32
+#ifdef _WIN32
 bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
