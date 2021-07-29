@@ -63,10 +63,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #endif // __GLIBCXX__
 
-#elif !defined(__ANDROID__)
+#else // !_WIN32
+
+#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
+    defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+
+// non posix
+
+#else
 
 // Assume Posix
 #include <wordexp.h>
+
+#endif
 
 #endif // _WIN32
 
@@ -170,7 +179,7 @@ std::string ExpandFilePath(const std::string &filepath, void *) {
 
 #else
 
-#if defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
+#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
     defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   // no expansion
   std::string s = filepath;
