@@ -47,12 +47,17 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifdef _WIN32
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 
 #include <windows.h>  // include API for expanding a file path
 
+#undef NOMINMAX
 #undef WIN32_LEAN_AND_MEAN
 
 #if defined(__GLIBCXX__)  // mingw
