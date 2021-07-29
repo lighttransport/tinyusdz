@@ -212,6 +212,10 @@ endif (TINYUSDZ_WITH_EXR)
 
 target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
 
+if (IOS)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_BUILD_IOS")
+endif ()
+
 if (TINYUSDZ_WITH_EXR)
   target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_SUPPORT_EXR")
 endif (TINYUSDZ_WITH_EXR)
