@@ -2214,10 +2214,12 @@ struct USDLoadOptions {
 //};
 #endif
 
+//
+
 ///
 /// Load USDZ(zip) from a file.
 ///
-/// @param[in] filename USDZ filename
+/// @param[in] filename USDZ filename(UTF-8)
 /// @param[out] scene USD scene.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
@@ -2229,10 +2231,18 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 
+
+#ifdef _WIN32
+// WideChar version
+bool LoadUSDZFromFile(const std::wstring &filename, Scene *scene,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options = USDLoadOptions());
+#endif
+
 ///
 /// Load USDC(binary) from a file.
 ///
-/// @param[in] filename USDC filename
+/// @param[in] filename USDC filename(UTF-8)
 /// @param[out] scene USD scene.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
@@ -2263,7 +2273,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 ///
 /// Load USDA(ascii) from a file.
 ///
-/// @param[in] filename USDA filename
+/// @param[in] filename USDA filename(UTF-8)
 /// @param[out] scene USD scene.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
