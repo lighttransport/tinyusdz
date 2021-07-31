@@ -24,3 +24,7 @@ UDIM is supported.
 
 .png, .jpg
 
+## ARKit Schema info
+
+https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
+
