@@ -4,6 +4,11 @@
 #endif
 #endif 
 
+#if defined(__EMSCRIPTEN__)
+/* work around of DEPRECATE macro */
+#define LZ4_DISABLE_DEPRECATE_WARNINGS
+#endif
+
 #include "lz4-compression.hh"
 
 #include <cstring>

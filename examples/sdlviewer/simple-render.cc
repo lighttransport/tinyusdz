@@ -8,9 +8,9 @@
 #include "nanosg.h"
 
 // common
+#include "mapbox/earcut.hpp"  // For polygon triangulation
 #include "matrix.h"
 #include "trackball.h"
-#include "mapbox/earcut.hpp" // For polygon triangulation
 
 const float kPI = 3.141592f;
 
@@ -53,8 +53,10 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
             << "\n";
 
-  std::cout << "# of faceVertexCounts: " << mesh.faceVertexCounts.size() << "\n";
-  std::cout << "# of faceVertexIndices: " << mesh.faceVertexIndices.size() << "\n";
+  std::cout << "# of faceVertexCounts: " << mesh.faceVertexCounts.size()
+            << "\n";
+  std::cout << "# of faceVertexIndices: " << mesh.faceVertexIndices.size()
+            << "\n";
 
   // for (size_t i = 0; i < facevarying_normals.size() / 3; i++) {
   //  std::cout << "fid[" << i << "] = " << facevarying_normals[3 * i + 0] << ",
@@ -183,7 +185,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   dst->int_primvars.clear();
   dst->int_primvars_map.clear();
 
-  for (const auto &attrib : mesh.attribs) {
+  for (const auto& attrib : mesh.attribs) {
     if (!attrib.second.facevarying) {
       continue;
     }
@@ -192,8 +194,8 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
       continue;
     }
 
-    if (attrib.second.buffer.GetDataType() == tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT) {
-
+    if (attrib.second.buffer.GetDataType() ==
+        tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT) {
       Buffer<float> buf;
       buf.num_coords = attrib.second.buffer.GetNumCoords();
       buf.data = attrib.second.buffer.GetAsFloatArray();
@@ -203,8 +205,8 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 
       std::cout << "Added [" << attrib.first << "] to float_primvars\n";
 
-    } else if (attrib.second.buffer.GetDataType() == tinyusdz::BufferData::BUFFER_DATA_TYPE_INT) {
-
+    } else if (attrib.second.buffer.GetDataType() ==
+               tinyusdz::BufferData::BUFFER_DATA_TYPE_INT) {
       Buffer<int32_t> buf;
       buf.num_coords = attrib.second.buffer.GetNumCoords();
       buf.data = attrib.second.buffer.GetAsInt32Array();
@@ -217,8 +219,6 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
     } else {
       // TODO
     }
-
-
   }
 
   std::cout << "num points = " << dst->vertices.size() / 3 << "\n";
@@ -497,17 +497,172 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
   return true;
 }
 
-bool RenderScene::Setup() {
+bool RenderLines(int start_y, int end_y, const RenderScene& scene,
+                 const Camera& cam, AOV* output) {
+  int width = output->width;
+  int height = output->height;
 
+  float eye[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
+  float look_at[3] = {cam.look_at[0], cam.look_at[1], cam.look_at[2]};
+  float up[3] = {cam.up[0], cam.up[1], cam.up[2]};
+  float fov = cam.fov;
+  float3 origin, corner, u, v;
+  BuildCameraFrame(&origin, &corner, &u, &v, cam.quat, eye, look_at, up, fov,
+                   width, height);
+
+  // Single threaded
+  for (int y = start_y; y < std::min(end_y, height); y++) {
+    for (int x = 0; x < width; x++) {
+      nanort::Ray<float> ray;
+      ray.org[0] = origin[0];
+      ray.org[1] = origin[1];
+      ray.org[2] = origin[2];
+
+      float3 dir;
+
+      float u0 = 0.5f;
+      float u1 = 0.5f;
+
+      dir = corner + (float(x) + u0) * u + (float(y) + u1) * v;
+
+      dir = vnormalize(dir);
+      ray.dir[0] = dir[0];
+      ray.dir[1] = dir[1];
+      ray.dir[2] = dir[2];
+
+      size_t pixel_idx = y * width + x;
+
+      // HACK. Use the first mesh
+      const DrawGeomMesh& mesh = scene.draw_meshes[0];
+
+      // Intersector functor.
+      nanort::TriangleIntersector<> triangle_intersector(
+          mesh.vertices.data(), mesh.facevarying_indices.data(),
+          sizeof(float) * 3);
+      nanort::TriangleIntersection<> isect;  // stores isect info
+
+      bool hit = mesh.accel.Traverse(ray, triangle_intersector, &isect);
+
+      if (hit) {
+        float3 Ng;
+        {
+          // geometric normal.
+          float3 v0;
+          float3 v1;
+          float3 v2;
+
+          size_t vid0 = mesh.facevarying_indices[3 * isect.prim_id + 0];
+          size_t vid1 = mesh.facevarying_indices[3 * isect.prim_id + 1];
+          size_t vid2 = mesh.facevarying_indices[3 * isect.prim_id + 2];
+
+          v0[0] = mesh.vertices[3 * vid0 + 0];
+          v0[1] = mesh.vertices[3 * vid0 + 1];
+          v0[2] = mesh.vertices[3 * vid0 + 2];
+
+          v1[0] = mesh.vertices[3 * vid1 + 0];
+          v1[1] = mesh.vertices[3 * vid1 + 1];
+          v1[2] = mesh.vertices[3 * vid1 + 2];
+
+          v2[0] = mesh.vertices[3 * vid2 + 0];
+          v2[1] = mesh.vertices[3 * vid2 + 1];
+          v2[2] = mesh.vertices[3 * vid2 + 2];
+
+          CalcNormal(Ng, v0, v1, v2);
+        }
+
+        float3 Ns;
+        if (mesh.facevarying_normals.size()) {
+          float3 n0;
+          float3 n1;
+          float3 n2;
+
+          n0[0] = mesh.facevarying_normals[9 * isect.prim_id + 0];
+          n0[1] = mesh.facevarying_normals[9 * isect.prim_id + 1];
+          n0[2] = mesh.facevarying_normals[9 * isect.prim_id + 2];
+
+          n1[0] = mesh.facevarying_normals[9 * isect.prim_id + 3];
+          n1[1] = mesh.facevarying_normals[9 * isect.prim_id + 4];
+          n1[2] = mesh.facevarying_normals[9 * isect.prim_id + 5];
+
+          n2[0] = mesh.facevarying_normals[9 * isect.prim_id + 6];
+          n2[1] = mesh.facevarying_normals[9 * isect.prim_id + 7];
+          n2[2] = mesh.facevarying_normals[9 * isect.prim_id + 8];
+
+          // lerp normal.
+          Ns = vnormalize(Lerp3(n0, n1, n2, isect.u, isect.v));
+        } else {
+          Ns = Ng;
+        }
+
+        float3 texcoord = {0.0f, 0.0f, 0.0f};
+        if (mesh.facevarying_texcoords.size()) {
+          float3 t0;
+          float3 t1;
+          float3 t2;
+
+          t0[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 0];
+          t0[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 1];
+          t0[2] = 0.0f;
+
+          t1[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 2];
+          t1[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 3];
+          t1[2] = 0.0f;
+
+          t2[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 4];
+          t2[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 5];
+          t2[2] = 0.0f;
+
+          texcoord = Lerp3(t0, t1, t2, isect.u, isect.v);
+        }
+
+        output->rgb[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+        output->rgb[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+        output->rgb[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+        output->geometric_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+        output->geometric_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+        output->geometric_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+        output->shading_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+        output->shading_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+        output->shading_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+        output->texcoords[2 * pixel_idx + 0] = texcoord[0];
+        output->texcoords[2 * pixel_idx + 1] = texcoord[1];
+
+      } else {
+        output->rgb[3 * pixel_idx + 0] = 0.0f;
+        output->rgb[3 * pixel_idx + 1] = 0.0f;
+        output->rgb[3 * pixel_idx + 2] = 0.0f;
+
+        output->geometric_normal[3 * pixel_idx + 0] = 0.0f;
+        output->geometric_normal[3 * pixel_idx + 1] = 0.0f;
+        output->geometric_normal[3 * pixel_idx + 2] = 0.0f;
+
+        output->shading_normal[3 * pixel_idx + 0] = 0.0f;
+        output->shading_normal[3 * pixel_idx + 1] = 0.0f;
+        output->shading_normal[3 * pixel_idx + 2] = 0.0f;
+
+        output->texcoords[2 * pixel_idx + 0] = 0.0f;
+        output->texcoords[2 * pixel_idx + 1] = 0.0f;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool RenderScene::Setup() {
   //
   // Construct scene
   //
   {
-    float local_xform[4][4]; // TODO
+    float local_xform[4][4];  // TODO
 
     for (size_t i = 0; i < draw_meshes.size(); i++) {
       // Construct Node by passing the pointer to draw_meshes[i]
-      // Pointer address of draw_meshes[i] must be identical during app's lifetime.
+      // Pointer address of draw_meshes[i] must be identical during app's
+      // lifetime.
       nanosg::Node<float, example::DrawGeomMesh> node(&draw_meshes[i]);
 
       std::cout << "SetName: " << draw_meshes[i].ref_mesh->name << "\n";
@@ -518,7 +673,6 @@ bool RenderScene::Setup() {
       this->nodes.push_back(node);
       this->scene.AddNode(node);
     }
-
   }
 
   for (size_t i = 0; i < draw_meshes.size(); i++) {

@@ -9,6 +9,11 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
 option(USDVIEW_USE_NATIVEFILEDIALOG "Use nativefiledialog. Requires gtk+-3 libs on linux to build" ON)
 
+if (EMSCRIPTEN)
+  # Disable nfd
+  set(USDVIEW_USE_NATIVEFILEDIALOG OFF CACHE INTERNAL "" FORCE)
+endif ()
+
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/../../src/osd) 
 
@@ -68,13 +73,33 @@ function ( ADD_SDL2_LIB )
   set(SDL_STATIC ON CACHE INTERNAL "" FORCE)
   add_subdirectory(../common/SDL2-2.0.14/ SDL2)
 endfunction ()
-ADD_SDL2_LIB()
+
+if (EMSCRIPTEN)
+  # Use emcc ported SDL2
+  # https://stackoverflow.com/questions/61590519/how-to-use-emscripten-ports-sdl2-and-freetype-with-cmake
+
+  # Assume `suzanne.usdc` is coped to build directory with PRE_BUILD custom command
+  # TODO: Read USD file from JS world
+  # TODO: Use max memory size.
+  set(USE_FLAGS "-s ASSERTIONS=1 -s USE_SDL=2 -s USE_FREETYPE=1 --embed-file suzanne.usdc")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${USE_FLAGS}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${USE_FLAGS}")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${USE_FLAGS} -s ALLOW_MEMORY_GROWTH=1")
+  set(CMAKE_EXECUTABLE_SUFFIX .html)
+
+  set(USDVIEW_SDL2_LIBRARIES ${SDL2_LIBRARIES})
+else()
+  ADD_SDL2_LIB()
+  set(USDVIEW_SDL2_LIBRARIES SDL2-static SDL2main)
+endif()
 
 
 if(WIN32)
-    # nothing.
+    # do nothing.
 elseif(APPLE)
     find_library(COCOA Cocoa REQUIRED)
+elseif(EMSCRIPTEN)
+    # do nothing
 else()
     find_package(X11 REQUIRED)
 endif()
@@ -194,6 +219,7 @@ set(GUI_SOURCES
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
 add_sanitizers(${BUILD_TARGET})
+target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
 
 if (UNIX)
   target_include_directories(${BUILD_TARGET} PUBLIC ${X11_INCLUDE_DIR})
@@ -212,28 +238,30 @@ if (USDVIEW_USE_NATIVEFILEDIALOG)
   list(APPEND EXT_LIBRARIES nfd)
 endif()
 
+if(WIN32)
+    # nothing.
+elseif(APPLE)
+    list(APPEND EXT_LIBRARIES ${COCOA})
+else()
+    list(APPEND EXT_LIBRARIES ${X11_LIBRARIES})
+endif()
+
 target_link_libraries(
     ${BUILD_TARGET}
     PRIVATE
-    SDL2-static
-    SDL2main
+    ${USDVIEW_SDL2_LIBRARIES}
     ${EXT_LIBRARIES}
     ${CMAKE_DL_LIBS}
 )
 
-if(WIN32)
-    # nothing.
-elseif(APPLE)
-    target_link_libraries(
-        ${BUILD_TARGET}
-        ${COCOA}
-    )
-else()
-    target_link_libraries(
-        ${BUILD_TARGET}
-        ${X11_LIBRARIES}
-    )
+if (EMSCRIPTEN)
+  add_custom_command(TARGET ${BUILD_TARGET} PRE_BUILD        # Adds a post-build event to MyTest
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different  # which executes "cmake - E copy_if_different..."
+              "${PROJECT_SOURCE_DIR}/../../models/suzanne.usdc"      # src
+              $<TARGET_FILE_DIR:${BUILD_TARGET}>)           # dest
 endif()
+
+
 
 source_group("Source Files" FILES ${SOURCES})
 
