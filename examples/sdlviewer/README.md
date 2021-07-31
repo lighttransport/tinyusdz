@@ -25,6 +25,19 @@ $ make
 $ ./usdz_view <input.usdz>
 ```
 
+## WebAssembly demo
+
+Setup emcc, then
+
+```
+$ ./bootstrap-emscripten-linux.sh
+$ cd build_emcc/
+$ make
+```
+
+Then run http server(e.g. `python -m http.server`) and open `usdz_view.html`.
+
+
 ## TODO
 
 * [ ] Subdivision surface
@@ -33,3 +46,4 @@ $ ./usdz_view <input.usdz>
 
 * imgui : MIT license.
 * SDL2 : zlib license.
+* nativefiledialog-extended : zlib license.
