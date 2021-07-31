@@ -10,6 +10,11 @@
 #include <mutex>   // C++11
 #include <thread>  // C++11
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#endif
+
 // ../common/SDL2
 #include <SDL.h>
 
@@ -20,17 +25,24 @@
 // common
 #include "imgui.h"
 #include "imgui_sdl/imgui_sdl.h"
+#include "roboto_mono_embed.inc.h"
 #include "simple-render.hh"
 #include "tinyusdz.hh"
 #include "trackball.h"
-
-#include "roboto_mono_embed.inc.h"
 
 // sdlviewer
 #include "gui.hh"
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
 #include "nfd.h"
+#endif
+
+#define EMULATE_EMSCRIPTEN
+
+#if defined(EMULATE_EMSCRIPTEN)
+#define EM_BOOL int
+#define EM_TRUE 1
+#define EM_FALSE 0
 #endif
 
 struct GUIContext {
@@ -59,7 +71,7 @@ struct GUIContext {
   bool ctrl_pressed = false;
   bool tab_pressed = false;
 
-  float yaw = 90.0f; // for Z up scene
+  float yaw = 90.0f;  // for Z up scene
   float pitch = 0.0f;
   float roll = 0.0f;
 
@@ -77,9 +89,21 @@ struct GUIContext {
   std::atomic<bool> update_texture{false};
   std::atomic<bool> redraw{true};  // require redraw
   std::atomic<bool> quit{false};
+
+  SDL_Renderer* renderer;
+  SDL_Texture* texture;  // Texture for rendered image
+  int render_width = 512;
+  int render_height = 512;
+
+#if __EMSCRIPTEN__ || defined(EMULATE_EMSCRIPTEN)
+  bool render_finished{false};
+  int current_render_line = 0;
+  int render_line_size = 32; // render images with this lines per animation loop.
+  // for emscripten environment
+#endif
 };
 
-GUIContext gCtx;
+GUIContext g_gui_ctx;
 
 namespace {
 
@@ -114,7 +138,7 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
   }
 
   for (const auto& child : node.children) {
-    //DrawNode(scene, scene.nodes.at(child));
+    // DrawNode(scene, scene.nodes.at(child));
   }
 
   if (node.type == tinyusdz::NODE_TYPE_XFORM) {
@@ -272,38 +296,193 @@ void RenderThread(GUIContext* ctx) {
   }
 };
 
-
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
 // TODO: widechar(UTF-16) support for Windows
 std::string OpenFileDialog() {
-
   std::string path;
 
-  nfdchar_t *outPath;
-  nfdfilteritem_t filterItem[1] = { { "USD file", "usda,usdc,usdz"} };
+  nfdchar_t* outPath;
+  nfdfilteritem_t filterItem[1] = {{"USD file", "usda,usdc,usdz"}};
 
   nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
-  if ( result == NFD_OKAY )
-  {
-        puts("Success!");
-        path = outPath;
-        NFD_FreePath(outPath);
-    }
-    else if ( result == NFD_CANCEL )
-    {
-        puts("User pressed cancel.");
-    }
-    else
-    {
-        printf("Error: %s\n", NFD_GetError() );
-    }
+  if (result == NFD_OKAY) {
+    puts("Success!");
+    path = outPath;
+    NFD_FreePath(outPath);
+  } else if (result == NFD_CANCEL) {
+    puts("User pressed cancel.");
+  } else {
+    printf("Error: %s\n", NFD_GetError());
+  }
 
-
-    return path;
-
+  return path;
 }
 #endif
 
+// Helper to display a little (?) mark which shows a tooltip when hovered.
+// In your own code you may want to display an actual icon if you are using a
+// merged icon fonts (see docs/FONTS.md)
+static void HelpMarker(const char* desc) {
+  ImGui::TextDisabled("(?)");
+  if (ImGui::IsItemHovered()) {
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+    ImGui::TextUnformatted(desc);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+  }
+}
+
+#if defined(__EMSCRIPTEN__) || defined(EMULATE_EMSCRIPTEN)
+
+EM_BOOL em_main_loop_frame(double tm, void* user) {
+
+#if 1
+  // Render image fragment
+  if (g_gui_ctx.redraw) {
+    g_gui_ctx.render_finished = false;
+    g_gui_ctx.current_render_line = 0;
+
+    g_gui_ctx.redraw = false;
+  }
+
+  if (!g_gui_ctx.render_finished) {
+    std::cout << "RenderLines: " << g_gui_ctx.current_render_line << "\n";
+    RenderLines(g_gui_ctx.current_render_line, g_gui_ctx.current_render_line + g_gui_ctx.render_line_size, g_gui_ctx.render_scene, g_gui_ctx.camera, &g_gui_ctx.aov);
+
+    g_gui_ctx.current_render_line += g_gui_ctx.render_line_size;
+    if (g_gui_ctx.current_render_line >= g_gui_ctx.render_height) {
+      g_gui_ctx.current_render_line = 0;
+      g_gui_ctx.render_finished = true;
+
+      g_gui_ctx.update_texture = true;
+    }
+  }
+#endif
+
+  ImGuiIO& io = ImGui::GetIO();
+
+#if 1
+  int wheel = 0;
+
+  SDL_Event e;
+  if (SDL_PollEvent(&e)) {
+    if (e.type == SDL_QUIT) {
+      return EM_FALSE;
+    } else if (e.type == SDL_DROPFILE) {
+      char* filepath = e.drop.file;
+
+      printf("File dropped: %s\n", filepath);
+
+      SDL_free(filepath);
+
+    } else if (e.type == SDL_WINDOWEVENT) {
+      if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+        io.DisplaySize.x = static_cast<float>(e.window.data1);
+        io.DisplaySize.y = static_cast<float>(e.window.data2);
+      }
+    } else if (e.type == SDL_KEYDOWN) {
+      if (e.key.keysym.sym == SDLK_ESCAPE) {
+        return EM_FALSE;
+      }
+    } else if (e.type == SDL_KEYUP) {
+    } else if (e.type == SDL_MOUSEWHEEL) {
+      wheel = e.wheel.y;
+    }
+  }
+
+  int mouseX, mouseY;
+  const int buttons = SDL_GetMouseState(&mouseX, &mouseY);
+
+  // Setup low-level inputs (e.g. on Win32, GetKeyboardState(), or
+  // write to those fields from your Windows message loop handlers,
+  // etc.)
+
+  io.DeltaTime = 1.0f / 60.0f;
+  io.MousePos = ImVec2(static_cast<float>(mouseX), static_cast<float>(mouseY));
+  io.MouseDown[0] = buttons & SDL_BUTTON(SDL_BUTTON_LEFT);
+  io.MouseDown[1] = buttons & SDL_BUTTON(SDL_BUTTON_RIGHT);
+  io.MouseWheel = static_cast<float>(wheel);
+#endif
+
+#if 1
+  ImGui::NewFrame();
+
+  bool update = false;
+  bool update_display = false;
+  ImGui::Begin("Scene");
+
+    update |=
+        ImGui::SliderFloat("eye.z", &g_gui_ctx.camera.eye[2], -1000.0, 1000.0f);
+    update |= ImGui::SliderFloat("fov", &g_gui_ctx.camera.fov, 0.01f, 140.0f);
+
+    // TODO: Validate coordinate definition.
+    if (ImGui::SliderFloat("yaw", &g_gui_ctx.yaw, -360.0f, 360.0f)) {
+      auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
+                            radians(g_gui_ctx.roll));
+      g_gui_ctx.camera.quat[0] = q[0];
+      g_gui_ctx.camera.quat[1] = q[1];
+      g_gui_ctx.camera.quat[2] = q[2];
+      g_gui_ctx.camera.quat[3] = q[3];
+      update = true;
+    }
+    if (ImGui::SliderFloat("pitch", &g_gui_ctx.pitch, -360.0f, 360.0f)) {
+      auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
+                            radians(g_gui_ctx.roll));
+      g_gui_ctx.camera.quat[0] = q[0];
+      g_gui_ctx.camera.quat[1] = q[1];
+      g_gui_ctx.camera.quat[2] = q[2];
+      g_gui_ctx.camera.quat[3] = q[3];
+      update = true;
+    }
+    if (ImGui::SliderFloat("roll", &g_gui_ctx.roll, -360.0f, 360.0f)) {
+      auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
+                            radians(g_gui_ctx.roll));
+      g_gui_ctx.camera.quat[0] = q[0];
+      g_gui_ctx.camera.quat[1] = q[1];
+      g_gui_ctx.camera.quat[2] = q[2];
+      g_gui_ctx.camera.quat[3] = q[3];
+      update = true;
+    }
+
+  ImGui::End();
+
+  ImGui::Begin("Image");
+  ImGui::Image(g_gui_ctx.texture,
+               ImVec2(g_gui_ctx.render_width, g_gui_ctx.render_height));
+  ImGui::End();
+
+  if (update) {
+    g_gui_ctx.redraw = true;
+  }
+
+  // Update texture
+  if (g_gui_ctx.update_texture || update_display) {
+    // Update texture for display
+    UpdateTexutre(g_gui_ctx.texture, g_gui_ctx, g_gui_ctx.aov);
+
+    g_gui_ctx.update_texture = false;
+  }
+
+  SDL_SetRenderDrawColor(g_gui_ctx.renderer, 114, 144, 154, 255);
+  SDL_RenderClear(g_gui_ctx.renderer);
+
+  // Imgui
+
+  ImGui::Render();
+  ImGuiSDL::Render(ImGui::GetDrawData());
+
+  // static int texUpdateCount = 0;
+
+  SDL_RenderPresent(g_gui_ctx.renderer);
+
+
+#endif
+
+  return EM_TRUE;
+}
+
+#endif
 
 }  // namespace
 
@@ -333,6 +512,9 @@ int main(int argc, char** argv) {
 
 #ifdef _WIN32
   std::string filename = "../../models/suzanne.usdc";
+#elif __EMSCRIPTEN__
+  // assume filename is embeded with --embed-file in emcc compile flag.
+  std::string filename = "suzanne.usdc";
 #else
   std::string filename = "../../../models/suzanne.usdc";
 #endif
@@ -345,7 +527,6 @@ int main(int argc, char** argv) {
   if (argc > 1) {
     filename = std::string(argv[1]);
   } else {
-
   }
 
   std::cout << "Loading file " << filename << "\n";
@@ -393,7 +574,8 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  GUIContext gui_ctx;
+  GUIContext& gui_ctx = g_gui_ctx;
+  gui_ctx.renderer = renderer;
 
   for (size_t i = 0; i < scene.geom_meshes.size(); i++) {
     example::DrawGeomMesh draw_mesh(&scene.geom_meshes[i]);
@@ -405,6 +587,7 @@ int main(int argc, char** argv) {
     std::cerr << "Failed to setup render mesh.\n";
     exit(-1);
   }
+  std::cout << "Setup render mesh\n";
 
   bool done = false;
 
@@ -422,19 +605,17 @@ int main(int argc, char** argv) {
                                              font_size, &roboto_config);
   }
 
-
   ImGuiSDL::Initialize(renderer, 1600, 800);
   // ImGui_ImplGlfw_InitForOpenGL(window, true);
   // ImGui_ImplOpenGL2_Init();
 
-  int render_width = 512;
-  int render_height = 512;
+  std::cout << "Imgui initialized\n";
 
-  SDL_Texture* texture =
-      SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                        SDL_TEXTUREACCESS_TARGET, render_width, render_height);
+  gui_ctx.texture = SDL_CreateTexture(
+      renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET,
+      gui_ctx.render_width, gui_ctx.render_height);
   {
-    SDL_SetRenderTarget(renderer, texture);
+    SDL_SetRenderTarget(renderer, gui_ctx.texture);
     SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
     SDL_RenderClear(renderer);
     SDL_SetRenderTarget(renderer, nullptr);
@@ -444,8 +625,8 @@ int main(int argc, char** argv) {
 
   ScreenActivate(window);
 
-  gui_ctx.aov.Resize(render_width, render_height);
-  UpdateTexutre(texture, gui_ctx, gui_ctx.aov);
+  gui_ctx.aov.Resize(gui_ctx.render_width, gui_ctx.render_height);
+  UpdateTexutre(gui_ctx.texture, gui_ctx, gui_ctx.aov);
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
@@ -460,20 +641,45 @@ int main(int argc, char** argv) {
     gui_ctx.camera.quat[3] = q[3];
   }
 
+#if __EMSCRIPTEN__ || defined(EMULATE_EMSCRIPTEN)
+  // no thread
+#else
   std::thread render_thread(RenderThread, &gui_ctx);
+#endif
 
   // Initial rendering requiest
   gui_ctx.redraw = true;
 
   std::map<std::string, int> aov_list = {
-    { "color", GUIContext::AOV_COLOR },
-    { "shading normal", GUIContext::AOV_SHADING_NORMAL },
-    { "geometric normal", GUIContext::AOV_GEOMETRIC_NORMAL },
-    { "texcoord", GUIContext::AOV_TEXCOORD }
-  };
+      {"color", GUIContext::AOV_COLOR},
+      {"shading normal", GUIContext::AOV_SHADING_NORMAL},
+      {"geometric normal", GUIContext::AOV_GEOMETRIC_NORMAL},
+      {"texcoord", GUIContext::AOV_TEXCOORD}};
 
   std::string aov_name = "color";
 
+#if __EMSCRIPTEN__ || defined(EMULATE_EMSCRIPTEN)
+
+#if __EMSCRIPTEN__
+  std::cout << "enter loop\n";
+  emscripten_request_animation_frame_loop(em_main_loop_frame, /* fps */ 0);
+
+  //render_thread.join();
+  std::cout << "quit\n";
+#else
+
+  while (!done) {
+    auto ret = em_main_loop_frame(0, nullptr);
+    if (ret == EM_FALSE) {
+      break;
+    }
+  }
+
+#endif
+
+#else
+  // Enable drop file
+  SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
@@ -482,9 +688,16 @@ int main(int argc, char** argv) {
 
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-      if (e.type == SDL_QUIT)
+      if (e.type == SDL_QUIT) {
         done = true;
-      else if (e.type == SDL_WINDOWEVENT) {
+      } else if (e.type == SDL_DROPFILE) {
+        char* filepath = e.drop.file;
+
+        printf("File dropped: %s\n", filepath);
+
+        SDL_free(filepath);
+
+      } else if (e.type == SDL_WINDOWEVENT) {
         if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
           io.DisplaySize.x = static_cast<float>(e.window.data1);
           io.DisplaySize.y = static_cast<float>(e.window.data2);
@@ -523,8 +736,12 @@ int main(int argc, char** argv) {
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
     if (ImGui::Button("Open file ...")) {
       std::string filename = OpenFileDialog();
-      std::cout << "TODO: Open file" << "\n";
+      std::cout << "TODO: Open file"
+                << "\n";
     }
+
+    ImGui::SameLine();
+    HelpMarker("You can also drop USDZ file to the window to open a file.");
 #endif
 
     if (example::ImGuiComboUI("aov", aov_name, aov_list)) {
@@ -532,10 +749,11 @@ int main(int argc, char** argv) {
       update_display = true;
     }
 
-    //update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
-    //update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
-    //update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
-    update |= ImGui::SliderFloat("eye.z", &gui_ctx.camera.eye[2], -1000.0, 1000.0f);
+    // update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
+    // update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
+    // update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
+    update |=
+        ImGui::SliderFloat("eye.z", &gui_ctx.camera.eye[2], -1000.0, 1000.0f);
     update |= ImGui::SliderFloat("fov", &gui_ctx.camera.fov, 0.01f, 140.0f);
 
     // TODO: Validate coordinate definition.
@@ -569,7 +787,8 @@ int main(int argc, char** argv) {
     ImGui::End();
 
     ImGui::Begin("Image");
-    ImGui::Image(texture, ImVec2(render_width, render_height));
+    ImGui::Image(gui_ctx.texture,
+                 ImVec2(gui_ctx.render_width, gui_ctx.render_height));
     ImGui::End();
 
     if (update) {
@@ -586,7 +805,7 @@ int main(int argc, char** argv) {
     // Update texture
     if (gui_ctx.update_texture || update_display) {
       // Update texture for display
-      UpdateTexutre(texture, gui_ctx, gui_ctx.aov);
+      UpdateTexutre(gui_ctx.texture, gui_ctx, gui_ctx.aov);
 
       gui_ctx.update_texture = false;
     }
@@ -633,6 +852,8 @@ int main(int argc, char** argv) {
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
   NFD_Quit();
+#endif
+
 #endif
 
   return EXIT_SUCCESS;

@@ -176,4 +176,13 @@ bool Render(
   const Camera &cam,
   AOV *output);
 
+// Render images for lines [start_y, end_y]
+// single-threaded. for webassembly.
+bool RenderLines(
+  int start_y,
+  int end_y,
+  const RenderScene &scene,
+  const Camera &cam,
+  AOV *output);
+
 } // namespace example

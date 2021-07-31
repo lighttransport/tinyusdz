@@ -52,6 +52,9 @@ TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses
 * [x] macOS
 * [x] Windows 10 64bit or later
   * [ ] Windows ARM(should work)
+* [x] WebAssembly(through Emscripten)
+  * See `examples/sdlviewer/` example.
+  * Multithreading is not available due to Browser's restriction.
 
 ## Requirements
 
