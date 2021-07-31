@@ -369,105 +369,113 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
           size_t pixel_idx = y * width + x;
 
-          // HACK. Use the first mesh
-          const DrawGeomMesh& mesh = scene.draw_meshes[0];
+          bool hit = false;
 
-          // Intersector functor.
-          nanort::TriangleIntersector<> triangle_intersector(
-              mesh.vertices.data(), mesh.facevarying_indices.data(),
-              sizeof(float) * 3);
-          nanort::TriangleIntersection<> isect;  // stores isect info
 
-          bool hit = mesh.accel.Traverse(ray, triangle_intersector, &isect);
+          if (scene.draw_meshes.size()) {
+            // HACK. Use the first mesh
+            const DrawGeomMesh& mesh = scene.draw_meshes[0];
 
-          if (hit) {
-            float3 Ng;
-            {
-              // geometric normal.
-              float3 v0;
-              float3 v1;
-              float3 v2;
+            // Intersector functor.
+            nanort::TriangleIntersector<> triangle_intersector(
+                mesh.vertices.data(), mesh.facevarying_indices.data(),
+                sizeof(float) * 3);
 
-              size_t vid0 = mesh.facevarying_indices[3 * isect.prim_id + 0];
-              size_t vid1 = mesh.facevarying_indices[3 * isect.prim_id + 1];
-              size_t vid2 = mesh.facevarying_indices[3 * isect.prim_id + 2];
+            nanort::TriangleIntersection<> isect;  // stores isect info
 
-              v0[0] = mesh.vertices[3 * vid0 + 0];
-              v0[1] = mesh.vertices[3 * vid0 + 1];
-              v0[2] = mesh.vertices[3 * vid0 + 2];
+            hit = mesh.accel.Traverse(ray, triangle_intersector, &isect);
 
-              v1[0] = mesh.vertices[3 * vid1 + 0];
-              v1[1] = mesh.vertices[3 * vid1 + 1];
-              v1[2] = mesh.vertices[3 * vid1 + 2];
+            if (hit) {
+              float3 Ng;
+              {
+                // geometric normal.
+                float3 v0;
+                float3 v1;
+                float3 v2;
 
-              v2[0] = mesh.vertices[3 * vid2 + 0];
-              v2[1] = mesh.vertices[3 * vid2 + 1];
-              v2[2] = mesh.vertices[3 * vid2 + 2];
+                size_t vid0 = mesh.facevarying_indices[3 * isect.prim_id + 0];
+                size_t vid1 = mesh.facevarying_indices[3 * isect.prim_id + 1];
+                size_t vid2 = mesh.facevarying_indices[3 * isect.prim_id + 2];
 
-              CalcNormal(Ng, v0, v1, v2);
+                v0[0] = mesh.vertices[3 * vid0 + 0];
+                v0[1] = mesh.vertices[3 * vid0 + 1];
+                v0[2] = mesh.vertices[3 * vid0 + 2];
+
+                v1[0] = mesh.vertices[3 * vid1 + 0];
+                v1[1] = mesh.vertices[3 * vid1 + 1];
+                v1[2] = mesh.vertices[3 * vid1 + 2];
+
+                v2[0] = mesh.vertices[3 * vid2 + 0];
+                v2[1] = mesh.vertices[3 * vid2 + 1];
+                v2[2] = mesh.vertices[3 * vid2 + 2];
+
+                CalcNormal(Ng, v0, v1, v2);
+              }
+
+              float3 Ns;
+              if (mesh.facevarying_normals.size()) {
+                float3 n0;
+                float3 n1;
+                float3 n2;
+
+                n0[0] = mesh.facevarying_normals[9 * isect.prim_id + 0];
+                n0[1] = mesh.facevarying_normals[9 * isect.prim_id + 1];
+                n0[2] = mesh.facevarying_normals[9 * isect.prim_id + 2];
+
+                n1[0] = mesh.facevarying_normals[9 * isect.prim_id + 3];
+                n1[1] = mesh.facevarying_normals[9 * isect.prim_id + 4];
+                n1[2] = mesh.facevarying_normals[9 * isect.prim_id + 5];
+
+                n2[0] = mesh.facevarying_normals[9 * isect.prim_id + 6];
+                n2[1] = mesh.facevarying_normals[9 * isect.prim_id + 7];
+                n2[2] = mesh.facevarying_normals[9 * isect.prim_id + 8];
+
+                // lerp normal.
+                Ns = vnormalize(Lerp3(n0, n1, n2, isect.u, isect.v));
+              } else {
+                Ns = Ng;
+              }
+
+              float3 texcoord = {0.0f, 0.0f, 0.0f};
+              if (mesh.facevarying_texcoords.size()) {
+                float3 t0;
+                float3 t1;
+                float3 t2;
+
+                t0[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 0];
+                t0[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 1];
+                t0[2] = 0.0f;
+
+                t1[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 2];
+                t1[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 3];
+                t1[2] = 0.0f;
+
+                t2[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 4];
+                t2[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 5];
+                t2[2] = 0.0f;
+
+                texcoord = Lerp3(t0, t1, t2, isect.u, isect.v);
+              }
+
+              output->rgb[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+              output->rgb[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+              output->rgb[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+              output->geometric_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+              output->geometric_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+              output->geometric_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+              output->shading_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
+              output->shading_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
+              output->shading_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+
+              output->texcoords[2 * pixel_idx + 0] = texcoord[0];
+              output->texcoords[2 * pixel_idx + 1] = texcoord[1];
             }
+          }
 
-            float3 Ns;
-            if (mesh.facevarying_normals.size()) {
-              float3 n0;
-              float3 n1;
-              float3 n2;
-
-              n0[0] = mesh.facevarying_normals[9 * isect.prim_id + 0];
-              n0[1] = mesh.facevarying_normals[9 * isect.prim_id + 1];
-              n0[2] = mesh.facevarying_normals[9 * isect.prim_id + 2];
-
-              n1[0] = mesh.facevarying_normals[9 * isect.prim_id + 3];
-              n1[1] = mesh.facevarying_normals[9 * isect.prim_id + 4];
-              n1[2] = mesh.facevarying_normals[9 * isect.prim_id + 5];
-
-              n2[0] = mesh.facevarying_normals[9 * isect.prim_id + 6];
-              n2[1] = mesh.facevarying_normals[9 * isect.prim_id + 7];
-              n2[2] = mesh.facevarying_normals[9 * isect.prim_id + 8];
-
-              // lerp normal.
-              Ns = vnormalize(Lerp3(n0, n1, n2, isect.u, isect.v));
-            } else {
-              Ns = Ng;
-            }
-
-            float3 texcoord = {0.0f, 0.0f, 0.0f};
-            if (mesh.facevarying_texcoords.size()) {
-              float3 t0;
-              float3 t1;
-              float3 t2;
-
-              t0[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 0];
-              t0[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 1];
-              t0[2] = 0.0f;
-
-              t1[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 2];
-              t1[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 3];
-              t1[2] = 0.0f;
-
-              t2[0] = mesh.facevarying_texcoords[6 * isect.prim_id + 4];
-              t2[1] = mesh.facevarying_texcoords[6 * isect.prim_id + 5];
-              t2[2] = 0.0f;
-
-              texcoord = Lerp3(t0, t1, t2, isect.u, isect.v);
-            }
-
-            output->rgb[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
-            output->rgb[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
-            output->rgb[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
-
-            output->geometric_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
-            output->geometric_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
-            output->geometric_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
-
-            output->shading_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
-            output->shading_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
-            output->shading_normal[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
-
-            output->texcoords[2 * pixel_idx + 0] = texcoord[0];
-            output->texcoords[2 * pixel_idx + 1] = texcoord[1];
-
-          } else {
+          if (!hit) {
+            
             output->rgb[3 * pixel_idx + 0] = 0.0f;
             output->rgb[3 * pixel_idx + 1] = 0.0f;
             output->rgb[3 * pixel_idx + 2] = 0.0f;
