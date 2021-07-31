@@ -37,7 +37,7 @@
 #include "nfd.h"
 #endif
 
-#define EMULATE_EMSCRIPTEN
+//#define EMULATE_EMSCRIPTEN
 
 #if defined(EMULATE_EMSCRIPTEN)
 #define EM_BOOL int
@@ -57,6 +57,7 @@ struct GUIContext {
     AOV_VERTEXCOLOR
   };
   int aov_mode{AOV_COLOR};
+
 
   example::AOV aov;  // framebuffer
 
@@ -94,6 +95,11 @@ struct GUIContext {
   SDL_Texture* texture;  // Texture for rendered image
   int render_width = 512;
   int render_height = 512;
+
+  // scene reload
+  tinyusdz::Scene scene;
+  std::atomic<bool> request_reload{false};
+  std::string filename;
 
 #if __EMSCRIPTEN__ || defined(EMULATE_EMSCRIPTEN)
   bool render_finished{false};
@@ -274,12 +280,80 @@ static void ScreenActivate(SDL_Window* window) {
 #endif
 }
 
+bool LoadModel(const std::string& filename, tinyusdz::Scene* scene) {
+  std::string ext = str_tolower(GetFileExtension(filename));
+
+  std::string warn;
+  std::string err;
+
+  if (ext.compare("usdz") == 0) {
+    std::cout << "usdz\n";
+    bool ret = tinyusdz::LoadUSDZFromFile(filename, scene, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDZ file: " << filename << "\n";
+      return false;
+    }
+  } else {  // assume usdc
+    bool ret = tinyusdz::LoadUSDCFromFile(filename, scene, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDC file: " << filename << "\n";
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
 void RenderThread(GUIContext* ctx) {
   bool done = false;
 
   while (!done) {
     if (ctx->quit) {
       return;
+    }
+
+    if (ctx->request_reload) {
+      ctx->scene = tinyusdz::Scene(); // reset
+
+      if (LoadModel(ctx->filename, &ctx->scene)) {
+        Proc(ctx->scene);
+        if (ctx->scene.geom_meshes.empty()) {
+          std::cerr << "The scene contains no GeomMesh\n";
+        } else {
+          ctx->render_scene.draw_meshes.clear();
+      
+          for (size_t i = 0; i < ctx->scene.geom_meshes.size(); i++) {
+            example::DrawGeomMesh draw_mesh(&ctx->scene.geom_meshes[i]);
+            ctx->render_scene.draw_meshes.push_back(draw_mesh);
+          }
+
+          // Setup render mesh
+          if (!ctx->render_scene.Setup()) {
+            std::cerr << "Failed to setup render mesh.\n";
+            ctx->render_scene.draw_meshes.clear();
+          }
+          std::cout << "Setup render mesh\n";
+        }
+      }
+
+      ctx->request_reload = false;
+
+      ctx->redraw = true;
     }
 
     if (!ctx->redraw) {
@@ -484,6 +558,7 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
 
 #endif
 
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -526,68 +601,44 @@ int main(int argc, char** argv) {
 
   if (argc > 1) {
     filename = std::string(argv[1]);
-  } else {
   }
 
   std::cout << "Loading file " << filename << "\n";
-  std::string ext = str_tolower(GetFileExtension(filename));
 
-  std::string warn;
-  std::string err;
-  tinyusdz::Scene scene;
+  //tinyusdz::Scene scene;
 
-  if (ext.compare("usdz") == 0) {
-    std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filename, &scene, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
-    }
+  bool init_with_empty = false;
 
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filename << "\n";
-      return EXIT_FAILURE;
-    }
-  } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filename, &scene, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filename << "\n";
-      return EXIT_FAILURE;
-    }
+  if (!LoadModel(filename, &g_gui_ctx.scene)) {
+    init_with_empty = true;
   }
 
-  std::cout << "Loaded USDC file\n";
+  if (!init_with_empty) {
+    std::cout << "Loaded USDC file\n";
 
-  Proc(scene);
-  if (scene.geom_meshes.empty()) {
-    exit(-1);
+    Proc(g_gui_ctx.scene);
+    if (g_gui_ctx.scene.geom_meshes.empty()) {
+      std::cerr << "The scene contains no GeomMesh\n";
+      exit(-1);
+    }
   }
 
   GUIContext& gui_ctx = g_gui_ctx;
   gui_ctx.renderer = renderer;
 
-  for (size_t i = 0; i < scene.geom_meshes.size(); i++) {
-    example::DrawGeomMesh draw_mesh(&scene.geom_meshes[i]);
-    gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
-  }
+  if (!init_with_empty) {
+    for (size_t i = 0; i < g_gui_ctx.scene.geom_meshes.size(); i++) {
+      example::DrawGeomMesh draw_mesh(&g_gui_ctx.scene.geom_meshes[i]);
+      gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
+    }
 
-  // Setup render mesh
-  if (!gui_ctx.render_scene.Setup()) {
-    std::cerr << "Failed to setup render mesh.\n";
-    exit(-1);
+    // Setup render mesh
+    if (!gui_ctx.render_scene.Setup()) {
+      std::cerr << "Failed to setup render mesh.\n";
+      exit(-1);
+    }
+    std::cout << "Setup render mesh\n";
   }
-  std::cout << "Setup render mesh\n";
 
   bool done = false;
 
@@ -694,6 +745,14 @@ int main(int argc, char** argv) {
         char* filepath = e.drop.file;
 
         printf("File dropped: %s\n", filepath);
+
+        std::string fname = filepath;
+
+        // Scene reloading is done in render thread.
+        g_gui_ctx.filename = fname;
+        g_gui_ctx.request_reload = true;
+
+
 
         SDL_free(filepath);
 
