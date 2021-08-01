@@ -2096,7 +2096,7 @@ struct PreviewSurface {
 struct Preliminary_PhysicsGravitationalForce
 {
   // physics::gravitatioalForce::acceleration
-  Vec3d acceleration = {0.0, -9.81, 0.0}; // [m/s^2]
+  Vec3d acceleration{{0.0, -9.81, 0.0}}; // [m/s^2]
 
 };
 
@@ -2130,8 +2130,8 @@ struct Preliminary_PhysicsColliderAPI
 
 struct Preliminary_InfiniteColliderPlane
 {
-  Vec3d position = {0.0, 0.0, 0.0};
-  Vec3d normal = {0.0, 0.0, 0.0};
+  Vec3d position{{0.0, 0.0, 0.0}};
+  Vec3d normal{{0.0, 0.0, 0.0}};
 
   Extent extent; // [-FLT_MAX, FLT_MAX]
 
