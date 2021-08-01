@@ -1450,7 +1450,7 @@ struct BufferData {
   }
 
   std::array<float, 3> GetAsColor3f() const {
-    std::array<float, 3> buf;
+    std::array<float, 3> buf{{0.0f, 0.0f, 0.0f}};
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
         (GetNumCoords() == 3) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
