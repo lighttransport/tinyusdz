@@ -1,5 +1,6 @@
 #include <jni.h>
 
+#include "tinyusdz.hh"
 
 extern "C" {
     /* 

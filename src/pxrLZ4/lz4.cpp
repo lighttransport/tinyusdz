@@ -83,7 +83,7 @@
 #  define LZ4_FORCE_SW_BITCOUNT
 #endif
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
 /* work around of DEPRECATE macro */
 #define LZ4_DISABLE_DEPRECATE_WARNINGS
 #endif
