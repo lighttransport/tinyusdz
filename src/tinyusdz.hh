@@ -2088,6 +2088,120 @@ struct PreviewSurface {
   int64_t displacement_id{-1};  // index to `Scene::shaders`
 };
 
+
+// USDZ Schemas for AR
+// https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
+
+// UsdPhysics
+struct Preliminary_PhysicsGravitationalForce
+{
+  // physics::gravitatioalForce::acceleration
+  Vec3d acceleration{{0.0, -9.81, 0.0}}; // [m/s^2]
+
+};
+
+struct Preliminary_PhysicsMaterialAPI
+{
+  // preliminary:physics:material:restitution
+  double restitution; // [0.0, 1.0]
+
+  // preliminary:physics:material:friction:static
+  double friction_static;
+
+  // preliminary:physics:material:friction:dynamic
+  double friction_dynamic;
+};
+
+struct Preliminary_PhysicsRigidBodyAPI
+{
+  // preliminary:physics:rigidBody:mass
+  double mass{1.0};
+
+  // preliminary:physics:rigidBody:initiallyActive
+  bool initiallyActive{true};
+};
+
+struct Preliminary_PhysicsColliderAPI
+{
+  // preliminary::physics::collider::convexShape
+  Path convexShape; 
+
+};
+
+struct Preliminary_InfiniteColliderPlane
+{
+  Vec3d position{{0.0, 0.0, 0.0}};
+  Vec3d normal{{0.0, 0.0, 0.0}};
+
+  Extent extent; // [-FLT_MAX, FLT_MAX]
+
+  Preliminary_InfiniteColliderPlane() {
+    extent.lower[0] = -std::numeric_limits<float>::max();
+    extent.lower[1] = -std::numeric_limits<float>::max();
+    extent.lower[2] = -std::numeric_limits<float>::max();
+    extent.upper[0] = std::numeric_limits<float>::max();
+    extent.upper[1] = std::numeric_limits<float>::max();
+    extent.upper[2] = std::numeric_limits<float>::max();
+  }
+
+};
+
+// UsdInteractive
+struct Preliminary_AnchoringAPI
+{
+  // preliminary:anchoring:type
+  std::string type; // "plane", "image", "face", "none";
+
+  std::string alignment; // "horizontal", "vertical", "any";
+
+  Path referenceImage;
+
+};
+
+struct Preliminary_ReferenceImage
+{
+  int64_t image_id{-1}; // asset image 
+
+  double physicalWidth{0.0};
+};
+
+struct Preliminary_Behavior
+{
+  Path triggers;
+  Path actions;
+  bool exclusive{false}; 
+};
+
+struct Preliminary_Trigger
+{
+  // uniform token info:id
+  std::string info; // Store decoded string from token id
+};
+
+struct Preliminary_Action
+{
+  // uniform token info:id
+  std::string info;  // Store decoded string from token id
+
+  std::string multiplePerformOperation{"ignore"}; // ["ignore", "allow", "stop"]
+};
+
+struct Preliminary_Text
+{
+  std::string content;
+  std::vector<std::string> font; // An array of font names
+
+  float pointSize{144.0f};
+  float width;
+  float height;
+  float depth{0.0f};
+
+  std::string wrapMode{"flowing"}; // ["singleLine", "hardBreaks", "flowing"]
+  std::string horizontalAlignmment{"center"}; // ["left", "center", "right", "justified"]
+  std::string verticalAlignmment{"middle"}; // ["top", "middle", "lowerMiddle", "baseline", "bottom"]
+
+};
+
 using StringOrId = std::pair<std::string, int32_t>;
 
 // Simple bidirectional Path(string) <-> index lookup
