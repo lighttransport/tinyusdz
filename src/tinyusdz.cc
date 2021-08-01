@@ -6060,9 +6060,9 @@ bool Xform::EvaluateXformOps(Matrix4d *out_matrix) const {
   return true;
 }
 
+static_assert(sizeof(Index) == 4, "");
 static_assert(sizeof(Field) == 16, "");
 static_assert(sizeof(Spec) == 12, "");
-static_assert(sizeof(Index) == 4, "");
 static_assert(sizeof(Vec4h) == 8, "");
 static_assert(sizeof(Vec4f) == 16, "");
 static_assert(sizeof(Vec4d) == 32, "");
