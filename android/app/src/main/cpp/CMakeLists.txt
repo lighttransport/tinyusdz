@@ -17,16 +17,20 @@ set(TINYUSDZ_DEP_SOURCES
 
 # Build the libhello-oboe library
 add_library(hello-tinyusdz SHARED
-        hello-tinyusdz.cc
+        jni-tinyusdz.cc
         ${TINYUSDZ_SOURCES}
         ${TINYUSDZ_DEP_SOURCES}
         )
 
 target_link_libraries(hello-tinyusdz android log)
 target_include_directories(hello-tinyusdz PRIVATE
-          ${PROJECT_SOURCE_DIR}/../../../../../src/
+        ${PROJECT_SOURCE_DIR}/../../../../../src/
         ${PROJECT_SOURCE_DIR}/../../../../../src/external/ryu
         )
+
+# Required to load .usd files from Android asset for demo purpose
+# When you embed TinyUSDZ to your own app, you are better to load .usd files from a memory and turn this define off.
+target_compile_definitions(hello-tinyusdz PRIVATE "TINYUSDZ_ANDROID_LOAD_FROM_ASSETS")
 
 # Enable optimization flags: if having problems with source level debugging,
 # disable -Ofast ( and debug ), re-enable after done debugging.

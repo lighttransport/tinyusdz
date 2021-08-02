@@ -39,12 +39,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unordered_set>
 #include <vector>
 
-#ifdef __ANDROID__
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
-#include <android/asset_manager.h>
-#endif
-#endif
-
 #ifdef _WIN32
 
 #ifndef NOMINMAX
@@ -139,14 +133,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma clang diagnostic pop
 #endif
 
+namespace tinyusdz {
 
-#ifdef __ANDROID__
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
 AAssetManager *asset_manager = nullptr;
 #endif
-#endif
-
-namespace tinyusdz {
 
 namespace {
 
@@ -225,12 +216,12 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
   (void)userdata;
 
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
-  if (asset_manager) {
+  if (tinyusdz::asset_manager) {
     AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
                                        AASSET_MODE_STREAMING);
     if (!asset) {
       if (err) {
-        (*err) += "File open error : " + filepath + "\n";
+        (*err) += "File open error(from AssestManager) : " + filepath + "\n";
       }
       return false;
     }
@@ -5485,9 +5476,28 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   return true;
 }
 
-bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
+bool LoadUSDCFromFile(const std::string &_filename, Scene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
+  std::string filepath = ExpandFilePath(_filename, /* userdata */nullptr);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
+  if (!ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+    return false;
+  }
+
+  if (data.size() < (11 * 8)) {
+    // ???
+    if (err) {
+      (*err) +=
+          "File size too short. Looks like this file is not a USDC : \"" +
+          filepath + "\"\n";
+    }
+    return false;
+  }
+
+#if 0
   std::vector<uint8_t> data;
   {
     std::ifstream ifs(filename.c_str(), std::ifstream::binary);
@@ -5535,6 +5545,7 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
     ifs.read(reinterpret_cast<char *>(&data.at(0)),
              static_cast<std::streamsize>(sz));
   }
+#endif
 
   return LoadUSDCFromMemory(data.data(), data.size(), scene, warn, err,
                             options);
@@ -5560,12 +5571,31 @@ static std::string str_tolower(std::string s) {
 
 }  // namespace
 
-bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
+bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   // <filename, byte_begin, byte_end>
   std::vector<std::tuple<std::string, size_t, size_t>> assets;
 
+  std::string filepath = ExpandFilePath(_filename, /* userdata */nullptr);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
+  if (!ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+    return false;
+  }
+
+  if (data.size() < (11 * 8) + 30) { // 88 for USDC header, 30 for ZIP header
+    // ???
+    if (err) {
+      (*err) +=
+          "File size too short. Looks like this file is not a USDZ : \"" +
+          filepath + "\"\n";
+    }
+    return false;
+  }
+
+#if 0
   std::vector<uint8_t> data;
   {
     std::ifstream ifs(filename.c_str(), std::ifstream::binary);
@@ -5603,6 +5633,7 @@ bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
     ifs.read(reinterpret_cast<char *>(&data.at(0)),
              static_cast<std::streamsize>(sz));
   }
+#endif
 
   size_t offset = 0;
   while ((offset + 30) < data.size()) {
