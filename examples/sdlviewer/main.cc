@@ -22,6 +22,10 @@
 #include <SDL_syswm.h>
 #endif
 
+#if defined(USDVIEW_USE_BULLET3)
+#include <btBulletDynamicsCommon.h>
+#endif
+
 // common
 #include "imgui.h"
 #include "imgui_sdl/imgui_sdl.h"
@@ -562,6 +566,11 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
 }  // namespace
 
 int main(int argc, char** argv) {
+
+#if defined(USDVIEW_USE_BULLET3)
+  btDefaultCollisionConfiguration* collisionConfiguration = new btDefaultCollisionConfiguration();
+#endif
+
   SDL_Init(SDL_INIT_VIDEO);
 
   SDL_Window* window =
