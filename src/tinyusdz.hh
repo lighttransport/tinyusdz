@@ -37,6 +37,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 #include <cmath>
 
+#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+#include <android/asset_manager.h>
+#endif
+
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
 #include <iostream>  // dbg
 #endif
@@ -57,6 +61,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "prim-types.hh"
 
 namespace tinyusdz {
+
+#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+extern AAssetManager *asset_manager;
+#endif
 
 constexpr int version_major = 0;
 constexpr int version_minor = 7;

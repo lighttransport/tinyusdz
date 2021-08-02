@@ -17,6 +17,7 @@
 
 package com.example.hellotinyusdz
 
+import android.content.res.AssetManager
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.view.MotionEvent
@@ -46,10 +47,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (createStream() != 0) {
-            val errorString : String = "ERROR"
+
+        var n = createStream(getAssets());
+
+        if (n <= 0) {
+            val errorString : String = "Failed to load USD file"
             Toast.makeText(applicationContext, errorString,Toast.LENGTH_LONG).show()
             sample_text.text = errorString
+        } else {
+            val s : String = "Loaded USD. # of geom_meshes " + n
+            Toast.makeText(applicationContext, s,Toast.LENGTH_LONG).show()
+            sample_text.text = s
+
         }
     }
 
@@ -59,7 +68,7 @@ class MainActivity : AppCompatActivity() {
 
 
     // Creates and starts Oboe stream to play audio
-    private external fun createStream() : Int
+    private external fun createStream(mgr: AssetManager) : Int
 
     companion object {
         // Used to load native code calling oboe on app startup.

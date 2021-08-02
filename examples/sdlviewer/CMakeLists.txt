@@ -8,6 +8,7 @@ project(${BUILD_TARGET} CXX)
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
 option(USDVIEW_USE_NATIVEFILEDIALOG "Use nativefiledialog. Requires gtk+-3 libs on linux to build" ON)
+option(USDVIEW_ENABLE_PHYSICS "Enable Physics" OFF)
 
 if (EMSCRIPTEN)
   # Disable nfd
@@ -29,6 +30,10 @@ find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
 if (USDVIEW_USE_NATIVEFILEDIALOG)
  add_subdirectory(${PROJECT_SOURCE_DIR}/../common/nativefiledialog-extended nfd_build)
+endif()
+
+if (USDVIEW_ENABLE_PHYSICS)
+ add_subdirectory(${PROJECT_SOURCE_DIR}/../common/bullet3 bullet3_build)
 endif()
 
 # [ccache]

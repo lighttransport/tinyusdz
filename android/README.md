@@ -13,6 +13,8 @@ arm64-v8a arch only.
 
 Open this folder in Android Studio and build it.
 
+When you open the folder in the first time, it will take time(~20 mins) and many file downloads(e.g. gradle) will happen.
+
 ### Command line build
 
 T.B.W.
