@@ -8,7 +8,7 @@ project(${BUILD_TARGET} CXX)
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
 option(USDVIEW_USE_NATIVEFILEDIALOG "Use nativefiledialog. Requires gtk+-3 libs on linux to build" ON)
-option(USDVIEW_ENABLE_PHYSICS "Enable Physics" OFF)
+option(USDVIEW_ENABLE_PHYSICS "Enable Physics(through Bullet3)" OFF)
 
 if (EMSCRIPTEN)
   # Disable nfd
@@ -33,7 +33,20 @@ if (USDVIEW_USE_NATIVEFILEDIALOG)
 endif()
 
 if (USDVIEW_ENABLE_PHYSICS)
- add_subdirectory(${PROJECT_SOURCE_DIR}/../common/bullet3 bullet3_build)
+
+  # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
+  function ( ADD_BULLET3_LIB )
+	  set(BUILD_CPU_DEMOS OFF CACHE INTERNAL "" FORCE)
+	  set(BUILD_UNIT_TESTS OFF CACHE INTERNAL "" FORCE)
+	  set(BUILD_EXTRAS OFF CACHE INTERNAL "" FORCE)
+	  if (MSVC)
+	    # StaticLib conflicts usd_view build itself. so link with dll as a work around.
+	    set(USE_MSVC_RUNTIME_LIBRARY_DLL ON CACHE INTERNAL "" FORCE)
+	  endif()
+    add_subdirectory(../common/bullet3 bullet3_build)
+  endfunction ()
+
+  ADD_BULLET3_LIB()
 endif()
 
 # [ccache]
@@ -241,6 +254,12 @@ target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../
 if (USDVIEW_USE_NATIVEFILEDIALOG)
   target_compile_definitions(${BUILD_TARGET} PRIVATE "USDVIEW_USE_NATIVEFILEDIALOG")
   list(APPEND EXT_LIBRARIES nfd)
+endif()
+
+if (USDVIEW_ENABLE_PHYSICS)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "USDVIEW_USE_BULLET3")
+  target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/bullet3/src")
+  list(APPEND EXT_LIBRARIES BulletDynamics BulletCollision Bullet3Common LinearMath)
 endif()
 
 if(WIN32)
