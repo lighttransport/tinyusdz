@@ -22,7 +22,7 @@ add_library(hello-tinyusdz SHARED
         ${TINYUSDZ_DEP_SOURCES}
         )
 
-target_link_libraries(hello-tinyusdz android log)
+target_link_libraries(hello-tinyusdz jnigraphics android log)
 target_include_directories(hello-tinyusdz PRIVATE
         ${PROJECT_SOURCE_DIR}/../../../../../src/
         ${PROJECT_SOURCE_DIR}/../../../../../src/external/ryu

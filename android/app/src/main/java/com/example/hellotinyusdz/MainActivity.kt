@@ -22,7 +22,11 @@ import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
+import android.widget.ImageView
 import android.widget.Toast
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.BitmapFactory
 import kotlinx.android.synthetic.main.activity_main.sample_text
 
 class MainActivity : AppCompatActivity() {
@@ -31,6 +35,25 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         val view = findViewById<View>(R.id.container)
+
+        var conf = Bitmap.Config.ARGB_8888
+        var b = Bitmap.createBitmap(512, 512, conf)
+
+        var pixels = IntArray(512 * 512)
+
+        b.getPixels(pixels, 0,512, 0, 0, 512, 512)
+
+        for (y in 0 until 512) {
+            for (x in 0 until 512) {
+            pixels[y * 512 + x] = Color.argb(125, x % 256, y % 256, 64)
+            }
+        }
+
+        b.setPixels(pixels, 0, 512, 0, 0, 512, 512)
+
+        var img = findViewById<ImageView>(R.id.imageView)
+
+        img.setImageBitmap(b)
 
         // Set up a touch listener which calls the native sound engine
         view.setOnTouchListener {_, event ->
