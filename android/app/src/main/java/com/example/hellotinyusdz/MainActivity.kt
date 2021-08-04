@@ -41,13 +41,18 @@ class MainActivity : AppCompatActivity() {
 
         var pixels = IntArray(512 * 512)
 
-        b.getPixels(pixels, 0,512, 0, 0, 512, 512)
+        //b.getPixels(pixels, 0,512, 0, 0, 512, 512)
 
-        for (y in 0 until 512) {
-            for (x in 0 until 512) {
-            pixels[y * 512 + x] = Color.argb(125, x % 256, y % 256, 64)
-            }
-        }
+        //for (y in 0 until 512) {
+        //    for (x in 0 until 512) {
+        //    pixels[y * 512 + x] = Color.argb(125, x % 256, y % 256, 64)
+        //    }
+        //}
+
+        var width = 512
+        var height = 512
+
+        updateImage(pixels, width, height)
 
         b.setPixels(pixels, 0, 512, 0, 0, 512, 512)
 
@@ -92,6 +97,7 @@ class MainActivity : AppCompatActivity() {
 
     // Creates and starts Oboe stream to play audio
     private external fun createStream(mgr: AssetManager) : Int
+    private external fun updateImage(img: IntArray, width: Int, height: Int) : Int
 
     companion object {
         // Used to load native code calling oboe on app startup.

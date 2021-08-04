@@ -18,6 +18,29 @@ tinyusdz::Scene g_scene;
 
 
 extern "C" {
+
+    JNIEXPORT jint JNICALL
+    Java_com_example_hellotinyusdz_MainActivity_updateImage(JNIEnv *env, jobject obj, jintArray _intarray, jint width, jint height) {
+        jint *ptr = env->GetIntArrayElements(_intarray, NULL);
+        int length = env->GetArrayLength(_intarray);
+        if (length != (width * height)) {
+            return -1;
+        }
+
+        uint32_t *buf = reinterpret_cast<uint32_t *>(ptr);
+        for (size_t y = 0; y < height; y++) {
+            for (size_t x = 0; x < width; x++) {
+                uint8_t r = x  % 255;
+                uint8_t g = y % 255;
+                uint8_t b = 128;
+                uint8_t a = 255;
+                // argb
+                buf[y * width + x] = (a << 24) | (r << 16) | (g << 8) | (b);
+            }
+        }
+
+        return 1;
+    }
     /* 
      * Returns:  0 - success
      *          -1 - failed
