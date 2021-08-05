@@ -14,18 +14,33 @@ set(TINYUSDZ_DEP_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/external/ryu/ryu/s2f.c
         )
 
+# Reuse files from sdlviewer
+set(USDVIEW_SOURCES
+  ${PROJECT_SOURCE_DIR}/../../../../../examples/sdlviewer/simple-render.cc
+  ${PROJECT_SOURCE_DIR}/../../../../../examples/common/matrix.cc
+  ${PROJECT_SOURCE_DIR}/../../../../../examples/common/trackball.cc
+  )
 
 # Build the libhello-oboe library
 add_library(hello-tinyusdz SHARED
         jni-tinyusdz.cc
+        render-ctx.cc
         ${TINYUSDZ_SOURCES}
         ${TINYUSDZ_DEP_SOURCES}
+        ${USDVIEW_SOURCES}
         )
 
 target_link_libraries(hello-tinyusdz jnigraphics android log)
+
 target_include_directories(hello-tinyusdz PRIVATE
         ${PROJECT_SOURCE_DIR}/../../../../../src/
         ${PROJECT_SOURCE_DIR}/../../../../../src/external/ryu
+
+        # nanort, nanosg, etc
+        ${PROJECT_SOURCE_DIR}/../../../../../examples/common/
+
+        # sdlviewer example
+        ${PROJECT_SOURCE_DIR}/../../../../../examples/sdlviewer/
         )
 
 # Required to load .usd files from Android asset for demo purpose

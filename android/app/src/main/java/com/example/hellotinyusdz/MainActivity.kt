@@ -31,34 +31,31 @@ import kotlinx.android.synthetic.main.activity_main.sample_text
 
 class MainActivity : AppCompatActivity() {
 
+    val render_width = 512;
+    val render_height = 512;
+
+    fun updateRender() {
+        renderImage(render_width, render_height);
+
+        var conf = Bitmap.Config.ARGB_8888
+        var b = Bitmap.createBitmap(render_width, render_height, conf)
+
+        var pixels = IntArray(render_width * render_height)
+
+        grabImage(pixels, render_width, render_height)
+
+        b.setPixels(pixels, 0, render_width, 0, 0, render_width, render_height)
+
+        var img = findViewById<ImageView>(R.id.imageView)
+
+        img.setImageBitmap(b)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         val view = findViewById<View>(R.id.container)
 
-        var conf = Bitmap.Config.ARGB_8888
-        var b = Bitmap.createBitmap(512, 512, conf)
-
-        var pixels = IntArray(512 * 512)
-
-        //b.getPixels(pixels, 0,512, 0, 0, 512, 512)
-
-        //for (y in 0 until 512) {
-        //    for (x in 0 until 512) {
-        //    pixels[y * 512 + x] = Color.argb(125, x % 256, y % 256, 64)
-        //    }
-        //}
-
-        var width = 512
-        var height = 512
-
-        updateImage(pixels, width, height)
-
-        b.setPixels(pixels, 0, 512, 0, 0, 512, 512)
-
-        var img = findViewById<ImageView>(R.id.imageView)
-
-        img.setImageBitmap(b)
 
         // Set up a touch listener which calls the native sound engine
         view.setOnTouchListener {_, event ->
@@ -76,7 +73,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
 
-        var n = createStream(getAssets());
+        var n = initScene(getAssets(), "suzanne.usdc");
 
         if (n <= 0) {
             val errorString : String = "Failed to load USD file"
@@ -87,6 +84,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(applicationContext, s,Toast.LENGTH_LONG).show()
             sample_text.text = s
 
+            updateRender()
         }
     }
 
@@ -95,9 +93,9 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    // Creates and starts Oboe stream to play audio
-    private external fun createStream(mgr: AssetManager) : Int
-    private external fun updateImage(img: IntArray, width: Int, height: Int) : Int
+    private external fun initScene(mgr: AssetManager, filename: String) : Int
+    private external fun renderImage(width: Int, height: Int) : Int
+    private external fun grabImage(img: IntArray, width: Int, height: Int) : Int
 
     companion object {
         // Used to load native code calling oboe on app startup.
