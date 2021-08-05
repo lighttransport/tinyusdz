@@ -42,8 +42,17 @@ std::string jstring2string(JNIEnv *env, jstring jStr) {
 extern "C" {
 
 
-
 JNIEXPORT jint JNICALL
+Java_com_example_hellotinyusdz_MainActivity_touchMove(JNIEnv *env, jobject obj, jfloat dx, jfloat dy) {
+    const float scale = 0.2f;
+
+    example::g_gui_ctx.yaw += scale * dy;
+    example::g_gui_ctx.roll -= scale * dx;
+
+    return 0;
+}
+
+    JNIEXPORT jint JNICALL
     Java_com_example_hellotinyusdz_MainActivity_grabImage(JNIEnv *env, jobject obj, jintArray _intarray, jint width, jint height) {
 
       __android_log_print(ANDROID_LOG_INFO, "tinyusdz", "grabImage");

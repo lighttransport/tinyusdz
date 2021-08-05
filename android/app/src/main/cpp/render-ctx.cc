@@ -95,6 +95,17 @@ bool SetupScene(GUIContext &ctx) {
 
 bool RenderScene(GUIContext &ctx)
 {
+
+    // init camera matrix
+    {
+        auto q = ToQuaternion(radians(ctx.yaw), radians(ctx.pitch),
+                              radians(ctx.roll));
+        ctx.camera.quat[0] = q[0];
+        ctx.camera.quat[1] = q[1];
+        ctx.camera.quat[2] = q[2];
+        ctx.camera.quat[3] = q[3];
+    }
+
     // Init AOV image
     ctx.aov.Resize(ctx.render_width, ctx.render_height);
 
