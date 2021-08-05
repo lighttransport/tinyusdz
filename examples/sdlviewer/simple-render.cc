@@ -346,7 +346,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
   // auto startT = std::chrono::system_clock::now();
 
   for (auto t = 0; t < num_threads; t++) {
-    workers.emplace_back(std::thread([&, t]() {
+    workers.emplace_back(std::thread([&]() {
       int y = 0;
       while ((y = i++) < height) {
         for (int x = 0; x < width; x++) {
@@ -371,8 +371,13 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
           bool hit = false;
 
+          output->rgb[3 * pixel_idx + 0] = 0.0f;
+          output->rgb[3 * pixel_idx + 1] = 0.0f;
+          output->rgb[3 * pixel_idx + 2] = 0.0f;
+
 
           if (scene.draw_meshes.size()) {
+
             // HACK. Use the first mesh
             const DrawGeomMesh& mesh = scene.draw_meshes[0];
 
@@ -472,13 +477,11 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
               output->texcoords[2 * pixel_idx + 0] = texcoord[0];
               output->texcoords[2 * pixel_idx + 1] = texcoord[1];
             }
+          } else {
           }
 
           if (!hit) {
             
-            output->rgb[3 * pixel_idx + 0] = 0.0f;
-            output->rgb[3 * pixel_idx + 1] = 0.0f;
-            output->rgb[3 * pixel_idx + 2] = 0.0f;
 
             output->geometric_normal[3 * pixel_idx + 0] = 0.0f;
             output->geometric_normal[3 * pixel_idx + 1] = 0.0f;
