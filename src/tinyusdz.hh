@@ -459,6 +459,50 @@ class Path {
   bool valid{false};
 };
 
+///
+/// Split Path by the delimiter(e.g. "/") then create lists.
+///
+class TokenizedPath
+{
+ public:
+
+  TokenizedPath() {}
+
+  TokenizedPath(const Path &path) {
+    std::string s = path.GetPropPart();
+    if (s.empty()) {
+      // ???
+      return;
+    }
+
+    if (s[0] != '/') {
+      // Path must start with "/"
+      return;
+    }
+    
+    s.erase(0, 1);
+
+    std::string delimiter = "/";
+    size_t pos{0};
+    while ((pos = s.find(delimiter)) != std::string::npos) {
+        std::string token = s.substr(0, pos);
+        _tokens.push_back(token);
+        s.erase(0, pos + delimiter.length());
+    }
+
+    if (!s.empty()) {
+      // leaf element
+      _tokens.push_back(s);
+    }
+    
+  }
+
+ private:
+
+  std::vector<std::string> _tokens;
+};
+
+
 class TimeCode {
   TimeCode(double tm = 0.0) : _time(tm) {}
 
@@ -2253,7 +2297,9 @@ enum NodeType {
   NODE_TYPE_NULL = 0,
   NODE_TYPE_XFORM,
   NODE_TYPE_GROUP,
+  NODE_TYPE_SPHERE,
   NODE_TYPE_GEOM_MESH,
+  NODE_TYPE_GEOM_BASISCURVES,
   NODE_TYPE_MATERIAL,
   NODE_TYPE_SHADER,
   NODE_TYPE_CUSTOM  // Uer defined custom node
