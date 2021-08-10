@@ -134,6 +134,25 @@ class Variable {
 
 namespace {
 
+// https://www.techiedelight.com/trim-string-cpp-remove-leading-trailing-spaces/
+std::string TrimString(const std::string &str) {
+  const std::string WHITESPACE = " \n\r\t\f\v";
+
+  // remove leading and trailing whitespaces
+  std::string s = str;
+  {
+    size_t start = s.find_first_not_of(WHITESPACE);
+    s = (start == std::string::npos) ? "" : s.substr(start);
+  }
+
+  {
+    size_t end = s.find_last_not_of(WHITESPACE);
+    s = (end == std::string::npos) ? "" : s.substr(0, end + 1);
+  }
+
+  return s;
+}
+
 std::string GetBaseDir(const std::string &filepath) {
   if (filepath.find_last_of("/\\") != std::string::npos)
     return filepath.substr(0, filepath.find_last_of("/\\"));
@@ -941,13 +960,19 @@ class USDAParser {
       return false;
     }
 
+
+    tinyusdz::ListEditQual qual{tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT};
+    if (!MaybeListEditQual(&qual)) {
+      return false;
+    }
+
     std::string token;
     if (!ReadToken(&token)) {
       return false;
     }
 
-    if (token != "kind") {
-      _PushError("Currently only `kind` is supported.\n");
+    if (!_IsNodeArg(token)) {
+      _PushError("Unsupported or invalid argument name `" + token + "`)\n");
       return false;
     }
 
@@ -962,6 +987,10 @@ class USDAParser {
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
+
+    // TODO
+    _PushError("TODO");
+    return false;
 
     std::string value;
     if (!ReadStringLiteral(&value)) {
@@ -1032,6 +1061,34 @@ class USDAParser {
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
+    }
+
+    return true;
+  }
+
+  bool MaybeListEditQual(tinyusdz::ListEditQual *qual) {
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    std::string tok;
+
+    auto loc = CurrLoc();
+    if (!ReadToken(&tok)) {
+      return false;
+    }
+
+    if (tok == "prepended") {
+      (*qual) = tinyusdz::LIST_EDIT_QUAL_PREPEND;
+    } else if (tok == "append") {
+      (*qual) = tinyusdz::LIST_EDIT_QUAL_APPEND;
+    } else if (tok == "delete") {
+      (*qual) = tinyusdz::LIST_EDIT_QUAL_DELETE;
+    } else {
+      // unqualified
+      // rewind
+      SeekTo(loc);
+      (*qual) = tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT;     
     }
 
     return true;
@@ -2208,6 +2265,9 @@ class USDAParser {
   bool ReadBasicType(double *value);
   bool ReadBasicType(bool *value);
 
+  /// == DORA ==
+  
+
   ///
   /// Parse rel string
   ///
@@ -2765,6 +2825,16 @@ class USDAParser {
       return false;
     }
 
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    // Must start with '/'
+    if (!Expect('/')) {
+      _PushError("Path identifier must start with '/'");
+      return false;
+    }
+
     // read until '>'
     bool ok = false;
     while (!_sr->eof()) {
@@ -2789,7 +2859,7 @@ class USDAParser {
       return false;
     }
 
-    (*path_identifier) = ss.str();
+    (*path_identifier) = TrimString(ss.str());
     std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
 
     return true;
@@ -3589,6 +3659,10 @@ class USDAParser {
     return true;
   }
 
+  uint64_t CurrLoc() {
+    return _sr->tell();
+  }
+
   bool SeekTo(size_t pos) {
     if (!_sr->seek_set(pos)) {
       return false;
@@ -3618,6 +3692,61 @@ class USDAParser {
     (*state) = parse_stack.top();
 
     parse_stack.pop();
+
+    return true;
+  }
+
+  ///
+/// Parse `class` block.
+///
+  bool ParseClassBlock() {
+    std::string tok;
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (!ReadToken(&tok)) {
+      return false;
+    }
+
+    if (tok != "class") {
+      _PushError("`class` is expected.");
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::string target;
+
+    if (!ReadToken(&target)) {
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::map<std::string, Variable> args;
+    ParseDefArgs(&args);
+
+    if (!Expect('{')) {
+      std::cout << "???\n";
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    // TODO: Parse block content
+
+    if (!Expect('}')) {
+      std::cout << "???\n";
+      return false;
+    }
 
     return true;
   }
@@ -3941,7 +4070,15 @@ class USDAParser {
           _PushError("Failed to parse `over` block.\n");
           return false;
         }
-
+      } else if (tok == "class") {
+        bool block_ok = ParseClassBlock();
+        if (!block_ok) {
+          _PushError("Failed to parse `class` block.\n");
+          return false;
+        }     
+      } else {
+        _PushError("Unknown token '" + tok + "'");
+        return false;
       }
     }
 
@@ -4011,8 +4148,18 @@ class USDAParser {
     }
   }
 
-  bool _IsBuiltinMeta(std::string name) {
+  bool _IsBuiltinMeta(const std::string &name) {
     return _builtin_metas.count(name) ? true : false;
+  }
+
+  bool _IsNodeArg(const std::string &name) {
+    return _node_args.count(name) ? true : false;
+  }
+
+  void _RegisterNodeArgs() {
+    _node_args["kind"] = Variable("string", "kind");
+    _node_args["references"] = Variable("path", "references");
+    _node_args["inherits"] = Variable("path", "inherits");
   }
 
   void _RegisterBuiltinMeta() {
@@ -4050,6 +4197,7 @@ class USDAParser {
   std::map<std::string, Variable> _builtin_metas;
   std::set<std::string> _node_types;
   std::set<std::string> _registered_prim_attr_types;
+  std::map<std::string, Variable> _node_args;
 
   std::stack<ErrorDiagnositc> err_stack;
   std::stack<ParseState> parse_stack;
