@@ -3288,6 +3288,61 @@ class USDAParser {
   }
 
   ///
+  /// Parse `over` block.
+  ///
+  bool ParseOverBlock() { 
+    std::string tok;
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (!ReadToken(&tok)) {
+      return false;
+    }
+
+    if (tok != "over") {
+      _PushError("`over` is expected.");
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::string target;
+
+    if (!ReadToken(&target)) {
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::map<std::string, Variable> args;
+    ParseDefArgs(&args);
+
+    if (!Expect('{')) {
+      std::cout << "???\n";
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    // TODO: Parse block content
+
+    if (!Expect('}')) {
+      std::cout << "???\n";
+      return false;
+    }
+
+    return true;
+  }
+
+  ///
   /// Parse `def` block.
   /// `def Xform "root" optional_arg? { ... }
   ///
@@ -3510,10 +3565,34 @@ class USDAParser {
         break;
       }
 
-      bool block_ok = ParseDefBlock();
-      if (!block_ok) {
-        _PushError("Failed to parse `def` block.\n");
+      // Look ahead token
+      auto curr_loc = _sr->tell();
+
+      std::string tok;
+      if (!ReadToken(&tok)) {
+        _PushError("Token expected.\n");
+        return false; 
+      }
+
+      // Rewind
+      if (!SeekTo(curr_loc)) {
         return false;
+      }
+
+      if (tok == "def") {
+
+        bool block_ok = ParseDefBlock();
+        if (!block_ok) {
+          _PushError("Failed to parse `def` block.\n");
+          return false;
+        }
+      } else if (tok == "over") {
+        bool block_ok = ParseOverBlock();
+        if (!block_ok) {
+          _PushError("Failed to parse `over` block.\n");
+          return false;
+        }
+
       }
     }
 
