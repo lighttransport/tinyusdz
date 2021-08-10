@@ -23,6 +23,7 @@
 
 #include <nonstd/expected.hpp>
 #include <nonstd/variant.hpp>
+#include <nonstd/optional.hpp>
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -122,6 +123,7 @@ class Variable {
 
   Variable() = default;
   Variable(std::string ty, std::string n) : type(ty), name(n) {}
+  Variable(std::string ty) : type(ty) {}
 
   // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
   friend std::ostream &operator<<(std::ostream &os, const Variable &var);
@@ -131,6 +133,28 @@ class Variable {
 };
 
 namespace {
+
+std::string GetBaseDir(const std::string &filepath) {
+  if (filepath.find_last_of("/\\") != std::string::npos)
+    return filepath.substr(0, filepath.find_last_of("/\\"));
+  return "";
+}
+
+
+std::string JoinPath(const std::string &dir, const std::string &filename) {
+  if (dir.empty()) {
+    return filename;
+  } else {
+    // check '/'
+    char lastChar = *dir.rbegin();
+    if (lastChar != '/') {
+      return dir + std::string("/") + filename;
+    } else {
+      return dir + filename;
+    }
+  }
+}
+
 
 std::string str_object(const Variable::Object &obj, int indent) {
   std::stringstream ss;
@@ -688,6 +712,10 @@ class USDAParser {
     _RegisterBuiltinMeta();
     _RegisterNodeTypes();
     _RegisterPrimAttrTypes();
+  }
+
+  void SetBaseDir(const std::string &str) {
+    _base_dir = str;
   }
 
   bool LexFloat(std::string *result, std::string *err) {
@@ -2199,6 +2227,84 @@ class USDAParser {
   }
 
   ///
+  /// Parses 1 or more occurences of asset references, separated by
+  /// `sep`
+  /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
+  ///
+  bool SepBy1AssetReference(const char sep, std::vector<std::string> *result) {
+    result->clear();
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    {
+      std::string ref;
+      bool triple_deliminated{false};
+
+      if (!ParseAssetReference(&ref, &triple_deliminated)) {
+        _PushError("Failed to parse AssetReference.\n");
+        return false;
+      }
+
+      (void)triple_deliminated;
+
+      result->push_back(ref);
+    }
+
+    // std::cout << "sep: " << sep << "\n";
+
+    while (!_sr->eof()) {
+      // sep
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      char c;
+      if (!_sr->read1(&c)) {
+        std::cout << "read1 failure\n";
+        return false;
+      }
+
+      // std::cout << "sep c = " << c << "\n";
+
+      if (c != sep) {
+        // end
+        // std::cout << "sepBy1 end\n";
+        _sr->seek_from_current(-1);  // unwind single char
+        break;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      // std::cout << "go to read int\n";
+
+      std::string ref;
+      bool triple_deliminated{false};
+      if (!ParseAssetReference(&ref, &triple_deliminated)) {
+        _PushError("Failed to parse AssetReference.\n");
+        break;
+      }
+
+      (void)triple_deliminated;
+      result->push_back(ref);
+    }
+
+    // std::cout << "result.size " << result->size() << "\n";
+
+    if (result->empty()) {
+      _PushError("Empty array.\n");
+      return false;
+    }
+
+    return true;
+  }
+
+  ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
   /// `sep`
   ///
@@ -2359,6 +2465,26 @@ class USDAParser {
       return false;
     }
     // std::cout << "got ]\n";
+
+    return true;
+  }
+
+  ///
+  /// Parse array of asset references
+  ///
+  bool ParseAssetReferenceArray(std::vector<std::string> *result) {
+    if (!Expect('[')) {
+      return false;
+    }
+
+    if (!SepBy1AssetReference(',', result)) {
+      return false;
+    }
+
+    if (!Expect(']')) {
+
+      return false;
+    }
 
     return true;
   }
@@ -2942,6 +3068,112 @@ class USDAParser {
     return ParseMetaAttr();
   }
 
+  // TODO: Return Path
+  bool ParseAssetReference(std::string *out_asset_path, bool *triple_deliminated) {
+    // @...@ 
+    // or @@@...@@@ (Triple '@'-deliminated asset references)
+
+    // TODO: Escape characters 
+
+    // look ahead.
+    std::vector<char> buf;
+    uint64_t curr = _sr->tell();
+    bool maybe_triple{false};
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (CharN(3, &buf)) {
+      if (buf[0] == '@' && buf[1] == '@' && buf[2] == '@') {
+        maybe_triple = true;
+      } 
+    } 
+
+    if (!maybe_triple) {
+
+      SeekTo(curr);
+      char s;
+      if (!Char1(&s)) {
+        return false;
+      }
+
+      if (s != '@') {
+        _PushError("AssetReference must start with '@'");
+        return false;
+      }
+
+      std::string tok;
+
+      // Read until '@'
+      bool found_delimiter = false;
+      while (!_sr->eof()) {
+        char c;
+
+        if (!Char1(&c)) {
+          return false;
+        }
+
+        if (c == '@') {
+          found_delimiter = true;
+          break;
+        } 
+
+        tok += c;
+      }
+
+      if (found_delimiter) {
+        (*out_asset_path) = tok;
+        (*triple_deliminated) = false;
+
+        return true;
+      }
+
+    } else {
+
+      bool found_delimiter{false};
+      int at_cnt{0};
+      std::string tok;
+
+      // Read until '@@@' appears
+      while (!_sr->eof()) {
+        char c;
+
+        if (!Char1(&c)) {
+          return false;
+        }
+
+        if (c == '@') {
+          at_cnt++;
+        } else {
+          at_cnt--;
+          if (at_cnt < 0) { at_cnt= 0; }
+        } 
+
+        tok += c;
+
+        if (at_cnt == 3) {
+          // Got it. '@@@'
+          found_delimiter = true;
+          break;
+        }
+      }
+
+      if (found_delimiter) {
+        (*out_asset_path) = tok;
+        (*triple_deliminated) = true;
+
+        return true;
+      }
+
+
+    }
+
+    return false;
+
+  }
+
+
   bool ParseMetaValue(const std::string &vartype, const std::string &varname,
                       Variable *outvar) {
     (void)outvar;
@@ -2954,6 +3186,24 @@ class USDAParser {
         _PushError(msg);
         return false;
       }
+    } else if (vartype == "path[]") {
+      std::string value;
+      std::cout << "read path[]\n";
+      std::vector<std::string> values;
+      if (!ParseAssetReferenceArray(&values)) {
+        std::string msg = "Array of AssetReference expected for `" + varname + "`.\n";
+        _PushError(msg);
+        return false;
+      }
+
+      outvar->array.clear();
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "asset_reference[" << i << "] = " << values[i] << "\n";
+        Variable var;
+        outvar->array.push_back(values[i]);
+      }
+      
     } else if (vartype == "int[]") {
       std::vector<int> values;
       if (!ParseBasicTypeArray<int>(&values)) {
@@ -3061,7 +3311,7 @@ class USDAParser {
   // metadata_opt := string_literal '\n'
   //              |  var '=' value '\n'
   //
-  bool ParseMetaOpt() {
+  bool ParseWorldMetaOpt() {
     {
       uint64_t loc = _sr->tell();
 
@@ -3104,6 +3354,79 @@ class USDAParser {
       _PushError("Failed to parse meta value.\n");
       return false;
     }
+
+    std::vector<std::string> sublayers;
+    if (varname == "subLayers") {
+      if (var.array.size()) {
+        for (size_t i = 0; i < var.array.size(); i++) {
+          if (auto p = nonstd::get_if<std::string>(&var.array[i])) {
+            sublayers.push_back(*p);
+          } 
+        }
+      } 
+    }
+
+    // Load subLayers
+    if (sublayers.size()) {
+
+      // Create another USDA parser.
+
+      for (size_t i = 0; i < sublayers.size(); i++) {
+        std::string filepath = JoinPath(_base_dir, sublayers[i]);
+ 
+        std::vector<uint8_t> data;
+        {
+          // TODO(syoyo): Support UTF-8 filename
+          std::ifstream ifs(filepath.c_str(), std::ifstream::binary);
+          if (!ifs) {
+            std::cerr << "File not found or failed to open file: " << filepath << "\n";
+
+            // may ok
+            continue;
+          }
+
+          // TODO(syoyo): Use mmap
+          ifs.seekg(0, ifs.end);
+          size_t sz = static_cast<size_t>(ifs.tellg());
+          if (int64_t(sz) < 0) {
+            // Looks reading directory, not a file.
+            std::cerr << "Looks like filename is a directory : \"" << filepath
+                      << "\"\n";
+            return -1;
+          }
+
+          data.resize(sz);
+
+          ifs.seekg(0, ifs.beg);
+          ifs.read(reinterpret_cast<char *>(&data.at(0)),
+                   static_cast<std::streamsize>(sz));
+        }
+      
+        tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+        tinyusdz::usda::USDAParser parser(&sr);
+
+        std::string base_dir = GetBaseDir(filepath);
+
+        std::cout << "SubLayer.Basedir = " << base_dir << "\n";
+        parser.SetBaseDir(base_dir);
+
+        {
+          bool ret = parser.Parse();
+
+          if (!ret) {
+            std::cerr << "Failed to parse .usda: \n";
+            std::cerr << parser.GetError() << "\n";
+          } else {
+            std::cout << "ok\n";
+          }
+        }
+
+      }
+      
+      // TODO: Merge/Import subLayer.
+
+    }
+
 #if 0
     if (var.type == "string") {
       std::string value;
@@ -3187,11 +3510,12 @@ class USDAParser {
     return true;
   }
 
-  // Parse meta
+
+  // Parse World meta
   // meta = ( metadata_opt )
   //      | empty
   //      ;
-  bool ParseMeta() {
+  bool ParseWorldMeta() {
     if (!Expect('(')) {
       return false;
     }
@@ -3215,7 +3539,7 @@ class USDAParser {
           return false;
         }
 
-        if (!ParseMetaOpt()) {
+        if (!ParseWorldMetaOpt()) {
           // parse error
           return false;
         }
@@ -3245,6 +3569,17 @@ class USDAParser {
   }
 
   bool Char1(char *c) { return _sr->read1(c); }
+
+  bool CharN(size_t n, std::vector<char> *nc) {
+    std::vector<char> buf(n);
+ 
+    bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
+    if (ok) {
+      (*nc) = buf;
+    }
+
+    return ok;
+  }
 
   bool Rewind(size_t offset) {
     if (!_sr->seek_from_current(-int64_t(offset))) {
@@ -3347,6 +3682,8 @@ class USDAParser {
   /// `def Xform "root" optional_arg? { ... }
   ///
   /// optional_arg = '(' args ')'
+  ///
+  /// TODO: Support `def` without type(i.e. actual definition is defined in another USD file or referenced USD)
   ///
   bool ParseDefBlock() {
     std::string def;
@@ -3540,6 +3877,17 @@ class USDAParser {
     return ParseMagicHeader();
   }
 
+  void ImportScene(tinyusdz::Scene &scene) {
+    _scene = scene;
+  }
+
+  bool HasPath(const std::string &path) {
+    // TODO
+    TokenizedPath tokPath(path);
+    (void)tokPath;
+    return false;
+  }
+
   bool Parse() {
     bool header_ok = ParseMagicHeader();
     if (!header_ok) {
@@ -3547,7 +3895,8 @@ class USDAParser {
       return false;
     }
 
-    bool has_meta = ParseMeta();
+    // global meta.
+    bool has_meta = ParseWorldMeta();
     if (has_meta) {
       // TODO: Process meta info
     } else {
@@ -3674,16 +4023,20 @@ class USDAParser {
     _builtin_metas["timeCodesPerSecond"] =
         Variable("float", "timeCodesPerSecond");
     _builtin_metas["customLayerData"] = Variable("object", "customLayerData");
-    _builtin_metas["test"] = Variable("int[]", "test");
-    _builtin_metas["testt"] = Variable("int3", "testt");
-    _builtin_metas["testf"] = Variable("float", "testf");
-    _builtin_metas["testfa"] = Variable("float[]", "testfa");
-    _builtin_metas["testfta"] = Variable("float3[]", "testfta");
+    _builtin_metas["subLayers"] = Variable("path[]", "subLayers");
+
+    //_builtin_metas["test"] = Variable("int[]", "test");
+    //_builtin_metas["testt"] = Variable("int3", "testt");
+    //_builtin_metas["testf"] = Variable("float", "testf");
+    //_builtin_metas["testfa"] = Variable("float[]", "testfa");
+    //_builtin_metas["testfta"] = Variable("float3[]", "testfta");
   }
 
   void _RegisterNodeTypes() {
     _node_types.insert("Xform");
     _node_types.insert("Sphere");
+    _node_types.insert("Cube");
+    _node_types.insert("Cylinder");
     _node_types.insert("Mesh");
     _node_types.insert("Scope");
     _node_types.insert("Material");
@@ -3705,6 +4058,10 @@ class USDAParser {
   int _line_col{0};
 
   float _version{1.0f};
+
+  std::string _base_dir; // Used for importing another USD file
+
+  nonstd::optional<tinyusdz::Scene> _scene; // Imported scene.
 };
 
 //
@@ -3910,6 +4267,8 @@ bool IsUSDA(const std::string &filename) {
 }  // namespace tinyusdz
 
 #if defined(USDA_MAIN)
+
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Need input.usda\n";
@@ -3917,6 +4276,9 @@ int main(int argc, char **argv) {
   }
 
   std::string filename = argv[1];
+
+  std::string base_dir;
+  base_dir = tinyusdz::usda::GetBaseDir(filename);
 
   std::vector<uint8_t> data;
   {
@@ -3946,6 +4308,9 @@ int main(int argc, char **argv) {
 
   tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
   tinyusdz::usda::USDAParser parser(&sr);
+
+  std::cout << "Basedir = " << base_dir << "\n";
+  parser.SetBaseDir(base_dir);
 
   {
     bool ret = parser.Parse();

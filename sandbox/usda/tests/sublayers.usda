@@ -1,0 +1,4 @@
+#usda1.0
+(
+  subLayers = [ @suzanne.usda@ ]
+)
