@@ -67,12 +67,17 @@ typedef std::array<double, 2> double2;
 typedef std::array<double, 3> double3;
 typedef std::array<double, 4> double4;
 
+struct AssetReference {
+  std::string asset_reference;
+  std::string prim_path;
+};
+
 // monostate = could be `Object` type in Variable class.
 // If you want to add more items, you need to generate nonstd::variant file,
 // since nonstd::variant has a limited number of types to use.
 using Value =
     nonstd::variant<nonstd::monostate, bool, int, float, double, float2, float3,
-                    float4, std::vector<float3>, std::string, Rel>;
+                    float4, std::vector<float3>, std::string, AssetReference, Rel>;
 
 class Variable {
  public:
@@ -933,8 +938,72 @@ class USDAParser {
     return true;
   }
 
-  bool ParseDefArgs(std::map<std::string, Variable> *args) {
+  bool ParseDefArg(std::tuple<ListEditQual, Variable> *out) {
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    tinyusdz::ListEditQual qual{tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT};
+    if (!MaybeListEditQual(&qual)) {
+      return false;
+    }
+
+    std::string varname;
+    if (!ReadToken(&varname)) {
+      return false;
+    }
+
+    if (!_IsNodeArg(varname)) {
+      _PushError("Unsupported or invalid variable name `" + varname + "`)\n");
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (!Expect('=')) {
+      _PushError("`=` expected.");
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    auto pvar = _GetNodeArg(varname);
+    if (!pvar) {
+      // This should not happen though;
+      return false;
+    }
+
+    auto var = (*pvar);
+
+    if (var.type == "path") {
+    } else if (var.type == "string") {
+      std::string value;
+      if (!ReadStringLiteral(&value)) {
+        return false;
+      }
+
+      Variable ret(var.type, varname);
+      ret.value = value;
+      std::get<1>(*out) = ret;
+
+    } else {
+      _PushError("TODO: varname " + varname + ", type " + var.type);
+      return false;
+    }
+
+    std::get<0>(*out) = qual;
+
+    return true;
+  }
+
+  bool ParseDefArgs(std::map<std::string, std::tuple<ListEditQual, Variable>> *args) {
     // '(' args ')'
+    // args = list of argument, separated by newline.
 
     if (!SkipWhitespace()) {
       return false;
@@ -960,61 +1029,31 @@ class USDAParser {
       return false;
     }
 
+    while (_sr->eof()) {
 
-    tinyusdz::ListEditQual qual{tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT};
-    if (!MaybeListEditQual(&qual)) {
-      return false;
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      char s;
+      if (!Char1(&s)) {
+        return false;
+      }
+
+      if (s == ')') {
+        // End
+        break;
+      }
+
+      std::tuple<ListEditQual, Variable> arg;
+      if (!ParseDefArg(&arg)) {
+        return false;
+      }
+
+      (*args)[std::get<1>(arg).name] = arg;
+
     }
 
-    std::string token;
-    if (!ReadToken(&token)) {
-      return false;
-    }
-
-    if (!_IsNodeArg(token)) {
-      _PushError("Unsupported or invalid argument name `" + token + "`)\n");
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!Expect('=')) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    // TODO
-    _PushError("TODO");
-    return false;
-
-    std::string value;
-    if (!ReadStringLiteral(&value)) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!Expect(')')) {
-      return false;
-    }
-
-    Variable kind_var("string", "kind");
-    kind_var.value = value;
-
-    (*args)["kind"] = kind_var;
-
-    std::cout << "100: kind = " << value << "\n";
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
 
     return true;
   }
@@ -2291,7 +2330,7 @@ class USDAParser {
   /// `sep`
   /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
   ///
-  bool SepBy1AssetReference(const char sep, std::vector<std::string> *result) {
+  bool SepBy1AssetReference(const char sep, std::vector<AssetReference> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -2299,7 +2338,7 @@ class USDAParser {
     }
 
     {
-      std::string ref;
+      AssetReference ref;
       bool triple_deliminated{false};
 
       if (!ParseAssetReference(&ref, &triple_deliminated)) {
@@ -2343,7 +2382,7 @@ class USDAParser {
 
       // std::cout << "go to read int\n";
 
-      std::string ref;
+      AssetReference ref;
       bool triple_deliminated{false};
       if (!ParseAssetReference(&ref, &triple_deliminated)) {
         _PushError("Failed to parse AssetReference.\n");
@@ -2531,19 +2570,38 @@ class USDAParser {
 
   ///
   /// Parse array of asset references
+  /// Allow non-list version
   ///
-  bool ParseAssetReferenceArray(std::vector<std::string> *result) {
-    if (!Expect('[')) {
+  bool ParseAssetReferenceArray(std::vector<AssetReference> *result) {
+
+    char c;
+    if (!Char1(&c)) {
       return false;
     }
 
-    if (!SepBy1AssetReference(',', result)) {
-      return false;
-    }
+    if (c != '[') {
+      // Guess non-list version
+      AssetReference ref;
+      bool triple_deliminated{false};
+      if (!ParseAssetReference(&ref, &triple_deliminated)) {
+        return false;
+      }
 
-    if (!Expect(']')) {
+      (void)triple_deliminated;
+      result->clear();
+      result->push_back(ref);
 
-      return false;
+    } else {
+
+      if (!SepBy1AssetReference(',', result)) {
+        return false;
+      }
+
+      if (!Expect(']')) {
+
+        return false;
+      }
+
     }
 
     return true;
@@ -3139,11 +3197,16 @@ class USDAParser {
   }
 
   // TODO: Return Path
-  bool ParseAssetReference(std::string *out_asset_path, bool *triple_deliminated) {
+  bool ParseAssetReference(AssetReference *out, bool *triple_deliminated) {
     // @...@ 
     // or @@@...@@@ (Triple '@'-deliminated asset references)
+    // And optionally followed by prim path.
+    // Example:
+    //   @bora@
+    //   @@@bora@@@
+    //   @bora@</dora>
 
-    // TODO: Escape characters 
+    // TODO: Correctly support escape characters 
 
     // look ahead.
     std::vector<char> buf;
@@ -3159,6 +3222,8 @@ class USDAParser {
         maybe_triple = true;
       } 
     } 
+
+    bool valid{false};
 
     if (!maybe_triple) {
 
@@ -3193,10 +3258,10 @@ class USDAParser {
       }
 
       if (found_delimiter) {
-        (*out_asset_path) = tok;
+        out->asset_reference = tok;
         (*triple_deliminated) = false;
 
-        return true;
+        valid = true;
       }
 
     } else {
@@ -3230,16 +3295,45 @@ class USDAParser {
       }
 
       if (found_delimiter) {
-        (*out_asset_path) = tok;
+        out->asset_reference = tok;
         (*triple_deliminated) = true;
 
-        return true;
+        valid = true;
       }
-
 
     }
 
-    return false;
+    if (!valid) {
+      return false;
+    }
+
+    // Parse optional prim_path 
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '<') {
+        if (!Rewind(1)) {
+          return false;
+        }
+
+        std::string path;
+        if (!ReadPathIdentifier(&path)) {
+          return false;
+        }
+
+        out->prim_path = path;
+
+      }
+    }
+
+    return true;
 
   }
 
@@ -3259,7 +3353,7 @@ class USDAParser {
     } else if (vartype == "path[]") {
       std::string value;
       std::cout << "read path[]\n";
-      std::vector<std::string> values;
+      std::vector<AssetReference> values;
       if (!ParseAssetReferenceArray(&values)) {
         std::string msg = "Array of AssetReference expected for `" + varname + "`.\n";
         _PushError(msg);
@@ -3269,7 +3363,7 @@ class USDAParser {
       outvar->array.clear();
 
       for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "asset_reference[" << i << "] = " << values[i] << "\n";
+        std::cout << "asset_reference[" << i << "] = " << values[i].asset_reference << ", prim_path = " << values[i].prim_path << "\n";
         Variable var;
         outvar->array.push_back(values[i]);
       }
@@ -3697,8 +3791,8 @@ class USDAParser {
   }
 
   ///
-/// Parse `class` block.
-///
+  /// Parse `class` block.
+  ///
   bool ParseClassBlock() {
     std::string tok;
 
@@ -3729,8 +3823,10 @@ class USDAParser {
       return false;
     }
 
-    std::map<std::string, Variable> args;
-    ParseDefArgs(&args);
+    std::map<std::string, std::tuple<ListEditQual, Variable>> args;
+    if (!ParseDefArgs(&args)) {
+      return false;
+    }
 
     if (!Expect('{')) {
       std::cout << "???\n";
@@ -3784,11 +3880,12 @@ class USDAParser {
       return false;
     }
 
-    std::map<std::string, Variable> args;
-    ParseDefArgs(&args);
+    std::map<std::string, std::tuple<ListEditQual, Variable>> args;
+    if (!ParseDefArgs(&args)) {
+      return false;
+    }
 
     if (!Expect('{')) {
-      std::cout << "???\n";
       return false;
     }
 
@@ -3799,7 +3896,6 @@ class USDAParser {
     // TODO: Parse block content
 
     if (!Expect('}')) {
-      std::cout << "???\n";
       return false;
     }
 
@@ -3867,14 +3963,14 @@ class USDAParser {
       return false;
     }
 
-    std::map<std::string, Variable> args;
-    ParseDefArgs(&args);
-
-    if (!Expect('{')) {
-      std::cout << "???\n";
+    std::map<std::string, std::tuple<ListEditQual, Variable>> args;
+    if (!ParseDefArgs(&args)) {
       return false;
     }
-    std::cout << "bbb\n";
+
+    if (!Expect('{')) {
+      return false;
+    }
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
@@ -4158,8 +4254,17 @@ class USDAParser {
 
   void _RegisterNodeArgs() {
     _node_args["kind"] = Variable("string", "kind");
-    _node_args["references"] = Variable("path", "references");
+    _node_args["references"] = Variable("path[]", "references");
     _node_args["inherits"] = Variable("path", "inherits");
+    _node_args["assetInfo"] = Variable("dict", "assetInfo");
+  }
+
+  nonstd::optional<Variable> _GetNodeArg(const std::string &arg) {
+    if (_node_args.count(arg)) {
+      return _node_args.at(arg);
+    }
+
+    return nonstd::nullopt;
   }
 
   void _RegisterBuiltinMeta() {
