@@ -200,7 +200,7 @@ enum ListEditQual {
   LIST_EDIT_QUAL_RESET_TO_EXPLICIT,	// "unqualified"(no qualifier)
   LIST_EDIT_QUAL_APPEND, // "append"
   LIST_EDIT_QUAL_DELETE, // "delete"
-  LIST_EDIT_QUAL_PREPEND, // "prepend"
+  LIST_EDIT_QUAL_PREPEND // "prepend"
 };
 
 template <typename T>
