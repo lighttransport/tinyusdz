@@ -75,10 +75,13 @@ struct AssetReference {
 // monostate = could be `Object` type in Variable class.
 // If you want to add more items, you need to generate nonstd::variant file,
 // since nonstd::variant has a limited number of types to use.
+// std::vector<float3> is the first citizen of `Value`, since it is frequently used type.
+// For other array type, use Variable::Array
 using Value =
-    nonstd::variant<nonstd::monostate, bool, int, float, double, float2, float3,
-                    float4, std::vector<float3>, std::string, AssetReference, Rel>;
+    nonstd::variant<nonstd::monostate, bool, int, float, float2, float3,
+                    float4, double, double2, double3, double4, std::vector<float3>, std::string, AssetReference, Rel>;
 
+// TODO: Use std::any?
 class Variable {
  public:
   std::string type;
@@ -112,6 +115,9 @@ class Variable {
   bool IsFloat4() const { return type == "float4" && is<float4>(); }
 
   bool IsDouble() const { return type == "double" && is<double>(); }
+  bool IsDouble2() const { return type == "double2" && is<double2>(); }
+  bool IsDouble3() const { return type == "double3" && is<double3>(); }
+  bool IsDouble4() const { return type == "double4" && is<double4>(); }
 
   bool IsString() const { return type == "string" && is<std::string>(); }
 
@@ -1815,7 +1821,7 @@ class USDAParser {
 
       // 'todos'
     } else {
-      _PushError("TODO: Implement value parser for type: " + type_name + "\n");
+      _PushError("TODO: ParseDictElement: Implement value parser for type: " + type_name + "\n");
       return false;
     }
 
@@ -2058,7 +2064,7 @@ class USDAParser {
         if (!ParseBasicTypeTuple<float, 2>(&value)) {
           _PushError("Failed to parse float2.\n");
         }
-        std::cout << "float3 = (" << value[0] << ", " << value[1] << ")\n";
+        std::cout << "float2 = (" << value[0] << ", " << value[1] << ")\n";
       }
 
       // optional: interpolation parameter
@@ -2107,6 +2113,219 @@ class USDAParser {
                   << nonstd::get<std::string>(meta.at("interpolation").value)
                   << "\n";
       }
+    } else if (type_name == "float4") {
+      if (array_qual) {
+        std::vector<std::array<float, 4>> values;
+        if (!ParseTupleArray(&values)) {
+          _PushError("Failed to parse float4 array.\n");
+        }
+        std::cout << "float4 = \n";
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "(" << values[i][0] << ", " << values[i][1] << ", "
+                    << values[i][2] << ", " << values[i][3] << ")\n";
+        }
+
+        Variable var;
+        for (size_t i = 0; i < values.size(); i++) {
+          var.array.push_back(values[i]);
+        }
+
+        (*props)[primattr_name] = var;
+      } else {
+        std::array<float, 4> value;
+        if (!ParseBasicTypeTuple<float, 4>(&value)) {
+          _PushError("Failed to parse float4.\n");
+        }
+        std::cout << "float4 = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ", " << value[3] << ")\n";
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
+      }
+    } else if (type_name == "double") {
+      if (array_qual) {
+        std::vector<double> values;
+        if (!ParseBasicTypeArray(&values)) {
+          _PushError("Failed to parse double array.\n");
+        }
+        std::cout << "double = \n";
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << values[i] << "\n";
+        }
+
+        Variable var;
+        for (size_t i = 0; i < values.size(); i++) {
+          var.array.push_back(values[i]);
+        }
+
+        (*props)[primattr_name] = var;
+
+      } else if (hasConnect(primattr_name)) {
+        std::string value;  // TODO: Path
+        if (!ReadPathIdentifier(&value)) {
+          _PushError("Failed to parse path identifier for `token`.\n");
+          return false;
+        }
+        std::cout << "Path identifier = " << value << "\n";
+      } else {
+        double value;
+        if (!ReadBasicType(&value)) {
+          _PushError("Failed to parse double.\n");
+        }
+        std::cout << "double = " << value << "\n";
+
+        Variable var("double");
+        var.value = value;
+
+        (*props)[primattr_name] = var;
+      }
+
+      // optional: interpolation parameter
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
+      }
+    } else if (type_name == "double2") {
+      if (array_qual) {
+        std::vector<std::array<double, 2>> values;
+        if (!ParseTupleArray(&values)) {
+          _PushError("Failed to parse double2 array.\n");
+        }
+        std::cout << "double2 = \n";
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "(" << values[i][0] << ", " << values[i][1] << ")\n";
+        }
+
+        Variable var;
+        for (size_t i = 0; i < values.size(); i++) {
+          var.array.push_back(values[i]);
+        }
+
+        (*props)[primattr_name] = var;
+      } else {
+        std::array<double, 2> value;
+        if (!ParseBasicTypeTuple<double, 2>(&value)) {
+          _PushError("Failed to parse double2.\n");
+        }
+        std::cout << "double2 = (" << value[0] << ", " << value[1] << ")\n";
+
+        Variable var("double2");
+        var.value = value;
+
+        (*props)[primattr_name] = var;
+      }
+
+      // optional: interpolation parameter
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
+      }
+
+    } else if (type_name == "double3") {
+      if (array_qual) {
+        std::vector<std::array<double, 3>> values;
+        if (!ParseTupleArray(&values)) {
+          _PushError("Failed to parse double3 array.\n");
+        }
+        std::cout << "double3 = \n";
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "(" << values[i][0] << ", " << values[i][1] << ", "
+                    << values[i][2] << ")\n";
+        }
+
+        Variable var;
+        for (size_t i = 0; i < values.size(); i++) {
+          var.array.push_back(values[i]);
+        }
+
+        (*props)[primattr_name] = var;
+
+      } else {
+        std::array<double, 3> value;
+        if (!ParseBasicTypeTuple<double, 3>(&value)) {
+          _PushError("Failed to parse double3.\n");
+        }
+        std::cout << "double3 = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ")\n";
+
+        Variable var;
+        var.value = value;
+        (*props)[primattr_name] = var;
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
+      }
+
+    } else if (type_name == "double4") {
+      if (array_qual) {
+        std::vector<std::array<double, 4>> values;
+        if (!ParseTupleArray(&values)) {
+          _PushError("Failed to parse double4 array.\n");
+        }
+        std::cout << "double4 = \n";
+        for (size_t i = 0; i < values.size(); i++) {
+          std::cout << "(" << values[i][0] << ", " << values[i][1] << ", "
+                    << values[i][2] << ", " << values[i][3] << ")\n";
+        }
+
+        Variable var;
+        for (size_t i = 0; i < values.size(); i++) {
+          var.array.push_back(values[i]);
+        }
+
+        (*props)[primattr_name] = var;
+      } else {
+        std::array<double, 4> value;
+        if (!ParseBasicTypeTuple<double, 4>(&value)) {
+          _PushError("Failed to parse double4.\n");
+        }
+        std::cout << "double4 = (" << value[0] << ", " << value[1] << ", "
+                  << value[2] << ", " << value[3] << ")\n";
+
+        Variable var;
+        var.value = value;
+        (*props)[primattr_name] = var;
+      }
+
+      std::map<std::string, Variable> meta;
+      if (!ParseAttrMeta(&meta)) {
+        _PushError("Failed to parse PrimAttr meta.");
+        return false;
+      }
+      if (meta.count("interpolation")) {
+        std::cout << "interpolation: "
+                  << nonstd::get<std::string>(meta.at("interpolation").value)
+                  << "\n";
+      }
+
     } else if (type_name == "color3f") {
       if (array_qual) {
         // TODO: connection
@@ -2119,6 +2338,11 @@ class USDAParser {
           std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
                     << value[i][2] << ")\n";
         }
+
+        Variable var;
+        var.value = value; // float3 array is the first-class type
+        (*props)[primattr_name] = var;
+
       } else if (hasConnect(primattr_name)) {
         std::string value;  // TODO: Path
         if (!ReadPathIdentifier(&value)) {
@@ -2149,37 +2373,6 @@ class USDAParser {
         std::cout << "has customData\n";
       }
 
-    } else if (type_name == "double3") {
-      if (array_qual) {
-        std::vector<std::array<double, 3>> value;
-        if (!ParseTupleArray(&value)) {
-          _PushError("Failed to parse double3 array.\n");
-        }
-        std::cout << "double3 = \n";
-        for (size_t i = 0; i < value.size(); i++) {
-          std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
-                    << value[i][2] << ")\n";
-        }
-      } else {
-        std::array<double, 3> value;
-        if (!ParseBasicTypeTuple<double, 3>(&value)) {
-          _PushError("Failed to parse double3.\n");
-        }
-        std::cout << "double3 = (" << value[0] << ", " << value[1] << ", "
-                  << value[2] << ")\n";
-      }
-
-      std::map<std::string, Variable> meta;
-      if (!ParseAttrMeta(&meta)) {
-        _PushError("Failed to parse PrimAttr meta.");
-        return false;
-      }
-      if (meta.count("interpolation")) {
-        std::cout << "interpolation: "
-                  << nonstd::get<std::string>(meta.at("interpolation").value)
-                  << "\n";
-      }
-
     } else if (type_name == "normal3f") {
       if (array_qual) {
         std::vector<std::array<float, 3>> value;
@@ -2191,6 +2384,11 @@ class USDAParser {
           std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
                     << value[i][2] << ")\n";
         }
+
+        Variable var;
+        var.value = value; // float3 array is the first-class type
+        (*props)[primattr_name] = var;
+
       } else if (hasConnect(primattr_name)) {
         std::string value;  // TODO: Path
         if (!ReadPathIdentifier(&value)) {
@@ -2205,6 +2403,10 @@ class USDAParser {
         }
         std::cout << "normal3f = (" << value[0] << ", " << value[1] << ", "
                   << value[2] << ")\n";
+
+        Variable var;
+        var.value = value; 
+        (*props)[primattr_name] = var;
       }
 
       std::map<std::string, Variable> meta;
@@ -2229,6 +2431,11 @@ class USDAParser {
           std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
                     << value[i][2] << ")\n";
         }
+
+        Variable var;
+        var.value = value; // float3 array is the first-class type
+        (*props)[primattr_name] = var;
+
       } else {
         std::array<float, 3> value;
         if (!ParseBasicTypeTuple<float, 3>(&value)) {
@@ -2236,6 +2443,10 @@ class USDAParser {
         }
         std::cout << "point3f = (" << value[0] << ", " << value[1] << ", "
                   << value[2] << ")\n";
+
+        Variable var;
+        var.value = value;
+        (*props)[primattr_name] = var;
       }
 
       std::map<std::string, Variable> meta;
@@ -2288,8 +2499,9 @@ class USDAParser {
       std::cout << "rel: " << rel.path << "\n";
 
       // 'todos'
+
     } else {
-      _PushError("TODO: Implement value parser for type: " + type_name + "\n");
+      _PushError("TODO: ParsePrimAttr: Implement value parser for type: " + type_name + "\n");
       return false;
     }
 
@@ -2385,7 +2597,6 @@ class USDAParser {
       AssetReference ref;
       bool triple_deliminated{false};
       if (!ParseAssetReference(&ref, &triple_deliminated)) {
-        _PushError("Failed to parse AssetReference.\n");
         break;
       }
 
@@ -2892,6 +3103,8 @@ class USDAParser {
       _PushError("Path identifier must start with '/'");
       return false;
     }
+    
+    ss << '/';
 
     // read until '>'
     bool ok = false;
@@ -3137,21 +3350,21 @@ class USDAParser {
     }
 
     {
-      char magic[5];
-      if (!_sr->read(5, 5, reinterpret_cast<uint8_t *>(magic))) {
+      char magic[6];
+      if (!_sr->read(6, 6, reinterpret_cast<uint8_t *>(magic))) {
         // eol
         return false;
       }
 
       if ((magic[0] == '#') && (magic[1] == 'u') && (magic[2] == 's') &&
-          (magic[3] == 'd') && (magic[4] == 'a')) {
+          (magic[3] == 'd') && (magic[4] == 'a') && (magic[5] == ' ')) {
         // ok
       } else {
         ErrorDiagnositc diag;
         diag.line_row = _line_row;
         diag.line_col = _line_col;
-        diag.err = "Magic header must be `#usda` but got `" +
-                   std::string(magic, 5) + "`\n";
+        diag.err = "Magic header must start with `#usda `(at least single whitespace after 'a') but got `" +
+                   std::string(magic, 6) + "`\n";
         err_stack.push(diag);
 
         return false;
@@ -3227,6 +3440,8 @@ class USDAParser {
 
     if (!maybe_triple) {
 
+      std::cout << "maybe single-'@' asset reference\n";
+
       SeekTo(curr);
       char s;
       if (!Char1(&s)) {
@@ -3256,6 +3471,8 @@ class USDAParser {
 
         tok += c;
       }
+
+      std::cout << "tok " << tok << ", found_delimiter " << found_delimiter << "\n";
 
       if (found_delimiter) {
         out->asset_reference = tok;
@@ -3329,7 +3546,10 @@ class USDAParser {
         }
 
         out->prim_path = path;
-
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
       }
     }
 
@@ -3963,9 +4183,31 @@ class USDAParser {
       return false;
     }
 
+    // optional args
     std::map<std::string, std::tuple<ListEditQual, Variable>> args;
-    if (!ParseDefArgs(&args)) {
-      return false;
+    {
+      // look ahead
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      if (c == '(') {
+        // arg
+
+        if (!ParseDefArgs(&args)) {
+          return false;
+        }
+
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+
+      }
     }
 
     if (!Expect('{')) {
@@ -4205,11 +4447,18 @@ class USDAParser {
   }
 
   void _RegisterPrimAttrTypes() {
-    _registered_prim_attr_types.insert("float");
     _registered_prim_attr_types.insert("int");
 
+    _registered_prim_attr_types.insert("float");
     _registered_prim_attr_types.insert("float2");
     _registered_prim_attr_types.insert("float3");
+    _registered_prim_attr_types.insert("float4");
+
+    _registered_prim_attr_types.insert("double");
+    _registered_prim_attr_types.insert("double2");
+    _registered_prim_attr_types.insert("double3");
+    _registered_prim_attr_types.insert("double4");
+
     _registered_prim_attr_types.insert("normal3f");
     _registered_prim_attr_types.insert("point3f");
     _registered_prim_attr_types.insert("texCoord2f");
