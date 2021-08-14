@@ -281,6 +281,23 @@ struct TypeTrait<Matrix4d> {
   static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX4D;
 };
 
+
+#if 0
+template<typename T>
+struct GetDim {
+  static constexpr size_t dim() {
+    return 0;
+  }
+};
+
+template<typename T>
+struct GetDim<std::vector<T>> {
+  static constexpr size_t dim() {
+    return 1 + GetDim<T>::dim();
+  }
+};
+#endif
+
 template <class T>
 class PrimValue {
  private:
@@ -299,17 +316,18 @@ class PrimValue {
 
   std::string type_name() { return std::string(TypeTrait<T>::type_name); }
   bool is_array() const { return false; }
-  int array_dim() const { return 0; }
+  size_t array_dim() const { return 0; }
 };
 
 ///
-/// 1D array of PrimValue
+/// Array of PrimValue
 ///
 template <class T>
 class PrimValue<std::vector<T>> {
  private:
   std::vector<T> m_value;
 
+ public:
   template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
                             * = nullptr>
   PrimValue<T> &operator=(const std::vector<U> &u) {
@@ -323,18 +341,18 @@ class PrimValue<std::vector<T>> {
   }
 
   bool is_array() const { return true; }
-  int array_dim() const { return 1; }
+  size_t array_dim() const { return 1; }
 };
 
 ///
 /// 2D array of PrimValue
-/// TODO: Provide multidim_array implementation
 ///
 template <class T>
 class PrimValue<std::vector<std::vector<T>>> {
  private:
   std::vector<std::vector<T>> m_value;
 
+ public:
   template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
                             * = nullptr>
   PrimValue<T> &operator=(const std::vector<std::vector<U>> &u) {
@@ -350,5 +368,32 @@ class PrimValue<std::vector<std::vector<T>>> {
   bool is_array() const { return true; }
   int array_dim() const { return 2; }
 };
+
+///
+/// 3D array of PrimValue
+///
+template <class T>
+class PrimValue<std::vector<std::vector<std::vector<T>>>> {
+ private:
+  std::vector<std::vector<std::vector<T>>> m_value;
+
+ public:
+  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
+                            * = nullptr>
+  PrimValue<T> &operator=(const std::vector<std::vector<std::vector<U>>> &u) {
+    m_value = u;
+
+    return (*this);
+  }
+
+  std::string type_name() {
+    return std::string(TypeTrait<T>::type_name) + "[][][]";
+  }
+
+  bool is_array() const { return true; }
+  int array_dim() const { return 3; }
+};
+
+// TODO: Privide generic multidimensional array type?
 
 } // namespace tinyusdz
