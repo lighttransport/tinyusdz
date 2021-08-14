@@ -13,6 +13,7 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_WITH_C_API "Enable C API." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
+option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd) 
@@ -84,7 +85,6 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
-    ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
     )
 
 set(TINYUSDZ_C_API_SOURCES
@@ -98,6 +98,10 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
   )
+
+if (TINYUSDZ_WITH_JSON)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
+endif()
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
     ${PROJECT_SOURCE_DIR}/src/python-bindings.cc
@@ -202,7 +206,10 @@ add_sanitizers(${BUILD_TARGET})
 
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
-target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+
+if (TINYUSDZ_WITH_JSON)
+  target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+endif ()
 
 if (TINYUSDZ_WITH_EXR)
   if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
