@@ -4124,7 +4124,8 @@ class USDAParser {
 
   ///
   /// Parse `def` block.
-  /// `def Xform "root" optional_arg? { ... }
+  ///
+  /// def = `def` prim_type? token optional_arg? { ... }
   ///
   /// optional_arg = '(' args ')'
   ///
@@ -4152,21 +4153,44 @@ class USDAParser {
       return false;
     }
 
+    // look ahead
+    bool has_primtype = false;
+    {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      if (c == '"') {
+        // token
+        has_primtype = false;
+      } else {
+        has_primtype = true;
+      }
+       
+    }
+
     std::string prim_type;
 
-    if (!ReadToken(&prim_type)) {
-      return false;
-    }
+    if (has_primtype) {
+      if (!ReadToken(&prim_type)) {
+        return false;
+      }
 
-    if (!_node_types.count(prim_type)) {
-      std::string msg =
-          "`" + prim_type +
-          "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
-      _PushError(msg);
-      return false;
-    }
+      if (!_node_types.count(prim_type)) {
+        std::string msg =
+            "`" + prim_type +
+            "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
+        _PushError(msg);
+        return false;
+      }
 
-    std::cout << "prim_type: " << prim_type << "\n";
+      std::cout << "prim_type: " << prim_type << "\n";
+    }
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
@@ -4261,7 +4285,10 @@ class USDAParser {
             return false;
           }
 
-          if (prim_type == "GeomMesh") {
+          if (prim_type.empty()) {
+            // Unknown or unresolved node type
+            std::cout << "TODO: unresolved node type\n";
+          } if (prim_type == "GeomMesh") {
             GeomMesh mesh;
             std::cout << "Reconstruct GeomMesh\n";
             if (!ReconstructGeomMesh(props, &mesh)) {
