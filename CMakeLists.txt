@@ -276,6 +276,9 @@ endif (TINYUSDZ_BUILD_EXAMPLES)
 
 if (TINYUSDZ_BUILD_TESTS)
 
+  #
+  # Standalone tester
+  #
   set(TINYUSDZ_TEST_SOURCES
       ${PROJECT_SOURCE_DIR}/tests/test-main.cc
       )
@@ -290,6 +293,11 @@ if (TINYUSDZ_BUILD_TESTS)
   if (TINYUSDZ_WITH_OPENSUBDIV)
     target_compile_definitions(${TEST_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif (TINYUSDZ_WITH_OPENSUBDIV)
+
+  #
+  # unit tester
+  #
+  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/unit)
 
 endif (TINYUSDZ_BUILD_TESTS)
 
