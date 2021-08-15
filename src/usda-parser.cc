@@ -1510,7 +1510,7 @@ class USDAParser {
     } else if (type_name == "bool") {
       if (array_qual) {
         // Assume people only use array access to vector<bool>
-        std::vector<bool> value;
+        std::vector<nonstd::optional<bool>> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError(
               "Failed to parse array of string literal for `uniform "
@@ -1518,19 +1518,21 @@ class USDAParser {
           return false;
         }
       } else {
-        bool value;
+        nonstd::optional<bool> value;
         if (!ReadBasicType(&value)) {
           _PushError("Failed to parse value for `uniform bool`.\n");
           return false;
         }
-        std::cout << "bool value = " << value << "\n";
+        if (value) {
+          std::cout << "bool value = " << *value << "\n";
 
-        var.type = "bool";
-        var.value = value;
+          var.type = "bool";
+          var.value = *value;
+        }
       }
     } else if (type_name == "token") {
       if (array_qual) {
-        std::vector<std::string> value;
+        std::vector<nonstd::optional<std::string>> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError(
               "Failed to parse array of string literal for `uniform "
@@ -1547,13 +1549,13 @@ class USDAParser {
       }
     } else if (type_name == "int") {
       if (array_qual) {
-        std::vector<int> value;
+        std::vector<nonstd::optional<int>> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError("Failed to parse int array.\n");
           return false;
         }
       } else {
-        int value;
+        nonstd::optional<int> value;
         if (!ReadBasicType(&value)) {
           _PushError("Failed to parse int value.\n");
           return false;
@@ -1947,18 +1949,20 @@ class USDAParser {
     } else if (type_name == "bool") {
       if (array_qual) {
         // Assume people only use array access to vector<bool>
-        std::vector<bool> value;
+        std::vector<nonstd::optional<bool>> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError(
               "Failed to parse array of string literal for `uniform "
               "bool[]`.\n");
         }
       } else {
-        bool value;
+        nonstd::optional<bool> value;
         if (!ReadBasicType(&value)) {
           _PushError("Failed to parse value for `uniform bool`.\n");
         }
-        std::cout << "bool value = " << value << "\n";
+        if (value) {
+          std::cout << "bool value = " << *value << "\n";
+        }
       }
     } else if (type_name == "token") {
       if (array_qual) {
@@ -1967,7 +1971,7 @@ class USDAParser {
           return false;
         }
 
-        std::vector<std::string> value;
+        std::vector<nonstd::optional<std::string>> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError(
               "Failed to parse array of string literal for `uniform "
@@ -2003,25 +2007,29 @@ class USDAParser {
       }
     } else if (type_name == "int") {
       if (array_qual) {
-        std::vector<int> value;
+        std::vector<nonstd::optional<int>> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError("Failed to parse int array.\n");
         }
       } else {
-        int value;
+        nonstd::optional<int> value;
         if (!ReadBasicType(&value)) {
           _PushError("Failed to parse int value.\n");
         }
       }
     } else if (type_name == "float") {
       if (array_qual) {
-        std::vector<float> value;
+        std::vector<nonstd::optional<float>> value;
         if (!ParseBasicTypeArray(&value)) {
           _PushError("Failed to parse float array.\n");
         }
         std::cout << "float = \n";
         for (size_t i = 0; i < value.size(); i++) {
-          std::cout << value[i] << "\n";
+          if (value[i]) {
+            std::cout << *value[i] << "\n";
+          } else {
+            std::cout << "None\n";
+          }
         }
       } else if (hasConnect(primattr_name)) {
         std::string value;  // TODO: Path
@@ -2031,11 +2039,15 @@ class USDAParser {
         }
         std::cout << "Path identifier = " << value << "\n";
       } else {
-        float value;
+        nonstd::optional<float> value;
         if (!ReadBasicType(&value)) {
           _PushError("Failed to parse float.\n");
         }
-        std::cout << "float = " << value << "\n";
+        if (value) {
+          std::cout << "float = " << *value << "\n";
+        } else { 
+          std::cout << "float = None\n";
+        }
       }
 
       // optional: interpolation parameter
@@ -2152,18 +2164,26 @@ class USDAParser {
       }
     } else if (type_name == "double") {
       if (array_qual) {
-        std::vector<double> values;
+        std::vector<nonstd::optional<double>> values;
         if (!ParseBasicTypeArray(&values)) {
           _PushError("Failed to parse double array.\n");
         }
         std::cout << "double = \n";
         for (size_t i = 0; i < values.size(); i++) {
-          std::cout << values[i] << "\n";
+          if (values[i]) {
+            std::cout << *values[i] << "\n";
+          } else {
+            std::cout << "None\n";
+          }
         }
 
         Variable var;
         for (size_t i = 0; i < values.size(); i++) {
-          var.array.push_back(values[i]);
+          if (values[i]) {
+            var.array.push_back(*values[i]);
+          } else {
+            var.array.push_back(Value()); // monostate
+          }
         }
 
         (*props)[primattr_name] = var;
@@ -2176,16 +2196,22 @@ class USDAParser {
         }
         std::cout << "Path identifier = " << value << "\n";
       } else {
-        double value;
+        nonstd::optional<double> value;
         if (!ReadBasicType(&value)) {
           _PushError("Failed to parse double.\n");
         }
-        std::cout << "double = " << value << "\n";
+        if (value) {
+          std::cout << "double = " << *value << "\n";
 
-        Variable var("double");
-        var.value = value;
+          Variable var("double");
+          var.value = *value;
 
-        (*props)[primattr_name] = var;
+          (*props)[primattr_name] = var;
+        } else {
+          std::cout << "double = None\n";
+          // TODO: invalidate attr?
+        }
+
       }
 
       // optional: interpolation parameter
@@ -2510,11 +2536,20 @@ class USDAParser {
     return true;
   }
 
+  // Allow value 'None', which is represented as nullopt.
+  bool ReadBasicType(nonstd::optional<std::string> *value);
+  bool ReadBasicType(nonstd::optional<int> *value);
+  bool ReadBasicType(nonstd::optional<float> *value);
+  bool ReadBasicType(nonstd::optional<double> *value);
+  bool ReadBasicType(nonstd::optional<bool> *value);
+
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
   bool ReadBasicType(float *value);
   bool ReadBasicType(double *value);
   bool ReadBasicType(bool *value);
+
+  bool MaybeNone();
 
   /// == DORA ==
   
@@ -2602,6 +2637,77 @@ class USDAParser {
 
       (void)triple_deliminated;
       result->push_back(ref);
+    }
+
+    // std::cout << "result.size " << result->size() << "\n";
+
+    if (result->empty()) {
+      _PushError("Empty array.\n");
+      return false;
+    }
+
+    return true;
+  }
+
+  ///
+  /// Parses 1 or more occurences of value with basic type 'T', separated by
+  /// `sep`
+  ///
+  template <typename T>
+  bool SepBy1BasicType(const char sep, std::vector<nonstd::optional<T>> *result) {
+    result->clear();
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    {
+      nonstd::optional<T> value;
+      if (!ReadBasicType(&value)) {
+        _PushError("Not starting with the value of requested type.\n");
+        return false;
+      }
+
+      result->push_back(value);
+    }
+
+    // std::cout << "sep: " << sep << "\n";
+
+    while (!_sr->eof()) {
+      // sep
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      char c;
+      if (!_sr->read1(&c)) {
+        std::cout << "read1 failure\n";
+        return false;
+      }
+
+      // std::cout << "sep c = " << c << "\n";
+
+      if (c != sep) {
+        // end
+        // std::cout << "sepBy1 end\n";
+        _sr->seek_from_current(-1);  // unwind single char
+        break;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      // std::cout << "go to read int\n";
+
+      nonstd::optional<T> value;
+      if (!ReadBasicType(&value)) {
+        break;
+      }
+
+      result->push_back(value);
     }
 
     // std::cout << "result.size " << result->size() << "\n";
@@ -2749,6 +2855,32 @@ class USDAParser {
       _PushError("Empty array.\n");
       return false;
     }
+
+    return true;
+  }
+
+  ///
+  /// Parse '[', Sep1By(','), ']'
+  ///
+  template <typename T>
+  bool ParseBasicTypeArray(std::vector<nonstd::optional<T>> *result) {
+    if (!Expect('[')) {
+      return false;
+    }
+    // std::cout << "got [\n";
+
+    if (!SepBy1BasicType<T>(',', result)) {
+      return false;
+    }
+
+    // std::cout << "try to parse ]\n";
+
+    if (!Expect(']')) {
+      // std::cout << "not ]\n";
+
+      return false;
+    }
+    // std::cout << "got ]\n";
 
     return true;
   }
@@ -4593,11 +4725,50 @@ class USDAParser {
   nonstd::optional<tinyusdz::Scene> _scene; // Imported scene.
 };
 
+// 'None'
+bool USDAParser::MaybeNone() {
+  std::vector<char> buf;
+
+  auto loc = CurrLoc();
+
+  if (!CharN(4, &buf)) {
+
+    SeekTo(loc);
+    return false;
+  }
+
+  if ((buf[0] == 'N') && (buf[1] == 'o') && (buf[2] == 'n') && (buf[3] == 'e')) {
+    // got it
+    return true;
+  }
+
+  SeekTo(loc);
+
+  return false;
+}
+
 //
 // Specializations
 //
 bool USDAParser::ReadBasicType(std::string *value) {
   return ReadStringLiteral(value);
+}
+
+bool USDAParser::ReadBasicType(nonstd::optional<std::string> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  std::string v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+    
+  }
+
+  return false;
 }
 
 bool USDAParser::ReadBasicType(bool *value) {
@@ -4624,6 +4795,23 @@ bool USDAParser::ReadBasicType(bool *value) {
     _PushError("'0' or '1' expected.\n");
     return false;
   }
+}
+
+bool USDAParser::ReadBasicType(nonstd::optional<bool> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  bool v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+    
+  }
+
+  return false;
 }
 
 bool USDAParser::ReadBasicType(int *value) {
@@ -4703,6 +4891,23 @@ bool USDAParser::ReadBasicType(int *value) {
   return true;
 }
 
+bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  int v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+    
+  }
+
+  return false;
+}
+
 bool USDAParser::ReadBasicType(float *value) {
   std::string value_str;
   std::string err;
@@ -4731,7 +4936,26 @@ bool USDAParser::ReadBasicType(float *value) {
   return true;
 }
 
+bool USDAParser::ReadBasicType(nonstd::optional<float> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  float v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+    
+  }
+
+  return false;
+}
+
+
 bool USDAParser::ReadBasicType(double *value) {
+
   std::string value_str;
   std::string err;
   if (!LexFloat(&value_str, &err)) {
@@ -4755,6 +4979,23 @@ bool USDAParser::ReadBasicType(double *value) {
   }
 
   return true;
+}
+
+bool USDAParser::ReadBasicType(nonstd::optional<double> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  double v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+    
+  }
+
+  return false;
 }
 
 bool IsUSDA(const std::string &filename) {
