@@ -41,8 +41,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifdef _WIN32
 
+#ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #endif
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -51,7 +53,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <windows.h>  // include API for expanding a file path
 
+#ifdef _MSC_VER
 #undef NOMINMAX
+#endif
+
 #undef WIN32_LEAN_AND_MEAN
 
 #if defined(__GLIBCXX__)  // mingw
