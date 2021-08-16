@@ -86,6 +86,7 @@ class Variable {
  public:
   std::string type;
   std::string name;
+  bool custom{false};
 
   // scalar type
   Value value;
@@ -748,6 +749,43 @@ class USDAParser {
     _base_dir = str;
   }
 
+  template<typename T>
+  bool MaybeNonFinite(T *out) {
+
+    auto loc = CurrLoc();
+
+    // "-inf", "inf" or "nan"
+    std::vector<char> buf(4);
+    if (!CharN(3, &buf)) {
+      return false;
+    }
+    SeekTo(loc);
+
+    if ((buf[0] == 'i') && (buf[1] == 'n') && (buf[2] == 'f')) {
+      (*out) = std::numeric_limits<T>::infinity();
+      return true;
+    }
+
+    if ((buf[0] == 'n') && (buf[1] == 'a') && (buf[2] == 'n')) {
+      (*out) = std::numeric_limits<T>::quiet_NaN();
+      return true;
+    }
+
+    bool ok = CharN(4, &buf);
+    SeekTo(loc);
+
+    if (ok) {
+      if ((buf[0] == '-') && (buf[1] == 'i') && (buf[2] == 'n') && (buf[3] == 'f')) {
+        (*out) = -std::numeric_limits<T>::infinity();
+        return true;
+      }
+
+      // NOTE: support "-nan"?
+    }
+
+    return false;
+  }
+
   bool LexFloat(std::string *result, std::string *err) {
     // FLOATVAL : ('+' or '-')? FLOAT
     // FLOAT
@@ -1123,10 +1161,12 @@ class USDAParser {
       return false;
     }
 
-    if (tok == "prepended") {
+    if (tok == "prepend") {
       (*qual) = tinyusdz::LIST_EDIT_QUAL_PREPEND;
     } else if (tok == "append") {
       (*qual) = tinyusdz::LIST_EDIT_QUAL_APPEND;
+    } else if (tok == "add") {
+      (*qual) = tinyusdz::LIST_EDIT_QUAL_ADD;
     } else if (tok == "delete") {
       (*qual) = tinyusdz::LIST_EDIT_QUAL_DELETE;
     } else {
@@ -1834,10 +1874,31 @@ class USDAParser {
     return true;
   }
 
+  bool MaybeCustom() {
+    std::string tok;
+
+    auto loc = CurrLoc();
+    bool ok = ReadIdentifier(&tok);
+
+    SeekTo(loc);
+
+    if (!ok) {
+      return false;
+    }
+
+    return (tok == "custom");
+  }
+
   bool ParsePrimAttr(std::map<std::string, Variable> *props) {
-    // prim_attr : uniform type (array_qual?) name '=' value interpolation?
-    //           | type (array_qual?) name '=' value interpolation?
+    // prim_attr : (custom?) uniform type (array_qual?) name '=' value interpolation?
+    //           | (custom?) type (array_qual?) name '=' value interpolation?
     //           ;
+
+    bool custom_qual = MaybeCustom();
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
 
     bool uniform_qual{false};
     std::string type_name;
@@ -2105,6 +2166,7 @@ class USDAParser {
 
         Variable var;
         var.value = value;
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
       } else {
         std::array<float, 3> value;
@@ -2141,6 +2203,7 @@ class USDAParser {
         for (size_t i = 0; i < values.size(); i++) {
           var.array.push_back(values[i]);
         }
+        var.custom = custom_qual;
 
         (*props)[primattr_name] = var;
       } else {
@@ -2186,6 +2249,7 @@ class USDAParser {
           }
         }
 
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
       } else if (hasConnect(primattr_name)) {
@@ -2205,6 +2269,7 @@ class USDAParser {
 
           Variable var("double");
           var.value = *value;
+          var.custom = custom_qual;
 
           (*props)[primattr_name] = var;
         } else {
@@ -2241,6 +2306,7 @@ class USDAParser {
           var.array.push_back(values[i]);
         }
 
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
       } else {
         std::array<double, 2> value;
@@ -2251,6 +2317,7 @@ class USDAParser {
 
         Variable var("double2");
         var.value = value;
+        var.custom = custom_qual;
 
         (*props)[primattr_name] = var;
       }
@@ -2284,6 +2351,7 @@ class USDAParser {
           var.array.push_back(values[i]);
         }
 
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
       } else {
@@ -2296,6 +2364,7 @@ class USDAParser {
 
         Variable var;
         var.value = value;
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
       }
 
@@ -2327,6 +2396,7 @@ class USDAParser {
           var.array.push_back(values[i]);
         }
 
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
       } else {
         std::array<double, 4> value;
@@ -2338,6 +2408,7 @@ class USDAParser {
 
         Variable var;
         var.value = value;
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
       }
 
@@ -2367,6 +2438,7 @@ class USDAParser {
 
         Variable var;
         var.value = value; // float3 array is the first-class type
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
       } else if (hasConnect(primattr_name)) {
@@ -2413,6 +2485,7 @@ class USDAParser {
 
         Variable var;
         var.value = value; // float3 array is the first-class type
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
       } else if (hasConnect(primattr_name)) {
@@ -2432,6 +2505,7 @@ class USDAParser {
 
         Variable var;
         var.value = value; 
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
       }
 
@@ -2460,6 +2534,7 @@ class USDAParser {
 
         Variable var;
         var.value = value; // float3 array is the first-class type
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
       } else {
@@ -2472,6 +2547,7 @@ class USDAParser {
 
         Variable var;
         var.value = value;
+        var.custom = custom_qual;
         (*props)[primattr_name] = var;
       }
 
@@ -3096,7 +3172,7 @@ class USDAParser {
       return false;
     }
 
-    _line_col += literal->size();
+    _line_col += int(literal->size());
 
     return true;
   }
@@ -3908,7 +3984,7 @@ class USDAParser {
             // Looks reading directory, not a file.
             std::cerr << "Looks like filename is a directory : \"" << filepath
                       << "\"\n";
-            return -1;
+            return false;
           }
 
           data.resize(sz);
@@ -4665,6 +4741,9 @@ class USDAParser {
     _node_args["references"] = Variable("path[]", "references");
     _node_args["inherits"] = Variable("path", "inherits");
     _node_args["assetInfo"] = Variable("dict", "assetInfo");
+    _node_args["customData"] = Variable("dict", "customData");
+    _node_args["variants"] = Variable("dict", "variants");
+    _node_args["variantSets"] = Variable("string", "variantSets");
   }
 
   nonstd::optional<Variable> _GetNodeArg(const std::string &arg) {
@@ -4909,6 +4988,15 @@ bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
 }
 
 bool USDAParser::ReadBasicType(float *value) {
+  // -inf, inf, nan
+  {
+    float v;
+    if (MaybeNonFinite(&v)) {
+      (*value) = v;
+      return true;
+    }
+  }
+
   std::string value_str;
   std::string err;
   if (!LexFloat(&value_str, &err)) {
@@ -4955,6 +5043,15 @@ bool USDAParser::ReadBasicType(nonstd::optional<float> *value) {
 
 
 bool USDAParser::ReadBasicType(double *value) {
+
+  // -inf, inf, nan
+  {
+    double v;
+    if (MaybeNonFinite(&v)) {
+      (*value) = v;
+      return true;
+    }
+  }
 
   std::string value_str;
   std::string err;
@@ -5006,7 +5103,7 @@ bool IsUSDA(const std::string &filename) {
     std::ifstream ifs(filename.c_str(), std::ifstream::binary);
     if (!ifs) {
       std::cerr << "Failed to open file: " << filename << "\n";
-      return -1;
+      return false;
     }
 
     // TODO(syoyo): Use mmap
@@ -5016,7 +5113,7 @@ bool IsUSDA(const std::string &filename) {
       // Looks reading directory, not a file.
       std::cerr << "Looks like filename is a directory : \"" << filename
                 << "\"\n";
-      return -1;
+      return false;
     }
 
     data.resize(sz);
