@@ -533,7 +533,7 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size,
   stbi_image_free(data);
 
   return true;
-};
+}
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
 float to_float(uint16_t h) {
