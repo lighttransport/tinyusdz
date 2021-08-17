@@ -4834,6 +4834,7 @@ class USDAParser {
     _node_args["customData"] = Variable("dictionary", "customData");
     _node_args["variants"] = Variable("dictionary", "variants");
     _node_args["variantSets"] = Variable("string", "variantSets");
+    _node_args["payload"] = Variable("path[]", "payload");
   }
 
   nonstd::optional<Variable> _GetNodeArg(const std::string &arg) {
