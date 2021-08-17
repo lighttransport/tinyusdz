@@ -742,6 +742,7 @@ class USDAParser {
   USDAParser(tinyusdz::StreamReader *sr) : _sr(sr) {
     _RegisterBuiltinMeta();
     _RegisterNodeTypes();
+    _RegisterNodeArgs();
     _RegisterPrimAttrTypes();
   }
 
@@ -984,7 +985,7 @@ class USDAParser {
 
   bool ParseDefArg(std::tuple<ListEditQual, Variable> *out) {
 
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -993,13 +994,21 @@ class USDAParser {
       return false;
     }
 
+    std::cout << "list-edit qual: " << tinyusdz::to_string(qual) << "\n";
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
     std::string varname;
     if (!ReadToken(&varname)) {
       return false;
     }
+    
+    std::cout << "varname = `" << varname << "`\n";
 
     if (!_IsNodeArg(varname)) {
-      _PushError("Unsupported or invalid variable name `" + varname + "`)\n");
+      _PushError("Unsupported or invalid/empty variable name `" + varname + "`\n");
       return false;
     }
 
@@ -1025,18 +1034,36 @@ class USDAParser {
     auto var = (*pvar);
 
     if (var.type == "path") {
+
+      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname + ", type " + var.type);
+      return false;
+
     } else if (var.type == "string") {
       std::string value;
       if (!ReadStringLiteral(&value)) {
+        std::cout << __LINE__ << " ReadStringLiteral failed\n";
         return false;
       }
 
+      std::cout << "var.type: " << var.type << ", name = " << varname << "\n";
       Variable ret(var.type, varname);
       ret.value = value;
       std::get<1>(*out) = ret;
 
+    } else if (var.type == "dictionary") {
+      std::map<std::string, Variable> dict;
+      if (!ParseDict(&dict)) {
+        _PushError(std::to_string(__LINE__) + " Failed to parse `" + varname + "`(dictionary type)\n");
+        return false;
+      }
+
+      std::cout << "var.type: " << var.type << ", name = " << varname << "\n";
+      Variable ret(var.type, varname);
+      ret.object = dict;
+      std::get<1>(*out) = ret;
+      
     } else {
-      _PushError("TODO: varname " + varname + ", type " + var.type);
+      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname + ", type " + var.type);
       return false;
     }
 
@@ -1062,6 +1089,7 @@ class USDAParser {
       }
 
       if (c == '(') {
+        std::cout << "def args start\n";
         // ok
       } else {
         _sr->seek_from_current(-1);
@@ -1069,13 +1097,15 @@ class USDAParser {
       }
     }
 
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      std::cout << "skip comment/whitespace/nl failed\n";
       return false;
     }
 
-    while (_sr->eof()) {
+    while (!Eof()) {
 
-      if (!SkipWhitespaceAndNewline()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        std::cout << "2: skip comment/whitespace/nl failed\n";
         return false;
       }
 
@@ -1085,10 +1115,14 @@ class USDAParser {
       }
 
       if (s == ')') {
+        std::cout << "def args end\n";
         // End
         break;
       }
 
+      Rewind(1);
+
+      std::cout << "c = " << std::to_string(s) << "\n";
       std::tuple<ListEditQual, Variable> arg;
       if (!ParseDefArg(&arg)) {
         return false;
@@ -1128,7 +1162,7 @@ class USDAParser {
         std::string key;
         Variable var;
         if (!ParseDictElement(&key, &var)) {
-          _PushError("Failed to parse dict element.");
+          _PushError(std::to_string(__LINE__) + "Failed to parse dict element.");
           return false;
         }
 
@@ -1586,6 +1620,30 @@ class USDAParser {
           return false;
         }
         std::cout << "Path identifier = " << value << "\n";
+
+        var.type = "string";
+        var.name = key_name;
+        var.value = value;
+      }
+    } else if (type_name == "string") {
+      if (array_qual) {
+        std::vector<nonstd::optional<std::string>> value;
+        if (!ParseBasicTypeArray(&value)) {
+          _PushError(
+              "Failed to parse array of string.\n");
+          return false;
+        }
+      } else {
+        std::string value;  // TODO: Path
+        if (!ReadStringLiteral(&value)) {
+          _PushError("Failed to parse string.\n");
+          return false;
+        }
+        std::cout << "string = " << value << "\n";
+
+        var.type = type_name;
+        var.name = key_name;
+        var.value = value;
       }
     } else if (type_name == "int") {
       if (array_qual) {
@@ -4160,6 +4218,37 @@ class USDAParser {
     return true;
   }
 
+  bool Eof() {
+    return _sr->eof();
+  }
+
+  // Fetch 1 char. Do not change input stream position.
+  bool LookChar1(char *c) {
+    if (!_sr->read1(c)) {
+      return false;
+    }
+
+    Rewind(1);
+
+    return true;
+  }
+
+  // Fetch N chars. Do not change input stream position.
+  bool LookCharN(size_t n, std::vector<char> *nc) {
+    std::vector<char> buf(n);
+ 
+    auto loc = CurrLoc();
+
+    bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
+    if (ok) {
+      (*nc) = buf;
+    }
+
+    SeekTo(loc);
+
+    return ok;
+  }
+
   bool Char1(char *c) { return _sr->read1(c); }
 
   bool CharN(size_t n, std::vector<char> *nc) {
@@ -4342,7 +4431,7 @@ class USDAParser {
   bool ParseDefBlock() {
     std::string def;
 
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -4420,17 +4509,14 @@ class USDAParser {
     {
       // look ahead
       char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (!Rewind(1)) {
+      if (!LookChar1(&c)) {
         return false;
       }
 
       if (c == '(') {
         // arg
 
+        std::cout << "parse def args\n";
         if (!ParseDefArgs(&args)) {
           return false;
         }
@@ -4440,6 +4526,10 @@ class USDAParser {
         }
 
       }
+    }
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
     }
 
     if (!Expect('{')) {
@@ -4740,9 +4830,9 @@ class USDAParser {
     _node_args["kind"] = Variable("string", "kind");
     _node_args["references"] = Variable("path[]", "references");
     _node_args["inherits"] = Variable("path", "inherits");
-    _node_args["assetInfo"] = Variable("dict", "assetInfo");
-    _node_args["customData"] = Variable("dict", "customData");
-    _node_args["variants"] = Variable("dict", "variants");
+    _node_args["assetInfo"] = Variable("dictionary", "assetInfo");
+    _node_args["customData"] = Variable("dictionary", "customData");
+    _node_args["variants"] = Variable("dictionary", "variants");
     _node_args["variantSets"] = Variable("string", "variantSets");
   }
 

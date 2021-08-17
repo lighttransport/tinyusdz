@@ -199,9 +199,27 @@ using Quatd = Quat<double>;
 enum ListEditQual {
   LIST_EDIT_QUAL_RESET_TO_EXPLICIT,	// "unqualified"(no qualifier)
   LIST_EDIT_QUAL_APPEND, // "append"
+  LIST_EDIT_QUAL_ADD, // "add"
   LIST_EDIT_QUAL_DELETE, // "delete"
   LIST_EDIT_QUAL_PREPEND // "prepend"
 };
+
+static std::string to_string(ListEditQual qual)
+{
+  if (qual == LIST_EDIT_QUAL_RESET_TO_EXPLICIT) {
+    return "";
+  } else if (qual == LIST_EDIT_QUAL_APPEND) {
+    return "append";
+  } else if (qual == LIST_EDIT_QUAL_ADD) {
+    return "add";
+  } else if (qual == LIST_EDIT_QUAL_PREPEND) {
+    return "prepend";
+  } else if (qual == LIST_EDIT_QUAL_DELETE) {
+    return "delete";
+  } else {
+    return "??? invalid ListEditQual";
+  }
+}
 
 template <typename T>
 class ListOp {
