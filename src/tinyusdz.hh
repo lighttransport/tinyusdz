@@ -53,6 +53,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
 #include "nonstd/variant.hpp"
+#include "nonstd/any.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -204,7 +205,13 @@ enum ListEditQual {
   LIST_EDIT_QUAL_PREPEND // "prepend"
 };
 
-static std::string to_string(ListEditQual qual)
+enum Axis {
+  AXIS_X,
+  AXIS_Y,
+  AXIS_Z
+};
+
+inline static std::string to_string(ListEditQual qual)
 {
   if (qual == LIST_EDIT_QUAL_RESET_TO_EXPLICIT) {
     return "";
@@ -1752,7 +1759,21 @@ struct XformOp
 
 Matrix4d GetTransform(XformOp xform);
 
-// Predefined node class
+
+// Generic "class" Node
+class Klass {
+
+  std::string name;
+  int64_t parent_id{-1};  // Index to parent node
+
+  // Generic type-less Value using any-lite
+  std::map<std::string, nonstd::any> value_map;
+};
+
+//
+// Predefined node classes
+// 
+
 struct Xform {
 
   std::string name;
@@ -1813,6 +1834,10 @@ struct Extent {
                -std::numeric_limits<float>::infinity(),
                -std::numeric_limits<float>::infinity()}};
 
+  Extent() {}
+
+  Extent(const Vec3f &l, const Vec3f &u) : lower(l), upper(u) {}
+
   bool Valid() const {
     if (lower[0] > upper[0]) return false;
     if (lower[1] > upper[1]) return false;
@@ -1836,13 +1861,163 @@ struct Extent {
   }
 };
 
+struct GeomBoundable {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  //
+  // Properties
+  //
+  Extent extent;  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
+struct GeomCone {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  //
+  // Properties
+  //
+  double height{2.0};
+  double radius{1.0};
+  Axis axis{AXIS_Z};
+
+  Extent extent{{-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0}};  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
+struct GeomCapsule {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  //
+  // Properties
+  //
+  double height{2.0};
+  double radius{0.5};
+  Axis axis{AXIS_Z};
+
+  Extent extent{{-0.5, -0.5, -1.0}, {0.5, 0.5, 1.0}};  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
+
+struct GeomCylinder {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  //
+  // Properties
+  //
+  double height{2.0};
+  double radius{1.0};
+  Axis axis{AXIS_Z};
+  Extent extent{{-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0}};  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
+struct GeomCube {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  //
+  // Properties
+  //
+  double size{2.0};
+  Extent extent{{-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0}};  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
+struct GeomSphere {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  //
+  // Predefined attribs.
+  //
+  double radius{1.0};
+
+  //
+  // Properties
+  //
+  Extent extent{{-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0}};  // bounding extent(in local coord?).
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+};
+
 //
 // Basis Curves(for hair/fur)
 //
 struct GeomBasisCurves {
   std::string name;
 
-  int64_t parent_id{-1};  // Index to xform node
+  int64_t parent_id{-1};  // Index to parent node
 
   // Interpolation attribute
   std::string type = "cubic";  // "linear", "cubic"
@@ -1869,6 +2044,12 @@ struct GeomBasisCurves {
   Extent extent;  // bounding extent(in local coord?).
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
@@ -1899,6 +2080,12 @@ struct GeomPoints {
   Extent extent;  // bounding extent(in local coord?).
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
@@ -2011,10 +2198,14 @@ struct GeomMesh {
   //
   Extent extent;  // bounding extent(in local coord?).
   std::string facevaryingLinearInterpolation = "cornerPlus1";
-  bool doubleSided{true};
-  Orientation orientation{OrientationRightHanded};
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
 
   //
   // SubD attribs.
