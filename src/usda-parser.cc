@@ -40,6 +40,28 @@ namespace tinyusdz {
 
 namespace usda {
 
+namespace {
+
+std::string to_string(const Klass &klass) {
+  std::stringstream ss;
+
+  for (const auto &value : klass.value_map) {
+    ss << value.first << " = ";
+
+    if (auto p = nonstd::any_cast<double>(&value.second)) {
+      ss << *p << "\n";
+    } else {
+      ss << "[[Unknown/Unsupported Type]]\n";
+    }
+
+    ss << "\n";
+  }
+
+  return ss.str();
+}
+
+} // namespace
+
 struct ErrorDiagnositc {
   std::string err;
   int line_row = -1;
@@ -712,7 +734,7 @@ static bool ParseTupleThreaded(
   const char bracket_char,  // Usually `(` or `[`
   int32_t num_threads, uint32_t max_threads = 128u)
 {
-  uint32_t nthreads = (num_threads <= 0) ? GetNumThreads(max_threads) : std::min(std::max(1u, uint32_t(num_threads)), max_threads); 
+  uint32_t nthreads = (num_threads <= 0) ? GetNumThreads(max_threads) : std::min(std::max(1u, uint32_t(num_threads)), max_threads);
 
   std::vector<std::vector<LineInfo>> line_infos;
   line_infos.resize(nthreads);
@@ -1022,7 +1044,7 @@ class USDAParser {
     if (!ReadToken(&varname)) {
       return false;
     }
-    
+
     std::cout << "varname = `" << varname << "`\n";
 
     if (!_IsNodeArg(varname)) {
@@ -1079,7 +1101,7 @@ class USDAParser {
       Variable ret(var.type, varname);
       ret.object = dict;
       std::get<1>(*out) = ret;
-      
+
     } else {
       _PushError(std::to_string(__LINE__) + " TODO: varname " + varname + ", type " + var.type);
       return false;
@@ -1225,7 +1247,7 @@ class USDAParser {
       // unqualified
       // rewind
       SeekTo(loc);
-      (*qual) = tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT;     
+      (*qual) = tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT;
     }
 
     return true;
@@ -2182,7 +2204,7 @@ class USDAParser {
         }
         if (value) {
           std::cout << "float = " << *value << "\n";
-        } else { 
+        } else {
           std::cout << "float = None\n";
         }
       }
@@ -2580,7 +2602,7 @@ class USDAParser {
                   << value[2] << ")\n";
 
         Variable var;
-        var.value = value; 
+        var.value = value;
         var.custom = custom_qual;
         (*props)[primattr_name] = var;
       }
@@ -2704,7 +2726,7 @@ class USDAParser {
   bool MaybeNone();
 
   /// == DORA ==
-  
+
 
   ///
   /// Parse rel string
@@ -3387,7 +3409,7 @@ class USDAParser {
       _PushError("Path identifier must start with '/'");
       return false;
     }
-    
+
     ss << '/';
 
     // read until '>'
@@ -3695,7 +3717,7 @@ class USDAParser {
 
   // TODO: Return Path
   bool ParseAssetReference(AssetReference *out, bool *triple_deliminated) {
-    // @...@ 
+    // @...@
     // or @@@...@@@ (Triple '@'-deliminated asset references)
     // And optionally followed by prim path.
     // Example:
@@ -3703,7 +3725,7 @@ class USDAParser {
     //   @@@bora@@@
     //   @bora@</dora>
 
-    // TODO: Correctly support escape characters 
+    // TODO: Correctly support escape characters
 
     // look ahead.
     std::vector<char> buf;
@@ -3717,8 +3739,8 @@ class USDAParser {
     if (CharN(3, &buf)) {
       if (buf[0] == '@' && buf[1] == '@' && buf[2] == '@') {
         maybe_triple = true;
-      } 
-    } 
+      }
+    }
 
     bool valid{false};
 
@@ -3751,7 +3773,7 @@ class USDAParser {
         if (c == '@') {
           found_delimiter = true;
           break;
-        } 
+        }
 
         tok += c;
       }
@@ -3784,7 +3806,7 @@ class USDAParser {
         } else {
           at_cnt--;
           if (at_cnt < 0) { at_cnt= 0; }
-        } 
+        }
 
         tok += c;
 
@@ -3808,7 +3830,7 @@ class USDAParser {
       return false;
     }
 
-    // Parse optional prim_path 
+    // Parse optional prim_path
     if (!SkipWhitespace()) {
       return false;
     }
@@ -3871,7 +3893,7 @@ class USDAParser {
         Variable var;
         outvar->array.push_back(values[i]);
       }
-      
+
     } else if (vartype == "int[]") {
       std::vector<int> values;
       if (!ParseBasicTypeArray<int>(&values)) {
@@ -4029,9 +4051,9 @@ class USDAParser {
         for (size_t i = 0; i < var.array.size(); i++) {
           if (auto p = nonstd::get_if<std::string>(&var.array[i])) {
             sublayers.push_back(*p);
-          } 
+          }
         }
-      } 
+      }
     }
 
     // Load subLayers
@@ -4041,7 +4063,7 @@ class USDAParser {
 
       for (size_t i = 0; i < sublayers.size(); i++) {
         std::string filepath = JoinPath(_base_dir, sublayers[i]);
- 
+
         std::vector<uint8_t> data;
         {
           // TODO(syoyo): Support UTF-8 filename
@@ -4069,7 +4091,7 @@ class USDAParser {
           ifs.read(reinterpret_cast<char *>(&data.at(0)),
                    static_cast<std::streamsize>(sz));
         }
-      
+
         tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
         tinyusdz::usda::USDAParser parser(&sr);
 
@@ -4090,7 +4112,7 @@ class USDAParser {
         }
 
       }
-      
+
       // TODO: Merge/Import subLayer.
 
     }
@@ -4254,7 +4276,7 @@ class USDAParser {
   // Fetch N chars. Do not change input stream position.
   bool LookCharN(size_t n, std::vector<char> *nc) {
     std::vector<char> buf(n);
- 
+
     auto loc = CurrLoc();
 
     bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
@@ -4271,7 +4293,7 @@ class USDAParser {
 
   bool CharN(size_t n, std::vector<char> *nc) {
     std::vector<char> buf(n);
- 
+
     bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
     if (ok) {
       (*nc) = buf;
@@ -4378,7 +4400,7 @@ class USDAParser {
 
     PushPath(path);
 
-    // TODO: Support nested 'class'? 
+    // TODO: Support nested 'class'?
 
     // expect = '}'
     //        | def_block
@@ -4437,6 +4459,8 @@ class USDAParser {
       klass.value_map[prop.first] = prop.second;
     }
 
+    std::cout << to_string(klass) << "\n";
+
     // TODO: Check key existance.
     _klasses[path] = klass;
 
@@ -4446,7 +4470,7 @@ class USDAParser {
   ///
   /// Parse `over` block.
   ///
-  bool ParseOverBlock() { 
+  bool ParseOverBlock() {
     std::string tok;
 
     if (!SkipWhitespaceAndNewline()) {
@@ -4547,7 +4571,7 @@ class USDAParser {
       } else {
         has_primtype = true;
       }
-       
+
     }
 
     std::string prim_type;
@@ -4791,7 +4815,7 @@ class USDAParser {
       std::string tok;
       if (!ReadToken(&tok)) {
         _PushError("Token expected.\n");
-        return false; 
+        return false;
       }
 
       // Rewind
@@ -4817,7 +4841,7 @@ class USDAParser {
         if (!block_ok) {
           _PushError("Failed to parse `class` block.\n");
           return false;
-        }     
+        }
       } else {
         _PushError("Unknown token '" + tok + "'");
         return false;
@@ -5023,7 +5047,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<std::string> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-    
+
   }
 
   return false;
@@ -5066,7 +5090,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<bool> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-    
+
   }
 
   return false;
@@ -5160,7 +5184,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-    
+
   }
 
   return false;
@@ -5214,7 +5238,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<float> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-    
+
   }
 
   return false;
@@ -5268,7 +5292,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<double> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-    
+
   }
 
   return false;
