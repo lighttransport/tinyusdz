@@ -750,6 +750,24 @@ class USDAParser {
     _base_dir = str;
   }
 
+  std::string GetCurrentPath() {
+    if (_path_stack.empty()) {
+      return "/";
+    }
+
+    return _path_stack.top();
+  }
+
+  void PushPath(const std::string &p) {
+    _path_stack.push(p);
+  }
+
+  void PopPath() {
+    if (!_path_stack.empty()) {
+      _path_stack.pop();
+    }
+  }
+
   template<typename T>
   bool MaybeNonFinite(T *out) {
 
@@ -4311,19 +4329,21 @@ class USDAParser {
   /// Parse `class` block.
   ///
   bool ParseClassBlock() {
-    std::string tok;
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
 
-    if (!ReadToken(&tok)) {
-      return false;
-    }
+    {
+      std::string tok;
+      if (!ReadToken(&tok)) {
+        return false;
+      }
 
-    if (tok != "class") {
-      _PushError("`class` is expected.");
-      return false;
+      if (tok != "class") {
+        _PushError("`class` is expected.");
+        return false;
+      }
     }
 
     if (!SkipWhitespaceAndNewline()) {
@@ -4354,12 +4374,71 @@ class USDAParser {
       return false;
     }
 
-    // TODO: Parse block content
+    std::string path = GetCurrentPath() + "/" + target;
 
-    if (!Expect('}')) {
-      std::cout << "???\n";
-      return false;
+    PushPath(path);
+
+    // TODO: Support nested 'class'? 
+
+    // expect = '}'
+    //        | def_block
+    //        | prim_attr+
+    std::map<std::string, Variable> props;
+    while (!_sr->eof()) {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '}') {
+        // end block
+        std::cout << "End of block\n";
+        break;
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
+
+        std::string tok;
+        if (!ReadToken(&tok)) {
+          return false;
+        }
+
+        std::cout << "token = " << tok << ", size = " << tok.size() << "\n";
+
+        if (!Rewind(tok.size())) {
+          return false;
+        }
+
+        if (tok == "def") {
+          std::cout << "rec\n";
+          // recusive call
+          if (!ParseDefBlock()) {
+            std::cout << "rec failed\n";
+            return false;
+          }
+        } else {
+          // Assume PrimAttr
+          if (!ParsePrimAttr(&props)) {
+            return false;
+          }
+
+        }
+
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+      }
     }
+
+    Klass klass;
+    for (const auto &prop : props) {
+      // TODO: list-edit qual
+      klass.value_map[prop.first] = prop.second;
+    }
+
+    // TODO: Check key existance.
+    _klasses[path] = klass;
 
     return true;
   }
@@ -4875,6 +4954,10 @@ class USDAParser {
     _node_types.insert("Camera");
   }
 
+  ///
+  /// -- Members --
+  ///
+
   const tinyusdz::StreamReader *_sr = nullptr;
 
   std::map<std::string, Variable> _builtin_metas;
@@ -4893,6 +4976,11 @@ class USDAParser {
   std::string _base_dir; // Used for importing another USD file
 
   nonstd::optional<tinyusdz::Scene> _scene; // Imported scene.
+
+  // "class" defs
+  std::map<std::string, Klass> _klasses;
+
+  std::stack<std::string> _path_stack;
 };
 
 // 'None'
@@ -5276,6 +5364,7 @@ int main(int argc, char **argv) {
     if (!ret) {
       std::cerr << "Failed to parse .usda: \n";
       std::cerr << parser.GetError() << "\n";
+      return -1;
     } else {
       std::cout << "ok\n";
     }

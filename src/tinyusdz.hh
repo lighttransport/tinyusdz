@@ -1761,7 +1761,7 @@ Matrix4d GetTransform(XformOp xform);
 
 
 // Generic "class" Node
-class Klass {
+struct Klass {
 
   std::string name;
   int64_t parent_id{-1};  // Index to parent node

@@ -3,7 +3,7 @@ CXX=clang++
 INCFLAGS=-I. -I../../src/external/ryu -I../../src
 
 # only applied to usda-parser.cc
-EXTRA_COMPILER_FLAGS=-Weverything -Werror -Wno-padded -Wno-c++98-compat
+EXTRA_COMPILER_FLAGS=-Weverything -Werror -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-unused-function -Wno-unused-member-function
 CXXFLAGS=-std=c++11 -fsanitize=address -g -O0 -DUSDA_MAIN
 CFLAGS=-fsanitize=address -g -O0
 LDFLAGS=-fsanitize=address
@@ -21,8 +21,13 @@ LDFLAGS=-fsanitize=address
 
 all: usda-parser t
 
+# unit tester
+u: usda-parser
+	python unit-runner.py	
+
+# single test
 t: usda-parser
-	./usda-parser tests/suzanne.usda
+	./usda-parser tests/sublayers.usda
 	#./usda-parser tests/dict.usda
 	#./usda-parser tests/simple-blender-exported.usda
 	#./usda-parser tests/test.usda
