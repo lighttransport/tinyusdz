@@ -53,6 +53,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
 #include "nonstd/variant.hpp"
+
+
+// Disable RTTI and Exception
+#define any_CONFIG_NO_EXCEPTIONS (1)
 #include "nonstd/any.hpp"
 
 #ifdef __clang__
