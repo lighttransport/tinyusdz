@@ -5,20 +5,26 @@
 
 # inherits
 
+W.I.P.
+
 * [ ] `inherit`
 * [ ] `over`
 
 # variantSets
 
-T.B.W.
+W.I.P.
 
-# payloads
+Works like `switch`.
 
-T.B.W.
+# references, payloads
+
+W.I.P.
+
+payloads : delayed load
 
 # specializers
 
-T.B.W.
+Priority is low. Won't implement.
 
 ## References
 
