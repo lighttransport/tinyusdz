@@ -1774,6 +1774,14 @@ struct Klass {
   std::map<std::string, nonstd::any> value_map;
 };
 
+struct MaterialBindingAPI
+{
+  std::string materialBinding; // rel material:binding
+  std::string materialBindingCorrection; // rel material:binding:correction
+
+  // TODO: allPurpose, preview, ...
+};
+
 //
 // Predefined node classes
 // 
@@ -1877,6 +1885,8 @@ struct GeomBoundable {
   Visibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
+  MaterialBindingAPI materialBinding;
+
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
   std::map<std::string, PrimAttrib> attribs;
@@ -1903,6 +1913,8 @@ struct GeomCone {
   Orientation orientation{OrientationRightHanded};
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  MaterialBindingAPI materialBinding;
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
@@ -1931,6 +1943,8 @@ struct GeomCapsule {
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
 
+  MaterialBindingAPI materialBinding;
+
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
   std::map<std::string, PrimAttrib> attribs;
@@ -1958,6 +1972,8 @@ struct GeomCylinder {
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
 
+  MaterialBindingAPI materialBinding;
+
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
   std::map<std::string, PrimAttrib> attribs;
@@ -1981,6 +1997,8 @@ struct GeomCube {
   Orientation orientation{OrientationRightHanded};
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
+  
+  MaterialBindingAPI materialBinding;
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
@@ -2009,6 +2027,8 @@ struct GeomSphere {
   Orientation orientation{OrientationRightHanded};
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  MaterialBindingAPI materialBinding;
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
@@ -2054,6 +2074,8 @@ struct GeomBasisCurves {
   Orientation orientation{OrientationRightHanded};
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  MaterialBindingAPI materialBinding;
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
@@ -2210,6 +2232,8 @@ struct GeomMesh {
   Orientation orientation{OrientationRightHanded};
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  MaterialBindingAPI materialBinding;
 
   //
   // SubD attribs.

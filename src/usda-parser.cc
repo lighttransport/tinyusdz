@@ -4847,7 +4847,16 @@ class USDAParser {
         mesh->points.resize(p.size() * 3);
         memcpy(mesh->points.data(), p.data(), p.size() * 3);
 
+      } else if (prop.first == "material:binding") {
+        if (!prop.second.IsRel()) {
+          _PushError("`material:binding` must be 'rel' type.");
+          return false;
+        }
+
+        mesh->materialBinding.materialBinding = nonstd::get<Rel>(prop.second.value).path;
       } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first + "\n");
+        return false;
       }
     }
 
