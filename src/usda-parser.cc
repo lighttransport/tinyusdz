@@ -1078,6 +1078,19 @@ class USDAParser {
       _PushError(std::to_string(__LINE__) + " TODO: varname " + varname + ", type " + var.type);
       return false;
 
+    } else if (var.type == "path[]") {
+      std::vector<std::string> value;
+      if (!ParsePathIdentifierArray(&value)) {
+        std::cout << __LINE__ << " ParsePathIdentifierArray failed\n";
+        return false;
+      }
+
+      Variable ret(var.type);
+      for (const auto &v : value) {
+        ret.array.push_back(v);
+      }
+      std::get<1>(*out) = ret;
+
     } else if (var.type == "string") {
       std::string value;
       if (!ReadStringLiteral(&value)) {
@@ -3125,6 +3138,114 @@ class USDAParser {
   }
 
   ///
+  /// Parses 1 or more occurences of paths, separated by
+  /// `sep`
+  ///
+  bool SepBy1PathIdentifier(const char sep, std::vector<std::string> *result) {
+    result->clear();
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    {
+      std::string path;
+
+      if (!ReadPathIdentifier(&path)) {
+        _PushError("Failed to parse Path.\n");
+        return false;
+      }
+
+      result->push_back(path);
+    }
+
+    // std::cout << "sep: " << sep << "\n";
+
+    while (!_sr->eof()) {
+      // sep
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      char c;
+      if (!_sr->read1(&c)) {
+        std::cout << "read1 failure\n";
+        return false;
+      }
+
+      // std::cout << "sep c = " << c << "\n";
+
+      if (c != sep) {
+        // end
+        // std::cout << "sepBy1 end\n";
+        _sr->seek_from_current(-1);  // unwind single char
+        break;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      // std::cout << "go to read int\n";
+
+      std::string path;
+      if (!ReadPathIdentifier(&path)) {
+        break;
+      }
+
+      result->push_back(path);
+    }
+
+    // std::cout << "result.size " << result->size() << "\n";
+
+    if (result->empty()) {
+      _PushError("Empty array.\n");
+      return false;
+    }
+
+    return true;
+  }
+
+  ///
+  /// Parse array of path
+  /// Allow non-list version
+  ///
+  bool ParsePathIdentifierArray(std::vector<std::string> *result) {
+
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c != '[') {
+      // Guess non-list version
+      std::string path;
+      if (!ReadPathIdentifier(&path)) {
+        return false;
+      }
+
+      result->clear();
+      result->push_back(path);
+
+    } else {
+
+      if (!SepBy1PathIdentifier(',', result)) {
+        return false;
+      }
+
+      if (!Expect(']')) {
+
+        return false;
+      }
+
+    }
+
+    return true;
+  }
+
+  ///
   /// Parse '(', Sep1By(','), ')'
   ///
   template <typename T, size_t N>
@@ -3876,9 +3997,9 @@ class USDAParser {
         _PushError(msg);
         return false;
       }
-    } else if (vartype == "path[]") {
+    } else if (vartype == "ref[]") {
       std::string value;
-      std::cout << "read path[]\n";
+      std::cout << "read ref[]\n";
       std::vector<AssetReference> values;
       if (!ParseAssetReferenceArray(&values)) {
         std::string msg = "Array of AssetReference expected for `" + varname + "`.\n";
@@ -4900,6 +5021,7 @@ class USDAParser {
     _registered_prim_attr_types.insert("bool");
 
     _registered_prim_attr_types.insert("rel");
+    _registered_prim_attr_types.insert("asset");
 
     _registered_prim_attr_types.insert("dictionary");
 
@@ -4931,13 +5053,14 @@ class USDAParser {
 
   void _RegisterNodeArgs() {
     _node_args["kind"] = Variable("string", "kind");
-    _node_args["references"] = Variable("path[]", "references");
+    _node_args["references"] = Variable("ref[]", "references");
     _node_args["inherits"] = Variable("path", "inherits");
     _node_args["assetInfo"] = Variable("dictionary", "assetInfo");
     _node_args["customData"] = Variable("dictionary", "customData");
     _node_args["variants"] = Variable("dictionary", "variants");
     _node_args["variantSets"] = Variable("string", "variantSets");
-    _node_args["payload"] = Variable("path[]", "payload");
+    _node_args["payload"] = Variable("ref[]", "payload");
+    _node_args["specializes"] = Variable("path[]", "specializes");
   }
 
   nonstd::optional<Variable> _GetNodeArg(const std::string &arg) {
@@ -4956,7 +5079,7 @@ class USDAParser {
     _builtin_metas["timeCodesPerSecond"] =
         Variable("float", "timeCodesPerSecond");
     _builtin_metas["customLayerData"] = Variable("object", "customLayerData");
-    _builtin_metas["subLayers"] = Variable("path[]", "subLayers");
+    _builtin_metas["subLayers"] = Variable("ref[]", "subLayers");
 
     //_builtin_metas["test"] = Variable("int[]", "test");
     //_builtin_metas["testt"] = Variable("int3", "testt");
