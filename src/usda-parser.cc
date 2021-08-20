@@ -22,8 +22,8 @@
 #include <ryu/ryu_parse.h>
 
 #include <nonstd/expected.hpp>
-#include <nonstd/variant.hpp>
 #include <nonstd/optional.hpp>
+#include <nonstd/variant.hpp>
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -33,7 +33,6 @@
 #include "simple-serialize.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
-
 #include "usda-parser.hh"
 
 namespace tinyusdz {
@@ -41,6 +40,57 @@ namespace tinyusdz {
 namespace usda {
 
 namespace {
+
+std::string Indent(uint32_t n) {
+  std::stringstream ss;
+
+  for (uint32_t i = 0; i < n; i++) {
+    ss << "  ";
+  }
+
+  return ss.str();
+}
+
+// TODO: Merge print code into usda-writer.cc
+
+std::string to_string(Visibility v) {
+  if (v == VisibilityInherited) {
+    return "\"inherited\"";
+  } else {
+    return "\"invisible\"";
+  }
+}
+
+std::string to_string(Orientation o) {
+  if (o == OrientationRightHanded) {
+    return "\"rightHanded\"";
+  } else {
+    return "\"leftHanded\"";
+  }
+}
+
+std::string to_string(const Vec3f &v) {
+  std::stringstream ss;
+  ss << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+
+  return ss.str();
+}
+
+std::string to_string(const Vec3d &v) {
+  std::stringstream ss;
+  ss << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+
+  return ss.str();
+}
+
+std::string to_string(Extent e) {
+  std::stringstream ss;
+
+  ss << "[" << to_string(e.lower) << ", " << to_string(e.upper) << "]";
+
+  return ss.str();
+}
+
 
 std::string to_string(const Klass &klass) {
   std::stringstream ss;
@@ -60,7 +110,71 @@ std::string to_string(const Klass &klass) {
   return ss.str();
 }
 
-} // namespace
+std::string to_string(const Xform &xform, const uint32_t indent=0)
+{
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Xform \"" << xform.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  if (xform.xformOps.size()) {
+    ss << Indent(indent) << "  uniform token[] xformOpOrder = [";
+    for (size_t i = 0; i < xform.xformOps.size(); i++) {
+      ss << tinyusdz::XformOp::GetOpTypeName(xform.xformOps[i].op);
+      if (i != (xform.xformOps.size() - 1)) {
+        ss << ", ";
+      }
+    }
+    ss << "]";
+    
+  }
+  ss << Indent(indent) << "  visibility = " << to_string(xform.visibility) << "\n";
+
+  return ss.str();
+}
+
+std::string to_string(const GeomSphere &sphere, const uint32_t indent=0)
+{
+  std::stringstream ss;
+
+
+  ss << Indent(indent) << "def Sphere \"" << sphere.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "  double radius = " << sphere.radius << "\n";
+  ss << Indent(indent) << "  float3[] extent = " << to_string(sphere.extent) << "\n";
+  ss << Indent(indent) << "  orientation = " << to_string(sphere.orientation) << "\n";
+  ss << Indent(indent) << "  visibility = " << to_string(sphere.visibility) << "\n";
+
+  // primvars
+  if (!sphere.displayColor.empty()) {
+    ss << Indent(indent) << "  primvars:displayColor = [";
+    for (size_t i = 0; i < sphere.displayColor.size(); i++) {
+      ss << to_string(sphere.displayColor[i]);
+      if (i != (sphere.displayColor.size() - 1)) {
+        ss << ", ";
+      }
+    }
+    ss << "]\n";
+
+    // TODO: print optional meta value(e.g. `interpolation`)
+  }
+
+  ss << Indent(indent) << "}\n";
+
+
+  return ss.str();
+}
+
+}  // namespace
 
 struct ErrorDiagnositc {
   std::string err;
@@ -97,11 +211,12 @@ struct AssetReference {
 // monostate = could be `Object` type in Variable class.
 // If you want to add more items, you need to generate nonstd::variant file,
 // since nonstd::variant has a limited number of types to use.
-// std::vector<float3> is the first citizen of `Value`, since it is frequently used type.
-// For other array type, use Variable::Array
+// std::vector<float3> is the first citizen of `Value`, since it is frequently
+// used type. For other array type, use Variable::Array
 using Value =
-    nonstd::variant<nonstd::monostate, bool, int, float, float2, float3,
-                    float4, double, double2, double3, double4, std::vector<float3>, std::string, AssetReference, Rel>;
+    nonstd::variant<nonstd::monostate, bool, int, float, float2, float3, float4,
+                    double, double2, double3, double4, std::vector<float3>,
+                    std::string, AssetReference, Rel>;
 
 // TODO: Use std::any?
 class Variable {
@@ -128,30 +243,32 @@ class Variable {
 
   bool IsArray() const { return array.size(); }
 
-  bool IsBool() const { return type == "bool" && is<bool>(); }
+  bool IsBool() const { return !IsArray() && is<bool>(); }
 
-  bool IsInt() const { return type == "int" && is<int>(); }
+  bool IsInt() const { return !IsArray() && is<int>(); }
 
-  bool IsFloat() const { return type == "float" && is<float>(); }
-  bool IsFloat2() const { return type == "float2" && is<float2>(); }
-  bool IsFloat3() const { return type == "float3" && is<float3>(); }
-  bool IsFloat4() const { return type == "float4" && is<float4>(); }
+  bool IsFloat() const { return !IsArray() && is<float>(); }
+  bool IsFloat2() const { return !IsArray() && is<float2>(); }
+  bool IsFloat3() const { return !IsArray() && is<float3>(); }
+  bool IsFloat4() const { return !IsArray() && is<float4>(); }
 
-  bool IsDouble() const { return type == "double" && is<double>(); }
-  bool IsDouble2() const { return type == "double2" && is<double2>(); }
-  bool IsDouble3() const { return type == "double3" && is<double3>(); }
-  bool IsDouble4() const { return type == "double4" && is<double4>(); }
+  bool IsDouble() const { return !IsArray() && is<double>(); }
+  bool IsDouble2() const { return !IsArray() && is<double2>(); }
+  bool IsDouble3() const { return !IsArray() && is<double3>(); }
+  bool IsDouble4() const { return !IsArray() && is<double4>(); }
 
-  bool IsString() const { return type == "string" && is<std::string>(); }
+  bool IsString() const { return !IsArray() && is<std::string>(); }
 
-  bool IsRel() const { return type == "rel" && is<Rel>(); }
+  bool IsRel() const { return !IsArray() && is<Rel>(); }
 
-  bool IsObject() const { return type == "object" && is<nonstd::monostate>(); }
+  bool IsAssetReference() const { return !IsArray() && is<AssetReference>(); }
+
+  bool IsObject() const { return !IsArray() && is<nonstd::monostate>(); }
 
   bool valid() const {
     // FIXME: Make empty valid?
     bool ok = IsBool() || IsInt() || IsFloat() || IsDouble() || IsString() ||
-              IsRel() || IsObject();
+              IsRel() || IsAssetReference() || IsObject();
     return ok;
   }
 
@@ -167,6 +284,29 @@ class Variable {
 };
 
 namespace {
+
+// Extract array of AssetReferences from Variable.
+std::vector<std::pair<ListEditQual, AssetReference>> GetAssetReferences(
+    const std::tuple<ListEditQual, Variable> &var) {
+  std::vector<std::pair<ListEditQual, AssetReference>> result;
+
+  ListEditQual qual = std::get<0>(var);
+
+  if (std::get<1>(var).IsArray()) {
+    for (const auto &v : std::get<1>(var).array) {
+      if (auto pref = nonstd::get_if<AssetReference>(&v)) {
+        result.push_back({qual, *pref});
+      }
+    }
+  }
+
+  if (std::get<1>(var).IsAssetReference()) {
+    auto pref = nonstd::get_if<AssetReference>(&std::get<1>(var).value);
+    result.push_back({qual, *pref});
+  }
+
+  return result;
+}
 
 // https://www.techiedelight.com/trim-string-cpp-remove-leading-trailing-spaces/
 std::string TrimString(const std::string &str) {
@@ -193,7 +333,6 @@ std::string GetBaseDir(const std::string &filepath) {
   return "";
 }
 
-
 std::string JoinPath(const std::string &dir, const std::string &filename) {
   if (dir.empty()) {
     return filename;
@@ -207,7 +346,6 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
     }
   }
 }
-
 
 std::string str_object(const Variable::Object &obj, int indent) {
   std::stringstream ss;
@@ -768,9 +906,28 @@ class USDAParser {
     _RegisterPrimAttrTypes();
   }
 
-  void SetBaseDir(const std::string &str) {
-    _base_dir = str;
+  // Return the flag if the .usda is read from `references`
+  bool IsReferenced() {
+    return _referenced;
   }
+
+  // Return the flag if the .usda is read from `subLayers`
+  bool IsSubLayered() {
+    return _sub_layered;
+  }
+
+  // Return the flag if the .usda is read from `payload`
+  bool IsPayloaded() {
+    return _payloaded;
+  }
+
+  // Return true if the .udsa is read in the top layer
+  bool IsToplevel() {
+    return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
+  }
+
+
+  void SetBaseDir(const std::string &str) { _base_dir = str; }
 
   std::string GetCurrentPath() {
     if (_path_stack.empty()) {
@@ -780,9 +937,7 @@ class USDAParser {
     return _path_stack.top();
   }
 
-  void PushPath(const std::string &p) {
-    _path_stack.push(p);
-  }
+  void PushPath(const std::string &p) { _path_stack.push(p); }
 
   void PopPath() {
     if (!_path_stack.empty()) {
@@ -790,9 +945,8 @@ class USDAParser {
     }
   }
 
-  template<typename T>
+  template <typename T>
   bool MaybeNonFinite(T *out) {
-
     auto loc = CurrLoc();
 
     // "-inf", "inf" or "nan"
@@ -816,7 +970,8 @@ class USDAParser {
     SeekTo(loc);
 
     if (ok) {
-      if ((buf[0] == '-') && (buf[1] == 'i') && (buf[2] == 'n') && (buf[3] == 'f')) {
+      if ((buf[0] == '-') && (buf[1] == 'i') && (buf[2] == 'n') &&
+          (buf[3] == 'f')) {
         (*out) = -std::numeric_limits<T>::infinity();
         return true;
       }
@@ -1024,7 +1179,6 @@ class USDAParser {
   }
 
   bool ParseDefArg(std::tuple<ListEditQual, Variable> *out) {
-
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
@@ -1048,7 +1202,8 @@ class USDAParser {
     std::cout << "varname = `" << varname << "`\n";
 
     if (!_IsNodeArg(varname)) {
-      _PushError("Unsupported or invalid/empty variable name `" + varname + "`\n");
+      _PushError("Unsupported or invalid/empty variable name `" + varname +
+                 "`\n");
       return false;
     }
 
@@ -1074,8 +1229,8 @@ class USDAParser {
     auto var = (*pvar);
 
     if (var.type == "path") {
-
-      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname + ", type " + var.type);
+      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname +
+                 ", type " + var.type);
       return false;
 
     } else if (var.type == "path[]") {
@@ -1106,7 +1261,8 @@ class USDAParser {
     } else if (var.type == "dictionary") {
       std::map<std::string, Variable> dict;
       if (!ParseDict(&dict)) {
-        _PushError(std::to_string(__LINE__) + " Failed to parse `" + varname + "`(dictionary type)\n");
+        _PushError(std::to_string(__LINE__) + " Failed to parse `" + varname +
+                   "`(dictionary type)\n");
         return false;
       }
 
@@ -1116,7 +1272,8 @@ class USDAParser {
       std::get<1>(*out) = ret;
 
     } else {
-      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname + ", type " + var.type);
+      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname +
+                 ", type " + var.type);
       return false;
     }
 
@@ -1125,7 +1282,8 @@ class USDAParser {
     return true;
   }
 
-  bool ParseDefArgs(std::map<std::string, std::tuple<ListEditQual, Variable>> *args) {
+  bool ParseDefArgs(
+      std::map<std::string, std::tuple<ListEditQual, Variable>> *args) {
     // '(' args ')'
     // args = list of argument, separated by newline.
 
@@ -1156,7 +1314,6 @@ class USDAParser {
     }
 
     while (!Eof()) {
-
       if (!SkipCommentAndWhitespaceAndNewline()) {
         std::cout << "2: skip comment/whitespace/nl failed\n";
         return false;
@@ -1182,9 +1339,7 @@ class USDAParser {
       }
 
       (*args)[std::get<1>(arg).name] = arg;
-
     }
-
 
     return true;
   }
@@ -1215,7 +1370,8 @@ class USDAParser {
         std::string key;
         Variable var;
         if (!ParseDictElement(&key, &var)) {
-          _PushError(std::to_string(__LINE__) + "Failed to parse dict element.");
+          _PushError(std::to_string(__LINE__) +
+                     "Failed to parse dict element.");
           return false;
         }
 
@@ -1682,8 +1838,7 @@ class USDAParser {
       if (array_qual) {
         std::vector<nonstd::optional<std::string>> value;
         if (!ParseBasicTypeArray(&value)) {
-          _PushError(
-              "Failed to parse array of string.\n");
+          _PushError("Failed to parse array of string.\n");
           return false;
         }
       } else {
@@ -1974,7 +2129,8 @@ class USDAParser {
 
       // 'todos'
     } else {
-      _PushError("TODO: ParseDictElement: Implement value parser for type: " + type_name + "\n");
+      _PushError("TODO: ParseDictElement: Implement value parser for type: " +
+                 type_name + "\n");
       return false;
     }
 
@@ -2001,7 +2157,8 @@ class USDAParser {
   }
 
   bool ParsePrimAttr(std::map<std::string, Variable> *props) {
-    // prim_attr : (custom?) uniform type (array_qual?) name '=' value interpolation?
+    // prim_attr : (custom?) uniform type (array_qual?) name '=' value
+    // interpolation?
     //           | (custom?) type (array_qual?) name '=' value interpolation?
     //           ;
 
@@ -2356,7 +2513,7 @@ class USDAParser {
           if (values[i]) {
             var.array.push_back(*values[i]);
           } else {
-            var.array.push_back(Value()); // monostate
+            var.array.push_back(Value());  // monostate
           }
         }
 
@@ -2387,7 +2544,6 @@ class USDAParser {
           std::cout << "double = None\n";
           // TODO: invalidate attr?
         }
-
       }
 
       // optional: interpolation parameter
@@ -2548,7 +2704,7 @@ class USDAParser {
         }
 
         Variable var;
-        var.value = value; // float3 array is the first-class type
+        var.value = value;  // float3 array is the first-class type
         var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
@@ -2595,7 +2751,7 @@ class USDAParser {
         }
 
         Variable var;
-        var.value = value; // float3 array is the first-class type
+        var.value = value;  // float3 array is the first-class type
         var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
@@ -2644,7 +2800,7 @@ class USDAParser {
         }
 
         Variable var;
-        var.value = value; // float3 array is the first-class type
+        var.value = value;  // float3 array is the first-class type
         var.custom = custom_qual;
         (*props)[primattr_name] = var;
 
@@ -2714,7 +2870,8 @@ class USDAParser {
       // 'todos'
 
     } else {
-      _PushError("TODO: ParsePrimAttr: Implement value parser for type: " + type_name + "\n");
+      _PushError("TODO: ParsePrimAttr: Implement value parser for type: " +
+                 type_name + "\n");
       return false;
     }
 
@@ -2740,7 +2897,6 @@ class USDAParser {
 
   /// == DORA ==
 
-
   ///
   /// Parse rel string
   ///
@@ -2764,7 +2920,8 @@ class USDAParser {
   /// `sep`
   /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
   ///
-  bool SepBy1AssetReference(const char sep, std::vector<AssetReference> *result) {
+  bool SepBy1AssetReference(const char sep,
+                            std::vector<AssetReference> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -2841,7 +2998,8 @@ class USDAParser {
   /// `sep`
   ///
   template <typename T>
-  bool SepBy1BasicType(const char sep, std::vector<nonstd::optional<T>> *result) {
+  bool SepBy1BasicType(const char sep,
+                       std::vector<nonstd::optional<T>> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -3103,7 +3261,6 @@ class USDAParser {
   /// Allow non-list version
   ///
   bool ParseAssetReferenceArray(std::vector<AssetReference> *result) {
-
     char c;
     if (!Char1(&c)) {
       return false;
@@ -3122,16 +3279,13 @@ class USDAParser {
       result->push_back(ref);
 
     } else {
-
       if (!SepBy1AssetReference(',', result)) {
         return false;
       }
 
       if (!Expect(']')) {
-
         return false;
       }
-
     }
 
     return true;
@@ -3213,7 +3367,6 @@ class USDAParser {
   /// Allow non-list version
   ///
   bool ParsePathIdentifierArray(std::vector<std::string> *result) {
-
     char c;
     if (!Char1(&c)) {
       return false;
@@ -3230,16 +3383,13 @@ class USDAParser {
       result->push_back(path);
 
     } else {
-
       if (!SepBy1PathIdentifier(',', result)) {
         return false;
       }
 
       if (!Expect(']')) {
-
         return false;
       }
-
     }
 
     return true;
@@ -3790,8 +3940,10 @@ class USDAParser {
         ErrorDiagnositc diag;
         diag.line_row = _line_row;
         diag.line_col = _line_col;
-        diag.err = "Magic header must start with `#usda `(at least single whitespace after 'a') but got `" +
-                   std::string(magic, 6) + "`\n";
+        diag.err =
+            "Magic header must start with `#usda `(at least single whitespace "
+            "after 'a') but got `" +
+            std::string(magic, 6) + "`\n";
         err_stack.push(diag);
 
         return false;
@@ -3866,7 +4018,6 @@ class USDAParser {
     bool valid{false};
 
     if (!maybe_triple) {
-
       std::cout << "maybe single-'@' asset reference\n";
 
       SeekTo(curr);
@@ -3899,7 +4050,8 @@ class USDAParser {
         tok += c;
       }
 
-      std::cout << "tok " << tok << ", found_delimiter " << found_delimiter << "\n";
+      std::cout << "tok " << tok << ", found_delimiter " << found_delimiter
+                << "\n";
 
       if (found_delimiter) {
         out->asset_reference = tok;
@@ -3909,7 +4061,6 @@ class USDAParser {
       }
 
     } else {
-
       bool found_delimiter{false};
       int at_cnt{0};
       std::string tok;
@@ -3926,7 +4077,9 @@ class USDAParser {
           at_cnt++;
         } else {
           at_cnt--;
-          if (at_cnt < 0) { at_cnt= 0; }
+          if (at_cnt < 0) {
+            at_cnt = 0;
+          }
         }
 
         tok += c;
@@ -3944,7 +4097,6 @@ class USDAParser {
 
         valid = true;
       }
-
     }
 
     if (!valid) {
@@ -3981,9 +4133,7 @@ class USDAParser {
     }
 
     return true;
-
   }
-
 
   bool ParseMetaValue(const std::string &vartype, const std::string &varname,
                       Variable *outvar) {
@@ -4002,7 +4152,8 @@ class USDAParser {
       std::cout << "read ref[]\n";
       std::vector<AssetReference> values;
       if (!ParseAssetReferenceArray(&values)) {
-        std::string msg = "Array of AssetReference expected for `" + varname + "`.\n";
+        std::string msg =
+            "Array of AssetReference expected for `" + varname + "`.\n";
         _PushError(msg);
         return false;
       }
@@ -4010,7 +4161,9 @@ class USDAParser {
       outvar->array.clear();
 
       for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "asset_reference[" << i << "] = " << values[i].asset_reference << ", prim_path = " << values[i].prim_path << "\n";
+        std::cout << "asset_reference[" << i
+                  << "] = " << values[i].asset_reference
+                  << ", prim_path = " << values[i].prim_path << "\n";
         Variable var;
         outvar->array.push_back(values[i]);
       }
@@ -4179,7 +4332,6 @@ class USDAParser {
 
     // Load subLayers
     if (sublayers.size()) {
-
       // Create another USDA parser.
 
       for (size_t i = 0; i < sublayers.size(); i++) {
@@ -4190,7 +4342,8 @@ class USDAParser {
           // TODO(syoyo): Support UTF-8 filename
           std::ifstream ifs(filepath.c_str(), std::ifstream::binary);
           if (!ifs) {
-            std::cerr << "File not found or failed to open file: " << filepath << "\n";
+            std::cerr << "File not found or failed to open file: " << filepath
+                      << "\n";
 
             // may ok
             continue;
@@ -4213,7 +4366,8 @@ class USDAParser {
                    static_cast<std::streamsize>(sz));
         }
 
-        tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+        tinyusdz::StreamReader sr(data.data(), data.size(),
+                                  /* swap endian */ false);
         tinyusdz::usda::USDAParser parser(&sr);
 
         std::string base_dir = GetBaseDir(filepath);
@@ -4222,7 +4376,7 @@ class USDAParser {
         parser.SetBaseDir(base_dir);
 
         {
-          bool ret = parser.Parse();
+          bool ret = parser.Parse(LOAD_STATE_SUBLAYER);
 
           if (!ret) {
             std::cerr << "Failed to parse .usda: \n";
@@ -4231,11 +4385,9 @@ class USDAParser {
             std::cout << "ok\n";
           }
         }
-
       }
 
       // TODO: Merge/Import subLayer.
-
     }
 
 #if 0
@@ -4321,7 +4473,6 @@ class USDAParser {
     return true;
   }
 
-
   // Parse World meta
   // meta = ( metadata_opt )
   //      | empty
@@ -4379,9 +4530,7 @@ class USDAParser {
     return true;
   }
 
-  bool Eof() {
-    return _sr->eof();
-  }
+  bool Eof() { return _sr->eof(); }
 
   // Fetch 1 char. Do not change input stream position.
   bool LookChar1(char *c) {
@@ -4431,9 +4580,7 @@ class USDAParser {
     return true;
   }
 
-  uint64_t CurrLoc() {
-    return _sr->tell();
-  }
+  uint64_t CurrLoc() { return _sr->tell(); }
 
   bool SeekTo(size_t pos) {
     if (!_sr->seek_set(pos)) {
@@ -4472,7 +4619,6 @@ class USDAParser {
   /// Parse `class` block.
   ///
   bool ParseClassBlock() {
-
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
@@ -4565,7 +4711,6 @@ class USDAParser {
           if (!ParsePrimAttr(&props)) {
             return false;
           }
-
         }
 
         if (!SkipWhitespaceAndNewline()) {
@@ -4650,9 +4795,10 @@ class USDAParser {
   ///
   /// optional_arg = '(' args ')'
   ///
-  /// TODO: Support `def` without type(i.e. actual definition is defined in another USD file or referenced USD)
+  /// TODO: Support `def` without type(i.e. actual definition is defined in
+  /// another USD file or referenced USD)
   ///
-  bool ParseDefBlock() {
+  bool ParseDefBlock(uint32_t nestlevel = 0) {
     std::string def;
 
     if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -4692,7 +4838,6 @@ class USDAParser {
       } else {
         has_primtype = true;
       }
-
     }
 
     std::string prim_type;
@@ -4718,7 +4863,7 @@ class USDAParser {
     }
 
     std::string node_name;
-    if (!ReadStringLiteral(&node_name)) {
+    if (!ReadBasicType(&node_name)) {
       return false;
     }
 
@@ -4748,7 +4893,6 @@ class USDAParser {
         if (!SkipWhitespaceAndNewline()) {
           return false;
         }
-
       }
     }
 
@@ -4762,6 +4906,11 @@ class USDAParser {
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
+    }
+
+    std::vector<std::pair<ListEditQual, AssetReference>> references;
+    if (args.count("references")) {
+      references = GetAssetReferences(args["references"]);
     }
 
     // expect = '}'
@@ -4796,7 +4945,7 @@ class USDAParser {
         if (tok == "def") {
           std::cout << "rec\n";
           // recusive call
-          if (!ParseDefBlock()) {
+          if (!ParseDefBlock(nestlevel+1)) {
             std::cout << "rec failed\n";
             return false;
           }
@@ -4810,16 +4959,29 @@ class USDAParser {
           if (prim_type.empty()) {
             // Unknown or unresolved node type
             std::cout << "TODO: unresolved node type\n";
-          } if (prim_type == "GeomMesh") {
+          }
+
+          if (prim_type == "GeomMesh") {
             GeomMesh mesh;
             std::cout << "Reconstruct GeomMesh\n";
-            if (!ReconstructGeomMesh(props, &mesh)) {
+            if (!ReconstructGeomMesh(props, references, &mesh)) {
               _PushError("Failed to reconstruct GeomMesh.");
               return false;
             }
+          } else if (prim_type == "Sphere") {
+            GeomSphere sphere;
+            std::cout << "Reconstruct Sphere\n";
+            if (!ReconstructGeomSphere(props, references, &sphere)) {
+              _PushError("Failed to reconstruct GeomSphere.");
+              return false;
+            }
+
+            sphere.name = node_name;
+            std::cout << to_string(sphere, nestlevel) << "\n";
+
           } else if (prim_type == "BasisCurves") {
           } else {
-            std::cout << "TODO:" << prim_type << "\n";
+            std::cout << __LINE__ << " TODO: " << prim_type << "\n";
           }
         }
 
@@ -4832,8 +4994,73 @@ class USDAParser {
     return true;
   }
 
-  bool ReconstructGeomMesh(const std::map<std::string, Variable> &properties,
-                           GeomMesh *mesh) {
+  bool ReconstructGeomSphere(
+      const std::map<std::string, Variable> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GeomSphere *sphere) {
+
+    //
+    // Resolve prepend references
+    //
+    for (const auto &ref : references) {
+      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+        std::cout << std::to_string(__LINE__) + "TODO\n";
+      }
+    }
+
+    for (const auto &prop : properties) {
+      if (prop.first == "radius") {
+        if (!prop.second.IsDouble()) {
+          _PushError("`radius` must be double type.");
+          return false;
+        }
+
+        if (auto p = nonstd::get_if<double>(&prop.second.value)) {
+          sphere->radius = *p;
+        } else {
+          // TODO: print warning?
+        }
+
+      } else if (prop.first == "material:binding") {
+        if (!prop.second.IsRel()) {
+          _PushError("`material:binding` must be 'rel' type.");
+          return false;
+        }
+
+        sphere->materialBinding.materialBinding =
+            nonstd::get<Rel>(prop.second.value).path;
+      } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
+        return false;
+      }
+    }
+
+    //
+    // Resolve append references
+    // (Overwrite variables with the referenced one).
+    //
+    for (const auto &ref : references) {
+      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+        std::cout << std::to_string(__LINE__) + "TODO\n";
+      }
+    }
+
+    return true;
+  }
+
+  bool ReconstructGeomMesh(
+      const std::map<std::string, Variable> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GeomMesh *mesh) {
+    //
+    // Resolve prepend references
+    //
+    for (const auto &ref : references) {
+      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+      }
+    }
+
     for (const auto &prop : properties) {
       if (prop.first == "points") {
         if (!prop.second.IsFloat3()) {
@@ -4853,10 +5080,21 @@ class USDAParser {
           return false;
         }
 
-        mesh->materialBinding.materialBinding = nonstd::get<Rel>(prop.second.value).path;
+        mesh->materialBinding.materialBinding =
+            nonstd::get<Rel>(prop.second.value).path;
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first + "\n");
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
         return false;
+      }
+    }
+
+    //
+    // Resolve append references
+    // (Overwrite variables with the referenced one).
+    //
+    for (const auto &ref : references) {
+      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
       }
     }
 
@@ -4898,13 +5136,9 @@ class USDAParser {
     return true;
   }
 
-  bool CheckHeader() {
-    return ParseMagicHeader();
-  }
+  bool CheckHeader() { return ParseMagicHeader(); }
 
-  void ImportScene(tinyusdz::Scene &scene) {
-    _scene = scene;
-  }
+  void ImportScene(tinyusdz::Scene &scene) { _scene = scene; }
 
   bool HasPath(const std::string &path) {
     // TODO
@@ -4913,7 +5147,22 @@ class USDAParser {
     return false;
   }
 
-  bool Parse() {
+  enum LoadState {
+    LOAD_STATE_TOPLEVEL, // toplevel .usda input
+    LOAD_STATE_SUBLAYER, // .usda is read by 'subLayers'
+    LOAD_STATE_REFERENCE,  // .usda is read by `references`
+    LOAD_STATE_PAYLOAD,  // .usda is read by `payload`
+  };
+
+  ///
+  /// Parser entry point
+  ///
+  bool Parse(LoadState state = LOAD_STATE_TOPLEVEL) {
+
+    _sub_layered = (state == LOAD_STATE_SUBLAYER);
+    _referenced = (state == LOAD_STATE_REFERENCE);
+    _payloaded = (state == LOAD_STATE_PAYLOAD);
+
     bool header_ok = ParseMagicHeader();
     if (!header_ok) {
       _PushError("Failed to parse USDA magic header.\n");
@@ -4954,7 +5203,6 @@ class USDAParser {
       }
 
       if (tok == "def") {
-
         bool block_ok = ParseDefBlock();
         if (!block_ok) {
           _PushError("Failed to parse `def` block.\n");
@@ -5129,14 +5377,19 @@ class USDAParser {
 
   float _version{1.0f};
 
-  std::string _base_dir; // Used for importing another USD file
+  std::string _base_dir;  // Used for importing another USD file
 
-  nonstd::optional<tinyusdz::Scene> _scene; // Imported scene.
+  nonstd::optional<tinyusdz::Scene> _scene;  // Imported scene.
 
   // "class" defs
   std::map<std::string, Klass> _klasses;
 
   std::stack<std::string> _path_stack;
+
+  // load flags
+  bool _sub_layered{false};
+  bool _referenced{false};
+  bool _payloaded{false};
 };
 
 // 'None'
@@ -5146,12 +5399,12 @@ bool USDAParser::MaybeNone() {
   auto loc = CurrLoc();
 
   if (!CharN(4, &buf)) {
-
     SeekTo(loc);
     return false;
   }
 
-  if ((buf[0] == 'N') && (buf[1] == 'o') && (buf[2] == 'n') && (buf[3] == 'e')) {
+  if ((buf[0] == 'N') && (buf[1] == 'o') && (buf[2] == 'n') &&
+      (buf[3] == 'e')) {
     // got it
     return true;
   }
@@ -5169,7 +5422,6 @@ bool USDAParser::ReadBasicType(std::string *value) {
 }
 
 bool USDAParser::ReadBasicType(nonstd::optional<std::string> *value) {
-
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -5179,7 +5431,6 @@ bool USDAParser::ReadBasicType(nonstd::optional<std::string> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-
   }
 
   return false;
@@ -5212,7 +5463,6 @@ bool USDAParser::ReadBasicType(bool *value) {
 }
 
 bool USDAParser::ReadBasicType(nonstd::optional<bool> *value) {
-
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -5222,7 +5472,6 @@ bool USDAParser::ReadBasicType(nonstd::optional<bool> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-
   }
 
   return false;
@@ -5306,7 +5555,6 @@ bool USDAParser::ReadBasicType(int *value) {
 }
 
 bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
-
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -5316,7 +5564,6 @@ bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-
   }
 
   return false;
@@ -5360,7 +5607,6 @@ bool USDAParser::ReadBasicType(float *value) {
 }
 
 bool USDAParser::ReadBasicType(nonstd::optional<float> *value) {
-
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -5370,15 +5616,12 @@ bool USDAParser::ReadBasicType(nonstd::optional<float> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-
   }
 
   return false;
 }
 
-
 bool USDAParser::ReadBasicType(double *value) {
-
   // -inf, inf, nan
   {
     double v;
@@ -5414,7 +5657,6 @@ bool USDAParser::ReadBasicType(double *value) {
 }
 
 bool USDAParser::ReadBasicType(nonstd::optional<double> *value) {
-
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -5424,14 +5666,12 @@ bool USDAParser::ReadBasicType(nonstd::optional<double> *value) {
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
-
   }
 
   return false;
 }
 
 bool IsUSDA(const std::string &filename) {
-
   std::vector<uint8_t> data;
   {
     // TODO(syoyo): Support UTF-8 filename
@@ -5469,7 +5709,6 @@ bool IsUSDA(const std::string &filename) {
 }  // namespace tinyusdz
 
 #if defined(USDA_MAIN)
-
 
 int main(int argc, char **argv) {
   if (argc < 2) {
