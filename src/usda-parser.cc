@@ -39,6 +39,13 @@ namespace tinyusdz {
 
 namespace usda {
 
+// Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
+typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>> TimeSampledDataDouble;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>> TimeSampledDataFloat3;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>> TimeSampledDataDouble3;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>> TimeSampledDataMatrix4d;
+
 namespace {
 
 std::string Indent(uint32_t n) {
@@ -128,13 +135,15 @@ std::string to_string(const Xform &xform, const uint32_t indent=0)
     for (size_t i = 0; i < xform.xformOps.size(); i++) {
       ss << tinyusdz::XformOp::GetOpTypeName(xform.xformOps[i].op);
       if (i != (xform.xformOps.size() - 1)) {
-        ss << ", ";
+        ss << ",\n";
       }
     }
     ss << "]";
     
   }
   ss << Indent(indent) << "  visibility = " << to_string(xform.visibility) << "\n";
+
+  ss << Indent(indent) << "}\n";
 
   return ss.str();
 }
@@ -176,6 +185,48 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent=0)
   return ss.str();
 }
 
+std::string to_string(const TimeSampledDataFloat &values, uint32_t indent = 0)
+{
+  std::stringstream ss;
+
+  ss << Indent(indent) << "{\n";
+
+  for (size_t i = 0; i < values.size(); i++) {
+    ss << Indent(indent+1) << std::get<0>(values[i]) << ":";
+    if (auto p = std::get<1>(values[i])) {
+      ss << *p;
+    } else {
+      ss << "None";
+    }
+    ss << ",\n";
+  }
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string to_string(const TimeSampledDataFloat3 &values, uint32_t indent = 0)
+{
+  std::stringstream ss;
+
+  ss << Indent(indent) << "{\n";
+
+  for (size_t i = 0; i < values.size(); i++) {
+    ss << Indent(indent+1) << std::get<0>(values[i]) << ":";
+    if (auto p = std::get<1>(values[i])) {
+      ss << to_string(*p);
+    } else {
+      ss << "None";
+    }
+    ss << ",\n";
+  }
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 }  // namespace
 
 struct ErrorDiagnositc {
@@ -209,13 +260,6 @@ struct AssetReference {
   std::string asset_reference;
   std::string prim_path;
 };
-
-// Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
-typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>> TimeSampledDataDouble;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>> TimeSampledDataFloat3;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>> TimeSampledDataDouble3;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>> TimeSampledDataMatrix4d;
 
 using TimeSampledValue = nonstd::variant<nonstd::monostate, TimeSampledDataFloat, TimeSampledDataDouble, TimeSampledDataFloat3, TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
 
@@ -2351,6 +2395,7 @@ class USDAParser {
 
         Variable var;
         var.timeSampledValue = values;
+        std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
         (*props)[primattr_name] = var;
 
       } else if (type_name == "double") {
@@ -5511,6 +5556,7 @@ class USDAParser {
       } else if (std::get<0>(tup) == "xformOp:rotateZ") {
 
         if (prop.second.IsTimeSampled()) {
+		
         } else if (prop.second.IsFloat()) {
           if (auto p = nonstd::get_if<float>(&prop.second.value)) {
             XformOp op;

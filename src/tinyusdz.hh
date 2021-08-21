@@ -1757,6 +1757,7 @@ struct XformOp
 
   OpType op;
   PrecisionType precision;
+  std::string suffix;
   XformOpValueType value; // When you look up the value, select basic type based on `precision`
 };
 
