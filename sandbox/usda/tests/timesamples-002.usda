@@ -9,4 +9,6 @@ def Xform "muda"
       192: 1440,
   }
 
+  uniform token[] xformOpOrder = ["xformOp:rotateZ:tilt", "xformOp:rotateZ:spin"]
+
 }

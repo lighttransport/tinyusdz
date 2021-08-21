@@ -12,6 +12,7 @@
 #include <stack>
 #include <thread>
 #include <vector>
+#include <algorithm>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -129,18 +130,40 @@ std::string to_string(const Xform &xform, const uint32_t indent=0)
   ss << Indent(indent) << ")\n";
   ss << Indent(indent) << "{\n";
 
-  // members
   if (xform.xformOps.size()) {
-    ss << Indent(indent) << "  uniform token[] xformOpOrder = [";
     for (size_t i = 0; i < xform.xformOps.size(); i++) {
-      ss << tinyusdz::XformOp::GetOpTypeName(xform.xformOps[i].op);
+      auto xformOp = xform.xformOps[i];
+      ss << Indent(indent);
+      ss << tinyusdz::XformOp::GetOpTypeName(xformOp.op);
+      if (!xformOp.suffix.empty()) {
+        ss << ":" << xformOp.suffix;
+      }
+      auto p = nonstd::get_if<float>(&xformOp.value);
+      if (p) {
+        ss << " = " << (*p);
+      }
+      // TODO: more types.
+      ss << "\n";
+    }
+  }
+
+  // xformOpOrder
+  if (xform.xformOps.size()) {
+    ss << Indent(indent) << "uniform token[] xformOpOrder = [";
+    for (size_t i = 0; i < xform.xformOps.size(); i++) {
+      auto xformOp = xform.xformOps[i];
+      ss << "\"" << tinyusdz::XformOp::GetOpTypeName(xformOp.op);
+      if (!xformOp.suffix.empty()) {
+        ss << ":" << xformOp.suffix;
+      }
+      ss << "\"";
       if (i != (xform.xformOps.size() - 1)) {
         ss << ",\n";
       }
     }
-    ss << "]";
-    
+    ss << "]\n";
   }
+
   ss << Indent(indent) << "  visibility = " << to_string(xform.visibility) << "\n";
 
   ss << Indent(indent) << "}\n";
@@ -1946,6 +1969,17 @@ class USDAParser {
               "token[]`.\n");
           return false;
         }
+
+        var.type = "string";
+        var.name = key_name;
+        for (const auto &item : value) {
+          if (item) {
+            var.array.push_back(*item);
+          } else {
+            // TODO
+          }
+        }
+
       } else {
         std::string value;  // TODO: Path
         if (!ReadPathIdentifier(&value)) {
@@ -2492,6 +2526,19 @@ class USDAParser {
                 "Failed to parse array of string literal for `uniform "
                 "token[]`.\n");
           }
+
+          Variable var;
+          for (size_t i = 0; i < value.size(); i++) {
+            if (value[i]) {
+              var.array.push_back(*value[i]);
+            } else {
+              var.array.push_back(Value());  // monostate
+            }
+          }
+
+          std::cout << "add token[] primattr: " << primattr_name << "\n";
+          var.custom = custom_qual;
+          (*props)[primattr_name] = var;
         } else {
           if (uniform_qual) {
             std::cout << "uniform_qual\n";
@@ -2539,13 +2586,18 @@ class USDAParser {
             _PushError("Failed to parse float array.\n");
           }
           std::cout << "float = \n";
+
+          Variable var;
           for (size_t i = 0; i < value.size(); i++) {
             if (value[i]) {
               std::cout << *value[i] << "\n";
+              var.array.push_back(*value[i]);
             } else {
               std::cout << "None\n";
+              var.array.push_back(Value());
             }
           }
+          (*props)[primattr_name] = var;
         } else if (hasConnect(primattr_name)) {
           std::string value;  // TODO: Path
           if (!ReadPathIdentifier(&value)) {
@@ -2563,6 +2615,13 @@ class USDAParser {
           } else {
             std::cout << "float = None\n";
           }
+
+          Variable var;
+          if (value) {
+            var.value = (*value);
+          }
+
+          (*props)[primattr_name] = var;
         }
 
         // optional: interpolation parameter
@@ -5342,6 +5401,8 @@ class USDAParser {
       references = GetAssetReferences(args["references"]);
     }
 
+    std::map<std::string, Variable> props;
+
     // expect = '}'
     //        | def_block
     //        | prim_attr+
@@ -5380,54 +5441,59 @@ class USDAParser {
           }
         } else {
           // Assume PrimAttr
-          std::map<std::string, Variable> props;
           if (!ParsePrimAttr(&props)) {
             return false;
           }
 
-          if (prim_type.empty()) {
-            // Unknown or unresolved node type
-            std::cout << "TODO: unresolved node type\n";
-          }
-
-          if (prim_type == "Xform") {
-            Xform xform;
-            std::cout << "Reconstruct Xform\n";
-            if (!ReconstructXform(props, references, &xform)) {
-              _PushError("Failed to reconstruct Xform.");
-              return false;
-            }
-
-            std::cout << to_string(xform, nestlevel) << "\n";
-
-          } else if (prim_type == "Mesh") {
-            GeomMesh mesh;
-            std::cout << "Reconstruct GeomMesh\n";
-            if (!ReconstructGeomMesh(props, references, &mesh)) {
-              _PushError("Failed to reconstruct GeomMesh.");
-              return false;
-            }
-          } else if (prim_type == "Sphere") {
-            GeomSphere sphere;
-            std::cout << "Reconstruct Sphere\n";
-            if (!ReconstructGeomSphere(props, references, &sphere)) {
-              _PushError("Failed to reconstruct GeomSphere.");
-              return false;
-            }
-
-            sphere.name = node_name;
-            std::cout << to_string(sphere, nestlevel) << "\n";
-
-          } else if (prim_type == "BasisCurves") {
-          } else {
-            std::cout << __LINE__ << " TODO: " << prim_type << "\n";
-          }
         }
 
         if (!SkipWhitespaceAndNewline()) {
           return false;
         }
       }
+    }
+
+    if (prim_type.empty()) {
+      // Unknown or unresolved node type
+      std::cout << "TODO: unresolved node type\n";
+    }
+
+    for (auto &item : props) {
+      std::cout << "prop name: " << item.first << "\n";
+    }
+
+    if (prim_type == "Xform") {
+      Xform xform;
+      std::cout << "Reconstruct Xform\n";
+      if (!ReconstructXform(props, references, &xform)) {
+        _PushError("Failed to reconstruct Xform.");
+        return false;
+      }
+      xform.name = node_name;
+
+      std::cout << to_string(xform, nestlevel) << "\n";
+
+    } else if (prim_type == "Mesh") {
+      GeomMesh mesh;
+      std::cout << "Reconstruct GeomMesh\n";
+      if (!ReconstructGeomMesh(props, references, &mesh)) {
+        _PushError("Failed to reconstruct GeomMesh.");
+        return false;
+      }
+    } else if (prim_type == "Sphere") {
+      GeomSphere sphere;
+      std::cout << "Reconstruct Sphere\n";
+      if (!ReconstructGeomSphere(props, references, &sphere)) {
+        _PushError("Failed to reconstruct GeomSphere.");
+        return false;
+      }
+
+      sphere.name = node_name;
+      std::cout << to_string(sphere, nestlevel) << "\n";
+
+    } else if (prim_type == "BasisCurves") {
+    } else {
+      std::cout << __LINE__ << " TODO: " << prim_type << "\n";
     }
 
     return true;
@@ -5534,10 +5600,76 @@ class USDAParser {
       }
     }
 
+    for (auto &item : properties) {
+      std::cout << "prop: " << item.first << "\n";
+    }
+
+    // Lookup xform values from `xformOpOrder`
+    if (properties.count("xformOpOrder")) {
+      std::cout << "xformOpOrder got";
+
+      // array of string
+      auto prop = properties.at("xformOpOrder");
+      if (!prop.IsArray()) {
+        _PushError("`xformOpOrder` must be an array type.");
+        return false;
+      }
+
+      std::cout << "iterate prop.array" << "\n";
+      for (const auto &item : prop.array) {
+
+        if (auto ptarget = nonstd::get_if<std::string>(&item)) {
+
+          std::cout << "ptarget = " << (*ptarget) << "\n";
+
+          // remove double-quotation
+          std::string identifier = *ptarget;
+          identifier.erase(
+              std::remove(identifier.begin(), identifier.end(), '\"'),
+              identifier.end());
+
+          auto tup = Split(identifier);
+          auto basename = std::get<0>(tup);
+          auto suffix = std::get<1>(tup);
+          auto isTimeSampled = std::get<2>(tup);
+          (void)isTimeSampled;
+
+          std::cout << "base = " << std::get<0>(tup) << ", suffix = " << std::get<1>(tup) << ", isTimeSampled = " << std::get<2>(tup) << "\n";
+
+          XformOp op;
+
+          std::string target_name = basename;
+          if (!suffix.empty()) {
+            target_name += ":" + suffix;
+          }
+
+          if (!properties.count(target_name)) {
+            _PushError("Property '" + target_name + "' not found in Xform node.");
+            return false;
+          }
+
+          auto targetProp = properties.at(target_name);
+
+          if (basename == "xformOp:rotateZ") {
+            std::cout << "basename is xformOp::rotateZ" << "\n";
+            if (auto p = nonstd::get_if<float>(&targetProp.value)) {
+              std::cout << "xform got it " << "\n";
+              op.op = XformOp::OpType::ROTATE_Z;
+              op.suffix = suffix;
+              op.value = (*p);
+
+              xform->xformOps.push_back(op);
+            }
+          }
+        }
+      }
+    } else {
+      std::cout << "no xformOpOrder\n";
+    }
+ 
+#if 0
     for (const auto &prop : properties) {
 
-      auto tup = Split(prop.first);
-      std::cout << "base = " << std::get<0>(tup) << ", suffix = " << std::get<1>(tup) << ", isTimeSampled = " << std::get<2>(tup) << "\n";
 
       if (prop.first == "xformOpOrder") {
         if (!prop.second.IsArray()) {
@@ -5581,6 +5713,7 @@ class USDAParser {
         return false;
       }
     }
+#endif
 
     //
     // Resolve append references
