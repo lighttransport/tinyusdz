@@ -210,6 +210,15 @@ struct AssetReference {
   std::string prim_path;
 };
 
+// Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
+typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>> TimeSampledDataDouble;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>> TimeSampledDataFloat3;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>> TimeSampledDataDouble3;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>> TimeSampledDataMatrix4d;
+
+using TimeSampledValue = nonstd::variant<nonstd::monostate, TimeSampledDataFloat, TimeSampledDataDouble, TimeSampledDataFloat3, TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
+
 // monostate = could be `Object` type in Variable class.
 // If you want to add more items, you need to generate nonstd::variant file,
 // since nonstd::variant has a limited number of types to use.
@@ -229,6 +238,9 @@ class Variable {
 
   // scalar type
   Value value;
+
+  // TimeSampled values
+  TimeSampledValue timeSampledValue;
 
   // compound types
   typedef std::vector<Value> Array;
@@ -266,6 +278,8 @@ class Variable {
   bool IsAssetReference() const { return !IsArray() && is<AssetReference>(); }
 
   bool IsObject() const { return !IsArray() && is<nonstd::monostate>(); }
+
+  bool IsTimeSampled() const { return timeSampledValue.index() != TimeSampledValue::index_of<nonstd::monostate>(); }
 
   bool valid() const {
     // FIXME: Make empty valid?
@@ -1697,7 +1711,7 @@ class USDAParser {
   }
 
   template<typename T>
-  bool ParseTimeSamples(std::vector<std::pair<uint32_t, nonstd::optional<T>>> *out_samples) {
+  bool ParseTimeSamples(std::vector<std::pair<uint64_t, nonstd::optional<T>>> *out_samples) {
 
     // timeSamples = '{' (int : T)+ '}'
     
@@ -1711,8 +1725,20 @@ class USDAParser {
 
     while (!Eof()) {
 
-      int timeVal;
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+      
+      if (c == '}') {
+        break;
+      }
+
+      Rewind(1);
+
+      uint64_t timeVal;
       if (!ReadBasicType(&timeVal)) {
+        _PushError("Parse time value failed.");
         return false;
       }
 
@@ -1744,11 +1770,6 @@ class USDAParser {
 
       out_samples->push_back({timeVal, value});
     }
-
-    if (!Expect('}')) {
-      return false;
-    }
-
 
     return true;
   }
@@ -2323,15 +2344,53 @@ class USDAParser {
     if (isTimeSample) {
 
       if (type_name == "float") {
-        std::vector<std::pair<uint32_t, nonstd::optional<float>>> values;
+        TimeSampledDataFloat values;
         if (!ParseTimeSamples(&values)) {
           return false;
         }
+
+        Variable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+
+      } else if (type_name == "double") {
+        TimeSampledDataDouble values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        Variable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+
       } else if (type_name == "float3") {
-        std::vector<std::pair<uint32_t, nonstd::optional<std::array<float, 3>>>> values;
+        TimeSampledDataFloat3 values;
         if (!ParseTimeSamples(&values)) {
           return false;
         }
+
+        Variable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+      } else if (type_name == "double3") {
+        TimeSampledDataDouble3 values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        Variable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+      } else if (type_name == "matrix4d") {
+        TimeSampledDataMatrix4d values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        Variable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+
       } else {
         _PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
         return false;
@@ -2975,12 +3034,19 @@ class USDAParser {
   bool ReadBasicType(float *value);
   bool ReadBasicType(double *value);
   bool ReadBasicType(bool *value);
+  bool ReadBasicType(uint64_t *value);
 
   // TimeSample data
   bool ReadTimeSampleData(nonstd::optional<float3> *value); 
   bool ReadTimeSampleData(nonstd::optional<float> *value); 
+  bool ReadTimeSampleData(nonstd::optional<double> *value); 
+  bool ReadTimeSampleData(nonstd::optional<double3> *value); 
+  bool ReadTimeSampleData(nonstd::optional<Matrix4d> *value); 
   bool ReadTimeSampleData(std::vector<nonstd::optional<float3>> *value); 
   bool ReadTimeSampleData(std::vector<nonstd::optional<float>> *value); 
+  bool ReadTimeSampleData(std::vector<nonstd::optional<double>> *value); 
+  bool ReadTimeSampleData(std::vector<nonstd::optional<double3>> *value); 
+  bool ReadTimeSampleData(std::vector<Matrix4d> *value); 
 
   bool MaybeNone();
 
@@ -3671,6 +3737,90 @@ class USDAParser {
       result[i][1] = content[i][1];
       result[i][2] = content[i][2];
       result[i][3] = content[i][3];
+    }
+
+    return true;
+  }
+
+  ///
+  /// Parses 1 or more occurences of matrix4d, separated by
+  /// `sep`
+  ///
+  bool SepBy1Matrix4d(const char sep, std::vector<Matrix4d> *result) {
+    result->clear();
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    {
+      Matrix4d m;
+
+      if (!ParseMatrix4d(m.m)) {
+        _PushError("Failed to parse Path.\n");
+        return false;
+      }
+
+      result->push_back(m);
+    }
+
+    // std::cout << "sep: " << sep << "\n";
+
+    while (!_sr->eof()) {
+      // sep
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      char c;
+      if (!_sr->read1(&c)) {
+        std::cout << "read1 failure\n";
+        return false;
+      }
+
+      // std::cout << "sep c = " << c << "\n";
+
+      if (c != sep) {
+        // end
+        // std::cout << "sepBy1 end\n";
+        _sr->seek_from_current(-1);  // unwind single char
+        break;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        // std::cout << "ws failure\n";
+        return false;
+      }
+
+      Matrix4d m;
+      if (!ParseMatrix4d(m.m)) {
+        break;
+      }
+
+      result->push_back(m);
+    }
+
+    if (result->empty()) {
+      _PushError("Empty array.\n");
+      return false;
+    }
+
+    return true;
+  }
+
+  bool ParseMatrix4dArray(std::vector<Matrix4d> *result) {
+
+    if (!Expect('[')) {
+      return false;
+    }
+
+    if (!SepBy1Matrix4d(',', result)) {
+      return false;
+    }
+
+    if (!Expect(']')) {
+      return false;
     }
 
     return true;
@@ -5299,6 +5449,38 @@ class USDAParser {
       Xform *xform) {
     (void)xform;
 
+    // ret = (basename, suffix, isTimeSampled?)
+    auto Split = [](const std::string &str) -> std::tuple<std::string, std::string, bool> {
+
+      bool isTimeSampled{false};
+
+      std::string s = str;
+
+      const std::string tsSuffix = ".timeSamples";
+
+      if (endsWith(s, tsSuffix)) {
+        isTimeSampled = true;
+        // rtrim
+        s = s.substr(0, s.size() - tsSuffix.size());
+
+        std::cout << "trimmed = " << s << "\n";
+      }
+
+      // TODO: Support multiple namespace?
+      std::string suffix;
+      if (s.find_last_of(":") != std::string::npos) {
+        suffix = s.substr(s.find_last_of(":") + 1);
+      }
+
+      std::string basename = s;
+      if (s.find_last_of(":") != std::string::npos) {
+        basename = s.substr(0, s.find_last_of(":")); 
+      }
+
+      return {basename, suffix, isTimeSampled};
+
+    };
+
     //
     // Resolve prepend references
     //
@@ -5308,6 +5490,10 @@ class USDAParser {
     }
 
     for (const auto &prop : properties) {
+
+      auto tup = Split(prop.first);
+      std::cout << "base = " << std::get<0>(tup) << ", suffix = " << std::get<1>(tup) << ", isTimeSampled = " << std::get<2>(tup) << "\n";
+
       if (prop.first == "xformOpOrder") {
         if (!prop.second.IsArray()) {
           _PushError("`xformOpOrder` must be an array type.");
@@ -5322,7 +5508,27 @@ class USDAParser {
           }
         }
 
+      } else if (std::get<0>(tup) == "xformOp:rotateZ") {
 
+        if (prop.second.IsTimeSampled()) {
+        } else if (prop.second.IsFloat()) {
+          if (auto p = nonstd::get_if<float>(&prop.second.value)) {
+            XformOp op;
+            op.op = XformOp::OpType::ROTATE_Z;
+            op.precision = XformOp::PrecisionType::PRECISION_FLOAT;
+            op.value = *p;
+
+            std::cout << "rotateZ value = " << *p << "\n";
+
+          } else {
+            _PushError("`xformOp:rotateZ` must be an float type.");
+            return false;
+          }
+        } else {
+          _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                     "\n");
+        }
+            
       } else {
         _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
@@ -5785,6 +5991,8 @@ bool USDAParser::ReadBasicType(int *value) {
     }
     _line_col++;
 
+    std::cout << "sc " << std::to_string(sc) << "\n";
+
     // sign or [0-9]
     if (sc == '+') {
       negative = false;
@@ -5795,7 +6003,7 @@ bool USDAParser::ReadBasicType(int *value) {
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
     } else {
-      _PushError("Sign or 0-9 expected.\n");
+      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) + "'.\n");
       return false;
     }
 
@@ -5847,6 +6055,86 @@ bool USDAParser::ReadBasicType(int *value) {
   return true;
 }
 
+bool USDAParser::ReadBasicType(uint64_t *value) {
+  std::stringstream ss;
+
+  // head character
+  bool has_sign = false;
+  bool negative = false;
+  {
+    char sc;
+    if (!_sr->read1(&sc)) {
+      return false;
+    }
+    _line_col++;
+
+    // sign or [0-9]
+    if (sc == '+') {
+      negative = false;
+      has_sign = true;
+    } else if (sc == '-') {
+      negative = true;
+      has_sign = true;
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else {
+      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) + "'.\n");
+      return false;
+    }
+
+    ss << sc;
+  }
+
+  if (negative) {
+    _PushError("Unsigned value expected but got '-' sign.");
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if ((c >= '0') && (c <= '9')) {
+      ss << c;
+    } else {
+      _sr->seek_from_current(-1);
+      break;
+    }
+  }
+
+  if (has_sign && (ss.str().size() == 1)) {
+    // sign only
+    _PushError("Integer value expected but got sign character only.\n");
+    return false;
+  }
+
+  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+    _PushError("Zero padded integer value is not allowed.\n");
+    return false;
+  }
+
+  // std::cout << "ReadInt token: " << ss.str() << "\n";
+
+  // TODO(syoyo): Use ryu parse.
+  try {
+    (*value) = std::stoull(ss.str());
+  } catch (const std::invalid_argument &e) {
+    (void)e;
+    _PushError("Not an 64bit unsigned integer literal.\n");
+    return false;
+  } catch (const std::out_of_range &e) {
+    (void)e;
+    _PushError("64bit unsigned integer value out of range.\n");
+    return false;
+  }
+
+  // std::cout << "read int ok\n";
+
+  return true;
+}
+
 bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -5886,9 +6174,45 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value)
   return true;
 }
 
+bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value) 
+{
+  nonstd::optional<double> value;
+  if (!ReadBasicType(&value)) {
+    return false;
+  }
+
+  (*out_value) = value;
+
+  return true;
+}
+
+bool USDAParser::ReadTimeSampleData(nonstd::optional<double3> *out_value) 
+{
+  nonstd::optional<double3> value;
+  if (!ParseBasicTypeTuple(&value)) {
+    return false;
+  }
+
+  (*out_value) = value;
+
+  return true;
+}
+
 bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float3>> *out_value) 
 {
   std::vector<nonstd::optional<std::array<float, 3>>> value;
+  if (!ParseTupleArray(&value)) {
+    return false;
+  }
+
+  (*out_value) = value;
+
+  return true;
+}
+
+bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double3>> *out_value) 
+{
+  std::vector<nonstd::optional<std::array<double, 3>>> value;
   if (!ParseTupleArray(&value)) {
     return false;
   }
@@ -5902,6 +6226,46 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float>> *out_va
 {
   std::vector<nonstd::optional<float>> value;
   if (!ParseBasicTypeArray(&value)) {
+    return false;
+  }
+
+  (*out_value) = value;
+
+  return true;
+}
+
+bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double>> *out_value) 
+{
+  std::vector<nonstd::optional<double>> value;
+  if (!ParseBasicTypeArray(&value)) {
+    return false;
+  }
+
+  (*out_value) = value;
+
+  return true;
+}
+
+bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value) 
+{
+  std::vector<Matrix4d> value;
+  if (!ParseMatrix4dArray(&value)) {
+    return false;
+  }
+
+  (*out_value) = value;
+
+  return true;
+}
+
+bool USDAParser::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value) 
+{
+  if (MaybeNone()) {
+    (*out_value) = nonstd::nullopt;
+  }
+
+  Matrix4d value;
+  if (!ParseMatrix4d(value.m)) {
     return false;
   }
 
