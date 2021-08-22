@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <cstdlib>
@@ -12,7 +13,6 @@
 #include <stack>
 #include <thread>
 #include <vector>
-#include <algorithm>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -39,7 +39,6 @@
 namespace tinyusdz {
 
 namespace usda {
-
 
 namespace {
 
@@ -78,7 +77,7 @@ std::string to_string(const Vec3f &v) {
   return ss.str();
 }
 
-#if 0 // not used
+#if 0  // not used
 std::string to_string(const Vec3d &v) {
   std::stringstream ss;
   ss << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
@@ -94,7 +93,6 @@ std::string to_string(Extent e) {
 
   return ss.str();
 }
-
 
 std::string to_string(const Klass &klass) {
   std::stringstream ss;
@@ -114,8 +112,7 @@ std::string to_string(const Klass &klass) {
   return ss.str();
 }
 
-std::string to_string(const TimeSampleType &tsv)
-{
+std::string to_string(const TimeSampleType &tsv) {
   std::stringstream ss;
 
   if (const float *f = nonstd::get_if<float>(&tsv)) {
@@ -131,8 +128,7 @@ std::string to_string(const TimeSampleType &tsv)
   return ss.str();
 }
 
-std::string to_string(const Xform &xform, const uint32_t indent=0)
-{
+std::string to_string(const Xform &xform, const uint32_t indent = 0) {
   std::stringstream ss;
 
   ss << Indent(indent) << "def Xform \"" << xform.name << "\"\n";
@@ -152,7 +148,7 @@ std::string to_string(const Xform &xform, const uint32_t indent=0)
       }
 
       // TODO
-      //ss << " = " << to_string(xformOp.value);
+      // ss << " = " << to_string(xformOp.value);
 
       ss << "\n";
     }
@@ -175,17 +171,16 @@ std::string to_string(const Xform &xform, const uint32_t indent=0)
     ss << "]\n";
   }
 
-  ss << Indent(indent) << "  visibility = " << to_string(xform.visibility) << "\n";
+  ss << Indent(indent) << "  visibility = " << to_string(xform.visibility)
+     << "\n";
 
   ss << Indent(indent) << "}\n";
 
   return ss.str();
 }
 
-std::string to_string(const GeomSphere &sphere, const uint32_t indent=0)
-{
+std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0) {
   std::stringstream ss;
-
 
   ss << Indent(indent) << "def Sphere \"" << sphere.name << "\"\n";
   ss << Indent(indent) << "(\n";
@@ -195,9 +190,12 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent=0)
 
   // members
   ss << Indent(indent) << "  double radius = " << sphere.radius << "\n";
-  ss << Indent(indent) << "  float3[] extent = " << to_string(sphere.extent) << "\n";
-  ss << Indent(indent) << "  orientation = " << to_string(sphere.orientation) << "\n";
-  ss << Indent(indent) << "  visibility = " << to_string(sphere.visibility) << "\n";
+  ss << Indent(indent) << "  float3[] extent = " << to_string(sphere.extent)
+     << "\n";
+  ss << Indent(indent) << "  orientation = " << to_string(sphere.orientation)
+     << "\n";
+  ss << Indent(indent) << "  visibility = " << to_string(sphere.visibility)
+     << "\n";
 
   // primvars
   if (!sphere.displayColor.empty()) {
@@ -214,7 +212,6 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent=0)
   }
 
   ss << Indent(indent) << "}\n";
-
 
   return ss.str();
 }
@@ -284,13 +281,13 @@ std::ostream &operator<<(std::ostream &os, const Rel &rel) {
   return os;
 }
 
-//typedef std::array<float, 2> float2;
-//typedef std::array<float, 3> float3;
-//typedef std::array<float, 4> float4;
+// typedef std::array<float, 2> float2;
+// typedef std::array<float, 3> float3;
+// typedef std::array<float, 4> float4;
 //
-//typedef std::array<double, 2> double2;
-//typedef std::array<double, 3> double3;
-//typedef std::array<double, 4> double4;
+// typedef std::array<double, 2> double2;
+// typedef std::array<double, 3> double3;
+// typedef std::array<double, 4> double4;
 
 struct AssetReference {
   std::string asset_reference;
@@ -303,45 +300,117 @@ struct Path {
 
 using PathList = std::vector<Path>;
 
-// If you want to add more items, you need to regenerate nonstd::variant.hpp file,
-// since nonstd::variant has a limited number of types to use(currently 32).
+// If you want to add more items, you need to regenerate nonstd::variant.hpp
+// file, since nonstd::variant has a limited number of types to use(currently
+// 32).
 //
 // std::vector<Vec3f> is the first citizen of `Value`, since it is frequently
 // used type. For other array type, use Variable::Array
-using Value =
-    nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f,
-                    double, Vec2d, Vec3d, Vec4d, std::vector<Vec3f>,
-                    std::string, AssetReference, Path, PathList, Rel>;
+using Value = nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f, double,
+                              Vec2d, Vec3d, Vec4d, std::vector<Vec3f>,
+                              std::string, AssetReference, Path, PathList, Rel>;
 
 namespace {
 
-std::string type_name(const Value &v)
-{
+std::string type_name(const Value &v) {
   // TODO: use nonstd::visit
   if (nonstd::get_if<bool>(&v)) {
     return "bool";
   } else if (nonstd::get_if<int>(&v)) {
     return "int";
+  } else if (nonstd::get_if<float>(&v)) {
+    return "float";
+  } else {
+    return "[[Unknown/unimplementef type for Value]]";
+  }
+}
+
+std::string ts_type_name(const TimeSampleType &v) {
+  // TODO: use nonstd::visit
+  if (nonstd::get_if<float>(&v)) {
+    return "float";
+  } else if (nonstd::get_if<double>(&v)) {
+    return "double";
+  } else if (nonstd::get_if<Vec3f>(&v)) {
+    return "float3";
   } else {
     return "[[Unknown type for Value]]";
   }
 }
 
-} // namespace
+
+
+}  // namespace
+
+class VariableDef
+{
+ public:
+  std::string type;
+  std::string name;
+
+  VariableDef() = default;
+  VariableDef(const std::string &t, const std::string &n) : type(t), name(n) {}
+
+  VariableDef& operator=(const VariableDef &rhs) {
+    type = rhs.type;
+    name = rhs.name;
+    return *this;
+  }
+};
 
 // TODO: Use std::any?
 class Variable {
  public:
-  //std::string type; // TODO: remove type
+  std::string type; // Explicit name of type
   std::string name;
   bool custom{false};
 
   // compound types
-  typedef std::vector<Variable> Array;
+  typedef std::vector<Variable> Array; // TODO: limit possible types to Value, TimeSamples or (nested) Array
   typedef std::map<std::string, Variable> Object;
 
-  using ValueType = nonstd::variant<nonstd::monostate, Value, TimeSamples, Array, Object>;
+  using ValueType =
+      nonstd::variant<nonstd::monostate, Value, TimeSamples, Array, Object>;
   ValueType value;
+
+  std::string type_name(const Variable &v) {
+    if (!v.type.empty()) {
+      return v.type;
+    }
+
+    // infer type from value content
+    if (v.IsObject()) {
+      return "dict";
+    } else if (v.IsArray()) {
+      // Assume all elements in array have all same type.
+      std::string arr_type = "none";
+      for (const auto &item : *v.as_array()) {
+        std::string tname = type_name(item);
+        if (tname != "none") {
+          return tname + "[]";
+        }
+      }
+
+      // ???Array contains all `None` values
+      return arr_type;
+
+    } else if (v.IsTimeSamples()) {
+      std::string ts_type = "none";
+      auto ts_struct = v.as_timesamples();
+      for (const auto &item : ts_struct->values) {
+        std::string tname = ts_type_name(item);
+        if (tname != "none") {
+          return tname;
+        }
+      }
+
+      // ??? TimeSamples data contains all `None` values
+      return ts_type;
+
+    } else {
+      return "none";
+    }
+  }
 
 #if 0
   // scalar type
@@ -386,14 +455,11 @@ class Variable {
     return p;
   }
 
-
-  bool valid() const {
-    return !IsEmpty();
-  }
+  bool valid() const { return !IsEmpty(); }
 
   Variable() = default;
-  //Variable(std::string ty, std::string n) : type(ty), name(n) {}
-  //Variable(std::string ty) : type(ty) {}
+  // Variable(std::string ty, std::string n) : type(ty), name(n) {}
+  // Variable(std::string ty) : type(ty) {}
 
   // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
   friend std::ostream &operator<<(std::ostream &os, const Variable &var);
@@ -415,8 +481,10 @@ std::vector<std::pair<ListEditQual, AssetReference>> GetAssetReferences(
 
   if (var.IsArray()) {
     for (const auto &v : *(var.as_array())) {
-      if (auto pref = nonstd::get_if<AssetReference>(&v)) {
-        result.push_back({qual, *pref});
+      if (v.IsValue()) {
+        if (auto pref = nonstd::get_if<AssetReference>(v.as_value())) {
+          result.push_back({qual, *pref});
+        }
       }
     }
   }
@@ -487,10 +555,10 @@ std::string str_object(const Variable::Object &obj, int indent) {
   ss << "{\n";
 
   for (const auto &item : obj) {
-
     if (item.second.IsObject()) {
       ss << Indent(indent + 1) << "dict " << item.first << " = ";
-      std::string str = str_object(nonstd::get<Variable::Object>(item.second.value), indent + 1);
+      std::string str = str_object(
+          nonstd::get<Variable::Object>(item.second.value), indent + 1);
       ss << str;
     } else if (item.second.IsValue()) {
       // TODO
@@ -1034,25 +1102,18 @@ class USDAParser {
   }
 
   // Return the flag if the .usda is read from `references`
-  bool IsReferenced() {
-    return _referenced;
-  }
+  bool IsReferenced() { return _referenced; }
 
   // Return the flag if the .usda is read from `subLayers`
-  bool IsSubLayered() {
-    return _sub_layered;
-  }
+  bool IsSubLayered() { return _sub_layered; }
 
   // Return the flag if the .usda is read from `payload`
-  bool IsPayloaded() {
-    return _payloaded;
-  }
+  bool IsPayloaded() { return _payloaded; }
 
   // Return true if the .udsa is read in the top layer
   bool IsToplevel() {
     return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
   }
-
 
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
@@ -1355,7 +1416,7 @@ class USDAParser {
 
     auto var = (*pvar);
 
-#if 0 // TODO
+#if 0  // TODO
     if (var.IsValue()) {
 
     } else if (var.IsObject()) {
@@ -1410,6 +1471,7 @@ class USDAParser {
     }
 #endif
 
+    _PushError(std::to_string(__LINE__) + "TODO");
     std::get<0>(*out) = qual;
 
     return true;
@@ -1829,9 +1891,9 @@ class USDAParser {
     return true;
   }
 
-  template<typename T>
-  bool ParseTimeSamples(std::vector<std::pair<uint64_t, nonstd::optional<T>>> *out_samples) {
-
+  template <typename T>
+  bool ParseTimeSamples(
+      std::vector<std::pair<uint64_t, nonstd::optional<T>>> *out_samples) {
     // timeSamples = '{' (int : T)+ '}'
 
     if (!Expect('{')) {
@@ -1843,7 +1905,6 @@ class USDAParser {
     }
 
     while (!Eof()) {
-
       char c;
       if (!Char1(&c)) {
         return false;
@@ -2008,7 +2069,7 @@ class USDAParser {
         if (value) {
           std::cout << "bool value = " << *value << "\n";
 
-          //var.type = "bool";
+          // var.type = "bool";
           var.value = *value;
         }
       }
@@ -2022,12 +2083,14 @@ class USDAParser {
           return false;
         }
 
-        //var.type = "string";
+        // var.type = "string";
         var.name = key_name;
         Variable::Array arr;
         for (const auto &item : value) {
           if (item) {
-            arr.push_back(*item);
+            Variable v;
+            v.value = (*item);
+            arr.push_back(v);
           } else {
             // TODO
           }
@@ -2471,8 +2534,7 @@ class USDAParser {
     // TODO(syoyo): Refactror and implement value parser dispatcher.
     //
     if (isTimeSample) {
-
-#if 0 // TODO
+#if 0  // TODO
       if (type_name == "float") {
         TimeSampledDataFloat values;
         if (!ParseTimeSamples(&values)) {
@@ -2528,11 +2590,11 @@ class USDAParser {
       }
 #endif
 
-      _PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
+      _PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " +
+                 type_name);
       return false;
 
     } else {
-
       if (type_name == "matrix4d") {
         double m[4][4];
         if (!ParseMatrix4d(m)) {
@@ -2584,11 +2646,13 @@ class USDAParser {
           Variable var;
           Variable::Array arr;
           for (size_t i = 0; i < value.size(); i++) {
+            Variable v;
             if (value[i]) {
-              arr.push_back(*value[i]);
+              v.value = (*value[i]);
             } else {
-              arr.push_back(nonstd::monostate{}); // None
+              v.value = nonstd::monostate{};  // None
             }
+            arr.push_back(v);
           }
 
           std::cout << "add token[] primattr: " << primattr_name << "\n";
@@ -2599,7 +2663,8 @@ class USDAParser {
             std::cout << "uniform_qual\n";
             std::string value;
             if (!ReadStringLiteral(&value)) {
-              _PushError("Failed to parse string literal for `uniform token`.\n");
+              _PushError(
+                  "Failed to parse string literal for `uniform token`.\n");
             }
             std::cout << "StringLiteral = " << value << "\n";
           } else if (hasConnect(primattr_name)) {
@@ -2642,16 +2707,20 @@ class USDAParser {
           }
           std::cout << "float = \n";
 
-          Variable var;
+          Variable::Array arr;
           for (size_t i = 0; i < value.size(); i++) {
+            Variable v;
             if (value[i]) {
               std::cout << *value[i] << "\n";
-              var.array.push_back(*value[i]);
+              v.value = (*value[i]);
             } else {
               std::cout << "None\n";
-              var.array.push_back(Value());
+              v.value = nonstd::monostate{};
             }
+            arr.push_back(v);
           }
+          Variable var;
+          var.value = arr;
           (*props)[primattr_name] = var;
         } else if (hasConnect(primattr_name)) {
           std::string value;  // TODO: Path
@@ -2767,10 +2836,15 @@ class USDAParser {
                       << values[i][2] << ", " << values[i][3] << ")\n";
           }
 
-          Variable var;
+          Variable::Array arr;
           for (size_t i = 0; i < values.size(); i++) {
-            var.array.push_back(values[i]);
+            Variable v;
+            v.value = values[i];
+            arr.push_back(v);
           }
+
+          Variable var;
+          var.value = arr;
           var.custom = custom_qual;
 
           (*props)[primattr_name] = var;
@@ -2808,15 +2882,19 @@ class USDAParser {
             }
           }
 
-          Variable var;
+          Variable::Array arr;
           for (size_t i = 0; i < values.size(); i++) {
+            Variable v;
             if (values[i]) {
-              var.array.push_back(*values[i]);
+              v.value = *values[i];
             } else {
-              var.array.push_back(Value());  // monostate
+              v.value = nonstd::monostate{};
             }
+            arr.push_back(v);
           }
 
+          Variable var;
+          var.value = arr;
           var.custom = custom_qual;
           (*props)[primattr_name] = var;
 
@@ -2835,8 +2913,8 @@ class USDAParser {
           if (value) {
             std::cout << "double = " << *value << "\n";
 
-            Variable var("double");
-            var.value = *value;
+            Variable var;
+            var.value = Value(*value);
             var.custom = custom_qual;
 
             (*props)[primattr_name] = var;
@@ -2868,11 +2946,14 @@ class USDAParser {
             std::cout << "(" << values[i][0] << ", " << values[i][1] << ")\n";
           }
 
-          Variable var;
+          Variable::Array arr;
           for (size_t i = 0; i < values.size(); i++) {
-            var.array.push_back(values[i]);
+            Variable v;
+            v.value = values[i];
+            arr.push_back(v);
           }
 
+          Variable var;
           var.custom = custom_qual;
           (*props)[primattr_name] = var;
         } else {
@@ -2882,7 +2963,7 @@ class USDAParser {
           }
           std::cout << "double2 = (" << value[0] << ", " << value[1] << ")\n";
 
-          Variable var("double2");
+          Variable var;
           var.value = value;
           var.custom = custom_qual;
 
@@ -2913,11 +2994,15 @@ class USDAParser {
                       << values[i][2] << ")\n";
           }
 
-          Variable var;
+          Variable::Array arr;
           for (size_t i = 0; i < values.size(); i++) {
-            var.array.push_back(values[i]);
+            Variable v;
+            v.value = values[i];
+            arr.push_back(v);
           }
 
+          Variable var;
+          var.value = arr;
           var.custom = custom_qual;
           (*props)[primattr_name] = var;
 
@@ -2958,11 +3043,15 @@ class USDAParser {
                       << values[i][2] << ", " << values[i][3] << ")\n";
           }
 
-          Variable var;
+          Variable::Array arr;
           for (size_t i = 0; i < values.size(); i++) {
-            var.array.push_back(values[i]);
+            Variable v;
+            v.value = values[i];
+            arr.push_back(v);
           }
 
+          Variable var;
+          var.value = arr;
           var.custom = custom_qual;
           (*props)[primattr_name] = var;
         } else {
@@ -3144,7 +3233,8 @@ class USDAParser {
           if (!ParseBasicTypeTuple<float, 2>(&value)) {
             _PushError("Failed to parse texCoord2f.\n");
           }
-          std::cout << "texCoord2f = (" << value[0] << ", " << value[1] << ")\n";
+          std::cout << "texCoord2f = (" << value[0] << ", " << value[1]
+                    << ")\n";
         }
 
         std::map<std::string, Variable> meta;
@@ -3455,7 +3545,8 @@ class USDAParser {
   /// `sep`
   ///
   template <typename T, size_t N>
-  bool SepBy1TupleType(const char sep, std::vector<nonstd::optional<std::array<T, N>>> *result) {
+  bool SepBy1TupleType(
+      const char sep, std::vector<nonstd::optional<std::array<T, N>>> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -3511,7 +3602,6 @@ class USDAParser {
         }
         result->push_back(value);
       }
-
     }
 
     // std::cout << "result.size " << result->size() << "\n";
@@ -3825,7 +3915,6 @@ class USDAParser {
   ///
   template <typename T, size_t N>
   bool ParseBasicTypeTuple(nonstd::optional<std::array<T, N>> *result) {
-
     if (MaybeNone()) {
       (*result) = nonstd::nullopt;
       return true;
@@ -3969,7 +4058,6 @@ class USDAParser {
   }
 
   bool ParseMatrix4dArray(std::vector<Matrix4d> *result) {
-
     if (!Expect('[')) {
       return false;
     }
@@ -3986,11 +4074,12 @@ class USDAParser {
   }
 
   ///
-  /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2), None, (2, 3, 4), ...] )
+  /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
+  /// None, (2, 3, 4), ...] )
   ///
   template <typename T, size_t N>
-  bool ParseTupleArray(std::vector<nonstd::optional<std::array<T, N>>> *result) {
-
+  bool ParseTupleArray(
+      std::vector<nonstd::optional<std::array<T, N>>> *result) {
     if (!Expect('[')) {
       return false;
     }
@@ -4701,15 +4790,18 @@ class USDAParser {
         return false;
       }
 
-      outvar->array.clear();
+      //outvar->array.clear();
 
       for (size_t i = 0; i < values.size(); i++) {
         std::cout << "asset_reference[" << i
                   << "] = " << values[i].asset_reference
                   << ", prim_path = " << values[i].prim_path << "\n";
         Variable var;
-        outvar->array.push_back(values[i]);
+        //outvar->array.push_back(values[i]);
       }
+
+      _PushError(std::to_string(__LINE__) + "TODO:");
+      return false;
 
     } else if (vartype == "int[]") {
       std::vector<int> values;
@@ -4755,7 +4847,6 @@ class USDAParser {
       }
       // std::cout << "float : " << fval << "\n";
       auto ret = ParseFloat(fval);
-      // if (!ParseFloat(fval, &value, &ferr)) {
       if (!ret) {
         std::string msg =
             "Failed to parse floating point literal for `" + varname + "`.\n";
@@ -4812,7 +4903,8 @@ class USDAParser {
       return true;
     }
 
-    return true;
+    _PushError(std::to_string(__LINE__) + " TODO: vartype = " + vartype);
+    return false;
   }
 
   // metadata_opt := string_literal '\n'
@@ -4855,19 +4947,23 @@ class USDAParser {
     }
     SkipWhitespace();
 
-    Variable &refvar = _builtin_metas.at(varname);
+    VariableDef &vardef = _builtin_metas.at(varname);
     Variable var;
-    if (!ParseMetaValue(refvar.type, refvar.name, &var)) {
+    if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
       _PushError("Failed to parse meta value.\n");
       return false;
     }
 
     std::vector<std::string> sublayers;
     if (varname == "subLayers") {
-      if (var.array.size()) {
-        for (size_t i = 0; i < var.array.size(); i++) {
-          if (auto p = nonstd::get_if<std::string>(&var.array[i])) {
-            sublayers.push_back(*p);
+      if (var.IsArray()) {
+        auto arr = *var.as_array();
+        for (size_t i = 0; i < arr.size(); i++) {
+          if (arr[i].IsValue()) {
+            auto pv = arr[i].as_value();
+            if (auto p = nonstd::get_if<std::string>(pv)) {
+              sublayers.push_back(*p);
+            }
           }
         }
       }
@@ -5490,7 +5586,7 @@ class USDAParser {
         if (tok == "def") {
           std::cout << "rec\n";
           // recusive call
-          if (!ParseDefBlock(nestlevel+1)) {
+          if (!ParseDefBlock(nestlevel + 1)) {
             std::cout << "rec failed\n";
             return false;
           }
@@ -5499,7 +5595,6 @@ class USDAParser {
           if (!ParsePrimAttr(&props)) {
             return false;
           }
-
         }
 
         if (!SkipWhitespaceAndNewline()) {
@@ -5557,317 +5652,20 @@ class USDAParser {
   bool ReconstructGeomSphere(
       const std::map<std::string, Variable> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
-      GeomSphere *sphere) {
-
-    //
-    // Resolve prepend references
-    //
-    for (const auto &ref : references) {
-      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
-        std::cout << std::to_string(__LINE__) + "TODO\n";
-      }
-    }
-
-    for (const auto &prop : properties) {
-      if (prop.first == "radius") {
-        if (!prop.second.IsDouble()) {
-          _PushError("`radius` must be double type.");
-          return false;
-        }
-
-        if (auto p = nonstd::get_if<double>(&prop.second.value)) {
-          sphere->radius = *p;
-        } else {
-          // TODO: print warning?
-        }
-
-      } else if (prop.first == "material:binding") {
-        if (!prop.second.IsRel()) {
-          _PushError("`material:binding` must be 'rel' type.");
-          return false;
-        }
-
-        sphere->materialBinding.materialBinding =
-            nonstd::get<Rel>(prop.second.value).path;
-      } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
-      }
-    }
-
-    //
-    // Resolve append references
-    // (Overwrite variables with the referenced one).
-    //
-    for (const auto &ref : references) {
-      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
-        std::cout << std::to_string(__LINE__) + "TODO\n";
-      }
-    }
-
-    return true;
-  }
+      GeomSphere *sphere);
 
   bool ReconstructXform(
       const std::map<std::string, Variable> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
-      Xform *xform) {
-    (void)xform;
-
-    // ret = (basename, suffix, isTimeSampled?)
-    auto Split = [](const std::string &str) -> std::tuple<std::string, std::string, bool> {
-
-      bool isTimeSampled{false};
-
-      std::string s = str;
-
-      const std::string tsSuffix = ".timeSamples";
-
-      if (endsWith(s, tsSuffix)) {
-        isTimeSampled = true;
-        // rtrim
-        s = s.substr(0, s.size() - tsSuffix.size());
-
-        std::cout << "trimmed = " << s << "\n";
-      }
-
-      // TODO: Support multiple namespace?
-      std::string suffix;
-      if (s.find_last_of(":") != std::string::npos) {
-        suffix = s.substr(s.find_last_of(":") + 1);
-      }
-
-      std::string basename = s;
-      if (s.find_last_of(":") != std::string::npos) {
-        basename = s.substr(0, s.find_last_of(":"));
-      }
-
-      return {basename, suffix, isTimeSampled};
-
-    };
-
-    //
-    // Resolve prepend references
-    //
-    for (const auto &ref : references) {
-      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
-      }
-    }
-
-    for (auto &item : properties) {
-      std::cout << "prop: " << item.first << "\n";
-    }
-
-    // Lookup xform values from `xformOpOrder`
-    if (properties.count("xformOpOrder")) {
-      std::cout << "xformOpOrder got";
-
-      // array of string
-      auto prop = properties.at("xformOpOrder");
-      if (!prop.IsArray()) {
-        _PushError("`xformOpOrder` must be an array type.");
-        return false;
-      }
-
-      std::cout << "iterate prop.array" << "\n";
-      for (const auto &item : prop.array) {
-
-        if (auto ptarget = nonstd::get_if<std::string>(&item)) {
-
-          std::cout << "ptarget = " << (*ptarget) << "\n";
-
-          // remove double-quotation
-          std::string identifier = *ptarget;
-          identifier.erase(
-              std::remove(identifier.begin(), identifier.end(), '\"'),
-              identifier.end());
-
-          auto tup = Split(identifier);
-          auto basename = std::get<0>(tup);
-          auto suffix = std::get<1>(tup);
-          auto isTimeSampled = std::get<2>(tup);
-          (void)isTimeSampled;
-
-          std::cout << "base = " << std::get<0>(tup) << ", suffix = " << std::get<1>(tup) << ", isTimeSampled = " << std::get<2>(tup) << "\n";
-
-          XformOp op;
-
-          std::string target_name = basename;
-          if (!suffix.empty()) {
-            target_name += ":" + suffix;
-          }
-
-          if (!properties.count(target_name)) {
-            _PushError("Property '" + target_name + "' not found in Xform node.");
-            return false;
-          }
-
-          auto targetProp = properties.at(target_name);
-
-          if (basename == "xformOp:rotateZ") {
-            std::cout << "basename is xformOp::rotateZ" << "\n";
-            if (auto p = nonstd::get_if<float>(&targetProp.value)) {
-              std::cout << "xform got it " << "\n";
-              op.op = XformOp::OpType::ROTATE_Z;
-              op.suffix = suffix;
-              op.value = (*p);
-
-              xform->xformOps.push_back(op);
-            }
-          }
-        }
-      }
-    } else {
-      std::cout << "no xformOpOrder\n";
-    }
-
-#if 0
-    for (const auto &prop : properties) {
-
-
-      if (prop.first == "xformOpOrder") {
-        if (!prop.second.IsArray()) {
-          _PushError("`xformOpOrder` must be an array type.");
-          return false;
-        }
-
-        for (const auto &item : prop.second.array) {
-          if (auto p = nonstd::get_if<std::string>(&item)) {
-            // TODO
-            //XformOp op;
-            //op.op =
-          }
-        }
-
-      } else if (std::get<0>(tup) == "xformOp:rotateZ") {
-
-        if (prop.second.IsTimeSampled()) {
-
-        } else if (prop.second.IsFloat()) {
-          if (auto p = nonstd::get_if<float>(&prop.second.value)) {
-            XformOp op;
-            op.op = XformOp::OpType::ROTATE_Z;
-            op.precision = XformOp::PrecisionType::PRECISION_FLOAT;
-            op.value = *p;
-
-            std::cout << "rotateZ value = " << *p << "\n";
-
-          } else {
-            _PushError("`xformOp:rotateZ` must be an float type.");
-            return false;
-          }
-        } else {
-          _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                     "\n");
-        }
-
-      } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
-      }
-    }
-#endif
-
-    //
-    // Resolve append references
-    // (Overwrite variables with the referenced one).
-    //
-    for (const auto &ref : references) {
-      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
-      }
-    }
-
-    return true;
-  }
+      Xform *xform);
 
   bool ReconstructGeomMesh(
       const std::map<std::string, Variable> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
-      GeomMesh *mesh) {
-    //
-    // Resolve prepend references
-    //
-    for (const auto &ref : references) {
-      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
-      }
-    }
+      GeomMesh *mesh);
 
-    for (const auto &prop : properties) {
-      if (prop.first == "points") {
-        if (!prop.second.IsFloat3()) {
-          _PushError("`points` must be float3 type.");
-          return false;
-        }
-
-        const std::vector<float3> p =
-            nonstd::get<std::vector<float3>>(prop.second.value);
-
-        mesh->points.resize(p.size() * 3);
-        memcpy(mesh->points.data(), p.data(), p.size() * 3);
-
-      } else if (prop.first == "material:binding") {
-        if (!prop.second.IsRel()) {
-          _PushError("`material:binding` must be 'rel' type.");
-          return false;
-        }
-
-        mesh->materialBinding.materialBinding =
-            nonstd::get<Rel>(prop.second.value).path;
-      } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
-      }
-    }
-
-    //
-    // Resolve append references
-    // (Overwrite variables with the referenced one).
-    //
-    for (const auto &ref : references) {
-      if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
-      }
-    }
-
-    return true;
-  }
-
-  bool ReconstructBasisCurves(const std::map<std::string, Variable> &properties,
-                              GeomBasisCurves *curves) {
-    for (const auto &prop : properties) {
-      if (prop.first == "points") {
-        if (!prop.second.IsFloat3() && !prop.second.IsArray()) {
-          _PushError("`points` must be float3 array type.");
-          return false;
-        }
-
-        const std::vector<float3> p =
-            nonstd::get<std::vector<float3>>(prop.second.value);
-
-        curves->points.resize(p.size() * 3);
-        memcpy(curves->points.data(), p.data(), p.size() * 3);
-
-      } else if (prop.first == "curveVertexCounts") {
-        if (!prop.second.IsInt() && !prop.second.IsArray()) {
-          _PushError("`curveVertexCounts` must be int array type.");
-          return false;
-        }
-
-        const std::vector<int32_t> p =
-            nonstd::get<std::vector<int32_t>>(prop.second.value);
-
-        curves->curveVertexCounts.resize(p.size());
-        memcpy(curves->curveVertexCounts.data(), p.data(), p.size());
-
-      } else {
-        std::cout << "TODO: " << prop.first << "\n";
-      }
-    }
-
-    return true;
-  }
+  //bool ReconstructBasisCurves(const std::map<std::string, Variable> &properties,
+  //                            GeomBasisCurves *curves);
 
   bool CheckHeader() { return ParseMagicHeader(); }
 
@@ -5881,17 +5679,16 @@ class USDAParser {
   }
 
   enum LoadState {
-    LOAD_STATE_TOPLEVEL, // toplevel .usda input
-    LOAD_STATE_SUBLAYER, // .usda is read by 'subLayers'
+    LOAD_STATE_TOPLEVEL,   // toplevel .usda input
+    LOAD_STATE_SUBLAYER,   // .usda is read by 'subLayers'
     LOAD_STATE_REFERENCE,  // .usda is read by `references`
-    LOAD_STATE_PAYLOAD,  // .usda is read by `payload`
+    LOAD_STATE_PAYLOAD,    // .usda is read by `payload`
   };
 
   ///
   /// Parser entry point
   ///
   bool Parse(LoadState state = LOAD_STATE_TOPLEVEL) {
-
     _sub_layered = (state == LOAD_STATE_SUBLAYER);
     _referenced = (state == LOAD_STATE_REFERENCE);
     _payloaded = (state == LOAD_STATE_PAYLOAD);
@@ -6042,18 +5839,18 @@ class USDAParser {
   }
 
   void _RegisterNodeArgs() {
-    _node_args["kind"] = Variable("string", "kind");
-    _node_args["references"] = Variable("ref[]", "references");
-    _node_args["inherits"] = Variable("path", "inherits");
-    _node_args["assetInfo"] = Variable("dictionary", "assetInfo");
-    _node_args["customData"] = Variable("dictionary", "customData");
-    _node_args["variants"] = Variable("dictionary", "variants");
-    _node_args["variantSets"] = Variable("string", "variantSets");
-    _node_args["payload"] = Variable("ref[]", "payload");
-    _node_args["specializes"] = Variable("path[]", "specializes");
+    _node_args["kind"] = VariableDef("string", "kind");
+    _node_args["references"] = VariableDef("ref[]", "references");
+    _node_args["inherits"] = VariableDef("path", "inherits");
+    _node_args["assetInfo"] = VariableDef("dictionary", "assetInfo");
+    _node_args["customData"] = VariableDef("dictionary", "customData");
+    _node_args["variants"] = VariableDef("dictionary", "variants");
+    _node_args["variantSets"] = VariableDef("string", "variantSets");
+    _node_args["payload"] = VariableDef("ref[]", "payload");
+    _node_args["specializes"] = VariableDef("path[]", "specializes");
   }
 
-  nonstd::optional<Variable> _GetNodeArg(const std::string &arg) {
+  nonstd::optional<VariableDef> _GetNodeArg(const std::string &arg) {
     if (_node_args.count(arg)) {
       return _node_args.at(arg);
     }
@@ -6062,20 +5859,15 @@ class USDAParser {
   }
 
   void _RegisterBuiltinMeta() {
-    _builtin_metas["doc"] = Variable("string", "doc");
-    _builtin_metas["metersPerUnit"] = Variable("float", "metersPerUnit");
-    _builtin_metas["defaultPrim"] = Variable("string", "defaultPrim");
-    _builtin_metas["upAxis"] = Variable("string", "upAxis");
+    _builtin_metas["doc"] = VariableDef("string", "doc");
+    _builtin_metas["metersPerUnit"] = VariableDef("float", "metersPerUnit");
+    _builtin_metas["defaultPrim"] = VariableDef("string", "defaultPrim");
+    _builtin_metas["upAxis"] = VariableDef("string", "upAxis");
     _builtin_metas["timeCodesPerSecond"] =
-        Variable("float", "timeCodesPerSecond");
-    _builtin_metas["customLayerData"] = Variable("object", "customLayerData");
-    _builtin_metas["subLayers"] = Variable("ref[]", "subLayers");
+        VariableDef("float", "timeCodesPerSecond");
+    _builtin_metas["customLayerData"] = VariableDef("object", "customLayerData");
+    _builtin_metas["subLayers"] = VariableDef("ref[]", "subLayers");
 
-    //_builtin_metas["test"] = Variable("int[]", "test");
-    //_builtin_metas["testt"] = Variable("int3", "testt");
-    //_builtin_metas["testf"] = Variable("float", "testf");
-    //_builtin_metas["testfa"] = Variable("float[]", "testfa");
-    //_builtin_metas["testfta"] = Variable("float3[]", "testfta");
   }
 
   void _RegisterNodeTypes() {
@@ -6097,10 +5889,10 @@ class USDAParser {
 
   const tinyusdz::StreamReader *_sr = nullptr;
 
-  std::map<std::string, Variable> _builtin_metas;
+  std::map<std::string, VariableDef> _builtin_metas;
   std::set<std::string> _node_types;
   std::set<std::string> _registered_prim_attr_types;
-  std::map<std::string, Variable> _node_args;
+  std::map<std::string, VariableDef> _node_args;
 
   std::stack<ErrorDiagnositc> err_stack;
   std::stack<ParseState> parse_stack;
@@ -6123,7 +5915,273 @@ class USDAParser {
   bool _sub_layered{false};
   bool _referenced{false};
   bool _payloaded{false};
+};
+
+// == impl ==
+bool USDAParser::ReconstructXform(
+      const std::map<std::string, Variable> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      Xform *xform) {
+  (void)xform;
+
+  // ret = (basename, suffix, isTimeSampled?)
+  auto Split =
+      [](const std::string &str) -> std::tuple<std::string, std::string, bool> {
+    bool isTimeSampled{false};
+
+    std::string s = str;
+
+    const std::string tsSuffix = ".timeSamples";
+
+    if (endsWith(s, tsSuffix)) {
+      isTimeSampled = true;
+      // rtrim
+      s = s.substr(0, s.size() - tsSuffix.size());
+
+      std::cout << "trimmed = " << s << "\n";
+    }
+
+    // TODO: Support multiple namespace?
+    std::string suffix;
+    if (s.find_last_of(":") != std::string::npos) {
+      suffix = s.substr(s.find_last_of(":") + 1);
+    }
+
+    std::string basename = s;
+    if (s.find_last_of(":") != std::string::npos) {
+      basename = s.substr(0, s.find_last_of(":"));
+    }
+
+    return {basename, suffix, isTimeSampled};
+  };
+
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    }
+  }
+
+  for (auto &item : properties) {
+    std::cout << "prop: " << item.first << "\n";
+  }
+
+  // Lookup xform values from `xformOpOrder`
+  if (properties.count("xformOpOrder")) {
+    std::cout << "xformOpOrder got";
+
+    // array of string
+    auto prop = properties.at("xformOpOrder");
+    if (!prop.IsArray()) {
+      _PushError("`xformOpOrder` must be an array type.");
+      return false;
+    }
+
+    std::cout << "iterate prop.array"
+              << "\n";
+    for (const auto &item : *prop.as_array()) {
+      const Value *pv = item.as_value();
+      if (auto ptarget = nonstd::get_if<std::string>(pv)) {
+        std::cout << "ptarget = " << (*ptarget) << "\n";
+
+        // remove double-quotation
+        std::string identifier = *ptarget;
+        identifier.erase(
+            std::remove(identifier.begin(), identifier.end(), '\"'),
+            identifier.end());
+
+        auto tup = Split(identifier);
+        auto basename = std::get<0>(tup);
+        auto suffix = std::get<1>(tup);
+        auto isTimeSampled = std::get<2>(tup);
+        (void)isTimeSampled;
+
+        std::cout << "base = " << std::get<0>(tup)
+                  << ", suffix = " << std::get<1>(tup)
+                  << ", isTimeSampled = " << std::get<2>(tup) << "\n";
+
+        XformOp op;
+
+        std::string target_name = basename;
+        if (!suffix.empty()) {
+          target_name += ":" + suffix;
+        }
+
+        if (!properties.count(target_name)) {
+          _PushError("Property '" + target_name + "' not found in Xform node.");
+          return false;
+        }
+
+        auto targetProp = properties.at(target_name);
+
+        if (basename == "xformOp:rotateZ") {
+          std::cout << "basename is xformOp::rotateZ"
+                    << "\n";
+          if (auto p = nonstd::get_if<float>(&targetProp.value)) {
+            std::cout << "xform got it "
+                      << "\n";
+            op.op = XformOp::OpType::ROTATE_Z;
+            op.suffix = suffix;
+            op.value = (*p);
+
+            xform->xformOps.push_back(op);
+          }
+        }
+      }
+    }
+  } else {
+    std::cout << "no xformOpOrder\n";
+  }
+
+#if 0
+    for (const auto &prop : properties) {
+
+
+      if (prop.first == "xformOpOrder") {
+        if (!prop.second.IsArray()) {
+          _PushError("`xformOpOrder` must be an array type.");
+          return false;
+        }
+
+        for (const auto &item : prop.second.array) {
+          if (auto p = nonstd::get_if<std::string>(&item)) {
+            // TODO
+            //XformOp op;
+            //op.op =
+          }
+        }
+
+      } else if (std::get<0>(tup) == "xformOp:rotateZ") {
+
+        if (prop.second.IsTimeSampled()) {
+
+        } else if (prop.second.IsFloat()) {
+          if (auto p = nonstd::get_if<float>(&prop.second.value)) {
+            XformOp op;
+            op.op = XformOp::OpType::ROTATE_Z;
+            op.precision = XformOp::PrecisionType::PRECISION_FLOAT;
+            op.value = *p;
+
+            std::cout << "rotateZ value = " << *p << "\n";
+
+          } else {
+            _PushError("`xformOp:rotateZ` must be an float type.");
+            return false;
+          }
+        } else {
+          _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                     "\n");
+        }
+
+      } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
+        return false;
+      }
+    }
+#endif
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    }
+  }
+
+  return true;
 }
+
+bool USDAParser::ReconstructGeomMesh(
+    const std::map<std::string, Variable> &properties,
+    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    GeomMesh *mesh) {
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    }
+  }
+
+  for (const auto &prop : properties) {
+    auto pv = prop.second.as_value();
+    if (prop.first == "points") {
+      if (auto p = nonstd::get_if<std::vector<Vec3f>>(pv)) {
+        mesh->points.resize(p->size() * 3);
+        memcpy(mesh->points.data(), p->data(), p->size() * 3);
+      } else {
+        _PushError("`points` must be float3[] type.");
+        return false;
+      }
+
+
+    } else if (prop.first == "material:binding") {
+      if (auto p = nonstd::get_if<Rel>(pv)) {
+        mesh->materialBinding.materialBinding = p->path;
+      } else {  
+        _PushError("`material:binding` must be 'rel' type.");
+        return false;
+      }
+
+    } else {
+      _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                 "\n");
+      return false;
+    }
+  }
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    }
+  }
+
+  return true;
+}
+
+#if 0 // TODO
+bool USDAParser::ReconstructBasisCurves(
+    const std::map<std::string, Variable> &properties,
+    GeomBasisCurves *curves) {
+  for (const auto &prop : properties) {
+    if (prop.first == "points") {
+      if (!prop.second.IsFloat3() && !prop.second.IsArray()) {
+        _PushError("`points` must be float3 array type.");
+        return false;
+      }
+
+      const std::vector<float3> p =
+          nonstd::get<std::vector<float3>>(prop.second.value);
+
+      curves->points.resize(p.size() * 3);
+      memcpy(curves->points.data(), p.data(), p.size() * 3);
+
+    } else if (prop.first == "curveVertexCounts") {
+      if (!prop.second.IsInt() && !prop.second.IsArray()) {
+        _PushError("`curveVertexCounts` must be int array type.");
+        return false;
+      }
+
+      const std::vector<int32_t> p =
+          nonstd::get<std::vector<int32_t>>(prop.second.value);
+
+      curves->curveVertexCounts.resize(p.size());
+      memcpy(curves->curveVertexCounts.data(), p.data(), p.size());
+
+    } else {
+      std::cout << "TODO: " << prop.first << "\n";
+    }
+  }
+
+  return true;
+}
+#endif
 
 // 'None'
 bool USDAParser::MaybeNone() {
@@ -6237,7 +6295,8 @@ bool USDAParser::ReadBasicType(int *value) {
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
     } else {
-      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) + "'.\n");
+      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+                 "'.\n");
       return false;
     }
 
@@ -6312,7 +6371,8 @@ bool USDAParser::ReadBasicType(uint64_t *value) {
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
     } else {
-      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) + "'.\n");
+      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+                 "'.\n");
       return false;
     }
 
@@ -6384,8 +6444,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
   return false;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<float3> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(nonstd::optional<Vec3f> *out_value) {
   nonstd::optional<std::array<float, 3>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -6396,8 +6455,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<float3> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value) {
   nonstd::optional<float> value;
   if (!ReadBasicType(&value)) {
     return false;
@@ -6408,8 +6466,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value) {
   nonstd::optional<double> value;
   if (!ReadBasicType(&value)) {
     return false;
@@ -6420,9 +6477,8 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<double3> *out_value)
-{
-  nonstd::optional<double3> value;
+bool USDAParser::ReadTimeSampleData(nonstd::optional<Vec3d> *out_value) {
+  nonstd::optional<Vec3d> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
   }
@@ -6432,8 +6488,8 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<double3> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float3>> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(
+    std::vector<nonstd::optional<Vec3f>> *out_value) {
   std::vector<nonstd::optional<std::array<float, 3>>> value;
   if (!ParseTupleArray(&value)) {
     return false;
@@ -6444,8 +6500,8 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float3>> *out_v
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double3>> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(
+    std::vector<nonstd::optional<Vec3d>> *out_value) {
   std::vector<nonstd::optional<std::array<double, 3>>> value;
   if (!ParseTupleArray(&value)) {
     return false;
@@ -6456,8 +6512,8 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double3>> *out_
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float>> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(
+    std::vector<nonstd::optional<float>> *out_value) {
   std::vector<nonstd::optional<float>> value;
   if (!ParseBasicTypeArray(&value)) {
     return false;
@@ -6468,8 +6524,8 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float>> *out_va
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double>> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(
+    std::vector<nonstd::optional<double>> *out_value) {
   std::vector<nonstd::optional<double>> value;
   if (!ParseBasicTypeArray(&value)) {
     return false;
@@ -6480,8 +6536,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double>> *out_v
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value) {
   std::vector<Matrix4d> value;
   if (!ParseMatrix4dArray(&value)) {
     return false;
@@ -6492,8 +6547,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value)
-{
+bool USDAParser::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
   }
