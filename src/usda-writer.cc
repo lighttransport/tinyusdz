@@ -11,6 +11,7 @@ namespace {
 
 // TODO: Use ryu print for precise floating point output?
 
+#if 0
 std::ostream &operator<<(std::ostream &ofs, const Vec3f &v) {
   ofs << "( " << v[0] << ", " << v[1] << ", " << v[2] << " )";
 
@@ -36,6 +37,7 @@ std::ostream &operator<<(std::ostream &ofs, const Quatd &q) {
 
   return ofs;
 }
+#endif
 
 #if 0
 std::ostream &operator<<(std::ostream &ofs, const Matrix4f &m) {
@@ -69,7 +71,8 @@ std::ostream &operator<<(std::ostream &ofs, const Matrix4d &m) {
   return ofs;
 }
 
-inline std::ostream &operator<<(std::ostream &os, XformOpValueType const &v) {
+#if 1
+std::ostream &operator<<(std::ostream &os, XformOpValueType const &v) {
   switch (v.index()) {
     case 0:
       os << nonstd::get<0>(v);
@@ -101,6 +104,7 @@ inline std::ostream &operator<<(std::ostream &os, XformOpValueType const &v) {
 
   return os;
 }
+#endif
 
 inline std::string GetTypeName(XformOpValueType const &v) {
   if (auto pval = nonstd::get_if<float>(&v)) {
@@ -154,13 +158,13 @@ std::string PrintIntArray(const std::vector<int32_t> &data) {
 }
 
 #if 0
-std::string PrintVec3fArray(const std::vector<Vec3f> &data) 
+std::string PrintVec3fArray(const std::vector<Vec3f> &data)
 {
   std::stringstream ofs;
 
   ofs << "[";
   for (size_t i = 0; i < data.size(); i++) {
-    
+
     ofs << "(" << data[i][0] << ", " << data[i][1] << ", " << data[i][2] << ")";
 
     if (i != (data.size() - 1)) {
@@ -281,8 +285,10 @@ class Writer {
 
         ofs << " " << XformOp::GetOpTypeName(xform.xformOps[i].op) << " = ";
 
+#if 0 // TODO
         nonstd::visit([&ofs](XformOpValueType &&arg) { ofs << arg; },
                       xform.xformOps[i].value);
+#endif
         ofs << "\n";
       }
     }
