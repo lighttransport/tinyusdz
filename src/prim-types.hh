@@ -396,4 +396,34 @@ class PrimValue<std::vector<std::vector<std::vector<T>>>> {
 
 // TODO: Privide generic multidimensional array type?
 
+
+//
+// TimeSample datatype
+//
+
+// monostate = `None`
+struct None
+{
+
+};
+
+using TimeSampleType = nonstd::variant<None, float, double, Vec3f, Quatf, Matrix4d>;
+
+struct TimeSamples {
+  std::vector<double> times;
+  std::vector<TimeSampleType> values;
+};
+
+
+// Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
+//typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
+//typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>> TimeSampledDataDouble;
+//typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>> TimeSampledDataFloat3;
+//typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>> TimeSampledDataDouble3;
+//typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>> TimeSampledDataMatrix4d;
+
+//using TimeSampledValue = nonstd::variant<nonstd::monostate, TimeSampledDataFloat, TimeSampledDataDouble, TimeSampledDataFloat3, TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
+
+
+
 } // namespace tinyusdz

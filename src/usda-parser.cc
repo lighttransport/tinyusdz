@@ -40,12 +40,6 @@ namespace tinyusdz {
 
 namespace usda {
 
-// Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
-typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>> TimeSampledDataDouble;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>> TimeSampledDataFloat3;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>> TimeSampledDataDouble3;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>> TimeSampledDataMatrix4d;
 
 namespace {
 
@@ -120,6 +114,23 @@ std::string to_string(const Klass &klass) {
   return ss.str();
 }
 
+std::string to_string(const TimeSampleType &tsv)
+{
+  std::stringstream ss;
+
+  if (const float *f = nonstd::get_if<float>(&tsv)) {
+    ss << (*f);
+  } else if (const double *d = nonstd::get_if<double>(&tsv)) {
+    ss << (*d);
+  } else if (auto p = nonstd::get_if<Vec3f>(&tsv)) {
+    ss << to_string(*p);
+  } else {
+    ss << "[[Unsupported/unimplemented TimeSampledValue type]]";
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const Xform &xform, const uint32_t indent=0)
 {
   std::stringstream ss;
@@ -130,6 +141,7 @@ std::string to_string(const Xform &xform, const uint32_t indent=0)
   ss << Indent(indent) << ")\n";
   ss << Indent(indent) << "{\n";
 
+  // props
   if (xform.xformOps.size()) {
     for (size_t i = 0; i < xform.xformOps.size(); i++) {
       auto xformOp = xform.xformOps[i];
@@ -138,11 +150,10 @@ std::string to_string(const Xform &xform, const uint32_t indent=0)
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
-      auto p = nonstd::get_if<float>(&xformOp.value);
-      if (p) {
-        ss << " = " << (*p);
-      }
-      // TODO: more types.
+
+      // TODO
+      //ss << " = " << to_string(xformOp.value);
+
       ss << "\n";
     }
   }
@@ -208,6 +219,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent=0)
   return ss.str();
 }
 
+#if 0
 std::string to_string(const TimeSampledDataFloat &values, uint32_t indent = 0)
 {
   std::stringstream ss;
@@ -249,6 +261,7 @@ std::string to_string(const TimeSampledDataFloat3 &values, uint32_t indent = 0)
 
   return ss.str();
 }
+#endif
 
 }  // namespace
 
@@ -271,93 +284,116 @@ std::ostream &operator<<(std::ostream &os, const Rel &rel) {
   return os;
 }
 
-typedef std::array<float, 2> float2;
-typedef std::array<float, 3> float3;
-typedef std::array<float, 4> float4;
-
-typedef std::array<double, 2> double2;
-typedef std::array<double, 3> double3;
-typedef std::array<double, 4> double4;
+//typedef std::array<float, 2> float2;
+//typedef std::array<float, 3> float3;
+//typedef std::array<float, 4> float4;
+//
+//typedef std::array<double, 2> double2;
+//typedef std::array<double, 3> double3;
+//typedef std::array<double, 4> double4;
 
 struct AssetReference {
   std::string asset_reference;
   std::string prim_path;
 };
 
-using TimeSampledValue = nonstd::variant<nonstd::monostate, TimeSampledDataFloat, TimeSampledDataDouble, TimeSampledDataFloat3, TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
+struct Path {
+  std::string path;
+};
 
-// monostate = could be `Object` type in Variable class.
-// If you want to add more items, you need to generate nonstd::variant file,
-// since nonstd::variant has a limited number of types to use.
-// std::vector<float3> is the first citizen of `Value`, since it is frequently
+using PathList = std::vector<Path>;
+
+// If you want to add more items, you need to regenerate nonstd::variant.hpp file,
+// since nonstd::variant has a limited number of types to use(currently 32).
+//
+// std::vector<Vec3f> is the first citizen of `Value`, since it is frequently
 // used type. For other array type, use Variable::Array
 using Value =
-    nonstd::variant<nonstd::monostate, bool, int, float, float2, float3, float4,
-                    double, double2, double3, double4, std::vector<float3>,
-                    std::string, AssetReference, Rel>;
+    nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f,
+                    double, Vec2d, Vec3d, Vec4d, std::vector<Vec3f>,
+                    std::string, AssetReference, Path, PathList, Rel>;
+
+namespace {
+
+std::string type_name(const Value &v)
+{
+  // TODO: use nonstd::visit
+  if (nonstd::get_if<bool>(&v)) {
+    return "bool";
+  } else if (nonstd::get_if<int>(&v)) {
+    return "int";
+  } else {
+    return "[[Unknown type for Value]]";
+  }
+}
+
+} // namespace
 
 // TODO: Use std::any?
 class Variable {
  public:
-  std::string type;
+  //std::string type; // TODO: remove type
   std::string name;
   bool custom{false};
 
+  // compound types
+  typedef std::vector<Variable> Array;
+  typedef std::map<std::string, Variable> Object;
+
+  using ValueType = nonstd::variant<nonstd::monostate, Value, TimeSamples, Array, Object>;
+  ValueType value;
+
+#if 0
   // scalar type
   Value value;
 
   // TimeSampled values
-  TimeSampledValue timeSampledValue;
+  TimeSamples timeSamples;
 
-  // compound types
-  typedef std::vector<Value> Array;
-  typedef std::map<std::string, Variable> Object;
   Array array;
   Object object;
+#endif
 
   template <typename T>
   bool is() const {
     return value.index() == Value::index_of<T>();
   }
 
-  bool IsEmpty() const { return type.empty() && is<nonstd::monostate>(); }
+  bool IsEmpty() const { return is<nonstd::monostate>(); }
 
-  bool IsArray() const { return array.size(); }
+  bool IsValue() const { return is<Value>(); }
+  bool IsArray() const { return is<Array>(); }
+  bool IsObject() const { return is<Object>(); }
+  bool IsTimeSamples() const { return is<TimeSamples>(); }
 
-  bool IsBool() const { return !IsArray() && is<bool>(); }
+  const Array *as_array() const {
+    const auto p = nonstd::get_if<Array>(&value);
+    return p;
+  }
 
-  bool IsInt() const { return !IsArray() && is<int>(); }
+  const Value *as_value() const {
+    const auto p = nonstd::get_if<Value>(&value);
+    return p;
+  }
 
-  bool IsFloat() const { return !IsArray() && is<float>(); }
-  bool IsFloat2() const { return !IsArray() && is<float2>(); }
-  bool IsFloat3() const { return !IsArray() && is<float3>(); }
-  bool IsFloat4() const { return !IsArray() && is<float4>(); }
+  const Object *as_object() const {
+    const auto p = nonstd::get_if<Object>(&value);
+    return p;
+  }
 
-  bool IsDouble() const { return !IsArray() && is<double>(); }
-  bool IsDouble2() const { return !IsArray() && is<double2>(); }
-  bool IsDouble3() const { return !IsArray() && is<double3>(); }
-  bool IsDouble4() const { return !IsArray() && is<double4>(); }
+  const TimeSamples *as_timesamples() const {
+    const auto p = nonstd::get_if<TimeSamples>(&value);
+    return p;
+  }
 
-  bool IsString() const { return !IsArray() && is<std::string>(); }
-
-  bool IsRel() const { return !IsArray() && is<Rel>(); }
-
-  bool IsAssetReference() const { return !IsArray() && is<AssetReference>(); }
-
-  bool IsObject() const { return !IsArray() && is<nonstd::monostate>(); }
-
-  bool IsTimeSampled() const { return timeSampledValue.index() != TimeSampledValue::index_of<nonstd::monostate>(); }
 
   bool valid() const {
-    // FIXME: Make empty valid?
-    bool ok = IsBool() || IsInt() || IsFloat() || IsDouble() || IsString() ||
-              IsRel() || IsAssetReference() || IsObject();
-    return ok;
+    return !IsEmpty();
   }
 
   Variable() = default;
-  Variable(std::string ty, std::string n) : type(ty), name(n) {}
-  Variable(std::string ty) : type(ty) {}
+  //Variable(std::string ty, std::string n) : type(ty), name(n) {}
+  //Variable(std::string ty) : type(ty) {}
 
   // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
   friend std::ostream &operator<<(std::ostream &os, const Variable &var);
@@ -370,22 +406,27 @@ namespace {
 
 // Extract array of AssetReferences from Variable.
 std::vector<std::pair<ListEditQual, AssetReference>> GetAssetReferences(
-    const std::tuple<ListEditQual, Variable> &var) {
+    const std::tuple<ListEditQual, Variable> &_var) {
   std::vector<std::pair<ListEditQual, AssetReference>> result;
 
-  ListEditQual qual = std::get<0>(var);
+  ListEditQual qual = std::get<0>(_var);
 
-  if (std::get<1>(var).IsArray()) {
-    for (const auto &v : std::get<1>(var).array) {
+  auto var = std::get<1>(_var);
+
+  if (var.IsArray()) {
+    for (const auto &v : *(var.as_array())) {
       if (auto pref = nonstd::get_if<AssetReference>(&v)) {
         result.push_back({qual, *pref});
       }
     }
   }
 
-  if (std::get<1>(var).IsAssetReference()) {
-    auto pref = nonstd::get_if<AssetReference>(&std::get<1>(var).value);
-    result.push_back({qual, *pref});
+  if (var.IsValue()) {
+    if (auto pv = var.as_value()) {
+      if (auto pas = nonstd::get_if<AssetReference>(pv)) {
+        result.push_back({qual, *pas});
+      }
+    }
   }
 
   return result;
@@ -446,12 +487,13 @@ std::string str_object(const Variable::Object &obj, int indent) {
   ss << "{\n";
 
   for (const auto &item : obj) {
-    ss << Indent(indent + 1) << item.second.type << " " << item.first << " = ";
 
     if (item.second.IsObject()) {
-      std::string str = str_object(item.second.object, indent + 1);
+      ss << Indent(indent + 1) << "dict " << item.first << " = ";
+      std::string str = str_object(nonstd::get<Variable::Object>(item.second.value), indent + 1);
       ss << str;
-    } else {
+    } else if (item.second.IsValue()) {
+      // TODO
       // Value
       ss << item.second;
     }
@@ -466,6 +508,7 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
 }  // namespace
 
+#if 0
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
   if (var.is<bool>()) {
     os << nonstd::get<bool>(var.value);
@@ -480,7 +523,7 @@ std::ostream &operator<<(std::ostream &os, const Variable &var) {
   } else if (var.is<Rel>()) {
     os << nonstd::get<Rel>(var.value);
   } else if (var.IsObject()) {
-    os << str_object(var.object, /* indent */ 0);
+    os << str_object(nonstd::get<Variable::Object>(var.value), /* indent */ 0);
   } else if (var.IsEmpty()) {
     os << "[Variable is empty]";
   } else {
@@ -489,6 +532,7 @@ std::ostream &operator<<(std::ostream &os, const Variable &var) {
 
   return os;
 }
+#endif
 
 inline bool isChar(char c) { return std::isalpha(int(c)); }
 
@@ -1311,6 +1355,22 @@ class USDAParser {
 
     auto var = (*pvar);
 
+#if 0 // TODO
+    if (var.IsValue()) {
+
+    } else if (var.IsObject()) {
+      std::map<std::string, Variable> dict;
+      if (!ParseDict(&dict)) {
+        _PushError(std::to_string(__LINE__) + " Failed to parse `" + varname +
+                   "`(dictionary type)\n");
+        return false;
+      }
+
+      std::cout << "var.type: " << var.type << ", name = " << varname << "\n";
+      Variable ret(var.type, varname);
+      ret.object = dict;
+      std::get<1>(*out) = ret;
+
     if (var.type == "path") {
       _PushError(std::to_string(__LINE__) + " TODO: varname " + varname +
                  ", type " + var.type);
@@ -1342,23 +1402,13 @@ class USDAParser {
       std::get<1>(*out) = ret;
 
     } else if (var.type == "dictionary") {
-      std::map<std::string, Variable> dict;
-      if (!ParseDict(&dict)) {
-        _PushError(std::to_string(__LINE__) + " Failed to parse `" + varname +
-                   "`(dictionary type)\n");
-        return false;
-      }
-
-      std::cout << "var.type: " << var.type << ", name = " << varname << "\n";
-      Variable ret(var.type, varname);
-      ret.object = dict;
-      std::get<1>(*out) = ret;
 
     } else {
       _PushError(std::to_string(__LINE__) + " TODO: varname " + varname +
                  ", type " + var.type);
       return false;
     }
+#endif
 
     std::get<0>(*out) = qual;
 
@@ -1581,7 +1631,8 @@ class USDAParser {
             return false;
           }
 
-          Variable var("string", "interpolation");
+          Variable var;
+          var.name = token;
           var.value = value;
 
           assert(var.valid());
@@ -1597,8 +1648,9 @@ class USDAParser {
             return false;
           }
 
-          Variable var("object", "customData");
-          var.object = dict;
+          Variable var;
+          var.name = token;
+          var.value = dict;
 
           assert(var.valid());
 
@@ -1781,7 +1833,7 @@ class USDAParser {
   bool ParseTimeSamples(std::vector<std::pair<uint64_t, nonstd::optional<T>>> *out_samples) {
 
     // timeSamples = '{' (int : T)+ '}'
-    
+
     if (!Expect('{')) {
       return false;
     }
@@ -1796,7 +1848,7 @@ class USDAParser {
       if (!Char1(&c)) {
         return false;
       }
-      
+
       if (c == '}') {
         break;
       }
@@ -1956,7 +2008,7 @@ class USDAParser {
         if (value) {
           std::cout << "bool value = " << *value << "\n";
 
-          var.type = "bool";
+          //var.type = "bool";
           var.value = *value;
         }
       }
@@ -1970,15 +2022,17 @@ class USDAParser {
           return false;
         }
 
-        var.type = "string";
+        //var.type = "string";
         var.name = key_name;
+        Variable::Array arr;
         for (const auto &item : value) {
           if (item) {
-            var.array.push_back(*item);
+            arr.push_back(*item);
           } else {
             // TODO
           }
         }
+        var.value = arr;
 
       } else {
         std::string value;  // TODO: Path
@@ -1988,7 +2042,6 @@ class USDAParser {
         }
         std::cout << "Path identifier = " << value << "\n";
 
-        var.type = "string";
         var.name = key_name;
         var.value = value;
       }
@@ -2007,7 +2060,6 @@ class USDAParser {
         }
         std::cout << "string = " << value << "\n";
 
-        var.type = type_name;
         var.name = key_name;
         var.value = value;
       }
@@ -2275,9 +2327,8 @@ class USDAParser {
         return false;
       }
 
-      var.type = "object";
       var.name = key_name;
-      var.object = dict;
+      var.value = dict;
 
       std::cout << "Dict = " << var << "\n";
 
@@ -2421,6 +2472,7 @@ class USDAParser {
     //
     if (isTimeSample) {
 
+#if 0 // TODO
       if (type_name == "float") {
         TimeSampledDataFloat values;
         if (!ParseTimeSamples(&values)) {
@@ -2474,8 +2526,10 @@ class USDAParser {
         _PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
         return false;
       }
+#endif
 
-      return true;
+      _PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
+      return false;
 
     } else {
 
@@ -2528,11 +2582,12 @@ class USDAParser {
           }
 
           Variable var;
+          Variable::Array arr;
           for (size_t i = 0; i < value.size(); i++) {
             if (value[i]) {
-              var.array.push_back(*value[i]);
+              arr.push_back(*value[i]);
             } else {
-              var.array.push_back(Value());  // monostate
+              arr.push_back(nonstd::monostate{}); // None
             }
           }
 
@@ -3141,16 +3196,16 @@ class USDAParser {
   bool ReadBasicType(uint64_t *value);
 
   // TimeSample data
-  bool ReadTimeSampleData(nonstd::optional<float3> *value); 
-  bool ReadTimeSampleData(nonstd::optional<float> *value); 
-  bool ReadTimeSampleData(nonstd::optional<double> *value); 
-  bool ReadTimeSampleData(nonstd::optional<double3> *value); 
-  bool ReadTimeSampleData(nonstd::optional<Matrix4d> *value); 
-  bool ReadTimeSampleData(std::vector<nonstd::optional<float3>> *value); 
-  bool ReadTimeSampleData(std::vector<nonstd::optional<float>> *value); 
-  bool ReadTimeSampleData(std::vector<nonstd::optional<double>> *value); 
-  bool ReadTimeSampleData(std::vector<nonstd::optional<double3>> *value); 
-  bool ReadTimeSampleData(std::vector<Matrix4d> *value); 
+  bool ReadTimeSampleData(nonstd::optional<Vec3f> *value);
+  bool ReadTimeSampleData(nonstd::optional<float> *value);
+  bool ReadTimeSampleData(nonstd::optional<double> *value);
+  bool ReadTimeSampleData(nonstd::optional<Vec3d> *value);
+  bool ReadTimeSampleData(nonstd::optional<Matrix4d> *value);
+  bool ReadTimeSampleData(std::vector<nonstd::optional<Vec3f>> *value);
+  bool ReadTimeSampleData(std::vector<nonstd::optional<float>> *value);
+  bool ReadTimeSampleData(std::vector<nonstd::optional<double>> *value);
+  bool ReadTimeSampleData(std::vector<nonstd::optional<Vec3d>> *value);
+  bool ReadTimeSampleData(std::vector<Matrix4d> *value);
 
   bool MaybeNone();
 
@@ -5585,7 +5640,7 @@ class USDAParser {
 
       std::string basename = s;
       if (s.find_last_of(":") != std::string::npos) {
-        basename = s.substr(0, s.find_last_of(":")); 
+        basename = s.substr(0, s.find_last_of(":"));
       }
 
       return {basename, suffix, isTimeSampled};
@@ -5666,7 +5721,7 @@ class USDAParser {
     } else {
       std::cout << "no xformOpOrder\n";
     }
- 
+
 #if 0
     for (const auto &prop : properties) {
 
@@ -5681,14 +5736,14 @@ class USDAParser {
           if (auto p = nonstd::get_if<std::string>(&item)) {
             // TODO
             //XformOp op;
-            //op.op = 
+            //op.op =
           }
         }
 
       } else if (std::get<0>(tup) == "xformOp:rotateZ") {
 
         if (prop.second.IsTimeSampled()) {
-		
+
         } else if (prop.second.IsFloat()) {
           if (auto p = nonstd::get_if<float>(&prop.second.value)) {
             XformOp op;
@@ -5706,7 +5761,7 @@ class USDAParser {
           _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                      "\n");
         }
-            
+
       } else {
         _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
@@ -6068,7 +6123,7 @@ class USDAParser {
   bool _sub_layered{false};
   bool _referenced{false};
   bool _payloaded{false};
-};
+}
 
 // 'None'
 bool USDAParser::MaybeNone() {
@@ -6329,7 +6384,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
   return false;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<float3> *out_value) 
+bool USDAParser::ReadTimeSampleData(nonstd::optional<float3> *out_value)
 {
   nonstd::optional<std::array<float, 3>> value;
   if (!ParseBasicTypeTuple(&value)) {
@@ -6341,7 +6396,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<float3> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value) 
+bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value)
 {
   nonstd::optional<float> value;
   if (!ReadBasicType(&value)) {
@@ -6353,7 +6408,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value) 
+bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value)
 {
   nonstd::optional<double> value;
   if (!ReadBasicType(&value)) {
@@ -6365,7 +6420,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<double3> *out_value) 
+bool USDAParser::ReadTimeSampleData(nonstd::optional<double3> *out_value)
 {
   nonstd::optional<double3> value;
   if (!ParseBasicTypeTuple(&value)) {
@@ -6377,7 +6432,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<double3> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float3>> *out_value) 
+bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float3>> *out_value)
 {
   std::vector<nonstd::optional<std::array<float, 3>>> value;
   if (!ParseTupleArray(&value)) {
@@ -6389,7 +6444,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float3>> *out_v
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double3>> *out_value) 
+bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double3>> *out_value)
 {
   std::vector<nonstd::optional<std::array<double, 3>>> value;
   if (!ParseTupleArray(&value)) {
@@ -6401,7 +6456,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double3>> *out_
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float>> *out_value) 
+bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float>> *out_value)
 {
   std::vector<nonstd::optional<float>> value;
   if (!ParseBasicTypeArray(&value)) {
@@ -6413,7 +6468,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<float>> *out_va
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double>> *out_value) 
+bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double>> *out_value)
 {
   std::vector<nonstd::optional<double>> value;
   if (!ParseBasicTypeArray(&value)) {
@@ -6425,7 +6480,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<nonstd::optional<double>> *out_v
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value) 
+bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value)
 {
   std::vector<Matrix4d> value;
   if (!ParseMatrix4dArray(&value)) {
@@ -6437,7 +6492,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value)
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value) 
+bool USDAParser::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value)
 {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;

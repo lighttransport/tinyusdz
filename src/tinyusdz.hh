@@ -515,7 +515,7 @@ class TokenizedPath
       // Path must start with "/"
       return;
     }
-    
+
     s.erase(0, 1);
 
     std::string delimiter = "/";
@@ -530,7 +530,7 @@ class TokenizedPath
       // leaf element
       _tokens.push_back(s);
     }
-    
+
   }
 
  private:
@@ -708,6 +708,7 @@ enum Variability {
   NumVariabilities
 };
 
+#if 0
 ///
 /// Curently we only support limited types for time sample values.
 ///
@@ -717,6 +718,7 @@ struct TimeSamples {
   std::vector<double> times;
   std::vector<TimeSampleType> values;
 };
+#endif
 
 #if 0
 ///
@@ -1785,7 +1787,7 @@ struct MaterialBindingAPI
 
 //
 // Predefined node classes
-// 
+//
 
 struct Xform {
 
@@ -1998,7 +2000,7 @@ struct GeomCube {
   Orientation orientation{OrientationRightHanded};
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
-  
+
   MaterialBindingAPI materialBinding;
 
   // List of Primitive attributes(primvars)
@@ -2421,7 +2423,7 @@ struct Preliminary_PhysicsRigidBodyAPI
 struct Preliminary_PhysicsColliderAPI
 {
   // preliminary::physics::collider::convexShape
-  Path convexShape; 
+  Path convexShape;
 
 };
 
@@ -2457,7 +2459,7 @@ struct Preliminary_AnchoringAPI
 
 struct Preliminary_ReferenceImage
 {
-  int64_t image_id{-1}; // asset image 
+  int64_t image_id{-1}; // asset image
 
   double physicalWidth{0.0};
 };
@@ -2466,7 +2468,7 @@ struct Preliminary_Behavior
 {
   Path triggers;
   Path actions;
-  bool exclusive{false}; 
+  bool exclusive{false};
 };
 
 struct Preliminary_Trigger
