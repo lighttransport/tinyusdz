@@ -358,6 +358,7 @@ std::string type_name(const Value &v) {
 }
 #endif
 
+// http://martinecker.com/martincodes/lambda-expression-overloading/
 template <class... Fs> struct overload_set;
 
 template <class F1, class... Fs>
@@ -381,15 +382,15 @@ struct overload_set<F> : F
 };
 
 template <class... Fs>
-typename overload_set<Fs...>::type overload(Fs... x)
-//auto overload(Fs... x)
+//auto overloaded(Fs... x) for C++14
+typename overload_set<Fs...>::type overloaded(Fs... x)
 {
     return overload_set<Fs...>(x...);
 }
 
 std::string ts_type_name(const TimeSampleType &v) {
 
-    auto f = overload
+    auto f = overloaded
         (
             []() { return 1; },
             [](int x) { return x + 1; }
@@ -397,7 +398,7 @@ std::string ts_type_name(const TimeSampleType &v) {
 
   (void)f;
 
-  std::string ty =  nonstd::visit(overload (
+  std::string ty =  nonstd::visit(overloaded (
             [](auto) { return "[[TODO: TypeSampleType. ]]"; },
             [](int) { return "int"; }
   ), v);
