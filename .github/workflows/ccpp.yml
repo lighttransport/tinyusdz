@@ -8,11 +8,11 @@ on:
 
 jobs:
 
-  # compile with older gcc4.8
-  build-gcc48:
+  # compile with older gcc4.9
+  build-gcc49:
 
     runs-on: ubuntu-18.04
-    name: Build with gcc 4.8
+    name: Build with gcc 4.9
 
     steps:
       - name: Checkout
@@ -21,9 +21,9 @@ jobs:
         run: |
             sudo apt-get update
             sudo apt-get install -y build-essential
-            sudo apt-get install -y gcc-4.8 g++-4.8
-            ./scripts/bootstrap-gcc-4.8.sh
-            cd build-gcc4.8
+            sudo apt-get install -y gcc-4.9 g++-4.9
+            ./scripts/bootstrap-gcc-4.9.sh
+            cd build-gcc4.9
             make VERBOSE=1
 
   # Cross-compile for aarch64 linux target
