@@ -42,6 +42,35 @@ namespace usda {
 
 namespace {
 
+#if 0
+template <class... Fs>
+struct overload;
+
+template <class F0, class... Frest>
+struct overload<F0, Frest...> : F0, overload<Frest...>
+{
+    overload(F0 f0, Frest... rest) : F0(f0), overload<Frest...>(rest...) {}
+
+    using F0::operator();
+    using overload<Frest...>::operator();
+};
+
+template <class F0>
+struct overload<F0> : F0
+{
+    overload(F0 f0) : F0(f0) {}
+
+    using F0::operator();
+};
+
+// In C++14 we can use `auto` for return type.
+template <class... Fs>
+typename overload<Fs...>::type make_overload(Fs... fs)
+{
+    return overload<Fs...>(fs...);
+}
+#endif
+
 std::string Indent(uint32_t n) {
   std::stringstream ss;
 
@@ -112,6 +141,7 @@ std::string to_string(const Klass &klass) {
   return ss.str();
 }
 
+#if 0
 std::string to_string(const TimeSampleType &tsv) {
   std::stringstream ss;
 
@@ -127,6 +157,7 @@ std::string to_string(const TimeSampleType &tsv) {
 
   return ss.str();
 }
+#endif
 
 std::string to_string(const Xform &xform, const uint32_t indent = 0) {
   std::stringstream ss;
@@ -312,6 +343,7 @@ using Value = nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f, double,
 
 namespace {
 
+#if 0
 std::string type_name(const Value &v) {
   // TODO: use nonstd::visit
   if (nonstd::get_if<bool>(&v)) {
@@ -324,8 +356,53 @@ std::string type_name(const Value &v) {
     return "[[Unknown/unimplementef type for Value]]";
   }
 }
+#endif
+
+template <class... Fs> struct overload_set;
+
+template <class F1, class... Fs>
+struct overload_set<F1, Fs...> : F1, overload_set<Fs...>::type
+{
+    typedef overload_set type;
+
+    overload_set(F1 head, Fs... tail)
+        : F1(head), overload_set<Fs...>::type(tail...)
+    {}
+
+    using F1::operator();
+    using overload_set<Fs...>::type::operator();
+};
+
+template <class F>
+struct overload_set<F> : F
+{
+    typedef F type;
+    using F::operator();
+};
+
+template <class... Fs>
+typename overload_set<Fs...>::type overload(Fs... x)
+//auto overload(Fs... x)
+{
+    return overload_set<Fs...>(x...);
+}
 
 std::string ts_type_name(const TimeSampleType &v) {
+
+    auto f = overload
+        (
+            []() { return 1; },
+            [](int x) { return x + 1; }
+        );
+
+  (void)f;
+
+  std::string ty =  nonstd::visit(overload (
+            [](auto) { return "[[TODO: TypeSampleType. ]]"; },
+            [](int) { return "int"; }
+  ), v);
+
+#if 0
   // TODO: use nonstd::visit
   if (nonstd::get_if<float>(&v)) {
     return "float";
@@ -336,6 +413,9 @@ std::string ts_type_name(const TimeSampleType &v) {
   } else {
     return "[[Unknown type for Value]]";
   }
+#endif
+
+  return ty;
 }
 
 
@@ -349,13 +429,18 @@ class VariableDef
   std::string name;
 
   VariableDef() = default;
+
   VariableDef(const std::string &t, const std::string &n) : type(t), name(n) {}
 
-  VariableDef& operator=(const VariableDef &rhs) {
+  VariableDef(const VariableDef &rhs) = default;
+
+  VariableDef &operator=(const VariableDef &rhs) {
     type = rhs.type;
     name = rhs.name;
+
     return *this;
   }
+
 };
 
 // TODO: Use std::any?
@@ -576,20 +661,48 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
 }  // namespace
 
-#if 0
+#if 1
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
-  if (var.is<bool>()) {
-    os << nonstd::get<bool>(var.value);
-  } else if (var.is<int>()) {
-    os << nonstd::get<int>(var.value);
-  } else if (var.is<float>()) {
-    os << nonstd::get<float>(var.value);
-  } else if (var.is<double>()) {
-    os << nonstd::get<double>(var.value);
-  } else if (var.is<std::string>()) {
-    os << nonstd::get<std::string>(var.value);
-  } else if (var.is<Rel>()) {
-    os << nonstd::get<Rel>(var.value);
+  if (var.IsValue()) {
+    //const Value &v = nonstd::get<Value>(var.value);
+
+    nonstd::variant<float, int> v;
+
+    struct PrintVisitor {
+      std::string operator()(int v) const {
+        std::ostringstream ss;
+        ss << v;
+        return ss.str();
+      }
+      std::string operator()(float v) const {
+        std::ostringstream ss;
+        ss << v;
+        return ss.str();
+      }
+    };
+
+    std::string str = nonstd::visit(PrintVisitor(), v);
+    os << str;
+
+#if 0
+    if (v.is<bool>()) {
+      os << nonstd::get<bool>(v);
+    } else if (v.is<int>()) {
+      os << nonstd::get<int>(v);
+    } else if (v.is<float>()) {
+      os << nonstd::get<float>(v);
+    } else if (v.is<double>()) {
+      os << nonstd::get<double>(v);
+    } else if (v.is<std::string>()) {
+      os << nonstd::get<std::string>(v);
+    } else if (v.is<Rel>()) {
+      os << nonstd::get<Rel>(v);
+    } else {
+      os << __LINE__ << " [TODO]";
+    }
+#endif
+  } else if (var.IsArray()) {
+    os << __LINE__ << " [TODO: Array type]";
   } else if (var.IsObject()) {
     os << str_object(nonstd::get<Variable::Object>(var.value), /* indent */ 0);
   } else if (var.IsEmpty()) {
@@ -1414,9 +1527,9 @@ class USDAParser {
       return false;
     }
 
+#if 0  // TODO
     auto var = (*pvar);
 
-#if 0  // TODO
     if (var.IsValue()) {
 
     } else if (var.IsObject()) {
@@ -6121,7 +6234,7 @@ bool USDAParser::ReconstructGeomMesh(
     } else if (prop.first == "material:binding") {
       if (auto p = nonstd::get_if<Rel>(pv)) {
         mesh->materialBinding.materialBinding = p->path;
-      } else {  
+      } else {
         _PushError("`material:binding` must be 'rel' type.");
         return false;
       }
