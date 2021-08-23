@@ -38,8 +38,8 @@ if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB)
   find_package(ZLIB REQUIRED)
 endif ()
 
-# Require strict C++11 mode(e.g. `-std=c++11`)
-set(CMAKE_CXX_STANDARD 11)
+# Require strict C++14 mode(e.g. `-std=c++14`)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 

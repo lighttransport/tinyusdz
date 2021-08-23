@@ -52,7 +52,6 @@ std::ostream &operator<<(std::ostream &ofs, const Matrix4f &m) {
 
   return ofs;
 }
-#endif
 
 std::ostream &operator<<(std::ostream &ofs, const Matrix4d &m) {
   ofs << "( ";
@@ -71,7 +70,6 @@ std::ostream &operator<<(std::ostream &ofs, const Matrix4d &m) {
   return ofs;
 }
 
-#if 1
 std::ostream &operator<<(std::ostream &os, XformOpValueType const &v) {
   switch (v.index()) {
     case 0:
