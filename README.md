@@ -1,6 +1,6 @@
 # Tiny USDZ library 
 
-`TinyUSDZ` is dependency-free(depends only on C++ STL. Yes, you don't need USD library!) USDZ/USDC/USDA library written in C++11.
+`TinyUSDZ` is dependency-free(depends only on C++ STL. Yes, you don't need USD library!) USDZ/USDC/USDA library written in C++14.
 
 ![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)
 
@@ -58,11 +58,10 @@ TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses
 
 ## Requirements
 
-* C++11 compiler
-  * [x] gcc 4.8.5(CentOS 7 default) or later
+* C++14 compiler
   * [x] Visual Studio 2019 or later(2017 may compiles)
     * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
-  * [x] clang 3.8 or later
+  * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
   * [x] llvm-ming(clang) supported
 
 ## USDZ file format
