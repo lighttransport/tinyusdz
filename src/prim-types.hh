@@ -425,6 +425,7 @@ struct TimeSamples {
   std::vector<TimeSampleType> values;
 };
 
+std::string type_name(const TimeSampleType &v);
 
 // Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
 //typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
