@@ -184,6 +184,8 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 
 ## TODO
 
+* [ ] Built-in usdObj(wavefront .obj mesh) support.
+  * Through tinyobjloader.
 * [ ] Support Crate(binary) version 0.8.0(USD v20.11 default)
 * [ ] Write parser based on the schema definition.
 * [ ] Subdivision surface using OpenSubdiv.
@@ -228,6 +230,7 @@ TinyUSDZ is licensed under MIT license.
 * lz4 : BSD-2 license. http://www.lz4.org
 * cnpy(uncompressed ZIP decode/encode code) : MIT license https://github.com/rogersce/cnpy
 * tinyexr: BSD license.
+* tinyobjloader: MIT license.
 * stb_image: public domain. 
 * dr_libs: public domain. https://github.com/mackron/dr_libs
 * miniaudio: public domain or MIT no attribution. https://github.com/dr-soft/miniaudio
