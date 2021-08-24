@@ -11,7 +11,7 @@ jobs:
   # compile with older gcc4.9
   build-gcc49:
 
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     name: Build with gcc 4.9
 
     steps:
