@@ -8,11 +8,11 @@ on:
 
 jobs:
 
-  # compile with older gcc4.9
-  build-gcc49:
+  # compile with older gcc5
+  build-gcc5:
 
-    runs-on: ubuntu-20.04
-    name: Build with gcc 4.9
+    runs-on: ubuntu-18.04
+    name: Build with gcc 5
 
     steps:
       - name: Checkout
@@ -21,9 +21,9 @@ jobs:
         run: |
             sudo apt-get update
             sudo apt-get install -y build-essential
-            sudo apt-get install -y gcc-4.9 g++-4.9
-            ./scripts/bootstrap-gcc-4.9.sh
-            cd build-gcc4.9
+            sudo apt-get install -y gcc-5 g++-5
+            ./scripts/bootstrap-gcc-5.sh
+            cd build-gcc5
             make VERBOSE=1
 
   # Cross-compile for aarch64 linux target
