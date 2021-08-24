@@ -36,40 +36,34 @@
 #include "tinyusdz.hh"
 #include "usda-parser.hh"
 
+// s = std::string
+#define PUSH_ERROR(s) do { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  _PushError(ss.str()); \
+} while(0)
+
+#if 0
+#define LOG_ERROR(s) do { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  std::cerr << s; \
+} while(0)
+
+#define LOG_FATAL(s) do { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  std::cerr << s; \
+  std::exit(-1); \
+} while(0)
+#endif
+
 namespace tinyusdz {
 
 namespace usda {
 
 namespace {
-
-#if 0
-template <class... Fs>
-struct overload;
-
-template <class F0, class... Frest>
-struct overload<F0, Frest...> : F0, overload<Frest...>
-{
-    overload(F0 f0, Frest... rest) : F0(f0), overload<Frest...>(rest...) {}
-
-    using F0::operator();
-    using overload<Frest...>::operator();
-};
-
-template <class F0>
-struct overload<F0> : F0
-{
-    overload(F0 f0) : F0(f0) {}
-
-    using F0::operator();
-};
-
-// In C++14 we can use `auto` for return type.
-template <class... Fs>
-typename overload<Fs...>::type make_overload(Fs... fs)
-{
-    return overload<Fs...>(fs...);
-}
-#endif
 
 std::string Indent(uint32_t n) {
   std::stringstream ss;
@@ -358,66 +352,6 @@ std::string type_name(const Value &v) {
 }
 #endif
 
-// http://martinecker.com/martincodes/lambda-expression-overloading/
-template <class... Fs> struct overload_set;
-
-template <class F1, class... Fs>
-struct overload_set<F1, Fs...> : F1, overload_set<Fs...>::type
-{
-    typedef overload_set type;
-
-    overload_set(F1 head, Fs... tail)
-        : F1(head), overload_set<Fs...>::type(tail...)
-    {}
-
-    using F1::operator();
-    using overload_set<Fs...>::type::operator();
-};
-
-template <class F>
-struct overload_set<F> : F
-{
-    typedef F type;
-    using F::operator();
-};
-
-template <class... Fs>
-//auto overloaded(Fs... x) for C++14
-typename overload_set<Fs...>::type overloaded(Fs... x)
-{
-    return overload_set<Fs...>(x...);
-}
-
-std::string ts_type_name(const TimeSampleType &v) {
-
-    auto f = overloaded
-        (
-            []() { return 1; },
-            [](int x) { return x + 1; }
-        );
-
-  (void)f;
-
-  std::string ty =  nonstd::visit(overloaded (
-            [](auto) { return "[[TODO: TypeSampleType. ]]"; },
-            [](int) { return "int"; }
-  ), v);
-
-#if 0
-  // TODO: use nonstd::visit
-  if (nonstd::get_if<float>(&v)) {
-    return "float";
-  } else if (nonstd::get_if<double>(&v)) {
-    return "double";
-  } else if (nonstd::get_if<Vec3f>(&v)) {
-    return "float3";
-  } else {
-    return "[[Unknown type for Value]]";
-  }
-#endif
-
-  return ty;
-}
 
 
 
@@ -483,8 +417,8 @@ class Variable {
     } else if (v.IsTimeSamples()) {
       std::string ts_type = "none";
       auto ts_struct = v.as_timesamples();
-      for (const auto &item : ts_struct->values) {
-        std::string tname = ts_type_name(item);
+      for (const TimeSampleType &item : ts_struct->values) {
+        std::string tname = tinyusdz::type_name(item);
         if (tname != "none") {
           return tname;
         }
@@ -1224,7 +1158,7 @@ class USDAParser {
   // Return the flag if the .usda is read from `payload`
   bool IsPayloaded() { return _payloaded; }
 
-  // Return true if the .udsa is read in the top layer
+  // Return true if the .udsa is read in the top layer(stage)
   bool IsToplevel() {
     return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
   }
@@ -4883,7 +4817,7 @@ class USDAParser {
 
   bool ParseMetaValue(const std::string &vartype, const std::string &varname,
                       Variable *outvar) {
-    (void)outvar;
+    Variable var;
 
     if (vartype == "string") {
       std::string value;
@@ -4904,18 +4838,17 @@ class USDAParser {
         return false;
       }
 
-      //outvar->array.clear();
-
+      Variable::Array arr;
       for (size_t i = 0; i < values.size(); i++) {
         std::cout << "asset_reference[" << i
                   << "] = " << values[i].asset_reference
                   << ", prim_path = " << values[i].prim_path << "\n";
-        Variable var;
-        //outvar->array.push_back(values[i]);
+        Variable v;
+        v.value = values[i];
+        arr.push_back(v);
       }
 
-      _PushError(std::to_string(__LINE__) + "TODO:");
-      return false;
+      var.value = arr;
 
     } else if (vartype == "int[]") {
       std::vector<int> values;
@@ -5014,11 +4947,14 @@ class USDAParser {
         }
       }
 
-      return true;
+    } else {
+      PUSH_ERROR("TODO: vartype = " + vartype);
+      return false;
     }
 
-    _PushError(std::to_string(__LINE__) + " TODO: vartype = " + vartype);
-    return false;
+    (*outvar) = var;
+
+    return true;
   }
 
   // metadata_opt := string_literal '\n'
@@ -5483,6 +5419,8 @@ class USDAParser {
     // TODO: Check key existance.
     _klasses[path] = klass;
 
+    PopPath();
+
     return true;
   }
 
@@ -5524,6 +5462,9 @@ class USDAParser {
       return false;
     }
 
+    std::string path = GetCurrentPath() + "/" + target;
+    PushPath(path);
+
     if (!Expect('{')) {
       return false;
     }
@@ -5537,6 +5478,8 @@ class USDAParser {
     if (!Expect('}')) {
       return false;
     }
+
+    PopPath();
 
     return true;
   }
@@ -5668,6 +5611,9 @@ class USDAParser {
 
     std::map<std::string, Variable> props;
 
+    std::string path = GetCurrentPath() + "/" + node_name;
+    PushPath(path);
+
     // expect = '}'
     //        | def_block
     //        | prim_attr+
@@ -5726,39 +5672,49 @@ class USDAParser {
       std::cout << "prop name: " << item.first << "\n";
     }
 
-    if (prim_type == "Xform") {
-      Xform xform;
-      std::cout << "Reconstruct Xform\n";
-      if (!ReconstructXform(props, references, &xform)) {
-        _PushError("Failed to reconstruct Xform.");
+    if (IsToplevel()) {
+      // Reconstruct concrete class object
+      if (prim_type == "Xform") {
+        Xform xform;
+        std::cout << "Reconstruct Xform\n";
+        if (!ReconstructXform(props, references, &xform)) {
+          _PushError("Failed to reconstruct Xform.");
+          return false;
+        }
+        xform.name = node_name;
+
+        std::cout << to_string(xform, nestlevel) << "\n";
+
+      } else if (prim_type == "Mesh") {
+        GeomMesh mesh;
+        std::cout << "Reconstruct GeomMesh\n";
+        if (!ReconstructGeomMesh(props, references, &mesh)) {
+          _PushError("Failed to reconstruct GeomMesh.");
+          return false;
+        }
+      } else if (prim_type == "Sphere") {
+        GeomSphere sphere;
+        std::cout << "Reconstruct Sphere\n";
+        if (!ReconstructGeomSphere(props, references, &sphere)) {
+          _PushError("Failed to reconstruct GeomSphere.");
+          return false;
+        }
+
+        sphere.name = node_name;
+        std::cout << to_string(sphere, nestlevel) << "\n";
+
+      } else if (prim_type == "BasisCurves") {
+      } else {
+        PUSH_ERROR(" TODO: " + prim_type);
         return false;
       }
-      xform.name = node_name;
-
-      std::cout << to_string(xform, nestlevel) << "\n";
-
-    } else if (prim_type == "Mesh") {
-      GeomMesh mesh;
-      std::cout << "Reconstruct GeomMesh\n";
-      if (!ReconstructGeomMesh(props, references, &mesh)) {
-        _PushError("Failed to reconstruct GeomMesh.");
-        return false;
-      }
-    } else if (prim_type == "Sphere") {
-      GeomSphere sphere;
-      std::cout << "Reconstruct Sphere\n";
-      if (!ReconstructGeomSphere(props, references, &sphere)) {
-        _PushError("Failed to reconstruct GeomSphere.");
-        return false;
-      }
-
-      sphere.name = node_name;
-      std::cout << to_string(sphere, nestlevel) << "\n";
-
-    } else if (prim_type == "BasisCurves") {
     } else {
-      std::cout << __LINE__ << " TODO: " << prim_type << "\n";
+      // Store properties in intermediate format.
+      
+      _props_map[path] = props;
     }
+
+    PopPath();
 
     return true;
   }
@@ -6020,6 +5976,9 @@ class USDAParser {
 
   nonstd::optional<tinyusdz::Scene> _scene;  // Imported scene.
 
+  // key = path, value = Properties
+  std::map<std::string, std::map<std::string, Variable>> _props_map;
+
   // "class" defs
   std::map<std::string, Klass> _klasses;
 
@@ -6195,6 +6154,54 @@ bool USDAParser::ReconstructXform(
       }
     }
 #endif
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::ReconstructGeomSphere(
+    const std::map<std::string, Variable> &properties,
+    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    GeomSphere *sphere) {
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    }
+  }
+
+  for (const auto &prop : properties) {
+    auto pv = prop.second.as_value();
+    if (prop.first == "radius") {
+      if (auto p = nonstd::get_if<double>(pv)) {
+        sphere->radius = *p;
+      } else {
+        _PushError("`radius` must be double type.");
+        return false;
+      }
+    } else if (prop.first == "material:binding") {
+      if (auto p = nonstd::get_if<Rel>(pv)) {
+        sphere->materialBinding.materialBinding = p->path;
+      } else {
+        _PushError("`material:binding` must be 'rel' type.");
+        return false;
+      }
+
+    } else {
+      _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                 "\n");
+      return false;
+    }
+  }
 
   //
   // Resolve append references
