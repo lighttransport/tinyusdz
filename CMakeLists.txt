@@ -14,6 +14,7 @@ option(TINYUSDZ_WITH_C_API "Enable C API." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
+option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)" ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd) 
@@ -101,6 +102,11 @@ set(TINYUSDZ_DEP_SOURCES
 
 if (TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
+endif()
+
+if (TINYUSDZ_WITH_USDOBJ)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usdObj.cc)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
 endif()
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
@@ -211,6 +217,10 @@ target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/ext
 
 if (TINYUSDZ_WITH_JSON)
   target_include_directories(${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+endif ()
+
+if (TINYUSDZ_WITH_USDOBJ)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_USE_USDOBJ")
 endif ()
 
 if (TINYUSDZ_WITH_EXR)
