@@ -35,6 +35,7 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "usda-parser.hh"
+#include "math-util.inc"
 
 // s = std::string
 #define PUSH_ERROR(s) do { \
