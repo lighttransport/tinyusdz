@@ -18,8 +18,16 @@ TinyUSDZ is currently in work-in-progress. It does not compile and run.
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
   * [ ] GeomPoints(for particles)
-  * [ ] XformOps
+  * [ ] Xform
   * [ ] etc.
+  * [ ] Built-in usdObj(wavefront .obj mesh support)
+    * See [doc/usdObj.md](doc/usdObj.md) for details.
+* [ ] Composition
+  * [ ] subLayers
+  * [ ] references
+  * [ ] payloads(delayed load)
+  * [ ] variants
+  * [ ] specializers
 * [ ] Write simple SDL viewer example(2021 Summer expected)
 * [ ] Character animation(usdSkel) support(2021 Winter expected)
 * [ ] Vulkan raytracing viewer example

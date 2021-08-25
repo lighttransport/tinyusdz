@@ -24,6 +24,7 @@ namespace tinyusdz {
 
 namespace usdObj {
 
+
 bool ReadObjFromString(const std::string &str, tinyusdz::GeomMesh *mesh, std::string *err)
 {
 #if !defined(TINYUSDZ_USE_USDOBJ)
@@ -64,6 +65,10 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GeomMesh *mesh, std::st
   std::vector<uint32_t> vertexIndices;
   std::vector<uint32_t> vertexCounts;
 
+  // normals and texcoords are facevarying
+  std::vector<Vec2f> facevaryingTexcoords;
+  std::vector<Vec3f> facevaryingNormals;
+
   {
     size_t index_offset = 0;
 
@@ -75,20 +80,50 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GeomMesh *mesh, std::st
 
         vertexCounts.push_back(uint32_t(num_v));
 
+        size_t num_fvn = 0;
         for (size_t v = 0; v < num_v; v++) {
           tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
           vertexIndices.push_back(uint32_t(idx.vertex_index));
+
+          if (idx.normal_index > -1) {
+            facevaryingNormals.push_back(attris.normals[3 * idx.normal_index + 0]);
+            facevaryingNormals.push_back(attris.normals[3 * idx.normal_index + 1]);
+            facevaryingNormals.push_back(attris.normals[3 * idx.normal_index + 2]);
+            num_fvn++;
+          } else {
+            facevaryingNormals.push_back(0.0f);
+            facevaryingNormals.push_back(0.0f);
+            facevaryingNormals.push_back(0.0f);
+          }
+
+          if (idx.texcoord_index > -1) {
+            facevaryingTexcoords.push_back(attris.texcoords[2 * idx.texcoord_index + 0]);
+            facevaryingTexcoords.push_back(attris.texcoords[2 * idx.texcoord_index + 1]);
+          } else {
+            facevaryingTexcoords.push_back(0.0f);
+            facevaryingTexcoords.push_back(0.0f);
+          }
+        }
+
+        if (num_fvn == 0) {
+          // No per-vertex normal.
+          // Compute geometric normal from p0, p1, p(N-1)
+          // This won't give correct geometric normal for n-gons(n >= 4)
+          
         }
 
         // TODO: normal, texcoords
         
         index_offset += num_v;
       }
+
+      
     }
 
     // TODO: per-face material?
   }
 
+  mesh->normals = facevaryingNormals;
 
   // TODO: read skin weight/indices
 
