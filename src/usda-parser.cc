@@ -6025,7 +6025,7 @@ bool USDAParser::ReconstructXform(
       basename = s.substr(0, s.find_last_of(":"));
     }
 
-    return {basename, suffix, isTimeSampled};
+    return std::make_tuple(basename, suffix, isTimeSampled);
   };
 
   //
