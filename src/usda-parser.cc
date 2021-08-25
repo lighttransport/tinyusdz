@@ -35,6 +35,7 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "usda-parser.hh"
+#include "math-util.inc"
 
 // s = std::string
 #define PUSH_ERROR(s) do { \
@@ -6025,7 +6026,7 @@ bool USDAParser::ReconstructXform(
       basename = s.substr(0, s.find_last_of(":"));
     }
 
-    return {basename, suffix, isTimeSampled};
+    return std::make_tuple(basename, suffix, isTimeSampled);
   };
 
   //
