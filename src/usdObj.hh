@@ -20,7 +20,8 @@ namespace tinyusdz {
 
 namespace usdObj {
 
-bool ReadObjFromString(const std::string &str, GeomMesh *mesh);
+bool ReadObjFromString(const std::string &str, GPrim *prim, std::string *err = nullptr);
+bool ReadObjFromFile(const std::string &filepath, GPrim *prim, std::string *err = nullptr);
 
 } // namespace usdObj
 

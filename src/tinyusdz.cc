@@ -39,49 +39,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unordered_set>
 #include <vector>
 
-#ifdef _WIN32
-
-#ifdef _MSC_VER
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#endif
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-
-#include <windows.h>  // include API for expanding a file path
-
-#ifdef _MSC_VER
-#undef NOMINMAX
-#endif
-
-#undef WIN32_LEAN_AND_MEAN
-
-#if defined(__GLIBCXX__)  // mingw
-
-#include <fcntl.h>  // _O_RDONLY
-
-#include <ext/stdio_filebuf.h>  // fstream (all sorts of IO stuff) + stdio_filebuf (=streambuf)
-
-#endif // __GLIBCXX__
-
-#else // !_WIN32
-
-#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
-    defined(__ANDROID__) || defined(__EMSCRIPTEN__)
-
-// non posix
-
-#else
-
-// Assume Posix
-#include <wordexp.h>
-
-#endif
-
-#endif // _WIN32
 
 
 
@@ -93,6 +50,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "lz4-compression.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
+#include "io-util.hh"
 
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
 
@@ -140,209 +98,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace tinyusdz {
 
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
-AAssetManager *asset_manager = nullptr;
-#endif
-
 namespace {
 
-#ifdef _WIN32
-static inline std::wstring __UTF8ToWchar(const std::string &str) {
-  int wstr_size =
-      MultiByteToWideChar(CP_UTF8, 0, str.data(), int(str.size()), nullptr, 0);
-  std::wstring wstr(size_t(wstr_size), 0);
-  MultiByteToWideChar(CP_UTF8, 0, str.data(), int(str.size()), &wstr[0],
-                      int(wstr.size()));
-  return wstr;
-}
-
-static inline std::string __WcharToUTF8(const std::wstring &wstr) {
-  int str_size = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()),
-                                     nullptr, 0, nullptr, nullptr);
-  std::string str(size_t(str_size), 0);
-  WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()), &str[0],
-                      int(str.size()), nullptr, nullptr);
-  return str;
-}
-#endif
-
-std::string ExpandFilePath(const std::string &filepath, void *) {
-#ifdef _WIN32
-  // Assume input `filepath` is encoded in UTF-8
-  std::wstring wfilepath = __UTF8ToWchar(filepath);
-  DWORD wlen = ExpandEnvironmentStringsW(wfilepath.c_str(), nullptr, 0);
-  wchar_t *wstr = new wchar_t[wlen];
-  ExpandEnvironmentStringsW(wfilepath.c_str(), wstr, wlen);
-
-  std::wstring ws(wstr);
-  delete[] wstr;
-  return __WcharToUTF8(ws);
-
-#else
-
-#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
-    defined(__ANDROID__) || defined(__EMSCRIPTEN__)
-  // no expansion
-  std::string s = filepath;
-#else
-  std::string s;
-  wordexp_t p;
-
-  if (filepath.empty()) {
-    return "";
-  }
-
-  // Quote the string to keep any spaces in filepath intact.
-  std::string quoted_path = "\"" + filepath + "\"";
-  // char** w;
-  int ret = wordexp(quoted_path.c_str(), &p, 0);
-  if (ret) {
-    // err
-    s = filepath;
-    return s;
-  }
-
-  // Use first element only.
-  if (p.we_wordv) {
-    s = std::string(p.we_wordv[0]);
-    wordfree(&p);
-  } else {
-    s = filepath;
-  }
-
-#endif
-
-  return s;
-#endif
-}
-
-bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
-                   const std::string &filepath, size_t filesize_max = 0, void *userdata = nullptr) {
-  (void)userdata;
-
-#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
-  if (tinyusdz::asset_manager) {
-    AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
-                                       AASSET_MODE_STREAMING);
-    if (!asset) {
-      if (err) {
-        (*err) += "File open error(from AssestManager) : " + filepath + "\n";
-      }
-      return false;
-    }
-    size_t size = AAsset_getLength(asset);
-    if (size == 0) {
-      if (err) {
-        (*err) += "Invalid file size : " + filepath +
-                  " (does the path point to a directory?)";
-      }
-      return false;
-    }
-    out->resize(size);
-    AAsset_read(asset, reinterpret_cast<char *>(&out->at(0)), size);
-    AAsset_close(asset);
-    return true;
-  } else {
-    if (err) {
-      (*err) += "No asset manager specified : " + filepath + "\n";
-    }
-    return false;
-  }
-
-#else
-#ifdef _WIN32
-#if defined(__GLIBCXX__)  // mingw
-  int file_descriptor =
-      _wopen(UTF8ToWchar(filepath).c_str(), _O_RDONLY | _O_BINARY);
-  __gnu_cxx::stdio_filebuf<char> wfile_buf(file_descriptor, std::ios_base::in);
-  std::istream f(&wfile_buf);
-#elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
-  // For libcxx, assume _LIBCPP_HAS_OPEN_WITH_WCHAR is defined to accept
-  // `wchar_t *`
-  std::ifstream f(__UTF8ToWchar(filepath).c_str(), std::ifstream::binary);
-#else
-  // Unknown compiler/runtime
-  std::ifstream f(filepath.c_str(), std::ifstream::binary);
-#endif
-#else
-  std::ifstream f(filepath.c_str(), std::ifstream::binary);
-#endif
-  if (!f) {
-    if (err) {
-      (*err) += "File open error : " + filepath + "\n";
-    }
-    return false;
-  }
-
-  f.seekg(0, f.end);
-  size_t sz = static_cast<size_t>(f.tellg());
-  f.seekg(0, f.beg);
-
-  if (int64_t(sz) < 0) {
-    if (err) {
-      (*err) += "Invalid file size : " + filepath +
-                " (does the path point to a directory?)";
-    }
-    return false;
-  } else if (sz == 0) {
-    if (err) {
-      (*err) += "File is empty : " + filepath + "\n";
-    }
-    return false;
-  }
-
-  if ((filesize_max > 0) && (sz > filesize_max)) {
-    if (err) {
-      (*err) += "File size is too large : " + filepath + " sz = " + std::to_string(sz) + "\n";
-    }
-    return false;
-  }
-
-  out->resize(sz);
-  f.read(reinterpret_cast<char *>(&out->at(0)),
-         static_cast<std::streamsize>(sz));
-
-  return true;
-#endif
-}
-
-#if 0 // not used at this momemnt
-bool WriteWholeFile(std::string *err, const std::string &filepath,
-                    const std::vector<unsigned char> &contents, void *) {
-#ifdef _WIN32
-#if defined(__GLIBCXX__)  // mingw
-  int file_descriptor = _wopen(__UTF8ToWchar(filepath).c_str(),
-                               _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
-  __gnu_cxx::stdio_filebuf<char> wfile_buf(
-      file_descriptor, std::ios_base::out | std::ios_base::binary);
-  std::ostream f(&wfile_buf);
-#elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
-  std::ofstream f(__UTF8ToWchar(filepath).c_str(), std::ofstream::binary);
-#else  // other C++ compiler for win32?
-  std::ofstream f(filepath.c_str(), std::ofstream::binary);
-#endif
-#else
-  std::ofstream f(filepath.c_str(), std::ofstream::binary);
-#endif
-  if (!f) {
-    if (err) {
-      (*err) += "File open error for writing : " + filepath + "\n";
-    }
-    return false;
-  }
-
-  f.write(reinterpret_cast<const char *>(&contents.at(0)),
-          static_cast<std::streamsize>(contents.size()));
-  if (!f) {
-    if (err) {
-      (*err) += "File write error: " + filepath + "\n";
-    }
-    return false;
-  }
-
-  return true;
-}
-#endif
 
 
 #if 0
@@ -362,106 +119,6 @@ void MatrixMult(T dst[4][4], const T m0[4][4], const T m1[4][4]) {
 }
 #endif
 
-#if 0 // TODO
-template<typename T>
-void MatrixInverse(T m[4][4]) {
-  /*
-   * codes from intel web
-   * cramer's rule version
-   */
-  int i, j;
-  T tmp[12];  /* tmp array for pairs */
-  T tsrc[16]; /* array of transpose source matrix */
-  T det;      /* determinant */
-
-  /* transpose matrix */
-  for (i = 0; i < 4; i++) {
-    tsrc[i] = m[i][0];
-    tsrc[i + 4] = m[i][1];
-    tsrc[i + 8] = m[i][2];
-    tsrc[i + 12] = m[i][3];
-  }
-
-  /* calculate pair for first 8 elements(cofactors) */
-  tmp[0] = tsrc[10] * tsrc[15];
-  tmp[1] = tsrc[11] * tsrc[14];
-  tmp[2] = tsrc[9] * tsrc[15];
-  tmp[3] = tsrc[11] * tsrc[13];
-  tmp[4] = tsrc[9] * tsrc[14];
-  tmp[5] = tsrc[10] * tsrc[13];
-  tmp[6] = tsrc[8] * tsrc[15];
-  tmp[7] = tsrc[11] * tsrc[12];
-  tmp[8] = tsrc[8] * tsrc[14];
-  tmp[9] = tsrc[10] * tsrc[12];
-  tmp[10] = tsrc[8] * tsrc[13];
-  tmp[11] = tsrc[9] * tsrc[12];
-
-  /* calculate first 8 elements(cofactors) */
-  m[0][0] = tmp[0] * tsrc[5] + tmp[3] * tsrc[6] + tmp[4] * tsrc[7];
-  m[0][0] -= tmp[1] * tsrc[5] + tmp[2] * tsrc[6] + tmp[5] * tsrc[7];
-  m[0][1] = tmp[1] * tsrc[4] + tmp[6] * tsrc[6] + tmp[9] * tsrc[7];
-  m[0][1] -= tmp[0] * tsrc[4] + tmp[7] * tsrc[6] + tmp[8] * tsrc[7];
-  m[0][2] = tmp[2] * tsrc[4] + tmp[7] * tsrc[5] + tmp[10] * tsrc[7];
-  m[0][2] -= tmp[3] * tsrc[4] + tmp[6] * tsrc[5] + tmp[11] * tsrc[7];
-  m[0][3] = tmp[5] * tsrc[4] + tmp[8] * tsrc[5] + tmp[11] * tsrc[6];
-  m[0][3] -= tmp[4] * tsrc[4] + tmp[9] * tsrc[5] + tmp[10] * tsrc[6];
-  m[1][0] = tmp[1] * tsrc[1] + tmp[2] * tsrc[2] + tmp[5] * tsrc[3];
-  m[1][0] -= tmp[0] * tsrc[1] + tmp[3] * tsrc[2] + tmp[4] * tsrc[3];
-  m[1][1] = tmp[0] * tsrc[0] + tmp[7] * tsrc[2] + tmp[8] * tsrc[3];
-  m[1][1] -= tmp[1] * tsrc[0] + tmp[6] * tsrc[2] + tmp[9] * tsrc[3];
-  m[1][2] = tmp[3] * tsrc[0] + tmp[6] * tsrc[1] + tmp[11] * tsrc[3];
-  m[1][2] -= tmp[2] * tsrc[0] + tmp[7] * tsrc[1] + tmp[10] * tsrc[3];
-  m[1][3] = tmp[4] * tsrc[0] + tmp[9] * tsrc[1] + tmp[10] * tsrc[2];
-  m[1][3] -= tmp[5] * tsrc[0] + tmp[8] * tsrc[1] + tmp[11] * tsrc[2];
-
-
-
-  /* calculate pairs for second 8 elements(cofactors) */
-  tmp[0] = tsrc[2] * tsrc[7];
-  tmp[1] = tsrc[3] * tsrc[6];
-  tmp[2] = tsrc[1] * tsrc[7];
-  tmp[3] = tsrc[3] * tsrc[5];
-  tmp[4] = tsrc[1] * tsrc[6];
-  tmp[5] = tsrc[2] * tsrc[5];
-  tmp[6] = tsrc[0] * tsrc[7];
-  tmp[7] = tsrc[3] * tsrc[4];
-  tmp[8] = tsrc[0] * tsrc[6];
-  tmp[9] = tsrc[2] * tsrc[4];
-  tmp[10] = tsrc[0] * tsrc[5];
-  tmp[11] = tsrc[1] * tsrc[4];
-
-  /* calculate second 8 elements(cofactors) */
-  m[2][0] = tmp[0] * tsrc[13] + tmp[3] * tsrc[14] + tmp[4] * tsrc[15];
-  m[2][0] -= tmp[1] * tsrc[13] + tmp[2] * tsrc[14] + tmp[5] * tsrc[15];
-  m[2][1] = tmp[1] * tsrc[12] + tmp[6] * tsrc[14] + tmp[9] * tsrc[15];
-  m[2][1] -= tmp[0] * tsrc[12] + tmp[7] * tsrc[14] + tmp[8] * tsrc[15];
-  m[2][2] = tmp[2] * tsrc[12] + tmp[7] * tsrc[13] + tmp[10] * tsrc[15];
-  m[2][2] -= tmp[3] * tsrc[12] + tmp[6] * tsrc[13] + tmp[11] * tsrc[15];
-  m[2][3] = tmp[5] * tsrc[12] + tmp[8] * tsrc[13] + tmp[11] * tsrc[14];
-  m[2][3] -= tmp[4] * tsrc[12] + tmp[9] * tsrc[13] + tmp[10] * tsrc[14];
-  m[3][0] = tmp[2] * tsrc[10] + tmp[5] * tsrc[11] + tmp[1] * tsrc[9];
-  m[3][0] -= tmp[4] * tsrc[11] + tmp[0] * tsrc[9] + tmp[3] * tsrc[10];
-  m[3][1] = tmp[8] * tsrc[11] + tmp[0] * tsrc[8] + tmp[7] * tsrc[10];
-  m[3][1] -= tmp[6] * tsrc[10] + tmp[9] * tsrc[11] + tmp[1] * tsrc[8];
-  m[3][2] = tmp[6] * tsrc[9] + tmp[11] * tsrc[11] + tmp[3] * tsrc[8];
-  m[3][2] -= tmp[10] * tsrc[11] + tmp[2] * tsrc[8] + tmp[7] * tsrc[9];
-  m[3][3] = tmp[10] * tsrc[10] + tmp[4] * tsrc[8] + tmp[9] * tsrc[9];
-  m[3][3] -= tmp[8] * tsrc[9] + tmp[11] * tsrc[0] + tmp[5] * tsrc[8];
-
-  /* calculate determinant */
-  det = tsrc[0] * m[0][0] + tsrc[1] * m[0][1] + tsrc[2] * m[0][2] +
-        tsrc[3] * m[0][3];
-
-  /* calculate matrix inverse */
-  det = T(1.0) / det;
-
-  for (j = 0; j < 4; j++) {
-    for (i = 0; i < 4; i++) {
-      m[j][i] *= det;
-    }
-  }
-}
-#endif
 
 
 constexpr size_t kMinCompressedArraySize = 16;
@@ -5484,11 +5141,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 bool LoadUSDCFromFile(const std::string &_filename, Scene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
-  std::string filepath = ExpandFilePath(_filename, /* userdata */nullptr);
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
 
   std::vector<uint8_t> data;
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
-  if (!ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
     return false;
   }
 
@@ -5582,11 +5239,11 @@ bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
   // <filename, byte_begin, byte_end>
   std::vector<std::tuple<std::string, size_t, size_t>> assets;
 
-  std::string filepath = ExpandFilePath(_filename, /* userdata */nullptr);
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
 
   std::vector<uint8_t> data;
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
-  if (!ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
     return false;
   }
 
@@ -5810,7 +5467,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
 bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
-  std::string filename = __WcharToUTF8(_filename);
+  std::string filename = io::WcharToUTF8(_filename);
   return LoadUSDZFromFile(filename, scene, warn, err, options);
 }
 #endif
@@ -5847,11 +5504,11 @@ bool LoadUSDAFromFile(const std::string &_filename, Scene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
 
-  std::string filepath = ExpandFilePath(_filename, /* userdata */nullptr);
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
 
   std::vector<uint8_t> data;
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
-  if (!ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
     return false;
   }
 
