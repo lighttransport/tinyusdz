@@ -117,6 +117,8 @@ if (TINYUSDZ_WITH_EXR)
   else ()
     list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
     set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    # TODO: Set this only for clang, gcc
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/miniz.c PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
   endif ()
 
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
