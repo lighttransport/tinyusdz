@@ -2187,11 +2187,28 @@ struct SkelBindingAPI {
   int64_t skeleton{-1};  // index to Scene.skeltons. // ref skel:skelton
 };
 
+// Generic Prim
+struct GPrim {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  // Gprim
+  bool doubleSided{false};
+  Orientation orientation{OrientationRightHanded};
+  std::vector<Vec3f> displayColor; // primvars:displayColor
+  std::vector<float> displayOpacity; // primvars:displaOpacity
+
+  MaterialBindingAPI materialBinding;
+
+  std::map<std::string, PrimAttrib> props;
+};
+
 // Polygon mesh geometry
 struct GeomMesh {
   std::string name;
 
-  int64_t parent_id{-1};  // Index to xform node
+  int64_t parent_id{-1};  // Index to parent node
 
   //
   // Predefined attribs.
