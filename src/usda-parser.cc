@@ -36,6 +36,7 @@
 #include "tinyusdz.hh"
 #include "usda-parser.hh"
 #include "math-util.inc"
+#include "usdObj.hh"
 
 // s = std::string
 #define PUSH_ERROR(s) do { \
@@ -6225,6 +6226,15 @@ bool USDAParser::ReconstructGeomMesh(
   //
   for (const auto &ref : references) {
     if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+      if (endsWith(asset_ref.asset_reference, ".obj")) {
+        std::string err;
+        GPrim gprim;
+        if (!usdObj::ReadObjFromFile(asset_ref.asset_reference, &gprim, &err)) {
+          _PushError("Failed to read .obj(usdObj). err = " + err);
+          return false;
+        }
+      }
     }
   }
 

@@ -15,6 +15,8 @@
 #include <string>
 
 #include "tinyusdz.hh"
+#include "io-util.hh"
+#include "usdObj.hh"
 
 #ifdef TINYUSDZ_USE_USDOBJ
 #include "external/tiny_obj_loader.h"
@@ -23,6 +25,29 @@
 namespace tinyusdz {
 
 namespace usdObj {
+
+bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::string *err)
+{
+#if !defined(TINYUSDZ_USE_USDOBJ)
+  if (err) {
+    (*err) = "usdObj is disabled in this build.\n";
+  }
+  return false;
+#else
+
+  std::vector<uint8_t> buf;
+  if (!io::ReadWholeFile(&buf, err, filepath, /* filesize max */ 0,
+                         /* user_ptr */ nullptr)) {
+    return false;
+  }
+
+  std::string str(buf.begin(), buf.begin() + buf.size());
+
+  return ReadObjFromString(str, prim, err);
+
+#endif
+
+}
 
 
 bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
