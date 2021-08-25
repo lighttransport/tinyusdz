@@ -25,7 +25,7 @@ namespace tinyusdz {
 namespace usdObj {
 
 
-bool ReadObjFromString(const std::string &str, tinyusdz::GeomMesh *mesh, std::string *err)
+bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
 {
 #if !defined(TINYUSDZ_USE_USDOBJ)
   if (err) {
@@ -56,8 +56,13 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GeomMesh *mesh, std::st
 
   const auto &attrs = reader.GetAttrib();
 
-  mesh->points.resize(attrs.vertices.size() / 3);
-  memcpy(mesh->points.data(), attrs.vertices.data(), sizeof(float) * 3);
+  PrimAttrib pointsAttr;
+  pointsAttr.type_name = "float3";
+  pointsAttr.buffer.data.resize(sizeof(float) * attrs.vertices.size());
+  memcpy(pointsAttr.buffer.data.data(), attrs.vertices.data(), sizeof(float) * attrs.vertices.size());
+  pointsAttr.buffer.num_coords = 3;
+  pointsAttr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT;
+  prim->props["points"] = pointsAttr;
 
   const auto &shapes = reader.GetShapes();
 
@@ -86,22 +91,22 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GeomMesh *mesh, std::st
           vertexIndices.push_back(uint32_t(idx.vertex_index));
 
           if (idx.normal_index > -1) {
-            facevaryingNormals.push_back(attris.normals[3 * idx.normal_index + 0]);
-            facevaryingNormals.push_back(attris.normals[3 * idx.normal_index + 1]);
-            facevaryingNormals.push_back(attris.normals[3 * idx.normal_index + 2]);
+            Vec3f normal;
+            normal[0] = attrs.normals[3 * idx.normal_index + 0];
+            normal[1] = attrs.normals[3 * idx.normal_index + 1];
+            normal[2] = attrs.normals[3 * idx.normal_index + 2];
+            facevaryingNormals.push_back(normal);
             num_fvn++;
           } else {
-            facevaryingNormals.push_back(0.0f);
-            facevaryingNormals.push_back(0.0f);
-            facevaryingNormals.push_back(0.0f);
+            facevaryingNormals.push_back({0.0f, 0.0f, 0.0f});
           }
 
           if (idx.texcoord_index > -1) {
-            facevaryingTexcoords.push_back(attris.texcoords[2 * idx.texcoord_index + 0]);
-            facevaryingTexcoords.push_back(attris.texcoords[2 * idx.texcoord_index + 1]);
+            Vec2f texcoord;
+            texcoord[0] = attrs.texcoords[2 * idx.texcoord_index + 0];
+            texcoord[1] = attrs.texcoords[2 * idx.texcoord_index + 1];
           } else {
-            facevaryingTexcoords.push_back(0.0f);
-            facevaryingTexcoords.push_back(0.0f);
+            facevaryingTexcoords.push_back({0.0f, 0.0f});
           }
         }
 
@@ -123,7 +128,29 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GeomMesh *mesh, std::st
     // TODO: per-face material?
   }
 
-  mesh->normals = facevaryingNormals;
+  {
+    PrimAttrib normalsAttr;
+    normalsAttr.facevarying = true;
+    normalsAttr.variability = VariabilityVarying;
+    normalsAttr.type_name = "float3";
+    normalsAttr.buffer.data.resize(sizeof(Vec3f) * facevaryingNormals.size());
+    memcpy(normalsAttr.buffer.data.data(), facevaryingNormals.data(), sizeof(Vec3f) * facevaryingNormals.size());
+    normalsAttr.buffer.num_coords = 3;
+    normalsAttr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT;
+    prim->props["normals"] = normalsAttr;
+  }
+
+  {
+    PrimAttrib texcoordsAttr;
+    texcoordsAttr.facevarying = true;
+    texcoordsAttr.variability = VariabilityVarying;
+    texcoordsAttr.type_name = "float2";
+    texcoordsAttr.buffer.data.resize(sizeof(Vec2f) * facevaryingTexcoords.size());
+    memcpy(texcoordsAttr.buffer.data.data(), facevaryingTexcoords.data(), sizeof(Vec3f) * facevaryingTexcoords.size());
+    texcoordsAttr.buffer.num_coords = 2;
+    texcoordsAttr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT;
+    prim->props["texcoords"] = texcoordsAttr;
+  }
 
   // TODO: read skin weight/indices
 
