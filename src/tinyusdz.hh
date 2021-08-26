@@ -1521,57 +1521,62 @@ struct BufferData {
   // Utility functions
   //
 
-  float GetAsFloat() const {
+  nonstd::optional<float> GetAsFloat() const {
     if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
         (GetNumCoords() == 1) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT) &&
         (GetNumElements() == 1)) {
       return *(reinterpret_cast<const float *>(data.data()));
     }
 
-    return std::numeric_limits<float>::quiet_NaN();
+    return nonstd::nullopt;
   }
 
-  std::array<float, 3> GetAsColor3f() const {
-    std::array<float, 3> buf{{0.0f, 0.0f, 0.0f}};
+  nonstd::optional<std::array<float, 3>> GetAsColor3f() const {
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
         (GetNumCoords() == 3) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      std::array<float, 3> buf{{0.0f, 0.0f, 0.0f}};
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+
+      return buf;
     }
 
-    return buf;
+    return nonstd::nullopt;
   }
 
   // Return empty array when required type mismatches.
   //
-  std::vector<uint32_t> GetAsUInt32Array() const {
-    std::vector<uint32_t> buf;
+  nonstd::optional<std::vector<uint32_t>> GetAsUInt32Array() const {
 
     if (((GetStride() == 0) || (GetStride() == sizeof(uint32_t))) &&
         (GetDataType() == BUFFER_DATA_TYPE_UNSIGNED_INT)) {
+      std::vector<uint32_t> buf;
       buf.resize(GetNumElements() * size_t(GetNumCoords()));
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "buf.size = " << buf.size() << "\n";
 #endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(uint32_t));
+      return std::move(buf);
     }
 
-    return buf;
+    return nonstd::nullopt;
   }
 
-  std::vector<int32_t> GetAsInt32Array() const {
-    std::vector<int32_t> buf;
+  nonstd::optional<std::vector<int32_t>> GetAsInt32Array() const {
 
     if (((GetStride() == 0) || (GetStride() == sizeof(int32_t))) &&
         (GetDataType() == BUFFER_DATA_TYPE_INT)) {
+      std::vector<int32_t> buf;
       buf.resize(GetNumElements() * size_t(GetNumCoords()));
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "buf.size = " << buf.size() << "\n";
 #endif
       memcpy(buf.data(), data.data(), buf.size() * sizeof(int32_t));
+
+      return std::move(buf);
     }
 
-    return buf;
+    return nonstd::nullopt;
   }
 
   // zero-copy version
@@ -1587,32 +1592,35 @@ struct BufferData {
   }
 
   // this creates new buffer.
-  std::vector<float> GetAsFloatArray() const {
-    std::vector<float> buf;
+  nonstd::optional<std::vector<float>> GetAsFloatArray() const {
 
     if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
         (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      std::vector<float> buf;
       buf.resize(GetNumElements() * size_t(GetNumCoords()));
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+
+      return std::move(buf);
     }
 
-    return buf;
+    return nonstd::nullopt;
   }
 
-  std::vector<float> GetAsVec2fArray() const {
-    std::vector<float> buf;
+  nonstd::optional<std::vector<float>> GetAsVec2fArray() const {
 
     if (((GetStride() == 0) || (GetStride() == 2 * sizeof(float))) &&
         (GetNumCoords() == 2) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      std::vector<float> buf;
       buf.resize(GetNumElements() * 2);
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+
+      return std::move(buf);
     }
 
-    return buf;
+    return nonstd::nullopt;
   }
 
-  std::vector<float> GetAsVec3fArray() const {
-    std::vector<float> buf;
+  nonstd::optional<std::vector<float>> GetAsVec3fArray() const {
 
     // std::cout << "stride = " << GetStride() << ", num_coords = " <<
     // GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " <<
@@ -1620,23 +1628,28 @@ struct BufferData {
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
         (GetNumCoords() == 3) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      std::vector<float> buf;
       buf.resize(GetNumElements() * 3);
       memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+
+      return std::move(buf);
     }
 
-    return buf;
+    return nonstd::nullopt;
   }
 
-  std::vector<float> GetAsVec4fArray() const {
-    std::vector<float> buf;
+  nonstd::optional<std::vector<float>> GetAsVec4fArray() const {
 
     if (((GetStride() == 0) || (GetStride() == 4 * sizeof(float))) &&
         (GetNumCoords() == 4) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
+      std::vector<float> buf;
       buf.resize(GetNumElements());
       memcpy(buf.data(), data.data(), buf.size() * 4 * sizeof(float));
+
+      return std::move(buf);
     }
 
-    return buf;
+    return nonstd::nullopt;
   }
 };
 

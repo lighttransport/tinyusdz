@@ -3681,10 +3681,8 @@ bool Parser::_ReconstructGeomBasisCurves(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 3)) {
-            curves->points = attr.buffer.GetAsVec3fArray();
+          if (auto p = attr.buffer.GetAsVec3fArray()) {
+            curves->points = *p;
           }
         } else if (prop_name == "extent") {
           // vec3f[2]
@@ -3692,32 +3690,35 @@ bool Parser::_ReconstructGeomBasisCurves(
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumElements() == 2) &&
               (attr.buffer.GetNumCoords() == 3)) {
-            std::vector<float> buf = attr.buffer.GetAsVec3fArray();
-            curves->extent.lower[0] = buf[0];
-            curves->extent.lower[1] = buf[1];
-            curves->extent.lower[2] = buf[2];
+            if (auto p = attr.buffer.GetAsVec3fArray()) {
+              curves->extent.lower[0] = (*p)[0];
+              curves->extent.lower[1] = (*p)[1];
+              curves->extent.lower[2] = (*p)[2];
 
-            curves->extent.upper[0] = buf[3];
-            curves->extent.upper[1] = buf[4];
-            curves->extent.upper[2] = buf[5];
+              curves->extent.upper[0] = (*p)[3];
+              curves->extent.upper[1] = (*p)[4];
+              curves->extent.upper[2] = (*p)[5];
+            }
           }
         } else if (prop_name == "normals") {
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 3)) {
-            curves->normals = attr.buffer.GetAsVec3fArray();
+          if (auto p = attr.buffer.GetAsVec3fArray()) {
+            curves->normals = (*p);
           }
         } else if (prop_name == "widths") {
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            curves->widths = attr.buffer.GetAsFloatArray();
+            if (auto p = attr.buffer.GetAsFloatArray()) {
+              curves->widths = (*p);
+            }
           }
         } else if (prop_name == "curveVertexCounts") {
           // Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            curves->curveVertexCounts = attr.buffer.GetAsInt32Array();
+            if (auto p = attr.buffer.GetAsInt32Array()) {
+              curves->curveVertexCounts = (*p);
+            }
           }
         } else if (prop_name == "type") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -3891,7 +3892,9 @@ bool Parser::_ReconstructGeomMesh(
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 3)) {
-            mesh->points = attr.buffer.GetAsVec3fArray();
+            if (auto p = attr.buffer.GetAsVec3fArray()) {
+              mesh->points = (*p);
+            }
           }
         } else if (prop_name == "doubleSided") {
           if (attr.basic_type == "bool") {
@@ -3903,14 +3906,15 @@ bool Parser::_ReconstructGeomMesh(
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumElements() == 2) &&
               (attr.buffer.GetNumCoords() == 3)) {
-            std::vector<float> buf = attr.buffer.GetAsVec3fArray();
-            mesh->extent.lower[0] = buf[0];
-            mesh->extent.lower[1] = buf[1];
-            mesh->extent.lower[2] = buf[2];
+            if (auto p = attr.buffer.GetAsVec3fArray()) {
+              mesh->extent.lower[0] = (*p)[0];
+              mesh->extent.lower[1] = (*p)[1];
+              mesh->extent.lower[2] = (*p)[2];
 
-            mesh->extent.upper[0] = buf[3];
-            mesh->extent.upper[1] = buf[4];
-            mesh->extent.upper[2] = buf[5];
+              mesh->extent.upper[0] = (*p)[3];
+              mesh->extent.upper[1] = (*p)[4];
+              mesh->extent.upper[2] = (*p)[5];
+            }
           }
         } else if (prop_name == "normals") {
           if ((attr.buffer.GetDataType() ==
@@ -3937,18 +3941,22 @@ bool Parser::_ReconstructGeomMesh(
           // Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            mesh->faceVertexCounts = attr.buffer.GetAsInt32Array();
+            if (auto p = attr.buffer.GetAsInt32Array()) {
+              mesh->faceVertexCounts = (*p);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            // aaa: typeName: int[]
-            std::cout << "got faceVertexCounts. num = "
-                      << attr.buffer.GetNumElements() << "\n";
-            std::cout << "  num = " << mesh->faceVertexCounts.size() << "\n";
+              // aaa: typeName: int[]
+              std::cout << "got faceVertexCounts. num = "
+                        << attr.buffer.GetNumElements() << "\n";
+              std::cout << "  num = " << mesh->faceVertexCounts.size() << "\n";
 #endif
+            }
           }
         } else if (prop_name == "faceVertexIndices") {
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            mesh->faceVertexIndices = attr.buffer.GetAsInt32Array();
+            if (auto p = attr.buffer.GetAsInt32Array()) {
+              mesh->faceVertexIndices = (*p);
+            }
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
             // aaa: typeName: int[]
@@ -3959,38 +3967,50 @@ bool Parser::_ReconstructGeomMesh(
         } else if (prop_name == "holeIndices") {
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
+            if (auto p = attr.buffer.GetAsInt32Array()) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            // aaa: typeName: int[]
-            std::cout << "got holeIdicies\n";
+              // aaa: typeName: int[]
+              std::cout << "got holeIdicies\n";
 #endif
-            mesh->holeIndices = attr.buffer.GetAsInt32Array();
+              mesh->holeIndices = (*p);
+            }
           }
         } else if (prop_name == "cornerIndices") {
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            mesh->cornerIndices = attr.buffer.GetAsInt32Array();
+            if (auto p = attr.buffer.GetAsInt32Array()) {
+              mesh->cornerIndices = (*p);
+            }
           }
         } else if (prop_name == "cornerSharpnesses") {
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            mesh->cornerSharpnesses = attr.buffer.GetAsFloatArray();
+            if (auto p = attr.buffer.GetAsFloatArray()) {
+              mesh->cornerSharpnesses = (*p);
+            }
           }
         } else if (prop_name == "creaseIndices") {
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            mesh->creaseIndices = attr.buffer.GetAsInt32Array();
+            if (auto p = attr.buffer.GetAsInt32Array()) {
+              mesh->creaseIndices = (*p);
+            }
           }
         } else if (prop_name == "creaseLengths") {
           if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            mesh->creaseLengths = attr.buffer.GetAsInt32Array();
+            if (auto p = attr.buffer.GetAsInt32Array()) {
+              mesh->creaseLengths = (*p);
+            }
           }
         } else if (prop_name == "creaseSharpnesses") {
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            mesh->creaseSharpnesses = attr.buffer.GetAsFloatArray();
+            if (auto p = attr.buffer.GetAsFloatArray()) {
+              mesh->creaseSharpnesses = (*p);
+            }
           }
         } else if (prop_name == "subdivisionScheme") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -4354,7 +4374,9 @@ bool Parser::_ReconstructShader(
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumElements() == 1) &&
               (attr.buffer.GetNumCoords() == 1)) {
-            shader->metallic.value = attr.buffer.GetAsFloat();
+            if (auto p = attr.buffer.GetAsFloat()) {
+              shader->metallic.value = (*p);
+            }
           }
         } else if (prop_name.compare("inputs:metallic.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
@@ -4364,13 +4386,15 @@ bool Parser::_ReconstructShader(
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumElements() == 1) &&
               (attr.buffer.GetNumCoords() == 3)) {
-            shader->diffuseColor.color = attr.buffer.GetAsColor3f();
+            if (auto p = attr.buffer.GetAsColor3f()) {
+              shader->diffuseColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
-                      << ", " << shader->diffuseColor.color[1] << ", "
-                      << shader->diffuseColor.color[2] << "\n";
+              std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
+                        << ", " << shader->diffuseColor.color[1] << ", "
+                        << shader->diffuseColor.color[2] << "\n";
 #endif
+            }
           }
         } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
@@ -4380,13 +4404,15 @@ bool Parser::_ReconstructShader(
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
               (attr.buffer.GetNumElements() == 1) &&
               (attr.buffer.GetNumCoords() == 3)) {
-            shader->emissiveColor.color = attr.buffer.GetAsColor3f();
+            if (auto p = attr.buffer.GetAsColor3f()) {
+              shader->emissiveColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            std::cout << "emissiveColor: " << shader->emissiveColor.color[0]
-                      << ", " << shader->emissiveColor.color[1] << ", "
-                      << shader->emissiveColor.color[2] << "\n";
+              std::cout << "emissiveColor: " << shader->emissiveColor.color[0]
+                        << ", " << shader->emissiveColor.color[1] << ", "
+                        << shader->emissiveColor.color[2] << "\n";
 #endif
+            }
           }
         } else if (prop_name.compare("inputs:emissiveColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.

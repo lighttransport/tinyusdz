@@ -228,8 +228,8 @@ class Writer {
     ofs << Indent(level + 1)
         << "point3f[] points = " << PrintVec3fArray(mesh.points) << "\n";
 
-    {
-      std::vector<float> normals = mesh.normals.buffer.GetAsVec3fArray();
+    if (auto p = mesh.normals.buffer.GetAsVec3fArray()) {
+      std::vector<float> normals = (*p);
 
       if (normals.size()) {
         ofs << Indent(level + 1)
