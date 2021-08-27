@@ -30,6 +30,10 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 option(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB "Use system's zlib instead of miniz for TinyEXR" OFF)
 # ---------
 
+# -- optional --
+option(TINYUSDZ_WITH_USDA_PARSER "Build with USDA parser program" ON)
+# --------------
+
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
@@ -269,6 +273,12 @@ if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES))
     COMMENT "copying python module file to python/" VERBATIM
   )
 
+endif ()
+
+if (TINYUSDZ_WITH_USDA_PARSER)
+  add_executable(usda-parser ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
+  target_include_directories(usda-parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
+  target_link_libraries(usda-parser ${BUILD_TARGET})
 endif ()
 
 if (TINYUSDZ_WITH_BLENDER_ADDON)

@@ -35,8 +35,10 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "usda-parser.hh"
-#include "math-util.inc"
+#include "io-util.hh"
 #include "usdObj.hh"
+
+#include "math-util.inc"
 
 // s = std::string
 #define PUSH_ERROR(s) do { \
@@ -539,26 +541,6 @@ std::string TrimString(const std::string &str) {
   }
 
   return s;
-}
-
-std::string GetBaseDir(const std::string &filepath) {
-  if (filepath.find_last_of("/\\") != std::string::npos)
-    return filepath.substr(0, filepath.find_last_of("/\\"));
-  return "";
-}
-
-std::string JoinPath(const std::string &dir, const std::string &filename) {
-  if (dir.empty()) {
-    return filename;
-  } else {
-    // check '/'
-    char lastChar = *dir.rbegin();
-    if (lastChar != '/') {
-      return dir + std::string("/") + filename;
-    } else {
-      return dir + filename;
-    }
-  }
 }
 
 std::string str_object(const Variable::Object &obj, int indent) {
@@ -5039,7 +5021,7 @@ class USDAParser {
       // Create another USDA parser.
 
       for (size_t i = 0; i < sublayers.size(); i++) {
-        std::string filepath = JoinPath(_base_dir, sublayers[i]);
+        std::string filepath = io::JoinPath(_base_dir, sublayers[i]);
 
         std::vector<uint8_t> data;
         {
@@ -5074,7 +5056,7 @@ class USDAParser {
                                   /* swap endian */ false);
         tinyusdz::usda::USDAParser parser(&sr);
 
-        std::string base_dir = GetBaseDir(filepath);
+        std::string base_dir = io::GetBaseDir(filepath);
 
         std::cout << "SubLayer.Basedir = " << base_dir << "\n";
         parser.SetBaseDir(base_dir);
