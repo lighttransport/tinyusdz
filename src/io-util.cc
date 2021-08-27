@@ -253,6 +253,26 @@ bool WriteWholeFile(std::string *err, const std::string &filepath,
 }
 #endif
 
+std::string GetBaseDir(const std::string &filepath) {
+  if (filepath.find_last_of("/\\") != std::string::npos)
+    return filepath.substr(0, filepath.find_last_of("/\\"));
+  return "";
+}
+
+std::string JoinPath(const std::string &dir, const std::string &filename) {
+  if (dir.empty()) {
+    return filename;
+  } else {
+    // check '/'
+    char lastChar = *dir.rbegin();
+    if (lastChar != '/') {
+      return dir + std::string("/") + filename;
+    } else {
+      return dir + filename;
+    }
+  }
+}
+
 
 } // namespace io
 } // namespace tinyusdz
