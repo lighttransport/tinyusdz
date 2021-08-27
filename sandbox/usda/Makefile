@@ -4,7 +4,7 @@ INCFLAGS=-I. -I../../src/external/ryu -I../../src
 
 # only applied to usda-parser.cc
 EXTRA_COMPILER_FLAGS=-Weverything -Werror -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-unused-function -Wno-unused-member-function
-CXXFLAGS=-std=c++11 -fsanitize=address -g -O0 -DUSDA_MAIN
+CXXFLAGS=-std=c++14 -fsanitize=address -g -O0 -DUSDA_MAIN -DTINYUSDZ_USE_USDOBJ
 CFLAGS=-fsanitize=address -g -O0
 LDFLAGS=-fsanitize=address
 
@@ -27,12 +27,12 @@ u: usda-parser
 
 # single test
 t: usda-parser
-	./usda-parser tests/sublayers.usda
+	./usda-parser ../../models/usdObj-001.usda
 	#./usda-parser tests/dict.usda
 	#./usda-parser tests/simple-blender-exported.usda
 	#./usda-parser tests/test.usda
 
-usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o prim-types.o
+usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o prim-types.o usdObj.o io-util.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 	
 usda-parser.o: ../../src/usda-parser.cc ../../src/simple-serialize.hh ../../src/prim-types.hh 
@@ -42,6 +42,12 @@ prim-types.o: ../../src/prim-types.cc ../../src/prim-types.hh
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
 
 simple-serialize.o: ../../src/simple-serialize.cc ../../src/simple-serialize.hh
+	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
+
+usdObj.o: ../../src/usdObj.cc ../../src/usdObj.hh
+	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
+
+io-util.o: ../../src/io-util.cc ../../src/io-util.hh
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
 
 d2s.o: ../../src/external/ryu/ryu/d2s.c
@@ -60,5 +66,5 @@ s2d.o: ../../src/external/ryu/ryu/s2d.c
 #	$(CXX) $(INCFLAGS) $(CXXFLAGS) -c -o $@ $<
 
 clean:
-	@rm -rf usda-parser usda-parser.o d2s.o f2s.o s2d.o s2f.o simple-serialize.o prim-types.o
+	@rm -rf usda-parser usda-parser.o d2s.o f2s.o s2d.o s2f.o simple-serialize.o prim-types.o usdObj.o io-util.o
 
