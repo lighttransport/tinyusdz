@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-// 
+//
 // Built-in .obj import plugIn.
 // Import only. Writing scene data as .obj is not supported.
 //
-// example usage 
+// example usage
 //
 // def "mesh" (
 //   prepend references = @bunny.obj@
@@ -18,13 +18,26 @@
 #include "io-util.hh"
 #include "usdObj.hh"
 
+#include "math-util.inc"
+
 #ifdef TINYUSDZ_USE_USDOBJ
+
+#ifndef TINYOBJLOADER_NO_INCLUDE
+#define TINYOBJLOADER_IMPLEMENTATION
 #include "external/tiny_obj_loader.h"
+#endif
+
 #endif
 
 namespace tinyusdz {
 
 namespace usdObj {
+
+namespace {
+
+
+
+}
 
 bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::string *err)
 {
@@ -41,7 +54,7 @@ bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
     return false;
   }
 
-  std::string str(buf.begin(), buf.begin() + buf.size());
+  std::string str(reinterpret_cast<const char *>(buf.data()), buf.size());
 
   return ReadObjFromString(str, prim, err);
 
@@ -110,6 +123,13 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
         vertexCounts.push_back(uint32_t(num_v));
 
+        if (num_v < 3) {
+          if (err) {
+            (*err) = "Degenerated face found.";
+          }
+          return false;
+        }
+
         size_t num_fvn = 0;
         for (size_t v = 0; v < num_v; v++) {
           tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
@@ -117,9 +137,9 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
           if (idx.normal_index > -1) {
             Vec3f normal;
-            normal[0] = attrs.normals[3 * idx.normal_index + 0];
-            normal[1] = attrs.normals[3 * idx.normal_index + 1];
-            normal[2] = attrs.normals[3 * idx.normal_index + 2];
+            normal[0] = attrs.normals[3 * size_t(idx.normal_index) + 0];
+            normal[1] = attrs.normals[3 * size_t(idx.normal_index) + 1];
+            normal[2] = attrs.normals[3 * size_t(idx.normal_index) + 2];
             facevaryingNormals.push_back(normal);
             num_fvn++;
           } else {
@@ -128,8 +148,8 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
           if (idx.texcoord_index > -1) {
             Vec2f texcoord;
-            texcoord[0] = attrs.texcoords[2 * idx.texcoord_index + 0];
-            texcoord[1] = attrs.texcoords[2 * idx.texcoord_index + 1];
+            texcoord[0] = attrs.texcoords[2 * size_t(idx.texcoord_index) + 0];
+            texcoord[1] = attrs.texcoords[2 * size_t(idx.texcoord_index) + 1];
           } else {
             facevaryingTexcoords.push_back({0.0f, 0.0f});
           }
@@ -139,15 +159,37 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
           // No per-vertex normal.
           // Compute geometric normal from p0, p1, p(N-1)
           // This won't give correct geometric normal for n-gons(n >= 4)
-          
+          Vec3f p0, p1, p2;
+
+          uint32_t vidx0 = uint32_t(shape.mesh.indices[index_offset + 0].vertex_index);
+          uint32_t vidx1 = uint32_t(shape.mesh.indices[index_offset + 1].vertex_index);
+          uint32_t vidx2 = uint32_t(shape.mesh.indices[index_offset + (num_v - 1)].vertex_index);
+
+          p0[0] = attrs.vertices[3 * vidx0 + 0];
+          p0[1] = attrs.vertices[3 * vidx0 + 1];
+          p0[2] = attrs.vertices[3 * vidx0 + 2];
+
+          p1[0] = attrs.vertices[3 * vidx1 + 0];
+          p1[1] = attrs.vertices[3 * vidx1 + 1];
+          p1[2] = attrs.vertices[3 * vidx1 + 2];
+
+          p2[0] = attrs.vertices[3 * vidx2 + 0];
+          p2[1] = attrs.vertices[3 * vidx2 + 1];
+          p2[2] = attrs.vertices[3 * vidx2 + 2];
+
+          Vec3f n = math::geometric_normal(p0, p1, p2);
+
+          for (size_t v = 0; v < num_v; v++) {
+            facevaryingNormals.push_back(n);
+          }
         }
 
         // TODO: normal, texcoords
-        
+
         index_offset += num_v;
       }
 
-      
+
     }
 
     // TODO: per-face material?

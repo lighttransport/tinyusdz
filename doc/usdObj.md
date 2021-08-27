@@ -6,7 +6,7 @@ Why built-in?
 * It is not recommended to use plug-in architecture(e.g. separated dll) for mobile/wasm devices.
 * People frequently want .obj support
 
-You can disable usdObj support by cmake flags(`TINYUSDZ_USE_USDOBJ=Off`)
+.obj support is enabled by default. You can disable usdObj support by cmake flags(`TINYUSDZ_USE_USDOBJ=Off`)
 
 ## Data structure
 

@@ -168,6 +168,78 @@ void MatrixInverse(T m[4][4]) {
 }
 #endif
 
+inline Vec3f operator-(const Vec3f &a, const Vec3f &b)
+{
+  return Vec3f({a[0] - b[0], a[1] - b[1], a[2] - b[2]});
+}
+
+inline Vec3d operator-(const Vec3d &a, const Vec3d &b)
+{
+  return Vec3d({a[0] - b[0], a[1] - b[1], a[2] - b[2]});
+}
+
+inline float vlength(const Vec3f &a) {
+  float d2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+  if (d2 > std::numeric_limits<float>::epsilon()) {
+    return std::sqrt(d2);
+  }
+  return 0.0f;
+}
+
+inline Vec3f vnormalize(const Vec3f &a) {
+  float len = vlength(a);
+  return Vec3f({a[0] / len, a[1] / len, a[2] / len});
+}
+
+inline double vlength(const Vec3d &a) {
+  double d2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+  if (d2 > std::numeric_limits<double>::epsilon()) {
+    return std::sqrt(d2);
+  }
+  return 0.0;
+}
+
+inline Vec3d vnormalize(const Vec3d &a) {
+  double len = vlength(a);
+  return Vec3d({a[0] / len, a[1] / len, a[2] / len});
+}
+
+inline Vec3f vcross(const Vec3f &a, const Vec3f &b)
+{
+  Vec3f n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+inline Vec3f geometric_normal(const Vec3f &p0, const Vec3f &p1, const Vec3f &p2)
+{
+  // CCW
+  Vec3f n = vcross(p1 - p0, p2 - p0);
+
+  return vnormalize(n);
+}
+
+inline Vec3d vcross(const Vec3d &a, const Vec3d &b)
+{
+  Vec3d n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+inline Vec3d geometric_normal(const Vec3d &p0, const Vec3d &p1, const Vec3d &p2)
+{
+  // CCW
+  Vec3d n = vcross(p1 - p0, p2 - p0);
+
+  return vnormalize(n);
+}
+
 } // namespace math
 
 } // namespace tinyusdz
