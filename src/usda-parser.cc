@@ -1458,70 +1458,83 @@ class USDAParser {
       return false;
     }
 
-    auto pvar = _GetNodeArg(varname);
-    if (!pvar) {
+    auto pvardef = _GetNodeArg(varname);
+    if (!pvardef) {
       // This should not happen though;
       return false;
     }
 
-#if 0  // TODO
-    auto var = (*pvar);
+    auto vardef = (*pvardef);
 
-    if (var.IsValue()) {
-
-    } else if (var.IsObject()) {
-      std::map<std::string, Variable> dict;
-      if (!ParseDict(&dict)) {
-        _PushError(std::to_string(__LINE__) + " Failed to parse `" + varname +
-                   "`(dictionary type)\n");
+    if (vardef.type == "path") {
+      std::string value;
+      if (!ReadPathIdentifier(&value)) {
+        _PushError("Failed to parse path identifier");
         return false;
       }
 
-      std::cout << "var.type: " << var.type << ", name = " << varname << "\n";
-      Variable ret(var.type, varname);
-      ret.object = dict;
-      std::get<1>(*out) = ret;
+      Variable var;
+      var.value = value;
+      std::get<1>(*out) = var;
 
-    if (var.type == "path") {
-      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname +
-                 ", type " + var.type);
-      return false;
-
-    } else if (var.type == "path[]") {
+    } else if (vardef.type == "path[]") {
       std::vector<std::string> value;
       if (!ParsePathIdentifierArray(&value)) {
+        _PushError("Failed to parse array of path identifier");
+    
         std::cout << __LINE__ << " ParsePathIdentifierArray failed\n";
         return false;
       }
 
-      Variable ret(var.type);
+      Variable::Array arr;
       for (const auto &v : value) {
-        ret.array.push_back(v);
+        Variable var;
+        var.value = v;
+        arr.push_back(var);
       }
-      std::get<1>(*out) = ret;
 
-    } else if (var.type == "string") {
+      Variable var;
+      var.value = arr;
+
+      std::get<1>(*out) = var;
+
+    } else if (vardef.type == "ref[]") {
+      std::vector<AssetReference> value;
+      if (!ParseAssetReferenceArray(&value)) {
+        _PushError("Failed to parse array of assert reference");
+    
+        return false;
+      }
+
+      Variable::Array arr;
+      for (const auto &v : value) {
+        Variable var;
+        var.value = v;
+        arr.push_back(var);
+      }
+
+      Variable var;
+      var.value = arr;
+
+      std::get<1>(*out) = var;
+
+    } else if (vardef.type == "string") {
       std::string value;
       if (!ReadStringLiteral(&value)) {
         std::cout << __LINE__ << " ReadStringLiteral failed\n";
         return false;
       }
 
-      std::cout << "var.type: " << var.type << ", name = " << varname << "\n";
-      Variable ret(var.type, varname);
-      ret.value = value;
-      std::get<1>(*out) = ret;
-
-    } else if (var.type == "dictionary") {
+      std::cout << "vardef.type: " << vardef.type << ", name = " << varname << "\n";
+      Variable var;
+      var.value = value;
+      std::get<1>(*out) = var;
 
     } else {
-      _PushError(std::to_string(__LINE__) + " TODO: varname " + varname +
-                 ", type " + var.type);
+      PUSH_ERROR("TODO: varname " + varname + ", type " + vardef.type);
       return false;
     }
-#endif
 
-    _PushError(std::to_string(__LINE__) + "TODO");
     std::get<0>(*out) = qual;
 
     return true;
@@ -6230,6 +6243,7 @@ bool USDAParser::ReconstructGeomMesh(
       if (endsWith(asset_ref.asset_reference, ".obj")) {
         std::string err;
         GPrim gprim;
+        std::cout << "Reading .obj file: " << asset_ref.asset_reference << "\n";
         if (!usdObj::ReadObjFromFile(asset_ref.asset_reference, &gprim, &err)) {
           _PushError("Failed to read .obj(usdObj). err = " + err);
           return false;
