@@ -196,6 +196,26 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   }
 
   {
+    PrimAttrib attr;
+    attr.type_name = "int";
+    attr.buffer.data.resize(sizeof(int) * vertexIndices.size());
+    memcpy(attr.buffer.data.data(), vertexIndices.data(), sizeof(int) * vertexIndices.size());
+    attr.buffer.num_coords = 1;
+    attr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_INT;
+    prim->props["faceVertexIndices"] = attr;
+  }
+
+  {
+    PrimAttrib attr;
+    attr.type_name = "int";
+    attr.buffer.data.resize(sizeof(int) * vertexCounts.size());
+    memcpy(attr.buffer.data.data(), vertexCounts.data(), sizeof(int) * vertexCounts.size());
+    attr.buffer.num_coords = 1;
+    attr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_INT;
+    prim->props["faceVertexCounts"] = attr;
+  }
+
+  {
     PrimAttrib normalsAttr;
     normalsAttr.facevarying = true;
     normalsAttr.variability = VariabilityVarying;

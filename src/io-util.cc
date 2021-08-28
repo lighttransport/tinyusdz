@@ -259,6 +259,25 @@ std::string GetBaseDir(const std::string &filepath) {
   return "";
 }
 
+bool IsAbsPath(const std::string &filename) {
+  if (filename.size() > 0) {
+    if (filename[0] == '/') {
+      return true;
+    }
+  }
+
+  // UNC path?
+  if (filename.size() > 2) {
+    if ((filename[1] == '\\') && (filename[1] == '\\')) {
+      return true;
+    }
+  }
+
+  // TODO: Windows drive path(e.g. C:\, D:\, ...)
+
+  return false;
+}
+
 std::string JoinPath(const std::string &dir, const std::string &filename) {
   if (dir.empty()) {
     return filename;
