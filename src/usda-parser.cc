@@ -1120,13 +1120,13 @@ static bool ParseTupleThreaded(
 }
 #endif
 
-class USDAParser {
+class USDAParser::Impl {
  public:
   struct ParseState {
     int64_t loc{-1};  // byte location in StreamReder
   };
 
-  USDAParser(tinyusdz::StreamReader *sr) : _sr(sr) {
+  Impl(tinyusdz::StreamReader *sr) : _sr(sr) {
     _RegisterBuiltinMeta();
     _RegisterNodeTypes();
     _RegisterNodeArgs();
@@ -1463,7 +1463,7 @@ class USDAParser {
       std::vector<std::string> value;
       if (!ParsePathIdentifierArray(&value)) {
         _PushError("Failed to parse array of path identifier");
-    
+
         std::cout << __LINE__ << " ParsePathIdentifierArray failed\n";
         return false;
       }
@@ -1484,7 +1484,7 @@ class USDAParser {
       std::vector<AssetReference> value;
       if (!ParseAssetReferenceArray(&value)) {
         _PushError("Failed to parse array of assert reference");
-    
+
         return false;
       }
 
@@ -5062,7 +5062,7 @@ class USDAParser {
         parser.SetBaseDir(base_dir);
 
         {
-          bool ret = parser.Parse(LOAD_STATE_SUBLAYER);
+          bool ret = parser.Parse(tinyusdz::usda::LOAD_STATE_SUBLAYER);
 
           if (!ret) {
             std::cerr << "Failed to parse .usda: \n";
@@ -5707,7 +5707,7 @@ class USDAParser {
       }
     } else {
       // Store properties in intermediate format.
-      
+
       _props_map[path] = props;
     }
 
@@ -5744,13 +5744,6 @@ class USDAParser {
     (void)tokPath;
     return false;
   }
-
-  enum LoadState {
-    LOAD_STATE_TOPLEVEL,   // toplevel .usda input
-    LOAD_STATE_SUBLAYER,   // .usda is read by 'subLayers'
-    LOAD_STATE_REFERENCE,  // .usda is read by `references`
-    LOAD_STATE_PAYLOAD,    // .usda is read by `payload`
-  };
 
   ///
   /// Parser entry point
@@ -5988,7 +5981,7 @@ class USDAParser {
 };
 
 // == impl ==
-bool USDAParser::ReconstructXform(
+bool USDAParser::Impl::ReconstructXform(
       const std::map<std::string, Variable> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
       Xform *xform) {
@@ -6164,7 +6157,7 @@ bool USDAParser::ReconstructXform(
   return true;
 }
 
-bool USDAParser::ReconstructGeomSphere(
+bool USDAParser::Impl::ReconstructGeomSphere(
     const std::map<std::string, Variable> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomSphere *sphere) {
@@ -6212,7 +6205,7 @@ bool USDAParser::ReconstructGeomSphere(
   return true;
 }
 
-bool USDAParser::ReconstructGeomMesh(
+bool USDAParser::Impl::ReconstructGeomMesh(
     const std::map<std::string, Variable> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomMesh *mesh) {
@@ -6274,7 +6267,7 @@ bool USDAParser::ReconstructGeomMesh(
 }
 
 #if 0 // TODO
-bool USDAParser::ReconstructBasisCurves(
+bool USDAParser::Impl::ReconstructBasisCurves(
     const std::map<std::string, Variable> &properties,
     GeomBasisCurves *curves) {
   for (const auto &prop : properties) {
@@ -6312,7 +6305,7 @@ bool USDAParser::ReconstructBasisCurves(
 #endif
 
 // 'None'
-bool USDAParser::MaybeNone() {
+bool USDAParser::Impl::MaybeNone() {
   std::vector<char> buf;
 
   auto loc = CurrLoc();
@@ -6336,11 +6329,11 @@ bool USDAParser::MaybeNone() {
 //
 // Specializations
 //
-bool USDAParser::ReadBasicType(std::string *value) {
+bool USDAParser::Impl::ReadBasicType(std::string *value) {
   return ReadStringLiteral(value);
 }
 
-bool USDAParser::ReadBasicType(nonstd::optional<std::string> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<std::string> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -6355,7 +6348,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<std::string> *value) {
   return false;
 }
 
-bool USDAParser::ReadBasicType(bool *value) {
+bool USDAParser::Impl::ReadBasicType(bool *value) {
   std::stringstream ss;
 
   std::cout << "ReadBool\n";
@@ -6381,7 +6374,7 @@ bool USDAParser::ReadBasicType(bool *value) {
   }
 }
 
-bool USDAParser::ReadBasicType(nonstd::optional<bool> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<bool> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -6396,7 +6389,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<bool> *value) {
   return false;
 }
 
-bool USDAParser::ReadBasicType(int *value) {
+bool USDAParser::Impl::ReadBasicType(int *value) {
   std::stringstream ss;
 
   // std::cout << "ReadInt\n";
@@ -6476,7 +6469,7 @@ bool USDAParser::ReadBasicType(int *value) {
   return true;
 }
 
-bool USDAParser::ReadBasicType(uint64_t *value) {
+bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
   std::stringstream ss;
 
   // head character
@@ -6557,7 +6550,7 @@ bool USDAParser::ReadBasicType(uint64_t *value) {
   return true;
 }
 
-bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -6572,7 +6565,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<int> *value) {
   return false;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<Vec3f> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec3f> *out_value) {
   nonstd::optional<std::array<float, 3>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -6583,7 +6576,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<Vec3f> *out_value) {
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<float> *out_value) {
   nonstd::optional<float> value;
   if (!ReadBasicType(&value)) {
     return false;
@@ -6594,7 +6587,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<float> *out_value) {
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<double> *out_value) {
   nonstd::optional<double> value;
   if (!ReadBasicType(&value)) {
     return false;
@@ -6605,7 +6598,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<double> *out_value) {
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<Vec3d> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec3d> *out_value) {
   nonstd::optional<Vec3d> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -6616,7 +6609,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<Vec3d> *out_value) {
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(
+bool USDAParser::Impl::ReadTimeSampleData(
     std::vector<nonstd::optional<Vec3f>> *out_value) {
   std::vector<nonstd::optional<std::array<float, 3>>> value;
   if (!ParseTupleArray(&value)) {
@@ -6628,7 +6621,7 @@ bool USDAParser::ReadTimeSampleData(
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(
+bool USDAParser::Impl::ReadTimeSampleData(
     std::vector<nonstd::optional<Vec3d>> *out_value) {
   std::vector<nonstd::optional<std::array<double, 3>>> value;
   if (!ParseTupleArray(&value)) {
@@ -6640,7 +6633,7 @@ bool USDAParser::ReadTimeSampleData(
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(
+bool USDAParser::Impl::ReadTimeSampleData(
     std::vector<nonstd::optional<float>> *out_value) {
   std::vector<nonstd::optional<float>> value;
   if (!ParseBasicTypeArray(&value)) {
@@ -6652,7 +6645,7 @@ bool USDAParser::ReadTimeSampleData(
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(
+bool USDAParser::Impl::ReadTimeSampleData(
     std::vector<nonstd::optional<double>> *out_value) {
   std::vector<nonstd::optional<double>> value;
   if (!ParseBasicTypeArray(&value)) {
@@ -6664,7 +6657,7 @@ bool USDAParser::ReadTimeSampleData(
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(std::vector<Matrix4d> *out_value) {
   std::vector<Matrix4d> value;
   if (!ParseMatrix4dArray(&value)) {
     return false;
@@ -6675,7 +6668,7 @@ bool USDAParser::ReadTimeSampleData(std::vector<Matrix4d> *out_value) {
   return true;
 }
 
-bool USDAParser::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
   }
@@ -6690,7 +6683,7 @@ bool USDAParser::ReadTimeSampleData(nonstd::optional<Matrix4d> *out_value) {
   return true;
 }
 
-bool USDAParser::ReadBasicType(float *value) {
+bool USDAParser::Impl::ReadBasicType(float *value) {
   // -inf, inf, nan
   {
     float v;
@@ -6727,7 +6720,7 @@ bool USDAParser::ReadBasicType(float *value) {
   return true;
 }
 
-bool USDAParser::ReadBasicType(nonstd::optional<float> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<float> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -6742,7 +6735,7 @@ bool USDAParser::ReadBasicType(nonstd::optional<float> *value) {
   return false;
 }
 
-bool USDAParser::ReadBasicType(double *value) {
+bool USDAParser::Impl::ReadBasicType(double *value) {
   // -inf, inf, nan
   {
     double v;
@@ -6777,7 +6770,7 @@ bool USDAParser::ReadBasicType(double *value) {
   return true;
 }
 
-bool USDAParser::ReadBasicType(nonstd::optional<double> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<double> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -6792,37 +6785,46 @@ bool USDAParser::ReadBasicType(nonstd::optional<double> *value) {
   return false;
 }
 
-bool IsUSDA(const std::string &filename) {
+bool IsUSDA(const std::string &filename, size_t max_filesize) {
+  // TODO: Read only first N bytes
   std::vector<uint8_t> data;
-  {
-    // TODO(syoyo): Support UTF-8 filename
-    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
-    if (!ifs) {
-      std::cerr << "Failed to open file: " << filename << "\n";
-      return false;
-    }
+  std::string err;
 
-    // TODO(syoyo): Use mmap
-    ifs.seekg(0, ifs.end);
-    size_t sz = static_cast<size_t>(ifs.tellg());
-    if (int64_t(sz) < 0) {
-      // Looks reading directory, not a file.
-      std::cerr << "Looks like filename is a directory : \"" << filename
-                << "\"\n";
-      return false;
-    }
-
-    data.resize(sz);
-
-    ifs.seekg(0, ifs.beg);
-    ifs.read(reinterpret_cast<char *>(&data.at(0)),
-             static_cast<std::streamsize>(sz));
+  if (!io::ReadWholeFile(&data, &err, filename, max_filesize)) {
+    return false;
   }
 
   tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
   tinyusdz::usda::USDAParser parser(&sr);
 
   return parser.CheckHeader();
+}
+
+///
+/// -- USDAParser
+///
+USDAParser::USDAParser(StreamReader *sr) {
+  _impl = new Impl(sr);
+}
+
+USDAParser::~USDAParser() {
+  delete _impl;
+}
+
+bool USDAParser::CheckHeader() {
+  return _impl->CheckHeader();
+}
+
+bool USDAParser::Parse(LoadState state) {
+  return _impl->Parse(state);
+}
+
+void USDAParser::SetBaseDir(const std::string &dir) {
+  return _impl->SetBaseDir(dir);
+}
+
+std::string USDAParser::GetError() {
+  return _impl->GetError();
 }
 
 }  // namespace usda
@@ -6840,7 +6842,7 @@ int main(int argc, char **argv) {
   std::string filename = argv[1];
 
   std::string base_dir;
-  base_dir = tinyusdz::usda::GetBaseDir(filename);
+  base_dir = tinyusdz::io::GetBaseDir(filename);
 
   std::vector<uint8_t> data;
   {
