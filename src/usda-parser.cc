@@ -25,6 +25,7 @@
 #include <nonstd/expected.hpp>
 #include <nonstd/optional.hpp>
 #include <nonstd/variant.hpp>
+#include <mapbox/recursive_wrapper.hpp> // for recursive types
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -46,6 +47,13 @@
   ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
   ss << s; \
   _PushError(ss.str()); \
+} while(0)
+
+#define LOG_INFO(s) do { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s << "\n"; \
+  std::cout << ss.str() << "\n"; \
 } while(0)
 
 #if 0
@@ -341,8 +349,7 @@ using Value = nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f, double,
 
 namespace {
 
-#if 0
-std::string type_name(const Value &v) {
+std::string value_type_name(const Value &v) {
   // TODO: use nonstd::visit
   if (nonstd::get_if<bool>(&v)) {
     return "bool";
@@ -350,13 +357,36 @@ std::string type_name(const Value &v) {
     return "int";
   } else if (nonstd::get_if<float>(&v)) {
     return "float";
+  } else if (nonstd::get_if<Vec2f>(&v)) {
+    return "float2";
+  } else if (nonstd::get_if<Vec3f>(&v)) {
+    return "float3";
+  } else if (nonstd::get_if<Vec4f>(&v)) {
+    return "float4";
+  } else if (nonstd::get_if<double>(&v)) {
+    return "double";
+  } else if (nonstd::get_if<Vec2d>(&v)) {
+    return "double2";
+  } else if (nonstd::get_if<Vec3d>(&v)) {
+    return "double3";
+  } else if (nonstd::get_if<Vec4d>(&v)) {
+    return "double4";
+  } else if (nonstd::get_if<std::vector<Vec3f>>(&v)) {
+    return "float3[]";
+  } else if (nonstd::get_if<std::string>(&v)) {
+    return "string";
+  } else if (nonstd::get_if<AssetReference>(&v)) {
+    return "asset_ref";
+  } else if (nonstd::get_if<Path>(&v)) {
+    return "path";
+  } else if (nonstd::get_if<PathList>(&v)) {
+    return "path[]";
+  } else if (nonstd::get_if<Rel>(&v)) {
+    return "rel";
   } else {
     return "[[Unknown/unimplementef type for Value]]";
   }
 }
-#endif
-
-
 
 
 }  // namespace
@@ -389,15 +419,46 @@ class Variable {
   std::string name;
   bool custom{false};
 
-  // compound types
-  typedef std::vector<Variable> Array; // TODO: limit possible types to Value, TimeSamples or (nested) Array
-  typedef std::map<std::string, Variable> Object;
 
+  //typedef std::vector<Variable> Array; // TODO: limit possible types to Value, TimeSamples or (nested) Array
+  //typedef std::map<std::string, Variable> Object;
+
+  // Forward decl.
+  struct Array;
+  struct Object;
+
+  // (non)std::variant itself cannot handle recursive types.
+  // Use mapbox::recursive_wrapper to handle recursive types
   using ValueType =
-      nonstd::variant<nonstd::monostate, Value, TimeSamples, Array, Object>;
+      nonstd::variant<nonstd::monostate, Value, TimeSamples, mapbox::util::recursive_wrapper<Array>, mapbox::util::recursive_wrapper<Object>>;
   ValueType value;
 
-  std::string type_name(const Variable &v) {
+  // compound types
+  struct Array {
+    std::vector<Variable> values;
+  };
+
+  struct Object {
+    std::map<std::string, Variable> values;
+  };
+
+  Variable& operator=(const Variable &rhs) {
+    type = rhs.type;
+    name = rhs.name;
+    custom = rhs.custom;
+    value = rhs.value;
+
+    return *this;
+  }
+
+  Variable(const Variable &rhs) {
+    type = rhs.type;
+    name = rhs.name;
+    custom = rhs.custom;
+    value = rhs.value;
+  }
+
+  static std::string type_name(const Variable &v) {
     if (!v.type.empty()) {
       return v.type;
     }
@@ -408,10 +469,13 @@ class Variable {
     } else if (v.IsArray()) {
       // Assume all elements in array have all same type.
       std::string arr_type = "none";
-      for (const auto &item : *v.as_array()) {
-        std::string tname = type_name(item);
-        if (tname != "none") {
-          return tname + "[]";
+      auto parr = v.as_array();
+      if (parr) {
+        for (const auto &item : parr->values) {
+          std::string tname = Variable::type_name(item);
+          if (tname != "none") {
+            return tname + "[]";
+          }
         }
       }
 
@@ -431,8 +495,16 @@ class Variable {
       // ??? TimeSamples data contains all `None` values
       return ts_type;
 
-    } else {
+    } else if (v.IsValue()) {
+      const Value &_value = nonstd::get<Value>(v.value);
+
+      return value_type_name(_value);
+
+    } else if (v.IsEmpty()) {
       return "none";
+    } else {
+      std::cout << "IsArray " << v.IsArray() << ", " << ValueType::index_of<mapbox::util::recursive_wrapper<Array>>() << "\n";
+      return "[[Variable type Unknown. index = " + std::to_string(v.value.index()) + "]]";
     }
   }
 
@@ -449,19 +521,24 @@ class Variable {
 
   template <typename T>
   bool is() const {
-    return value.index() == Value::index_of<T>();
+    return value.index() == ValueType::index_of<T>();
   }
 
   bool IsEmpty() const { return is<nonstd::monostate>(); }
-
   bool IsValue() const { return is<Value>(); }
-  bool IsArray() const { return is<Array>(); }
-  bool IsObject() const { return is<Object>(); }
+  bool IsArray() const { return is<mapbox::util::recursive_wrapper<Array>>(); }
+  //bool IsArray() const {
+  //  auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
+  //
+  //  return p ? true: false;
+  //}
+
+  bool IsObject() const { return is<mapbox::util::recursive_wrapper<Object>>(); }
   bool IsTimeSamples() const { return is<TimeSamples>(); }
 
   const Array *as_array() const {
-    const auto p = nonstd::get_if<Array>(&value);
-    return p;
+    const auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
+    return p->get_pointer();
   }
 
   const Value *as_value() const {
@@ -470,8 +547,8 @@ class Variable {
   }
 
   const Object *as_object() const {
-    const auto p = nonstd::get_if<Object>(&value);
-    return p;
+    const auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
+    return p->get_pointer();
   }
 
   const TimeSamples *as_timesamples() const {
@@ -503,22 +580,35 @@ std::vector<std::pair<ListEditQual, AssetReference>> GetAssetReferences(
 
   auto var = std::get<1>(_var);
 
+  LOG_INFO("GetAssetReferences. var.name = " + var.name);
+
   if (var.IsArray()) {
-    for (const auto &v : *(var.as_array())) {
-      if (v.IsValue()) {
-        if (auto pref = nonstd::get_if<AssetReference>(v.as_value())) {
-          result.push_back({qual, *pref});
+    LOG_INFO("IsArray");
+    auto parr = var.as_array();
+    if (parr) {
+      LOG_INFO("parr");
+      for (const auto &v : parr->values) {
+        LOG_INFO("Maybe Value");
+        if (v.IsValue()) {
+          LOG_INFO("Maybe AssetReference");
+          if (auto pref = nonstd::get_if<AssetReference>(v.as_value())) {
+            LOG_INFO("Got it");
+            result.push_back({qual, *pref});
+          }
         }
       }
     }
-  }
-
-  if (var.IsValue()) {
+  } else if (var.IsValue()) {
+    LOG_INFO("IsValue");
     if (auto pv = var.as_value()) {
+      LOG_INFO("Maybe AssertReference");
       if (auto pas = nonstd::get_if<AssetReference>(pv)) {
+        LOG_INFO("Got it");
         result.push_back({qual, *pas});
       }
     }
+  } else {
+    LOG_INFO("Unknown var type: " + Variable::type_name(var));
   }
 
   return result;
@@ -558,7 +648,7 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
   ss << "{\n";
 
-  for (const auto &item : obj) {
+  for (const auto &item : obj.values) {
     if (item.second.IsObject()) {
       ss << Indent(indent + 1) << "dict " << item.first << " = ";
       std::string str = str_object(
@@ -1448,6 +1538,9 @@ class USDAParser::Impl {
 
     auto vardef = (*pvardef);
 
+    Variable var;
+    var.name = varname;
+
     if (vardef.type == "path") {
       std::string value;
       if (!ReadPathIdentifier(&value)) {
@@ -1455,9 +1548,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      Variable var;
       var.value = value;
-      std::get<1>(*out) = var;
 
     } else if (vardef.type == "path[]") {
       std::vector<std::string> value;
@@ -1470,15 +1561,13 @@ class USDAParser::Impl {
 
       Variable::Array arr;
       for (const auto &v : value) {
-        Variable var;
-        var.value = v;
-        arr.push_back(var);
+        std::cout << "  " << v << "\n";
+        Variable _var;
+        _var.value = v;
+        arr.values.push_back(_var);
       }
 
-      Variable var;
       var.value = arr;
-
-      std::get<1>(*out) = var;
 
     } else if (vardef.type == "ref[]") {
       std::vector<AssetReference> value;
@@ -1490,15 +1579,12 @@ class USDAParser::Impl {
 
       Variable::Array arr;
       for (const auto &v : value) {
-        Variable var;
-        var.value = v;
-        arr.push_back(var);
+        Variable _var;
+        _var.value = v;
+        arr.values.push_back(_var);
       }
 
-      Variable var;
       var.value = arr;
-
-      std::get<1>(*out) = var;
 
     } else if (vardef.type == "string") {
       std::string value;
@@ -1508,9 +1594,7 @@ class USDAParser::Impl {
       }
 
       std::cout << "vardef.type: " << vardef.type << ", name = " << varname << "\n";
-      Variable var;
       var.value = value;
-      std::get<1>(*out) = var;
 
     } else {
       PUSH_ERROR("TODO: varname " + varname + ", type " + vardef.type);
@@ -1518,6 +1602,7 @@ class USDAParser::Impl {
     }
 
     std::get<0>(*out) = qual;
+    std::get<1>(*out) = var;
 
     return true;
   }
@@ -1577,6 +1662,8 @@ class USDAParser::Impl {
       if (!ParseDefArg(&arg)) {
         return false;
       }
+
+      LOG_INFO("arg: list-edit qual = " + to_string(std::get<0>(arg)) + ", name = " + std::get<1>(arg).name);
 
       (*args)[std::get<1>(arg).name] = arg;
     }
@@ -1755,9 +1842,12 @@ class USDAParser::Impl {
             return false;
           }
 
+          Variable::Object d;
+          d.values = dict;
+
           Variable var;
           var.name = token;
-          var.value = dict;
+          var.value = d;
 
           assert(var.valid());
 
@@ -2135,7 +2225,7 @@ class USDAParser::Impl {
           if (item) {
             Variable v;
             v.value = (*item);
-            arr.push_back(v);
+            arr.values.push_back(v);
           } else {
             // TODO
           }
@@ -2435,8 +2525,11 @@ class USDAParser::Impl {
         return false;
       }
 
+      Variable::Object d;
+      d.values = dict;
+
       var.name = key_name;
-      var.value = dict;
+      var.value = d;
 
       std::cout << "Dict = " << var << "\n";
 
@@ -2697,7 +2790,7 @@ class USDAParser::Impl {
             } else {
               v.value = nonstd::monostate{};  // None
             }
-            arr.push_back(v);
+            arr.values.push_back(v);
           }
 
           std::cout << "add token[] primattr: " << primattr_name << "\n";
@@ -2762,7 +2855,7 @@ class USDAParser::Impl {
               std::cout << "None\n";
               v.value = nonstd::monostate{};
             }
-            arr.push_back(v);
+            arr.values.push_back(v);
           }
           Variable var;
           var.value = arr;
@@ -2885,7 +2978,7 @@ class USDAParser::Impl {
           for (size_t i = 0; i < values.size(); i++) {
             Variable v;
             v.value = values[i];
-            arr.push_back(v);
+            arr.values.push_back(v);
           }
 
           Variable var;
@@ -2935,7 +3028,7 @@ class USDAParser::Impl {
             } else {
               v.value = nonstd::monostate{};
             }
-            arr.push_back(v);
+            arr.values.push_back(v);
           }
 
           Variable var;
@@ -2995,7 +3088,7 @@ class USDAParser::Impl {
           for (size_t i = 0; i < values.size(); i++) {
             Variable v;
             v.value = values[i];
-            arr.push_back(v);
+            arr.values.push_back(v);
           }
 
           Variable var;
@@ -3043,7 +3136,7 @@ class USDAParser::Impl {
           for (size_t i = 0; i < values.size(); i++) {
             Variable v;
             v.value = values[i];
-            arr.push_back(v);
+            arr.values.push_back(v);
           }
 
           Variable var;
@@ -3092,7 +3185,7 @@ class USDAParser::Impl {
           for (size_t i = 0; i < values.size(); i++) {
             Variable v;
             v.value = values[i];
-            arr.push_back(v);
+            arr.values.push_back(v);
           }
 
           Variable var;
@@ -3784,12 +3877,21 @@ class USDAParser::Impl {
   /// Allow non-list version
   ///
   bool ParseAssetReferenceArray(std::vector<AssetReference> *result) {
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
     char c;
     if (!Char1(&c)) {
       return false;
     }
 
     if (c != '[') {
+
+      Rewind(1);
+
+      std::cout << "Guess non-list version\n";
       // Guess non-list version
       AssetReference ref;
       bool triple_deliminated{false};
@@ -4704,7 +4806,8 @@ class USDAParser::Impl {
       }
 
       if (s != '@') {
-        _PushError("AssetReference must start with '@'");
+        std::string sstr{s};
+        _PushError("AssetReference must start with '@', but got '" + sstr + "'");
         return false;
       }
 
@@ -4842,7 +4945,7 @@ class USDAParser::Impl {
                   << ", prim_path = " << values[i].prim_path << "\n";
         Variable v;
         v.value = values[i];
-        arr.push_back(v);
+        arr.values.push_back(v);
       }
 
       var.value = arr;
@@ -5004,12 +5107,16 @@ class USDAParser::Impl {
     std::vector<std::string> sublayers;
     if (varname == "subLayers") {
       if (var.IsArray()) {
-        auto arr = *var.as_array();
-        for (size_t i = 0; i < arr.size(); i++) {
-          if (arr[i].IsValue()) {
-            auto pv = arr[i].as_value();
-            if (auto p = nonstd::get_if<std::string>(pv)) {
-              sublayers.push_back(*p);
+        auto parr = var.as_array();
+
+        if (parr) {
+          auto arr = parr->values;
+          for (size_t i = 0; i < arr.size(); i++) {
+            if (arr[i].IsValue()) {
+              auto pv = arr[i].as_value();
+              if (auto p = nonstd::get_if<std::string>(pv)) {
+                sublayers.push_back(*p);
+              }
             }
           }
         }
@@ -5602,8 +5709,11 @@ class USDAParser::Impl {
     }
 
     std::vector<std::pair<ListEditQual, AssetReference>> references;
+    LOG_INFO("`references.count` = " + std::to_string(args.count("references")));
+
     if (args.count("references")) {
       references = GetAssetReferences(args["references"]);
+      LOG_INFO("`references.size` = " + std::to_string(references.size()));
     }
 
     std::map<std::string, Variable> props;
@@ -6043,52 +6153,55 @@ bool USDAParser::Impl::ReconstructXform(
 
     std::cout << "iterate prop.array"
               << "\n";
-    for (const auto &item : *prop.as_array()) {
-      const Value *pv = item.as_value();
-      if (auto ptarget = nonstd::get_if<std::string>(pv)) {
-        std::cout << "ptarget = " << (*ptarget) << "\n";
+    auto parr = prop.as_array();
+    if (parr) {
+      for (const auto &item : parr->values) {
+        const Value *pv = item.as_value();
+        if (auto ptarget = nonstd::get_if<std::string>(pv)) {
+          std::cout << "ptarget = " << (*ptarget) << "\n";
 
-        // remove double-quotation
-        std::string identifier = *ptarget;
-        identifier.erase(
-            std::remove(identifier.begin(), identifier.end(), '\"'),
-            identifier.end());
+          // remove double-quotation
+          std::string identifier = *ptarget;
+          identifier.erase(
+              std::remove(identifier.begin(), identifier.end(), '\"'),
+              identifier.end());
 
-        auto tup = Split(identifier);
-        auto basename = std::get<0>(tup);
-        auto suffix = std::get<1>(tup);
-        auto isTimeSampled = std::get<2>(tup);
-        (void)isTimeSampled;
+          auto tup = Split(identifier);
+          auto basename = std::get<0>(tup);
+          auto suffix = std::get<1>(tup);
+          auto isTimeSampled = std::get<2>(tup);
+          (void)isTimeSampled;
 
-        std::cout << "base = " << std::get<0>(tup)
-                  << ", suffix = " << std::get<1>(tup)
-                  << ", isTimeSampled = " << std::get<2>(tup) << "\n";
+          std::cout << "base = " << std::get<0>(tup)
+                    << ", suffix = " << std::get<1>(tup)
+                    << ", isTimeSampled = " << std::get<2>(tup) << "\n";
 
-        XformOp op;
+          XformOp op;
 
-        std::string target_name = basename;
-        if (!suffix.empty()) {
-          target_name += ":" + suffix;
-        }
+          std::string target_name = basename;
+          if (!suffix.empty()) {
+            target_name += ":" + suffix;
+          }
 
-        if (!properties.count(target_name)) {
-          _PushError("Property '" + target_name + "' not found in Xform node.");
-          return false;
-        }
+          if (!properties.count(target_name)) {
+            _PushError("Property '" + target_name + "' not found in Xform node.");
+            return false;
+          }
 
-        auto targetProp = properties.at(target_name);
+          auto targetProp = properties.at(target_name);
 
-        if (basename == "xformOp:rotateZ") {
-          std::cout << "basename is xformOp::rotateZ"
-                    << "\n";
-          if (auto p = nonstd::get_if<float>(&targetProp.value)) {
-            std::cout << "xform got it "
+          if (basename == "xformOp:rotateZ") {
+            std::cout << "basename is xformOp::rotateZ"
                       << "\n";
-            op.op = XformOp::OpType::ROTATE_Z;
-            op.suffix = suffix;
-            op.value = (*p);
+            if (auto p = nonstd::get_if<float>(&targetProp.value)) {
+              std::cout << "xform got it "
+                        << "\n";
+              op.op = XformOp::OpType::ROTATE_Z;
+              op.suffix = suffix;
+              op.value = (*p);
 
-            xform->xformOps.push_back(op);
+              xform->xformOps.push_back(op);
+            }
           }
         }
       }
@@ -6212,17 +6325,62 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   //
   // Resolve prepend references
   //
+  std::cout << "# of references = " << references.size() << "\n";
+
   for (const auto &ref : references) {
+    std::cout << "list-edit qual = " << to_string(std::get<0>(ref)) << "\n";
+
+    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+
     if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
       const AssetReference &asset_ref = std::get<1>(ref);
+
       if (endsWith(asset_ref.asset_reference, ".obj")) {
         std::string err;
         GPrim gprim;
-        std::cout << "Reading .obj file: " << asset_ref.asset_reference << "\n";
-        if (!usdObj::ReadObjFromFile(asset_ref.asset_reference, &gprim, &err)) {
+
+        // abs path.
+        std::string filepath = asset_ref.asset_reference;
+
+        if (io::IsAbsPath(asset_ref.asset_reference)) {
+          // do nothing
+        } else {
+          if (!_base_dir.empty()) {
+            filepath = io::JoinPath(_base_dir, filepath);
+          }
+        }
+
+        LOG_INFO("Reading .obj file: " + filepath);
+
+        if (!usdObj::ReadObjFromFile(filepath, &gprim, &err)) {
           _PushError("Failed to read .obj(usdObj). err = " + err);
           return false;
         }
+        LOG_INFO("Loaded .obj file: " + filepath);
+
+        if (gprim.props.count("points")) {
+          auto attr = gprim.props["points"];
+          if (auto p = attr.buffer.GetAsVec3fArray()) {
+            mesh->points = *p;
+          }
+        }
+
+        if (gprim.props.count("faceVertexIndices")) {
+          auto attr = gprim.props["faceVertexIndices"];
+          if (auto p = attr.buffer.GetAsInt32Array()) {
+            mesh->faceVertexIndices = *p;
+          }
+        }
+
+        if (gprim.props.count("faceVertexCounts")) {
+          auto attr = gprim.props["faceVertexCounts"];
+          if (auto p = attr.buffer.GetAsInt32Array()) {
+            mesh->faceVertexCounts = *p;
+          }
+        }
+
+      } else {
+        LOG_INFO("Not a .obj file");
       }
     }
   }

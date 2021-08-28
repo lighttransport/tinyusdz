@@ -18,29 +18,9 @@ int main(int argc, char **argv) {
   base_dir = tinyusdz::io::GetBaseDir(filename);
 
   std::vector<uint8_t> data;
-  {
-    // TODO(syoyo): Support UTF-8 filename
-    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
-    if (!ifs) {
-      std::cerr << "Failed to open file: " << filename << "\n";
-      return -1;
-    }
-
-    // TODO(syoyo): Use mmap
-    ifs.seekg(0, ifs.end);
-    size_t sz = static_cast<size_t>(ifs.tellg());
-    if (int64_t(sz) < 0) {
-      // Looks reading directory, not a file.
-      std::cerr << "Looks like filename is a directory : \"" << filename
-                << "\"\n";
-      return -1;
-    }
-
-    data.resize(sz);
-
-    ifs.seekg(0, ifs.beg);
-    ifs.read(reinterpret_cast<char *>(&data.at(0)),
-             static_cast<std::streamsize>(sz));
+  std::string err;
+  if (!tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */0)) {
+    std::cerr << "Failed to open file: " << filename << ":" << err << "\n";
   }
 
   tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);

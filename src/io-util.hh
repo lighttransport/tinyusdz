@@ -27,6 +27,7 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
 
 std::string GetBaseDir(const std::string &filepath);
 std::string JoinPath(const std::string &dir, const std::string &filename);
+bool IsAbsPath(const std::string &filepath);
 
 } // namespace io
 } // namespace tinyusdz
