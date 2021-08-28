@@ -3356,7 +3356,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
   bool has_connection{false};
 
   Variability variability{VariabilityVarying};
-  bool facevarying{false};
+  Interpolation interpolation{InterpolationInvalid};
 
   //
   // Parse properties
@@ -3403,12 +3403,19 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
     } else if ((fv.first == "interpolation") &&
                (fv.second.GetTypeName() == "Token")) {
       if (fv.second.GetToken() == "faceVarying") {
-        facevarying = true;
+        interpolation = InterpolationFaceVarying;
+      } else if (fv.second.GetToken() == "constant") {
+        interpolation = InterpolationConstant;
+      } else if (fv.second.GetToken() == "uniform") {
+        interpolation = InterpolationUniform;
+      } else if (fv.second.GetToken() == "vertex") {
+        interpolation = InterpolationVertex;
+      } else if (fv.second.GetToken() == "varying") {
+        interpolation = InterpolationVarying;
       }
     }
   }
 
-  attr->facevarying = facevarying;
   attr->variability = variability;
 
   //
@@ -3448,21 +3455,21 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
       } else if (fv.second.GetTypeName() == "Vec3f") {
         attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
                          /* stride */ sizeof(float), fv.second.GetData());
-        // attr->variability = variability;
-        // attr->facevarying = facevarying;
+        attr->variability = variability;
+        attr->interpolation = interpolation;
         success = true;
 
       } else if (fv.second.GetTypeName() == "FloatArray") {
         attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1,
                          /* stride */ sizeof(float), fv.second.GetData());
         attr->variability = variability;
-        attr->facevarying = facevarying;
+        attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "Vec2fArray") {
         attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2,
                          /* stride */ sizeof(float) * 2, fv.second.GetData());
         attr->variability = variability;
-        attr->facevarying = facevarying;
+        attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "Vec3fArray") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -3472,19 +3479,19 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
                          /* stride */ sizeof(float) * 3, fv.second.GetData());
         attr->variability = variability;
-        attr->facevarying = facevarying;
+        attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "Vec4fArray") {
         attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4,
                          /* stride */ sizeof(float) * 4, fv.second.GetData());
         attr->variability = variability;
-        attr->facevarying = facevarying;
+        attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "IntArray") {
         attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_INT, 1,
                          /* stride */ sizeof(int32_t), fv.second.GetData());
         attr->variability = variability;
-        attr->facevarying = facevarying;
+        attr->interpolation = interpolation;
         success = true;
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cout << "IntArray"
@@ -3691,13 +3698,8 @@ bool Parser::_ReconstructGeomBasisCurves(
               (attr.buffer.GetNumElements() == 2) &&
               (attr.buffer.GetNumCoords() == 3)) {
             if (auto p = attr.buffer.GetAsVec3fArray()) {
-              curves->extent.lower[0] = (*p)[0];
-              curves->extent.lower[1] = (*p)[1];
-              curves->extent.lower[2] = (*p)[2];
-
-              curves->extent.upper[0] = (*p)[3];
-              curves->extent.upper[1] = (*p)[4];
-              curves->extent.upper[2] = (*p)[5];
+              curves->extent.lower = (*p)[0];
+              curves->extent.upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {
@@ -3907,13 +3909,8 @@ bool Parser::_ReconstructGeomMesh(
               (attr.buffer.GetNumElements() == 2) &&
               (attr.buffer.GetNumCoords() == 3)) {
             if (auto p = attr.buffer.GetAsVec3fArray()) {
-              mesh->extent.lower[0] = (*p)[0];
-              mesh->extent.lower[1] = (*p)[1];
-              mesh->extent.lower[2] = (*p)[2];
-
-              mesh->extent.upper[0] = (*p)[3];
-              mesh->extent.upper[1] = (*p)[4];
-              mesh->extent.upper[2] = (*p)[5];
+              mesh->extent.lower = (*p)[0];
+              mesh->extent.upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {
@@ -5778,6 +5775,73 @@ bool Xform::EvaluateXformOps(Matrix4d *out_matrix) const {
 
   return true;
 }
+
+void GeomMesh::Initialize(const GPrim &gprim)
+{
+  name = gprim.name;
+  parent_id = gprim.parent_id;
+
+  for (auto &prop_item : gprim.props) {
+    std::string attr_name = std::get<0>(prop_item);
+    const PrimAttrib &attr = std::get<1>(prop_item);
+
+    if (attr_name == "points") {
+      if (auto p = attr.buffer.GetAsVec3fArray()) {
+        points = *p;
+      }
+    } else if (attr_name == "faceVertexIndices") {
+      if (auto p = attr.buffer.GetAsInt32Array()) {
+        faceVertexIndices = *p;
+      }
+    } else if (attr_name == "faceVertexCounts") {
+      if (auto p = attr.buffer.GetAsInt32Array()) {
+        faceVertexCounts = *p;
+      }
+    } else if (attr_name == "normals") {
+      if (auto p = attr.buffer.GetAsVec3fArray()) {
+        normals.buffer.Set(*p);
+        normals.interpolation = attr.interpolation;
+      }
+    } else if (attr_name == "velocitiess") {
+      if (auto p = attr.buffer.GetAsVec3fArray()) {
+        velocitiess.buffer.Set(*p);
+        velocitiess.interpolation = attr.interpolation;
+      }
+    } else if (attr_name == "primvars:uv") {
+      if (auto p = attr.buffer.GetAsVec2fArray()) {
+        st.buffer.Set(*p);
+        st.interpolation = attr.interpolation;
+      }
+    } else {
+      // Generic PrimAtrr
+      attribs[attr_name] = attr;
+    }
+    
+  }
+
+  doubleSided = gprim.doubleSided;
+  orientation = gprim.orientation;
+  visibility = gprim.visibility;
+  extent = gprim.extent;
+  purpose = gprim.purpose;
+
+  displayColor = gprim.displayColor;
+  displayOpacity = gprim.displayOpacity;
+
+#if 0 // TODO 
+
+
+  // PrimVar(TODO: Remove)
+  UVCoords st;
+
+  //
+  // Properties
+  //
+
+
+#endif
+
+};
 
 static_assert(sizeof(Index) == 4, "");
 static_assert(sizeof(Field) == 16, "");

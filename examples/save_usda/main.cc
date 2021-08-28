@@ -31,21 +31,13 @@ void DummyScene(tinyusdz::Scene *scene)
   mesh_node.type = tinyusdz::NODE_TYPE_GEOM_MESH;
   mesh_node.index = 0; // geom_meshes[0]
 
-  mesh.points.push_back(0.0f);
-  mesh.points.push_back(0.0f);
-  mesh.points.push_back(0.0f);
+  mesh.points.push_back({0.0f, 0.0f, 0.0f});
 
-  mesh.points.push_back(1.0f);
-  mesh.points.push_back(0.0f);
-  mesh.points.push_back(0.0f);
+  mesh.points.push_back({1.0f, 0.0f, 0.0f});
 
-  mesh.points.push_back(1.0f);
-  mesh.points.push_back(1.0f);
-  mesh.points.push_back(0.0f);
+  mesh.points.push_back({1.0f, 1.0f, 0.0f});
 
-  mesh.points.push_back(0.0f);
-  mesh.points.push_back(1.0f);
-  mesh.points.push_back(0.0f);
+  mesh.points.push_back({0.0f, 1.0f, 0.0f});
 
   // quad plane composed of 2 triangles.
   mesh.faceVertexCounts.push_back(3);

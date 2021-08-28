@@ -62,28 +62,28 @@ static void DumpNode(const tinyusdz::Node &node, int level) {
 
 static void DumpGeomMesh(const tinyusdz::GeomMesh &mesh, int level) {
   std::cout << indent(level) << "# of points: " << mesh.GetNumPoints() << "\n";
-  const std::vector<float> &points = mesh.points;
+  const std::vector<tinyusdz::Vec3f> &points = mesh.points;
 
   for (size_t i = 0; i < points.size(); i++) {
-    std::cout << points[i] << "\n";
+    std::cout << points[i][0] << ", " << points[i][1] << ", " << points[i][2] << "\n";
   }
 }
 
 static void DumpGeomCurves(const tinyusdz::GeomBasisCurves &curves, int level) {
   std::cout << indent(level) << "# of points: " << curves.points.size() << "\n";
-  const std::vector<float> &points = curves.points;
+  const std::vector<tinyusdz::Vec3f> &points = curves.points;
 
   for (size_t i = 0; i < points.size(); i++) {
-    std::cout << points[i] << "\n";
+    std::cout << points[i][0] << ", " << points[i][1] << ", " << points[i][2] << "\n";
   }
 }
 
 static void DumpGeomPoints(const tinyusdz::GeomPoints &pts, int level) {
   std::cout << indent(level) << "# of points: " << pts.points.size() << "\n";
-  const std::vector<float> &points = pts.points;
+  const std::vector<tinyusdz::Vec3f> &points = pts.points;
 
   for (size_t i = 0; i < points.size(); i++) {
-    std::cout << points[i] << "\n";
+    std::cout << points[i][0] << ", " << points[i][1] << ", " << points[i][2] << "\n";
   }
 }
 

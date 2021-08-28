@@ -6358,26 +6358,9 @@ bool USDAParser::Impl::ReconstructGeomMesh(
         }
         LOG_INFO("Loaded .obj file: " + filepath);
 
-        if (gprim.props.count("points")) {
-          auto attr = gprim.props["points"];
-          if (auto p = attr.buffer.GetAsVec3fArray()) {
-            mesh->points = *p;
-          }
-        }
-
-        if (gprim.props.count("faceVertexIndices")) {
-          auto attr = gprim.props["faceVertexIndices"];
-          if (auto p = attr.buffer.GetAsInt32Array()) {
-            mesh->faceVertexIndices = *p;
-          }
-        }
-
-        if (gprim.props.count("faceVertexCounts")) {
-          auto attr = gprim.props["faceVertexCounts"];
-          if (auto p = attr.buffer.GetAsInt32Array()) {
-            mesh->faceVertexCounts = *p;
-          }
-        }
+        mesh->visibility = gprim.visibility;
+        mesh->doubleSided = gprim.doubleSided;
+        mesh->orientation = gprim.orientation;
 
       } else {
         LOG_INFO("Not a .obj file");
