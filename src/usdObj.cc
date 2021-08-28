@@ -217,7 +217,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     PrimAttrib normalsAttr;
-    normalsAttr.facevarying = true;
+    normalsAttr.interpolation = InterpolationFaceVarying;
     normalsAttr.variability = VariabilityVarying;
     normalsAttr.type_name = "float3";
     normalsAttr.buffer.data.resize(sizeof(Vec3f) * facevaryingNormals.size());
@@ -229,14 +229,14 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     PrimAttrib texcoordsAttr;
-    texcoordsAttr.facevarying = true;
+    texcoordsAttr.interpolation = InterpolationFaceVarying;
     texcoordsAttr.variability = VariabilityVarying;
     texcoordsAttr.type_name = "float2";
     texcoordsAttr.buffer.data.resize(sizeof(Vec2f) * facevaryingTexcoords.size());
     memcpy(texcoordsAttr.buffer.data.data(), facevaryingTexcoords.data(), sizeof(Vec3f) * facevaryingTexcoords.size());
     texcoordsAttr.buffer.num_coords = 2;
     texcoordsAttr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT;
-    prim->props["texcoords"] = texcoordsAttr;
+    prim->props["prmvars:uv"] = texcoordsAttr;
   }
 
   // TODO: read skin weight/indices

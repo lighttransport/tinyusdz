@@ -176,7 +176,27 @@ std::string PrintVec3fArray(const std::vector<Vec3f> &data)
 }
 #endif
 
-std::string PrintVec3fArray(const std::vector<float> &data) {
+std::string PrintVec3fArray(const std::vector<Vec3f> &data) {
+  std::stringstream ofs;
+
+  ofs << "[";
+  // TODO: Use ryu print?
+  for (size_t i = 0; i < data.size(); i++) {
+    ofs << "(" << data[i][0] << ", " << data[i][1] << ", "
+        << data[i][2] << ")";
+
+    if (i != (data.size() - 1)) {
+      ofs << ", ";
+    }
+  }
+  ofs << "]";
+
+  return ofs.str();
+}
+
+
+#if 0
+std::string PrintAsVec3fArray(const std::vector<float> &data) {
   std::stringstream ofs;
 
   if ((data.size() % 3) != 0) {
@@ -197,6 +217,7 @@ std::string PrintVec3fArray(const std::vector<float> &data) {
 
   return ofs.str();
 }
+#endif
 
 class Writer {
  public:
@@ -229,16 +250,15 @@ class Writer {
         << "point3f[] points = " << PrintVec3fArray(mesh.points) << "\n";
 
     if (auto p = mesh.normals.buffer.GetAsVec3fArray()) {
-      std::vector<float> normals = (*p);
+      std::vector<Vec3f> normals = (*p);
 
       if (normals.size()) {
         ofs << Indent(level + 1)
             << "normal3f[] normals = " << PrintVec3fArray(normals);
 
-        // Currently we only support `facevarying` for interpolation
-        if (mesh.normals.facevarying) {
+        if (mesh.normals.interpolation != InterpolationInvalid) {
           ofs << Indent(level + 2) << "(\n";
-          ofs << Indent(level + 3) << "interpolation = \"faceVarying\"\n";
+          ofs << Indent(level + 3) << "interpolation = \"" << to_string(mesh.normals.interpolation) << "\"\n";
           ofs << Indent(level + 2) << ")\n";
         } else {
           ofs << "\n";

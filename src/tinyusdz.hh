@@ -679,6 +679,33 @@ enum SubdivisionScheme {
   SubdivisionSchemeNone
 };
 
+// Attribute interpolation
+enum Interpolation {
+  InterpolationInvalid, // 0
+  InterpolationConstant, // "constant"
+  InterpolationUniform, // "uniform"
+  InterpolationVarying, // "varying"
+  InterpolationVertex, // "vertex"
+  InterpolationFaceVarying, // "faceVarying"
+};
+
+inline std::string to_string(Interpolation interp) {
+  switch (interp) {
+    case InterpolationInvalid:
+      return "[[Invalid interpolation value]]";
+    case InterpolationConstant:
+      return "constant";
+    case InterpolationUniform:
+      return "uniform";
+    case InterpolationVarying:
+      return "varying";
+    case InterpolationVertex:
+      return "vertex";
+    case InterpolationFaceVarying:
+      return "faceVarying";
+  }
+}
+
 // For PrimSpec
 enum Specifier {
   SpecifierDef,  // 0
@@ -1521,6 +1548,34 @@ struct BufferData {
   // Utility functions
   //
 
+  void Set(const std::vector<Vec2f> &v) {
+    data.resize(v.size() * sizeof(Vec2f)); 
+    memcpy(data.data(), v.data(), sizeof(Vec2f) * v.size());
+
+    data_type = BUFFER_DATA_TYPE_FLOAT;
+    num_coords = 2;
+    stride = sizeof(Vec2f);
+  }
+
+  void Set(const std::vector<Vec3f> &v) {
+    data.resize(v.size() * sizeof(Vec3f)); 
+    memcpy(data.data(), v.data(), sizeof(Vec3f) * v.size());
+
+    data_type = BUFFER_DATA_TYPE_FLOAT;
+    num_coords = 3;
+    stride = sizeof(Vec3f);
+  }
+
+
+  void Set(const std::vector<int> &v) {
+    data.resize(v.size() * sizeof(int)); 
+    memcpy(data.data(), v.data(), sizeof(int) * v.size());
+
+    data_type = BUFFER_DATA_TYPE_INT;
+    num_coords = 1;
+    stride = sizeof(Vec3f);
+  }
+
   nonstd::optional<float> GetAsFloat() const {
     if (((GetStride() == 0) || (GetStride() == sizeof(float))) &&
         (GetNumCoords() == 1) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT) &&
@@ -1606,13 +1661,13 @@ struct BufferData {
     return nonstd::nullopt;
   }
 
-  nonstd::optional<std::vector<float>> GetAsVec2fArray() const {
+  nonstd::optional<std::vector<Vec2f>> GetAsVec2fArray() const {
 
     if (((GetStride() == 0) || (GetStride() == 2 * sizeof(float))) &&
         (GetNumCoords() == 2) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      std::vector<float> buf;
-      buf.resize(GetNumElements() * 2);
-      memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+      std::vector<Vec2f> buf;
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(Vec2f));
 
       return std::move(buf);
     }
@@ -1620,7 +1675,7 @@ struct BufferData {
     return nonstd::nullopt;
   }
 
-  nonstd::optional<std::vector<float>> GetAsVec3fArray() const {
+  nonstd::optional<std::vector<Vec3f>> GetAsVec3fArray() const {
 
     // std::cout << "stride = " << GetStride() << ", num_coords = " <<
     // GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " <<
@@ -1628,9 +1683,9 @@ struct BufferData {
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
         (GetNumCoords() == 3) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      std::vector<float> buf;
-      buf.resize(GetNumElements() * 3);
-      memcpy(buf.data(), data.data(), buf.size() * sizeof(float));
+      std::vector<Vec3f> buf;
+      buf.resize(GetNumElements());
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(Vec3f));
 
       return std::move(buf);
     }
@@ -1638,13 +1693,13 @@ struct BufferData {
     return nonstd::nullopt;
   }
 
-  nonstd::optional<std::vector<float>> GetAsVec4fArray() const {
+  nonstd::optional<std::vector<Vec4f>> GetAsVec4fArray() const {
 
     if (((GetStride() == 0) || (GetStride() == 4 * sizeof(float))) &&
         (GetNumCoords() == 4) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      std::vector<float> buf;
+      std::vector<Vec4f> buf;
       buf.resize(GetNumElements());
-      memcpy(buf.data(), data.data(), buf.size() * 4 * sizeof(float));
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(Vec4f));
 
       return std::move(buf);
     }
@@ -1674,7 +1729,8 @@ struct PrimAttrib {
   // For array data types(e.g. FloatArray)
   BufferData buffer;  // raw buffer data
   Variability variability;
-  bool facevarying{false};
+  //bool facevarying{false}; // TODO: Deprecate
+  Interpolation interpolation{InterpolationInvalid};
 
   // For basic types(e.g. Bool, Float).
 
@@ -1839,6 +1895,7 @@ struct Xform {
 struct UVCoords {
   std::string name;
   BufferData buffer;
+  Interpolation interpolation{InterpolationVertex};
   Variability variability;
 
   // non-empty when UV has its own indices.
@@ -2063,12 +2120,12 @@ struct GeomBasisCurves {
   //
   // Predefined attribs.
   //
-  std::vector<float> points;   // float3
-  std::vector<float> normals;  // normal3f
+  std::vector<Vec3f> points;   
+  std::vector<Vec3f> normals;  // normal3f
   std::vector<int> curveVertexCounts;
   std::vector<float> widths;
-  std::vector<float> velocities;     // vector3f
-  std::vector<float> accelerations;  // vector3f
+  std::vector<Vec3f> velocities;     // vector3f
+  std::vector<Vec3f> accelerations;  // vector3f
 
   //
   // Properties
@@ -2101,12 +2158,12 @@ struct GeomPoints {
   //
   // Predefined attribs.
   //
-  std::vector<float> points;   // float3
-  std::vector<float> normals;  // normal3f
+  std::vector<Vec3f> points;   // float3
+  std::vector<Vec3f> normals;  // normal3f
   std::vector<float> widths;
   std::vector<int64_t> ids;          // per-point ids
-  std::vector<float> velocities;     // vector3f
-  std::vector<float> accelerations;  // vector3f
+  std::vector<Vec3f> velocities;     // vector3f
+  std::vector<Vec3f> accelerations;  // vector3f
 
   //
   // Properties
@@ -2199,8 +2256,11 @@ struct GPrim {
   int64_t parent_id{-1};  // Index to parent node
 
   // Gprim
+  Extent extent;  // bounding extent(in local coord?).
   bool doubleSided{false};
   Orientation orientation{OrientationRightHanded};
+  Visibility visibility{VisibilityInherited};
+  Purpose purpose{PurposeDefault};
   std::vector<Vec3f> displayColor; // primvars:displayColor
   std::vector<float> displayOpacity; // primvars:displaOpacity
 
@@ -2218,12 +2278,18 @@ struct GeomMesh {
   //
   // Predefined attribs.
   //
-  std::vector<float> points;  // float3
-  PrimAttrib normals;         // Usually float3[], varying
+  std::vector<Vec3f> points;  // point3f
+  PrimAttrib normals;         // float3f[]
 
   //
   // Utility functions
   //
+
+  // Initialize GeomMesh by GPrim(prepend references)
+  void Initialize(const GPrim &pprim);
+
+  // Update GeomMesh by GPrim(append references)
+  void UpdateBy(const GPrim &pprim);
 
   size_t GetNumPoints() const;
   size_t GetNumFacevaryingNormals() const;
@@ -2236,7 +2302,7 @@ struct GeomMesh {
   // Return false if `texcoords` is neither float2[] type nor `varying`
   bool GetFacevaryingTexcoords(std::vector<float> *v) const;
 
-  // PrimVar(TODO: Remove)
+  // Primary UV coords(TODO: Remove. Read uv coords through PrimVarReader)
   UVCoords st;
 
   PrimAttrib velocitiess;  // Usually float3[], varying
