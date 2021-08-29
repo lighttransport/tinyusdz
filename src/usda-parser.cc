@@ -50,9 +50,7 @@
 } while(0)
 
 #define SLOG_INFO do { \
-  std::ostringstream ss; \
   std::cout << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  std::cout << ss.str(); \
 } while(0); std::cout
 
 #define LOG_INFO(s) do { \
@@ -142,20 +140,37 @@ std::string to_string(Extent e) {
   return ss.str();
 }
 
-std::string to_string(const Klass &klass) {
+std::string to_string(const Klass &klass, uint32_t indent = 0) {
   std::stringstream ss;
 
-  for (const auto &value : klass.value_map) {
-    ss << value.first << " = ";
+  ss << Indent(indent) << "class " << klass.name << " (\n";
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
 
-    if (auto p = nonstd::any_cast<double>(&value.second)) {
-      ss << *p << "\n";
-    } else {
-      ss << "[[Unknown/Unsupported Type]]\n";
+  for (auto prop : klass.props) {
+
+
+    if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+        SLOG_INFO << "TODO: Rel\n";
+    } else if (auto pattr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+      if (auto p = nonstd::any_cast<double>(&pattr->value)) {
+        ss << Indent(indent);
+        if (pattr->custom) {
+          ss << " custom ";
+        }
+        if (pattr->uniform) {
+          ss << " uniform ";
+        }
+        ss << " double " << prop.first << " = " << *p;
+      } else {
+        SLOG_INFO << "TODO:" << pattr->type_name << "\n";
+      }
     }
 
     ss << "\n";
   }
+
+  ss << Indent(indent) << "}\n";
 
   return ss.str();
 }
@@ -345,11 +360,6 @@ struct ErrorDiagnositc {
 // typedef std::array<double, 2> double2;
 // typedef std::array<double, 3> double3;
 // typedef std::array<double, 4> double4;
-
-struct AssetReference {
-  std::string asset_reference;
-  std::string prim_path;
-};
 
 struct Path {
   std::string path;
@@ -2598,6 +2608,74 @@ class USDAParser::Impl {
     return (tok == "custom");
   }
 
+  template<typename T>
+  bool _ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name, PrimAttrib *out_attr) {
+
+    PrimAttrib attr;
+
+    attr.basic_type = TypeTrait<T>::type_name;
+
+    if (array_qual) {
+      if (TypeTrait<T>::type_name == "bool") {
+        _PushError("Array of bool type is not supported.");
+        return false;
+      } else {
+        std::vector<T> value;
+        if (!ParseBasicTypeArray(&value)) {
+          _PushError("Failed to parse " + std::string(TypeTrait<T>::type_name) + " array.\n");
+          return false;
+        }
+
+        //attr.buffer.Set(value);
+        attr.value = value;
+      }
+
+    } else if (hasConnect(primattr_name)) {
+      std::string value;  // TODO: Path
+      if (!ReadPathIdentifier(&value)) {
+        _PushError("Failed to parse path identifier for `token`.\n");
+        return false;
+      }
+      std::cout << "Path identifier = " << value << "\n";
+      PUSH_ERROR("TODO:" + primattr_name);
+      return false;
+    } else {
+      nonstd::optional<T> value;
+      if (!ReadBasicType(&value)) {
+        _PushError("Failed to parse " + std::string(TypeTrait<T>::type_name) + " .\n");
+        return false;
+      }
+
+      if (value) {
+        std::cout << TypeTrait<T>::type_name << " = " << *value << "\n";
+      } else {
+        std::cout << TypeTrait<T>::type_name << " = None\n";
+      }
+
+      attr.value = *value;
+    }
+
+    // optional: interpolation parameter
+    std::map<std::string, Variable> meta;
+    if (!ParseAttrMeta(&meta)) {
+      _PushError("Failed to parse PrimAttrib meta.");
+      return false;
+    }
+
+    if (meta.count("interpolation")) {
+      auto p = meta.at("interpolation").cast<std::string>();
+      if (p) {
+        if (auto v = wise_enum::from_string<Interpolation>(*p)) {
+          attr.interpolation = *v;
+        }
+      }
+    }
+
+    (*out_attr) = std::move(attr);
+
+    return true;
+  }
+
   //bool ParsePrimAttr(std::map<std::string, Variable> *props) {
   bool ParsePrimAttr(std::map<std::string, Property> *props) {
     // prim_attr : (custom?) uniform type (array_qual?) name '=' value
@@ -2766,70 +2844,55 @@ class USDAParser::Impl {
       return false;
 
     } else {
-      if (type_name == "float") {
 
-        PrimAttrib attr;
+      PrimAttrib attr;
 
-        if (array_qual) {
-          std::vector<float> value;
-          if (!ParseBasicTypeArray(&value)) {
-            _PushError("Failed to parse float array.\n");
-          }
-          std::cout << "float = \n";
-
-          attr.buffer.Set(value);
-
-        } else if (hasConnect(primattr_name)) {
-          std::string value;  // TODO: Path
-          if (!ReadPathIdentifier(&value)) {
-            _PushError("Failed to parse path identifier for `token`.\n");
-            return false;
-          }
-          std::cout << "Path identifier = " << value << "\n";
-          PUSH_ERROR("TODO");
-        } else {
-          nonstd::optional<float> value;
-          if (!ReadBasicType(&value)) {
-            _PushError("Failed to parse float.\n");
-          }
-
-          if (value) {
-            std::cout << "float = " << *value << "\n";
-          } else {
-            std::cout << "float = None\n";
-          }
-
-          attr.basic_type = "float";
-          attr.floatVal = *value;
-
-          (*props)[primattr_name] = attr;
+      if (type_name == "bool") {
+        if (!_ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
+          return false;
         }
-
-        // optional: interpolation parameter
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttrib meta.");
+      } else if (type_name == "float") {
+        if (!_ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "double") {
+        if (!_ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "string") {
+        if (!_ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "token") {
+        if (!_ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "float2") {
+        if (!_ParseBasicPrimAttr<Vec2f>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "float3") {
+        if (!_ParseBasicPrimAttr<Vec3f>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "matrix4d") {
+        Matrix4d m;
+        if (!ParseMatrix4d(m.m)) {
+          _PushError("Failed to parse value with type `matrix4d`.\n");
           return false;
         }
 
-
-        if (meta.count("interpolation")) {
-          auto p = meta.at("interpolation").cast<std::string>();
-          if (p) {
-            if (auto v = wise_enum::from_string<Interpolation>(*p)) {
-              attr.interpolation = *v;
-            }
-          }
-        }
-
-        attr.custom = custom_qual;
-        attr.uniform = uniform_qual;
-
-        (*props)[primattr_name] = attr;
+        attr.value = m;
       } else {
-        PUSH_ERROR("TODO");
+        PUSH_ERROR("TODO: type = " + type_name);
         return false;
       }
+
+      attr.custom = custom_qual;
+      attr.uniform = uniform_qual;
+      attr.name = primattr_name;
+
+      (*props)[primattr_name] = attr;
 
 #if 0 // TODO
       if (type_name == "matrix4d") {
@@ -5645,7 +5708,7 @@ class USDAParser::Impl {
     Klass klass;
     for (const auto &prop : props) {
       // TODO: list-edit qual
-      klass.value_map[prop.first] = prop.second;
+      klass.props[prop.first] = prop.second;
     }
 
     std::cout << to_string(klass) << "\n";

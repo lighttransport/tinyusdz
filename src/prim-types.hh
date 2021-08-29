@@ -19,6 +19,12 @@
 
 namespace tinyusdz {
 
+struct AssetReference {
+  std::string asset_reference;
+  std::string prim_path;
+};
+
+
 //
 // Colum-major order(e.g. employed in OpenGL).
 // For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to the translation.
@@ -229,6 +235,12 @@ template <>
 struct TypeTrait<std::string> {
   static constexpr auto type_name = "string";
   static constexpr ValueTypeId type_id = VALUE_TYPE_STRING;
+};
+
+template <>
+struct TypeTrait<bool> {
+  static constexpr auto type_name = "bool";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_BOOL;
 };
 
 template <>
