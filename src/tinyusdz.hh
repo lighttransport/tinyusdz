@@ -1556,6 +1556,11 @@ struct BufferData {
   // Utility functions
   //
 
+  void Set(const std::vector<bool> &v) {
+    // Not supported
+    (void)v;
+  }
+
   void Set(const std::vector<float> &v) {
     data.resize(v.size() * sizeof(float));
     memcpy(data.data(), v.data(), sizeof(float) * v.size());
@@ -1563,6 +1568,15 @@ struct BufferData {
     data_type = BUFFER_DATA_TYPE_FLOAT;
     num_coords = 1;
     stride = sizeof(float);
+  }
+
+  void Set(const std::vector<double> &v) {
+    data.resize(v.size() * sizeof(double));
+    memcpy(data.data(), v.data(), sizeof(double) * v.size());
+
+    data_type = BUFFER_DATA_TYPE_DOUBLE;
+    num_coords = 1;
+    stride = sizeof(double);
   }
 
   void Set(const std::vector<Vec2f> &v) {
@@ -1748,6 +1762,8 @@ struct PrimAttrib {
 
   std::string type_name;  // name of attrib type(e.g. "float', "color3f")
 
+  ListEditQual list_edit{LIST_EDIT_QUAL_RESET_TO_EXPLICIT};
+
   // For array data types(e.g. FloatArray)
   BufferData buffer;  // raw buffer data
   Variability variability;
@@ -1861,13 +1877,15 @@ Matrix4d GetTransform(XformOp xform);
 
 
 // Generic "class" Node
+// Mostly identical to GPrim
 struct Klass {
 
   std::string name;
   int64_t parent_id{-1};  // Index to parent node
 
-  // Generic type-less Value using any-lite
-  std::map<std::string, nonstd::any> value_map;
+  std::vector<std::pair<ListEditQual, AssetReference>> references;
+
+  std::map<std::string, Property> props;
 };
 
 struct MaterialBindingAPI
