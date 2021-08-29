@@ -5847,7 +5847,11 @@ static_assert(sizeof(Index) == 4, "");
 static_assert(sizeof(Field) == 16, "");
 static_assert(sizeof(Spec) == 12, "");
 static_assert(sizeof(Vec4h) == 8, "");
+static_assert(sizeof(Vec2f) == 8, "");
+static_assert(sizeof(Vec3f) == 12, "");
 static_assert(sizeof(Vec4f) == 16, "");
+static_assert(sizeof(Vec2d) == 16, "");
+static_assert(sizeof(Vec3d) == 24, "");
 static_assert(sizeof(Vec4d) == 32, "");
 static_assert(sizeof(Matrix4d) == (8 * 16), "");
 

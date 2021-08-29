@@ -49,7 +49,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
 #include "nonstd/variant.hpp"
+#include "nonstd/string_view.hpp"
 
+// Cannot use std::string as WISE_ENUM_STRING_TYPE so use nonstd::string_view
+#define WISE_ENUM_STRING_TYPE nonstd::string_view
+#include "wise_enum/wise_enum.h"
 
 // Disable RTTI and Exception
 #define any_CONFIG_NO_EXCEPTIONS (1)
@@ -193,13 +197,13 @@ using Quatd = Quat<double>;
 
 #endif
 
-enum ListEditQual {
+WISE_ENUM(ListEditQual,
   LIST_EDIT_QUAL_RESET_TO_EXPLICIT,	// "unqualified"(no qualifier)
   LIST_EDIT_QUAL_APPEND, // "append"
   LIST_EDIT_QUAL_ADD, // "add"
   LIST_EDIT_QUAL_DELETE, // "delete"
   LIST_EDIT_QUAL_PREPEND // "prepend"
-};
+)
 
 enum Axis {
   AXIS_X,
@@ -207,22 +211,22 @@ enum Axis {
   AXIS_Z
 };
 
-inline static std::string to_string(ListEditQual qual)
-{
-  if (qual == LIST_EDIT_QUAL_RESET_TO_EXPLICIT) {
-    return "";
-  } else if (qual == LIST_EDIT_QUAL_APPEND) {
-    return "append";
-  } else if (qual == LIST_EDIT_QUAL_ADD) {
-    return "add";
-  } else if (qual == LIST_EDIT_QUAL_PREPEND) {
-    return "prepend";
-  } else if (qual == LIST_EDIT_QUAL_DELETE) {
-    return "delete";
-  } else {
-    return "??? invalid ListEditQual";
-  }
-}
+//inline static std::string to_string(ListEditQual qual)
+//{
+//  if (qual == LIST_EDIT_QUAL_RESET_TO_EXPLICIT) {
+//    return "";
+//  } else if (qual == LIST_EDIT_QUAL_APPEND) {
+//    return "append";
+//  } else if (qual == LIST_EDIT_QUAL_ADD) {
+//    return "add";
+//  } else if (qual == LIST_EDIT_QUAL_PREPEND) {
+//    return "prepend";
+//  } else if (qual == LIST_EDIT_QUAL_DELETE) {
+//    return "delete";
+//  } else {
+//    return "??? invalid ListEditQual";
+//  }
+//}
 
 template <typename T>
 class ListOp {
@@ -639,8 +643,8 @@ struct ValueType {
 
 #endif
 
-enum SpecType {
-  SpecTypeUnknown = 0,
+WISE_ENUM(SpecType,
+  SpecTypeUnknown,
   SpecTypeAttribute,
   SpecTypeConnection,
   SpecTypeExpression,
@@ -653,41 +657,42 @@ enum SpecType {
   SpecTypeVariant,
   SpecTypeVariantSet,
   NumSpecTypes
-};
+)
 
-enum Orientation {
+WISE_ENUM(Orientation,
   OrientationRightHanded,  // 0
   OrientationLeftHanded
-};
+)
 
-enum Visibility {
+WISE_ENUM(Visibility,
   VisibilityInherited,  // 0
   VisibilityInvisible
-};
+)
 
-enum Purpose {
+WISE_ENUM(Purpose,
   PurposeDefault,  // 0
   PurposeRender,
   PurposeProxy,
   PurposeGuide
-};
+)
 
-enum SubdivisionScheme {
+WISE_ENUM(SubdivisionScheme,
   SubdivisionSchemeCatmullClark,  // 0
   SubdivisionSchemeLoop,
   SubdivisionSchemeBilinear,
   SubdivisionSchemeNone
-};
+)
 
 // Attribute interpolation
-enum Interpolation {
+WISE_ENUM(Interpolation,
   InterpolationInvalid, // 0
   InterpolationConstant, // "constant"
   InterpolationUniform, // "uniform"
   InterpolationVarying, // "varying"
   InterpolationVertex, // "vertex"
-  InterpolationFaceVarying, // "faceVarying"
-};
+  InterpolationFaceVarying // "faceVarying"
+)
+
 
 inline std::string to_string(Interpolation interp) {
   switch (interp) {
@@ -704,6 +709,9 @@ inline std::string to_string(Interpolation interp) {
     case InterpolationFaceVarying:
       return "faceVarying";
   }
+
+  // Never reach here though
+  return "[[Invalid interpolation value]]";
 }
 
 // For PrimSpec
@@ -1548,8 +1556,17 @@ struct BufferData {
   // Utility functions
   //
 
+  void Set(const std::vector<float> &v) {
+    data.resize(v.size() * sizeof(float));
+    memcpy(data.data(), v.data(), sizeof(float) * v.size());
+
+    data_type = BUFFER_DATA_TYPE_FLOAT;
+    num_coords = 1;
+    stride = sizeof(float);
+  }
+
   void Set(const std::vector<Vec2f> &v) {
-    data.resize(v.size() * sizeof(Vec2f)); 
+    data.resize(v.size() * sizeof(Vec2f));
     memcpy(data.data(), v.data(), sizeof(Vec2f) * v.size());
 
     data_type = BUFFER_DATA_TYPE_FLOAT;
@@ -1558,7 +1575,7 @@ struct BufferData {
   }
 
   void Set(const std::vector<Vec3f> &v) {
-    data.resize(v.size() * sizeof(Vec3f)); 
+    data.resize(v.size() * sizeof(Vec3f));
     memcpy(data.data(), v.data(), sizeof(Vec3f) * v.size());
 
     data_type = BUFFER_DATA_TYPE_FLOAT;
@@ -1568,7 +1585,7 @@ struct BufferData {
 
 
   void Set(const std::vector<int> &v) {
-    data.resize(v.size() * sizeof(int)); 
+    data.resize(v.size() * sizeof(int));
     memcpy(data.data(), v.data(), sizeof(int) * v.size());
 
     data_type = BUFFER_DATA_TYPE_INT;
@@ -1718,9 +1735,14 @@ struct ConnectionPath {
                       // `Scene.shaders`)
 };
 
-// PrimAttrib is a struct to hold attributes of the object.
-// (e.g. property, PrimVar).
-// We treat PrimVar as PrimAttrib(attributes) at the moment.
+// Relation
+struct Rel {
+  // TODO: Implement
+  std::string path;
+};
+
+
+// PrimAttrib is a struct to hold attribute of a property(e.g. primvar)
 struct PrimAttrib {
   std::string name;  // attrib name
 
@@ -1731,6 +1753,12 @@ struct PrimAttrib {
   Variability variability;
   //bool facevarying{false}; // TODO: Deprecate
   Interpolation interpolation{InterpolationInvalid};
+
+  //
+  // Qualifiers
+  //
+  bool uniform{false}; // `uniform`
+  bool custom{false}; // `custom`
 
   // For basic types(e.g. Bool, Float).
 
@@ -1748,6 +1776,8 @@ struct PrimAttrib {
   double doubleVal;
   std::string stringVal;  // token, string
   Path path;
+
+  nonstd::any value;
 };
 
 // UsdPrimvarReader_float2.
@@ -1759,6 +1789,8 @@ struct PrimvarReader {
   ConnectionPath
       varname;  // Name of the primvar to be fetched from the geometry.
 };
+
+using Property = nonstd::variant<PrimAttrib, Rel>;
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`
@@ -2120,7 +2152,7 @@ struct GeomBasisCurves {
   //
   // Predefined attribs.
   //
-  std::vector<Vec3f> points;   
+  std::vector<Vec3f> points;
   std::vector<Vec3f> normals;  // normal3f
   std::vector<int> curveVertexCounts;
   std::vector<float> widths;
@@ -2254,6 +2286,8 @@ struct GPrim {
   std::string name;
 
   int64_t parent_id{-1};  // Index to parent node
+
+  std::string prim_type; // Primitive type(if specified by `def`)
 
   // Gprim
   Extent extent;  // bounding extent(in local coord?).
