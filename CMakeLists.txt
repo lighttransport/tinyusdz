@@ -300,6 +300,8 @@ endif (TINYUSDZ_BUILD_EXAMPLES)
 
 if (TINYUSDZ_BUILD_TESTS)
 
+  enable_testing()
+
   #
   # Standalone tester
   #
@@ -322,6 +324,17 @@ if (TINYUSDZ_BUILD_TESTS)
   # unit tester
   #
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/unit)
+
+
+  #
+  # USDA parser tester
+  #
+  if (TINYUSDZ_WITH_USDA_PARSER)
+    add_test(
+      NAME usda-parser-unit-test
+      COMMAND python ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app "$<TARGET_FILE:usda-parser>" --basedir "${PROJECT_SOURCE_DIR}"
+    )
+  endif ()
 
 endif (TINYUSDZ_BUILD_TESTS)
 

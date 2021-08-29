@@ -247,5 +247,6 @@ TinyUSDZ is licensed under MIT license.
 * span-lite: BSL 1.0 license. https://github.com/martinmoene/span-lite
 * expected-lite: BSL 1.0 license. https://github.com/martinmoene/expected-lite
 * any-lite: BSL 1.0 license. https://github.com/martinmoene/any-lite
+* string-view-lite: BSL 1.0 license. https://github.com/martinmoene/string-view-lite
 * mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
 * mapbox/recursive_wrapper: BSL 1.0 license. https://github.com/mapbox/variant

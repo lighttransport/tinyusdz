@@ -49,12 +49,25 @@
   _PushError(ss.str()); \
 } while(0)
 
+#define SLOG_INFO do { \
+  std::ostringstream ss; \
+  std::cout << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  std::cout << ss.str(); \
+} while(0); std::cout
+
 #define LOG_INFO(s) do { \
   std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s << "\n"; \
+  ss << "[info] " << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
   std::cout << ss.str() << "\n"; \
-} while(0)
+} while(0); std::cout
+
+#if 0
+#define LOG_WARN(s) do { \
+  std::ostringstream ss; \
+  ss << "[warn] " << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  std::cout << ss.str() << "\n"; \
+} while(0); std::cout
+#endif
 
 #if 0
 #define LOG_ERROR(s) do { \
@@ -164,6 +177,26 @@ std::string to_string(const TimeSampleType &tsv) {
   return ss.str();
 }
 #endif
+
+std::string to_string(const GPrim &gprim, const uint32_t indent = 0) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def \"" << gprim.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // props
+  // TODO:
+
+  ss << Indent(indent) << "  visibility = " << to_string(gprim.visibility)
+     << "\n";
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
 
 std::string to_string(const Xform &xform, const uint32_t indent = 0) {
   std::stringstream ss;
@@ -304,19 +337,6 @@ struct ErrorDiagnositc {
   int line_row = -1;
   int line_col = -1;
 };
-
-struct Rel {
-  // TODO: Implement
-  std::string path;
-
-  friend std::ostream &operator<<(std::ostream &os, const Rel &rel);
-};
-
-std::ostream &operator<<(std::ostream &os, const Rel &rel) {
-  os << rel.path;
-
-  return os;
-}
 
 // typedef std::array<float, 2> float2;
 // typedef std::array<float, 3> float3;
@@ -556,6 +576,16 @@ class Variable {
     return p;
   }
 
+  // For Value
+  template<typename T>
+  const nonstd::optional<T> cast() const {
+    if (IsValue()) {
+      const T *p = nonstd::get_if<T>(&value);
+      return *p;
+    }
+    return nonstd::nullopt;
+  }
+
   bool valid() const { return !IsEmpty(); }
 
   Variable() = default;
@@ -571,16 +601,18 @@ class Variable {
 
 namespace {
 
+using AssetReferenceList = std::vector<std::pair<ListEditQual, AssetReference>>;
+
 // Extract array of AssetReferences from Variable.
-std::vector<std::pair<ListEditQual, AssetReference>> GetAssetReferences(
+AssetReferenceList GetAssetReferences(
     const std::tuple<ListEditQual, Variable> &_var) {
-  std::vector<std::pair<ListEditQual, AssetReference>> result;
+  AssetReferenceList result;
 
   ListEditQual qual = std::get<0>(_var);
 
   auto var = std::get<1>(_var);
 
-  LOG_INFO("GetAssetReferences. var.name = " + var.name);
+  SLOG_INFO << "GetAssetReferences. var.name = " << var.name << "\n";
 
   if (var.IsArray()) {
     LOG_INFO("IsArray");
@@ -601,7 +633,7 @@ std::vector<std::pair<ListEditQual, AssetReference>> GetAssetReferences(
   } else if (var.IsValue()) {
     LOG_INFO("IsValue");
     if (auto pv = var.as_value()) {
-      LOG_INFO("Maybe AssertReference");
+      LOG_INFO("Maybe AssetReference");
       if (auto pas = nonstd::get_if<AssetReference>(pv)) {
         LOG_INFO("Got it");
         result.push_back({qual, *pas});
@@ -1498,7 +1530,7 @@ class USDAParser::Impl {
       return false;
     }
 
-    std::cout << "list-edit qual: " << tinyusdz::to_string(qual) << "\n";
+    std::cout << "list-edit qual: " << wise_enum::to_string(qual) << "\n";
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
@@ -1663,7 +1695,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      LOG_INFO("arg: list-edit qual = " + to_string(std::get<0>(arg)) + ", name = " + std::get<1>(arg).name);
+      LOG_INFO("arg: list-edit qual = " + wise_enum::to_string(std::get<0>(arg)) + ", name = " + std::get<1>(arg).name);
 
       (*args)[std::get<1>(arg).name] = arg;
     }
@@ -2566,7 +2598,8 @@ class USDAParser::Impl {
     return (tok == "custom");
   }
 
-  bool ParsePrimAttr(std::map<std::string, Variable> *props) {
+  //bool ParsePrimAttr(std::map<std::string, Variable> *props) {
+  bool ParsePrimAttr(std::map<std::string, Property> *props) {
     // prim_attr : (custom?) uniform type (array_qual?) name '=' value
     // interpolation?
     //           | (custom?) type (array_qual?) name '=' value interpolation?
@@ -2733,6 +2766,72 @@ class USDAParser::Impl {
       return false;
 
     } else {
+      if (type_name == "float") {
+
+        PrimAttrib attr;
+
+        if (array_qual) {
+          std::vector<float> value;
+          if (!ParseBasicTypeArray(&value)) {
+            _PushError("Failed to parse float array.\n");
+          }
+          std::cout << "float = \n";
+
+          attr.buffer.Set(value);
+
+        } else if (hasConnect(primattr_name)) {
+          std::string value;  // TODO: Path
+          if (!ReadPathIdentifier(&value)) {
+            _PushError("Failed to parse path identifier for `token`.\n");
+            return false;
+          }
+          std::cout << "Path identifier = " << value << "\n";
+          PUSH_ERROR("TODO");
+        } else {
+          nonstd::optional<float> value;
+          if (!ReadBasicType(&value)) {
+            _PushError("Failed to parse float.\n");
+          }
+
+          if (value) {
+            std::cout << "float = " << *value << "\n";
+          } else {
+            std::cout << "float = None\n";
+          }
+
+          attr.basic_type = "float";
+          attr.floatVal = *value;
+
+          (*props)[primattr_name] = attr;
+        }
+
+        // optional: interpolation parameter
+        std::map<std::string, Variable> meta;
+        if (!ParseAttrMeta(&meta)) {
+          _PushError("Failed to parse PrimAttrib meta.");
+          return false;
+        }
+
+
+        if (meta.count("interpolation")) {
+          auto p = meta.at("interpolation").cast<std::string>();
+          if (p) {
+            if (auto v = wise_enum::from_string<Interpolation>(*p)) {
+              attr.interpolation = *v;
+            }
+          }
+        }
+
+        attr.custom = custom_qual;
+        attr.uniform = uniform_qual;
+
+        (*props)[primattr_name] = attr;
+      } else {
+        PUSH_ERROR("TODO");
+        return false;
+      }
+
+#if 0 // TODO
       if (type_name == "matrix4d") {
         double m[4][4];
         if (!ParseMatrix4d(m)) {
@@ -2889,7 +2988,7 @@ class USDAParser::Impl {
         // optional: interpolation parameter
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          _PushError("Failed to parse PrimAttrib meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -3402,11 +3501,42 @@ class USDAParser::Impl {
                    type_name + "\n");
         return false;
       }
-
-      (void)uniform_qual;
+#endif
 
       return true;
     }
+  }
+
+  bool ParseProperty(std::map<std::string, Property> *props) {
+    // property : primm_attr
+    //          | 'rel' name '=' path
+    //          ;
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    // rel?
+    {
+      size_t loc = CurrLoc();
+      std::string tok;
+
+      if (!ReadIdentifier(&tok)) {
+        return false;
+      }
+
+      if (tok == "rel") {
+        PUSH_ERROR("TODO: Parse rel");
+        return false;
+      } else {
+        SeekTo(loc);
+      }
+
+    }
+
+    // attribute
+    return ParsePrimAttr(props);
+
   }
 
   // Allow value 'None', which is represented as nullopt.
@@ -5465,7 +5595,7 @@ class USDAParser::Impl {
     // expect = '}'
     //        | def_block
     //        | prim_attr+
-    std::map<std::string, Variable> props;
+    std::map<std::string, Property> props;
     while (!_sr->eof()) {
       char c;
       if (!Char1(&c)) {
@@ -5716,7 +5846,7 @@ class USDAParser::Impl {
       LOG_INFO("`references.size` = " + std::to_string(references.size()));
     }
 
-    std::map<std::string, Variable> props;
+    std::map<std::string, Property> props;
 
     std::string path = GetCurrentPath() + "/" + node_name;
     PushPath(path);
@@ -5780,45 +5910,69 @@ class USDAParser::Impl {
     }
 
     if (IsToplevel()) {
-      // Reconstruct concrete class object
-      if (prim_type == "Xform") {
-        Xform xform;
-        std::cout << "Reconstruct Xform\n";
-        if (!ReconstructXform(props, references, &xform)) {
-          _PushError("Failed to reconstruct Xform.");
+      if (prim_type.empty()) {
+        // Reconstuct Generic Prim.
+
+        GPrim gprim;
+        std::cout << "Reconstruct GPrim\n";
+        if (!ReconstructGPrim(props, references, &gprim)) {
+          _PushError("Failed to reconstruct GPrim.");
           return false;
         }
-        xform.name = node_name;
+        gprim.name = node_name;
 
-        std::cout << to_string(xform, nestlevel) << "\n";
+        std::cout << to_string(gprim, nestlevel) << "\n";
 
-      } else if (prim_type == "Mesh") {
-        GeomMesh mesh;
-        std::cout << "Reconstruct GeomMesh\n";
-        if (!ReconstructGeomMesh(props, references, &mesh)) {
-          _PushError("Failed to reconstruct GeomMesh.");
-          return false;
-        }
-      } else if (prim_type == "Sphere") {
-        GeomSphere sphere;
-        std::cout << "Reconstruct Sphere\n";
-        if (!ReconstructGeomSphere(props, references, &sphere)) {
-          _PushError("Failed to reconstruct GeomSphere.");
-          return false;
-        }
-
-        sphere.name = node_name;
-        std::cout << to_string(sphere, nestlevel) << "\n";
-
-      } else if (prim_type == "BasisCurves") {
       } else {
-        PUSH_ERROR(" TODO: " + prim_type);
-        return false;
+
+        // Reconstruct concrete class object
+        if (prim_type == "Xform") {
+          Xform xform;
+          std::cout << "Reconstruct Xform\n";
+          if (!ReconstructXform(props, references, &xform)) {
+            _PushError("Failed to reconstruct Xform.");
+            return false;
+          }
+          xform.name = node_name;
+
+          std::cout << to_string(xform, nestlevel) << "\n";
+
+        } else if (prim_type == "Mesh") {
+          GeomMesh mesh;
+          std::cout << "Reconstruct GeomMesh\n";
+          if (!ReconstructGeomMesh(props, references, &mesh)) {
+            _PushError("Failed to reconstruct GeomMesh.");
+            return false;
+          }
+        } else if (prim_type == "Sphere") {
+          GeomSphere sphere;
+          std::cout << "Reconstruct Sphere\n";
+          if (!ReconstructGeomSphere(props, references, &sphere)) {
+            _PushError("Failed to reconstruct GeomSphere.");
+            return false;
+          }
+
+          sphere.name = node_name;
+          std::cout << to_string(sphere, nestlevel) << "\n";
+
+        } else if (prim_type == "BasisCurves") {
+        } else {
+          PUSH_ERROR(" TODO: " + prim_type);
+          return false;
+        }
       }
     } else {
-      // Store properties in intermediate format.
+      // Store properties to GPrim.
+      // TODO: Use Class?
+      GPrim gprim;
+      std::cout << "Reconstruct GPrim\n";
+      if (!ReconstructGPrim(props, references, &gprim)) {
+        _PushError("Failed to reconstruct GPrim.");
+        return false;
+      }
+      gprim.name = node_name;
 
-      _props_map[path] = props;
+      std::cout << to_string(gprim, nestlevel) << "\n";
     }
 
     PopPath();
@@ -5826,18 +5980,23 @@ class USDAParser::Impl {
     return true;
   }
 
+  bool ReconstructGPrim(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GPrim *gprim);
+
   bool ReconstructGeomSphere(
-      const std::map<std::string, Variable> &properties,
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
       GeomSphere *sphere);
 
   bool ReconstructXform(
-      const std::map<std::string, Variable> &properties,
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
       Xform *xform);
 
   bool ReconstructGeomMesh(
-      const std::map<std::string, Variable> &properties,
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
       GeomMesh *mesh);
 
@@ -6077,7 +6236,7 @@ class USDAParser::Impl {
   nonstd::optional<tinyusdz::Scene> _scene;  // Imported scene.
 
   // key = path, value = Properties
-  std::map<std::string, std::map<std::string, Variable>> _props_map;
+  // std::map<std::string, std::map<std::string, Variable>> _props_map;
 
   // "class" defs
   std::map<std::string, Klass> _klasses;
@@ -6091,8 +6250,42 @@ class USDAParser::Impl {
 };
 
 // == impl ==
+bool USDAParser::Impl::ReconstructGPrim(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GPrim *gprim) {
+
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    }
+  }
+
+  // Update props;
+  for (auto item : properties) {
+    if (auto p = nonstd::get_if<PrimAttrib>(&item.second)) {
+      gprim->props[item.first] = *p;
+    } else {
+      PUSH_ERROR("TODO: rel");
+      return false;
+    }
+  }
+
+  //
+  // Resolve append references
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    }
+  }
+
+  return true;
+}
+
 bool USDAParser::Impl::ReconstructXform(
-      const std::map<std::string, Variable> &properties,
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
       Xform *xform) {
   (void)xform;
@@ -6146,22 +6339,12 @@ bool USDAParser::Impl::ReconstructXform(
 
     // array of string
     auto prop = properties.at("xformOpOrder");
-    if (!prop.IsArray()) {
-      _PushError("`xformOpOrder` must be an array type.");
-      return false;
-    }
-
-    std::cout << "iterate prop.array"
-              << "\n";
-    auto parr = prop.as_array();
-    if (parr) {
-      for (const auto &item : parr->values) {
-        const Value *pv = item.as_value();
-        if (auto ptarget = nonstd::get_if<std::string>(pv)) {
-          std::cout << "ptarget = " << (*ptarget) << "\n";
+    if (auto attrib = nonstd::get_if<PrimAttrib>(&prop)) {
+      if (auto parr = nonstd::any_cast<std::vector<std::string>>(&attrib->value)) {
+        for (const auto &item : *parr) {
 
           // remove double-quotation
-          std::string identifier = *ptarget;
+          std::string identifier = item;
           identifier.erase(
               std::remove(identifier.begin(), identifier.end(), '\"'),
               identifier.end());
@@ -6193,19 +6376,25 @@ bool USDAParser::Impl::ReconstructXform(
           if (basename == "xformOp:rotateZ") {
             std::cout << "basename is xformOp::rotateZ"
                       << "\n";
-            if (auto p = nonstd::get_if<float>(&targetProp.value)) {
-              std::cout << "xform got it "
-                        << "\n";
-              op.op = XformOp::OpType::ROTATE_Z;
-              op.suffix = suffix;
-              op.value = (*p);
+            if (auto targetAttr = nonstd::get_if<PrimAttrib>(&targetProp)) {
+              if (auto p = nonstd::any_cast<float>(&targetAttr->value)) {
+                std::cout << "xform got it "
+                          << "\n";
+                op.op = XformOp::OpType::ROTATE_Z;
+                op.suffix = suffix;
+                op.value = (*p);
 
-              xform->xformOps.push_back(op);
+                xform->xformOps.push_back(op);
+              }
             }
           }
         }
       }
+    } else {
+      _PushError("`xformOpOrder` must be an array of string type.");
+      return false;
     }
+
   } else {
     std::cout << "no xformOpOrder\n";
   }
@@ -6271,7 +6460,7 @@ bool USDAParser::Impl::ReconstructXform(
 }
 
 bool USDAParser::Impl::ReconstructGeomSphere(
-    const std::map<std::string, Variable> &properties,
+    const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomSphere *sphere) {
   //
@@ -6283,26 +6472,26 @@ bool USDAParser::Impl::ReconstructGeomSphere(
   }
 
   for (const auto &prop : properties) {
-    auto pv = prop.second.as_value();
-    if (prop.first == "radius") {
-      if (auto p = nonstd::get_if<double>(pv)) {
-        sphere->radius = *p;
-      } else {
-        _PushError("`radius` must be double type.");
-        return false;
-      }
-    } else if (prop.first == "material:binding") {
-      if (auto p = nonstd::get_if<Rel>(pv)) {
-        sphere->materialBinding.materialBinding = p->path;
+    if (prop.first == "material:binding") {
+      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+        sphere->materialBinding.materialBinding = prel->path;
       } else {
         _PushError("`material:binding` must be 'rel' type.");
         return false;
       }
-
-    } else {
-      _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                 "\n");
-      return false;
+    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+      if (prop.first == "radius") {
+        if (auto p = nonstd::any_cast<double>(&attr->value)) {
+          sphere->radius = *p;
+        } else {
+          _PushError("`radius` must be double type.");
+          return false;
+        }
+      } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
+        return false;
+      }
     }
   }
 
@@ -6319,7 +6508,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
 }
 
 bool USDAParser::Impl::ReconstructGeomMesh(
-    const std::map<std::string, Variable> &properties,
+    const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomMesh *mesh) {
   //
@@ -6328,7 +6517,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   std::cout << "# of references = " << references.size() << "\n";
 
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << to_string(std::get<0>(ref)) << "\n";
+    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref)) << "\n";
 
     LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
 
@@ -6369,29 +6558,24 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   }
 
   for (const auto &prop : properties) {
-    auto pv = prop.second.as_value();
-    if (prop.first == "points") {
-      if (auto p = nonstd::get_if<std::vector<Vec3f>>(pv)) {
-        mesh->points.resize(p->size() * 3);
-        memcpy(mesh->points.data(), p->data(), p->size() * 3);
+    if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+      if (prop.first == "points") {
+        if (auto p = nonstd::any_cast<std::vector<Vec3f>>(&attr->value)) {
+          mesh->points = (*p);
+        } else {
+          _PushError("`points` must be float3[] type.");
+          return false;
+        }
+
       } else {
-        _PushError("`points` must be float3[] type.");
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
         return false;
       }
-
-
-    } else if (prop.first == "material:binding") {
-      if (auto p = nonstd::get_if<Rel>(pv)) {
-        mesh->materialBinding.materialBinding = p->path;
-      } else {
-        _PushError("`material:binding` must be 'rel' type.");
-        return false;
+    } else if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+      if (prop.first == "material:binding") {
+        mesh->materialBinding.materialBinding = prel->path;
       }
-
-    } else {
-      _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                 "\n");
-      return false;
     }
   }
 
