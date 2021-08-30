@@ -439,6 +439,33 @@ struct TimeSamples {
 
 std::string type_name(const TimeSampleType &v);
 
+//
+// Simple NumPy like NDArray up to 4D
+// Based on NumCpp
+//
+
+
+template<typename dtype, class Allocator = std::allocator<dtype>>
+class ndarray {
+
+  class Shape
+  {
+
+  };
+
+ private:
+   static_assert(std::is_same<dtype, typename Allocator::value_type>::value, "dtype and Allocator::value_type must match");
+
+
+ public:
+  using value_type = dtype;
+  using allocator_type = Allocator;
+  //using pointer = typename AllocTraits::pointer;
+
+  ndarray() = default;
+
+};
+
 // Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
 //typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
 //typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>> TimeSampledDataDouble;

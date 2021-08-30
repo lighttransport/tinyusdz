@@ -38,6 +38,7 @@
 #include "usda-parser.hh"
 #include "io-util.hh"
 #include "usdObj.hh"
+#include "pprinter.hh"
 
 #include "math-util.inc"
 
@@ -82,7 +83,9 @@
 } while(0)
 #endif
 
+
 namespace tinyusdz {
+
 
 namespace usda {
 
@@ -711,6 +714,7 @@ std::string str_object(const Variable::Object &obj, int indent) {
 }
 
 }  // namespace
+
 
 #if 1
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
@@ -2647,7 +2651,7 @@ class USDAParser::Impl {
       }
 
       if (value) {
-        std::cout << TypeTrait<T>::type_name << " = " << *value << "\n";
+        std::cout << TypeTrait<T>::type_name << " = " << (*value) << "\n";
       } else {
         std::cout << TypeTrait<T>::type_name << " = None\n";
       }
@@ -3603,15 +3607,25 @@ class USDAParser::Impl {
   }
 
   // Allow value 'None', which is represented as nullopt.
+
+  //
+  // -- ReadBasicType --
+  //
   bool ReadBasicType(nonstd::optional<std::string> *value);
   bool ReadBasicType(nonstd::optional<int> *value);
   bool ReadBasicType(nonstd::optional<float> *value);
+  bool ReadBasicType(nonstd::optional<Vec2f> *value);
+  bool ReadBasicType(nonstd::optional<Vec3f> *value);
+  bool ReadBasicType(nonstd::optional<Vec4f> *value);
   bool ReadBasicType(nonstd::optional<double> *value);
   bool ReadBasicType(nonstd::optional<bool> *value);
 
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
   bool ReadBasicType(float *value);
+  bool ReadBasicType(Vec2f *value);
+  bool ReadBasicType(Vec3f *value);
+  bool ReadBasicType(Vec4f *value);
   bool ReadBasicType(double *value);
   bool ReadBasicType(bool *value);
   bool ReadBasicType(uint64_t *value);
@@ -6938,6 +6952,15 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
   return true;
 }
 
+bool USDAParser::Impl::ReadBasicType(Vec2f *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+bool USDAParser::Impl::ReadBasicType(Vec3f *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+
 bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -7172,6 +7195,15 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<double> *value) {
 
   return false;
 }
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2f> *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec3f> *value) {
+  return ParseBasicTypeTuple(value);
+}
+
 
 bool IsUSDA(const std::string &filename, size_t max_filesize) {
   // TODO: Read only first N bytes
