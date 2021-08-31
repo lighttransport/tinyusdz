@@ -338,224 +338,6 @@ struct ListOpHeader {
   uint8_t bits;
 };
 
-///
-/// We don't need the performance for USDZ, so use naiive implementation
-/// to represent Path.
-/// Path is something like Unix path, delimited by `/`, ':' and '.'
-///
-/// Example:
-///
-/// `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
-///
-/// ':' is a namespce delimiter(example `input:muda`).
-///
-/// Limitations:
-///
-/// Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
-/// supported.
-///
-/// variant chars('{' '}') is not supported.
-/// '..' is not supported
-///
-/// and have more limitatons.
-///
-class Path {
- public:
-  Path() : valid(false) {}
-  Path(const std::string &prim)
-      : prim_part(prim), local_part(prim), valid(true) {}
-  // Path(const std::string &prim, const std::string &prop)
-  //    : prim_part(prim), prop_part(prop) {}
-
-  Path(const Path &rhs) = default;
-
-  Path &operator=(const Path &rhs) {
-    this->valid = rhs.valid;
-
-    this->prim_part = rhs.prim_part;
-    this->prop_part = rhs.prop_part;
-    this->local_part = rhs.local_part;
-
-    return (*this);
-  }
-
-  std::string full_path_name() const {
-    std::string s;
-    if (!valid) {
-      s += "INVALID#";
-    }
-
-    s += prim_part;
-    if (prop_part.empty()) {
-      return s;
-    }
-
-    s += "." + prop_part;
-
-    return s;
-  }
-
-  std::string local_path_name() const {
-    std::string s;
-    if (!valid) {
-      s += "INVALID#";
-    }
-
-    s += local_part;
-
-    return s;
-  }
-
-  std::string GetPrimPart() const { return prim_part; }
-
-  std::string GetPropPart() const { return prop_part; }
-
-  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
-
-  static Path AbsoluteRootPath() { return Path("/"); }
-
-  void SetLocalPath(const Path &rhs) {
-    // assert(rhs.valid == true);
-
-    this->local_part = rhs.local_part;
-    this->valid = rhs.valid;
-  }
-
-  Path AppendProperty(const std::string &elem) {
-    Path p = (*this);
-
-    if (elem.empty()) {
-      p.valid = false;
-      return p;
-    }
-
-    if (elem[0] == '{') {
-      // variant chars are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '[') {
-      // relational attrib are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '.') {
-      // std::cerr << "???. elem[0] is '.'\n";
-      // For a while, make this valid.
-      p.valid = false;
-      return p;
-    } else {
-      p.prop_part = elem;
-
-      return p;
-    }
-  }
-
-  Path AppendElement(const std::string &elem) {
-    Path p = (*this);
-
-    if (elem.empty()) {
-      p.valid = false;
-      return p;
-    }
-
-    if (elem[0] == '{') {
-      // variant chars are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '[') {
-      // relational attrib are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '.') {
-      // std::cerr << "???. elem[0] is '.'\n";
-      // For a while, make this valid.
-      p.valid = false;
-      return p;
-    } else {
-      // std::cout << "elem " << elem << "\n";
-      if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
-        p.prim_part += elem;
-      } else {
-        p.prim_part += '/' + elem;
-      }
-
-      return p;
-    }
-  }
-
-  bool IsValid() const { return valid; }
-
- private:
-  std::string prim_part;  // full path
-  std::string prop_part;  // full path
-  std::string local_part;
-  bool valid{false};
-};
-
-///
-/// Split Path by the delimiter(e.g. "/") then create lists.
-///
-class TokenizedPath
-{
- public:
-
-  TokenizedPath() {}
-
-  TokenizedPath(const Path &path) {
-    std::string s = path.GetPropPart();
-    if (s.empty()) {
-      // ???
-      return;
-    }
-
-    if (s[0] != '/') {
-      // Path must start with "/"
-      return;
-    }
-
-    s.erase(0, 1);
-
-    std::string delimiter = "/";
-    size_t pos{0};
-    while ((pos = s.find(delimiter)) != std::string::npos) {
-        std::string token = s.substr(0, pos);
-        _tokens.push_back(token);
-        s.erase(0, pos + delimiter.length());
-    }
-
-    if (!s.empty()) {
-      // leaf element
-      _tokens.push_back(s);
-    }
-
-  }
-
- private:
-
-  std::vector<std::string> _tokens;
-};
-
-
-class TimeCode {
-  TimeCode(double tm = 0.0) : _time(tm) {}
-
-  size_t hash() const { return std::hash<double>{}(_time); }
-
-  double value() const { return _time; }
-
- private:
-  double _time;
-};
-
-struct LayerOffset {
-  double _offset;
-  double _scale;
-};
-
-struct Payload {
-  std::string _asset_path;
-  Path _prim_path;
-  LayerOffset _layer_offset;
-};
 
 #if 0
 enum ValueTypeId {
@@ -1376,12 +1158,13 @@ class Value {
     return false;
   }
 
-  float GetFloat() const {
+  bool GetFloat(float *ret) const {
     if (dtype.id == VALUE_TYPE_FLOAT) {
       float d = *reinterpret_cast<const float *>(data.data());
-      return d;
+      (*ret) = d;
+      return true;
     }
-    return std::numeric_limits<float>::quiet_NaN();  // invalid
+    return false;
   }
 
   std::string GetToken() const {
@@ -1782,6 +1565,7 @@ struct PrimAttrib {
   // "path" empty = array data type
   std::string basic_type;
 
+#if 0
   // TODO: Use union struct
   bool boolVal;
   int intVal;
@@ -1792,8 +1576,11 @@ struct PrimAttrib {
   double doubleVal;
   std::string stringVal;  // token, string
   Path path;
+#endif
 
-  nonstd::any value;
+  nonstd::any value; // TODO: Use PrimVar
+
+  PrimVar var;
 };
 
 // UsdPrimvarReader_float2.
