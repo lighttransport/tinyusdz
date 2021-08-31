@@ -3389,7 +3389,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         std::cout << "local path: " << path.local_path_name() << "\n";
 #endif
 
-        attr->path = path;
+        attr->var = path;
         attr->basic_type = "path";
 
         has_connection = true;
@@ -3431,25 +3431,34 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
                 << "\n";
 #endif
       if (fv.second.GetTypeName() == "Float") {
-        attr->floatVal = fv.second.GetFloat();
+        float value;
+
+        if (!fv.second.GetFloat(&value)) {
+          _err += "Failed to decode Float value.";
+          return false;
+        }
         attr->basic_type = "float";
         success = true;
 
       } else if (fv.second.GetTypeName() == "Bool") {
-        if (!fv.second.GetBool(&attr->boolVal)) {
+        bool boolVal;
+        if (!fv.second.GetBool(&boolVal)) {
           _err += "Failed to decode Int data";
           return false;
         }
 
+        attr->var = boolVal;
         attr->basic_type = "bool";
         success = true;
 
       } else if (fv.second.GetTypeName() == "Int") {
-        if (!fv.second.GetInt(&attr->intVal)) {
+        int value;
+        if (!fv.second.GetInt(&value)) {
           _err += "Failed to decode Int data";
           return false;
         }
 
+        attr->var = value;
         attr->basic_type = "int";
         success = true;
       } else if (fv.second.GetTypeName() == "Vec3f") {
@@ -3507,7 +3516,8 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
 #endif
-        attr->stringVal = fv.second.GetToken();
+        
+        attr->var = fv.second.GetToken();
         attr->basic_type = "string";
         // attr->variability = variability;
         // attr->facevarying = facevarying;
@@ -3724,53 +3734,53 @@ bool Parser::_ReconstructGeomBasisCurves(
           }
         } else if (prop_name == "type") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "type:" << attr.stringVal << "\n";
+          //std::cout << "type:" << attr.stringVal << "\n";
 #endif
-          if (attr.stringVal.size()) {
-            if ((attr.stringVal.compare("cubic") == 0)) {
+          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
+            if (p->compare("cubic") == 0) {
               curves->type = "cubic";
-            } else if (attr.stringVal.compare("linear") == 0) {
+            } else if (p->compare("linear") == 0) {
               curves->type = "linear";
             } else {
-              _err += "Unknown type: " + attr.stringVal + "\n";
+              _err += "Unknown type: " + (*p) + "\n";
               return false;
             }
           }
         } else if (prop_name == "basis") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "basis:" << attr.stringVal << "\n";
+          //std::cout << "basis:" << attr.stringVal << "\n";
 #endif
-          if (attr.stringVal.size()) {
-            if ((attr.stringVal.compare("bezier") == 0)) {
+          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
+            if (p->compare("bezier") == 0) {
               curves->type = "bezier";
-            } else if (attr.stringVal.compare("catmullRom") == 0) {
+            } else if (p->compare("catmullRom") == 0) {
               curves->type = "catmullRom";
-            } else if (attr.stringVal.compare("bspline") == 0) {
+            } else if (p->compare("bspline") == 0) {
               curves->type = "bspline";
-            } else if (attr.stringVal.compare("hermite") == 0) {
+            } else if (p->compare("hermite") == 0) {
               _err += "`hermite` basis for BasisCurves is not supported in TinyUSDZ\n";
               return false;
-            } else if (attr.stringVal.compare("power") == 0) {
+            } else if (p->compare("power") == 0) {
               _err += "`power` basis for BasisCurves is not supported in TinyUSDZ\n";
               return false;
             } else {
-              _err += "Unknown basis: " + attr.stringVal + "\n";
+              _err += "Unknown basis: " + (*p) + "\n";
               return false;
             }
           }
         } else if (prop_name == "wrap") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "wrap:" << attr.stringVal << "\n";
+          //std::cout << "wrap:" << attr.stringVal << "\n";
 #endif
-          if (attr.stringVal.size()) {
-            if ((attr.stringVal.compare("nonperiodic") == 0)) {
+          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
+            if (p->compare("nonperiodic") == 0) {
               curves->type = "nonperiodic";
-            } else if (attr.stringVal.compare("periodic") == 0) {
+            } else if (p->compare("periodic") == 0) {
               curves->type = "periodic";
-            } else if (attr.stringVal.compare("pinned") == 0) {
+            } else if (p->compare("pinned") == 0) {
               curves->type = "pinned";
             } else {
-              _err += "Unknown wrap: " + attr.stringVal + "\n";
+              _err += "Unknown wrap: " + (*p) + "\n";
               return false;
             }
           }
@@ -3900,7 +3910,7 @@ bool Parser::_ReconstructGeomMesh(
           }
         } else if (prop_name == "doubleSided") {
           if (attr.basic_type == "bool") {
-            mesh->doubleSided = attr.boolVal;
+            mesh->doubleSided = nonstd::get<bool>(attr.var);
           }
         } else if (prop_name == "extent") {
           // vec3f[2]
@@ -4011,19 +4021,19 @@ bool Parser::_ReconstructGeomMesh(
           }
         } else if (prop_name == "subdivisionScheme") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "subdivisionScheme:" << attr.stringVal << "\n";
+          //std::cout << "subdivisionScheme:" << attr.stringVal << "\n";
 #endif
-          if (attr.stringVal.size()) {
-            if ((attr.stringVal.compare("none") == 0)) {
+          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
+            if (p->compare("none") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeNone;
-            } else if (attr.stringVal.compare("catmullClark") == 0) {
+            } else if (p->compare("catmullClark") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeCatmullClark;
-            } else if (attr.stringVal.compare("bilinear") == 0) {
+            } else if (p->compare("bilinear") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeBilinear;
-            } else if (attr.stringVal.compare("loop") == 0) {
+            } else if (p->compare("loop") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeLoop;
             } else {
-              _err += "Unknown subdivision scheme: " + attr.stringVal + "\n";
+              _err += "Unknown subdivision scheme: " + (*p) + "\n";
               return false;
             }
           }
@@ -4377,7 +4387,7 @@ bool Parser::_ReconstructShader(
           }
         } else if (prop_name.compare("inputs:metallic.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          shader->metallic.path = attr.stringVal;
+          shader->metallic.path = nonstd::get<std::string>(attr.var);
         } else if (prop_name.compare("inputs:diffuseColor") == 0) {
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
@@ -4395,7 +4405,7 @@ bool Parser::_ReconstructShader(
           }
         } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          shader->diffuseColor.path = attr.stringVal;
+          shader->diffuseColor.path = nonstd::get<std::string>(attr.var);
         } else if (prop_name.compare("inputs:emissiveColor") == 0) {
           if ((attr.buffer.GetDataType() ==
                BufferData::BUFFER_DATA_TYPE_FLOAT) &&
@@ -4413,7 +4423,7 @@ bool Parser::_ReconstructShader(
           }
         } else if (prop_name.compare("inputs:emissiveColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          shader->emissiveColor.path = attr.stringVal;
+          shader->emissiveColor.path = nonstd::get<std::string>(attr.var);
         }
       }
     }

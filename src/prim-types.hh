@@ -2,15 +2,16 @@
 #pragma once
 
 #include <array>
-#include <vector>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#include <nonstd/optional.hpp>
 #include <nonstd/variant.hpp>
 
 #ifdef __clang__
@@ -24,10 +25,224 @@ struct AssetReference {
   std::string prim_path;
 };
 
+///
+/// We don't need the performance for USDZ, so use naiive implementation
+/// to represent Path.
+/// Path is something like Unix path, delimited by `/`, ':' and '.'
+///
+/// Example:
+///
+/// `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+///
+/// ':' is a namespce delimiter(example `input:muda`).
+///
+/// Limitations:
+///
+/// Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
+/// supported.
+///
+/// variant chars('{' '}') is not supported.
+/// '..' is not supported
+///
+/// and have more limitatons.
+///
+class Path {
+ public:
+  Path() : valid(false) {}
+  Path(const std::string &prim)
+      : prim_part(prim), local_part(prim), valid(true) {}
+  // Path(const std::string &prim, const std::string &prop)
+  //    : prim_part(prim), prop_part(prop) {}
+
+  Path(const Path &rhs) = default;
+
+  Path &operator=(const Path &rhs) {
+    this->valid = rhs.valid;
+
+    this->prim_part = rhs.prim_part;
+    this->prop_part = rhs.prop_part;
+    this->local_part = rhs.local_part;
+
+    return (*this);
+  }
+
+  std::string full_path_name() const {
+    std::string s;
+    if (!valid) {
+      s += "INVALID#";
+    }
+
+    s += prim_part;
+    if (prop_part.empty()) {
+      return s;
+    }
+
+    s += "." + prop_part;
+
+    return s;
+  }
+
+  std::string local_path_name() const {
+    std::string s;
+    if (!valid) {
+      s += "INVALID#";
+    }
+
+    s += local_part;
+
+    return s;
+  }
+
+  std::string GetPrimPart() const { return prim_part; }
+
+  std::string GetPropPart() const { return prop_part; }
+
+  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
+
+  static Path AbsoluteRootPath() { return Path("/"); }
+
+  void SetLocalPath(const Path &rhs) {
+    // assert(rhs.valid == true);
+
+    this->local_part = rhs.local_part;
+    this->valid = rhs.valid;
+  }
+
+  Path AppendProperty(const std::string &elem) {
+    Path p = (*this);
+
+    if (elem.empty()) {
+      p.valid = false;
+      return p;
+    }
+
+    if (elem[0] == '{') {
+      // variant chars are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '[') {
+      // relational attrib are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '.') {
+      // std::cerr << "???. elem[0] is '.'\n";
+      // For a while, make this valid.
+      p.valid = false;
+      return p;
+    } else {
+      p.prop_part = elem;
+
+      return p;
+    }
+  }
+
+  Path AppendElement(const std::string &elem) {
+    Path p = (*this);
+
+    if (elem.empty()) {
+      p.valid = false;
+      return p;
+    }
+
+    if (elem[0] == '{') {
+      // variant chars are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '[') {
+      // relational attrib are not supported
+      p.valid = false;
+      return p;
+    } else if (elem[0] == '.') {
+      // std::cerr << "???. elem[0] is '.'\n";
+      // For a while, make this valid.
+      p.valid = false;
+      return p;
+    } else {
+      // std::cout << "elem " << elem << "\n";
+      if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
+        p.prim_part += elem;
+      } else {
+        p.prim_part += '/' + elem;
+      }
+
+      return p;
+    }
+  }
+
+  bool IsValid() const { return valid; }
+
+ private:
+  std::string prim_part;  // full path
+  std::string prop_part;  // full path
+  std::string local_part;
+  bool valid{false};
+};
+
+///
+/// Split Path by the delimiter(e.g. "/") then create lists.
+///
+class TokenizedPath {
+ public:
+  TokenizedPath() {}
+
+  TokenizedPath(const Path &path) {
+    std::string s = path.GetPropPart();
+    if (s.empty()) {
+      // ???
+      return;
+    }
+
+    if (s[0] != '/') {
+      // Path must start with "/"
+      return;
+    }
+
+    s.erase(0, 1);
+
+    std::string delimiter = "/";
+    size_t pos{0};
+    while ((pos = s.find(delimiter)) != std::string::npos) {
+      std::string token = s.substr(0, pos);
+      _tokens.push_back(token);
+      s.erase(0, pos + delimiter.length());
+    }
+
+    if (!s.empty()) {
+      // leaf element
+      _tokens.push_back(s);
+    }
+  }
+
+ private:
+  std::vector<std::string> _tokens;
+};
+
+class TimeCode {
+  TimeCode(double tm = 0.0) : _time(tm) {}
+
+  size_t hash() const { return std::hash<double>{}(_time); }
+
+  double value() const { return _time; }
+
+ private:
+  double _time;
+};
+
+struct LayerOffset {
+  double _offset;
+  double _scale;
+};
+
+struct Payload {
+  std::string _asset_path;
+  Path _prim_path;
+  LayerOffset _layer_offset;
+};
 
 //
 // Colum-major order(e.g. employed in OpenGL).
-// For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to the translation.
+// For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to
+// the translation.
 //
 template <typename T, size_t N>
 struct Matrix {
@@ -66,7 +281,6 @@ typedef uint16_t float16;
 float half_to_float(float16 h);
 float16 float_to_half_full(float f);
 
-
 using Matrix2f = Matrix<float, 2>;
 using Matrix2d = Matrix<double, 2>;
 using Matrix3f = Matrix<float, 3>;
@@ -92,17 +306,16 @@ using Vec4d = std::array<double, 4>;
 using Vec3d = std::array<double, 3>;
 using Vec2d = std::array<double, 2>;
 
-template<typename T>
-struct Quat
-{
+template <typename T>
+struct Quat {
   std::array<T, 4> v;
 };
 
 using Quath = Quat<uint16_t>;
 using Quatf = Quat<float>;
 using Quatd = Quat<double>;
-//using Quaternion = Quat<double>;  // Storage layout is same with Quadd,
-                                           // so we can delete this
+// using Quaternion = Quat<double>;  // Storage layout is same with Quadd,
+// so we can delete this
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
 
@@ -225,7 +438,8 @@ struct ValueType {
 };
 
 ///
-/// Simple type-erased primitive value class for frequently used data types(e.g. `float[]`)
+/// Simple type-erased primitive value class for frequently used data types(e.g.
+/// `float[]`)
 ///
 template <class dtype>
 struct TypeTrait;
@@ -261,7 +475,6 @@ struct TypeTrait<double> {
   static constexpr ValueTypeId type_id = VALUE_TYPE_DOUBLE;
 };
 
-
 template <>
 struct TypeTrait<float16> {
   static constexpr auto type_name = "half";
@@ -287,6 +500,24 @@ struct TypeTrait<Vec4f> {
 };
 
 template <>
+struct TypeTrait<Vec2d> {
+  static constexpr auto type_name = "vec2d";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2D;
+};
+
+template <>
+struct TypeTrait<Vec3d> {
+  static constexpr auto type_name = "vec3d";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3D;
+};
+
+template <>
+struct TypeTrait<Vec4d> {
+  static constexpr auto type_name = "vec4d";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4D;
+};
+
+template <>
 struct TypeTrait<Quatf> {
   static constexpr auto type_name = "quatf";
   static constexpr ValueTypeId type_id = VALUE_TYPE_QUATF;
@@ -303,7 +534,6 @@ struct TypeTrait<Matrix4d> {
   static constexpr auto type_name = "matrix4d";
   static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX4D;
 };
-
 
 #if 0
 template<typename T>
@@ -419,18 +649,15 @@ class PrimValue<std::vector<std::vector<std::vector<T>>>> {
 
 // TODO: Privide generic multidimensional array type?
 
-
 //
 // TimeSample datatype
 //
 
 // monostate = `None`
-struct None
-{
+struct None {};
 
-};
-
-using TimeSampleType = nonstd::variant<None, float, double, Vec3f, Quatf, Matrix4d>;
+using TimeSampleType =
+    nonstd::variant<None, float, double, Vec3f, Quatf, Matrix4d>;
 
 struct TimeSamples {
   std::vector<double> times;
@@ -444,37 +671,52 @@ std::string type_name(const TimeSampleType &v);
 // Based on NumCpp
 //
 
-
-template<typename dtype, class Allocator = std::allocator<dtype>>
+template <typename dtype, class Allocator = std::allocator<dtype>>
 class ndarray {
-
-  class Shape
-  {
-
-  };
+  class Shape {};
 
  private:
-   static_assert(std::is_same<dtype, typename Allocator::value_type>::value, "dtype and Allocator::value_type must match");
-
+  static_assert(std::is_same<dtype, typename Allocator::value_type>::value,
+                "dtype and Allocator::value_type must match");
 
  public:
   using value_type = dtype;
   using allocator_type = Allocator;
-  //using pointer = typename AllocTraits::pointer;
+  // using pointer = typename AllocTraits::pointer;
 
   ndarray() = default;
-
 };
 
-// Types which can be TimeSampledData are restricted to frequently used one in TinyUSDZ.
-//typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>> TimeSampledDataFloat;
-//typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>> TimeSampledDataDouble;
-//typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>> TimeSampledDataFloat3;
-//typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>> TimeSampledDataDouble3;
-//typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>> TimeSampledDataMatrix4d;
+// Types which can be TimeSampledData are restricted to frequently used one in
+// TinyUSDZ.
+typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>>
+    TimeSampledDataFloat;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>>
+    TimeSampledDataDouble;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>>
+    TimeSampledDataFloat3;
+typedef std::vector<
+    std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>>
+    TimeSampledDataDouble3;
+typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>>
+    TimeSampledDataMatrix4d;
 
-//using TimeSampledValue = nonstd::variant<nonstd::monostate, TimeSampledDataFloat, TimeSampledDataDouble, TimeSampledDataFloat3, TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
+using TimeSampledValue =
+    nonstd::variant<nonstd::monostate, TimeSampledDataFloat,
+                    TimeSampledDataDouble, TimeSampledDataFloat3,
+                    TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
 
+using PrimBasicType =
+    nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f, double, Vec2d, Vec3d,
+                    Vec4d, Matrix4d, std::string, Path>;
+using PrimArrayType =
+    nonstd::variant<std::vector<int>, std::vector<float>, std::vector<Vec2f>,
+                    std::vector<Vec3f>, std::vector<Vec4f>, std::vector<double>,
+                    std::vector<Vec2d>, std::vector<Vec3d>, std::vector<Vec4d>,
+                    std::vector<Matrix4d>, std::vector<std::string>,
+                    std::vector<Path>>;
 
+using PrimVar =
+    nonstd::variant<None, PrimBasicType, PrimArrayType, TimeSampledValue>;
 
-} // namespace tinyusdz
+}  // namespace tinyusdz
