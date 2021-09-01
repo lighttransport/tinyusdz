@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <cstring>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -707,10 +708,10 @@ using TimeSampledValue =
                     TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
 
 using PrimBasicType =
-    nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f, double, Vec2d, Vec3d,
+    nonstd::variant<bool, int, uint32_t, float, Vec2f, Vec3f, Vec4f, double, Vec2d, Vec3d,
                     Vec4d, Matrix4d, std::string, Path>;
 using PrimArrayType =
-    nonstd::variant<std::vector<int>, std::vector<float>, std::vector<Vec2f>,
+    nonstd::variant<std::vector<bool>, std::vector<int>, std::vector<float>, std::vector<Vec2f>,
                     std::vector<Vec3f>, std::vector<Vec4f>, std::vector<double>,
                     std::vector<Vec2d>, std::vector<Vec3d>, std::vector<Vec4d>,
                     std::vector<Matrix4d>, std::vector<std::string>,
@@ -718,5 +719,104 @@ using PrimArrayType =
 
 using PrimVar =
     nonstd::variant<None, PrimBasicType, PrimArrayType, TimeSampledValue>;
+
+namespace primvar {
+
+inline bool is_basic_type(const PrimVar *v) {
+  if (nonstd::get_if<PrimBasicType>(v)) {
+    return true;
+  }
+  return false;
+}
+
+inline bool is_array_type(const PrimVar *v) {
+  if (nonstd::get_if<PrimArrayType>(v)) {
+    return true;
+  }
+  return false;
+}
+
+inline bool is_time_sampled(const PrimVar *v) {
+  if (nonstd::get_if<TimeSampledValue>(v)) {
+    return true;
+  }
+  return false;
+}
+
+template <typename T>
+using is_vector = std::is_same<T, std::vector< typename T::value_type,
+                                          typename T::allocator_type > >;
+
+
+// non-vector types
+template<typename T, typename _ = void>
+inline const T *as(const PrimVar *v) {
+  if (is_basic_type(v)) {
+    return nonstd::get_if<T>(v);
+  }
+  return nullptr;
+}
+
+// vector types
+template<typename T, typename std::enable_if<is_vector<T>::value>::type>
+inline const T *as(const PrimVar *v) {
+  if (is_array_type(v)) {
+    return nonstd::get_if<T>(v);
+  }
+  return nullptr;
+}
+
+#if 0 
+// https://stackoverflow.com/questions/17032310/how-to-make-a-variadic-is-same
+template<typename T, typename... Rest>
+struct is_any : std::false_type {};
+
+template<typename T, typename First>
+struct is_any<T, First> : std::is_same<T, First> {};
+
+template<typename T, typename First, typename... Rest>
+struct is_any<T, First, Rest...>
+    : std::integral_constant<bool, std::is_same<T, First>::value || is_any<T, Rest...>::value>
+{};
+#endif
+
+template<>
+inline const TimeSampledDataFloat *as(const PrimVar *v) {
+  if (is_time_sampled(v)) {
+    return nonstd::get_if<TimeSampledDataFloat>(v);
+  }
+  return nullptr;
+}
+
+template<>
+inline const TimeSampledDataDouble *as(const PrimVar *v) {
+  if (is_time_sampled(v)) {
+    return nonstd::get_if<TimeSampledDataDouble>(v);
+  }
+  return nullptr;
+}
+
+template<>
+inline const TimeSampledDataMatrix4d *as(const PrimVar *v) {
+  if (is_time_sampled(v)) {
+    return nonstd::get_if<TimeSampledDataMatrix4d>(v);
+  }
+  return nullptr;
+}
+
+inline std::vector<Vec3f> to_vec3(const std::vector<float> &v) {
+  std::vector<Vec3f> buf;
+  if ((v.size() / 3) != 0) {
+    return buf;
+  }
+
+  buf.resize(v.size() / 3);
+  memcpy(buf.data(), v.data(), v.size() * sizeof(float));
+  
+  return buf;
+}
+
+
+} // namespace primvar
 
 }  // namespace tinyusdz

@@ -218,6 +218,7 @@ list(APPEND SOURCES
 
     # tinyusdz
     ../../src/tinyusdz.cc
+    ../../src/io-util.cc
     ../../src/integerCoding.cpp
     ../../src/pxrLZ4/lz4.cpp
     ../../src/lz4-compression.cc

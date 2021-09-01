@@ -55,9 +55,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define WISE_ENUM_STRING_TYPE nonstd::string_view
 #include "wise_enum/wise_enum.h"
 
+#if 0 // TODO: Remove
 // Disable RTTI and Exception
 #define any_CONFIG_NO_EXCEPTIONS (1)
 #include "nonstd/any.hpp"
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -1547,10 +1549,7 @@ struct PrimAttrib {
 
   ListEditQual list_edit{LIST_EDIT_QUAL_RESET_TO_EXPLICIT};
 
-  // For array data types(e.g. FloatArray)
-  BufferData buffer;  // raw buffer data
   Variability variability;
-  //bool facevarying{false}; // TODO: Deprecate
   Interpolation interpolation{InterpolationInvalid};
 
   //
@@ -1559,39 +1558,25 @@ struct PrimAttrib {
   bool uniform{false}; // `uniform`
   bool custom{false}; // `custom`
 
-  // For basic types(e.g. Bool, Float).
-
-  // "bool", "string", "float", "int", "uint", "int64", "uint64", "double" or
-  // "path" empty = array data type
-  std::string basic_type;
-
-#if 0
-  // TODO: Use union struct
-  bool boolVal;
-  int intVal;
-  uint32_t uintVal;
-  int64_t int64Val;
-  uint64_t uint64Val;
-  float floatVal;
-  double doubleVal;
-  std::string stringVal;  // token, string
-  Path path;
-#endif
-
-  nonstd::any value; // TODO: Use PrimVar
-
   PrimVar var;
 };
 
 // UsdPrimvarReader_float2.
+
 // Currently for UV texture coordinate
+template<typename T>
 struct PrimvarReader {
-  std::string output_type = "float2";           // currently "float2" only.
-  std::array<float, 2> fallback{{0.0f, 0.0f}};  // fallback value
+  std::string output_type = TypeTrait<T>::type_name;
+  T fallback{};  // fallback value
 
   ConnectionPath
       varname;  // Name of the primvar to be fetched from the geometry.
 };
+
+using PrimvarReader_float2 = PrimvarReader<Vec2f>;
+using PrimvarReader_float3 = PrimvarReader<Vec3f>;
+
+using PrimvarReaderType = nonstd::variant<PrimvarReader_float2, PrimvarReader_float3>;
 
 using Property = nonstd::variant<PrimAttrib, Rel>;
 
@@ -1730,8 +1715,12 @@ struct Xform {
 };
 
 struct UVCoords {
+
+  using UVCoordType = nonstd::variant<std::vector<Vec2f>, std::vector<Vec3f>>;
+
   std::string name;
-  BufferData buffer;
+  UVCoordType buffer;
+
   Interpolation interpolation{InterpolationVertex};
   Variability variability;
 
@@ -2252,8 +2241,8 @@ struct UVTexture {
   int64_t image_id{
       -1};  // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
 
-  TextureWrap wrapS;
-  TextureWrap wrapT;
+  TextureWrap wrapS{};
+  TextureWrap wrapT{};
 
   std::array<float, 4> fallback{
       {0.0f, 0.0f, 0.0f,
@@ -2269,8 +2258,8 @@ struct UVTexture {
   // item = pair<type, name> : example: <"float3", "outputs:rgb">
   std::map<std::string, std::pair<std::string, std::string>> outputs;
 
-  PrimvarReader st;  // texture coordinate(`inputs:st`). We assume there is a
-                     // connection to this.
+  PrimvarReaderType st;  // texture coordinate(`inputs:st`). We assume there is a
+                         // connection to this.
 
   // TODO: orientation?
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD

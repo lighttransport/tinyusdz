@@ -156,7 +156,7 @@ std::string to_string(const Klass &klass, uint32_t indent = 0) {
     if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
         SLOG_INFO << "TODO: Rel\n";
     } else if (auto pattr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-      if (auto p = nonstd::any_cast<double>(&pattr->value)) {
+      if (auto p = primvar::as<double>(&pattr->var)) {
         ss << Indent(indent);
         if (pattr->custom) {
           ss << " custom ";
@@ -2136,6 +2136,9 @@ class USDAParser::Impl {
   }
 
   bool ParseDictElement(std::string *out_key, Variable *out_var) {
+    (void)out_key;
+    (void)out_var;
+
     // dict_element: type (array_qual?) name '=' value
     //           ;
 
@@ -2587,19 +2590,18 @@ class USDAParser::Impl {
 
       // 'todos'
 #else
-    if (0) {
-#endif
-    } else {
-      _PushError("TODO: ParseDictElement: Implement value parser for type: " +
-                 type_name + "\n");
-      return false;
-    }
 
     // TODO
-    (*out_key) = key_name;
-    (*out_var) = var;
+    //(*out_key) = key_name;
+    //(*out_var) = var;
 
-    return true;
+    if (0) {
+#endif
+    }
+
+    _PushError("TODO: ParseDictElement: Implement value parser for type: " +
+               type_name + "\n");
+    return false;
   }
 
   bool MaybeCustom() {
@@ -2622,8 +2624,6 @@ class USDAParser::Impl {
 
     PrimAttrib attr;
 
-    attr.basic_type = TypeTrait<T>::type_name;
-
     if (array_qual) {
       if (TypeTrait<T>::type_name == "bool") {
         _PushError("Array of bool type is not supported.");
@@ -2636,7 +2636,7 @@ class USDAParser::Impl {
         }
 
         //attr.buffer.Set(value);
-        attr.value = value;
+        attr.var = value;
       }
 
     } else if (hasConnect(primattr_name)) {
@@ -2661,7 +2661,7 @@ class USDAParser::Impl {
         std::cout << TypeTrait<T>::type_name << " = None\n";
       }
 
-      attr.value = *value;
+      attr.var = *value;
     }
 
     // optional: interpolation parameter
@@ -2907,7 +2907,7 @@ class USDAParser::Impl {
           return false;
         }
 
-        attr.value = m;
+        attr.var = m;
       } else {
         PUSH_ERROR("TODO: type = " + type_name);
         return false;
@@ -6768,7 +6768,7 @@ bool USDAParser::Impl::ReconstructXform(
     // array of string
     auto prop = properties.at("xformOpOrder");
     if (auto attrib = nonstd::get_if<PrimAttrib>(&prop)) {
-      if (auto parr = nonstd::any_cast<std::vector<std::string>>(&attrib->value)) {
+      if (auto parr = primvar::as<std::vector<std::string>>(&attrib->var)) {
         for (const auto &item : *parr) {
 
           // remove double-quotation
@@ -6805,7 +6805,7 @@ bool USDAParser::Impl::ReconstructXform(
             std::cout << "basename is xformOp::rotateZ"
                       << "\n";
             if (auto targetAttr = nonstd::get_if<PrimAttrib>(&targetProp)) {
-              if (auto p = nonstd::any_cast<float>(&targetAttr->value)) {
+              if (auto p = primvar::as<float>(&targetAttr->var)) {
                 std::cout << "xform got it "
                           << "\n";
                 op.op = XformOp::OpType::ROTATE_Z;
@@ -6909,7 +6909,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "radius") {
-        if (auto p = nonstd::any_cast<double>(&attr->value)) {
+        if (auto p = primvar::as<double>(&attr->var)) {
           sphere->radius = *p;
         } else {
           _PushError("`radius` must be double type.");
@@ -6988,7 +6988,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   for (const auto &prop : properties) {
     if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "points") {
-        if (auto p = nonstd::any_cast<std::vector<Vec3f>>(&attr->value)) {
+        if (auto p = primvar::as<std::vector<Vec3f>>(&attr->var)) {
           mesh->points = (*p);
         } else {
           _PushError("`points` must be float3[] type.");

@@ -130,7 +130,7 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
   (void)userdata;
 
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
-  if (tinyusdz::asset_manager) {
+  if (tinyusdz::io::asset_manager) {
     AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
                                        AASSET_MODE_STREAMING);
     if (!asset) {
