@@ -5,6 +5,7 @@
 #include <android/asset_manager_jni.h>
 
 #include "tinyusdz.hh"
+#include "io-util.hh"
 
 #include "render-ctx.hh"
 
@@ -117,7 +118,7 @@ Java_com_example_hellotinyusdz_MainActivity_touchMove(JNIEnv *env, jobject obj, 
             jstring _filename) {
 
         std::string filename = jstring2string(env, _filename);
-        tinyusdz::asset_manager = AAssetManager_fromJava(env, assetManager);
+        tinyusdz::io::asset_manager = AAssetManager_fromJava(env, assetManager);
 
         tinyusdz::USDLoadOptions options;
 

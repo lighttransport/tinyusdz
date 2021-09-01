@@ -33,12 +33,13 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   // Trianglate mesh
   // vertex points should be vec3f
-  dst->vertices = mesh.points;
   if (dst->vertices.size() != (mesh.GetNumPoints() * 3)) {
     std::cerr << "The number of vertices mismatch. " << dst->vertices.size()
               << " must be equal to " << mesh.GetNumPoints() * 3 << "\n";
     return false;
   }
+  dst->vertices.resize(mesh.points.size() * 3);
+  memcpy(dst->vertices.data(), mesh.points.data(), dst->vertices.size() * sizeof(float));
 
   std::vector<float> facevarying_normals;
   if (!mesh.GetFacevaryingNormals(&facevarying_normals)) {
@@ -178,6 +179,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
     }
   }
 
+#if 0 // TODO: Rewrite
   // Other facevarying attributes(property, primvars)
   dst->float_primvars.clear();
   dst->float_primvars_map.clear();
@@ -186,7 +188,8 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   dst->int_primvars_map.clear();
 
   for (const auto& attrib : mesh.attribs) {
-    if (!attrib.second.facevarying) {
+    if (attrib.second.interpolation != tinyusdz::Interpolation::InterpolationFaceVarying) {
+      std::cerr << "Interpolation must be facevarying\n";
       continue;
     }
 
@@ -198,7 +201,12 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
         tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT) {
       Buffer<float> buf;
       buf.num_coords = attrib.second.buffer.GetNumCoords();
-      buf.data = attrib.second.buffer.GetAsFloatArray();
+      if (auto p = attrib.second.buffer.GetAsFloatArray()) {
+        buf.data = (*p);
+      } else {
+        std::cerr << "Failed to get attribute value as float array\n";
+        continue;
+      }
 
       dst->float_primvars_map[attrib.first] = dst->float_primvars.size();
       dst->float_primvars.push_back(buf);
@@ -209,7 +217,10 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
                tinyusdz::BufferData::BUFFER_DATA_TYPE_INT) {
       Buffer<int32_t> buf;
       buf.num_coords = attrib.second.buffer.GetNumCoords();
-      buf.data = attrib.second.buffer.GetAsInt32Array();
+      if (auto p = attrib.second.buffer.GetAsInt32Array()) {
+        buf.data = (*p);
+        std::cerr << "Failed to get attribute value as int array\n";
+      }
 
       dst->int_primvars_map[attrib.first] = dst->int_primvars.size();
       dst->int_primvars.push_back(buf);
@@ -220,6 +231,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
       // TODO
     }
   }
+#endif
 
   std::cout << "num points = " << dst->vertices.size() / 3 << "\n";
   std::cout << "num triangulated faces = "
@@ -481,7 +493,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
           }
 
           if (!hit) {
-            
+
 
             output->geometric_normal[3 * pixel_idx + 0] = 0.0f;
             output->geometric_normal[3 * pixel_idx + 1] = 0.0f;

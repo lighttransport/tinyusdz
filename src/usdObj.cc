@@ -95,18 +95,15 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   const auto &attrs = reader.GetAttrib();
 
   PrimAttrib pointsAttr;
-  pointsAttr.type_name = "float3";
-  pointsAttr.buffer.data.resize(sizeof(float) * attrs.vertices.size());
-  memcpy(pointsAttr.buffer.data.data(), attrs.vertices.data(), sizeof(float) * attrs.vertices.size());
-  pointsAttr.buffer.num_coords = 3;
-  pointsAttr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT;
+  pointsAttr.type_name = "float3[]";
+  pointsAttr.var = primvar::to_vec3(attrs.vertices); // std::vector<float> -> std::vector<Vec3f>
   prim->props["points"] = pointsAttr;
 
   const auto &shapes = reader.GetShapes();
 
   // Combine all shapes into single mesh.
-  std::vector<uint32_t> vertexIndices;
-  std::vector<uint32_t> vertexCounts;
+  std::vector<int32_t> vertexIndices;
+  std::vector<int32_t> vertexCounts;
 
   // normals and texcoords are facevarying
   std::vector<Vec2f> facevaryingTexcoords;
@@ -197,21 +194,15 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     PrimAttrib attr;
-    attr.type_name = "int";
-    attr.buffer.data.resize(sizeof(int) * vertexIndices.size());
-    memcpy(attr.buffer.data.data(), vertexIndices.data(), sizeof(int) * vertexIndices.size());
-    attr.buffer.num_coords = 1;
-    attr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_INT;
+    attr.type_name = "int[]";
+    attr.var = vertexIndices;
     prim->props["faceVertexIndices"] = attr;
   }
 
   {
     PrimAttrib attr;
-    attr.type_name = "int";
-    attr.buffer.data.resize(sizeof(int) * vertexCounts.size());
-    memcpy(attr.buffer.data.data(), vertexCounts.data(), sizeof(int) * vertexCounts.size());
-    attr.buffer.num_coords = 1;
-    attr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_INT;
+    attr.type_name = "int[]";
+    attr.var = vertexCounts;
     prim->props["faceVertexCounts"] = attr;
   }
 
@@ -219,11 +210,8 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
     PrimAttrib normalsAttr;
     normalsAttr.interpolation = InterpolationFaceVarying;
     normalsAttr.variability = VariabilityVarying;
-    normalsAttr.type_name = "float3";
-    normalsAttr.buffer.data.resize(sizeof(Vec3f) * facevaryingNormals.size());
-    memcpy(normalsAttr.buffer.data.data(), facevaryingNormals.data(), sizeof(Vec3f) * facevaryingNormals.size());
-    normalsAttr.buffer.num_coords = 3;
-    normalsAttr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT;
+    normalsAttr.type_name = "float3[]";
+    normalsAttr.var = facevaryingNormals;
     prim->props["normals"] = normalsAttr;
   }
 
@@ -231,11 +219,8 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
     PrimAttrib texcoordsAttr;
     texcoordsAttr.interpolation = InterpolationFaceVarying;
     texcoordsAttr.variability = VariabilityVarying;
-    texcoordsAttr.type_name = "float2";
-    texcoordsAttr.buffer.data.resize(sizeof(Vec2f) * facevaryingTexcoords.size());
-    memcpy(texcoordsAttr.buffer.data.data(), facevaryingTexcoords.data(), sizeof(Vec3f) * facevaryingTexcoords.size());
-    texcoordsAttr.buffer.num_coords = 2;
-    texcoordsAttr.buffer.data_type = tinyusdz::BufferData::BUFFER_DATA_TYPE_FLOAT;
+    texcoordsAttr.type_name = "float2[]";
+    texcoordsAttr.var = facevaryingTexcoords;
     prim->props["prmvars:uv"] = texcoordsAttr;
   }
 

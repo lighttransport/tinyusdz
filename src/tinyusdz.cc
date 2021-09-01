@@ -3390,7 +3390,6 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
 #endif
 
         attr->var = path;
-        attr->basic_type = "path";
 
         has_connection = true;
 
@@ -3424,7 +3423,6 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
   for (const auto &fv : fvs) {
     if (fv.first == "default") {
       attr->name = prop_name;
-      attr->basic_type = std::string();
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "fv.second.GetTypeName = " << fv.second.GetTypeName()
@@ -3437,7 +3435,6 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
           _err += "Failed to decode Float value.";
           return false;
         }
-        attr->basic_type = "float";
         success = true;
 
       } else if (fv.second.GetTypeName() == "Bool") {
@@ -3448,7 +3445,6 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         }
 
         attr->var = boolVal;
-        attr->basic_type = "bool";
         success = true;
 
       } else if (fv.second.GetTypeName() == "Int") {
@@ -3459,46 +3455,58 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         }
 
         attr->var = value;
-        attr->basic_type = "int";
         success = true;
       } else if (fv.second.GetTypeName() == "Vec3f") {
-        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
-                         /* stride */ sizeof(float), fv.second.GetData());
+        Vec3f value = *reinterpret_cast<const Vec3f*>(fv.second.GetData().data());
+        attr->var = value;
+
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
 
       } else if (fv.second.GetTypeName() == "FloatArray") {
-        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1,
-                         /* stride */ sizeof(float), fv.second.GetData());
+        std::vector<float> value;
+        value.resize(fv.second.GetData().size() / sizeof(float));
+        memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
+        attr->var = value;
+
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "Vec2fArray") {
-        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2,
-                         /* stride */ sizeof(float) * 2, fv.second.GetData());
+        std::vector<Vec2f> value;
+        value.resize(fv.second.GetData().size() / sizeof(Vec2f));
+        memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
+        attr->var = value;
+
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "Vec3fArray") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "fv.second.data.size = " << fv.second.GetData().size()
-                  << "\n";
-#endif
-        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
-                         /* stride */ sizeof(float) * 3, fv.second.GetData());
+
+        std::vector<Vec3f> value;
+        value.resize(fv.second.GetData().size() / sizeof(Vec3f));
+        memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
+
+        attr->var = value;
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "Vec4fArray") {
-        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4,
-                         /* stride */ sizeof(float) * 4, fv.second.GetData());
+
+        std::vector<Vec4f> value;
+        value.resize(fv.second.GetData().size() / sizeof(Vec4f));
+        memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
+
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "IntArray") {
-        attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_INT, 1,
-                         /* stride */ sizeof(int32_t), fv.second.GetData());
+
+        std::vector<int> value;
+        value.resize(fv.second.GetData().size() / sizeof(int));
+        memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
+
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
@@ -3516,9 +3524,8 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
 #endif
-        
+
         attr->var = fv.second.GetToken();
-        attr->basic_type = "string";
         // attr->variability = variability;
         // attr->facevarying = facevarying;
         success = true;
@@ -3698,45 +3705,34 @@ bool Parser::_ReconstructGeomBasisCurves(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
-          if (auto p = attr.buffer.GetAsVec3fArray()) {
+          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
             curves->points = *p;
           }
         } else if (prop_name == "extent") {
           // vec3f[2]
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumElements() == 2) &&
-              (attr.buffer.GetNumCoords() == 3)) {
-            if (auto p = attr.buffer.GetAsVec3fArray()) {
+          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+            if (p->size() == 2) {
               curves->extent.lower = (*p)[0];
               curves->extent.upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {
-          if (auto p = attr.buffer.GetAsVec3fArray()) {
+          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
             curves->normals = (*p);
           }
         } else if (prop_name == "widths") {
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsFloatArray()) {
-              curves->widths = (*p);
-            }
+          if (auto p = primvar::as<std::vector<float>>(&attr.var)) {
+            curves->widths = (*p);
           }
         } else if (prop_name == "curveVertexCounts") {
-          // Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsInt32Array()) {
-              curves->curveVertexCounts = (*p);
-            }
+          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+            curves->curveVertexCounts = (*p);
           }
         } else if (prop_name == "type") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           //std::cout << "type:" << attr.stringVal << "\n";
 #endif
-          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
+          if (auto p = primvar::as<std::string>(&attr.var)) {
             if (p->compare("cubic") == 0) {
               curves->type = "cubic";
             } else if (p->compare("linear") == 0) {
@@ -3901,32 +3897,23 @@ bool Parser::_ReconstructGeomMesh(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 3)) {
-            if (auto p = attr.buffer.GetAsVec3fArray()) {
-              mesh->points = (*p);
-            }
+          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+            mesh->points = (*p);
           }
         } else if (prop_name == "doubleSided") {
-          if (attr.basic_type == "bool") {
-            mesh->doubleSided = nonstd::get<bool>(attr.var);
+          if (auto p = primvar::as<bool>(&attr.var)) {
+            mesh->doubleSided = (*p);
           }
         } else if (prop_name == "extent") {
           // vec3f[2]
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumElements() == 2) &&
-              (attr.buffer.GetNumCoords() == 3)) {
-            if (auto p = attr.buffer.GetAsVec3fArray()) {
+          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+            if (p->size() == 2) {
               mesh->extent.lower = (*p)[0];
               mesh->extent.upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 3)) {
+          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
             mesh->normals = std::move(attr);
           }
         } else if ((prop_name == "primvars:UVMap") &&
@@ -3935,35 +3922,26 @@ bool Parser::_ReconstructGeomMesh(
           // TODO(syoyo): Write PrimVar parser
 
           // Currently we only support vec2f for uv coords.
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 2)) {
+          if (auto p = primvar::as<std::vector<Vec2f>>(&attr.var)) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
             std::cout << "got explicit UVCoords!\n";
 #endif
-            mesh->st.buffer = attr.buffer;
+            mesh->st.buffer = (*p);
             mesh->st.variability = attr.variability;
           }
         } else if (prop_name == "faceVertexCounts") {
-          // Path prim part: /Suzanne/Suzanne, prop part: faceVertexCounts
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsInt32Array()) {
-              mesh->faceVertexCounts = (*p);
+          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+            mesh->faceVertexCounts = (*p);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-              // aaa: typeName: int[]
-              std::cout << "got faceVertexCounts. num = "
-                        << attr.buffer.GetNumElements() << "\n";
-              std::cout << "  num = " << mesh->faceVertexCounts.size() << "\n";
+            // aaa: typeName: int[]
+            std::cout << "got faceVertexCounts. num = "
+                      << p->size() << "\n";
+            std::cout << "  num = " << mesh->faceVertexCounts.size() << "\n";
 #endif
-            }
           }
         } else if (prop_name == "faceVertexIndices") {
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsInt32Array()) {
-              mesh->faceVertexIndices = (*p);
-            }
+          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+            mesh->faceVertexIndices = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
             // aaa: typeName: int[]
@@ -3971,59 +3949,40 @@ bool Parser::_ReconstructGeomMesh(
             std::cout << "  num = " << mesh->faceVertexIndices.size() << "\n";
 #endif
           }
+
         } else if (prop_name == "holeIndices") {
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsInt32Array()) {
+          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
               // aaa: typeName: int[]
               std::cout << "got holeIdicies\n";
 #endif
               mesh->holeIndices = (*p);
-            }
           }
         } else if (prop_name == "cornerIndices") {
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsInt32Array()) {
+          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
               mesh->cornerIndices = (*p);
-            }
           }
         } else if (prop_name == "cornerSharpnesses") {
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsFloatArray()) {
+          if (auto p = primvar::as<std::vector<float>>(&attr.var)) {
               mesh->cornerSharpnesses = (*p);
-            }
           }
         } else if (prop_name == "creaseIndices") {
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsInt32Array()) {
+          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
               mesh->creaseIndices = (*p);
-            }
           }
         } else if (prop_name == "creaseLengths") {
-          if ((attr.buffer.GetDataType() == BufferData::BUFFER_DATA_TYPE_INT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsInt32Array()) {
-              mesh->creaseLengths = (*p);
-            }
+          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+            mesh->creaseLengths = (*p);
           }
         } else if (prop_name == "creaseSharpnesses") {
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsFloatArray()) {
+          if (auto p = primvar::as<std::vector<float>>(&attr.var)) {
               mesh->creaseSharpnesses = (*p);
-            }
           }
         } else if (prop_name == "subdivisionScheme") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           //std::cout << "subdivisionScheme:" << attr.stringVal << "\n";
 #endif
-          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
+          if (auto p = primvar::as<std::string>(&attr.var)) {
             if (p->compare("none") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeNone;
             } else if (p->compare("catmullClark") == 0) {
@@ -4377,23 +4336,16 @@ bool Parser::_ReconstructShader(
           // Displacement shader output available
         } else if (prop_name.compare("inputs:metallic") == 0) {
           // type: float
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumElements() == 1) &&
-              (attr.buffer.GetNumCoords() == 1)) {
-            if (auto p = attr.buffer.GetAsFloat()) {
+            if (auto p = primvar::as<float>(&attr.var)) {
               shader->metallic.value = (*p);
             }
-          }
         } else if (prop_name.compare("inputs:metallic.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          shader->metallic.path = nonstd::get<std::string>(attr.var);
+          if (auto p = primvar::as<std::string>(&attr.var)) {
+            shader->metallic.path = *p;
+          }
         } else if (prop_name.compare("inputs:diffuseColor") == 0) {
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumElements() == 1) &&
-              (attr.buffer.GetNumCoords() == 3)) {
-            if (auto p = attr.buffer.GetAsColor3f()) {
+            if (auto p = primvar::as<Vec3f>(&attr.var)) {
               shader->diffuseColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -4402,16 +4354,13 @@ bool Parser::_ReconstructShader(
                         << shader->diffuseColor.color[2] << "\n";
 #endif
             }
-          }
         } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          shader->diffuseColor.path = nonstd::get<std::string>(attr.var);
+          if (auto p = primvar::as<std::string>(&attr.var)) {
+            shader->diffuseColor.path = *p;
+          }
         } else if (prop_name.compare("inputs:emissiveColor") == 0) {
-          if ((attr.buffer.GetDataType() ==
-               BufferData::BUFFER_DATA_TYPE_FLOAT) &&
-              (attr.buffer.GetNumElements() == 1) &&
-              (attr.buffer.GetNumCoords() == 3)) {
-            if (auto p = attr.buffer.GetAsColor3f()) {
+            if (auto p = primvar::as<Vec3f>(&attr.var)) {
               shader->emissiveColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -4420,10 +4369,11 @@ bool Parser::_ReconstructShader(
                         << shader->emissiveColor.color[2] << "\n";
 #endif
             }
-          }
         } else if (prop_name.compare("inputs:emissiveColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          shader->emissiveColor.path = nonstd::get<std::string>(attr.var);
+          if (auto p = primvar::as<std::string>(&attr.var)) {
+            shader->emissiveColor.path = *p;
+          }
         }
       }
     }
@@ -5609,32 +5559,15 @@ bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
     return false;
   }
 
-  // Currently we only support float3[]
-  if (normals.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
-    return false;
+  if (auto p = primvar::as<std::vector<Vec3f>>(&normals.var)) {
+    v->resize(p->size() * 3);
+    memcpy(v->data(), p->data(), v->size() * sizeof(float));
+
+    return true;
   }
 
-  if ((normals.buffer.GetNumCoords() < 0) ||
-      (normals.buffer.GetNumCoords() != 3)) {
-    return false;
-  }
+  return false;
 
-  if ((normals.buffer.GetStride() != (3 * sizeof(float)))) {
-    return false;
-  }
-
-  size_t n = normals.buffer.GetNumElements();
-  size_t c = size_t(normals.buffer.GetNumCoords());
-
-  v->resize(n * c);
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "fvnormal numelements = " << n << ", numcoords = " << c << "\n";
-#endif
-
-  memcpy(v->data(), normals.buffer.data.data(), n * c * sizeof(float));
-
-  return true;
 }
 
 bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
@@ -5642,32 +5575,21 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
     return false;
   }
 
-  // Currently we only support float3[]
-  if (st.buffer.GetDataType() != BufferData::BUFFER_DATA_TYPE_FLOAT) {
-    return false;
+  if (auto p = nonstd::get_if<std::vector<Vec3f>>(&st.buffer)) {
+    v->resize(p->size() * 3);
+    memcpy(v->data(), p->data(), v->size() * sizeof(float));
+
+    return true;
   }
 
-  if ((st.buffer.GetNumCoords() < 0) || (st.buffer.GetNumCoords() != 2)) {
-    return false;
+  if (auto p = nonstd::get_if<std::vector<Vec2f>>(&st.buffer)) {
+    v->resize(p->size() * 2);
+    memcpy(v->data(), p->data(), v->size() * sizeof(float));
+
+    return true;
   }
 
-  if ((st.buffer.GetStride() != (2 * sizeof(float)))) {
-    return false;
-  }
-
-  size_t n = st.buffer.GetNumElements();
-  size_t c = size_t(st.buffer.GetNumCoords());
-
-  v->resize(n * c);
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "fvtexcoords numelements = " << n << ", numcoords = " << c
-            << "\n";
-#endif
-
-  memcpy(v->data(), st.buffer.data.data(), n * c * sizeof(float));
-
-  return true;
+  return false;
 }
 
 Matrix4d GetTransform(XformOp xform)
@@ -5796,37 +5718,38 @@ void GeomMesh::Initialize(const GPrim &gprim)
     const PrimAttrib &attr = std::get<1>(prop_item);
 
     if (attr_name == "points") {
-      if (auto p = attr.buffer.GetAsVec3fArray()) {
+      if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
         points = *p;
       }
     } else if (attr_name == "faceVertexIndices") {
-      if (auto p = attr.buffer.GetAsInt32Array()) {
+      if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
         faceVertexIndices = *p;
       }
     } else if (attr_name == "faceVertexCounts") {
-      if (auto p = attr.buffer.GetAsInt32Array()) {
+      if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
         faceVertexCounts = *p;
       }
     } else if (attr_name == "normals") {
-      if (auto p = attr.buffer.GetAsVec3fArray()) {
-        normals.buffer.Set(*p);
+      if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+        normals.var = *p;
         normals.interpolation = attr.interpolation;
       }
     } else if (attr_name == "velocitiess") {
-      if (auto p = attr.buffer.GetAsVec3fArray()) {
-        velocitiess.buffer.Set(*p);
+      if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+        velocitiess.var = (*p);
         velocitiess.interpolation = attr.interpolation;
       }
     } else if (attr_name == "primvars:uv") {
-      if (auto p = attr.buffer.GetAsVec2fArray()) {
-        st.buffer.Set(*p);
+      // TODO: Vec3f UV coord
+      if (auto p = primvar::as<std::vector<Vec2f>>(&attr.var)) {
+        st.buffer = (*p);
         st.interpolation = attr.interpolation;
       }
     } else {
       // Generic PrimAtrr
       attribs[attr_name] = attr;
     }
-    
+
   }
 
   doubleSided = gprim.doubleSided;
@@ -5838,7 +5761,7 @@ void GeomMesh::Initialize(const GPrim &gprim)
   displayColor = gprim.displayColor;
   displayOpacity = gprim.displayOpacity;
 
-#if 0 // TODO 
+#if 0 // TODO
 
 
   // PrimVar(TODO: Remove)

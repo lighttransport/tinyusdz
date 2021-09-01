@@ -44,4 +44,17 @@ inline std::ostream &operator<<(std::ostream &os, const tinyusdz::Vec4d &v) {
   return os;
 }
 
+template<typename T>
+inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() -1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
+
 } // namespace std
