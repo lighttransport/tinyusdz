@@ -49,11 +49,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
 #include "nonstd/variant.hpp"
-#include "nonstd/string_view.hpp"
-
-// Cannot use std::string as WISE_ENUM_STRING_TYPE so use nonstd::string_view
-#define WISE_ENUM_STRING_TYPE nonstd::string_view
-#include "wise_enum/wise_enum.h"
 
 #if 0 // TODO: Remove
 // Disable RTTI and Exception
@@ -89,116 +84,6 @@ struct Image {
 };
 
 #if 0
-//
-// Colum-major order(e.g. employed in OpenGL).
-// For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to the translation.
-//
-template <typename T, size_t N>
-struct Matrix {
-  T m[N][N];
-  constexpr static uint32_t n = N;
-};
-
-template <typename T, size_t N>
-void Identity(Matrix<T, N> *mat) {
-  memset(mat->m, 0, sizeof(T) * N * N);
-  for (size_t i = 0; i < N; i++) {
-    mat->m[i][i] = static_cast<T>(1);
-  }
-};
-
-// ret = m x n
-template <typename T, size_t N>
-Matrix<T, N> Mult(Matrix<T, N> &m, Matrix<T, N> &n) {
-  Matrix<T, N> ret;
-  memset(ret.m, 0, sizeof(T) * N * N);
-
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      T value = static_cast<T>(0);
-      for (size_t k = 0; k < N; k++) {
-        value += m.m[k][i] * n.m[j][k];
-      }
-      ret.m[j][i] = value;
-    }
-  }
-
-  return ret;
-};
-
-
-
-using Matrix2f = Matrix<float, 2>;
-using Matrix2d = Matrix<double, 2>;
-using Matrix3f = Matrix<float, 3>;
-using Matrix3d = Matrix<double, 3>;
-using Matrix4f = Matrix<float, 4>;
-using Matrix4d = Matrix<double, 4>;
-
-using Vec4i = std::array<int32_t, 4>;
-using Vec3i = std::array<int32_t, 3>;
-using Vec2i = std::array<int32_t, 2>;
-
-// Use uint16_t for storage of half type.
-// Need to decode/encode value through half converter functions
-using Vec4h = std::array<uint16_t, 4>;
-using Vec3h = std::array<uint16_t, 3>;
-using Vec2h = std::array<uint16_t, 2>;
-
-using Vec4f = std::array<float, 4>;
-using Vec3f = std::array<float, 3>;
-using Vec2f = std::array<float, 2>;
-
-using Vec4d = std::array<double, 4>;
-using Vec3d = std::array<double, 3>;
-using Vec2d = std::array<double, 2>;
-
-template<typename T>
-struct Quat
-{
-  std::array<T, 4> v;
-};
-
-using Quath = Quat<uint16_t>;
-using Quatf = Quat<float>;
-using Quatd = Quat<double>;
-//using Quaternion = Quat<double>;  // Storage layout is same with Quadd,
-                                           // so we can delete this
-
-// TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
-
-/*
-#define VT_GFRANGE_VALUE_TYPES                 \
-((      GfRange3f,           Range3f        )) \
-((      GfRange3d,           Range3d        )) \
-((      GfRange2f,           Range2f        )) \
-((      GfRange2d,           Range2d        )) \
-((      GfRange1f,           Range1f        )) \
-((      GfRange1d,           Range1d        ))
-
-#define VT_RANGE_VALUE_TYPES                   \
-    VT_GFRANGE_VALUE_TYPES                     \
-((      GfInterval,          Interval       )) \
-((      GfRect2i,            Rect2i         ))
-
-#define VT_STRING_VALUE_TYPES            \
-((      std::string,           String )) \
-((      TfToken,               Token  ))
-
-#define VT_QUATERNION_VALUE_TYPES           \
-((      GfQuath,             Quath ))       \
-((      GfQuatf,             Quatf ))       \
-((      GfQuatd,             Quatd ))       \
-((      GfQuaternion,        Quaternion ))
-
-#define VT_NONARRAY_VALUE_TYPES                 \
-((      GfFrustum,           Frustum))          \
-((      GfMultiInterval,     MultiInterval))
-
-*/
-
-#endif
-
 WISE_ENUM(ListEditQual,
   LIST_EDIT_QUAL_RESET_TO_EXPLICIT,	// "unqualified"(no qualifier)
   LIST_EDIT_QUAL_APPEND, // "append"
@@ -212,6 +97,7 @@ enum Axis {
   AXIS_Y,
   AXIS_Z
 };
+#endif
 
 //inline static std::string to_string(ListEditQual qual)
 //{
@@ -427,6 +313,7 @@ struct ValueType {
 
 #endif
 
+#if 0
 WISE_ENUM(SpecType,
   SpecTypeUnknown,
   SpecTypeAttribute,
@@ -497,7 +384,9 @@ inline std::string to_string(Interpolation interp) {
   // Never reach here though
   return "[[Invalid interpolation value]]";
 }
+#endif
 
+#if 0
 // For PrimSpec
 enum Specifier {
   SpecifierDef,  // 0
@@ -518,6 +407,7 @@ enum Variability {
   VariabilityConfig,
   NumVariabilities
 };
+#endif
 
 #if 0
 ///
@@ -528,152 +418,6 @@ using TimeSampleType = nonstd::variant<double, Vec3f, Quatf, Matrix4d>;
 struct TimeSamples {
   std::vector<double> times;
   std::vector<TimeSampleType> values;
-};
-#endif
-
-#if 0
-///
-/// Simple type-erased primitive value class for frequently used data types(e.g. `float[]`)
-///
-template <class dtype>
-struct TypeTrait;
-
-// TODO(syoyo): Support `Token` type
-template <>
-struct TypeTrait<std::string> {
-  static constexpr auto type_name = "string";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_STRING;
-};
-
-template <>
-struct TypeTrait<int> {
-  static constexpr auto type_name = "int";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_INT;
-};
-
-template <>
-struct TypeTrait<float> {
-  static constexpr auto type_name = "float";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_FLOAT;
-};
-
-template <>
-struct TypeTrait<double> {
-  static constexpr auto type_name = "double";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_DOUBLE;
-};
-
-
-template <>
-struct TypeTrait<float16> {
-  static constexpr auto type_name = "half";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_HALF;
-};
-
-template <>
-struct TypeTrait<Vec2f> {
-  static constexpr auto type_name = "vec2f";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2F;
-};
-
-template <>
-struct TypeTrait<Vec3f> {
-  static constexpr auto type_name = "vec3f";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3F;
-};
-
-template <>
-struct TypeTrait<Vec4f> {
-  static constexpr auto type_name = "vec4f";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4F;
-};
-
-template <>
-struct TypeTrait<Quatf> {
-  static constexpr auto type_name = "quatf";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATF;
-};
-
-template <>
-struct TypeTrait<Quatd> {
-  static constexpr auto type_name = "quatd";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATD;
-};
-
-template <>
-struct TypeTrait<Matrix4d> {
-  static constexpr auto type_name = "matrix4d";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX4D;
-};
-
-template <class T>
-class PrimValue {
- private:
-  T m_value;
-
- public:
-  T value() const { return m_value; }
-
-  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
-                            * = nullptr>
-  PrimValue<T> &operator=(const U &u) {
-    m_value = u;
-
-    return (*this);
-  }
-
-  std::string type_name() { return std::string(TypeTrait<T>::type_name); }
-  bool is_array() const { return false; }
-  int array_dim() const { return 0; }
-};
-
-///
-/// 1D array of PrimValue
-///
-template <class T>
-class PrimValue<std::vector<T>> {
- private:
-  std::vector<T> m_value;
-
-  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
-                            * = nullptr>
-  PrimValue<T> &operator=(const std::vector<U> &u) {
-    m_value = u;
-
-    return (*this);
-  }
-
-  std::string type_name() {
-    return std::string(TypeTrait<T>::type_name) + "[]";
-  }
-
-  bool is_array() const { return true; }
-  int array_dim() const { return 1; }
-};
-
-///
-/// 2D array of PrimValue
-/// TODO: Provide multidim_array implementation
-///
-template <class T>
-class PrimValue<std::vector<std::vector<T>>> {
- private:
-  std::vector<std::vector<T>> m_value;
-
-  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
-                            * = nullptr>
-  PrimValue<T> &operator=(const std::vector<std::vector<U>> &u) {
-    m_value = u;
-
-    return (*this);
-  }
-
-  std::string type_name() {
-    return std::string(TypeTrait<T>::type_name) + "[][]";
-  }
-
-  bool is_array() const { return true; }
-  int array_dim() const { return 2; }
 };
 #endif
 
@@ -1728,6 +1472,7 @@ struct UVCoords {
   std::vector<uint32_t> indices;  // UV indices. Usually varying
 };
 
+#if 0
 struct Extent {
   Vec3f lower{{std::numeric_limits<float>::infinity(),
                std::numeric_limits<float>::infinity(),
@@ -1763,6 +1508,7 @@ struct Extent {
 
   }
 };
+#endif
 
 struct GeomBoundable {
   std::string name;

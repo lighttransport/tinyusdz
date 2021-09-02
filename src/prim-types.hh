@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -15,11 +17,102 @@
 #include <nonstd/optional.hpp>
 #include <nonstd/variant.hpp>
 
+#include "nonstd/string_view.hpp"
+
+// Cannot use std::string as WISE_ENUM_STRING_TYPE so use nonstd::string_view
+#define WISE_ENUM_STRING_TYPE nonstd::string_view
+#include <wise_enum/wise_enum.h>
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
 namespace tinyusdz {
+
+WISE_ENUM(SpecType,
+  SpecTypeUnknown,
+  SpecTypeAttribute,
+  SpecTypeConnection,
+  SpecTypeExpression,
+  SpecTypeMapper,
+  SpecTypeMapperArg,
+  SpecTypePrim,
+  SpecTypePseudoRoot,
+  SpecTypeRelationship,
+  SpecTypeRelationshipTarget,
+  SpecTypeVariant,
+  SpecTypeVariantSet,
+  NumSpecTypes
+)
+
+WISE_ENUM(Orientation,
+  OrientationRightHanded,  // 0
+  OrientationLeftHanded
+)
+
+WISE_ENUM(Visibility,
+  VisibilityInherited,  // 0
+  VisibilityInvisible
+)
+
+WISE_ENUM(Purpose,
+  PurposeDefault,  // 0
+  PurposeRender,
+  PurposeProxy,
+  PurposeGuide
+)
+
+WISE_ENUM(SubdivisionScheme,
+  SubdivisionSchemeCatmullClark,  // 0
+  SubdivisionSchemeLoop,
+  SubdivisionSchemeBilinear,
+  SubdivisionSchemeNone
+)
+
+// Attribute interpolation
+WISE_ENUM(Interpolation,
+  InterpolationInvalid, // 0
+  InterpolationConstant, // "constant"
+  InterpolationUniform, // "uniform"
+  InterpolationVarying, // "varying"
+  InterpolationVertex, // "vertex"
+  InterpolationFaceVarying // "faceVarying"
+)
+
+WISE_ENUM(ListEditQual,
+  LIST_EDIT_QUAL_RESET_TO_EXPLICIT,	// "unqualified"(no qualifier)
+  LIST_EDIT_QUAL_APPEND, // "append"
+  LIST_EDIT_QUAL_ADD, // "add"
+  LIST_EDIT_QUAL_DELETE, // "delete"
+  LIST_EDIT_QUAL_PREPEND // "prepend"
+)
+
+WISE_ENUM(Axis,
+  AXIS_X,
+  AXIS_Y,
+  AXIS_Z
+)
+
+// For PrimSpec
+WISE_ENUM(Specifier,
+  SpecifierDef,  // 0
+  SpecifierOver,
+  SpecifierClass,
+  NumSpecifiers
+)
+
+WISE_ENUM(Permission,
+  PermissionPublic,  // 0
+  PermissionPrivate,
+  NumPermissions
+)
+
+WISE_ENUM(Variability,
+  VariabilityVarying,  // 0
+  VariabilityUniform,
+  VariabilityConfig,
+  NumVariabilities
+)
 
 struct AssetReference {
   std::string asset_reference;
@@ -437,6 +530,43 @@ struct ValueType {
   ValueTypeId id{VALUE_TYPE_INVALID};
   bool supports_array{false};
 };
+
+struct Extent {
+  Vec3f lower{{std::numeric_limits<float>::infinity(),
+               std::numeric_limits<float>::infinity(),
+               std::numeric_limits<float>::infinity()}};
+
+  Vec3f upper{{-std::numeric_limits<float>::infinity(),
+               -std::numeric_limits<float>::infinity(),
+               -std::numeric_limits<float>::infinity()}};
+
+  Extent() {}
+
+  Extent(const Vec3f &l, const Vec3f &u) : lower(l), upper(u) {}
+
+  bool Valid() const {
+    if (lower[0] > upper[0]) return false;
+    if (lower[1] > upper[1]) return false;
+    if (lower[2] > upper[2]) return false;
+
+    return std::isfinite(lower[0]) && std::isfinite(lower[1]) && std::isfinite(lower[2])
+           && std::isfinite(upper[0]) && std::isfinite(upper[1]) && std::isfinite(upper[2]);
+  }
+
+  std::array<std::array<float, 3>, 2> to_array() const {
+    std::array<std::array<float, 3>, 2> ret;
+    ret[0][0] = lower[0];
+    ret[0][1] = lower[1];
+    ret[0][2] = lower[2];
+    ret[1][0] = upper[0];
+    ret[1][1] = upper[1];
+    ret[1][2] = upper[2];
+
+    return ret;
+
+  }
+};
+
 
 ///
 /// Simple type-erased primitive value class for frequently used data types(e.g.
