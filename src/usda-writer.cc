@@ -1,4 +1,5 @@
 #include "usda-writer.hh"
+#include "pprinter.hh"
 
 #include <fstream>
 #include <iostream>
@@ -10,34 +11,6 @@ namespace usda {
 namespace {
 
 // TODO: Use ryu print for precise floating point output?
-
-#if 0
-std::ostream &operator<<(std::ostream &ofs, const Vec3f &v) {
-  ofs << "( " << v[0] << ", " << v[1] << ", " << v[2] << " )";
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const Vec3d &v) {
-  ofs << "( " << v[0] << ", " << v[1] << ", " << v[2] << " )";
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const Quatf &q) {
-  ofs << "( " << q.v[0] << ", " << q.v[1] << ", " << q.v[2] << ", " << q.v[3]
-      << " )";
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const Quatd &q) {
-  ofs << "( " << q.v[0] << ", " << q.v[1] << ", " << q.v[2] << ", " << q.v[3]
-      << " )";
-
-  return ofs;
-}
-#endif
 
 #if 0
 std::ostream &operator<<(std::ostream &ofs, const Matrix4f &m) {

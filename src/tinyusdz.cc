@@ -100,27 +100,6 @@ namespace tinyusdz {
 
 namespace {
 
-
-
-#if 0
-//
-// Simple MatMul implementation
-//
-template<typename T>
-void MatrixMult(T dst[4][4], const T m0[4][4], const T m1[4][4]) {
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4; ++j) {
-      dst[i][j] = 0;
-      for (int k = 0; k < 4; ++k) {
-        dst[i][j] += m0[k][j] * m1[i][k];
-      }
-    }
-  }
-}
-#endif
-
-
-
 constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
 
@@ -5740,9 +5719,11 @@ void GeomMesh::Initialize(const GPrim &gprim)
         velocitiess.interpolation = attr.interpolation;
       }
     } else if (attr_name == "primvars:uv") {
-      // TODO: Vec3f UV coord
-      if (auto p = primvar::as<std::vector<Vec2f>>(&attr.var)) {
-        st.buffer = (*p);
+      if (auto pv2f = primvar::as<std::vector<Vec2f>>(&attr.var)) {
+        st.buffer = (*pv2f);
+        st.interpolation = attr.interpolation;
+      } else if (auto pv3f = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+        st.buffer = (*pv3f);
         st.interpolation = attr.interpolation;
       }
     } else {

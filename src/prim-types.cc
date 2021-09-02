@@ -262,31 +262,14 @@ typename overload_set<Fs...>::type overloaded(Fs... x)
 
 std::string type_name(const TimeSampleType &v) {
 
-  //  auto f = overloaded
-  //      (
-  //          []() { return 1; },
-  //          [](int x) { return x + 1; }
-  //      );
-
-  //(void)f;
-
   std::string ty =  nonstd::visit(overloaded (
             [](auto) { return "[[TODO: TypeSampleType. ]]"; },
-            [](int) { return "int"; }
+            [](TimeSampledDataDouble) { return "double"; },
+            [](TimeSampledDataDouble3) { return "double3"; },
+            [](TimeSampledDataFloat) { return "float"; },
+            [](TimeSampledDataFloat3) { return "float"; },
+            [](TimeSampledDataMatrix4d) { return "matrix4d"; }
   ), v);
-
-#if 0
-  // TODO: use nonstd::visit
-  if (nonstd::get_if<float>(&v)) {
-    return "float";
-  } else if (nonstd::get_if<double>(&v)) {
-    return "double";
-  } else if (nonstd::get_if<Vec3f>(&v)) {
-    return "float3";
-  } else {
-    return "[[Unknown type for Value]]";
-  }
-#endif
 
   return ty;
 }
