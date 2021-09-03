@@ -16,8 +16,9 @@
 
 #include <nonstd/optional.hpp>
 #include <nonstd/variant.hpp>
+#include <nonstd/string_view.hpp>
 
-#include "nonstd/string_view.hpp"
+using namespace nonstd::literals; // _sv
 
 // Cannot use std::string as WISE_ENUM_STRING_TYPE so use nonstd::string_view
 #define WISE_ENUM_STRING_TYPE nonstd::string_view
@@ -795,7 +796,6 @@ struct TimeSamples {
   std::vector<TimeSampleType> values;
 };
 
-std::string type_name(const TimeSampleType &v);
 
 //
 // Simple NumPy like NDArray up to 4D
@@ -837,9 +837,11 @@ using TimeSampledValue =
                     TimeSampledDataDouble, TimeSampledDataFloat3,
                     TimeSampledDataDouble3, TimeSampledDataMatrix4d>;
 
+// Use string_view as `token` type
+using Token = nonstd::string_view;
 using PrimBasicType =
     nonstd::variant<bool, int, uint32_t, float, Vec2f, Vec3f, Vec4f, double, Vec2d, Vec3d,
-                    Vec4d, Matrix4d, std::string, Path>;
+                    Vec4d, Matrix4d, std::string, Token, Path>;
 using PrimArrayType =
     nonstd::variant<std::vector<bool>, std::vector<int>, std::vector<float>, std::vector<Vec2f>,
                     std::vector<Vec3f>, std::vector<Vec4f>, std::vector<double>,
@@ -946,6 +948,15 @@ inline std::vector<Vec3f> to_vec3(const std::vector<float> &v) {
   return buf;
 }
 
+template<typename T>
+std::string type_name(const std::vector<T> &v) {
+  return TypeTrait<T>::type_name + std::string("[]");
+}
+
+std::string type_name(const PrimVar &v);
+std::string type_name(const PrimArrayType &v);
+std::string type_name(const PrimBasicType &v);
+std::string type_name(const TimeSampleType &v);
 
 } // namespace primvar
 

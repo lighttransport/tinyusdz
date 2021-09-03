@@ -298,5 +298,37 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0) {
   return ss.str();
 }
 
+std::string to_string(const GeomMesh &mesh, const uint32_t indent = 0) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Mesh \"" << mesh.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "  " << primvar::type_name(mesh.points) << " points = " << mesh.points << "\n";
+
+  // primvars
+  if (!mesh.displayColor.empty()) {
+    ss << Indent(indent) << "  primvars:displayColor = [";
+    for (size_t i = 0; i < mesh.displayColor.size(); i++) {
+      ss << mesh.displayColor[i];
+      if (i != (mesh.displayColor.size() - 1)) {
+        ss << ", ";
+      }
+    }
+    ss << "]\n";
+
+    // TODO: print optional meta value(e.g. `interpolation`)
+  }
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+
 
 } // namespace tinyusdz
