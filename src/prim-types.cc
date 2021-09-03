@@ -274,5 +274,61 @@ std::string type_name(const TimeSampleType &v) {
   return ty;
 }
 
+std::string type_name(const PrimBasicType &v) {
+
+  std::string ty =  nonstd::visit(overloaded (
+            [](auto) { return "[[TODO: PrimBasicType. ]]"; },
+            [](std::string) { return "string"; },
+            [](Token) { return "token"; },
+            [](float) { return "float"; },
+            [](Vec2f) { return "float2"; },
+            [](Vec3f) { return "float3"; },
+            [](Vec4f) { return "float4"; },
+            [](double) { return "double"; },
+            [](Vec2d) { return "double2"; },
+            [](Vec3d) { return "double3"; },
+            [](Vec4d) { return "double4"; },
+            [](Matrix4d) { return "matrix4d"; }
+  ), v);
+
+  return ty;
+}
+
+std::string type_name(const PrimArrayType &v) {
+
+  std::string ty =  nonstd::visit(overloaded (
+            [](auto) { return "[[TODO: PrimAarrayType. ]]"; },
+            [](const std::vector<std::string>&) { return "string[]"; },
+            [](const std::vector<Token>&) { return "token[]"; },
+            [](const std::vector<float>&) { return "float[]"; },
+            [](const std::vector<Vec2f>&) { return "float2[]"; },
+            [](const std::vector<Vec3f>&) { return "float3[]"; },
+            [](const std::vector<Vec4f>&) { return "float4[]"; },
+            [](const std::vector<double>&) { return "double"; },
+            [](const std::vector<Vec2d>&) { return "double2[]"; },
+            [](const std::vector<Vec3d>&) { return "double3[]"; },
+            [](const std::vector<Vec4d>&) { return "double4[]"; },
+            [](const std::vector<Matrix4d>&) { return "matrix4d[]"; }
+  ), v);
+
+  return ty;
+}
+
+std::string type_name(const PrimVar &v) {
+  if (auto p = nonstd::get_if<None>(&v)) {
+    return "None";
+  } 
+  if (auto p = nonstd::get_if<PrimBasicType>(&v)) {
+    return type_name(*p);
+  } 
+  if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
+    return type_name(*p);
+  } 
+  if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
+    return type_name(*p);
+  } 
+
+  return "[[Invalid PrimVar type]]";
+}
 
 } // namespace tinyusdz

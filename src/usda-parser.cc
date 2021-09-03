@@ -325,7 +325,7 @@ class Variable {
       std::string ts_type = "none";
       auto ts_struct = v.as_timesamples();
       for (const TimeSampleType &item : ts_struct->values) {
-        std::string tname = tinyusdz::type_name(item);
+        auto tname = primvar::type_name(item);
         if (tname != "none") {
           return tname;
         }
@@ -6178,6 +6178,9 @@ class USDAParser::Impl {
             _PushError("Failed to reconstruct GeomMesh.");
             return false;
           }
+
+          std::cout << to_string(mesh, nestlevel) << "\n";
+
         } else if (prim_type == "Sphere") {
           GeomSphere sphere;
           std::cout << "Reconstruct Sphere\n";
