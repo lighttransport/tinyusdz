@@ -4441,8 +4441,8 @@ bool Parser::_ReconstructGeomMesh(
           // vec3f[2]
           if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
             if (p->size() == 2) {
-              mesh->extent.lower = (*p)[0];
-              mesh->extent.upper = (*p)[1];
+              nonstd::get<Extent>(mesh->extent).lower = (*p)[0];
+              nonstd::get<Extent>(mesh->extent).upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {

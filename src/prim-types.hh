@@ -1098,6 +1098,16 @@ struct TimeSampled {
 };
 
 // For run-time data structure(e.g. for GeomMesh)
+// `None` value and `deleted` items are omitted in this data struct.
+// e.g.
+// 
+// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
+//
+// in .usd is stored as
+//
+// radius = { 0: 1.0, 2: 3.0 }
+//
+// for Animatable type.
 
 template<typename T>
 using Animatable = nonstd::variant<T, TimeSampled<T>>;
@@ -1307,7 +1317,7 @@ struct GeomCube {
   //
   AnimatableDouble size{2.0};
   AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  Visibility visibility{VisibilityInherited};
+  AnimatableVisibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
   // Gprim
@@ -1511,13 +1521,13 @@ struct GPrim {
   std::string prim_type; // Primitive type(if specified by `def`)
 
   // Gprim
-  Extent extent;  // bounding extent(in local coord?).
+  AnimatableExtent extent;  // bounding extent(in local coord?).
   bool doubleSided{false};
   Orientation orientation{OrientationRightHanded};
-  Visibility visibility{VisibilityInherited};
+  AnimatableVisibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
-  std::vector<Vec3f> displayColor; // primvars:displayColor
-  std::vector<float> displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor; // primvars:displayColor
+  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1568,16 +1578,16 @@ struct GeomMesh {
   //
   // Properties
   //
-  Extent extent;  // bounding extent(in local coord?).
+  AnimatableExtent extent;  // bounding extent(in local coord?).
   std::string facevaryingLinearInterpolation = "cornerPlus1";
-  Visibility visibility{VisibilityInherited};
+  AnimatableVisibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 
   // Gprim
   bool doubleSided{false};
   Orientation orientation{OrientationRightHanded};
-  std::vector<Vec3f> displayColor; // primvars:displayColor
-  std::vector<float> displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor; // primvars:displayColor
+  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1853,7 +1863,7 @@ struct Group {
 
   int64_t parent_id{-1};
 
-  Visibility visibility{VisibilityInherited};
+  AnimatableVisibility visibility{VisibilityInherited};
   Purpose purpose{PurposeDefault};
 };
 
