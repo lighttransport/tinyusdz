@@ -14,12 +14,108 @@ std::string Indent(uint32_t n) {
   return ss.str();
 }
 
+std::string to_string(const float &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const double &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+template<typename T>
+std::string to_string(const std::vector<T> &v) {
+  std::stringstream ss;
+
+  ss << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    ss << v[i];
+    if (i != (v.size() - 1)) {
+      ss << ", ";
+    }
+  }
+  ss << "]";
+  
+  return ss.str();
+}
+
+
 template<typename T>
 std::string prefix(const Animatable<T> &v) {
   if (nonstd::get_if<TimeSampled<T>>(&v)) {
     return ".timeSamples";
   }
   return "";
+}
+
+template<typename T>
+std::string print_timesampled(const TimeSampled<T> &v, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << "{\n";
+
+  for (size_t i = 0; i < v.times.size(); i++) {
+    ss << Indent(indent+2) << v.times[i] << " : " << to_string(v.values[i]) << ",\n";
+  }
+
+  ss << Indent(indent+1) << "}";
+
+  return ss.str();
+}
+
+template<typename T>
+std::string print_animatable(const Animatable<T> &v, const uint32_t indent) {
+  if (auto p = nonstd::get_if<T>(&v)) {
+    return to_string(*p);
+  }
+
+  if (auto p = nonstd::get_if<TimeSampled<T>>(&v)) {
+    return print_timesampled(*p, indent);
+  }
+
+  return "[[??? print_animatable]]";
+}
+
+template<typename T>
+std::string print_predefined(const T &gprim, const uint32_t indent) {
+  std::stringstream ss;
+
+  // properties
+  if (gprim.doubleSided != false) {
+    ss << Indent(indent) << "  uniform bool doubleSided = " << gprim.doubleSided << "\n";
+  }
+
+  if (gprim.orientation != OrientationRightHanded) {
+    ss << Indent(indent) << "  uniform token orientation = " << to_string(gprim.orientation)
+       << "\n";
+  }
+
+  ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent) << " = " << print_animatable(gprim.extent, indent) << "\n";
+
+  ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility) << " = " << print_animatable(gprim.visibility, indent) << "\n";
+
+  // primvars
+  ss << Indent(indent) << "  float3[] primvars:displayColor" << prefix(gprim.displayColor) << " = " << print_animatable(gprim.displayColor, indent) << "\n";
+
+#if 0
+  if (!gprim.displayColor.empty()) {
+    ss << Indent(indent) << "  primvars:displayColor = [";
+    for (size_t i = 0; i < gprim.displayColor.size(); i++) {
+      ss << gprim.displayColor[i];
+      if (i != (gprim.displayColor.size() - 1)) {
+        ss << ", ";
+      }
+    }
+    ss << "]\n";
+
+    // TODO: print optional meta value(e.g. `interpolation`)
+  }
+#endif
+
+  return ss.str();
 }
 
 } // namespace
@@ -69,6 +165,7 @@ std::string to_string(tinyusdz::Extent e) {
   return ss.str();
 }
 
+#if 0
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent) {
   if (auto p = nonstd::get_if<Visibility>(&v)) {
     return to_string(*p);
@@ -91,6 +188,7 @@ std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t in
 
   return "[[??? AnimatableVisibility]]";
 }
+#endif
 
 std::string to_string(const tinyusdz::Klass &klass, uint32_t indent) {
   std::stringstream ss;
@@ -138,7 +236,7 @@ std::string to_string(const GPrim &gprim, const uint32_t indent) {
   // props
   // TODO:
 
-  ss << Indent(indent) << "  visibility = " << to_string(gprim.visibility)
+  ss << Indent(indent) << "  visibility" << prefix(gprim.visibility) << " = " << print_animatable(gprim.visibility, indent)
      << "\n";
 
   ss << Indent(indent) << "}\n";
@@ -189,7 +287,7 @@ std::string to_string(const Xform &xform, const uint32_t indent) {
     ss << "]\n";
   }
 
-  ss << Indent(indent) << "  visibility = " << to_string(xform.visibility, indent)
+  ss << Indent(indent) << "  visibility" << prefix(xform.visibility) << " = " << print_animatable(xform.visibility, indent)
      << "\n";
 
   ss << Indent(indent) << "}\n";
@@ -197,72 +295,6 @@ std::string to_string(const Xform &xform, const uint32_t indent) {
   return ss.str();
 }
 
-namespace {
-
-template<typename T>
-std::string print_timesampled(const TimeSampled<T> &v, const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << "{\n";
-
-  for (size_t i = 0; i < v.times.size(); i++) {
-    ss << Indent(indent+2) << v.times[i] << " : " << to_string(v.values[i]) << ",\n";
-  }
-
-  ss << Indent(indent+1) << "}";
-
-  return ss.str();
-}
-
-template<typename T>
-std::string print_animatable(const nonstd::variant<T, TimeSampled<T>> &v, const uint32_t indent) {
-  if (auto p = nonstd::get_if<T>(&v)) {
-    return to_string(*p, indent);
-  }
-
-  if (auto p = nonstd::get_if<TimeSampled<T>>(&v)) {
-    return print_timesampled(*p, indent);
-  }
-
-  return "[[??? print_animatable]]";
-}
-
-template<typename T>
-std::string print_predefined(const T &gprim, const uint32_t indent) {
-  std::stringstream ss;
-
-  // properties
-  if (gprim.doubleSided != false) {
-    ss << Indent(indent) << "  uniform bool doubleSided = " << gprim.doubleSided << "\n";
-  }
-
-  if (gprim.orientation != OrientationRightHanded) {
-    ss << Indent(indent) << "  uniform token orientation = " << to_string(gprim.orientation)
-       << "\n";
-  }
-
-  ss << Indent(indent) << "  float3[] extent = " << to_string(gprim.extent) << "\n";
-
-  ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility) << " = " << print_animatable(gprim.visibility);
-
-  // primvars
-  if (!gprim.displayColor.empty()) {
-    ss << Indent(indent) << "  primvars:displayColor = [";
-    for (size_t i = 0; i < gprim.displayColor.size(); i++) {
-      ss << gprim.displayColor[i];
-      if (i != (gprim.displayColor.size() - 1)) {
-        ss << ", ";
-      }
-    }
-    ss << "]\n";
-
-    // TODO: print optional meta value(e.g. `interpolation`)
-  }
-
-  return ss.str();
-}
-
-} // namespace
 
 std::string to_string(const GeomSphere &sphere, const uint32_t indent) {
   std::stringstream ss;
@@ -301,6 +333,26 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent) {
 
   return ss.str();
 }
+
+std::string to_string(const GeomPoints &points, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Points \"" << points.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "  " << primvar::type_name(points.points) << " points = " << points.points << "\n";
+
+  ss << print_predefined(points, indent);
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 
 std::string to_string(const GeomBasisCurves &geom, const uint32_t indent) {
   std::stringstream ss;
