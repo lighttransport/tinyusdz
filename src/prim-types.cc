@@ -1,9 +1,9 @@
 #include "prim-types.hh"
+#include "pprinter.hh"
 
 #include <limits>
 
 namespace tinyusdz {
-
 namespace {
 
 // https://www.realtime.bc.ca/articles/endian-safe.html
@@ -194,9 +194,9 @@ float16 float_to_half_full_le(float _f) {
 } // namespace
 
 float half_to_float(float16 h) {
-  // TODO: Compile time detection of endianness  
+  // TODO: Compile time detection of endianness
   HostEndianness endian;
-  
+
   if (endian.isBig()) {
     float16be f;
     f.u = h;
@@ -214,9 +214,9 @@ float half_to_float(float16 h) {
 
 
 float16 float_to_half_full(float _f) {
-  // TODO: Compile time detection of endianness  
+  // TODO: Compile time detection of endianness
   HostEndianness endian;
-  
+
   if (endian.isBig()) {
     return float_to_half_full_be(_f);
   } else if (endian.isLittle()) {
@@ -260,6 +260,7 @@ typename overload_set<Fs...>::type overloaded(Fs... x)
     return overload_set<Fs...>(x...);
 }
 
+#if 0
 std::string type_name(const TimeSampleType &v) {
 
   std::string ty =  nonstd::visit(overloaded (
@@ -317,18 +318,19 @@ std::string type_name(const PrimArrayType &v) {
 std::string type_name(const PrimVar &v) {
   if (auto p = nonstd::get_if<None>(&v)) {
     return "None";
-  } 
+  }
   if (auto p = nonstd::get_if<PrimBasicType>(&v)) {
     return type_name(*p);
-  } 
+  }
   if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
     return type_name(*p);
-  } 
+  }
   if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
     return type_name(*p);
-  } 
+  }
 
   return "[[Invalid PrimVar type]]";
 }
+#endif
 
 } // namespace tinyusdz
