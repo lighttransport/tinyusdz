@@ -14,11 +14,13 @@ std::string Indent(uint32_t n) {
   return ss.str();
 }
 
+#if 0
 std::string to_string(const float &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
 }
+#endif
 
 std::string to_string(const double &v) {
   std::stringstream ss;
@@ -38,7 +40,7 @@ std::string to_string(const std::vector<T> &v) {
     }
   }
   ss << "]";
-  
+
   return ss.str();
 }
 
@@ -92,6 +94,7 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
     ss << Indent(indent) << "  uniform token orientation = " << to_string(gprim.orientation)
        << "\n";
   }
+
 
   ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent) << " = " << print_animatable(gprim.extent, indent) << "\n";
 
@@ -202,7 +205,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent) {
     if (auto prel = nonstd::get_if<tinyusdz::Rel>(&prop.second)) {
         ss << "TODO: Rel\n";
     } else if (auto pattr = nonstd::get_if<tinyusdz::PrimAttrib>(&prop.second)) {
-      if (auto p = tinyusdz::primvar::as<double>(&pattr->var)) {
+      if (auto p = tinyusdz::primvar::as_basic<double>(&pattr->var)) {
         ss << tinyusdz::Indent(indent);
         if (pattr->custom) {
           ss << " custom ";

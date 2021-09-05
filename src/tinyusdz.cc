@@ -4238,34 +4238,34 @@ bool Parser::_ReconstructGeomBasisCurves(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
-          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+          if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             curves->points = *p;
           }
         } else if (prop_name == "extent") {
           // vec3f[2]
-          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+          if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             if (p->size() == 2) {
               nonstd::get<Extent>(curves->extent).lower = (*p)[0];
               nonstd::get<Extent>(curves->extent).upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {
-          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+          if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             curves->normals = (*p);
           }
         } else if (prop_name == "widths") {
-          if (auto p = primvar::as<std::vector<float>>(&attr.var)) {
+          if (auto p = primvar::as_vector<float>(&attr.var)) {
             curves->widths = (*p);
           }
         } else if (prop_name == "curveVertexCounts") {
-          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+          if (auto p = primvar::as_vector<int>(&attr.var)) {
             curves->curveVertexCounts = (*p);
           }
         } else if (prop_name == "type") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           //std::cout << "type:" << attr.stringVal << "\n";
 #endif
-          if (auto p = primvar::as<std::string>(&attr.var)) {
+          if (auto p = primvar::as_basic<std::string>(&attr.var)) {
             if (p->compare("cubic") == 0) {
               curves->type = "cubic";
             } else if (p->compare("linear") == 0) {
@@ -4430,23 +4430,23 @@ bool Parser::_ReconstructGeomMesh(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
-          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+          if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             mesh->points = (*p);
           }
         } else if (prop_name == "doubleSided") {
-          if (auto p = primvar::as<bool>(&attr.var)) {
+          if (auto p = primvar::as_basic<bool>(&attr.var)) {
             mesh->doubleSided = (*p);
           }
         } else if (prop_name == "extent") {
           // vec3f[2]
-          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+          if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             if (p->size() == 2) {
               nonstd::get<Extent>(mesh->extent).lower = (*p)[0];
               nonstd::get<Extent>(mesh->extent).upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {
-          if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+          if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             mesh->normals = std::move(attr);
           }
         } else if ((prop_name == "primvars:UVMap") &&
@@ -4455,7 +4455,7 @@ bool Parser::_ReconstructGeomMesh(
           // TODO(syoyo): Write PrimVar parser
 
           // Currently we only support vec2f for uv coords.
-          if (auto p = primvar::as<std::vector<Vec2f>>(&attr.var)) {
+          if (auto p = primvar::as_vector<Vec2f>(&attr.var)) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
             std::cout << "got explicit UVCoords!\n";
 #endif
@@ -4463,7 +4463,7 @@ bool Parser::_ReconstructGeomMesh(
             mesh->st.variability = attr.variability;
           }
         } else if (prop_name == "faceVertexCounts") {
-          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+          if (auto p = primvar::as_vector<int>(&attr.var)) {
             mesh->faceVertexCounts = (*p);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
             // aaa: typeName: int[]
@@ -4473,7 +4473,7 @@ bool Parser::_ReconstructGeomMesh(
 #endif
           }
         } else if (prop_name == "faceVertexIndices") {
-          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+          if (auto p = primvar::as_vector<int>(&attr.var)) {
             mesh->faceVertexIndices = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -4484,7 +4484,7 @@ bool Parser::_ReconstructGeomMesh(
           }
 
         } else if (prop_name == "holeIndices") {
-          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+          if (auto p = primvar::as_vector<int>(&attr.var)) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
               // aaa: typeName: int[]
               std::cout << "got holeIdicies\n";
@@ -4492,30 +4492,30 @@ bool Parser::_ReconstructGeomMesh(
               mesh->holeIndices = (*p);
           }
         } else if (prop_name == "cornerIndices") {
-          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+          if (auto p = primvar::as_vector<int>(&attr.var)) {
               mesh->cornerIndices = (*p);
           }
         } else if (prop_name == "cornerSharpnesses") {
-          if (auto p = primvar::as<std::vector<float>>(&attr.var)) {
+          if (auto p = primvar::as_vector<float>(&attr.var)) {
               mesh->cornerSharpnesses = (*p);
           }
         } else if (prop_name == "creaseIndices") {
-          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+          if (auto p = primvar::as_vector<int>(&attr.var)) {
               mesh->creaseIndices = (*p);
           }
         } else if (prop_name == "creaseLengths") {
-          if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+          if (auto p = primvar::as_vector<int>(&attr.var)) {
             mesh->creaseLengths = (*p);
           }
         } else if (prop_name == "creaseSharpnesses") {
-          if (auto p = primvar::as<std::vector<float>>(&attr.var)) {
+          if (auto p = primvar::as_vector<float>(&attr.var)) {
               mesh->creaseSharpnesses = (*p);
           }
         } else if (prop_name == "subdivisionScheme") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           //std::cout << "subdivisionScheme:" << attr.stringVal << "\n";
 #endif
-          if (auto p = primvar::as<std::string>(&attr.var)) {
+          if (auto p = primvar::as_basic<std::string>(&attr.var)) {
             if (p->compare("none") == 0) {
               mesh->subdivisionScheme = SubdivisionSchemeNone;
             } else if (p->compare("catmullClark") == 0) {
@@ -4869,16 +4869,16 @@ bool Parser::_ReconstructShader(
           // Displacement shader output available
         } else if (prop_name.compare("inputs:metallic") == 0) {
           // type: float
-            if (auto p = primvar::as<float>(&attr.var)) {
+            if (auto p = primvar::as_basic<float>(&attr.var)) {
               shader->metallic.value = (*p);
             }
         } else if (prop_name.compare("inputs:metallic.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          if (auto p = primvar::as<std::string>(&attr.var)) {
+          if (auto p = primvar::as_basic<std::string>(&attr.var)) {
             shader->metallic.path = *p;
           }
         } else if (prop_name.compare("inputs:diffuseColor") == 0) {
-            if (auto p = primvar::as<Vec3f>(&attr.var)) {
+            if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
               shader->diffuseColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -4889,11 +4889,11 @@ bool Parser::_ReconstructShader(
             }
         } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          if (auto p = primvar::as<std::string>(&attr.var)) {
+          if (auto p = primvar::as_basic<std::string>(&attr.var)) {
             shader->diffuseColor.path = *p;
           }
         } else if (prop_name.compare("inputs:emissiveColor") == 0) {
-            if (auto p = primvar::as<Vec3f>(&attr.var)) {
+            if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
               shader->emissiveColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -4904,7 +4904,7 @@ bool Parser::_ReconstructShader(
             }
         } else if (prop_name.compare("inputs:emissiveColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          if (auto p = primvar::as<std::string>(&attr.var)) {
+          if (auto p = primvar::as_basic<std::string>(&attr.var)) {
             shader->emissiveColor.path = *p;
           }
         }
@@ -6092,7 +6092,7 @@ bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
     return false;
   }
 
-  if (auto p = primvar::as<std::vector<Vec3f>>(&normals.var)) {
+  if (auto p = primvar::as_vector<Vec3f>(&normals.var)) {
     v->resize(p->size() * 3);
     memcpy(v->data(), p->data(), v->size() * sizeof(float));
 
@@ -6248,35 +6248,41 @@ void GeomMesh::Initialize(const GPrim &gprim)
 
   for (auto &prop_item : gprim.props) {
     std::string attr_name = std::get<0>(prop_item);
-    const PrimAttrib &attr = std::get<1>(prop_item);
+    const Property &prop = std::get<1>(prop_item);
+    if (!nonstd::get_if<PrimAttrib>(&prop)) {
+      //LOG_INFO("TODO: Rel property:" + attr_name);
+      continue;
+    }
+
+    const PrimAttrib &attr = nonstd::get<PrimAttrib>(prop);
 
     if (attr_name == "points") {
-      if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+      if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
         points = *p;
       }
     } else if (attr_name == "faceVertexIndices") {
-      if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+      if (auto p = primvar::as_vector<int>(&attr.var)) {
         faceVertexIndices = *p;
       }
     } else if (attr_name == "faceVertexCounts") {
-      if (auto p = primvar::as<std::vector<int>>(&attr.var)) {
+      if (auto p = primvar::as_vector<int>(&attr.var)) {
         faceVertexCounts = *p;
       }
     } else if (attr_name == "normals") {
-      if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+      if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
         normals.var = *p;
         normals.interpolation = attr.interpolation;
       }
     } else if (attr_name == "velocitiess") {
-      if (auto p = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+      if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
         velocitiess.var = (*p);
         velocitiess.interpolation = attr.interpolation;
       }
     } else if (attr_name == "primvars:uv") {
-      if (auto pv2f = primvar::as<std::vector<Vec2f>>(&attr.var)) {
+      if (auto pv2f = primvar::as_vector<Vec2f>(&attr.var)) {
         st.buffer = (*pv2f);
         st.interpolation = attr.interpolation;
-      } else if (auto pv3f = primvar::as<std::vector<Vec3f>>(&attr.var)) {
+      } else if (auto pv3f = primvar::as_vector<Vec3f>(&attr.var)) {
         st.buffer = (*pv3f);
         st.interpolation = attr.interpolation;
       }

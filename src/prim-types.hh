@@ -10,6 +10,8 @@
 #include <cmath>
 #include <map>
 
+#include <iostream>
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -617,37 +619,37 @@ struct TypeTrait<float16> {
 
 template <>
 struct TypeTrait<Vec2f> {
-  static constexpr auto type_name = "vec2f";
+  static constexpr auto type_name = "float2";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2F;
 };
 
 template <>
 struct TypeTrait<Vec3f> {
-  static constexpr auto type_name = "vec3f";
+  static constexpr auto type_name = "float3";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3F;
 };
 
 template <>
 struct TypeTrait<Vec4f> {
-  static constexpr auto type_name = "vec4f";
+  static constexpr auto type_name = "float4";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4F;
 };
 
 template <>
 struct TypeTrait<Vec2d> {
-  static constexpr auto type_name = "vec2d";
+  static constexpr auto type_name = "double2";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2D;
 };
 
 template <>
 struct TypeTrait<Vec3d> {
-  static constexpr auto type_name = "vec3d";
+  static constexpr auto type_name = "double3";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3D;
 };
 
 template <>
 struct TypeTrait<Vec4d> {
-  static constexpr auto type_name = "vec4d";
+  static constexpr auto type_name = "double4";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4D;
 };
 
@@ -891,19 +893,27 @@ using is_vector = std::is_same<T, std::vector< typename T::value_type,
 
 
 // non-vector types
-template<typename T, typename _ = void>
-inline const T *as(const PrimVar *v) {
+template<typename T>
+inline const T *as_basic(const PrimVar *v) {
+  std::cout << "T is basic\n";
   if (is_basic_type(v)) {
+    std::cout << "basic\n";
     return nonstd::get_if<T>(v);
   }
   return nullptr;
 }
 
 // vector types
-template<typename T, typename std::enable_if<is_vector<T>::value>::type>
-inline const T *as(const PrimVar *v) {
+template<typename T>
+inline const std::vector<T> *as_vector(const PrimVar *v) {
+  std::cout << "T is vec\n";
   if (is_array_type(v)) {
-    return nonstd::get_if<T>(v);
+    std::cout << "is_arary_type\n";
+    // First cast to PrimArrayType.
+    if (auto p = nonstd::get_if<PrimArrayType>(v)) {
+      std::cout << "p got\n";
+      return nonstd::get_if<std::vector<T>>(p);
+    }
   }
   return nullptr;
 }
@@ -922,29 +932,14 @@ struct is_any<T, First, Rest...>
 {};
 #endif
 
-template<>
-inline const TimeSampledDataFloat *as(const PrimVar *v) {
+template<typename T>
+inline const T *as_timesample(const PrimVar *v) {
   if (is_time_sampled(v)) {
-    return nonstd::get_if<TimeSampledDataFloat>(v);
+    return nonstd::get_if<T>(v);
   }
   return nullptr;
 }
 
-template<>
-inline const TimeSampledDataDouble *as(const PrimVar *v) {
-  if (is_time_sampled(v)) {
-    return nonstd::get_if<TimeSampledDataDouble>(v);
-  }
-  return nullptr;
-}
-
-template<>
-inline const TimeSampledDataMatrix4d *as(const PrimVar *v) {
-  if (is_time_sampled(v)) {
-    return nonstd::get_if<TimeSampledDataMatrix4d>(v);
-  }
-  return nullptr;
-}
 
 inline std::vector<Vec3f> to_vec3(const std::vector<float> &v) {
   std::vector<Vec3f> buf;
@@ -1531,7 +1526,7 @@ struct GPrim {
 
   MaterialBindingAPI materialBinding;
 
-  std::map<std::string, PrimAttrib> props;
+  std::map<std::string, Property> props;
 };
 
 // Polygon mesh geometry

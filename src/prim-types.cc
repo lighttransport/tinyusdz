@@ -260,7 +260,8 @@ typename overload_set<Fs...>::type overloaded(Fs... x)
     return overload_set<Fs...>(x...);
 }
 
-#if 0
+namespace primvar {
+
 std::string type_name(const TimeSampleType &v) {
 
   std::string ty =  nonstd::visit(overloaded (
@@ -331,6 +332,8 @@ std::string type_name(const PrimVar &v) {
 
   return "[[Invalid PrimVar type]]";
 }
-#endif
+
+} // namespace primvar
+
 
 } // namespace tinyusdz

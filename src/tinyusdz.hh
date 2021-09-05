@@ -59,7 +59,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace tinyusdz {
 
 constexpr int version_major = 0;
-constexpr int version_minor = 7;
+constexpr int version_minor = 8;
 constexpr int version_micro = 0;
 
 // Simple image class.
