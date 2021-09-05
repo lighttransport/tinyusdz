@@ -57,8 +57,9 @@
 #define LOG_INFO(s) do { \
   std::ostringstream ss; \
   ss << "[info] " << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
   std::cout << ss.str() << "\n"; \
-} while(0); std::cout
+} while(0)
 
 #if 0
 #define LOG_WARN(s) do { \
@@ -1515,7 +1516,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      LOG_INFO("arg: list-edit qual = " + wise_enum::to_string(std::get<0>(arg)) + ", name = " + std::get<1>(arg).name);
+      SLOG_INFO << "arg: list-edit qual = " << wise_enum::to_string(std::get<0>(arg)) << ", name = " << std::get<1>(arg).name;
 
       (*args)[std::get<1>(arg).name] = arg;
     }
@@ -6577,7 +6578,7 @@ bool USDAParser::Impl::ReconstructXform(
     // array of string
     auto prop = properties.at("xformOpOrder");
     if (auto attrib = nonstd::get_if<PrimAttrib>(&prop)) {
-      if (auto parr = primvar::as<std::vector<std::string>>(&attrib->var)) {
+      if (auto parr = primvar::as_vector<std::string>(&attrib->var)) {
         for (const auto &item : *parr) {
 
           // remove double-quotation
@@ -6614,7 +6615,7 @@ bool USDAParser::Impl::ReconstructXform(
             std::cout << "basename is xformOp::rotateZ"
                       << "\n";
             if (auto targetAttr = nonstd::get_if<PrimAttrib>(&targetProp)) {
-              if (auto p = primvar::as<float>(&targetAttr->var)) {
+              if (auto p = primvar::as_basic<float>(&targetAttr->var)) {
                 std::cout << "xform got it "
                           << "\n";
                 op.op = XformOp::OpType::ROTATE_Z;
@@ -6718,7 +6719,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "radius") {
-        if (auto p = primvar::as<double>(&attr->var)) {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
           sphere->radius = *p;
         } else {
           _PushError("`radius` must be double type.");
@@ -6788,6 +6789,18 @@ bool USDAParser::Impl::ReconstructGeomMesh(
         mesh->doubleSided = gprim.doubleSided;
         mesh->orientation = gprim.orientation;
 
+        if (gprim.props.count("points")) {
+          LOG_INFO("points");
+          const Property &prop = gprim.props.at("points");
+          if (auto pattr = nonstd::get_if<PrimAttrib>(&prop)) {
+            LOG_INFO("pattr:" + primvar::type_name(pattr->var));
+            if (auto p = primvar::as_vector<Vec3f>(&pattr->var)) {
+              LOG_INFO("points. sz = " + std::to_string(p->size()));
+              mesh->points = (*p);
+            }
+          }
+        }
+
       } else {
         LOG_INFO("Not a .obj file");
       }
@@ -6797,7 +6810,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   for (const auto &prop : properties) {
     if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "points") {
-        if (auto p = primvar::as<std::vector<Vec3f>>(&attr->var)) {
+        if (auto p = primvar::as_vector<Vec3f>(&attr->var)) {
           mesh->points = (*p);
         } else {
           _PushError("`points` must be float3[] type.");
