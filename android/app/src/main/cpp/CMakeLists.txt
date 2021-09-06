@@ -6,7 +6,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/../../../../../src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/usda-parser.cc
-        ${PROJECT_SOURCE_DIR}/../../../../../src/io-util.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/io-util.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/pprinter.cc
         )
 
 if (TINYUSDZ_USE_USDOBJ)
