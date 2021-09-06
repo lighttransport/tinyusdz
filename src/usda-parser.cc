@@ -4655,7 +4655,9 @@ class USDAParser::Impl {
       return false;
     }
 
-    ss << "\"";
+    //ss << "\"";
+
+    bool end_with_quotation{false};
 
     while (!_sr->eof()) {
       char c;
@@ -4665,16 +4667,15 @@ class USDAParser::Impl {
         return false;
       }
 
-      ss << c;
-
       if (c == '"') {
+        end_with_quotation = true;
         break;
       }
+
+      ss << c;
     }
 
-    (*literal) = ss.str();
-
-    if (literal->back() != '"') {
+    if (!end_with_quotation) {
       ErrorDiagnositc diag;
       diag.err = "String literal expected but it does not end with '\"'\n";
       diag.line_col = _line_col;
@@ -4684,7 +4685,9 @@ class USDAParser::Impl {
       return false;
     }
 
-    _line_col += int(literal->size());
+    (*literal) = ss.str();
+
+    _line_col += int(literal->size() + 2); // +2 for quotation chars
 
     return true;
   }
@@ -6179,6 +6182,7 @@ class USDAParser::Impl {
             _PushError("Failed to reconstruct GeomMesh.");
             return false;
           }
+          mesh.name = node_name;
 
           std::cout << to_string(mesh, nestlevel) << "\n";
 

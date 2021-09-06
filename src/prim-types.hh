@@ -943,7 +943,8 @@ inline const T *as_timesample(const PrimVar *v) {
 
 inline std::vector<Vec3f> to_vec3(const std::vector<float> &v) {
   std::vector<Vec3f> buf;
-  if ((v.size() / 3) != 0) {
+  if ((v.size() % 3) != 0) {
+    // std::cout << "to_vec3: not dividable by 3\n";
     return buf;
   }
 
