@@ -9,8 +9,10 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <limits>
 
 #include <iostream>
+
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -1784,12 +1786,12 @@ struct Preliminary_InfiniteColliderPlane
   Extent extent; // [-FLT_MAX, FLT_MAX]
 
   Preliminary_InfiniteColliderPlane() {
-    extent.lower[0] = -std::numeric_limits<float>::max();
-    extent.lower[1] = -std::numeric_limits<float>::max();
-    extent.lower[2] = -std::numeric_limits<float>::max();
-    extent.upper[0] = std::numeric_limits<float>::max();
-    extent.upper[1] = std::numeric_limits<float>::max();
-    extent.upper[2] = std::numeric_limits<float>::max();
+    extent.lower[0] = -(std::numeric_limits<float>::max)();
+    extent.lower[1] = -(std::numeric_limits<float>::max)();
+    extent.lower[2] = -(std::numeric_limits<float>::max)();
+    extent.upper[0] = (std::numeric_limits<float>::max)();
+    extent.upper[1] = (std::numeric_limits<float>::max)();
+    extent.upper[2] = (std::numeric_limits<float>::max)();
   }
 
 };
