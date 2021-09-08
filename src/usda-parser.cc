@@ -6531,8 +6531,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
-        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND)) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
