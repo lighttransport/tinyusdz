@@ -1,9 +1,9 @@
 #usda 1.0
 (
-  defaultPrim = "bora"
+  defaultPrim = "sphere"
 )
 
-def Sphere "bora"
+def Sphere "sphere"
 {
   double radius = 1.2
 }

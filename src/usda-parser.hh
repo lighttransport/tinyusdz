@@ -50,6 +50,19 @@ class USDAParser {
   ///
   bool Parse(LoadState state = LOAD_STATE_TOPLEVEL);
 
+  ///
+  ///
+  ///
+  std::string GetDefaultPrimName() const;
+
+  ///
+  /// Get parsed toplevel "def" nodes(GPrim)
+  ///
+  std::vector<GPrim> GetGPrims();
+
+  ///
+  /// Get error message(when `Parse` failed)
+  ///
   std::string GetError();
 
  private:
