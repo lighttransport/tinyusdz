@@ -899,8 +899,12 @@ template<typename T>
 inline const T *as_basic(const PrimVar *v) {
   std::cout << "T is basic\n";
   if (is_basic_type(v)) {
-    std::cout << "basic\n";
-    return nonstd::get_if<T>(v);
+    std::cout << "is_basic\n";
+    // First cast to PrimArrayType.
+    if (auto p = nonstd::get_if<PrimBasicType>(v)) {
+      std::cout << "p got\n";
+      return nonstd::get_if<T>(p);
+    }
   }
   return nullptr;
 }
@@ -1530,6 +1534,10 @@ struct GPrim {
   MaterialBindingAPI materialBinding;
 
   std::map<std::string, Property> props;
+
+
+  // child nodes
+  std::vector<GPrim> children;
 };
 
 // Polygon mesh geometry
