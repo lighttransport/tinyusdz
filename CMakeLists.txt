@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 
 set(BUILD_TARGET "tinyusdz") # TODO: drop `z`
 set(BUILD_TARGET_C "c-tinyusd")
-set(BUILD_TARGET_PY "tinyusd")
+set(BUILD_TARGET_PY "pytinyusd")
 set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
 set(TEST_TARGET "test_tinyusdz")
 
@@ -264,7 +264,7 @@ if (TINYUSDZ_WITH_C_API)
   target_link_libraries(${BUILD_TARGET_C} PRIVATE ${BUILD_TARGET})
 endif ()
 
-if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES))
+if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
   pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
 
