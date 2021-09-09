@@ -1,1 +1,5 @@
-Python files will be placed here. T.B.D.
+Python binding of tinyusdz.
+
+Core part is deletegated to native module(pytinyusd)
+
+W.I.P.
