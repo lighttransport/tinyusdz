@@ -41,6 +41,8 @@
 #define DOUBLE_EXPONENT_BITS 11
 #define DOUBLE_EXPONENT_BIAS 1023
 
+#if 0
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 
@@ -55,6 +57,23 @@ static inline uint32_t floor_log2(const uint64_t value) {
   return 63 - __builtin_clzll(value);
 }
 
+#endif
+
+#else
+
+// Compiler independent way
+// https://github.com/Tencent/rapidjson/blob/master/include/rapidjson/internal/clzll.h
+static inline uint32_t floor_log2(const uint64_t value) {
+  uint32_t r = 0;
+  uint64_t bitmask = 1ull << 63;
+  uint64_t x = value;
+
+  while (!(x & bitmask)) {
+    x <<= 1;
+    ++r;
+  }
+  return r;
+}
 #endif
 
 // The max function is already defined on Windows.
