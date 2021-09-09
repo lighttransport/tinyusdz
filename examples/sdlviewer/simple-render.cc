@@ -12,6 +12,8 @@
 #include "matrix.h"
 #include "trackball.h"
 
+#include "par_shapes.h" // For meshing
+
 const float kPI = 3.141592f;
 
 typedef nanort::real3<float> float3;
@@ -28,6 +30,77 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
 
   N = vcross(v10, v20);
   N = vnormalize(N);
+}
+
+bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere, DrawGeomMesh* dst) {
+
+  // TODO: Write our own sphere -> polygon converter
+
+
+  // TODO: Read subdivision parameter from somewhere.
+  int slices = 16;
+  int stacks = 8;
+
+  // icohedron subdivision does not generate UV coordinate, so use par_shapes_create_parametric_sphere for now
+  par_shapes_mesh* par_mesh = par_shapes_create_parametric_sphere(slices, stacks);
+
+  dst->vertices.resize(par_mesh->npoints * 3);
+
+  // TODO: Animated radius
+  float radius = 1.0;
+  if (auto p = tinyusdz::primvar::as_basic<double>(&sphere.radius)) {
+    radius = (*p);
+  }
+
+  // scale by radius
+  for (size_t i = 0; i < dst->vertices.size(); i++) {
+    dst->vertices[i] = par_mesh->points[i] * radius;
+  }
+
+  std::vector<int> facevarying_indices;
+  std::vector<float> facevarying_normals;
+  std::vector<float> facevarying_texcoords;
+
+  // Make uv and normal facevarying
+  // ntriangles = slices * 2 + (stacks - 2) * slices * 2
+  for (size_t i = 0; i < par_mesh->ntriangles; i++) {
+    PAR_SHAPES_T vidx0 = triangles[3 * i + 0];
+    PAR_SHAPES_T vidx1 = triangles[3 * i + 1];
+    PAR_SHAPES_T vidx2 = triangles[3 * i + 2];
+
+    facevarying_indices.push_back(vidx0);
+    facevarying_indices.push_back(vidx1);
+    facevarying_indices.push_back(vidx2);
+
+    facevarying_normals.push_back(par_mesh->normals[3 * idx0 + 0]);
+    facevarying_normals.push_back(par_mesh->normals[3 * idx0 + 1]);
+    facevarying_normals.push_back(par_mesh->normals[3 * idx0 + 2]);
+
+    facevarying_normals.push_back(par_mesh->normals[3 * idx1 + 0]);
+    facevarying_normals.push_back(par_mesh->normals[3 * idx1 + 1]);
+    facevarying_normals.push_back(par_mesh->normals[3 * idx1 + 2]);
+
+    facevarying_normals.push_back(par_mesh->normals[3 * idx2 + 0]);
+    facevarying_normals.push_back(par_mesh->normals[3 * idx2 + 1]);
+    facevarying_normals.push_back(par_mesh->normals[3 * idx2 + 2]);
+
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx0 + 0]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx0 + 1]);
+
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx1 + 0]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx1 + 1]);
+
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx2 + 0]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx2 + 1]);
+  }
+
+  par_shapes_free_mesh(par_mesh);
+
+
+  dst->facevarying_indices = facevarying_indices;
+
+  return true;
+
 }
 
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
