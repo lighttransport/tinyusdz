@@ -5857,13 +5857,15 @@ class USDAParser::Impl {
             if (root_nodes.empty()) {
               LOG_WARN("USD file does not contain any Prim node.");
             } else {
-              uint32_t default_idx = 0;
-              for (size_t i = 0; i < root_nodes.size(); i++) {
-                if (!defaultPrim.empty() &&
-                    (root_nodes[i].name == defaultPrim)) {
-                  default_idx = uint32_t(i);
-                  break;
-                }
+
+              size_t default_idx = 0; // Use the first element when corresponding defaultPrim node is not found.
+
+              auto node_it = std::find_if(root_nodes.begin(), root_nodes.end(), [defaultPrim](const GPrim &a) {
+                return !defaultPrim.empty() && (a.name == defaultPrim);
+              });
+
+              if (node_it != root_nodes.end()) {
+                default_idx = size_t(std::distance(root_nodes.begin(), node_it));
               }
 
               LOG_INFO("defaultPrim node: " + root_nodes[default_idx].name);

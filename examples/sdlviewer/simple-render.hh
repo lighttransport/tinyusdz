@@ -86,7 +86,7 @@ struct DrawGeomMesh {
   }
 
   std::vector<float> vertices;  // vec3f
-  std::vector<uint32_t> facevarying_indices; // triangulated indices. 3 x num_faces
+  std::vector<uint32_t> facevertex_indices; // triangulated indices. 3 x num_faces
   std::vector<float> facevarying_normals; // 3 x 3 x num_faces
   std::vector<float> facevarying_texcoords; // 2 x 3 x num_faces
 
