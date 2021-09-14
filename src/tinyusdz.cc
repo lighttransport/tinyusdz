@@ -4245,8 +4245,8 @@ bool Parser::_ReconstructGeomBasisCurves(
           // vec3f[2]
           if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             if (p->size() == 2) {
-              nonstd::get<Extent>(curves->extent).lower = (*p)[0];
-              nonstd::get<Extent>(curves->extent).upper = (*p)[1];
+              curves->extent.value.lower = (*p)[0];
+              curves->extent.value.upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {
@@ -4441,8 +4441,8 @@ bool Parser::_ReconstructGeomMesh(
           // vec3f[2]
           if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
             if (p->size() == 2) {
-              nonstd::get<Extent>(mesh->extent).lower = (*p)[0];
-              nonstd::get<Extent>(mesh->extent).upper = (*p)[1];
+              mesh->extent.value.lower = (*p)[0];
+              mesh->extent.value.upper = (*p)[1];
             }
           }
         } else if (prop_name == "normals") {

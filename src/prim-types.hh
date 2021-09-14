@@ -1092,11 +1092,56 @@ struct XformOp
   XformOpValueType value; // When you look up the value, select basic type based on `precision`
 };
 
+
+template<typename T>
+inline T lerp(const T a, const T b, const double t) {
+  return (1.0 - t) * a + t * b;
+}
+
+
 template<typename T>
 struct TimeSampled {
   std::vector<double> times;
   std::vector<T> values;
   // TODO: Support `none` 
+
+  void Set(T value, double t) {
+    times.push_back(t);
+    values.push_back(value);
+  } 
+
+  T Get(double t) const {
+    // Linear-interpolation.
+    // TODO: Support other interpolation method for example cubic.
+    auto it = std::lower_bound(times.begin(), times.end(), t);
+    size_t idx0 = size_t(std::max(int64_t(0), std::min(int64_t(times.size() - 1), int64_t(std::distance(times.begin(), it - 1)))));
+    size_t idx1 = size_t(std::max(int64_t(0), std::min(int64_t(times.size() - 1), int64_t(idx0) + 1)));
+ 
+    double tl = times[idx0];
+    double tu = times[idx1];
+
+    double dt = (t - tl);
+    if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
+      // slope is zero.
+      dt = 0.0;
+    } else {
+      dt /= (tu - tl);
+    }
+
+    // Just in case.
+    dt = std::max(0.0, std::min(1.0, dt));
+
+    const T &p0 = values[idx0];
+    const T &p1 = values[idx1];
+
+    const T p = lerp(p0, p1, dt); 
+
+    return p;
+  }
+
+  bool Valid() const {
+    return !times.empty() && (times.size() == values.size());
+  }
 };
 
 // For run-time data structure(e.g. for GeomMesh)
@@ -1112,16 +1157,43 @@ struct TimeSampled {
 // for Animatable type.
 
 template<typename T>
-using Animatable = nonstd::variant<T, TimeSampled<T>>;
+struct Animatable
+{
+  T value;
+  TimeSampled<T> timeSamples;
+
+  bool IsTimeSampled() const {
+    return timeSamples.Valid();
+  }
+
+  T Get() const {
+    return value; 
+  }
+
+  T Get(double t) {
+    if (IsTimeSampled()) {
+      // TODO: lookup value by t
+      return timeSamples.Get(t);
+    }
+    return value;
+  }
+
+  Animatable() {}
+  Animatable(T v) : value(v) {}
+
+};
+
+//template<typename T>
+//using Animatable = nonstd::variant<T, TimeSampled<T>>;
 
 // Frequently used types
 using AnimatableFloat = Animatable<float>;
 using AnimatableDouble = Animatable<double>;
-using AnimatableExtent = nonstd::variant<Extent, TimeSampled<Extent>>;
-using AnimatableVisibility = nonstd::variant<Visibility, TimeSampled<Visibility>>;
-using AnimatableVec3f = nonstd::variant<Vec3f, TimeSampled<Vec3f>>;
-using AnimatableVec3fArray = nonstd::variant<std::vector<Vec3f>, TimeSampled<std::vector<Vec3f>>>;
-using AnimatableFloatArray = nonstd::variant<std::vector<float>, TimeSampled<std::vector<float>>>;
+using AnimatableExtent = Animatable<Extent>;
+using AnimatableVisibility = Animatable<Visibility>;
+using AnimatableVec3f = Animatable<Vec3f>;
+using AnimatableVec3fArray = Animatable<std::vector<Vec3f>>;
+using AnimatableFloatArray = Animatable<std::vector<float>>;
 
 // Generic "class" Node
 // Mostly identical to GPrim
