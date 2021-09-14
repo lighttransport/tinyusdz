@@ -47,7 +47,7 @@ std::string to_string(const std::vector<T> &v) {
 
 template<typename T>
 std::string prefix(const Animatable<T> &v) {
-  if (nonstd::get_if<TimeSampled<T>>(&v)) {
+  if (v.IsTimeSampled()) {
     return ".timeSamples";
   }
   return "";
@@ -70,15 +70,11 @@ std::string print_timesampled(const TimeSampled<T> &v, const uint32_t indent) {
 
 template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent) {
-  if (auto p = nonstd::get_if<T>(&v)) {
-    return to_string(*p);
+  if (v.IsTimeSampled()) {
+    return print_timesampled(v.timeSamples, indent);
+  } else {
+    return to_string(v.value);
   }
-
-  if (auto p = nonstd::get_if<TimeSampled<T>>(&v)) {
-    return print_timesampled(*p, indent);
-  }
-
-  return "[[??? print_animatable]]";
 }
 
 template<typename T>
