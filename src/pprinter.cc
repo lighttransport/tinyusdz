@@ -411,4 +411,66 @@ std::string to_string(const GeomCone &geom, const uint32_t indent) {
   return ss.str();
 }
 
+std::string to_string(const GeomCylinder &geom, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Cylinder \"" << geom.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
+  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+
+  std::string axis;
+  if (geom.axis == AXIS_X) {
+    axis = "x";
+  } else if (geom.axis == AXIS_Y) {
+    axis = "y";
+  } else {
+    axis = "z";
+  }
+    
+  ss << Indent(indent) << "  uniform token axis = " << axis << "\n";
+
+  ss << print_predefined(geom, indent);
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string to_string(const GeomCapsule &geom, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Capsule \"" << geom.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
+  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+
+  std::string axis;
+  if (geom.axis == AXIS_X) {
+    axis = "x";
+  } else if (geom.axis == AXIS_Y) {
+    axis = "y";
+  } else {
+    axis = "z";
+  }
+    
+  ss << Indent(indent) << "  uniform token axis = " << axis << "\n";
+
+  ss << print_predefined(geom, indent);
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 } // tinyusdz

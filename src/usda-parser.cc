@@ -5939,6 +5939,49 @@ class USDAParser::Impl {
 
           sphere.name = node_name;
           std::cout << to_string(sphere, nestlevel) << "\n";
+        } else if (prim_type == "Cone") {
+          GeomCone cone;
+          std::cout << "Reconstruct Cone\n";
+          if (!ReconstructGeomCone(props, references, &cone)) {
+            _PushError("Failed to reconstruct GeomCone.");
+            return false;
+          }
+
+          cone.name = node_name;
+          std::cout << to_string(cone, nestlevel) << "\n";
+        } else if (prim_type == "Cube") {
+          GeomCube cube;
+          std::cout << "Reconstruct Cube\n";
+          if (!ReconstructGeomCube(props, references, &cube)) {
+            _PushError("Failed to reconstruct GeomCube.");
+            return false;
+          }
+
+          cube.name = node_name;
+          std::cout << to_string(cube, nestlevel) << "\n";
+
+        } else if (prim_type == "Capsule") {
+          GeomCapsule capsule;
+          std::cout << "Reconstruct Capsule\n";
+          if (!ReconstructGeomCapsule(props, references, &capsule)) {
+            _PushError("Failed to reconstruct GeomCapsule.");
+            return false;
+          }
+
+          capsule.name = node_name;
+          std::cout << to_string(capsule, nestlevel) << "\n";
+
+        } else if (prim_type == "Cylinder") {
+          GeomCylinder cylinder;
+          std::cout << "Reconstruct Cylinder\n";
+          if (!ReconstructGeomCylinder(props, references, &cylinder)) {
+            _PushError("Failed to reconstruct GeomCylinder.");
+            return false;
+          }
+
+          cylinder.name = node_name;
+          std::cout << to_string(cylinder, nestlevel) << "\n";
+
 
         } else if (prim_type == "BasisCurves") {
         } else {
@@ -5980,6 +6023,26 @@ class USDAParser::Impl {
       const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
       GeomSphere *sphere);
+
+  bool ReconstructGeomCone(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GeomCone *cone);
+
+  bool ReconstructGeomCube(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GeomCube *cube);
+
+  bool ReconstructGeomCapsule(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GeomCapsule *capsule);
+
+  bool ReconstructGeomCylinder(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      GeomCylinder *cylinder);
 
   bool ReconstructXform(
       const std::map<std::string, Property> &properties,
@@ -6553,6 +6616,543 @@ bool USDAParser::Impl::ReconstructGeomSphere(
               if (auto p = primvar::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference radius = " << (*p) << "\n";
                 sphere->radius = *p;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructGeomCone(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    GeomCone *cone) {
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+              << "\n";
+
+    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+
+    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
+        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "radius") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
+                cone->radius = *p;
+              }
+            } else if (prop.first == "height") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "prepend reference height = " << (*p) << "\n";
+                cone->height = *p;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const auto &prop : properties) {
+    if (prop.first == "material:binding") {
+      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+        cone->materialBinding.materialBinding = prel->path;
+      } else {
+        _PushError("`material:binding` must be 'rel' type.");
+        return false;
+      }
+    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+      if (prop.first == "radius") {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
+          cone->radius = *p;
+        } else {
+          _PushError("`radius` must be double type.");
+          return false;
+        }
+      } else if (prop.first == "height") {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
+          cone->height = *p;
+        } else {
+          _PushError("`height` must be double type.");
+          return false;
+        }
+      } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
+        return false;
+      }
+    }
+  }
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "radius") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "append reference radius = " << (*p) << "\n";
+                cone->radius = *p;
+              }
+            } else if (prop.first == "height") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "append reference height = " << (*p) << "\n";
+                cone->height = *p;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructGeomCube(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    GeomCube *cube) {
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+              << "\n";
+
+    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+
+    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
+        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "size") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "prepend reference size = " << (*p) << "\n";
+                cube->size = *p;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const auto &prop : properties) {
+    if (prop.first == "material:binding") {
+      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+        cube->materialBinding.materialBinding = prel->path;
+      } else {
+        _PushError("`material:binding` must be 'rel' type.");
+        return false;
+      }
+    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+      if (prop.first == "size") {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
+          cube->size = *p;
+        } else {
+          _PushError("`size` must be double type.");
+          return false;
+        }
+      } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
+        return false;
+      }
+    }
+  }
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "size") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "append reference size = " << (*p) << "\n";
+                cube->size = *p;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructGeomCapsule(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    GeomCapsule *capsule) {
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+              << "\n";
+
+    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+
+    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
+        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "height") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "prepend reference height = " << (*p) << "\n";
+                capsule->height = *p;
+              }
+            } else if (prop.first == "radius") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
+                capsule->radius = *p;
+              }
+            } else if (prop.first == "axis") {
+              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                if (p->value == "x") {
+                  capsule->axis = AXIS_X;
+                } else if (p->value == "y") {
+                  capsule->axis = AXIS_Y;
+                } else if (p->value == "z") {
+                  capsule->axis = AXIS_Z;
+                } else {
+                  LOG_WARN("Invalid axis token: " + p->value);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const auto &prop : properties) {
+    if (prop.first == "material:binding") {
+      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+        capsule->materialBinding.materialBinding = prel->path;
+      } else {
+        _PushError("`material:binding` must be 'rel' type.");
+        return false;
+      }
+    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+      if (prop.first == "height") {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
+          capsule->height = *p;
+        } else {
+          _PushError("`height` must be double type.");
+          return false;
+        }
+      } else if (prop.first == "radius") {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
+          capsule->radius = *p;
+        } else {
+          _PushError("`radius` must be double type.");
+          return false;
+        }
+      } else if (prop.first == "axis") {
+        if (auto p = primvar::as_basic<Token>(&attr->var)) {
+          if (p->value == "x") {
+            capsule->axis = AXIS_X;
+          } else if (p->value == "y") {
+            capsule->axis = AXIS_Y;
+          } else if (p->value == "z") {
+            capsule->axis = AXIS_Z;
+          }
+        } else {
+          _PushError("`axis` must be token type.");
+          return false;
+        }
+      } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
+        return false;
+      }
+    }
+  }
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "height") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "append reference height = " << (*p) << "\n";
+                capsule->height = *p;
+              }
+            } else if (prop.first == "radius") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "append reference radius = " << (*p) << "\n";
+                capsule->radius = *p;
+              }
+            } else if (prop.first == "axis") {
+              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                if (p->value == "x") {
+                  capsule->axis = AXIS_X;
+                } else if (p->value == "y") {
+                  capsule->axis = AXIS_Y;
+                } else if (p->value == "z") {
+                  capsule->axis = AXIS_Z;
+                } else {
+                  LOG_WARN("Invalid axis token: " + p->value);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructGeomCylinder(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    GeomCylinder *cylinder) {
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+              << "\n";
+
+    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+
+    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
+        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "height") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "prepend reference height = " << (*p) << "\n";
+                cylinder->height = *p;
+              }
+            } else if (prop.first == "radius") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
+                cylinder->radius = *p;
+              }
+            } else if (prop.first == "axis") {
+              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                if (p->value == "x") {
+                  cylinder->axis = AXIS_X;
+                } else if (p->value == "y") {
+                  cylinder->axis = AXIS_Y;
+                } else if (p->value == "z") {
+                  cylinder->axis = AXIS_Z;
+                } else {
+                  LOG_WARN("Invalid axis token: " + p->value);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const auto &prop : properties) {
+    if (prop.first == "material:binding") {
+      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+        cylinder->materialBinding.materialBinding = prel->path;
+      } else {
+        _PushError("`material:binding` must be 'rel' type.");
+        return false;
+      }
+    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+      if (prop.first == "height") {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
+          cylinder->height = *p;
+        } else {
+          _PushError("`height` must be double type.");
+          return false;
+        }
+      } else if (prop.first == "radius") {
+        if (auto p = primvar::as_basic<double>(&attr->var)) {
+          cylinder->radius = *p;
+        } else {
+          _PushError("`radius` must be double type.");
+          return false;
+        }
+      } else if (prop.first == "axis") {
+        if (auto p = primvar::as_basic<Token>(&attr->var)) {
+          if (p->value == "x") {
+            cylinder->axis = AXIS_X;
+          } else if (p->value == "y") {
+            cylinder->axis = AXIS_Y;
+          } else if (p->value == "z") {
+            cylinder->axis = AXIS_Z;
+          }
+        } else {
+          _PushError("`axis` must be token type.");
+          return false;
+        }
+      } else {
+        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+                   "\n");
+        return false;
+      }
+    }
+  }
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+      const AssetReference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_reference;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        LOG_INFO("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "height") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "append reference height = " << (*p) << "\n";
+                cylinder->height = *p;
+              }
+            } else if (prop.first == "radius") {
+              if (auto p = primvar::as_basic<double>(&attr->var)) {
+                SLOG_INFO << "append reference radius = " << (*p) << "\n";
+                cylinder->radius = *p;
+              }
+            } else if (prop.first == "axis") {
+              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                if (p->value == "x") {
+                  cylinder->axis = AXIS_X;
+                } else if (p->value == "y") {
+                  cylinder->axis = AXIS_Y;
+                } else if (p->value == "z") {
+                  cylinder->axis = AXIS_Z;
+                } else {
+                  LOG_WARN("Invalid axis token: " + p->value);
+                }
               }
             }
           }
