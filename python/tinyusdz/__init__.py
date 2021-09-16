@@ -2,7 +2,7 @@
 # Simple python classes to mimic pxr python binding.
 #
 from enum import Enum # from python3.4
-import pytinyusd # native module
+#import pytinyusd # native module
 
 class Sdf:
     def __init__(self):
@@ -55,6 +55,13 @@ class Usd:
             self.endTimeCode = None
             pass
 
+
+        def DefinePrim(self, path: str, geom_type: str):
+            if geom_type == 'Xform':
+                return UsdGeom.Xform.Define(self, path)
+
+            # TODO: Other geom_typs
+            return None
 
         @classmethod
         def CreateInMemory(cls):
