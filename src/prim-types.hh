@@ -19,15 +19,15 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include <nonstd/optional.hpp>
-#include <nonstd/variant.hpp>
-#include <nonstd/string_view.hpp>
+#include "nonstd/optional.hpp"
+#include "nonstd/variant.hpp"
+#include "nonstd/string_view.hpp"
 
 using namespace nonstd::literals; // _sv
 
 // Cannot use std::string as WISE_ENUM_STRING_TYPE so use nonstd::string_view
 #define WISE_ENUM_STRING_TYPE nonstd::string_view
-#include <wise_enum/wise_enum.h>
+#include "wise_enum/wise_enum.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -1103,12 +1103,12 @@ template<typename T>
 struct TimeSampled {
   std::vector<double> times;
   std::vector<T> values;
-  // TODO: Support `none` 
+  // TODO: Support `none`
 
   void Set(T value, double t) {
     times.push_back(t);
     values.push_back(value);
-  } 
+  }
 
   T Get(double t) const {
     // Linear-interpolation.
@@ -1116,7 +1116,7 @@ struct TimeSampled {
     auto it = std::lower_bound(times.begin(), times.end(), t);
     size_t idx0 = size_t(std::max(int64_t(0), std::min(int64_t(times.size() - 1), int64_t(std::distance(times.begin(), it - 1)))));
     size_t idx1 = size_t(std::max(int64_t(0), std::min(int64_t(times.size() - 1), int64_t(idx0) + 1)));
- 
+
     double tl = times[idx0];
     double tu = times[idx1];
 
@@ -1134,7 +1134,7 @@ struct TimeSampled {
     const T &p0 = values[idx0];
     const T &p1 = values[idx1];
 
-    const T p = lerp(p0, p1, dt); 
+    const T p = lerp(p0, p1, dt);
 
     return p;
   }
@@ -1147,7 +1147,7 @@ struct TimeSampled {
 // For run-time data structure(e.g. for GeomMesh)
 // `None` value and `deleted` items are omitted in this data struct.
 // e.g.
-// 
+//
 // double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
 //
 // in .usd is stored as
@@ -1167,7 +1167,7 @@ struct Animatable
   }
 
   T Get() const {
-    return value; 
+    return value;
   }
 
   T Get(double t) {
