@@ -64,7 +64,7 @@ static inline uint32_t floor_log2(const uint64_t value) {
 // Compiler independent way
 // https://github.com/Tencent/rapidjson/blob/master/include/rapidjson/internal/clzll.h
 static inline uint32_t floor_log2(const uint64_t value) {
-  uint32_t r = 0;
+  uint32_t r = 0; 
   uint64_t bitmask = 1ull << 63;
   uint64_t x = value;
 
@@ -72,7 +72,8 @@ static inline uint32_t floor_log2(const uint64_t value) {
     x <<= 1;
     ++r;
   }
-  return r;
+
+  return 63 - r; // r = clzll(value)
 }
 #endif
 
@@ -245,11 +246,12 @@ enum Status s2d_n(const char * buffer, const int len, double * result) {
   // the final IEEE exponent into account, so we need to reverse the bias and also special-case
   // the value 0.
   int32_t shift = (ieee_e2 == 0 ? 1 : ieee_e2) - e2 - DOUBLE_EXPONENT_BIAS - DOUBLE_MANTISSA_BITS;
-  assert(shift >= 0);
 #ifdef RYU_DEBUG
+  printf("e2 = %d\n", e2);
   printf("ieee_e2 = %d\n", ieee_e2);
   printf("shift = %d\n", shift);
 #endif
+  assert(shift >= 0);
   
   // We need to round up if the exact value is more than 0.5 above the value we computed. That's
   // equivalent to checking if the last removed bit was 1 and either the value was not just
