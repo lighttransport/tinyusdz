@@ -45,8 +45,22 @@ static inline uint32_t floor_log2(const uint32_t value) {
 
 #else
 
-static inline uint32_t floor_log2(const uint32_t value) {
-  return 31 - __builtin_clz(value);
+//static inline uint32_t floor_log2(const uint32_t value) {
+//  return 31 - __builtin_clz(value);
+//}
+
+static inline uint32_t floor_log2(uint32_t x) {
+    // compiler independent clz
+    int n = 0;
+    if (x == 0) { n = 32;} else {
+      if (x <= 0x0000FFFF) { n += 16; x <<= 16; }
+      if (x <= 0x00FFFFFF) { n += 8; x <<= 8; }
+      if (x <= 0x0FFFFFFF) { n += 4; x <<= 4; }
+      if (x <= 0x3FFFFFFF) { n += 2; x <<= 2; }
+      if (x <= 0x7FFFFFFF) { n += 1; x <<= 1; }
+    }
+
+    return 31 - n;
 }
 
 #endif

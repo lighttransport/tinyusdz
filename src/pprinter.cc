@@ -47,7 +47,7 @@ std::string to_string(const std::vector<T> &v) {
 
 template<typename T>
 std::string prefix(const Animatable<T> &v) {
-  if (nonstd::get_if<TimeSampled<T>>(&v)) {
+  if (v.IsTimeSampled()) {
     return ".timeSamples";
   }
   return "";
@@ -70,15 +70,11 @@ std::string print_timesampled(const TimeSampled<T> &v, const uint32_t indent) {
 
 template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent) {
-  if (auto p = nonstd::get_if<T>(&v)) {
-    return to_string(*p);
+  if (v.IsTimeSampled()) {
+    return print_timesampled(v.timeSamples, indent);
+  } else {
+    return to_string(v.value);
   }
-
-  if (auto p = nonstd::get_if<TimeSampled<T>>(&v)) {
-    return print_timesampled(*p, indent);
-  }
-
-  return "[[??? print_animatable]]";
 }
 
 template<typename T>
@@ -407,6 +403,68 @@ std::string to_string(const GeomCone &geom, const uint32_t indent) {
   // members
   ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
   ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+
+  ss << print_predefined(geom, indent);
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string to_string(const GeomCylinder &geom, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Cylinder \"" << geom.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
+  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+
+  std::string axis;
+  if (geom.axis == AXIS_X) {
+    axis = "x";
+  } else if (geom.axis == AXIS_Y) {
+    axis = "y";
+  } else {
+    axis = "z";
+  }
+    
+  ss << Indent(indent) << "  uniform token axis = " << axis << "\n";
+
+  ss << print_predefined(geom, indent);
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string to_string(const GeomCapsule &geom, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Capsule \"" << geom.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
+  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+
+  std::string axis;
+  if (geom.axis == AXIS_X) {
+    axis = "x";
+  } else if (geom.axis == AXIS_Y) {
+    axis = "y";
+  } else {
+    axis = "z";
+  }
+    
+  ss << Indent(indent) << "  uniform token axis = " << axis << "\n";
 
   ss << print_predefined(geom, indent);
 
