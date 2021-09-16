@@ -32,6 +32,7 @@
 #endif
 
 #include "io-util.hh"
+#include "str-util.hh"
 #include "math-util.inc"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -587,19 +588,6 @@ std::ostream &operator<<(std::ostream &os, const Variable &var) {
 
 inline bool isChar(char c) { return std::isalpha(int(c)); }
 
-inline bool startsWith(const std::string &str, const std::string &t) {
-  return (str.size() >= t.size()) &&
-         std::equal(std::begin(t), std::end(t), std::begin(str));
-}
-
-inline bool endsWith(const std::string &str, const std::string &suffix) {
-  return (str.size() >= suffix.size()) &&
-         (str.find(suffix, str.size() - suffix.size()) != std::string::npos);
-}
-
-inline bool contains(const std::string &str, char c) {
-  return str.find(c) == std::string::npos;
-}
 
 inline bool hasConnect(const std::string &str) {
   return endsWith(str, ".connect");

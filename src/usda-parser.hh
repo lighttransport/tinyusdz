@@ -2,6 +2,7 @@
 #pragma once
 
 #include "tinyusdz.hh"
+#include "stream-reader.hh"
 
 namespace tinyusdz {
 
