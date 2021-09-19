@@ -7,6 +7,7 @@
 using namespace tinyusdz;
 
 void prim_type_test(void) {
+#if 0
   {
     PrimValue<float> pf;
     TEST_CHECK(pf.array_dim() == 0);
@@ -30,5 +31,6 @@ void prim_type_test(void) {
     TEST_CHECK(v.array_dim() == 3);
     TEST_CHECK(v.type_name() == "float[][][]");
   }
+#endif
 
 }
