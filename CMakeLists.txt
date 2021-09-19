@@ -23,6 +23,8 @@ option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
+option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ON)
+
 option(TINYUSDZ_WITH_BLENDER_ADDON "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON" OFF)
 
 # -- EXR --
@@ -93,6 +95,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     )
+
+if (TINYUSDZ_WITH_PXR_COMPAT_API)
+  list(APPEND TINYUSDZ_SOURCES  ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
+endif ()
 
 set(TINYUSDZ_C_API_SOURCES
     ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc

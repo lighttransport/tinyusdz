@@ -130,6 +130,7 @@ For Windows native build, we assume `ninja.exe` is installed on your system(You 
   * OpenSubdiv code is included in TinyUSDZ repo. If you want to use external OpenSubdiv repo, specity the path to OpenSubdiv using `osd_DIR` cmake environment variable.
 * `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
 * `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture through TinyEXR.
+* `TINYUSDZ_WITH_PXR_COMPAT_API` : Build with pxr compatible API.
 
 #### clang-cl on Windows
 

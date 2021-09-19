@@ -1,9 +1,18 @@
 set(TEST_TARGET_NAME unit-test-tinyusdz)
 
-add_executable(${TEST_TARGET_NAME}
+set(TEST_SOURCES
 	unit-main.cc
 	unit-prim-types.cc
+   )
+
+if (TINYUSDZ_WITH_PXR_COMPAT_API)
+    list(APPEND TEST_SOURCES unit-pxr-compat-api.cc)
+endif ()
+
+add_executable(${TEST_TARGET_NAME}
+	${TEST_SOURCES}
 	)
+
 add_sanitizers(${TEST_TARGET_NAME})
 
 if (WIN32)
@@ -18,4 +27,9 @@ target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz ${CMAKE_DL_LIBS})
 target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+ if (TINYUSDZ_WITH_PXR_COMPAT_API)
+  target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "TINYUSDZ_WITH_PXR_COMPAT_API")
+endif (TINYUSDZ_WITH_OPENSUBDIV)
+
 

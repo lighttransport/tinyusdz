@@ -10,6 +10,7 @@
 #include <cmath>
 #include <map>
 #include <limits>
+#include <memory>
 
 #include <iostream>
 
@@ -21,6 +22,10 @@
 
 #include "nonstd/optional.hpp"
 #include "nonstd/variant.hpp"
+
+#define any_CONFIG_NO_EXCEPTIONS (1)
+#include "nonstd/any.hpp"
+
 #include "nonstd/string_view.hpp"
 
 using namespace nonstd::literals; // _sv
@@ -268,8 +273,6 @@ class Path {
       return p;
     }
   }
-
-  bool IsValid() const { return valid; }
 
  private:
   std::string prim_part;  // full path
@@ -689,6 +692,7 @@ struct GetDim<std::vector<T>> {
 };
 #endif
 
+#if 0
 template <class T>
 class PrimValue {
  private:
@@ -786,6 +790,7 @@ class PrimValue<std::vector<std::vector<std::vector<T>>>> {
 };
 
 // TODO: Privide generic multidimensional array type?
+#endif
 
 //
 // TimeSample datatype
@@ -1607,6 +1612,7 @@ struct GPrim {
 
   std::map<std::string, Property> props;
 
+  bool _valid{true}; // default behavior is valid(allow empty GPrim)
 
   // child nodes
   std::vector<GPrim> children;
@@ -2500,5 +2506,10 @@ class Value {
   TimeSamples time_samples;
 };
 #endif
+
+struct Value {
+
+  nonstd::any value;
+};
 
 }  // namespace tinyusdz
