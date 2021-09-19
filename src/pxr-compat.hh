@@ -13,7 +13,7 @@
 #if defined(PXR_STATIC)
   #define USD_API
 #else
-  #if defined(USD_EXRPORTS)
+  #if defined(USD_EXPORTS)
     #if defined(_WIN32)
       #if defined(_MSC_VER)
         #define USD_API __declspec(dllexport)
@@ -66,7 +66,7 @@ typedef UsdStagePtr UsdStageWeakPtr;
 struct UsdPrim
 {
   UsdPrim() : _prim(nullptr) {}
-  UsdPrim(tinyusdz::GPrim *prim) : _prim(prim) {}
+  //UsdPrim(tinyusdz::GPrim *prim) : _prim(prim) {}
 
   bool IsValid() const {
     if (!_prim) {
@@ -82,7 +82,8 @@ struct UsdPrim
     return IsValid();
   }
 
-  tinyusdz::GPrim *_prim{nullptr};
+  // TODO: Use raw pointer?
+  std::unique_ptr<tinyusdz::GPrim> *_prim{nullptr};
 };
 
 struct SdfPath
