@@ -12,6 +12,7 @@
 #include "matrix.h"
 #include "trackball.h"
 
+#define PAR_SHAPES_IMPLEMENTATION
 #include "par_shapes.h" // For meshing
 
 const float kPI = 3.141592f;
@@ -48,8 +49,10 @@ bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere, DrawGeomMesh* dst) 
 
   // TODO: Animated radius
   float radius = 1.0;
-  if (auto p = tinyusdz::primvar::as_basic<double>(&sphere.radius)) {
-    radius = (*p);
+  if (sphere.radius.IsTimeSampled()) {
+    // TODO
+  } else {
+    radius = sphere.radius.Get();
   }
 
   // scale by radius
@@ -57,47 +60,47 @@ bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere, DrawGeomMesh* dst) 
     dst->vertices[i] = par_mesh->points[i] * radius;
   }
 
-  std::vector<int> facevarying_indices;
+  std::vector<uint32_t> facevertex_indices;
   std::vector<float> facevarying_normals;
   std::vector<float> facevarying_texcoords;
 
   // Make uv and normal facevarying
   // ntriangles = slices * 2 + (stacks - 2) * slices * 2
   for (size_t i = 0; i < par_mesh->ntriangles; i++) {
-    PAR_SHAPES_T vidx0 = triangles[3 * i + 0];
-    PAR_SHAPES_T vidx1 = triangles[3 * i + 1];
-    PAR_SHAPES_T vidx2 = triangles[3 * i + 2];
+    PAR_SHAPES_T vidx0 = par_mesh->triangles[3 * i + 0];
+    PAR_SHAPES_T vidx1 = par_mesh->triangles[3 * i + 1];
+    PAR_SHAPES_T vidx2 = par_mesh->triangles[3 * i + 2];
 
-    facevarying_indices.push_back(vidx0);
-    facevarying_indices.push_back(vidx1);
-    facevarying_indices.push_back(vidx2);
+    facevertex_indices.push_back(vidx0);
+    facevertex_indices.push_back(vidx1);
+    facevertex_indices.push_back(vidx2);
 
-    facevarying_normals.push_back(par_mesh->normals[3 * idx0 + 0]);
-    facevarying_normals.push_back(par_mesh->normals[3 * idx0 + 1]);
-    facevarying_normals.push_back(par_mesh->normals[3 * idx0 + 2]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx0 + 0]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx0 + 1]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx0 + 2]);
 
-    facevarying_normals.push_back(par_mesh->normals[3 * idx1 + 0]);
-    facevarying_normals.push_back(par_mesh->normals[3 * idx1 + 1]);
-    facevarying_normals.push_back(par_mesh->normals[3 * idx1 + 2]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx1 + 0]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx1 + 1]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx1 + 2]);
 
-    facevarying_normals.push_back(par_mesh->normals[3 * idx2 + 0]);
-    facevarying_normals.push_back(par_mesh->normals[3 * idx2 + 1]);
-    facevarying_normals.push_back(par_mesh->normals[3 * idx2 + 2]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx2 + 0]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx2 + 1]);
+    facevarying_normals.push_back(par_mesh->normals[3 * vidx2 + 2]);
 
-    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx0 + 0]);
-    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx0 + 1]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * vidx0 + 0]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * vidx0 + 1]);
 
-    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx1 + 0]);
-    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx1 + 1]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * vidx1 + 0]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * vidx1 + 1]);
 
-    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx2 + 0]);
-    facevarying_texcoords.push_back(par_mesh->tcoords[2 * idx2 + 1]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * vidx2 + 0]);
+    facevarying_texcoords.push_back(par_mesh->tcoords[2 * vidx2 + 1]);
   }
 
   par_shapes_free_mesh(par_mesh);
 
 
-  dst->facevarying_indices = facevarying_indices;
+  dst->facevertex_indices = facevertex_indices;
 
   return true;
 
@@ -156,7 +159,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 
       if (f_count == 3) {
         for (size_t f = 0; f < f_count; f++) {
-          dst->facevarying_indices.push_back(
+          dst->facevertex_indices.push_back(
               mesh.faceVertexIndices[face_offset + f]);
 
           if (facevarying_normals.size()) {
@@ -187,11 +190,11 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
           size_t f1 = f + 1;
           size_t f2 = f + 2;
 
-          dst->facevarying_indices.push_back(
+          dst->facevertex_indices.push_back(
               mesh.faceVertexIndices[face_offset + f0]);
-          dst->facevarying_indices.push_back(
+          dst->facevertex_indices.push_back(
               mesh.faceVertexIndices[face_offset + f1]);
-          dst->facevarying_indices.push_back(
+          dst->facevertex_indices.push_back(
               mesh.faceVertexIndices[face_offset + f2]);
 
           if (facevarying_normals.size()) {
@@ -308,7 +311,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 
   std::cout << "num points = " << dst->vertices.size() / 3 << "\n";
   std::cout << "num triangulated faces = "
-            << dst->facevarying_indices.size() / 3 << "\n";
+            << dst->facevertex_indices.size() / 3 << "\n";
 
   return true;
 }
@@ -468,7 +471,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
             // Intersector functor.
             nanort::TriangleIntersector<> triangle_intersector(
-                mesh.vertices.data(), mesh.facevarying_indices.data(),
+                mesh.vertices.data(), mesh.facevertex_indices.data(),
                 sizeof(float) * 3);
 
             nanort::TriangleIntersection<> isect;  // stores isect info
@@ -483,9 +486,9 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
                 float3 v1;
                 float3 v2;
 
-                size_t vid0 = mesh.facevarying_indices[3 * isect.prim_id + 0];
-                size_t vid1 = mesh.facevarying_indices[3 * isect.prim_id + 1];
-                size_t vid2 = mesh.facevarying_indices[3 * isect.prim_id + 2];
+                size_t vid0 = mesh.facevertex_indices[3 * isect.prim_id + 0];
+                size_t vid1 = mesh.facevertex_indices[3 * isect.prim_id + 1];
+                size_t vid2 = mesh.facevertex_indices[3 * isect.prim_id + 2];
 
                 v0[0] = mesh.vertices[3 * vid0 + 0];
                 v0[1] = mesh.vertices[3 * vid0 + 1];
@@ -633,7 +636,7 @@ bool RenderLines(int start_y, int end_y, const RenderScene& scene,
 
       // Intersector functor.
       nanort::TriangleIntersector<> triangle_intersector(
-          mesh.vertices.data(), mesh.facevarying_indices.data(),
+          mesh.vertices.data(), mesh.facevertex_indices.data(),
           sizeof(float) * 3);
       nanort::TriangleIntersection<> isect;  // stores isect info
 
@@ -647,9 +650,9 @@ bool RenderLines(int start_y, int end_y, const RenderScene& scene,
           float3 v1;
           float3 v2;
 
-          size_t vid0 = mesh.facevarying_indices[3 * isect.prim_id + 0];
-          size_t vid1 = mesh.facevarying_indices[3 * isect.prim_id + 1];
-          size_t vid2 = mesh.facevarying_indices[3 * isect.prim_id + 2];
+          size_t vid0 = mesh.facevertex_indices[3 * isect.prim_id + 0];
+          size_t vid1 = mesh.facevertex_indices[3 * isect.prim_id + 1];
+          size_t vid2 = mesh.facevertex_indices[3 * isect.prim_id + 2];
 
           v0[0] = mesh.vertices[3 * vid0 + 0];
           v0[1] = mesh.vertices[3 * vid0 + 1];
@@ -779,13 +782,13 @@ bool RenderScene::Setup() {
     DrawGeomMesh& draw_mesh = draw_meshes[i];
 
     nanort::TriangleMesh<float> triangle_mesh(
-        draw_mesh.vertices.data(), draw_mesh.facevarying_indices.data(),
+        draw_mesh.vertices.data(), draw_mesh.facevertex_indices.data(),
         sizeof(float) * 3);
     nanort::TriangleSAHPred<float> triangle_pred(
-        draw_mesh.vertices.data(), draw_mesh.facevarying_indices.data(),
+        draw_mesh.vertices.data(), draw_mesh.facevertex_indices.data(),
         sizeof(float) * 3);
 
-    bool ret = draw_mesh.accel.Build(draw_mesh.facevarying_indices.size() / 3,
+    bool ret = draw_mesh.accel.Build(draw_mesh.facevertex_indices.size() / 3,
                                      triangle_mesh, triangle_pred);
     if (!ret) {
       std::cerr << "Failed to build BVH\n";
