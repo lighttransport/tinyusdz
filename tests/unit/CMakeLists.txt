@@ -28,8 +28,11 @@ target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src
 
 set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
- if (TINYUSDZ_WITH_PXR_COMPAT_API)
+if (TINYUSDZ_WITH_PXR_COMPAT_API)
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "TINYUSDZ_WITH_PXR_COMPAT_API")
-endif (TINYUSDZ_WITH_OPENSUBDIV)
+
+  # FIXME: support dll build
+  target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")
+endif ()
 
 

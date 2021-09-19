@@ -243,6 +243,12 @@ endif (TINYUSDZ_WITH_EXR)
 
 target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
 
+if (WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
+  # FIXME: Currently static build only
+  #target_compile_definitions(${BUILD_TARGET} PRIVATE "USD_EXPORTS")
+  target_compile_definitions(${BUILD_TARGET} PRIVATE "PXR_STATIC")
+endif ()
+
 if (IOS)
   target_compile_definitions(${BUILD_TARGET} PRIVATE "TINYUSDZ_BUILD_IOS")
 endif ()

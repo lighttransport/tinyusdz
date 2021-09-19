@@ -4,7 +4,7 @@
 
 namespace pxr {
 
-UsdStageRefPtr UsdStage::Open(const std::string &filepath, InitialLoadSet loadset) {
+USD_API UsdStageRefPtr UsdStage::Open(const std::string &filepath, InitialLoadSet loadset) {
   (void)filepath;
   (void)loadset;
 
@@ -12,7 +12,7 @@ UsdStageRefPtr UsdStage::Open(const std::string &filepath, InitialLoadSet loadse
   return std::shared_ptr<UsdStage>(nullptr);
 };
 
-UsdStageRefPtr UsdStage::CreateNew(const std::string &filepath, InitialLoadSet loadset) {
+USD_API UsdStageRefPtr UsdStage::CreateNew(const std::string &filepath, InitialLoadSet loadset) {
   (void)filepath;
   (void)loadset;
 
@@ -20,7 +20,7 @@ UsdStageRefPtr UsdStage::CreateNew(const std::string &filepath, InitialLoadSet l
   return std::shared_ptr<UsdStage>(nullptr);
 };
 
-UsdPrim UsdStage::GetPrimAtPath(const SdfPath &path) {
+USD_API UsdPrim UsdStage::GetPrimAtPath(const SdfPath &path) {
   (void)path;
 
   return UsdPrim();

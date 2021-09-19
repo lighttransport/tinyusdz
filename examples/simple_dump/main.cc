@@ -86,7 +86,7 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "# of groups: " << scene.groups.size() << "\n";
 
   if (scene.default_root_node > -1) {
-    DumpNode(scene.nodes[scene.default_root_node], 0);
+    DumpNode(scene.nodes[size_t(scene.default_root_node)], 0);
   }
 
   std::cout << "== Meshes ===\n";
