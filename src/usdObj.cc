@@ -22,10 +22,9 @@
 
 #ifdef TINYUSDZ_USE_USDOBJ
 
-#ifndef TINYOBJLOADER_NO_INCLUDE
-#define TINYOBJLOADER_IMPLEMENTATION
+// Assume implementation is done in external/tiny_obj_loader.cc
+//#define TINYOBJLOADER_IMPLEMENTATION
 #include "external/tiny_obj_loader.h"
-#endif
 
 #endif
 
