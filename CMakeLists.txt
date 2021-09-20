@@ -10,6 +10,7 @@ project(${BUILD_TARGET} C CXX)
 
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
+option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(TINYUSDZ_WITH_C_API "Enable C API." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
@@ -244,9 +245,11 @@ endif (TINYUSDZ_WITH_EXR)
 target_link_libraries(${BUILD_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
 
 if (WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
-  # FIXME: Currently static build only
-  #target_compile_definitions(${BUILD_TARGET} PRIVATE "USD_EXPORTS")
-  target_compile_definitions(${BUILD_TARGET} PRIVATE "PXR_STATIC")
+  if (TINYUSDZ_BUILD_SHARED_LIBS)
+    target_compile_definitions(${BUILD_TARGET} PRIVATE "USD_EXPORTS")
+  else ()
+    target_compile_definitions(${BUILD_TARGET} PRIVATE "PXR_STATIC")
+  endif ()
 endif ()
 
 if (IOS)
