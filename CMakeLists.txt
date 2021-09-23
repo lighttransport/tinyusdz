@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.5)
 
-set(TINYUSDZ_LIB_TARGET "tinyusdz") # TODO: drop `z`
-set(TINYUSDZ_LIB_TARGET_STATIC "tinyusdz_static") 
+set(TINYUSDZ_TARGET "tinyusdz") # TODO: drop `z`
+set(TINYUSDZ_TARGET_STATIC "tinyusdz_static")  # static lib is always built.
 set(BUILD_TARGET_C "c-tinyusd")
 set(BUILD_TARGET_PY "pytinyusd")
 set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
 set(TEST_TARGET "test_tinyusdz")
 
-project(${TINYUSDZ_LIB_TARGET} C CXX)
+project(${TINYUSDZ_TARGET} C CXX)
 
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
@@ -236,25 +236,25 @@ endif (TINYUSDZ_WITH_EXR)
 #
 # -- target
 #
-add_library(${TINYUSDZ_LIB_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
-add_sanitizers(${TINYUSDZ_LIB_TARGET_STATIC})
+add_library(${TINYUSDZ_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 
 if (TINYUSDZ_BUILD_SHARED_LIBS)
-  add_library(${TINYUSDZ_LIB_TARGET} SHARED ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
-  add_sanitizers(${TINYUSDZ_LIB_TARGET})
+  add_library(${TINYUSDZ_TARGET} SHARED ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+  add_sanitizers(${TINYUSDZ_TARGET})
 
-  set(TINYUSDZ_LIBS ${TINYUSDZ_LIB_TARGET_STATIC} ${TINYUSDZ_LIB_TARGET})
+  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC} ${TINYUSDZ_TARGET})
 else ()
   # static only
-  set(TINYUSDZ_LIBS ${TINYUSDZ_LIB_TARGET_STATIC})
+  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC})
 endif ()
 
 if (WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
   if (TINYUSDZ_BUILD_SHARED_LIBS)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "USD_EXPORTS")
+    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
   endif ()
 
-  target_compile_definitions(${TINYUSDZ_LIB_TARGET_STATIC} PRIVATE "PXR_STATIC")
+  target_compile_definitions(${TINYUSDZ_TARGET_STATIC} PRIVATE "PXR_STATIC")
 endif ()
 
 #
@@ -302,7 +302,7 @@ ENDIF ()
 if (TINYUSDZ_WITH_C_API)
   # TODO: dll version
   add_library(${BUILD_TARGET_C} STATIC ${TINYUSDZ_C_API_SOURCES})
-  target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_LIB_TARGET_STATIC})
+  target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif ()
 
 if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
@@ -310,7 +310,7 @@ if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
   # build monolithic .dll
   pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
-  target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_LIB_TARGET_STATIC})
+  target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   # copy python binding .so file to python/
   add_custom_command(TARGET ${BUILD_TARGET_PY} POST_BUILD
@@ -324,7 +324,7 @@ if (TINYUSDZ_WITH_USDA_PARSER)
   add_executable(usda-parser ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
   add_sanitizers(usda-parser)
   target_include_directories(usda-parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
-  target_link_libraries(usda-parser ${TINYUSDZ_LIB_TARGET_STATIC})
+  target_link_libraries(usda-parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif ()
 
 if (TINYUSDZ_WITH_BLENDER_ADDON)
@@ -359,7 +359,7 @@ if (TINYUSDZ_BUILD_TESTS)
 
   target_include_directories(${TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
                                                     ${PROJECT_SOURCE_DIR}/tests)
-  target_link_libraries(${TEST_TARGET} PRIVATE ${TINYUSDZ_LIB_TARGET_STATIC})
+  target_link_libraries(${TEST_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   if (TINYUSDZ_WITH_OPENSUBDIV)
     target_compile_definitions(${TEST_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
@@ -385,13 +385,13 @@ endif (TINYUSDZ_BUILD_TESTS)
 
 # [VisualStudio]
 if(WIN32)
-  # Set ${TINYUSDZ_LIB_TARGET} as a startup project for VS IDE
-  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${TINYUSDZ_LIB_TARGET})
+  # Set ${TINYUSDZ_TARGET_STATIC} as a startup project for VS IDE
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${TINYUSDZ_TARGET_STATIC})
 
   # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
-  # directory to ${TINYUSDZ_LIB_TARGET} git repo root.
+  # directory to ${TINYUSDZ_TARGET_STATIC} git repo root.
   if(CMAKE_VERSION VERSION_GREATER 3.8.0)
-    set_target_properties(${TINYUSDZ_LIB_TARGET}
+    set_target_properties(${TINYUSDZ_TARGET_STATIC}
                           PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
                                      "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
