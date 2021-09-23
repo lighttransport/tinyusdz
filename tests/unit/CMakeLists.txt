@@ -32,7 +32,7 @@ if (TINYUSDZ_WITH_PXR_COMPAT_API)
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "TINYUSDZ_WITH_PXR_COMPAT_API")
 
   # FIXME: support dll build
-  # target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")
+  target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")
 endif ()
 
 
