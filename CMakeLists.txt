@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 set(TINYUSDZ_TARGET "tinyusdz") # TODO: drop `z`
-set(TINYUSDZ_TARGET_STATIC "tinyusdz_static")  # static lib is always built.
+set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # static lib is always built.
 set(BUILD_TARGET_C "c-tinyusd")
 set(BUILD_TARGET_PY "pytinyusd")
 set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
@@ -14,12 +14,18 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(TINYUSDZ_WITH_C_API "Enable C API." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
-option(TINYUSDZ_BUILD_EXAMPLES "Build examples(but not all examples area built in `examples` folder)" ON)
+option(TINYUSDZ_BUILD_EXAMPLES
+       "Build examples(but not all examples area built in `examples` folder)"
+       ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
-option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)" ON)
-option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)
+option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
+       ON)
+option(
+  TINYUSDZ_WITH_OPENSUBDIV
+  "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
+  ON)
 # Use embedded version of OpenSubdiv code by default
-set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd) 
+set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
@@ -27,11 +33,15 @@ option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
 option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ON)
 
-option(TINYUSDZ_WITH_BLENDER_ADDON "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON" OFF)
+option(
+  TINYUSDZ_WITH_BLENDER_ADDON
+  "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON"
+  OFF)
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
-option(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB "Use system's zlib instead of miniz for TinyEXR" OFF)
+option(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB
+       "Use system's zlib instead of miniz for TinyEXR" OFF)
 # ---------
 
 # -- optional --
@@ -43,9 +53,9 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
-if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
+if(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB)
   find_package(ZLIB REQUIRED)
-endif ()
+endif()
 
 # Require strict C++14 mode(e.g. `-std=c++14`)
 set(CMAKE_CXX_STANDARD 14)
@@ -80,18 +90,18 @@ if(TINYUSDZ_USE_CCACHE)
   endif()
 endif()
 
-if (TINYUSDZ_WITH_BLENDER_ADDON)
+if(TINYUSDZ_WITH_BLENDER_ADDON)
   set(TINYUSDZ_WITH_PYTHON ON)
-endif ()
+endif()
 
-if (TINYUSDZ_WITH_PYTHON)
+if(TINYUSDZ_WITH_PYTHON)
 
-  # We build monolithic python module, so build libtinyusdz as a static library with PIC enabled.
+  # We build monolithic python module, so build libtinyusdz as a static library
+  # with PIC enabled.
   set(CMAKE_POSITION_INDEPENDENT_CODE On)
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11 pybind11_build)
-endif ()
-
+endif()
 
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
@@ -99,79 +109,106 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
-    ${PROJECT_SOURCE_DIR}/src/pprinter.cc
-    )
+    ${PROJECT_SOURCE_DIR}/src/pprinter.cc)
 
-if (TINYUSDZ_WITH_PXR_COMPAT_API)
-  list(APPEND TINYUSDZ_SOURCES  ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
-endif ()
+if(TINYUSDZ_WITH_PXR_COMPAT_API)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
+endif()
 
-set(TINYUSDZ_C_API_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc
-    )
+set(TINYUSDZ_C_API_SOURCES ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc)
 
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
     ${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
-    ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
-  )
+    ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c)
 
-if (TINYUSDZ_WITH_JSON)
+if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
 endif()
 
-if (TINYUSDZ_WITH_USDOBJ)
+if(TINYUSDZ_WITH_USDOBJ)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usdObj.cc)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
 endif()
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/python-bindings.cc
-  )
+    ${PROJECT_SOURCE_DIR}/src/python-bindings.cc)
 
 set(TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc
-  )
+    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc)
 
-if (TINYUSDZ_WITH_EXR)
-  if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
-    set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
-  else ()
+if(TINYUSDZ_WITH_EXR)
+  if(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB)
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+      PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+  else()
     list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
-    set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+      PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
     # TODO: Set this only for clang, gcc
-    set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/miniz.c PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
-  endif ()
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/miniz.c
+      PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
+  endif()
 
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
-endif (TINYUSDZ_WITH_EXR)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+endif(TINYUSDZ_WITH_EXR)
 
-
-
-if (TINYUSDZ_WITH_OPENSUBDIV)
+if(TINYUSDZ_WITH_OPENSUBDIV)
 
   # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
-  function ( ADD_OSD_LIB )
+  function(ADD_OSD_LIB)
 
-    set(NO_TUTORIALS ON CACHE INTERNAL "" FORCE)
-    set(NO_EXAMPLES ON CACHE INTERNAL "" FORCE)
-    set(NO_REGRESSION ON CACHE INTERNAL "" FORCE)
-    set(NO_DOC ON CACHE INTERNAL "" FORCE)
-    set(NO_OMP ON CACHE INTERNAL "" FORCE)
-    set(NO_TBB ON CACHE INTERNAL "" FORCE)
-    set(NO_CUDA ON CACHE INTERNAL "" FORCE)
-    set(NO_OPENCL ON CACHE INTERNAL "" FORCE)
-    set(NO_OPENGL ON CACHE INTERNAL "" FORCE)
-    set(NO_TESTS ON CACHE INTERNAL "" FORCE)
-    set(NO_GLTESTS ON CACHE INTERNAL "" FORCE)
-    set(NO_GLFW ON CACHE INTERNAL "" FORCE)
-    set(NO_PTEX ON CACHE INTERNAL "" FORCE)
+    set(NO_TUTORIALS
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_EXAMPLES
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_REGRESSION
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_DOC
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_OMP
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_TBB
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_CUDA
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_OPENCL
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_OPENGL
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_TESTS
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_GLTESTS
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_GLFW
+        ON
+        CACHE INTERNAL "" FORCE)
+    set(NO_PTEX
+        ON
+        CACHE INTERNAL "" FORCE)
 
-    # CMakeLists of OSD package is problematic,
-    # so provide our own one.
-    list(APPEND OSD_FAR_SOURCES
+    # CMakeLists of OSD package is problematic, so provide our own one.
+    list(
+      APPEND
+      OSD_FAR_SOURCES
       ${osd_DIR}/opensubdiv/far/bilinearPatchBuilder.cpp
       ${osd_DIR}/opensubdiv/far/catmarkPatchBuilder.cpp
       ${osd_DIR}/opensubdiv/far/error.cpp
@@ -188,124 +225,139 @@ if (TINYUSDZ_WITH_OPENSUBDIV)
       ${osd_DIR}/opensubdiv/far/stencilBuilder.cpp
       ${osd_DIR}/opensubdiv/far/topologyDescriptor.cpp
       ${osd_DIR}/opensubdiv/far/topologyRefiner.cpp
-      ${osd_DIR}/opensubdiv/far/topologyRefinerFactory.cpp
-    )
+      ${osd_DIR}/opensubdiv/far/topologyRefinerFactory.cpp)
 
     # CPU only
-    list(APPEND OSD_OSD_SOURCES
+    list(
+      APPEND
+      OSD_OSD_SOURCES
       ${osd_DIR}/opensubdiv/osd/cpuEvaluator.cpp
       ${osd_DIR}/opensubdiv/osd/cpuKernel.cpp
       ${osd_DIR}/opensubdiv/osd/cpuPatchTable.cpp
-      ${osd_DIR}/opensubdiv/osd/cpuVertexBuffer.cpp
-    )
+      ${osd_DIR}/opensubdiv/osd/cpuVertexBuffer.cpp)
 
-    list(APPEND OSD_SDC_SOURCES
-      ${osd_DIR}/opensubdiv/sdc/typeTraits.cpp
-      ${osd_DIR}/opensubdiv/sdc/crease.cpp
-    )
+    list(APPEND OSD_SDC_SOURCES ${osd_DIR}/opensubdiv/sdc/typeTraits.cpp
+         ${osd_DIR}/opensubdiv/sdc/crease.cpp)
 
-    list(APPEND OSD_VTR_SOURCES
+    list(
+      APPEND
+      OSD_VTR_SOURCES
       ${osd_DIR}/opensubdiv/vtr/fvarLevel.cpp
       ${osd_DIR}/opensubdiv/vtr/fvarRefinement.cpp
       ${osd_DIR}/opensubdiv/vtr/level.cpp
       ${osd_DIR}/opensubdiv/vtr/quadRefinement.cpp
       ${osd_DIR}/opensubdiv/vtr/refinement.cpp
       ${osd_DIR}/opensubdiv/vtr/sparseSelector.cpp
-      ${osd_DIR}/opensubdiv/vtr/triRefinement.cpp
-    )
-
+      ${osd_DIR}/opensubdiv/vtr/triRefinement.cpp)
 
     add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_OSD_SOURCES})
     target_include_directories(osd_cpu PRIVATE ${osd_DIR})
 
-  endfunction ()
+  endfunction()
 
-  ADD_OSD_LIB()
-  list(APPEND TINYUSDZ_EXT_LIBRARIES osd_cpu) 
+  add_osd_lib()
+  list(APPEND TINYUSDZ_EXT_LIBRARIES osd_cpu)
 
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
 
-endif (TINYUSDZ_WITH_OPENSUBDIV)
+endif(TINYUSDZ_WITH_OPENSUBDIV)
 
-if (TINYUSDZ_WITH_EXR)
-  if (TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB) 
+if(TINYUSDZ_WITH_EXR)
+  if(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB)
     list(APPEND ${TINYUSDZ_EXT_LIBRARIES} ZLIB::ZLIB)
-  endif ()
-endif (TINYUSDZ_WITH_EXR)
+  endif()
+endif(TINYUSDZ_WITH_EXR)
 
 #
 # -- target
 #
-add_library(${TINYUSDZ_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+add_library(${TINYUSDZ_TARGET_STATIC} STATIC
+            ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
 add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 
-if (TINYUSDZ_BUILD_SHARED_LIBS)
-  add_library(${TINYUSDZ_TARGET} SHARED ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+if(TINYUSDZ_BUILD_SHARED_LIBS)
+  add_library(
+    ${TINYUSDZ_TARGET} SHARED ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES}
+                              ${TINYUSDZ_EXT_SOURCES})
   add_sanitizers(${TINYUSDZ_TARGET})
 
   set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC} ${TINYUSDZ_TARGET})
-else ()
+else()
   # static only
   set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC})
-endif ()
+endif()
 
-if (WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
-  if (TINYUSDZ_BUILD_SHARED_LIBS)
+if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
+  if(TINYUSDZ_BUILD_SHARED_LIBS)
     target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
-  endif ()
+  endif()
 
   target_compile_definitions(${TINYUSDZ_TARGET_STATIC} PRIVATE "PXR_STATIC")
-endif ()
+endif()
 
 #
 # -- common target props
 #
-foreach (TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
-  target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
+foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
+  target_include_directories(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_include_directories(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
 
-  if (TINYUSDZ_WITH_JSON)
-   target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-  endif ()
+  if(TINYUSDZ_WITH_JSON)
+    target_include_directories(
+      ${TINYUSDZ_LIB_TARGET}
+      PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+  endif()
 
-  if (TINYUSDZ_WITH_USDOBJ)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_USE_USDOBJ")
-  endif ()
+  if(TINYUSDZ_WITH_USDOBJ)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDOBJ")
+  endif()
 
+  target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
+                        ${CMAKE_DL_LIBS})
 
-  target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES} ${CMAKE_DL_LIBS})
+  if(IOS)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_BUILD_IOS")
+  endif()
 
-  if (IOS)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_BUILD_IOS")
-  endif ()
-  
-  if (TINYUSDZ_WITH_EXR)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_SUPPORT_EXR")
-  endif (TINYUSDZ_WITH_EXR)
-  
-  if (TINYUSDZ_WITH_AUDIO)
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_SUPPORT_AUDIO")
-  endif (TINYUSDZ_WITH_AUDIO)
-  
-  if (TINYUSDZ_WITH_OPENSUBDIV)
+  if(TINYUSDZ_WITH_EXR)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_SUPPORT_EXR")
+  endif(TINYUSDZ_WITH_EXR)
+
+  if(TINYUSDZ_WITH_AUDIO)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_SUPPORT_AUDIO")
+  endif(TINYUSDZ_WITH_AUDIO)
+
+  if(TINYUSDZ_WITH_OPENSUBDIV)
     target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
-    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
-  endif (TINYUSDZ_WITH_OPENSUBDIV)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+  endif(TINYUSDZ_WITH_OPENSUBDIV)
 
 endforeach()
 
 # Increase warning level for clang.
-IF (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set_source_files_properties(${TINYUSDZ_SOURCES} PROPERTIES COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function")
-ENDIF ()
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties(
+    ${TINYUSDZ_SOURCES}
+    PROPERTIES
+      COMPILE_FLAGS
+      "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+  )
+endif()
 
-if (TINYUSDZ_WITH_C_API)
+if(TINYUSDZ_WITH_C_API)
   # TODO: dll version
   add_library(${BUILD_TARGET_C} STATIC ${TINYUSDZ_C_API_SOURCES})
   target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET_STATIC})
-endif ()
+endif()
 
-if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
+if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
   # build monolithic .dll
   pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
@@ -313,46 +365,49 @@ if (TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   # copy python binding .so file to python/
-  add_custom_command(TARGET ${BUILD_TARGET_PY} POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_PY}>" "${CMAKE_SOURCE_DIR}/python/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
-    COMMENT "copying python module file to python/" VERBATIM
-  )
+  add_custom_command(
+    TARGET ${BUILD_TARGET_PY}
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${BUILD_TARGET_PY}>"
+            "${CMAKE_SOURCE_DIR}/python/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
+    COMMENT "copying python module file to python/"
+    VERBATIM)
 
-endif ()
+endif()
 
-if (TINYUSDZ_WITH_USDA_PARSER)
-  add_executable(usda-parser ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
+if(TINYUSDZ_WITH_USDA_PARSER)
+  add_executable(usda-parser
+                 ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
   add_sanitizers(usda-parser)
   target_include_directories(usda-parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
   target_link_libraries(usda-parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
-endif ()
+endif()
 
-if (TINYUSDZ_WITH_BLENDER_ADDON)
-  pybind11_add_module(${BUILD_TARGET_BLENDER_PY} ${TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES})
+if(TINYUSDZ_WITH_BLENDER_ADDON)
+  pybind11_add_module(${BUILD_TARGET_BLENDER_PY}
+                      ${TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_BLENDER_PY})
 
-  # For Python.h header files.
-  # Assume Blender 2.93 LTS(Python 3.9)
-  target_include_directories(${BUILD_TARGET_BLENDER_PY} PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
+  # For Python.h header files. Assume Blender 2.93 LTS(Python 3.9)
+  target_include_directories(
+    ${BUILD_TARGET_BLENDER_PY}
+    PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
 
-endif ()
+endif()
 
-
-if (TINYUSDZ_BUILD_EXAMPLES)
+if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_dump)
   add_subdirectory(examples/save_usda)
-endif (TINYUSDZ_BUILD_EXAMPLES)
+endif(TINYUSDZ_BUILD_EXAMPLES)
 
-if (TINYUSDZ_BUILD_TESTS)
+if(TINYUSDZ_BUILD_TESTS)
 
   enable_testing()
 
   #
   # Standalone tester
   #
-  set(TINYUSDZ_TEST_SOURCES
-      ${PROJECT_SOURCE_DIR}/tests/test-main.cc
-      )
+  set(TINYUSDZ_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
 
   add_executable(${TEST_TARGET} ${TINYUSDZ_TEST_SOURCES})
   add_sanitizers(${TEST_TARGET})
@@ -361,27 +416,26 @@ if (TINYUSDZ_BUILD_TESTS)
                                                     ${PROJECT_SOURCE_DIR}/tests)
   target_link_libraries(${TEST_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
-  if (TINYUSDZ_WITH_OPENSUBDIV)
+  if(TINYUSDZ_WITH_OPENSUBDIV)
     target_compile_definitions(${TEST_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
-  endif (TINYUSDZ_WITH_OPENSUBDIV)
+  endif(TINYUSDZ_WITH_OPENSUBDIV)
 
   #
   # unit tester
   #
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/unit)
 
-
   #
   # USDA parser tester
   #
-  if (TINYUSDZ_WITH_USDA_PARSER)
+  if(TINYUSDZ_WITH_USDA_PARSER)
     add_test(
       NAME usda-parser-unit-test
-      COMMAND python ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app "$<TARGET_FILE:usda-parser>" --basedir "${PROJECT_SOURCE_DIR}"
-    )
-  endif ()
+      COMMAND python ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
+              "$<TARGET_FILE:usda-parser>" --basedir "${PROJECT_SOURCE_DIR}")
+  endif()
 
-endif (TINYUSDZ_BUILD_TESTS)
+endif(TINYUSDZ_BUILD_TESTS)
 
 # [VisualStudio]
 if(WIN32)
@@ -391,8 +445,8 @@ if(WIN32)
   # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
   # directory to ${TINYUSDZ_TARGET_STATIC} git repo root.
   if(CMAKE_VERSION VERSION_GREATER 3.8.0)
-    set_target_properties(${TINYUSDZ_TARGET_STATIC}
-                          PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
-                                     "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_target_properties(
+      ${TINYUSDZ_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
+                                           "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
 endif()
