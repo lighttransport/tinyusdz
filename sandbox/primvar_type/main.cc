@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 
 //
 // Simple variant-lile type
@@ -17,14 +18,29 @@ struct TypeTrait<double> {
   static constexpr auto type_name = "double";
 };
 
-struct Value
+template<>
+struct TypeTrait<std::vector<double>> {
+  static constexpr auto type_name = "double[]";
+};
+
+class Value
 {
+ public:
+
   std::string type_name;
 
-  union {
+  union U {
     float _float;
     double _double;
     int _int;
+    
+    // 1D array type
+    std::vector<double> _vdouble;
+
+    // User defined constructor and destructor are required.
+    U() {}
+    ~U() {}
+
   } u;
 
   template<class T>
@@ -47,6 +63,7 @@ Value &Value::operator=(const __type &v) { \
 
 DEFINE_ASSIGN(double, _double);
 DEFINE_ASSIGN(float, _float);
+DEFINE_ASSIGN(std::vector<double>, _vdouble);
 
 #undef DEFINE_ASSIGN
 
@@ -67,6 +84,15 @@ std::ostream &operator<<(std::ostream &os, const Value &v)
     os << v.u._float;
   } else if (v.type_name == "double") {
     os << v.u._double;
+  } else if (v.type_name == "double[]") {
+    std::cout << "n = " << v.u._vdouble.size() << "\n";
+    os << "[";
+    for (size_t i = 0; i < v.u._vdouble.size(); i++) {
+      os << v.u._vdouble[i];
+      if (i != v.u._vdouble.size() - 1) {
+        os << ", ";
+      }
+    }
   } else {
     os << "TODO";
   }
@@ -81,6 +107,10 @@ int main(int argc, char **argv)
   v = 1.3f;
   v = 1.3;
 
+  std::vector<double> din = {1.0, 2.0};
+  v = din;
+
+  std::cout << "val\n";
   std::cout << v << "\n";
 
   if (v.get_if<double>()) {
