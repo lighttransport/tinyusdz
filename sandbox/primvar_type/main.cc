@@ -28,12 +28,12 @@ enum TypeId {
 
   TYPE_ID_BOOL,
 
-  TYPE_ID_INT8,
-  TYPE_ID_INT16, // 'half'
+  //TYPE_ID_INT8,
+  TYPE_ID_HALF,
   TYPE_ID_INT32,
   TYPE_ID_INT64,
 
-  TYPE_ID_HALF2,  // int16 x 2
+  TYPE_ID_HALF2,
   TYPE_ID_HALF3, 
   TYPE_ID_HALF4,
 
@@ -41,14 +41,9 @@ enum TypeId {
   TYPE_ID_INT3, 
   TYPE_ID_INT4,
 
-  TYPE_ID_UINT8,
-  TYPE_ID_UINT16, // 'uhalf'
+  TYPE_ID_UCHAR, // uint8
   TYPE_ID_UINT32,
   TYPE_ID_UINT64,
-
-  TYPE_ID_UHALF2,  // uint16 x 2
-  TYPE_ID_UHALF3, 
-  TYPE_ID_UHALF4,
 
   TYPE_ID_UINT2,
   TYPE_ID_UINT3,
@@ -64,6 +59,10 @@ enum TypeId {
   TYPE_ID_DOUBLE3,
   TYPE_ID_DOUBLE4,
 
+  TYPE_ID_QUATH,
+  TYPE_ID_QUATF,
+  TYPE_ID_QUATD,
+
   TYPE_ID_VFLOAT,  // float[]
   TYPE_ID_VFLOAT2,
   TYPE_ID_VFLOAT3,
@@ -74,8 +73,36 @@ enum TypeId {
   TYPE_ID_VDOUBLE3,
   TYPE_ID_VDOUBLE4,
 
+
+  TYPE_ID_COLOR3H,
   TYPE_ID_COLOR3F,
+  TYPE_ID_COLOR3D,
+
+  TYPE_ID_COLOR4H,
   TYPE_ID_COLOR4F,
+  TYPE_ID_COLOR4D,
+
+  TYPE_ID_POINT3H,
+  TYPE_ID_POINT3F,
+  TYPE_ID_POINT3D,
+
+  TYPE_ID_NORMAL3H,
+  TYPE_ID_NORMAL3F,
+  TYPE_ID_NORMAL3D,
+
+  TYPE_ID_VECTOR3H,
+  TYPE_ID_VECTOR3F,
+  TYPE_ID_VECTOR3D,
+
+  TYPE_ID_FRAME4D,
+
+  TYPE_ID_TEXCOORD2H,
+  TYPE_ID_TEXCOORD2F,
+  TYPE_ID_TEXCOORD2D,
+
+  TYPE_ID_TEXCOORD3H,
+  TYPE_ID_TEXCOORD3F,
+  TYPE_ID_TEXCOORD3D,
 
   TYPE_ID_TIMESAMPLE,
 
@@ -84,16 +111,11 @@ enum TypeId {
   TYPE_ID_ALL // terminator
 };
 
-using half = int16_t;
-using uhalf = uint16_t;
+using half = uint16_t;
 
 using half2 = std::array<half, 2>;
 using half3 = std::array<half, 3>;
 using half4 = std::array<half, 4>;
-
-using uhalf2 = std::array<uhalf, 2>;
-using uhalf3 = std::array<uhalf, 3>;
-using uhalf4 = std::array<uhalf, 4>;
 
 using int2 = std::array<int32_t, 2>;
 using int3 = std::array<int32_t, 3>;
@@ -106,6 +128,195 @@ using uint4 = std::array<uint32_t, 4>;
 using float2 = std::array<float, 2>;
 using float3 = std::array<float, 3>;
 using float4 = std::array<float, 4>;
+
+using double2 = std::array<double, 2>;
+using double3 = std::array<double, 3>;
+using double4 = std::array<double, 4>;
+
+struct matrix2d
+{
+  matrix2d() {
+    m[0][0] = 1.0;
+    m[0][1] = 0.0;
+
+    m[1][0] = 0.0;
+    m[1][1] = 1.0;
+  }
+
+  double m[2][2];
+};
+
+struct matrix3d
+{
+  matrix3d() {
+    m[0][0] = 1.0;
+    m[0][1] = 0.0;
+    m[0][2] = 0.0;
+
+    m[1][0] = 0.0;
+    m[1][1] = 1.0;
+    m[1][2] = 0.0;
+
+    m[2][0] = 0.0;
+    m[2][1] = 0.0;
+    m[2][2] = 1.0;
+  }
+
+  double m[3][3];
+};
+
+struct matrix4d
+{
+  matrix4d() {
+    m[0][0] = 1.0;
+    m[0][1] = 0.0;
+    m[0][2] = 0.0;
+    m[0][3] = 0.0;
+
+    m[1][0] = 0.0;
+    m[1][1] = 1.0;
+    m[1][2] = 0.0;
+    m[1][3] = 0.0;
+
+    m[2][0] = 0.0;
+    m[2][1] = 0.0;
+    m[2][2] = 1.0;
+    m[2][3] = 0.0;
+
+    m[3][0] = 0.0;
+    m[3][1] = 0.0;
+    m[3][2] = 0.0;
+    m[3][3] = 1.0;
+  }
+
+  double m[4][4];
+};
+
+// = matrix4d
+struct frame4d
+{
+  frame4d() {
+    m[0][0] = 1.0;
+    m[0][1] = 0.0;
+    m[0][2] = 0.0;
+    m[0][3] = 0.0;
+
+    m[1][0] = 0.0;
+    m[1][1] = 1.0;
+    m[1][2] = 0.0;
+    m[1][3] = 0.0;
+
+    m[2][0] = 0.0;
+    m[2][1] = 0.0;
+    m[2][2] = 1.0;
+    m[2][3] = 0.0;
+
+    m[3][0] = 0.0;
+    m[3][1] = 0.0;
+    m[3][2] = 0.0;
+    m[3][3] = 1.0;
+  }
+  double m[4][4];
+};
+
+struct quath
+{
+  half3 imag;
+  half real;
+};
+
+struct quatf
+{
+  float3 imag;
+  float real; 
+};
+
+struct quatd
+{
+  double3 imag;
+  double real; 
+};
+
+struct vector3h
+{
+  half x, y, z;
+
+  half operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct vector3f
+{
+  float x, y, z;
+
+  float operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct vector3d
+{
+  double x, y, z;
+
+  double operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct normal3h
+{
+  half x, y, z;
+
+  half operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct normal3f
+{
+  float x, y, z;
+
+  float operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct normal3d
+{
+  double x, y, z;
+
+  double operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct point3h
+{
+  half x, y, z;
+
+  half operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct point3f
+{
+  float x, y, z;
+
+  float operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
+
+struct point3d
+{
+  double x, y, z;
+
+  double operator[](size_t idx) {
+    return *(&x + idx);
+  }
+};
 
 struct color3f
 {
@@ -125,6 +336,56 @@ struct color4f
   float operator[](size_t idx) {
     return *(&r + idx);
   }
+};
+
+struct color3d
+{
+  double r, g, b;
+
+  // C++11 or later, struct is tightly packed, so use the pointer offset is valid.
+  double operator[](size_t idx) {
+    return *(&r + idx);
+  }
+};
+
+struct color4d
+{
+  double r, g, b, a;
+
+  // C++11 or later, struct is tightly packed, so use the pointer offset is valid.
+  double operator[](size_t idx) {
+    return *(&r + idx);
+  }
+};
+
+struct texcoord2h
+{
+  half s, t;
+};
+
+struct texcoord2f
+{
+  float s, t;
+};
+
+struct texcoord2d
+{
+  double s, t;
+};
+
+struct texcoord3h
+{
+  half s, t, r;
+};
+
+struct texcoord3f
+{
+  float s, t, r;
+};
+
+struct texcoord3d
+{
+  double s, t, r;
 };
 
 
@@ -152,21 +413,18 @@ struct TypeTrait<__dty> { \
 }
 
 DEFINE_TYPE_TRAIT(bool, "bool",   TYPE_ID_BOOL);
-DEFINE_TYPE_TRAIT(int8_t, "byte",   TYPE_ID_INT8);
-DEFINE_TYPE_TRAIT(int16_t, "half",   TYPE_ID_INT16);
-DEFINE_TYPE_TRAIT(int32_t, "int",   TYPE_ID_INT32);
+DEFINE_TYPE_TRAIT(uint8_t, "uchar",   TYPE_ID_UCHAR);
+DEFINE_TYPE_TRAIT(half, "half",   TYPE_ID_HALF);
 
-DEFINE_TYPE_TRAIT(uint8_t, "ubyte",   TYPE_ID_UINT8);
-DEFINE_TYPE_TRAIT(uint16_t, "ushort",   TYPE_ID_UINT16);
+DEFINE_TYPE_TRAIT(int32_t, "int",   TYPE_ID_INT32);
 DEFINE_TYPE_TRAIT(uint32_t, "uint",   TYPE_ID_UINT32);
+
+DEFINE_TYPE_TRAIT(int64_t, "int64",   TYPE_ID_INT64);
+DEFINE_TYPE_TRAIT(uint64_t, "uint64",   TYPE_ID_UINT64);
 
 DEFINE_TYPE_TRAIT(half2, "half2",   TYPE_ID_HALF2);
 DEFINE_TYPE_TRAIT(half3, "half3",   TYPE_ID_HALF3);
 DEFINE_TYPE_TRAIT(half4, "half4",   TYPE_ID_HALF4);
-
-DEFINE_TYPE_TRAIT(uhalf2, "uhalf2",   TYPE_ID_UHALF2);
-DEFINE_TYPE_TRAIT(uhalf3, "uhalf3",   TYPE_ID_UHALF3);
-DEFINE_TYPE_TRAIT(uhalf4, "uhalf4",   TYPE_ID_UHALF4);
 
 DEFINE_TYPE_TRAIT(float, "float",   TYPE_ID_FLOAT);
 DEFINE_TYPE_TRAIT(float2, "float2", TYPE_ID_FLOAT2);
@@ -178,8 +436,36 @@ DEFINE_TYPE_TRAIT(double2, "double2", TYPE_ID_DOUBLE2);
 DEFINE_TYPE_TRAIT(double3, "double3", TYPE_ID_DOUBLE3);
 DEFINE_TYPE_TRAIT(double4, "double4", TYPE_ID_DOUBLE4);
 
+DEFINE_TYPE_TRAIT(quath, "quath", TYPE_ID_QUATH);
+DEFINE_TYPE_TRAIT(quatf, "quatf", TYPE_ID_QUATF);
+DEFINE_TYPE_TRAIT(quatd, "quatd", TYPE_ID_QUATD);
+
+DEFINE_TYPE_TRAIT(vector3h, "vector3h", TYPE_ID_VECTOR3H);
+DEFINE_TYPE_TRAIT(vector3f, "vector3f", TYPE_ID_VECTOR3F);
+DEFINE_TYPE_TRAIT(vector3d, "vector3d", TYPE_ID_VECTOR3D);
+
+DEFINE_TYPE_TRAIT(normal3h, "normal3h", TYPE_ID_NORMAL3H);
+DEFINE_TYPE_TRAIT(normal3f, "normal3f", TYPE_ID_NORMAL3F);
+DEFINE_TYPE_TRAIT(normal3d, "normal3d", TYPE_ID_NORMAL3D);
+
+DEFINE_TYPE_TRAIT(point3h, "point3h", TYPE_ID_POINT3H);
+DEFINE_TYPE_TRAIT(point3f, "point3f", TYPE_ID_POINT3F);
+DEFINE_TYPE_TRAIT(point3d, "point3d", TYPE_ID_POINT3D);
+
+DEFINE_TYPE_TRAIT(frame4d, "frame4d", TYPE_ID_FRAME4D);
+
 DEFINE_TYPE_TRAIT(color3f, "color3f", TYPE_ID_COLOR3F);
 DEFINE_TYPE_TRAIT(color4f, "color4f", TYPE_ID_COLOR4F);
+DEFINE_TYPE_TRAIT(color3d, "color3d", TYPE_ID_COLOR3D);
+DEFINE_TYPE_TRAIT(color4d, "color4d", TYPE_ID_COLOR4D);
+
+DEFINE_TYPE_TRAIT(texcoord2h, "texcoord2h", TYPE_ID_TEXCOORD2H);
+DEFINE_TYPE_TRAIT(texcoord2f, "texcoord2f", TYPE_ID_TEXCOORD2F);
+DEFINE_TYPE_TRAIT(texcoord2d, "texcoord2d", TYPE_ID_TEXCOORD2D);
+
+DEFINE_TYPE_TRAIT(texcoord3h, "texcoord3h", TYPE_ID_TEXCOORD3H);
+DEFINE_TYPE_TRAIT(texcoord3f, "texcoord3f", TYPE_ID_TEXCOORD3F);
+DEFINE_TYPE_TRAIT(texcoord3d, "texcoord3d", TYPE_ID_TEXCOORD3D);
 
 DEFINE_TYPE_TRAIT(std::vector<float> , "float[]" , TYPE_ID_VFLOAT);
 DEFINE_TYPE_TRAIT(std::vector<float2>, "float2[]", TYPE_ID_VFLOAT2);
