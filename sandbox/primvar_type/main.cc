@@ -63,17 +63,6 @@ enum TypeId {
   TYPE_ID_QUATF,
   TYPE_ID_QUATD,
 
-  TYPE_ID_VFLOAT,  // float[]
-  TYPE_ID_VFLOAT2,
-  TYPE_ID_VFLOAT3,
-  TYPE_ID_VFLOAT4,
-
-  TYPE_ID_VDOUBLE, // double[]
-  TYPE_ID_VDOUBLE2,
-  TYPE_ID_VDOUBLE3,
-  TYPE_ID_VDOUBLE4,
-
-
   TYPE_ID_COLOR3H,
   TYPE_ID_COLOR3F,
   TYPE_ID_COLOR3D,
@@ -408,8 +397,11 @@ struct TypeTrait;
 template<> \
 struct TypeTrait<__dty> { \
   using value_type = __dty; \
+  static constexpr uint32_t ndim = 0; /* array dim */ \
   static constexpr uint32_t type_id = __tyid; \
-  static constexpr auto type_name = __name; \
+  static std::string type_name() { \
+    return __name; \
+  } \
 }
 
 DEFINE_TYPE_TRAIT(bool, "bool",   TYPE_ID_BOOL);
@@ -467,27 +459,43 @@ DEFINE_TYPE_TRAIT(texcoord3h, "texcoord3h", TYPE_ID_TEXCOORD3H);
 DEFINE_TYPE_TRAIT(texcoord3f, "texcoord3f", TYPE_ID_TEXCOORD3F);
 DEFINE_TYPE_TRAIT(texcoord3d, "texcoord3d", TYPE_ID_TEXCOORD3D);
 
-DEFINE_TYPE_TRAIT(std::vector<float> , "float[]" , TYPE_ID_VFLOAT);
-DEFINE_TYPE_TRAIT(std::vector<float2>, "float2[]", TYPE_ID_VFLOAT2);
-DEFINE_TYPE_TRAIT(std::vector<float3>, "float3[]", TYPE_ID_VFLOAT3);
-DEFINE_TYPE_TRAIT(std::vector<float4>, "float4[]", TYPE_ID_VFLOAT4);
-
-DEFINE_TYPE_TRAIT(std::vector<double>, "double[]"  , TYPE_ID_VDOUBLE);
-DEFINE_TYPE_TRAIT(std::vector<double2>, "double2[]", TYPE_ID_VDOUBLE2);
-DEFINE_TYPE_TRAIT(std::vector<double3>, "double3[]", TYPE_ID_VDOUBLE3);
-DEFINE_TYPE_TRAIT(std::vector<double4>, "double4[]", TYPE_ID_VDOUBLE4);
-
 DEFINE_TYPE_TRAIT(token, "token", TYPE_ID_TOKEN);
 DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING);
 DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT);
 
 #undef DEFINE_TYPE_TRAIT
 
+// 1D Array
+template<typename T> 
+struct TypeTrait<std::vector<T>> {
+  using value_type = std::vector<T>;
+  static constexpr uint32_t ndim = 1; /* array dim */
+  static constexpr uint32_t type_id = TypeTrait<T>::type_id + 1000; // 1000 = enough amount to hold the number of base types(> TYPE_ID_ALL)
+  static std::string type_name() {
+    return TypeTrait<T>::type_name() + "[]";
+  }
+};
+
+// 2D Array
+template<typename T> 
+struct TypeTrait<std::vector<std::vector<T>>> {
+  using value_type = std::vector<std::vector<T>>;
+  static constexpr uint32_t ndim = 2; /* array dim */
+  static constexpr uint32_t type_id = TypeTrait<T>::type_id + 2000;
+  static std::string type_name() {
+    return TypeTrait<T>::type_name() + "[][]";
+  }
+};
+
+// TODO(syoyo): 3D array?
+
 struct base_value
 {
   virtual ~base_value();
   virtual const std::string type_name() const = 0;
   virtual uint32_t type_id() const = 0;
+
+  virtual uint32_t ndim() const = 0;
 
   virtual const void *value() const = 0;
 
@@ -504,7 +512,7 @@ struct value_impl : public base_value
   value_impl(const T &v) : _value(v) {}
 
   const std::string type_name() const override {
-    return TypeTrait<T>::type_name;
+    return TypeTrait<T>::type_name();
   }
 
   uint32_t type_id() const override {
@@ -515,14 +523,34 @@ struct value_impl : public base_value
     return reinterpret_cast<const void *>(&_value);
   }
 
-#if 0
-  explicit operator T() const {
-    return _value;
+  uint32_t ndim() const override {
+    return TypeTrait<T>::ndim;
   }
-#endif
 
   T _value;
 };
+
+#if 0
+template<typename T>
+struct value_impl<std::vector<T>> : public base_value
+{
+  value_impl(const std::vector<T> &v) : _value(v) {}
+
+  const std::string type_name() const override {
+    return TypeTrait<T>::type_name + "[]";
+  }
+
+  uint32_t type_id() const override {
+    return TypeTrait<T>::type_id;
+  }
+
+  const void *value() const override {
+    return reinterpret_cast<const void *>(&_value);
+  }
+
+  T _value;
+};
+#endif
 
 struct any_value
 {
@@ -545,6 +573,14 @@ struct any_value
     }
 
     return TYPE_ID_INVALID;
+  }
+
+  int32_t ndim() const {
+    if (p) {
+      return int32_t(p->ndim());
+    }
+
+    return -1; // invalid
   }
 
   const void *value() const {
@@ -617,6 +653,10 @@ class Value
     return (*this);
   }
 
+  bool is_array() const {
+    return v_.ndim() > 0;
+  }
+
   //template<class T>
   //T *get_if();
 
@@ -680,6 +720,7 @@ int main(int argc, char **argv)
   dict o;
   o["muda"] = 1.3;
 
+
   Value v;
 
   v = 1.3f;
@@ -697,6 +738,9 @@ int main(int argc, char **argv)
 
   std::cout << "val\n";
   std::cout << v << "\n";
+
+  std::vector<int> vids = {1, 2, 3};
+  v = vids;
 
   v = o;
 
