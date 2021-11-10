@@ -348,13 +348,14 @@ using dict = std::map<std::string, any_value>;
 template <class dtype>
 struct TypeTrait;
 
-// No underlying type.
-#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid)                 \
+#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
   template <>                                                    \
   struct TypeTrait<__dty> {                                      \
     using value_type = __dty;                                    \
     using value_underlying_type = __dty;                         \
     static constexpr uint32_t ndim = 0; /* array dim */          \
+    static constexpr uint32_t ncomp =                            \
+        __nc; /* the number of components(e.g. float3 => 3) */   \
     static constexpr uint32_t type_id = __tyid;                  \
     static constexpr uint32_t underlying_type_id = __tyid;       \
     static std::string type_name() { return __name; }            \
@@ -368,6 +369,7 @@ struct TypeTrait;
     using value_type = __dty;                                                 \
     using value_underlying_type = TypeTrait<__uty>::value_type;               \
     static constexpr uint32_t ndim = 0; /* array dim */                       \
+    static constexpr uint32_t ncomp = TypeTrait<__uty>::ncomp;                \
     static constexpr uint32_t type_id = __tyid;                               \
     static constexpr uint32_t underlying_type_id = TypeTrait<__uty>::type_id; \
     static std::string type_name() { return __name; }                         \
@@ -376,37 +378,37 @@ struct TypeTrait;
     }                                                                         \
   }
 
-DEFINE_TYPE_TRAIT(bool, "bool", TYPE_ID_BOOL);
-DEFINE_TYPE_TRAIT(uint8_t, "uchar", TYPE_ID_UCHAR);
-DEFINE_TYPE_TRAIT(half, "half", TYPE_ID_HALF);
+DEFINE_TYPE_TRAIT(bool, "bool", TYPE_ID_BOOL, 1);
+DEFINE_TYPE_TRAIT(uint8_t, "uchar", TYPE_ID_UCHAR, 1);
+DEFINE_TYPE_TRAIT(half, "half", TYPE_ID_HALF, 1);
 
-DEFINE_TYPE_TRAIT(int32_t, "int", TYPE_ID_INT32);
-DEFINE_TYPE_TRAIT(uint32_t, "uint", TYPE_ID_UINT32);
+DEFINE_TYPE_TRAIT(int32_t, "int", TYPE_ID_INT32, 1);
+DEFINE_TYPE_TRAIT(uint32_t, "uint", TYPE_ID_UINT32, 1);
 
-DEFINE_TYPE_TRAIT(int64_t, "int64", TYPE_ID_INT64);
-DEFINE_TYPE_TRAIT(uint64_t, "uint64", TYPE_ID_UINT64);
+DEFINE_TYPE_TRAIT(int64_t, "int64", TYPE_ID_INT64, 1);
+DEFINE_TYPE_TRAIT(uint64_t, "uint64", TYPE_ID_UINT64, 1);
 
-DEFINE_TYPE_TRAIT(half2, "half2", TYPE_ID_HALF2);
-DEFINE_TYPE_TRAIT(half3, "half3", TYPE_ID_HALF3);
-DEFINE_TYPE_TRAIT(half4, "half4", TYPE_ID_HALF4);
+DEFINE_TYPE_TRAIT(half2, "half2", TYPE_ID_HALF2, 2);
+DEFINE_TYPE_TRAIT(half3, "half3", TYPE_ID_HALF3, 3);
+DEFINE_TYPE_TRAIT(half4, "half4", TYPE_ID_HALF4, 4);
 
-DEFINE_TYPE_TRAIT(float, "float", TYPE_ID_FLOAT);
-DEFINE_TYPE_TRAIT(float2, "float2", TYPE_ID_FLOAT2);
-DEFINE_TYPE_TRAIT(float3, "float3", TYPE_ID_FLOAT3);
-DEFINE_TYPE_TRAIT(float4, "float4", TYPE_ID_FLOAT4);
+DEFINE_TYPE_TRAIT(float, "float", TYPE_ID_FLOAT, 1);
+DEFINE_TYPE_TRAIT(float2, "float2", TYPE_ID_FLOAT2, 2);
+DEFINE_TYPE_TRAIT(float3, "float3", TYPE_ID_FLOAT3, 3);
+DEFINE_TYPE_TRAIT(float4, "float4", TYPE_ID_FLOAT4, 4);
 
-DEFINE_TYPE_TRAIT(double, "double", TYPE_ID_DOUBLE);
-DEFINE_TYPE_TRAIT(double2, "double2", TYPE_ID_DOUBLE2);
-DEFINE_TYPE_TRAIT(double3, "double3", TYPE_ID_DOUBLE3);
-DEFINE_TYPE_TRAIT(double4, "double4", TYPE_ID_DOUBLE4);
+DEFINE_TYPE_TRAIT(double, "double", TYPE_ID_DOUBLE, 1);
+DEFINE_TYPE_TRAIT(double2, "double2", TYPE_ID_DOUBLE2, 2);
+DEFINE_TYPE_TRAIT(double3, "double3", TYPE_ID_DOUBLE3, 3);
+DEFINE_TYPE_TRAIT(double4, "double4", TYPE_ID_DOUBLE4, 4);
 
-DEFINE_TYPE_TRAIT(quath, "quath", TYPE_ID_QUATH);
-DEFINE_TYPE_TRAIT(quatf, "quatf", TYPE_ID_QUATF);
-DEFINE_TYPE_TRAIT(quatd, "quatd", TYPE_ID_QUATD);
+DEFINE_TYPE_TRAIT(quath, "quath", TYPE_ID_QUATH, 1);
+DEFINE_TYPE_TRAIT(quatf, "quatf", TYPE_ID_QUATF, 1);
+DEFINE_TYPE_TRAIT(quatd, "quatd", TYPE_ID_QUATD, 1);
 
-DEFINE_TYPE_TRAIT(matrix2d, "matrix2d", TYPE_ID_MATRIX2D);
-DEFINE_TYPE_TRAIT(matrix3d, "matrix3d", TYPE_ID_MATRIX3D);
-DEFINE_TYPE_TRAIT(matrix4d, "matrix4d", TYPE_ID_MATRIX4D);
+DEFINE_TYPE_TRAIT(matrix2d, "matrix2d", TYPE_ID_MATRIX2D, 1);
+DEFINE_TYPE_TRAIT(matrix3d, "matrix3d", TYPE_ID_MATRIX3D, 1);
+DEFINE_TYPE_TRAIT(matrix4d, "matrix4d", TYPE_ID_MATRIX4D, 1);
 
 //
 // Role types
@@ -441,21 +443,30 @@ DEFINE_ROLE_TYPE_TRAIT(texcoord3d, "texcoord3d", TYPE_ID_TEXCOORD3D, double3);
 //
 //
 //
-DEFINE_TYPE_TRAIT(token, "token", TYPE_ID_TOKEN);
-DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING);
-DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT);
+DEFINE_TYPE_TRAIT(token, "token", TYPE_ID_TOKEN, 1);
+DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING, 1);
+DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
 
 #undef DEFINE_TYPE_TRAIT
+
 
 // 1D Array
 template <typename T>
 struct TypeTrait<std::vector<T>> {
   using value_type = std::vector<T>;
   static constexpr uint32_t ndim = 1; /* array dim */
+  static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
   static constexpr uint32_t type_id =
       TypeTrait<T>::type_id + 1000;  // 1000 = enough amount to hold the number
                                      // of base types(> TYPE_ID_ALL)
+  static constexpr uint32_t underlying_type_id =
+      TypeTrait<T>::underlying_type_id +
+      1000;  // 1000 = enough amount to hold the number
+             // of base types(> TYPE_ID_ALL)
   static std::string type_name() { return TypeTrait<T>::type_name() + "[]"; }
+  static std::string underlying_type_name() {
+    return TypeTrait<T>::underlying_type_name() + "[]";
+  }
 };
 
 // 2D Array
@@ -463,8 +474,14 @@ template <typename T>
 struct TypeTrait<std::vector<std::vector<T>>> {
   using value_type = std::vector<std::vector<T>>;
   static constexpr uint32_t ndim = 2; /* array dim */
+  static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
   static constexpr uint32_t type_id = TypeTrait<T>::type_id + 2000;
+  static constexpr uint32_t underlying_type_id =
+      TypeTrait<T>::underlying_type_id + 2000;
   static std::string type_name() { return TypeTrait<T>::type_name() + "[][]"; }
+  static std::string underlying_type_name() {
+    return TypeTrait<T>::underlying_type_name() + "[][]";
+  }
 };
 
 // TODO(syoyo): 3D array?
@@ -472,9 +489,12 @@ struct TypeTrait<std::vector<std::vector<T>>> {
 struct base_value {
   virtual ~base_value();
   virtual const std::string type_name() const = 0;
+  virtual const std::string underlying_type_name() const = 0;
   virtual uint32_t type_id() const = 0;
+  virtual uint32_t underlying_type_id() const = 0;
 
   virtual uint32_t ndim() const = 0;
+  virtual uint32_t ncomp() const = 0;
 
   virtual const void *value() const = 0;
 };
@@ -483,44 +503,33 @@ base_value::~base_value() {}
 
 template <typename T>
 struct value_impl : public base_value {
+
+  using type = typename TypeTrait<T>::value_type;
+
   value_impl(const T &v) : _value(v) {}
 
   const std::string type_name() const override {
     return TypeTrait<T>::type_name();
   }
 
+  const std::string underlying_type_name() const override {
+    return TypeTrait<T>::underlying_type_name();
+  }
+
   uint32_t type_id() const override { return TypeTrait<T>::type_id; }
+  uint32_t underlying_type_id() const override {
+    return TypeTrait<T>::underlying_type_id;
+  }
 
   const void *value() const override {
     return reinterpret_cast<const void *>(&_value);
   }
 
   uint32_t ndim() const override { return TypeTrait<T>::ndim; }
+  uint32_t ncomp() const override { return TypeTrait<T>::ncomp; }
 
   T _value;
 };
-
-#if 0
-template<typename T>
-struct value_impl<std::vector<T>> : public base_value
-{
-  value_impl(const std::vector<T> &v) : _value(v) {}
-
-  const std::string type_name() const override {
-    return TypeTrait<T>::type_name + "[]";
-  }
-
-  uint32_t type_id() const override {
-    return TypeTrait<T>::type_id;
-  }
-
-  const void *value() const override {
-    return reinterpret_cast<const void *>(&_value);
-  }
-
-  T _value;
-};
-#endif
 
 struct any_value {
   any_value() = default;
@@ -537,9 +546,24 @@ struct any_value {
     return std::string();
   }
 
+  const std::string underlying_type_name() const {
+    if (p) {
+      return p->underlying_type_name();
+    }
+    return std::string();
+  }
+
   uint32_t type_id() const {
     if (p) {
       return p->type_id();
+    }
+
+    return TYPE_ID_INVALID;
+  }
+
+  uint32_t underlying_type_id() const {
+    if (p) {
+      return p->underlying_type_id();
     }
 
     return TYPE_ID_INVALID;
@@ -551,6 +575,14 @@ struct any_value {
     }
 
     return -1;  // invalid
+  }
+
+  uint32_t ncomp() const {
+    if (p) {
+      return p->ncomp();
+    }
+
+    return 0;  // empty
   }
 
   const void *value() const {
@@ -579,14 +611,11 @@ class Value {
   template <class T>
   Value(const T &v) : v_(v) {}
 
-  // bool valid() const {
-  //  if (v_ptr) {
-  //    return true;
-  //  }
-  //  return false;
-  //}
-
   std::string type_name() const { return v_.type_name(); }
+  std::string underlying_type_name() const { return v_.underlying_type_name(); }
+
+  uint32_t type_id() const { return v_.type_id(); }
+  uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
 
   // Return nullptr when type conversion failed.
   template <class T>
@@ -606,10 +635,14 @@ class Value {
     return (*reinterpret_cast<const T *>(v_.value()));
   }
 
-  // Type-safe way to get underlying concrete value.
+  // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
     if (TypeTrait<T>::type_id == v_.type_id()) {
+      return std::move(value<T>());
+    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout is same
       return std::move(value<T>());
     }
     return nonstd::nullopt;
@@ -622,36 +655,140 @@ class Value {
   }
 
   bool is_array() const { return v_.ndim() > 0; }
+  int32_t ndim() const { return v_.ndim(); }
 
-  // template<class T>
-  // T *get_if();
+  uint32_t ncomp() const { return v_.ncomp(); }
+
+  bool is_vector_type() const { return v_.ncomp() > 1; }
 
   friend std::ostream &operator<<(std::ostream &os, const Value &v);
 
  private:
-  // std::shared_ptr<base_value> v_ptr; // basic type, array
   any_value v_;
-
-  // Dict dict_; // dictionary
 };
+
+// Frequently-used utility function
+bool is_float3(const Value &v);
+bool is_float4(const Value &v);
+bool is_double3(const Value &v);
+bool is_double4(const Value &v);
+
+bool is_float3(const Value &v) {
+  if (v.underlying_type_name() == "float3") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_float4(const Value &v) {
+  if (v.underlying_type_name() == "float4") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double3(const Value &v) {
+  if (v.underlying_type_name() == "double3") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double4(const Value &v) {
+  if (v.underlying_type_name() == "double4") {
+    return true;
+  }
+
+  return false;
+}
+
+std::ostream &operator<<(std::ostream &os, const float2 &v);
+std::ostream &operator<<(std::ostream &os, const float3 &v);
+std::ostream &operator<<(std::ostream &os, const float4 &v);
+std::ostream &operator<<(std::ostream &os, const double2 &v);
+std::ostream &operator<<(std::ostream &os, const double3 &v);
+std::ostream &operator<<(std::ostream &os, const double4 &v);
+
+std::ostream &operator<<(std::ostream &os, const float2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const float3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const float4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const double2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const double3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const double4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
+
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<T>> &v) {
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
 
 std::ostream &operator<<(std::ostream &os, const Value &v) {
   os << "(type: " << v.type_name() << ") ";
-  if (v.type_name() == "float") {
+
+  // List up all possible datatypes.
+  // TODO: Use std::function or some template technique?
+  if (v.type_id() == TYPE_ID_INT32) {
+     os << v.value<int32_t>();
+  } else if (v.type_name() == "float") {
     os << v.value<float>();
   } else if (v.type_name() == "double") {
     os << v.value<double>();
   } else if (v.type_name() == "float[]") {
-    auto val = v.value<std::vector<float>>();
-    std::cout << "n = " << val.size() << "\n";
-    os << "[";
-    for (size_t i = 0; i < val.size(); i++) {
-      os << val[i];
-      if (i != val.size() - 1) {
-        os << ", ";
-      }
-    }
-    os << "]";
+    os << v.value<std::vector<float>>();
+  } else if (v.type_name() == "float2[]") {
+    os << v.value<std::vector<float2>>();
+  } else if (v.type_name() == "float3[]") {
+    os << v.value<std::vector<float3>>();
+  } else if (v.type_name() == "float4[]") {
+    os << v.value<std::vector<float4>>();
+  } else if (v.type_name() == "double[]") {
+    os << v.value<std::vector<double>>();
   } else if (v.type_name() == "dictionary") {
     auto val = v.value<dict>();
     std::cout << "n = " << val.size() << "\n";
@@ -667,7 +804,7 @@ std::ostream &operator<<(std::ostream &os, const Value &v) {
     os << "}";
 
   } else {
-    os << "TODO";
+    os << "TODO: type: " << v.type_name() << "\n";
   }
 
   return os;
