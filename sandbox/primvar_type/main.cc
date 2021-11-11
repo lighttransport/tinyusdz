@@ -4,6 +4,7 @@
 #include <memory>
 #include <type_traits>
 #include <vector>
+#include <functional>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -18,6 +19,9 @@
 #endif
 
 using token = nonstd::string_view;
+
+// Offst must be larger than `TYPE_ID_ALL`(terminator).
+constexpr uint32_t TYPE_ID_ARRAY_OFFSET = 1000;
 
 // TODO(syoyo): Use compile-time string hash?
 enum TypeId {
@@ -388,6 +392,14 @@ DEFINE_TYPE_TRAIT(uint32_t, "uint", TYPE_ID_UINT32, 1);
 DEFINE_TYPE_TRAIT(int64_t, "int64", TYPE_ID_INT64, 1);
 DEFINE_TYPE_TRAIT(uint64_t, "uint64", TYPE_ID_UINT64, 1);
 
+DEFINE_TYPE_TRAIT(int2, "int2", TYPE_ID_INT2, 2);
+DEFINE_TYPE_TRAIT(int3, "int3", TYPE_ID_INT3, 3);
+DEFINE_TYPE_TRAIT(int4, "int4", TYPE_ID_INT4, 4);
+
+DEFINE_TYPE_TRAIT(uint2, "uint2", TYPE_ID_UINT2, 2);
+DEFINE_TYPE_TRAIT(uint3, "uint3", TYPE_ID_UINT3, 3);
+DEFINE_TYPE_TRAIT(uint4, "uint4", TYPE_ID_UINT4, 4);
+
 DEFINE_TYPE_TRAIT(half2, "half2", TYPE_ID_HALF2, 2);
 DEFINE_TYPE_TRAIT(half3, "half3", TYPE_ID_HALF3, 3);
 DEFINE_TYPE_TRAIT(half4, "half4", TYPE_ID_HALF4, 4);
@@ -457,12 +469,9 @@ struct TypeTrait<std::vector<T>> {
   static constexpr uint32_t ndim = 1; /* array dim */
   static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
   static constexpr uint32_t type_id =
-      TypeTrait<T>::type_id + 1000;  // 1000 = enough amount to hold the number
-                                     // of base types(> TYPE_ID_ALL)
+      TypeTrait<T>::type_id + TYPE_ID_ARRAY_OFFSET;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id +
-      1000;  // 1000 = enough amount to hold the number
-             // of base types(> TYPE_ID_ALL)
+      TypeTrait<T>::underlying_type_id + TYPE_ID_ARRAY_OFFSET;
   static std::string type_name() { return TypeTrait<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
     return TypeTrait<T>::underlying_type_name() + "[]";
@@ -475,9 +484,9 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   using value_type = std::vector<std::vector<T>>;
   static constexpr uint32_t ndim = 2; /* array dim */
   static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
-  static constexpr uint32_t type_id = TypeTrait<T>::type_id + 2000;
+  static constexpr uint32_t type_id = TypeTrait<T>::type_id + ndim * TYPE_ID_ARRAY_OFFSET;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id + 2000;
+      TypeTrait<T>::underlying_type_id + ndim * TYPE_ID_ARRAY_OFFSET;
   static std::string type_name() { return TypeTrait<T>::type_name() + "[][]"; }
   static std::string underlying_type_name() {
     return TypeTrait<T>::underlying_type_name() + "[][]";
@@ -769,43 +778,65 @@ std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<T>> &v)
 }
 
 std::ostream &operator<<(std::ostream &os, const Value &v) {
-  os << "(type: " << v.type_name() << ") ";
 
-  // List up all possible datatypes.
-  // TODO: Use std::function or some template technique?
-  if (v.type_id() == TYPE_ID_INT32) {
-     os << v.value<int32_t>();
-  } else if (v.type_name() == "float") {
-    os << v.value<float>();
-  } else if (v.type_name() == "double") {
-    os << v.value<double>();
-  } else if (v.type_name() == "float[]") {
-    os << v.value<std::vector<float>>();
-  } else if (v.type_name() == "float2[]") {
-    os << v.value<std::vector<float2>>();
-  } else if (v.type_name() == "float3[]") {
-    os << v.value<std::vector<float3>>();
-  } else if (v.type_name() == "float4[]") {
-    os << v.value<std::vector<float4>>();
-  } else if (v.type_name() == "double[]") {
-    os << v.value<std::vector<double>>();
-  } else if (v.type_name() == "dictionary") {
-    auto val = v.value<dict>();
-    std::cout << "n = " << val.size() << "\n";
-    os << "{";
-    for (const auto &item : val) {
-      static uint32_t i{0};
-      os << " \"" << item.first << "\": ";
-      os << item.second;
-      if (i != val.size() - 1) {
-        os << ", ";
-      }
+#define CASE_EXPR(__tid, __ty) \
+  case __tid: { \
+    os << v.value<__ty>(); \
+    break; \
+  } 
+
+  switch (v.type_id()) {
+
+    CASE_EXPR(TYPE_ID_BOOL, bool)
+    CASE_EXPR(TYPE_ID_HALF, half)
+    CASE_EXPR(TYPE_ID_HALF2, half2)
+    CASE_EXPR(TYPE_ID_HALF3, half3)
+    CASE_EXPR(TYPE_ID_HALF4, half4)
+    CASE_EXPR(TYPE_ID_INT32, int32_t)
+    CASE_EXPR(TYPE_ID_UINT32, uint32_t)
+    CASE_EXPR(TYPE_ID_INT2, int2)
+    CASE_EXPR(TYPE_ID_INT3, int3)
+    CASE_EXPR(TYPE_ID_INT4, int4)
+    CASE_EXPR(TYPE_ID_UINT2, uint2)
+    CASE_EXPR(TYPE_ID_UINT3, uint3)
+    CASE_EXPR(TYPE_ID_UINT4, uint4)
+    CASE_EXPR(TYPE_ID_INT64, int64_t)
+    CASE_EXPR(TYPE_ID_UINT64, uint64_t)
+    CASE_EXPR(TYPE_ID_FLOAT, float)
+    CASE_EXPR(TYPE_ID_FLOAT2, float2)
+    CASE_EXPR(TYPE_ID_FLOAT3, float3)
+    CASE_EXPR(TYPE_ID_FLOAT4, float4)
+    CASE_EXPR(TYPE_ID_DOUBLE, double)
+    CASE_EXPR(TYPE_ID_DOUBLE2, double2)
+    CASE_EXPR(TYPE_ID_DOUBLE3, double3)
+    CASE_EXPR(TYPE_ID_DOUBLE4, double4)
+
+    // 1D array
+    CASE_EXPR(TYPE_ID_INT32 + TYPE_ID_ARRAY_OFFSET, std::vector<int32_t>)
+    CASE_EXPR(TYPE_ID_FLOAT + TYPE_ID_ARRAY_OFFSET, std::vector<float>)
+    CASE_EXPR(TYPE_ID_FLOAT2 + TYPE_ID_ARRAY_OFFSET, std::vector<float2>)
+    CASE_EXPR(TYPE_ID_FLOAT3 + TYPE_ID_ARRAY_OFFSET, std::vector<float3>)
+    CASE_EXPR(TYPE_ID_FLOAT4 + TYPE_ID_ARRAY_OFFSET, std::vector<float4>)
+
+    CASE_EXPR(TYPE_ID_DOUBLE + TYPE_ID_ARRAY_OFFSET, std::vector<double>)
+    CASE_EXPR(TYPE_ID_DOUBLE2 + TYPE_ID_ARRAY_OFFSET, std::vector<double2>)
+    CASE_EXPR(TYPE_ID_DOUBLE3 + TYPE_ID_ARRAY_OFFSET, std::vector<double3>)
+    CASE_EXPR(TYPE_ID_DOUBLE4 + TYPE_ID_ARRAY_OFFSET, std::vector<double4>)
+
+    // 2D array
+    CASE_EXPR(TYPE_ID_INT32 + 2 * TYPE_ID_ARRAY_OFFSET, std::vector<std::vector<int32_t>>)
+    CASE_EXPR(TYPE_ID_FLOAT + 2 * TYPE_ID_ARRAY_OFFSET, std::vector<std::vector<float>>)
+
+    // TODO: List-up all case and remove `default` clause.
+    default: {
+      os << "TODO: (type: " << v.type_name() << ") ";
     }
-    os << "}";
-
-  } else {
-    os << "TODO: type: " << v.type_name() << "\n";
   }
+
+  // Simple brute-force way..
+  // TODO: Use std::function or some template technique?
+
+#undef CASE_EXPR
 
   return os;
 }
@@ -815,6 +846,8 @@ int main(int argc, char **argv) {
   (void)argv;
 
   // std::cout << "sizeof(U) = " << sizeof(Value::U) << "\n";
+  
+  //std::map<int, TypeTrait<T>> bora;
 
   dict o;
   o["muda"] = 1.3;
@@ -839,7 +872,7 @@ int main(int argc, char **argv) {
 
   std::vector<std::vector<float>> din2 = {{1.0, 2.0}, {3.0, 4.0}};
   v = din2;
-  std::cout << "val\n";
+  std::cout << "val\n" << "vty: " << v.type_name() << "\n";
   std::cout << v << "\n";
 
   std::vector<int> vids = {1, 2, 3};
