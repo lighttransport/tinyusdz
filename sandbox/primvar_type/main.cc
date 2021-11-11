@@ -4,6 +4,7 @@
 #include <memory>
 #include <type_traits>
 #include <vector>
+#include <functional>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -18,6 +19,9 @@
 #endif
 
 using token = nonstd::string_view;
+
+// Offst must be larger than `TYPE_ID_ALL`(terminator).
+constexpr uint32_t TYPE_ID_ARRAY_OFFSET = 1000;
 
 // TODO(syoyo): Use compile-time string hash?
 enum TypeId {
@@ -388,6 +392,14 @@ DEFINE_TYPE_TRAIT(uint32_t, "uint", TYPE_ID_UINT32, 1);
 DEFINE_TYPE_TRAIT(int64_t, "int64", TYPE_ID_INT64, 1);
 DEFINE_TYPE_TRAIT(uint64_t, "uint64", TYPE_ID_UINT64, 1);
 
+DEFINE_TYPE_TRAIT(int2, "int2", TYPE_ID_INT2, 2);
+DEFINE_TYPE_TRAIT(int3, "int3", TYPE_ID_INT3, 3);
+DEFINE_TYPE_TRAIT(int4, "int4", TYPE_ID_INT4, 4);
+
+DEFINE_TYPE_TRAIT(uint2, "uint2", TYPE_ID_UINT2, 2);
+DEFINE_TYPE_TRAIT(uint3, "uint3", TYPE_ID_UINT3, 3);
+DEFINE_TYPE_TRAIT(uint4, "uint4", TYPE_ID_UINT4, 4);
+
 DEFINE_TYPE_TRAIT(half2, "half2", TYPE_ID_HALF2, 2);
 DEFINE_TYPE_TRAIT(half3, "half3", TYPE_ID_HALF3, 3);
 DEFINE_TYPE_TRAIT(half4, "half4", TYPE_ID_HALF4, 4);
@@ -457,12 +469,9 @@ struct TypeTrait<std::vector<T>> {
   static constexpr uint32_t ndim = 1; /* array dim */
   static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
   static constexpr uint32_t type_id =
-      TypeTrait<T>::type_id + 1000;  // 1000 = enough amount to hold the number
-                                     // of base types(> TYPE_ID_ALL)
+      TypeTrait<T>::type_id + TYPE_ID_ARRAY_OFFSET;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id +
-      1000;  // 1000 = enough amount to hold the number
-             // of base types(> TYPE_ID_ALL)
+      TypeTrait<T>::underlying_type_id + TYPE_ID_ARRAY_OFFSET;
   static std::string type_name() { return TypeTrait<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
     return TypeTrait<T>::underlying_type_name() + "[]";
@@ -475,9 +484,9 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   using value_type = std::vector<std::vector<T>>;
   static constexpr uint32_t ndim = 2; /* array dim */
   static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
-  static constexpr uint32_t type_id = TypeTrait<T>::type_id + 2000;
+  static constexpr uint32_t type_id = TypeTrait<T>::type_id + ndim * TYPE_ID_ARRAY_OFFSET;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id + 2000;
+      TypeTrait<T>::underlying_type_id + ndim * TYPE_ID_ARRAY_OFFSET;
   static std::string type_name() { return TypeTrait<T>::type_name() + "[][]"; }
   static std::string underlying_type_name() {
     return TypeTrait<T>::underlying_type_name() + "[][]";
@@ -642,7 +651,7 @@ class Value {
       return std::move(value<T>());
     } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
-      // layout is same
+      // layout does not change.
       return std::move(value<T>());
     }
     return nonstd::nullopt;
@@ -705,12 +714,71 @@ bool is_double4(const Value &v) {
   return false;
 }
 
+std::ostream &operator<<(std::ostream &os, const int2 &v);
+std::ostream &operator<<(std::ostream &os, const int3 &v);
+std::ostream &operator<<(std::ostream &os, const int4 &v);
+
+std::ostream &operator<<(std::ostream &os, const uint2 &v);
+std::ostream &operator<<(std::ostream &os, const uint3 &v);
+std::ostream &operator<<(std::ostream &os, const uint4 &v);
+
+std::ostream &operator<<(std::ostream &os, const half2 &v);
+std::ostream &operator<<(std::ostream &os, const half3 &v);
+std::ostream &operator<<(std::ostream &os, const half4 &v);
+
 std::ostream &operator<<(std::ostream &os, const float2 &v);
 std::ostream &operator<<(std::ostream &os, const float3 &v);
 std::ostream &operator<<(std::ostream &os, const float4 &v);
 std::ostream &operator<<(std::ostream &os, const double2 &v);
 std::ostream &operator<<(std::ostream &os, const double3 &v);
 std::ostream &operator<<(std::ostream &os, const double4 &v);
+
+std::ostream &operator<<(std::ostream &os, const any_value &v);
+
+std::ostream &operator<<(std::ostream &os, const int2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const int3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const int4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const uint2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const uint3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const uint4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const half2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const half3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const half4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
 
 std::ostream &operator<<(std::ostream &os, const float2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
@@ -742,8 +810,16 @@ std::ostream &operator<<(std::ostream &os, const double4 &v) {
   return os;
 }
 
+// Simple is_vector 
+template<typename>
+struct is_vector : std::false_type {};
+template<typename T, typename Alloc>
+struct is_vector<std::vector<T, Alloc>> : std::true_type {};
+
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  static_assert(!is_vector<T>::value, "T must NOT be std::vector");
+
   os << "[";
   for (size_t i = 0; i < v.size(); i++) {
     os << v[i];
@@ -758,55 +834,97 @@ std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<T>> &v) {
   os << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    os << v[i];
-    if (i != (v.size() - 1)) {
-      os << ", ";
+  if (v.size() == 0) {
+    os << "[]";
+  } else {
+    for (size_t i = 0; i < v.size(); i++) {
+      os << v[i]; // std::vector<T>
+      if (i != (v.size() - 1)) {
+        os << ", ";
+      }
     }
   }
   os << "]";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const Value &v) {
-  os << "(type: " << v.type_name() << ") ";
+std::ostream &operator<<(std::ostream &os, const any_value &v) {
 
-  // List up all possible datatypes.
-  // TODO: Use std::function or some template technique?
-  if (v.type_id() == TYPE_ID_INT32) {
-     os << v.value<int32_t>();
-  } else if (v.type_name() == "float") {
-    os << v.value<float>();
-  } else if (v.type_name() == "double") {
-    os << v.value<double>();
-  } else if (v.type_name() == "float[]") {
-    os << v.value<std::vector<float>>();
-  } else if (v.type_name() == "float2[]") {
-    os << v.value<std::vector<float2>>();
-  } else if (v.type_name() == "float3[]") {
-    os << v.value<std::vector<float3>>();
-  } else if (v.type_name() == "float4[]") {
-    os << v.value<std::vector<float4>>();
-  } else if (v.type_name() == "double[]") {
-    os << v.value<std::vector<double>>();
-  } else if (v.type_name() == "dictionary") {
-    auto val = v.value<dict>();
-    std::cout << "n = " << val.size() << "\n";
-    os << "{";
-    for (const auto &item : val) {
-      static uint32_t i{0};
-      os << " \"" << item.first << "\": ";
-      os << item.second;
-      if (i != val.size() - 1) {
-        os << ", ";
-      }
+// Simple brute-force way..
+// TODO: Use std::function or some template technique?
+
+#define BASETYPE_CASE_EXPR(__tid, __ty) \
+  case __tid: { \
+    os << *reinterpret_cast<const __ty *>(v.value()); \
+    break; \
+  } 
+
+#define ARRAY1DTYPE_CASE_EXPR(__tid, __ty) \
+  case __tid + TYPE_ID_ARRAY_OFFSET : { \
+    os << *reinterpret_cast<const std::vector<__ty> *>(v.value()); \
+    break; \
+  } 
+
+#define ARRAY2DTYPE_CASE_EXPR(__tid, __ty) \
+  case __tid + 2 * TYPE_ID_ARRAY_OFFSET : { \
+    os << *reinterpret_cast<const std::vector<std::vector<__ty>> *>(v.value()); \
+    break; \
+  } 
+
+#define CASE_EXR_LIST(__FUNC) \
+    __FUNC(TYPE_ID_BOOL, bool) \
+    __FUNC(TYPE_ID_HALF, half) \
+    __FUNC(TYPE_ID_HALF2, half2) \
+    __FUNC(TYPE_ID_HALF3, half3) \
+    __FUNC(TYPE_ID_HALF4, half4) \
+    __FUNC(TYPE_ID_INT32, int32_t) \
+    __FUNC(TYPE_ID_UINT32, uint32_t) \
+    __FUNC(TYPE_ID_INT2, int2) \
+    __FUNC(TYPE_ID_INT3, int3) \
+    __FUNC(TYPE_ID_INT4, int4) \
+    __FUNC(TYPE_ID_UINT2, uint2) \
+    __FUNC(TYPE_ID_UINT3, uint3) \
+    __FUNC(TYPE_ID_UINT4, uint4) \
+    __FUNC(TYPE_ID_INT64, int64_t) \
+    __FUNC(TYPE_ID_UINT64, uint64_t) \
+    __FUNC(TYPE_ID_FLOAT, float) \
+    __FUNC(TYPE_ID_FLOAT2, float2) \
+    __FUNC(TYPE_ID_FLOAT3, float3) \
+    __FUNC(TYPE_ID_FLOAT4, float4) \
+    __FUNC(TYPE_ID_DOUBLE, double) \
+    __FUNC(TYPE_ID_DOUBLE2, double2) \
+    __FUNC(TYPE_ID_DOUBLE3, double3) \
+    __FUNC(TYPE_ID_DOUBLE4, double4) 
+
+
+  switch (v.type_id()) {
+
+    // base type
+    CASE_EXR_LIST(BASETYPE_CASE_EXPR)
+
+    // 1D array
+    CASE_EXR_LIST(ARRAY1DTYPE_CASE_EXPR)
+
+    // 2D array
+    CASE_EXR_LIST(ARRAY2DTYPE_CASE_EXPR)
+
+    // TODO: List-up all case and remove `default` clause.
+    default: {
+      os << "PPRINT: TODO: (type: " << v.type_name() << ") ";
     }
-    os << "}";
-
-  } else {
-    os << "TODO: type: " << v.type_name() << "\n";
   }
 
+
+#undef BASETYPE_CASE_EXPR
+#undef ARRAY1DTYPE_CASE_EXPR
+#undef ARRAY2DTYPE_CASE_EXPR
+#undef CASE_EXPR_LIST
+
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const Value &v) {
+  os << v.v_; // delegate to operator<<(os, any_value)
   return os;
 }
 
@@ -815,6 +933,8 @@ int main(int argc, char **argv) {
   (void)argv;
 
   // std::cout << "sizeof(U) = " << sizeof(Value::U) << "\n";
+  
+  //std::map<int, TypeTrait<T>> bora;
 
   dict o;
   o["muda"] = 1.3;
@@ -839,7 +959,7 @@ int main(int argc, char **argv) {
 
   std::vector<std::vector<float>> din2 = {{1.0, 2.0}, {3.0, 4.0}};
   v = din2;
-  std::cout << "val\n";
+  std::cout << "val\n" << "vty: " << v.type_name() << "\n";
   std::cout << v << "\n";
 
   std::vector<int> vids = {1, 2, 3};
@@ -859,6 +979,18 @@ int main(int argc, char **argv) {
   ret = v.get_value<double>();
   if (ret) {
     std::cout << "double!\n";
+  }
+
+  {
+    std::vector<std::vector<float>> vvf;
+    std::cout << vvf << "\n";
+
+    vvf = {{1.0}, {2.0, 3.0}};
+    std::cout << vvf << "\n";
+
+    v = vvf;
+    std::cout << v << "\n";
+
   }
 
 #if 0
