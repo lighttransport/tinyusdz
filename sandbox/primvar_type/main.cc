@@ -872,7 +872,6 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
   } 
 
 #define CASE_EXR_LIST(__FUNC) \
-    __FUNC(TYPE_ID_BOOL, bool) \
     __FUNC(TYPE_ID_HALF, half) \
     __FUNC(TYPE_ID_HALF2, half2) \
     __FUNC(TYPE_ID_HALF3, half3) \
@@ -898,6 +897,9 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
 
 
   switch (v.type_id()) {
+
+    // no `bool` type for 1D and 2D array
+    BASETYPE_CASE_EXPR(TYPE_ID_BOOL, bool)
 
     // base type
     CASE_EXR_LIST(BASETYPE_CASE_EXPR)
