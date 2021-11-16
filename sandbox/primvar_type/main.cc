@@ -733,6 +733,8 @@ std::ostream &operator<<(std::ostream &os, const double2 &v);
 std::ostream &operator<<(std::ostream &os, const double3 &v);
 std::ostream &operator<<(std::ostream &os, const double4 &v);
 
+std::ostream &operator<<(std::ostream &os, const dict &v);
+
 std::ostream &operator<<(std::ostream &os, const any_value &v);
 
 std::ostream &operator<<(std::ostream &os, const int2 &v) {
@@ -848,6 +850,22 @@ std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<T>> &v)
   return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const dict &v) {
+
+  for (auto const &item : v) {
+    static uint32_t cnt = 0;
+    os << item.first << ":" << item.second; 
+
+    if (cnt != (v.size() - 1)) {
+      os << ", ";
+    }
+
+    cnt++;
+  }
+
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const any_value &v) {
 
 // Simple brute-force way..
@@ -900,6 +918,9 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
 
     // no `bool` type for 1D and 2D array
     BASETYPE_CASE_EXPR(TYPE_ID_BOOL, bool)
+
+    // no std::vector<dict> and std::vector<std::vector<dict>>, ...
+    BASETYPE_CASE_EXPR(TYPE_ID_DICT, dict)
 
     // base type
     CASE_EXR_LIST(BASETYPE_CASE_EXPR)
