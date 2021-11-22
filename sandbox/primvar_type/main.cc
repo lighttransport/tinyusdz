@@ -14,6 +14,8 @@
 #include "../../src/nonstd/optional.hpp"
 #include "../../src/nonstd/string_view.hpp"
 
+#include "../../src/external/staticstruct.hh"
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
@@ -607,6 +609,42 @@ struct any_value {
 struct TimeSample {
   std::vector<double> times;
   std::vector<any_value> values;
+
+};
+
+struct PrimVar {
+  
+  // For scalar value, times.size() == 0, and values.size() == 1
+  TimeSample var;
+
+  bool is_scalar() const {
+    return (var.times.size() == 0) && (var.values.size() == 1);
+  }
+
+  bool is_timesample() const {
+    return (var.times.size() > 0) && (var.times.size() == var.values.size());
+  }
+
+  bool is_valid() const {
+    return is_scalar() || is_timesample();
+  }
+    
+  std::string type_name() const {
+    if (!is_valid()) {
+      return std::string();
+    }
+    return var.values[0].type_name();
+  }
+
+  uint32_t type_id() const {
+    if (!is_valid()) {
+      return TYPE_ID_INVALID;
+    }
+
+    return var.values[0].type_id();
+  }
+
+  
 };
 
 // using Object = std::map<std::string, any_value>;
@@ -734,6 +772,7 @@ std::ostream &operator<<(std::ostream &os, const double3 &v);
 std::ostream &operator<<(std::ostream &os, const double4 &v);
 
 std::ostream &operator<<(std::ostream &os, const dict &v);
+std::ostream &operator<<(std::ostream &os, const TimeSample &ts);
 
 std::ostream &operator<<(std::ostream &os, const any_value &v);
 
@@ -850,6 +889,20 @@ std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<T>> &v)
   return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const TimeSample &ts) {
+  os << "{";
+  for (size_t i = 0; i < ts.times.size(); i++) {
+    os << ts.times[i] << ": " << ts.values[i];
+
+    if (i != (ts.times.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "}";
+
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const dict &v) {
 
   for (auto const &item : v) {
@@ -950,6 +1003,10 @@ std::ostream &operator<<(std::ostream &os, const Value &v) {
   os << v.v_; // delegate to operator<<(os, any_value)
   return os;
 }
+
+// reconstruct
+
+
 
 int main(int argc, char **argv) {
   (void)argc;
