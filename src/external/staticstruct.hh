@@ -2109,7 +2109,7 @@ class Reader {
   /// @param[in] handler Object(Struct) handler
   /// @param[in] fn Callback function
   /// @param[in] err Error message(filled when the function returns false)
-  bool ParseStruct(ObjectHandler* hander,
+  bool ParseStruct(ObjectHandler* handler,
                    std::function<bool(std::string, uint32_t flags,
                                       BaseHandler& handler)>&& fn,
                    std::string* err);
