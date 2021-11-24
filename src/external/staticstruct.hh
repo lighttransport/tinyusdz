@@ -248,6 +248,7 @@ class ObjectHandler : public BaseHandler {
   struct FlaggedHandler {
     std::unique_ptr<BaseHandler> handler;
     unsigned flags;
+    uint32_t type_id_;
   };
 
  protected:
@@ -256,6 +257,7 @@ class ObjectHandler : public BaseHandler {
   std::string current_name;
   int depth = 0;
   unsigned flags = Flags::Default;
+  uint32_t type_id_ = 0; // user supplied type id
 
  protected:
   bool precheck(const char* type);
@@ -314,12 +316,15 @@ class ObjectHandler : public BaseHandler {
 
   void set_flags(unsigned f) { flags = f; }
 
+  void set_type_id(uint32_t idx) { type_id_ = idx; }
+
   template <class T>
   void add_property(std::string name, T* pointer,
-                    unsigned flags_ = Flags::Default) {
+                    unsigned flags_ = Flags::Default, uint32_t type_id__ = 0) {
     FlaggedHandler fh;
     fh.handler.reset(new Handler<T>(pointer));
     fh.flags = flags_;
+    fh.type_id_ = type_id__;
     add_handler(std::move(name), std::move(fh));
   }
 
@@ -327,7 +332,7 @@ class ObjectHandler : public BaseHandler {
   // Iterate over properties and call callbacks for each property.
   // TODO(syoyo): Call visit recursively for ObjectType.
   //
-  bool visit(std::function<bool(std::string, uint32_t flags,
+  bool visit(std::function<bool(std::string, uint32_t flags, uint32_t user_type_id,
                                 BaseHandler& handler)>& callback,
              ErrorStack& err_stack) {
     if (!StartObject()) {
@@ -338,7 +343,7 @@ class ObjectHandler : public BaseHandler {
       if (pair.second.handler && !(pair.second.flags & Flags::IgnoreRead)) {
         std::cout << "parse " << pair.first << "\n";
         bool ret =
-            callback(pair.first, pair.second.flags, *pair.second.handler);
+            callback(pair.first, pair.second.flags, pair.second.type_id_, *pair.second.handler);
 
         std::cout << "parse " << pair.second.handler->type_name() << "\n";
 
@@ -384,6 +389,7 @@ struct Converter {
   }
 
   static std::string type_name() { return "T"; }
+  static uint32_t type_id() { return 0; }
 
   static constexpr bool has_specialized_type_name = false;
 };
@@ -2110,7 +2116,7 @@ class Reader {
   /// @param[in] fn Callback function
   /// @param[in] err Error message(filled when the function returns false)
   bool ParseStruct(ObjectHandler* handler,
-                   std::function<bool(std::string, uint32_t flags,
+                   std::function<bool(std::string, uint32_t flags, uint32_t user_type_id,
                                       BaseHandler& handler)>&& fn,
                    std::string* err);
 };

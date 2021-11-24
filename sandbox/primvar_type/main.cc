@@ -1,20 +1,20 @@
 #include <array>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <type_traits>
 #include <vector>
-#include <functional>
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#include "../../src/external/staticstruct.hh"
+#include "../../src/nonstd/expected.hpp"
 #include "../../src/nonstd/optional.hpp"
 #include "../../src/nonstd/string_view.hpp"
-
-#include "../../src/external/staticstruct.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -22,8 +22,8 @@
 
 using token = nonstd::string_view;
 
-// Offst must be larger than `TYPE_ID_ALL`(terminator).
-constexpr uint32_t TYPE_ID_ARRAY_OFFSET = 1000;
+constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10;
+constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11;
 
 // TODO(syoyo): Use compile-time string hash?
 enum TypeId {
@@ -463,7 +463,6 @@ DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
 
 #undef DEFINE_TYPE_TRAIT
 
-
 // 1D Array
 template <typename T>
 struct TypeTrait<std::vector<T>> {
@@ -471,9 +470,9 @@ struct TypeTrait<std::vector<T>> {
   static constexpr uint32_t ndim = 1; /* array dim */
   static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
   static constexpr uint32_t type_id =
-      TypeTrait<T>::type_id + TYPE_ID_ARRAY_OFFSET;
+      TypeTrait<T>::type_id | TYPE_ID_1D_ARRAY_BIT;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id + TYPE_ID_ARRAY_OFFSET;
+      TypeTrait<T>::underlying_type_id | TYPE_ID_1D_ARRAY_BIT;
   static std::string type_name() { return TypeTrait<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
     return TypeTrait<T>::underlying_type_name() + "[]";
@@ -486,9 +485,10 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   using value_type = std::vector<std::vector<T>>;
   static constexpr uint32_t ndim = 2; /* array dim */
   static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
-  static constexpr uint32_t type_id = TypeTrait<T>::type_id + ndim * TYPE_ID_ARRAY_OFFSET;
+  static constexpr uint32_t type_id =
+      TypeTrait<T>::type_id | TYPE_ID_2D_ARRAY_BIT;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id + ndim * TYPE_ID_ARRAY_OFFSET;
+      TypeTrait<T>::underlying_type_id | TYPE_ID_2D_ARRAY_BIT;
   static std::string type_name() { return TypeTrait<T>::type_name() + "[][]"; }
   static std::string underlying_type_name() {
     return TypeTrait<T>::underlying_type_name() + "[][]";
@@ -514,7 +514,6 @@ base_value::~base_value() {}
 
 template <typename T>
 struct value_impl : public base_value {
-
   using type = typename TypeTrait<T>::value_type;
 
   value_impl(const T &v) : _value(v) {}
@@ -603,17 +602,22 @@ struct any_value {
     return nullptr;
   }
 
+  template<class T>
+  operator T() const {
+    assert(TypeTrait<T>::type_id == p->type_id());
+
+    return *(reinterpret_cast<const T *>(p->value()));
+  }
+
   std::shared_ptr<base_value> p;
 };
 
 struct TimeSample {
   std::vector<double> times;
   std::vector<any_value> values;
-
 };
 
 struct PrimVar {
-  
   // For scalar value, times.size() == 0, and values.size() == 1
   TimeSample var;
 
@@ -625,10 +629,8 @@ struct PrimVar {
     return (var.times.size() > 0) && (var.times.size() == var.values.size());
   }
 
-  bool is_valid() const {
-    return is_scalar() || is_timesample();
-  }
-    
+  bool is_valid() const { return is_scalar() || is_timesample(); }
+
   std::string type_name() const {
     if (!is_valid()) {
       return std::string();
@@ -643,8 +645,6 @@ struct PrimVar {
 
     return var.values[0].type_id();
   }
-
-  
 };
 
 // using Object = std::map<std::string, any_value>;
@@ -851,10 +851,10 @@ std::ostream &operator<<(std::ostream &os, const double4 &v) {
   return os;
 }
 
-// Simple is_vector 
-template<typename>
+// Simple is_vector
+template <typename>
 struct is_vector : std::false_type {};
-template<typename T, typename Alloc>
+template <typename T, typename Alloc>
 struct is_vector<std::vector<T, Alloc>> : std::true_type {};
 
 template <typename T>
@@ -873,13 +873,14 @@ std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
 }
 
 template <typename T>
-std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<T>> &v) {
+std::ostream &operator<<(std::ostream &os,
+                         const std::vector<std::vector<T>> &v) {
   os << "[";
   if (v.size() == 0) {
     os << "[]";
   } else {
     for (size_t i = 0; i < v.size(); i++) {
-      os << v[i]; // std::vector<T>
+      os << v[i];  // std::vector<T>
       if (i != (v.size() - 1)) {
         os << ", ";
       }
@@ -904,10 +905,9 @@ std::ostream &operator<<(std::ostream &os, const TimeSample &ts) {
 }
 
 std::ostream &operator<<(std::ostream &os, const dict &v) {
-
   for (auto const &item : v) {
     static uint32_t cnt = 0;
-    os << item.first << ":" << item.second; 
+    os << item.first << ":" << item.second;
 
     if (cnt != (v.size() - 1)) {
       os << ", ";
@@ -920,55 +920,53 @@ std::ostream &operator<<(std::ostream &os, const dict &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const any_value &v) {
+  // Simple brute-force way..
+  // TODO: Use std::function or some template technique?
 
-// Simple brute-force way..
-// TODO: Use std::function or some template technique?
-
-#define BASETYPE_CASE_EXPR(__tid, __ty) \
-  case __tid: { \
+#define BASETYPE_CASE_EXPR(__tid, __ty)               \
+  case __tid: {                                       \
     os << *reinterpret_cast<const __ty *>(v.value()); \
-    break; \
-  } 
+    break;                                            \
+  }
 
-#define ARRAY1DTYPE_CASE_EXPR(__tid, __ty) \
-  case __tid + TYPE_ID_ARRAY_OFFSET : { \
+#define ARRAY1DTYPE_CASE_EXPR(__tid, __ty)                         \
+  case __tid + TYPE_ID_1D_ARRAY_BIT: {                             \
     os << *reinterpret_cast<const std::vector<__ty> *>(v.value()); \
-    break; \
-  } 
+    break;                                                         \
+  }
 
-#define ARRAY2DTYPE_CASE_EXPR(__tid, __ty) \
-  case __tid + 2 * TYPE_ID_ARRAY_OFFSET : { \
-    os << *reinterpret_cast<const std::vector<std::vector<__ty>> *>(v.value()); \
-    break; \
-  } 
+#define ARRAY2DTYPE_CASE_EXPR(__tid, __ty)                           \
+  case __tid + TYPE_ID_2D_ARRAY_BIT: {                           \
+    os << *reinterpret_cast<const std::vector<std::vector<__ty>> *>( \
+        v.value());                                                  \
+    break;                                                           \
+  }
 
-#define CASE_EXR_LIST(__FUNC) \
-    __FUNC(TYPE_ID_HALF, half) \
-    __FUNC(TYPE_ID_HALF2, half2) \
-    __FUNC(TYPE_ID_HALF3, half3) \
-    __FUNC(TYPE_ID_HALF4, half4) \
-    __FUNC(TYPE_ID_INT32, int32_t) \
-    __FUNC(TYPE_ID_UINT32, uint32_t) \
-    __FUNC(TYPE_ID_INT2, int2) \
-    __FUNC(TYPE_ID_INT3, int3) \
-    __FUNC(TYPE_ID_INT4, int4) \
-    __FUNC(TYPE_ID_UINT2, uint2) \
-    __FUNC(TYPE_ID_UINT3, uint3) \
-    __FUNC(TYPE_ID_UINT4, uint4) \
-    __FUNC(TYPE_ID_INT64, int64_t) \
-    __FUNC(TYPE_ID_UINT64, uint64_t) \
-    __FUNC(TYPE_ID_FLOAT, float) \
-    __FUNC(TYPE_ID_FLOAT2, float2) \
-    __FUNC(TYPE_ID_FLOAT3, float3) \
-    __FUNC(TYPE_ID_FLOAT4, float4) \
-    __FUNC(TYPE_ID_DOUBLE, double) \
-    __FUNC(TYPE_ID_DOUBLE2, double2) \
-    __FUNC(TYPE_ID_DOUBLE3, double3) \
-    __FUNC(TYPE_ID_DOUBLE4, double4) 
-
+#define CASE_EXR_LIST(__FUNC)      \
+  __FUNC(TYPE_ID_HALF, half)       \
+  __FUNC(TYPE_ID_HALF2, half2)     \
+  __FUNC(TYPE_ID_HALF3, half3)     \
+  __FUNC(TYPE_ID_HALF4, half4)     \
+  __FUNC(TYPE_ID_INT32, int32_t)   \
+  __FUNC(TYPE_ID_UINT32, uint32_t) \
+  __FUNC(TYPE_ID_INT2, int2)       \
+  __FUNC(TYPE_ID_INT3, int3)       \
+  __FUNC(TYPE_ID_INT4, int4)       \
+  __FUNC(TYPE_ID_UINT2, uint2)     \
+  __FUNC(TYPE_ID_UINT3, uint3)     \
+  __FUNC(TYPE_ID_UINT4, uint4)     \
+  __FUNC(TYPE_ID_INT64, int64_t)   \
+  __FUNC(TYPE_ID_UINT64, uint64_t) \
+  __FUNC(TYPE_ID_FLOAT, float)     \
+  __FUNC(TYPE_ID_FLOAT2, float2)   \
+  __FUNC(TYPE_ID_FLOAT3, float3)   \
+  __FUNC(TYPE_ID_FLOAT4, float4)   \
+  __FUNC(TYPE_ID_DOUBLE, double)   \
+  __FUNC(TYPE_ID_DOUBLE2, double2) \
+  __FUNC(TYPE_ID_DOUBLE3, double3) \
+  __FUNC(TYPE_ID_DOUBLE4, double4)
 
   switch (v.type_id()) {
-
     // no `bool` type for 1D and 2D array
     BASETYPE_CASE_EXPR(TYPE_ID_BOOL, bool)
 
@@ -990,7 +988,6 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
     }
   }
 
-
 #undef BASETYPE_CASE_EXPR
 #undef ARRAY1DTYPE_CASE_EXPR
 #undef ARRAY2DTYPE_CASE_EXPR
@@ -1000,21 +997,63 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const Value &v) {
-  os << v.v_; // delegate to operator<<(os, any_value)
+  os << v.v_;  // delegate to operator<<(os, any_value)
   return os;
 }
 
 // reconstruct
 
+struct Mesh {
+  std::vector<float> vertices;
+  std::vector<int32_t> indices;
+};
 
+
+static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
+  if (v.type_id() == (TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT)) {
+    mesh.vertices = *reinterpret_cast<const std::vector<float>*>(v.value());
+    return true;
+  }
+
+  return false;
+}
 
 int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
 
+  {
+    Mesh mesh;
+    staticstruct::ObjectHandler h;
+    h.add_property("vertices", &mesh.vertices, 0, TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT);
+
+    staticstruct::Reader r;
+    std::string err;
+    bool ret = r.ParseStruct(&h, [](std::string key, uint32_t flags, uint32_t user_type_id, staticstruct::BaseHandler &handler) -> bool {
+      (void)flags;
+      (void)key;
+      (void)user_type_id; 
+      (void)handler;
+      return false;
+
+    }, &err);
+
+    if (!ret) {
+      std::cout << "reconstruct failed\n";
+    }
+  }
+
+  {
+    any_value a(4.2f);
+
+    float fval = a;
+
+    std::cout << "fval = " << fval << "\n";
+  }
+
   // std::cout << "sizeof(U) = " << sizeof(Value::U) << "\n";
-  
-  //std::map<int, TypeTrait<T>> bora;
+
+  // std::map<int, TypeTrait<T>> bora;
 
   dict o;
   o["muda"] = 1.3;
@@ -1034,12 +1073,25 @@ int main(int argc, char **argv) {
   std::vector<float> din = {1.0, 2.0};
   v = din;
 
+  {
+    std::vector<float> vs = {1.0, 2.0, 3.0};
+    any_value val(vs);
+    Mesh mesh;
+
+    if (ReconstructVertrices(val, mesh)) {
+      std::cout << "Reconstruct mesh.vertices ok\n";
+    } else {
+      std::cout << "Reconstruct mesh.vertices failed\n";
+    }
+  }
+
   std::cout << "val\n";
   std::cout << v << "\n";
 
   std::vector<std::vector<float>> din2 = {{1.0, 2.0}, {3.0, 4.0}};
   v = din2;
-  std::cout << "val\n" << "vty: " << v.type_name() << "\n";
+  std::cout << "val\n"
+            << "vty: " << v.type_name() << "\n";
   std::cout << v << "\n";
 
   std::vector<int> vids = {1, 2, 3};
@@ -1070,7 +1122,6 @@ int main(int argc, char **argv) {
 
     v = vvf;
     std::cout << v << "\n";
-
   }
 
 #if 0

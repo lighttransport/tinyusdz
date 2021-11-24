@@ -374,7 +374,7 @@ bool ParseUtil::SetValue(const std::vector<float>& v, BaseHandler& handler) {
 
 bool Reader::ParseStruct(
     ObjectHandler* handler,
-    std::function<bool(std::string, uint32_t flags, BaseHandler& handler)>&& fn,
+    std::function<bool(std::string, uint32_t flags, uint32_t user_type_id, BaseHandler& handler)>&& fn,
     std::string* err_msg) {
   ErrorStack err_stack;
 
