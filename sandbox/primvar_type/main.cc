@@ -1001,6 +1001,32 @@ std::ostream &operator<<(std::ostream &os, const Value &v) {
   return os;
 }
 
+//
+// typecast from type_id 
+//
+template<uint32_t tid>
+struct typecast {};
+
+#define TYPECAST_BASETYPE(__tid, __ty) \
+template<> \
+struct typecast<__tid> { \
+  static __ty to(const any_value &v) { \
+    return *reinterpret_cast<const __ty *>(v.value()); \
+  } \
+}
+
+TYPECAST_BASETYPE(TYPE_ID_BOOL, bool);
+TYPECAST_BASETYPE(TYPE_ID_UCHAR, uint8_t);
+TYPECAST_BASETYPE(TYPE_ID_HALF, half);
+
+TYPECAST_BASETYPE(TYPE_ID_UINT32, uint32_t);
+TYPECAST_BASETYPE(TYPE_ID_FLOAT, float);
+TYPECAST_BASETYPE(TYPE_ID_DOUBLE, double);
+
+TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
+
+#undef TYPECAST_BASETYPE
+
 // reconstruct
 
 struct Mesh {
@@ -1021,6 +1047,21 @@ static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
 int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
+
+  {
+    any_value f = 1.2f;
+    float a = typecast<TYPE_ID_FLOAT>::to(f);
+    std::cout << "a = " << a << "\n";
+
+    f = double(4.5);
+    double b = typecast<TYPE_ID_DOUBLE>::to(f);
+    std::cout << "b = " << b << "\n";
+
+    std::vector<float> v = {1.0f, 2.0f};
+    f = v;
+    auto c = typecast<TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT>::to(f);
+    std::cout << "c = " << c << "\n";
+  }
 
   {
     Mesh mesh;
