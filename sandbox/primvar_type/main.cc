@@ -1,4 +1,5 @@
 #include <array>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -480,6 +481,7 @@ struct TypeTrait<std::vector<T>> {
 };
 
 // 2D Array
+// TODO(syoyo): support 3D array?
 template <typename T>
 struct TypeTrait<std::vector<std::vector<T>>> {
   using value_type = std::vector<std::vector<T>>;
@@ -495,7 +497,52 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   }
 };
 
-// TODO(syoyo): 3D array?
+static std::string GetTypeName(uint32_t tyid) {
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
+
+  static std::map<uint32_t, std::string> m;
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+  if (m.empty()) {
+    // initialize
+    m[TYPE_ID_BOOL] = TypeTrait<bool>::type_name();
+    m[TYPE_ID_UCHAR] = TypeTrait<uint8_t>::type_name();
+    m[TYPE_ID_INT32] = TypeTrait<int32_t>::type_name();
+    m[TYPE_ID_UINT32] = TypeTrait<uint32_t>::type_name();
+    // TODO: ...
+
+    m[TYPE_ID_INT32 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<int>>::type_name();
+    m[TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float>>::type_name();
+    m[TYPE_ID_FLOAT2 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float2>>::type_name();
+    m[TYPE_ID_FLOAT3 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float3>>::type_name();
+    m[TYPE_ID_FLOAT4 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float4>>::type_name();
+
+    m[TYPE_ID_VECTOR3H | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<vector3h>>::type_name();
+    m[TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<vector3f>>::type_name();
+    m[TYPE_ID_VECTOR3D | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<vector3d>>::type_name();
+  }
+
+  if (!m.count(tyid)) {
+    return "(GetTypeName) [[Unknown or unsupported type_id: " +
+           std::to_string(tyid) + "]]";
+  }
+
+  return m.at(tyid);
+}
 
 struct base_value {
   virtual ~base_value();
@@ -508,6 +555,7 @@ struct base_value {
   virtual uint32_t ncomp() const = 0;
 
   virtual const void *value() const = 0;
+  virtual void *value() = 0;
 };
 
 base_value::~base_value() {}
@@ -534,6 +582,8 @@ struct value_impl : public base_value {
   const void *value() const override {
     return reinterpret_cast<const void *>(&_value);
   }
+
+  void *value() override { return reinterpret_cast<void *>(&_value); }
 
   uint32_t ndim() const override { return TypeTrait<T>::ndim; }
   uint32_t ncomp() const override { return TypeTrait<T>::ncomp; }
@@ -602,7 +652,14 @@ struct any_value {
     return nullptr;
   }
 
-  template<class T>
+  void *value() {
+    if (p) {
+      return p->value();
+    }
+    return nullptr;
+  }
+
+  template <class T>
   operator T() const {
     assert(TypeTrait<T>::type_id == p->type_id());
 
@@ -936,7 +993,7 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
   }
 
 #define ARRAY2DTYPE_CASE_EXPR(__tid, __ty)                           \
-  case __tid + TYPE_ID_2D_ARRAY_BIT: {                           \
+  case __tid + TYPE_ID_2D_ARRAY_BIT: {                               \
     os << *reinterpret_cast<const std::vector<std::vector<__ty>> *>( \
         v.value());                                                  \
     break;                                                           \
@@ -1002,18 +1059,18 @@ std::ostream &operator<<(std::ostream &os, const Value &v) {
 }
 
 //
-// typecast from type_id 
+// typecast from type_id
 //
-template<uint32_t tid>
+template <uint32_t tid>
 struct typecast {};
 
-#define TYPECAST_BASETYPE(__tid, __ty) \
-template<> \
-struct typecast<__tid> { \
-  static __ty to(const any_value &v) { \
-    return *reinterpret_cast<const __ty *>(v.value()); \
-  } \
-}
+#define TYPECAST_BASETYPE(__tid, __ty)                   \
+  template <>                                            \
+  struct typecast<__tid> {                               \
+    static __ty to(const any_value &v) {                 \
+      return *reinterpret_cast<const __ty *>(v.value()); \
+    }                                                    \
+  }
 
 TYPECAST_BASETYPE(TYPE_ID_BOOL, bool);
 TYPECAST_BASETYPE(TYPE_ID_UCHAR, uint8_t);
@@ -1030,18 +1087,104 @@ TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
 // reconstruct
 
 struct Mesh {
-  std::vector<float> vertices;
+  std::vector<vector3f> vertices;
   std::vector<int32_t> indices;
 };
 
-
 static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
-  if (v.type_id() == (TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT)) {
-    mesh.vertices = *reinterpret_cast<const std::vector<float>*>(v.value());
+  if (v.type_id() == (TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT)) {
+    mesh.vertices = *reinterpret_cast<const std::vector<vector3f> *>(v.value());
     return true;
   }
 
   return false;
+}
+
+namespace staticstruct {
+
+template <>
+struct Converter<vector3f>
+{
+    typedef std::array<float, 3> shadow_type;
+
+    static std::unique_ptr<Error> from_shadow(const shadow_type& shadow, vector3f& value)
+    {
+        value.x = shadow[0];
+        value.y = shadow[1];
+        value.z = shadow[2];
+
+        return nullptr; // success
+    }
+
+    static void to_shadow(const vector3f& value, shadow_type& shadow)
+    {
+        shadow[0] = value.x;
+        shadow[1] = value.y;
+        shadow[2] = value.z;
+    }
+};
+}
+
+struct AttribMap {
+  std::map<std::string, any_value> attribs;
+};
+
+static bool ReconstructAttribTest() {
+  AttribMap amap;
+  amap.attribs["vertices"] =
+      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.0f, 4.0f}});
+
+  Mesh mesh;
+  staticstruct::ObjectHandler h;
+  h.add_property("vertices", &mesh.vertices, 0,
+                 TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT);
+
+  staticstruct::Reader r;
+  std::string err;
+  bool ret = r.ParseStruct(
+      &h,
+      [&amap](std::string key, uint32_t flags, uint32_t user_type_id,
+              staticstruct::BaseHandler &handler) -> bool {
+        std::cout << "key = " << key << ", count = " << amap.attribs.count(key)
+                  << "\n";
+
+        if (!amap.attribs.count(key)) {
+          if (flags & staticstruct::Flags::Optional) {
+            return true;
+          } else {
+            return false;
+          }
+        }
+
+        auto &value = amap.attribs[key];
+        if (amap.attribs[key].type_id() == user_type_id) {
+          if (user_type_id == (TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT)) {
+            std::vector<float3> *p =
+                reinterpret_cast<std::vector<float3> *>(value.value());
+            staticstruct::Handler<std::vector<float3>> _h(p);
+            return _h.write(&handler);
+          } else {
+            std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
+                      << "\n";
+            return false;
+          }
+        } else {
+          std::cerr << "type: " << amap.attribs[key].type_name() << "(a.k.a "
+                    << amap.attribs[key].underlying_type_name()
+                    << ") expected but got " << GetTypeName(user_type_id)
+                    << " for attribute \"" << key << "\"\n";
+          return false;
+        }
+      },
+      &err);
+
+  if (!ret) {
+    if (!err.empty()) {
+      std::cerr << "Attrib reconstruction failed. ERR: " << err << "\n";
+    }
+  }
+
+  return ret;
 }
 
 int main(int argc, char **argv) {
@@ -1063,21 +1206,27 @@ int main(int argc, char **argv) {
     std::cout << "c = " << c << "\n";
   }
 
+  bool ok = ReconstructAttribTest();
+  std::cout << "ReconstructAttribTest: " << ok << "\n";
+
   {
     Mesh mesh;
     staticstruct::ObjectHandler h;
-    h.add_property("vertices", &mesh.vertices, 0, TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT);
-
+    h.add_property("vertices", &mesh.vertices, 0,
+                   TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT); 
     staticstruct::Reader r;
     std::string err;
-    bool ret = r.ParseStruct(&h, [](std::string key, uint32_t flags, uint32_t user_type_id, staticstruct::BaseHandler &handler) -> bool {
-      (void)flags;
-      (void)key;
-      (void)user_type_id; 
-      (void)handler;
-      return false;
-
-    }, &err);
+    bool ret = r.ParseStruct(
+        &h,
+        [](std::string key, uint32_t flags, uint32_t user_type_id,
+           staticstruct::BaseHandler &handler) -> bool {
+          (void)flags;
+          (void)key;
+          (void)user_type_id;
+          (void)handler;
+          return false;
+        },
+        &err);
 
     if (!ret) {
       std::cout << "reconstruct failed\n";
@@ -1115,7 +1264,7 @@ int main(int argc, char **argv) {
   v = din;
 
   {
-    std::vector<float> vs = {1.0, 2.0, 3.0};
+    std::vector<float3> vs = {{1.0, 2.0, 3.0}, {0.32f, 0.21f, 1.3f}};
     any_value val(vs);
     Mesh mesh;
 
