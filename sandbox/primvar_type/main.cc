@@ -828,6 +828,10 @@ std::ostream &operator<<(std::ostream &os, const double2 &v);
 std::ostream &operator<<(std::ostream &os, const double3 &v);
 std::ostream &operator<<(std::ostream &os, const double4 &v);
 
+std::ostream &operator<<(std::ostream &os, const vector3h &v);
+std::ostream &operator<<(std::ostream &os, const vector3f &v);
+std::ostream &operator<<(std::ostream &os, const vector3d &v);
+
 std::ostream &operator<<(std::ostream &os, const dict &v);
 std::ostream &operator<<(std::ostream &os, const TimeSample &ts);
 
@@ -905,6 +909,11 @@ std::ostream &operator<<(std::ostream &os, const double3 &v) {
 
 std::ostream &operator<<(std::ostream &os, const double4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const vector3f &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
@@ -1103,41 +1112,128 @@ static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
 namespace staticstruct {
 
 template <>
-struct Converter<vector3f>
-{
-    typedef std::array<float, 3> shadow_type;
+struct Converter<vector3f> {
+  typedef std::array<float, 3> shadow_type;
 
-    static std::unique_ptr<Error> from_shadow(const shadow_type& shadow, vector3f& value)
-    {
-        value.x = shadow[0];
-        value.y = shadow[1];
-        value.z = shadow[2];
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            vector3f &value) {
+    value.x = shadow[0];
+    value.y = shadow[1];
+    value.z = shadow[2];
 
-        return nullptr; // success
-    }
+    return nullptr;  // success
+  }
 
-    static void to_shadow(const vector3f& value, shadow_type& shadow)
-    {
-        shadow[0] = value.x;
-        shadow[1] = value.y;
-        shadow[2] = value.z;
-    }
+  static void to_shadow(const vector3f &value, shadow_type &shadow) {
+    shadow[0] = value.x;
+    shadow[1] = value.y;
+    shadow[2] = value.z;
+  }
 };
-}
+}  // namespace staticstruct
 
 struct AttribMap {
   std::map<std::string, any_value> attribs;
 };
 
+class Register {
+ public:
+  Register() = default;
+
+  template <class T>
+  Register &property(std::string name, T *pointer,
+                     uint32_t flags = staticstruct::Flags::Default) {
+    h.add_property(name, pointer, flags, TypeTrait<T>::type_id);
+
+    return *this;
+  }
+
+  bool reconstruct(AttribMap &amap) {
+    err_.clear();
+
+    staticstruct::Reader r;
+
+    bool ret = r.ParseStruct(
+        &h,
+        [&amap](std::string key, uint32_t flags, uint32_t user_type_id,
+                staticstruct::BaseHandler &handler) -> bool {
+          std::cout << "key = " << key
+                    << ", count = " << amap.attribs.count(key) << "\n";
+
+          if (!amap.attribs.count(key)) {
+            if (flags & staticstruct::Flags::Optional) {
+              return true;
+            } else {
+              return false;
+            }
+          }
+
+          auto &value = amap.attribs[key];
+          if (amap.attribs[key].type_id() == user_type_id) {
+            if (user_type_id == (TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT)) {
+              std::vector<float3> *p =
+                  reinterpret_cast<std::vector<float3> *>(value.value());
+              staticstruct::Handler<std::vector<float3>> _h(p);
+              return _h.write(&handler);
+            } else {
+              std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
+                        << "\n";
+              return false;
+            }
+          } else {
+            std::cerr << "type: " << amap.attribs[key].type_name() << "(a.k.a "
+                      << amap.attribs[key].underlying_type_name()
+                      << ") expected but got " << GetTypeName(user_type_id)
+                      << " for attribute \"" << key << "\"\n";
+            return false;
+          }
+        },
+        &err_);
+
+    return ret;
+  }
+
+  std::string get_error() const { return err_; }
+
+ private:
+  staticstruct::ObjectHandler h;
+  std::string err_;
+};
+
+static bool ReconstructAttribTest0() {
+  Mesh mesh;
+  Register r;
+
+  r.property("vertices", &mesh.vertices).property("indices", &mesh.indices);
+
+  AttribMap amap;
+  amap.attribs["vertices"] =
+      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.1f, 4.3f}});
+  amap.attribs["indices"] =
+      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.1f, 4.3f}});
+
+  bool ret = r.reconstruct(amap);
+
+  if (!ret) {
+    std::cerr << r.get_error() << "\n";
+  }
+
+  return ret;
+}
+
 static bool ReconstructAttribTest() {
   AttribMap amap;
   amap.attribs["vertices"] =
-      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.0f, 4.0f}});
+      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.1f, 4.3f}});
 
   Mesh mesh;
+
+  std::cout << "mesh.vertices typename = "
+            << TypeTrait<decltype(mesh.vertices)>::type_name() << "\n";
+
   staticstruct::ObjectHandler h;
   h.add_property("vertices", &mesh.vertices, 0,
-                 TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT);
+                 TypeTrait<decltype(mesh.vertices)>::type_id);
 
   staticstruct::Reader r;
   std::string err;
@@ -1184,6 +1280,8 @@ static bool ReconstructAttribTest() {
     }
   }
 
+  std::cout << mesh.vertices << "\n";
+
   return ret;
 }
 
@@ -1206,6 +1304,11 @@ int main(int argc, char **argv) {
     std::cout << "c = " << c << "\n";
   }
 
+  {
+    bool ok = ReconstructAttribTest0();
+    std::cout << "ReconstructAttribTest0: " << ok << "\n";
+  }
+
   bool ok = ReconstructAttribTest();
   std::cout << "ReconstructAttribTest: " << ok << "\n";
 
@@ -1213,7 +1316,7 @@ int main(int argc, char **argv) {
     Mesh mesh;
     staticstruct::ObjectHandler h;
     h.add_property("vertices", &mesh.vertices, 0,
-                   TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT); 
+                   TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT);
     staticstruct::Reader r;
     std::string err;
     bool ret = r.ParseStruct(
