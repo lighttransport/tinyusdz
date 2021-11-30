@@ -10,7 +10,7 @@
 
 #include "prim-types.hh"
 
-#if defined(PXR_STATIC)
+#if !defined(PXR_DYNAMIC)
   #define USD_API
 #else
   #if defined(USD_EXPORTS)
