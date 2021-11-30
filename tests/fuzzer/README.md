@@ -11,7 +11,7 @@ $ sudo apt install clang++-8
 $ sudo apt install libfuzzer-8-dev
 ```
 
-Optionally, if you didn't set `update-alternatives` you can set `clang++` to point to `clang++8`
+Optionally, if you didn't set `update-alternatives` you can set `clang++` to point to `clang++8`(if your clang version is less than 8.0)
 
 ```
 $ sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-8 10
