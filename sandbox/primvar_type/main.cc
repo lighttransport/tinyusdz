@@ -13,6 +13,16 @@
 #endif
 
 #include "../../src/external/staticstruct.hh"
+
+// clang and gcc
+#if defined(__EXCEPTIONS) || defined(__cpp_exceptions) 
+#define nsel_CONFIG_NO_EXCEPTIONS 0
+#define nssv_CONFIG_NO_EXCEPTIONS 0
+#else
+// -fno-exceptions
+#define nsel_CONFIG_NO_EXCEPTIONS 1
+#define nssv_CONFIG_NO_EXCEPTIONS 1
+#endif
 #include "../../src/nonstd/expected.hpp"
 #include "../../src/nonstd/optional.hpp"
 #include "../../src/nonstd/string_view.hpp"
