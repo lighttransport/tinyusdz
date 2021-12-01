@@ -216,18 +216,18 @@ struct frame4d {
 };
 
 struct quath {
-  half3 imag;
   half real;
+  half3 imag;
 };
 
 struct quatf {
-  float3 imag;
   float real;
+  float3 imag;
 };
 
 struct quatd {
-  double3 imag;
   double real;
+  double3 imag;
 };
 
 struct vector3h {
@@ -828,14 +828,74 @@ std::ostream &operator<<(std::ostream &os, const double2 &v);
 std::ostream &operator<<(std::ostream &os, const double3 &v);
 std::ostream &operator<<(std::ostream &os, const double4 &v);
 
+std::ostream &operator<<(std::ostream &os, const normal3h &v);
+std::ostream &operator<<(std::ostream &os, const normal3f &v);
+std::ostream &operator<<(std::ostream &os, const normal3d &v);
+
 std::ostream &operator<<(std::ostream &os, const vector3h &v);
 std::ostream &operator<<(std::ostream &os, const vector3f &v);
 std::ostream &operator<<(std::ostream &os, const vector3d &v);
+
+std::ostream &operator<<(std::ostream &os, const point3h &v);
+std::ostream &operator<<(std::ostream &os, const point3f &v);
+std::ostream &operator<<(std::ostream &os, const point3d &v);
+
+std::ostream &operator<<(std::ostream &os, const color3f &v);
+std::ostream &operator<<(std::ostream &os, const color3d &v);
+std::ostream &operator<<(std::ostream &os, const color4f &v);
+std::ostream &operator<<(std::ostream &os, const color4d &v);
+
+std::ostream &operator<<(std::ostream &os, const texcoord2h &v);
+std::ostream &operator<<(std::ostream &os, const texcoord2f &v);
+std::ostream &operator<<(std::ostream &os, const texcoord2d &v);
+
+std::ostream &operator<<(std::ostream &os, const texcoord3h &v);
+std::ostream &operator<<(std::ostream &os, const texcoord3f &v);
+std::ostream &operator<<(std::ostream &os, const texcoord3d &v);
+
+std::ostream &operator<<(std::ostream &os, const quath &v);
+std::ostream &operator<<(std::ostream &os, const quatf &v);
+std::ostream &operator<<(std::ostream &os, const quatd &v);
 
 std::ostream &operator<<(std::ostream &os, const dict &v);
 std::ostream &operator<<(std::ostream &os, const TimeSample &ts);
 
 std::ostream &operator<<(std::ostream &os, const any_value &v);
+
+std::ostream &operator<<(std::ostream &os, const matrix2d &v);
+std::ostream &operator<<(std::ostream &os, const matrix3d &v);
+std::ostream &operator<<(std::ostream &os, const matrix4d &v);
+
+std::ostream &operator<<(std::ostream &os, const matrix2d &v) {
+  os << "(";
+  os << "(" << v.m[0][0] << ", " << v.m[0][1] << "), ";
+  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ")";
+  os << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const matrix3d &v) {
+  os << "(";
+  os << "(" << v.m[0][0] << ", " << v.m[0][1] << ", " << v.m[0][2] << "), ";
+  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ", " << v.m[1][2] << ")";
+  os << "(" << v.m[2][0] << ", " << v.m[2][1] << ", " << v.m[2][2] << ")";
+  os << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const matrix4d &v) {
+  os << "(";
+  os << "(" << v.m[0][0] << ", " << v.m[0][1] << ", " << v.m[0][2] << ", "
+     << v.m[0][3] << "), ";
+  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ", " << v.m[1][2] << ", "
+     << v.m[1][3] << ")";
+  os << "(" << v.m[2][0] << ", " << v.m[2][1] << ", " << v.m[2][2] << ", "
+     << v.m[2][3] << ")";
+  os << "(" << v.m[3][0] << ", " << v.m[3][1] << ", " << v.m[3][2] << ", "
+     << v.m[3][3] << ")";
+  os << ")";
+  return os;
+}
 
 std::ostream &operator<<(std::ostream &os, const int2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
@@ -912,8 +972,86 @@ std::ostream &operator<<(std::ostream &os, const double4 &v) {
   return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const vector3h &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const vector3f &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const vector3d &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const normal3h &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const normal3f &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const normal3d &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const point3h &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const point3f &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const point3d &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color3f &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color3d &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color4f &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color4d &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const quath &v) {
+  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
+     << v.imag[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const quatf &v) {
+  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
+     << v.imag[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const quatd &v) {
+  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
+     << v.imag[2] << ")";
   return os;
 }
 
@@ -989,55 +1127,76 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
   // Simple brute-force way..
   // TODO: Use std::function or some template technique?
 
-#define BASETYPE_CASE_EXPR(__tid, __ty)               \
-  case __tid: {                                       \
+#define BASETYPE_CASE_EXPR(__ty)                      \
+  case TypeTrait<__ty>::type_id: {                    \
     os << *reinterpret_cast<const __ty *>(v.value()); \
     break;                                            \
   }
 
-#define ARRAY1DTYPE_CASE_EXPR(__tid, __ty)                         \
-  case __tid + TYPE_ID_1D_ARRAY_BIT: {                             \
+#define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
+  case TypeTrait<std::vector<__ty>>::type_id: {                    \
     os << *reinterpret_cast<const std::vector<__ty> *>(v.value()); \
     break;                                                         \
   }
 
-#define ARRAY2DTYPE_CASE_EXPR(__tid, __ty)                           \
-  case __tid + TYPE_ID_2D_ARRAY_BIT: {                               \
+#define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
+  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
     os << *reinterpret_cast<const std::vector<std::vector<__ty>> *>( \
         v.value());                                                  \
     break;                                                           \
   }
 
-#define CASE_EXR_LIST(__FUNC)      \
-  __FUNC(TYPE_ID_HALF, half)       \
-  __FUNC(TYPE_ID_HALF2, half2)     \
-  __FUNC(TYPE_ID_HALF3, half3)     \
-  __FUNC(TYPE_ID_HALF4, half4)     \
-  __FUNC(TYPE_ID_INT32, int32_t)   \
-  __FUNC(TYPE_ID_UINT32, uint32_t) \
-  __FUNC(TYPE_ID_INT2, int2)       \
-  __FUNC(TYPE_ID_INT3, int3)       \
-  __FUNC(TYPE_ID_INT4, int4)       \
-  __FUNC(TYPE_ID_UINT2, uint2)     \
-  __FUNC(TYPE_ID_UINT3, uint3)     \
-  __FUNC(TYPE_ID_UINT4, uint4)     \
-  __FUNC(TYPE_ID_INT64, int64_t)   \
-  __FUNC(TYPE_ID_UINT64, uint64_t) \
-  __FUNC(TYPE_ID_FLOAT, float)     \
-  __FUNC(TYPE_ID_FLOAT2, float2)   \
-  __FUNC(TYPE_ID_FLOAT3, float3)   \
-  __FUNC(TYPE_ID_FLOAT4, float4)   \
-  __FUNC(TYPE_ID_DOUBLE, double)   \
-  __FUNC(TYPE_ID_DOUBLE2, double2) \
-  __FUNC(TYPE_ID_DOUBLE3, double3) \
-  __FUNC(TYPE_ID_DOUBLE4, double4)
+#define CASE_EXR_LIST(__FUNC) \
+  __FUNC(token)               \
+  __FUNC(std::string)         \
+  __FUNC(half)                \
+  __FUNC(half2)               \
+  __FUNC(half3)               \
+  __FUNC(half4)               \
+  __FUNC(int32_t)             \
+  __FUNC(uint32_t)            \
+  __FUNC(int2)                \
+  __FUNC(int3)                \
+  __FUNC(int4)                \
+  __FUNC(uint2)               \
+  __FUNC(uint3)               \
+  __FUNC(uint4)               \
+  __FUNC(int64_t)             \
+  __FUNC(uint64_t)            \
+  __FUNC(float)               \
+  __FUNC(float2)              \
+  __FUNC(float3)              \
+  __FUNC(float4)              \
+  __FUNC(double)              \
+  __FUNC(double2)             \
+  __FUNC(double3)             \
+  __FUNC(double4)             \
+  __FUNC(matrix2d)            \
+  __FUNC(matrix3d)            \
+  __FUNC(matrix4d)            \
+  __FUNC(quath)               \
+  __FUNC(quatf)               \
+  __FUNC(quatd)               \
+  __FUNC(normal3h)            \
+  __FUNC(normal3f)            \
+  __FUNC(normal3d)            \
+  __FUNC(vector3h)            \
+  __FUNC(vector3f)            \
+  __FUNC(vector3d)            \
+  __FUNC(point3h)             \
+  __FUNC(point3f)             \
+  __FUNC(point3d)             \
+  __FUNC(color3f)             \
+  __FUNC(color3d)             \
+  __FUNC(color4f)             \
+  __FUNC(color4d)
 
   switch (v.type_id()) {
     // no `bool` type for 1D and 2D array
-    BASETYPE_CASE_EXPR(TYPE_ID_BOOL, bool)
+    BASETYPE_CASE_EXPR(bool)
 
     // no std::vector<dict> and std::vector<std::vector<dict>>, ...
-    BASETYPE_CASE_EXPR(TYPE_ID_DICT, dict)
+    BASETYPE_CASE_EXPR(dict)
 
     // base type
     CASE_EXR_LIST(BASETYPE_CASE_EXPR)
@@ -1111,6 +1270,120 @@ static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
 
 namespace staticstruct {
 
+// -- 00conv
+
+template <>
+struct Converter<quath> {
+  typedef std::array<uint16_t, 4> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            quath &value) {
+    memcpy(&value.real, &shadow[0], sizeof(uint16_t) * 4);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const quath &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.real, sizeof(uint16_t) * 4);
+  }
+};
+
+template <>
+struct Converter<quatf> {
+  typedef std::array<float, 4> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            quatf &value) {
+    memcpy(&value.real, &shadow[0], sizeof(float) * 4);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const quatf &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.real, sizeof(float) * 4);
+  }
+};
+
+template <>
+struct Converter<quatd> {
+  typedef std::array<double, 4> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            quatd &value) {
+    memcpy(&value.real, &shadow[0], sizeof(double) * 4);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const quatd &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.real, sizeof(double) * 4);
+  }
+};
+
+template <>
+struct Converter<matrix2d> {
+  typedef std::array<double, 4> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            matrix2d &value) {
+    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 4);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const matrix2d &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 4);
+  }
+};
+
+template <>
+struct Converter<matrix3d> {
+  typedef std::array<double, 9> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            matrix3d &value) {
+    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 9);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const matrix3d &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 9);
+  }
+};
+
+template <>
+struct Converter<matrix4d> {
+  typedef std::array<double, 16> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            matrix4d &value) {
+    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 16);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const matrix4d &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 16);
+  }
+};
+
+template <>
+struct Converter<vector3h> {
+  typedef std::array<uint16_t, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            vector3h &value) {
+    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const vector3h &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
+  }
+};
+
 template <>
 struct Converter<vector3f> {
   typedef std::array<float, 3> shadow_type;
@@ -1130,6 +1403,223 @@ struct Converter<vector3f> {
     shadow[2] = value.z;
   }
 };
+
+template <>
+struct Converter<vector3d> {
+  typedef std::array<double, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            vector3d &value) {
+    value.x = shadow[0];
+    value.y = shadow[1];
+    value.z = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const vector3d &value, shadow_type &shadow) {
+    shadow[0] = value.x;
+    shadow[1] = value.y;
+    shadow[2] = value.z;
+  }
+};
+
+template <>
+struct Converter<normal3h> {
+  typedef std::array<uint16_t, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            normal3h &value) {
+    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const normal3h &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
+  }
+};
+
+template <>
+struct Converter<normal3f> {
+  typedef std::array<float, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            normal3f &value) {
+    value.x = shadow[0];
+    value.y = shadow[1];
+    value.z = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const normal3f &value, shadow_type &shadow) {
+    shadow[0] = value.x;
+    shadow[1] = value.y;
+    shadow[2] = value.z;
+  }
+};
+
+template <>
+struct Converter<normal3d> {
+  typedef std::array<double, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            normal3d &value) {
+    value.x = shadow[0];
+    value.y = shadow[1];
+    value.z = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const normal3d &value, shadow_type &shadow) {
+    shadow[0] = value.x;
+    shadow[1] = value.y;
+    shadow[2] = value.z;
+  }
+};
+
+template <>
+struct Converter<point3h> {
+  typedef std::array<uint16_t, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            point3h &value) {
+    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const point3h &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
+  }
+};
+
+template <>
+struct Converter<point3f> {
+  typedef std::array<float, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            point3f &value) {
+    value.x = shadow[0];
+    value.y = shadow[1];
+    value.z = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const point3f &value, shadow_type &shadow) {
+    shadow[0] = value.x;
+    shadow[1] = value.y;
+    shadow[2] = value.z;
+  }
+};
+
+template <>
+struct Converter<point3d> {
+  typedef std::array<double, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            point3d &value) {
+    value.x = shadow[0];
+    value.y = shadow[1];
+    value.z = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const point3d &value, shadow_type &shadow) {
+    shadow[0] = value.x;
+    shadow[1] = value.y;
+    shadow[2] = value.z;
+  }
+};
+
+template <>
+struct Converter<color3f> {
+  typedef std::array<float, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            color3f &value) {
+    value.r = shadow[0];
+    value.g = shadow[1];
+    value.b = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const color3f &value, shadow_type &shadow) {
+    shadow[0] = value.r;
+    shadow[1] = value.g;
+    shadow[2] = value.b;
+  }
+};
+
+template <>
+struct Converter<color3d> {
+  typedef std::array<double, 3> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            color3d &value) {
+    value.r = shadow[0];
+    value.g = shadow[1];
+    value.b = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const color3d &value, shadow_type &shadow) {
+    shadow[0] = value.r;
+    shadow[1] = value.g;
+    shadow[2] = value.b;
+  }
+};
+
+template <>
+struct Converter<color4f> {
+  typedef std::array<float, 4> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            color4f &value) {
+    value.r = shadow[0];
+    value.g = shadow[1];
+    value.b = shadow[2];
+    value.a = shadow[3];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const color4f &value, shadow_type &shadow) {
+    shadow[0] = value.r;
+    shadow[1] = value.g;
+    shadow[2] = value.b;
+    shadow[3] = value.a;
+  }
+};
+
+template <>
+struct Converter<color4d> {
+  typedef std::array<double, 4> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            color4d &value) {
+    value.r = shadow[0];
+    value.g = shadow[1];
+    value.b = shadow[2];
+    value.a = shadow[2];
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const color4d &value, shadow_type &shadow) {
+    shadow[0] = value.r;
+    shadow[1] = value.g;
+    shadow[2] = value.b;
+    shadow[3] = value.a;
+  }
+};
+
 }  // namespace staticstruct
 
 struct AttribMap {
@@ -1153,6 +1643,71 @@ class Register {
 
     staticstruct::Reader r;
 
+#define CONVERT_TYPE_SCALAR(__ty, __value)       \
+  case TypeTrait<__ty>::type_id: {               \
+    __ty *p = reinterpret_cast<__ty *>(__value); \
+    staticstruct::Handler<__ty> _h(p);           \
+    return _h.write(&handler);                   \
+  }
+
+#define CONVERT_TYPE_1D(__ty, __value)                                     \
+  case (TypeTrait<__ty>::type_id | TYPE_ID_1D_ARRAY_BIT): {                \
+    std::vector<__ty> *p = reinterpret_cast<std::vector<__ty> *>(__value); \
+    staticstruct::Handler<std::vector<__ty>> _h(p);                        \
+    return _h.write(&handler);                                             \
+  }
+
+#define CONVERT_TYPE_2D(__ty, __value)                               \
+  case (TypeTrait<__ty>::type_id | TYPE_ID_2D_ARRAY_BIT): {          \
+    std::vector<std::vector<__ty>> *p =                              \
+        reinterpret_cast<std::vector<std::vector<__ty>> *>(__value); \
+    staticstruct::Handler<std::vector<std::vector<__ty>>> _h(p);     \
+    return _h.write(&handler);                                       \
+  }
+
+#define CONVERT_TYPE_LIST(__FUNC) \
+  __FUNC(half, v)                 \
+  __FUNC(half2, v)                \
+  __FUNC(half3, v)                \
+  __FUNC(half4, v)                \
+  __FUNC(int32_t, v)              \
+  __FUNC(uint32_t, v)             \
+  __FUNC(int2, v)                 \
+  __FUNC(int3, v)                 \
+  __FUNC(int4, v)                 \
+  __FUNC(uint2, v)                \
+  __FUNC(uint3, v)                \
+  __FUNC(uint4, v)                \
+  __FUNC(int64_t, v)              \
+  __FUNC(uint64_t, v)             \
+  __FUNC(float, v)                \
+  __FUNC(float2, v)               \
+  __FUNC(float3, v)               \
+  __FUNC(float4, v)               \
+  __FUNC(double, v)               \
+  __FUNC(double2, v)              \
+  __FUNC(double3, v)              \
+  __FUNC(double4, v)              \
+  __FUNC(quath, v)                \
+  __FUNC(quatf, v)                \
+  __FUNC(quatd, v)                \
+  __FUNC(vector3h, v)             \
+  __FUNC(vector3f, v)             \
+  __FUNC(vector3d, v)             \
+  __FUNC(normal3h, v)             \
+  __FUNC(normal3f, v)             \
+  __FUNC(normal3d, v)             \
+  __FUNC(point3h, v)              \
+  __FUNC(point3f, v)              \
+  __FUNC(point3d, v)              \
+  __FUNC(color3f, v)              \
+  __FUNC(color3d, v)              \
+  __FUNC(color4f, v)              \
+  __FUNC(color4d, v)              \
+  __FUNC(matrix2d, v)             \
+  __FUNC(matrix3d, v)             \
+  __FUNC(matrix4d, v)
+
     bool ret = r.ParseStruct(
         &h,
         [&amap](std::string key, uint32_t flags, uint32_t user_type_id,
@@ -1170,15 +1725,20 @@ class Register {
 
           auto &value = amap.attribs[key];
           if (amap.attribs[key].type_id() == user_type_id) {
-            if (user_type_id == (TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT)) {
-              std::vector<float3> *p =
-                  reinterpret_cast<std::vector<float3> *>(value.value());
-              staticstruct::Handler<std::vector<float3>> _h(p);
-              return _h.write(&handler);
-            } else {
-              std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
-                        << "\n";
-              return false;
+            void *v = value.value();
+
+            switch (user_type_id) {
+              CONVERT_TYPE_SCALAR(bool, v)
+
+              CONVERT_TYPE_LIST(CONVERT_TYPE_SCALAR)
+              CONVERT_TYPE_LIST(CONVERT_TYPE_1D)
+              CONVERT_TYPE_LIST(CONVERT_TYPE_2D)
+
+              default: {
+                std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
+                          << "\n";
+                return false;
+              }
             }
           } else {
             std::cerr << "type: " << amap.attribs[key].type_name() << "(a.k.a "
@@ -1192,6 +1752,11 @@ class Register {
 
     return ret;
   }
+
+#undef CONVERT_TYPE_SCALAR
+#undef CONVERT_TYPE_1D
+#undef CONVERT_TYPE_2D
+#undef CONVERT_TYPE_LIST
 
   std::string get_error() const { return err_; }
 
