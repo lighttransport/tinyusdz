@@ -290,10 +290,10 @@ endif()
 
 if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
   if(TINYUSDZ_BUILD_SHARED_LIBS)
+    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "PXR_DYNAMIC")
     target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
   endif()
 
-  target_compile_definitions(${TINYUSDZ_TARGET_STATIC} PRIVATE "PXR_STATIC")
 endif()
 
 #
@@ -377,11 +377,11 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 endif()
 
 if(TINYUSDZ_WITH_USDA_PARSER)
-  add_executable(usda-parser
+  add_executable(usda_parser
                  ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
-  add_sanitizers(usda-parser)
-  target_include_directories(usda-parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
-  target_link_libraries(usda-parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  add_sanitizers(usda_parser)
+  target_include_directories(usda_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
+  target_link_libraries(usda_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif()
 
 if(TINYUSDZ_WITH_BLENDER_ADDON)
@@ -433,7 +433,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(
       NAME usda-parser-unit-test
       COMMAND python ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
-              "$<TARGET_FILE:usda-parser>" --basedir "${PROJECT_SOURCE_DIR}")
+              "$<TARGET_FILE:usda_parser>" --basedir "${PROJECT_SOURCE_DIR}")
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)
