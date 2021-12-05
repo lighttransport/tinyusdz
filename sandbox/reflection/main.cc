@@ -4,7 +4,7 @@
 struct Node {
     std::string key;
     int value;
-    float fval;
+    double fval;
     std::vector<Node> children;
 
     REFLECT()       // Enable reflection for this type
