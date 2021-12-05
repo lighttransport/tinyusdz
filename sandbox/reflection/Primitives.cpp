@@ -56,4 +56,20 @@ TypeDescriptor* getPrimitiveDescriptor<std::string>() {
     return &typeDesc;
 }
 
+#define REGISTER_TYPE_DESCRIPTOR(suffix, type) \
+struct TypeDescriptor_##suffix : TypeDescriptor { \
+    TypeDescriptor_##suffix() : TypeDescriptor{#type, sizeof(type)} { \
+    } \
+    virtual void dump(const void* obj, int /* unused */) const override {\
+        std::cout << #type "{\"" << *(const type*) obj << "\"}"; \
+    } \
+}; \
+template <> \
+TypeDescriptor* getPrimitiveDescriptor<type>() { \
+    static TypeDescriptor_##suffix typeDesc; \
+    return &typeDesc; \
+}
+
+REGISTER_TYPE_DESCRIPTOR(Double, double);
+
 } // namespace reflect
