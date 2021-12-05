@@ -9,12 +9,13 @@
 ## Status
 
 TinyUSDZ is currently in work-in-progress. It does not compile and run.
+I'm rewritting TinyUSDZ to support more USD features including Composition Args.
 
 * [x] USDC data parse
 * [ ] USDA parse
   * Initial USDA parser starting to work(see `sandbox/usda/`)
-  * Support Blender-exported USDA support in 2021 Summer planned.
-* [ ] Reconstuct primitive and scene graph representaion(2021 Summer expected)
+  * Support Blender-exported USDA support in 2022 Spring planned.
+* [ ] Reconstuct primitive and scene graph representaion(2022 Spring expected)
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
   * [ ] GeomPoints(for particles)
@@ -28,8 +29,8 @@ TinyUSDZ is currently in work-in-progress. It does not compile and run.
   * [ ] payloads(delayed load)
   * [ ] variants
   * [ ] specializers
-* [ ] Write simple SDL viewer example(2021 Summer expected)
-* [ ] Character animation(usdSkel) support(2021 Winter expected)
+* [ ] Write simple SDL viewer example(2022 Spring expected)
+* [ ] Character animation(usdSkel, blendshapes, animations) support(2022 Summer expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] Viewer with Metal ray tracing API?
 * [ ] Polygon triangulation using mapxbo/earcut.hpp
