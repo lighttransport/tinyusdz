@@ -1,12 +1,18 @@
-CC=clang
-CXX=clang++
+CC=gcc
+CXX=g++
 INCFLAGS=-I. -I../../src/external/ryu -I../../src
 
 # only applied to usda-parser.cc
-EXTRA_COMPILER_FLAGS=-Weverything -Werror -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-unused-function -Wno-unused-member-function
-CXXFLAGS=-std=c++14 -fsanitize=address -g -O0 -DUSDA_MAIN -DTINYUSDZ_USE_USDOBJ
-CFLAGS=-fsanitize=address -g -O0
-LDFLAGS=-fsanitize=address
+#EXTRA_COMPILER_FLAGS=-Weverything -Werror -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-unused-function -Wno-unused-member-function
+
+CXXFLAGS=-fPIC -std=c++14 -O0 -DTINYUSDZ_USE_USDOBJ
+CFLAGS=-fPIC -O0
+LDFLAGS=-fuse-ld=lld
+
+# ASAN
+#CXXFLAGS+=-fsanitize=address -g
+#CFLAGS+=-fsanitize=address -g 
+#LDFLAGS+=-fsanitize=address
 
 # On some macOS
 #EXTRA_COMPILER_FLAGS+=-Wno-poison-system-directories
@@ -32,10 +38,13 @@ t: usda-parser
 	#./usda-parser tests/simple-blender-exported.usda
 	#./usda-parser tests/test.usda
 
-usda-parser: usda-parser.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o prim-types.o usdObj.o io-util.o
+usda-parser: usda-parser.o prim-types.o d2s.o f2s.o s2f.o s2d.o simple-serialize.o usdObj.o io-util.o pprinter.o parser-main.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 	
 usda-parser.o: ../../src/usda-parser.cc ../../src/simple-serialize.hh ../../src/prim-types.hh 
+	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
+
+parser-main.o: parser-main.cc
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
 
 prim-types.o: ../../src/prim-types.cc ../../src/prim-types.hh
@@ -44,8 +53,12 @@ prim-types.o: ../../src/prim-types.cc ../../src/prim-types.hh
 simple-serialize.o: ../../src/simple-serialize.cc ../../src/simple-serialize.hh
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
 
-usdObj.o: ../../src/usdObj.cc ../../src/usdObj.hh
+pprinter.o: ../../src/pprinter.cc ../../src/pprinter.hh
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
+
+# Define TINYOBJ_IMPLEMENTATION
+usdObj.o: ../../src/usdObj.cc ../../src/usdObj.hh
+	$(CXX) $(INCFLAGS) $(CXXFLAGS) -DTINYOBJLOADER_IMPLEMENTATION $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
 
 io-util.o: ../../src/io-util.cc ../../src/io-util.hh
 	$(CXX) $(INCFLAGS) $(CXXFLAGS) $(EXTRA_COMPILER_FLAGS) -c -o $@ $<
@@ -66,5 +79,5 @@ s2d.o: ../../src/external/ryu/ryu/s2d.c
 #	$(CXX) $(INCFLAGS) $(CXXFLAGS) -c -o $@ $<
 
 clean:
-	@rm -rf usda-parser usda-parser.o d2s.o f2s.o s2d.o s2f.o simple-serialize.o prim-types.o usdObj.o io-util.o
+	@rm -rf usda-parser usda-parser.o d2s.o f2s.o s2d.o s2f.o simple-serialize.o prim-types.o usdObj.o io-util.o pprinter.o parser-main.o
 
