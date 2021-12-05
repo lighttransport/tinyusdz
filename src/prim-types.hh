@@ -577,7 +577,6 @@ struct Extent {
 };
 
 
-
 ///
 /// Simple type-erased primitive value class for frequently used data types(e.g.
 /// `float[]`)
@@ -965,17 +964,29 @@ inline std::vector<Vec3f> to_vec3(const std::vector<float> &v) {
   return buf;
 }
 
-template<typename T>
-inline std::string type_name(const std::vector<T> &) {
-  return TypeTrait<T>::type_name + std::string("[]");
-}
+//template<typename T>
+//inline std::string type_name(const std::vector<T> &) {
+//  return TypeTrait<T>::type_name + std::string("[]");
+//}
 
-std::string type_name(const PrimVar &v);
-std::string type_name(const PrimArrayType &v);
-std::string type_name(const PrimBasicType &v);
-std::string type_name(const TimeSampleType &v);
+//std::string type_name(const PrimBasicType &v);
+//std::string type_name(const TimeSampleType &v);
 
 } // namespace primvar
+
+std::string prim_basic_type_name(const PrimBasicType &v);
+
+inline std::string get_type_name(const PrimVar &v) {
+  if (auto p = nonstd::get_if<None>(&v)) {
+    return "None";
+  }
+
+  if (auto p = nonstd::get_if<PrimBasicType>(&v)) {
+    return prim_basic_type_name(*p);
+  }
+  return "TODO";
+}
+
 
 struct ConnectionPath {
   bool input{false};  // true: Input connection. false: Ouput connection.
