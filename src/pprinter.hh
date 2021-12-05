@@ -112,8 +112,6 @@ std::string to_string(const GeomCone &geom, const uint32_t indent = 0);
 std::string to_string(const GeomCylinder &geom, const uint32_t indent = 0);
 std::string to_string(const GeomCube &geom, const uint32_t indent = 0);
 
-std::string type_name(const TimeSampleType &v);
-
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t );
 
 } // namespace tinyusdz

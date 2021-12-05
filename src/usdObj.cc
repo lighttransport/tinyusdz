@@ -117,7 +117,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
       for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
         size_t num_v = shape.mesh.num_face_vertices[f];
 
-        vertexCounts.push_back(uint32_t(num_v));
+        vertexCounts.push_back(int32_t(num_v));
 
         if (num_v < 3) {
           if (err) {
@@ -129,7 +129,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
         size_t num_fvn = 0;
         for (size_t v = 0; v < num_v; v++) {
           tinyobj::index_t idx = shape.mesh.indices[index_offset + v];
-          vertexIndices.push_back(uint32_t(idx.vertex_index));
+          vertexIndices.push_back(int32_t(idx.vertex_index));
 
           if (idx.normal_index > -1) {
             Vec3f normal;

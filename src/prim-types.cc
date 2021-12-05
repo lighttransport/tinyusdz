@@ -1,9 +1,10 @@
 #include "prim-types.hh"
-#include "pprinter.hh"
+//#include "pprinter.hh"
 
 #include <limits>
 
 namespace tinyusdz {
+
 namespace {
 
 // https://www.realtime.bc.ca/articles/endian-safe.html
@@ -260,24 +261,10 @@ typename overload_set<Fs...>::type overloaded(Fs... x)
     return overload_set<Fs...>(x...);
 }
 
-namespace primvar {
+std::string prim_basic_type_name(const PrimBasicType &v) {
 
-std::string type_name(const TimeSampleType &v) {
-
-  std::string ty =  nonstd::visit(overloaded (
-            [](auto) { return "[[TODO: TypeSampleType. ]]"; },
-            [](TimeSampledDataDouble) { return "double"; },
-            [](TimeSampledDataDouble3) { return "double3"; },
-            [](TimeSampledDataFloat) { return "float"; },
-            [](TimeSampledDataFloat3) { return "float"; },
-            [](TimeSampledDataMatrix4d) { return "matrix4d"; }
-  ), v);
-
-  return ty;
-}
-
-std::string type_name(const PrimBasicType &v) {
-
+  (void)v;
+#if 0
   std::string ty =  nonstd::visit(overloaded (
             [](auto) { return "[[TODO: PrimBasicType. ]]"; },
             [](std::string) { return "string"; },
@@ -294,9 +281,30 @@ std::string type_name(const PrimBasicType &v) {
   ), v);
 
   return ty;
+#endif
+  return "TODO";
 }
 
-std::string type_name(const PrimArrayType &v) {
+namespace primvar {
+
+
+#if 0 // FIXME
+std::string type_name(const TimeSampleType &v) {
+
+  std::string ty =  nonstd::visit(overloaded (
+            [](auto) { return "[[TODO: TypeSampleType. ]]"; },
+            [](TimeSampledDataDouble) { return "double"; },
+            [](TimeSampledDataDouble3) { return "double3"; },
+            [](TimeSampledDataFloat) { return "float"; },
+            [](TimeSampledDataFloat3) { return "float"; },
+            [](TimeSampledDataMatrix4d) { return "matrix4d"; }
+  ), v);
+
+  return ty;
+}
+
+
+static std::string get_type_name(const PrimArrayType &v) {
 
   std::string ty =  nonstd::visit(overloaded (
             [](auto) { return "[[TODO: PrimAarrayType. ]]"; },
@@ -315,23 +323,29 @@ std::string type_name(const PrimArrayType &v) {
 
   return ty;
 }
+#endif
 
-std::string type_name(const PrimVar &v) {
-  if (auto p = nonstd::get_if<None>(&v)) {
-    return "None";
-  }
-  if (auto p = nonstd::get_if<PrimBasicType>(&v)) {
-    return type_name(*p);
-  }
-  if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
-    return type_name(*p);
-  }
-  if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
-    return type_name(*p);
-  }
+#if 0
+std::string get_type_name(const PrimVar &v) {
+  (void)v;
+
+  //if (auto p = nonstd::get_if<None>(&v)) {
+  //  return "None";
+  //}
+
+  //if (auto p = nonstd::get_if<PrimBasicType>(&v)) {
+  //  return type_name(*p);
+  //}
+  //if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
+  //  return type_name(*p);
+  //}
+  //if (auto p = nonstd::get_if<TimeSampleType>(&v)) {
+  //  return type_name(*p);
+  //}
 
   return "[[Invalid PrimVar type]]";
 }
+#endif
 
 } // namespace primvar
 
