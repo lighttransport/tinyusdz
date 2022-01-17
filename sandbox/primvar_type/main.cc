@@ -114,11 +114,17 @@ enum TypeId {
   TYPE_ID_TEXCOORD3F,
   TYPE_ID_TEXCOORD3D,
 
+  TYPE_ID_TIMECODE,
   TYPE_ID_TIMESAMPLE,
 
   TYPE_ID_DICT,
 
   TYPE_ID_ALL  // terminator
+};
+
+struct timecode
+{
+  double value;
 };
 
 using half = uint16_t;
@@ -427,6 +433,7 @@ DEFINE_TYPE_TRAIT(double2, "double2", TYPE_ID_DOUBLE2, 2);
 DEFINE_TYPE_TRAIT(double3, "double3", TYPE_ID_DOUBLE3, 3);
 DEFINE_TYPE_TRAIT(double4, "double4", TYPE_ID_DOUBLE4, 4);
 
+
 DEFINE_TYPE_TRAIT(quath, "quath", TYPE_ID_QUATH, 1);
 DEFINE_TYPE_TRAIT(quatf, "quatf", TYPE_ID_QUATF, 1);
 DEFINE_TYPE_TRAIT(quatd, "quatd", TYPE_ID_QUATD, 1);
@@ -434,6 +441,8 @@ DEFINE_TYPE_TRAIT(quatd, "quatd", TYPE_ID_QUATD, 1);
 DEFINE_TYPE_TRAIT(matrix2d, "matrix2d", TYPE_ID_MATRIX2D, 1);
 DEFINE_TYPE_TRAIT(matrix3d, "matrix3d", TYPE_ID_MATRIX3D, 1);
 DEFINE_TYPE_TRAIT(matrix4d, "matrix4d", TYPE_ID_MATRIX4D, 1);
+
+DEFINE_TYPE_TRAIT(timecode, "timecode", TYPE_ID_TIMECODE, 1);
 
 //
 // Role types
@@ -682,6 +691,65 @@ struct any_value {
 struct TimeSample {
   std::vector<double> times;
   std::vector<any_value> values;
+};
+
+// simple linear interpolator
+template<typename T>
+struct LinearInterpolator
+{
+  static T interpolate(const T *values, const size_t n, const double _t) {
+    if (n == 0) {
+      return static_cast<T>(0);
+    } else if (n == 1) {
+      return values[0];
+    }
+
+    // [0.0, 1.0]
+    double t = std::fmin(0.0, std::fmax(_t, 1.0));
+
+    size_t idx0 = std::max(n-1, size_t(t * double(n)));
+    size_t idx1 = std::max(n-1, idx0+1);
+
+    return (1.0 - t) * values[idx0] + t * values[idx1];
+  } 
+};
+
+// Explicitly typed version of `TimeSample`
+template<typename T>
+struct AnimatableValue
+{
+  std::vector<double> times; // Assume sorted
+  std::vector<T> values;
+
+  bool is_scalar() const {
+    return (times.size() == 0) && (values.size() == 1);
+  }
+
+  bool is_timesample() const {
+    return (times.size() > 0) && (times.size() == values.size());
+  }
+
+  template<class Interpolator>
+  T Get(double time = 0.0) {
+    std::vector<double>::iterator it = std::lower_bound(times.begin(), times.end(), time);
+
+    size_t idx0, idx1;
+    if (it != times.end()) {
+      idx0 = std::distance(times.begin(), it);
+      idx1 = std::min(idx0 + 1, times.size() - 1);
+    } else {
+      idx0 = idx1 = times.size() - 1;
+    }
+    double slope = times[idx1] - times[idx0];
+    if (slope < std::numeric_limits<double>::epsilon()) {
+      slope = 1.0;
+    }
+
+    const double t = (times[idx1] - time) / slope;
+
+    T val = Interpolator::interpolate(values.data(), values.size(), t);
+    return val;
+  }
 };
 
 struct PrimVar {
