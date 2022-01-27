@@ -12,6 +12,7 @@ set(TINYUSDZ_SOURCES
 
 if (TINYUSDZ_USE_USDOBJ)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/../../../../../src/usdObj.cc)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/../../../../../src/external/tiny_obj_loader.cc)
 endif()
 
 
@@ -19,6 +20,7 @@ set(TINYUSDZ_DEP_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/integerCoding.cpp
         ${PROJECT_SOURCE_DIR}/../../../../../src/lz4-compression.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/pxrLZ4/lz4.cpp
+        ${PROJECT_SOURCE_DIR}/../../../../../src/external/fpng.cpp
         ${PROJECT_SOURCE_DIR}/../../../../../src/external/ryu/ryu/s2d.c
         ${PROJECT_SOURCE_DIR}/../../../../../src/external/ryu/ryu/s2f.c
         )
