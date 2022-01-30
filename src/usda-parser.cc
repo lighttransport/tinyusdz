@@ -4918,7 +4918,6 @@ class USDAParser::Impl {
       }
       var.value = value;
     } else if (vartype == "ref[]") {
-      std::string value;
       std::cout << "read ref[]\n";
       std::vector<AssetReference> values;
       if (!ParseAssetReferenceArray(&values)) {
@@ -6368,13 +6367,13 @@ bool USDAParser::Impl::ReconstructXform(
 
     // TODO: Support multiple namespace?
     std::string suffix;
-    if (s.find_last_of(":") != std::string::npos) {
-      suffix = s.substr(s.find_last_of(":") + 1);
+    if (s.find_last_of(':') != std::string::npos) {
+      suffix = s.substr(s.find_last_of(':') + 1);
     }
 
     std::string basename = s;
-    if (s.find_last_of(":") != std::string::npos) {
-      basename = s.substr(0, s.find_last_of(":"));
+    if (s.find_last_of(':') != std::string::npos) {
+      basename = s.substr(0, s.find_last_of(':'));
     }
 
     return std::make_tuple(basename, suffix, isTimeSampled);
@@ -7432,8 +7431,6 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<std::string> *value) {
 }
 
 bool USDAParser::Impl::ReadBasicType(bool *value) {
-  std::stringstream ss;
-
   std::cout << "ReadBool\n";
 
   // '0' or '1'
