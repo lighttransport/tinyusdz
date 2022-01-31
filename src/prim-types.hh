@@ -302,12 +302,12 @@ class TokenizedPath {
 
     s.erase(0, 1);
 
-    std::string delimiter = "/";
+    char delimiter = '/';
     size_t pos{0};
     while ((pos = s.find(delimiter)) != std::string::npos) {
       std::string token = s.substr(0, pos);
       _tokens.push_back(token);
-      s.erase(0, pos + delimiter.length());
+      s.erase(0, pos + sizeof(char));
     }
 
     if (!s.empty()) {
@@ -549,7 +549,7 @@ struct Extent {
                -std::numeric_limits<float>::infinity(),
                -std::numeric_limits<float>::infinity()}};
 
-  Extent() {}
+  Extent() = default;
 
   Extent(const Vec3f &l, const Vec3f &u) : lower(l), upper(u) {}
 
