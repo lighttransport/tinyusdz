@@ -64,7 +64,7 @@ struct ControlQuadMesh {
 ///
 struct Vertex {
   // Minimal required interface ----------------------
-  Vertex() {}
+  Vertex() = default;
 
   Vertex(Vertex const &src) {
     _position[0] = src._position[0];

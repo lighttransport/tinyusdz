@@ -17,6 +17,10 @@
 #include <assert.h>
 #include <string.h>
 
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 #ifdef _MSC_VER
 	#pragma warning (disable:4127) // conditional expression is constant
 #endif

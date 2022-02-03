@@ -2250,7 +2250,7 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
     }
   }
 
-  (*d) = dict;
+  (*d) = std::move(dict);
   return true;
 }
 
@@ -4992,7 +4992,7 @@ bool Parser::_ReconstructSceneRecursively(
                   "'\n";
           return false;
         }
-        scene->upAxis = v;
+        scene->upAxis = std::move(v);
       } else if (fv.first == "metersPerUnit") {
         if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) ||
             (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
@@ -5732,8 +5732,8 @@ bool LoadUSDCFromFile(const std::string &_filename, Scene *scene,
 namespace {
 
 static std::string GetFileExtension(const std::string &filename) {
-  if (filename.find_last_of(".") != std::string::npos)
-    return filename.substr(filename.find_last_of(".") + 1);
+  if (filename.find_last_of('.') != std::string::npos)
+    return filename.substr(filename.find_last_of('.') + 1);
   return "";
 }
 
