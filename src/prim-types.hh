@@ -1949,6 +1949,19 @@ struct Preliminary_Text
 
 };
 
+// Simple volume class.
+// Currently this is just an placeholder. Not implemented.
+struct Volume {
+  OpenVDBAsset vdb;
+}
+
+struct OpenVDBAsset {
+  std::string fieldDataType{"float"};
+  std::string fieldName{"density"};
+  std::string filePath; // asset
+}
+
+
 // Corresponds to USD's Scope.
 // `Scope` is uncommon in graphics community, so we use `Group`.
 // From USD doc: Scope is the simplest grouping primitive, and does not carry

@@ -564,6 +564,7 @@ struct Scene {
   std::vector<Material> materials;
   std::vector<PreviewSurface> shaders;  // TODO(syoyo): Support othre shaders
   std::vector<Group> groups;
+  std::vector<Volume> volumes;
 
   StringAndIdMap geom_meshes_map;  // Path <-> array index map
   StringAndIdMap materials_map;    // Path <-> array index map
