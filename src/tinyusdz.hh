@@ -103,7 +103,7 @@ class ListOp {
 
   bool HasDeletedItems() const { return deleted_items.size(); }
 
-  bool HasOrderedItems() const { return deleted_items.size(); }
+  bool HasOrderedItems() const { return ordered_items.size(); }
 
   const std::vector<T> &GetExplicitItems() const { return explicit_items; }
 

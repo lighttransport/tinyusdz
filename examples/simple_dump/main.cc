@@ -7,8 +7,8 @@
 #include "pprinter.hh"
 
 static std::string GetFileExtension(const std::string &filename) {
-  if (filename.find_last_of(".") != std::string::npos)
-    return filename.substr(filename.find_last_of(".") + 1);
+  if (filename.find_last_of('.') != std::string::npos)
+    return filename.substr(filename.find_last_of('.') + 1);
   return "";
 }
 
