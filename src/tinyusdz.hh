@@ -55,27 +55,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 #include "prim-types.hh"
+#include "image-types.hh"
+#include "texture-types.hh"
 
 namespace tinyusdz {
 
 constexpr int version_major = 0;
 constexpr int version_minor = 8;
 constexpr int version_micro = 0;
-
-// Simple image class.
-// No colorspace conversion will be applied when decoding image data(e.g. from
-// .jpg, .png).
-// TODO(syoyo): Add option to decode image into linear space.
-struct Image {
-  std::string uri;  // filename or uri;
-
-  int width{-1};     // -1 = invalid
-  int height{-1};    // -1 = invalid
-  int channels{-1};  // Image channels. 3=RGB, 4=RGBA. -1 = invalid
-  int bpp{-1};       // bits per pixel. 8=LDR, 16=HDR
-
-  std::vector<uint8_t> data;
-};
 
 template <typename T>
 class ListOp {
