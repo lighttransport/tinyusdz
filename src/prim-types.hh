@@ -1951,15 +1951,17 @@ struct Preliminary_Text
 
 // Simple volume class.
 // Currently this is just an placeholder. Not implemented.
-struct Volume {
-  OpenVDBAsset vdb;
-}
 
 struct OpenVDBAsset {
   std::string fieldDataType{"float"};
   std::string fieldName{"density"};
   std::string filePath; // asset
-}
+};
+
+struct Volume {
+  OpenVDBAsset vdb;
+};
+
 
 
 // Corresponds to USD's Scope.

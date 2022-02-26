@@ -66,11 +66,13 @@ struct Vertex {
   // Minimal required interface ----------------------
   Vertex() = default;
 
-  Vertex(Vertex const &src) {
+  Vertex(const Vertex &src) {
     _position[0] = src._position[0];
     _position[1] = src._position[1];
     _position[2] = src._position[2];
   }
+
+  Vertex &operator=(const Vertex &rhs) = default;
 
   void Clear(void * = nullptr) { _position[0] = _position[1] = _position[2] = 0.0f; }
 
