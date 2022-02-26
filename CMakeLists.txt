@@ -38,10 +38,15 @@ option(
   "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON"
   OFF)
 
+option(TINYUSDZ_USE_SYSTEM_ZLIB
+       "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
+
+# -- TIFF --
+option(TINYUSDZ_WITH_TIFF "Build with TIFF texture support" OFF)
+# ----------
+
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
-option(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB
-       "Use system's zlib instead of miniz for TinyEXR" OFF)
 # ---------
 
 # -- optional --
@@ -53,8 +58,10 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
-if(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB)
-  find_package(ZLIB REQUIRED)
+if (TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
+  if(TINYUSDZ_USE_SYSTEM_ZLIB)
+    find_package(ZLIB REQUIRED)
+  endif()
 endif()
 
 # Require strict C++14 mode(e.g. `-std=c++14`)
@@ -109,6 +116,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
+    ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc)
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -126,6 +134,11 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c)
 
+# Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
+set_source_files_properties(
+  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
+  PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
+
 if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
 endif()
@@ -142,25 +155,48 @@ set(TINYUSDZ_PYTHON_BINDING_SOURCES
 set(TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES
     ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc)
 
+if(TINYUSDZ_WITH_TIFF)
+  if(TINYUSDZ_USE_SYSTEM_ZLIB)
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/tiny_dng_loader.cc
+      PROPERTIES COMPILE_DEFINITIONS "TINY_DNG_LOADER_USE_SYSTEM_ZLIB=1")
+  else()
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/tiny_dng_loader.cc
+      PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+  endif()
+
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+endif(TINYUSDZ_WITH_TIFF)
+
 if(TINYUSDZ_WITH_EXR)
-  if(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB)
+  if(TINYUSDZ_USE_SYSTEM_ZLIB)
     set_source_files_properties(
       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
       PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
   else()
-    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
     set_source_files_properties(
       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
       PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+  endif()
+
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+endif(TINYUSDZ_WITH_EXR)
+
+if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
+
+  if(NOT TINYUSDZ_USE_SYSTEM_ZLIB)
+    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/miniz.c)
+
     # TODO: Set this only for clang, gcc
     set_source_files_properties(
       ${PROJECT_SOURCE_DIR}/src/external/miniz.c
       PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
   endif()
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
-endif(TINYUSDZ_WITH_EXR)
+endif ()
 
 if(TINYUSDZ_WITH_OPENSUBDIV)
 
@@ -264,11 +300,11 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
 
 endif(TINYUSDZ_WITH_OPENSUBDIV)
 
-if(TINYUSDZ_WITH_EXR)
-  if(TINYUSDZ_TINYEXR_USE_SYSTEM_ZLIB)
+if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
+  if(TINYUSDZ_USE_SYSTEM_ZLIB)
     list(APPEND ${TINYUSDZ_EXT_LIBRARIES} ZLIB::ZLIB)
   endif()
-endif(TINYUSDZ_WITH_EXR)
+endif()
 
 #
 # -- target
@@ -324,6 +360,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_BUILD_IOS")
   endif()
+
+  if(TINYUSDZ_WITH_TIFF)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_SUPPORT_TIFF")
+  endif(TINYUSDZ_WITH_TIFF)
 
   if(TINYUSDZ_WITH_EXR)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
