@@ -56,7 +56,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
       - name: Configure
-        run: .\vcsetup-2019.bat
+        run: .\vcsetup.bat
       - name: Build
         run: cmake --build build --config Release
 
