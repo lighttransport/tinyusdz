@@ -1,4 +1,5 @@
 #include <fstream>
+#include <algorithm>
 
 #ifdef _WIN32
 
@@ -292,6 +293,40 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
   }
 }
 
+bool IsUDIMPath(const std::string &path)
+{
+  return SplitUDIMPath(path, nullptr, nullptr);
+}
+
+bool SplitUDIMPath(const std::string &path, std::string *pre, std::string *post)
+{
+  std::string tag = "<UDIM>";
+
+  auto rs = std::search(path.begin(), path.end(), tag.begin(), tag.end());
+  if (rs == path.end()) {
+    return false;
+  }
+
+  auto re = std::find_end(path.begin(), path.end(), tag.begin(), tag.end());
+  if (re == path.end()) {
+    return false;
+  }
+
+  // No multiple tags. e.g. diffuse.<UDIM>.<UDIM>.png
+  if (rs != re) {
+    return false;
+  }
+
+  if (pre) {
+    (*pre) = std::string(path.begin(), rs);
+  }
+
+  if (post) {
+    (*post) = std::string(re, path.end());
+  }
+
+  return true;
+}
 
 } // namespace io
 } // namespace tinyusdz
