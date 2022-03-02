@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_map>
+
 #include "tinyusdz.hh"
 
 #include "nanort.h"
@@ -126,6 +128,28 @@ struct Texture {
   // NOTE: for single channel(e.g. R), [0] will be filled for the return value.
   std::array<float, 4> fetch(size_t face_id, float varyu, float varyv, Channel channel);
 
+};
+
+// https://graphics.pixar.com/usd/release/spec_usdpreviewsurface.html#texture-reader
+// https://learn.foundry.com/modo/901/content/help/pages/uving/udim_workflow.html
+// Up to 10 tiles for U direction.
+// Not sure there is an limitation for V direction. Anyway maximum tile id is 9999.
+
+static uint32_t GetUDIMTileId(uint32_t u, uint32_t v)
+{
+  uint32_t uu = std::max(1u, std::min(10u, u+1)); // clamp U dir.
+
+  return 1000 + v * 10 + uu;
+}
+
+
+struct UDIMTexture {
+  UVReader uv_reader;
+  std::unordered_map<uint32_t, int32_t> images; // key: udim tile_id, value: image_id
+
+  
+  // NOTE: for single channel(e.g. R), [0] will be filled for the return value.
+  std::array<float, 4> fetch(size_t face_id, float varyu, float varyv, Texture::Channel channel);
 };
 
 // base color(fallback color) or Texture
