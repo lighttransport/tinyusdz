@@ -47,7 +47,7 @@ set(GLFW_BUILD_TESTS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_INSTALL OFF CACHE INTERNAL "" FORCE)
 #option(GLFW_VULKAN_STATIC "Assume the Vulkan loader is linked with the application" OFF)
-add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.2" glfw-3.3.2 EXCLUDE_FROM_ALL)
+add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.6" glfw-3.3.6 EXCLUDE_FROM_ALL)
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
 
