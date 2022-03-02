@@ -29,5 +29,12 @@ std::string GetBaseDir(const std::string &filepath);
 std::string JoinPath(const std::string &dir, const std::string &filename);
 bool IsAbsPath(const std::string &filepath);
 
+bool IsUDIMPath(const std::string &filepath);
+
+//
+// diffuse.<UDIM>.png => "diffuse.", ".png"
+//
+bool SplitUDIMPath(const std::string &filepath, std::string *pre, std::string *post);
+
 } // namespace io
 } // namespace tinyusdz
