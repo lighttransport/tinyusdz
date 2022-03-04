@@ -349,5 +349,31 @@ std::string get_type_name(const PrimVar &v) {
 
 } // namespace primvar
 
+Interpolation InterpolationFromString(const std::string &v)
+{
+  if ("faceVarying" == v) {
+    return Interpolation::FaceVarying;
+  } else if ("constant" == v) {
+    return Interpolation::Constant;
+  } else if ("uniform" == v) {
+    return Interpolation::Uniform;
+  } else if ("vertex" == v) {
+    return Interpolation::Vertex;
+  } else if ("varying" == v) {
+    return Interpolation::Varying;
+  }
+  return Interpolation::Invalid;
+}
+
+Orientation OrientationFromString(const std::string &v) 
+{
+  if ("rightHanded" == v) {
+    return Orientation::RightHanded;
+  } else if ("leftHanded" == v) {
+    return Orientation::LeftHanded;
+  }
+  return Orientation::Invalid;
+}
+
 
 } // namespace tinyusdz

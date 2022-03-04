@@ -93,10 +93,18 @@ inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
 
 namespace tinyusdz {
 
-std::string to_string(tinyusdz::Visibility v);
-std::string to_string(tinyusdz::Orientation o);
-std::string to_string(tinyusdz::Extent e);
-std::string to_string(tinyusdz::Interpolation interp);
+std::string to_string(Visibility v);
+std::string to_string(Orientation o);
+std::string to_string(Extent e);
+std::string to_string(Interpolation interp);
+std::string to_string(Axis axis);
+std::string to_string(ListEditQual axis);
+std::string to_string(Specifier specifier);
+std::string to_string(SubdivisionScheme subd_scheme);
+std::string to_string(Purpose purpose);
+std::string to_string(Permission permission);
+std::string to_string(Variability variability);
+std::string to_string(SpecType spec_type);
 
 //
 

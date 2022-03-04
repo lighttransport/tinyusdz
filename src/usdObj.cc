@@ -207,8 +207,8 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     PrimAttrib normalsAttr;
-    normalsAttr.interpolation = InterpolationFaceVarying;
-    normalsAttr.variability = VariabilityVarying;
+    normalsAttr.interpolation = Interpolation::FaceVarying;
+    normalsAttr.variability = Variability::Varying;
     normalsAttr.type_name = "float3[]";
     normalsAttr.var = facevaryingNormals;
     prim->props["normals"] = normalsAttr;
@@ -216,8 +216,8 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     PrimAttrib texcoordsAttr;
-    texcoordsAttr.interpolation = InterpolationFaceVarying;
-    texcoordsAttr.variability = VariabilityVarying;
+    texcoordsAttr.interpolation = Interpolation::FaceVarying;
+    texcoordsAttr.variability = Variability::Varying;
     texcoordsAttr.type_name = "float2[]";
     texcoordsAttr.var = facevaryingTexcoords;
     prim->props["prmvars:uv"] = texcoordsAttr;

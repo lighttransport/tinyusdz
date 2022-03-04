@@ -51,6 +51,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "io-util.hh"
+#include "pprinter.hh"
 
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
 
@@ -534,7 +535,7 @@ class Value {
       uint32_t d = *reinterpret_cast<const uint32_t *>(data.data());
       return static_cast<Specifier>(d);
     }
-    return NumSpecifiers;  // invalid
+    return Specifier::Invalid;  // invalid
   }
 
   Variability GetVariability() const {
@@ -542,7 +543,7 @@ class Value {
       uint32_t d = *reinterpret_cast<const uint32_t *>(data.data());
       return static_cast<Variability>(d);
     }
-    return NumVariabilities;  // invalid
+    return Variability::Invalid;  // invalid
   }
 
   bool GetBool(bool *ret) const {
@@ -867,65 +868,37 @@ std::string GetValueTypeRepr(int32_t type_id) {
 }
 #endif
 
-std::string GetSpecTypeString(SpecType ty) {
-  if (SpecTypeUnknown == ty) {
-    return "SpecTypeUnknown";
-  } else if (SpecTypeAttribute == ty) {
-    return "SpecTypeAttribute";
-  } else if (SpecTypeConnection == ty) {
-    return "SpecTypeConection";
-  } else if (SpecTypeExpression == ty) {
-    return "SpecTypeExpression";
-  } else if (SpecTypeMapper == ty) {
-    return "SpecTypeMapper";
-  } else if (SpecTypeMapperArg == ty) {
-    return "SpecTypeMapperArg";
-  } else if (SpecTypePrim == ty) {
-    return "SpecTypePrim";
-  } else if (SpecTypePseudoRoot == ty) {
-    return "SpecTypePseudoRoot";
-  } else if (SpecTypeRelationship == ty) {
-    return "SpecTypeRelationship";
-  } else if (SpecTypeRelationshipTarget == ty) {
-    return "SpecTypeRelationshipTarget";
-  } else if (SpecTypeVariant == ty) {
-    return "SpecTypeVariant";
-  } else if (SpecTypeVariantSet == ty) {
-    return "SpecTypeVariantSet";
-  }
-  return "??? SpecType " + std::to_string(ty);
-}
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
 std::string GetSpecifierString(Specifier ty) {
-  if (SpecifierDef == ty) {
+  if (Specifier::Def == ty) {
     return "SpecifierDef";
-  } else if (SpecifierOver == ty) {
+  } else if (Specifier::Over == ty) {
     return "SpecifierOver";
-  } else if (SpecifierClass == ty) {
+  } else if (Specifier::Class == ty) {
     return "SpecifierClass";
   }
-  return "??? Specifier " + std::to_string(ty);
+  return "??? Specifier " + to_string(ty);
 }
 
 std::string GetPermissionString(Permission ty) {
-  if (PermissionPublic == ty) {
+  if (Permission::Public == ty) {
     return "PermissionPublic";
-  } else if (PermissionPrivate == ty) {
+  } else if (Permission::Private == ty) {
     return "PermissionPrivate";
   }
-  return "??? Permission " + std::to_string(ty);
+  return "??? Permission " + to_string(ty);
 }
 
 std::string GetVariabilityString(Variability ty) {
-  if (VariabilityVarying == ty) {
+  if (Variability::Varying == ty) {
     return "VariabilityVarying";
-  } else if (VariabilityUniform == ty) {
+  } else if (Variability::Uniform == ty) {
     return "VariabilityUniform";
-  } else if (VariabilityConfig == ty) {
+  } else if (Variability::Config == ty) {
     return "VariabilityConfig";
   }
-  return "??? Variability " + std::to_string(ty);
+  return "??? Variability " + to_string(ty);
 }
 #endif
 
@@ -1302,7 +1275,7 @@ class Parser {
     const Spec &spec = _specs[index.value];
 
     std::string path_str = GetPathString(spec.path_index);
-    std::string specty_str = GetSpecTypeString(spec.spec_type);
+    std::string specty_str = to_string(spec.spec_type);
 
     return "[Spec] path: " + path_str +
            ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
@@ -2293,7 +2266,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
                 << GetSpecifierString(static_cast<Specifier>(d)) << "\n";
 #endif
 
-      if (d >= NumSpecifiers) {
+      if (d >= static_cast<int>(Specifier::Invalid)) {
         _err += "Invalid value for Specifier\n";
         return false;
       }
@@ -2309,7 +2282,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
                 << GetPermissionString(static_cast<Permission>(d)) << "\n";
 #endif
 
-      if (d >= NumPermissions) {
+      if (d >= static_cast<int>(Permission::Invalid)) {
         _err += "Invalid value for Permission\n";
         return false;
       }
@@ -2325,7 +2298,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
                 << GetVariabilityString(static_cast<Variability>(d)) << "\n";
 #endif
 
-      if (d >= NumVariabilities) {
+      if (d >= static_cast<int>(Variability::Invalid)) {
         _err += "Invalid value for Variability\n";
         return false;
       }
@@ -3888,8 +3861,8 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
 
   bool has_connection{false};
 
-  Variability variability{VariabilityVarying};
-  Interpolation interpolation{InterpolationInvalid};
+  Variability variability{Variability::Varying};
+  Interpolation interpolation{Interpolation::Invalid};
 
   //
   // Parse properties
@@ -3934,17 +3907,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
       variability = fv.second.GetVariability();
     } else if ((fv.first == "interpolation") &&
                (fv.second.GetTypeName() == "Token")) {
-      if (fv.second.GetToken() == "faceVarying") {
-        interpolation = InterpolationFaceVarying;
-      } else if (fv.second.GetToken() == "constant") {
-        interpolation = InterpolationConstant;
-      } else if (fv.second.GetToken() == "uniform") {
-        interpolation = InterpolationUniform;
-      } else if (fv.second.GetToken() == "vertex") {
-        interpolation = InterpolationVertex;
-      } else if (fv.second.GetToken() == "varying") {
-        interpolation = InterpolationVarying;
-      }
+      interpolation = InterpolationFromString(fv.second.GetToken());
     }
   }
 
@@ -4517,13 +4480,13 @@ bool Parser::_ReconstructGeomMesh(
 #endif
           if (auto p = primvar::as_basic<std::string>(&attr.var)) {
             if (p->compare("none") == 0) {
-              mesh->subdivisionScheme = SubdivisionSchemeNone;
+              mesh->subdivisionScheme = SubdivisionScheme::None;
             } else if (p->compare("catmullClark") == 0) {
-              mesh->subdivisionScheme = SubdivisionSchemeCatmullClark;
+              mesh->subdivisionScheme = SubdivisionScheme::CatmullClark;
             } else if (p->compare("bilinear") == 0) {
-              mesh->subdivisionScheme = SubdivisionSchemeBilinear;
+              mesh->subdivisionScheme = SubdivisionScheme::Bilinear;
             } else if (p->compare("loop") == 0) {
-              mesh->subdivisionScheme = SubdivisionSchemeLoop;
+              mesh->subdivisionScheme = SubdivisionScheme::Loop;
             } else {
               _err += "Unknown subdivision scheme: " + (*p) + "\n";
               return false;
@@ -6088,7 +6051,7 @@ size_t GeomMesh::GetNumPoints() const {
 }
 
 bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
-  if (normals.variability != VariabilityVarying) {
+  if (normals.variability != Variability::Varying) {
     return false;
   }
 
@@ -6104,7 +6067,7 @@ bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
 }
 
 bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
-  if (st.variability != VariabilityVarying) {
+  if (st.variability != Variability::Varying) {
     return false;
   }
 

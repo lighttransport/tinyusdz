@@ -229,7 +229,7 @@ class Writer {
         ofs << Indent(level + 1)
             << "normal3f[] normals = " << PrintVec3fArray(normals);
 
-        if (mesh.normals.interpolation != InterpolationInvalid) {
+        if (mesh.normals.interpolation != Interpolation::Invalid) {
           ofs << Indent(level + 2) << "(\n";
           ofs << Indent(level + 3) << "interpolation = \"" << to_string(mesh.normals.interpolation) << "\"\n";
           ofs << Indent(level + 2) << ")\n";
