@@ -1349,12 +1349,12 @@ class USDAParser::Impl {
       return false;
     }
 
-    tinyusdz::ListEditQual qual{tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT};
+    tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
     if (!MaybeListEditQual(&qual)) {
       return false;
     }
 
-    std::cout << "list-edit qual: " << wise_enum::to_string(qual) << "\n";
+    std::cout << "list-edit qual: " << tinyusdz::to_string(qual) << "\n";
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
@@ -1521,7 +1521,7 @@ class USDAParser::Impl {
       }
 
       SLOG_INFO << "arg: list-edit qual = "
-                << wise_enum::to_string(std::get<0>(arg))
+                << tinyusdz::to_string(std::get<0>(arg))
                 << ", name = " << std::get<1>(arg).name;
 
       (*args)[std::get<1>(arg).name] = arg;
@@ -1591,18 +1591,18 @@ class USDAParser::Impl {
     }
 
     if (tok == "prepend") {
-      (*qual) = tinyusdz::LIST_EDIT_QUAL_PREPEND;
+      (*qual) = tinyusdz::ListEditQual::Prepend;
     } else if (tok == "append") {
-      (*qual) = tinyusdz::LIST_EDIT_QUAL_APPEND;
+      (*qual) = tinyusdz::ListEditQual::Append;
     } else if (tok == "add") {
-      (*qual) = tinyusdz::LIST_EDIT_QUAL_ADD;
+      (*qual) = tinyusdz::ListEditQual::Add;
     } else if (tok == "delete") {
-      (*qual) = tinyusdz::LIST_EDIT_QUAL_DELETE;
+      (*qual) = tinyusdz::ListEditQual::Delete;
     } else {
       // unqualified
       // rewind
       SeekTo(loc);
-      (*qual) = tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT;
+      (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
     }
 
     return true;
@@ -2106,9 +2106,7 @@ class USDAParser::Impl {
     if (meta.count("interpolation")) {
       auto p = meta.at("interpolation").cast<std::string>();
       if (p) {
-        if (auto v = wise_enum::from_string<Interpolation>(*p)) {
-          attr.interpolation = *v;
-        }
+        attr.interpolation = tinyusdz::InterpolationFromString(*p);
       }
     }
 
@@ -6317,7 +6315,7 @@ bool USDAParser::Impl::ReconstructGPrim(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
     }
   }
 
@@ -6335,7 +6333,7 @@ bool USDAParser::Impl::ReconstructGPrim(
   // Resolve append references
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
     }
   }
 
@@ -6383,7 +6381,7 @@ bool USDAParser::Impl::ReconstructXform(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
     }
   }
 
@@ -6510,7 +6508,7 @@ bool USDAParser::Impl::ReconstructXform(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
     }
   }
 
@@ -6525,13 +6523,13 @@ bool USDAParser::Impl::ReconstructGeomSphere(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
     LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
 
-    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
-        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
+        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6588,7 +6586,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6627,13 +6625,13 @@ bool USDAParser::Impl::ReconstructGeomCone(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
     LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
 
-    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
-        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
+        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6702,7 +6700,7 @@ bool USDAParser::Impl::ReconstructGeomCone(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6746,13 +6744,13 @@ bool USDAParser::Impl::ReconstructGeomCube(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
     LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
 
-    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
-        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
+        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6809,7 +6807,7 @@ bool USDAParser::Impl::ReconstructGeomCube(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6848,13 +6846,13 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
     LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
 
-    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
-        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
+        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6884,11 +6882,11 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
               if (auto p = primvar::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
-                  capsule->axis = AXIS_X;
+                  capsule->axis = Axis::X;
                 } else if (p->value == "y") {
-                  capsule->axis = AXIS_Y;
+                  capsule->axis = Axis::Y;
                 } else if (p->value == "z") {
-                  capsule->axis = AXIS_Z;
+                  capsule->axis = Axis::Z;
                 } else {
                   LOG_WARN("Invalid axis token: " + p->value);
                 }
@@ -6926,11 +6924,11 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
       } else if (prop.first == "axis") {
         if (auto p = primvar::as_basic<Token>(&attr->var)) {
           if (p->value == "x") {
-            capsule->axis = AXIS_X;
+            capsule->axis = Axis::X;
           } else if (p->value == "y") {
-            capsule->axis = AXIS_Y;
+            capsule->axis = Axis::Y;
           } else if (p->value == "z") {
-            capsule->axis = AXIS_Z;
+            capsule->axis = Axis::Z;
           }
         } else {
           _PushError("`axis` must be token type.");
@@ -6949,7 +6947,7 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -6979,11 +6977,11 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
               if (auto p = primvar::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
-                  capsule->axis = AXIS_X;
+                  capsule->axis = Axis::X;
                 } else if (p->value == "y") {
-                  capsule->axis = AXIS_Y;
+                  capsule->axis = Axis::Y;
                 } else if (p->value == "z") {
-                  capsule->axis = AXIS_Z;
+                  capsule->axis = Axis::Z;
                 } else {
                   LOG_WARN("Invalid axis token: " + p->value);
                 }
@@ -7006,13 +7004,13 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
     LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
 
-    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
-        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
+        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -7042,11 +7040,11 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
               if (auto p = primvar::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
-                  cylinder->axis = AXIS_X;
+                  cylinder->axis = Axis::X;
                 } else if (p->value == "y") {
-                  cylinder->axis = AXIS_Y;
+                  cylinder->axis = Axis::Y;
                 } else if (p->value == "z") {
-                  cylinder->axis = AXIS_Z;
+                  cylinder->axis = Axis::Z;
                 } else {
                   LOG_WARN("Invalid axis token: " + p->value);
                 }
@@ -7084,11 +7082,11 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
       } else if (prop.first == "axis") {
         if (auto p = primvar::as_basic<Token>(&attr->var)) {
           if (p->value == "x") {
-            cylinder->axis = AXIS_X;
+            cylinder->axis = Axis::X;
           } else if (p->value == "y") {
-            cylinder->axis = AXIS_Y;
+            cylinder->axis = Axis::Y;
           } else if (p->value == "z") {
-            cylinder->axis = AXIS_Z;
+            cylinder->axis = Axis::Z;
           }
         } else {
           _PushError("`axis` must be token type.");
@@ -7107,7 +7105,7 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       std::string filepath = asset_ref.asset_reference;
@@ -7137,11 +7135,11 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
               if (auto p = primvar::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
-                  cylinder->axis = AXIS_X;
+                  cylinder->axis = Axis::X;
                 } else if (p->value == "y") {
-                  cylinder->axis = AXIS_Y;
+                  cylinder->axis = Axis::Y;
                 } else if (p->value == "z") {
-                  cylinder->axis = AXIS_Z;
+                  cylinder->axis = Axis::Z;
                 } else {
                   LOG_WARN("Invalid axis token: " + p->value);
                 }
@@ -7166,13 +7164,13 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   std::cout << "# of references = " << references.size() << "\n";
 
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << wise_enum::to_string(std::get<0>(ref))
+    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
     LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
 
-    if ((std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_RESET_TO_EXPLICIT) ||
-        (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_PREPEND)) {
+    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
+        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
       const AssetReference &asset_ref = std::get<1>(ref);
 
       if (endsWith(asset_ref.asset_reference, ".obj")) {
@@ -7248,7 +7246,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   // (Overwrite variables with the referenced one).
   //
   for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::LIST_EDIT_QUAL_APPEND) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
     }
   }
 

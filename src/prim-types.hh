@@ -30,100 +30,102 @@
 
 using namespace nonstd::literals; // _sv
 
-// Cannot use std::string as WISE_ENUM_STRING_TYPE so use nonstd::string_view
-#define WISE_ENUM_STRING_TYPE nonstd::string_view
-#include "wise_enum/wise_enum.h"
-
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
 namespace tinyusdz {
 
-WISE_ENUM(SpecType,
-  SpecTypeUnknown,
-  SpecTypeAttribute,
-  SpecTypeConnection,
-  SpecTypeExpression,
-  SpecTypeMapper,
-  SpecTypeMapperArg,
-  SpecTypePrim,
-  SpecTypePseudoRoot,
-  SpecTypeRelationship,
-  SpecTypeRelationshipTarget,
-  SpecTypeVariant,
-  SpecTypeVariantSet,
-  NumSpecTypes
-)
+enum class SpecType {
+  Unknown,
+  Attribute,
+  Connection,
+  Expression,
+  Mapper,
+  MapperArg,
+  Prim,
+  PseudoRoot,
+  Relationship,
+  RelationshipTarget,
+  Variant,
+  VariantSet,
+  Invalid,
+};
 
-WISE_ENUM(Orientation,
-  OrientationRightHanded,  // 0
-  OrientationLeftHanded
-)
+enum class Orientation {
+  RightHanded,  // 0
+  LeftHanded,
+  Invalid
+};
 
-WISE_ENUM(Visibility,
-  VisibilityInherited,  // 0
-  VisibilityInvisible
-)
+enum class Visibility {
+  Inherited,  // 0
+  Invisible,
+  Invalid
+};
 
-WISE_ENUM(Purpose,
-  PurposeDefault,  // 0
-  PurposeRender,
-  PurposeProxy,
-  PurposeGuide
-)
+enum class Purpose {
+  Default,  // 0
+  Render,
+  Proxy,
+  Guide,
+  Invalid
+};
 
-WISE_ENUM(SubdivisionScheme,
-  SubdivisionSchemeCatmullClark,  // 0
-  SubdivisionSchemeLoop,
-  SubdivisionSchemeBilinear,
-  SubdivisionSchemeNone
-)
+enum class SubdivisionScheme {
+  CatmullClark,  // 0
+  Loop,
+  Bilinear,
+  None,
+  Invalid
+};
 
 // Attribute interpolation
-WISE_ENUM(Interpolation,
-  InterpolationInvalid, // 0
-  InterpolationConstant, // "constant"
-  InterpolationUniform, // "uniform"
-  InterpolationVarying, // "varying"
-  InterpolationVertex, // "vertex"
-  InterpolationFaceVarying // "faceVarying"
-)
+enum class Interpolation {
+  Constant, // "constant"
+  Uniform, // "uniform"
+  Varying, // "varying"
+  Vertex, // "vertex"
+  FaceVarying, // "faceVarying"
+  Invalid
+};
 
-WISE_ENUM(ListEditQual,
-  LIST_EDIT_QUAL_RESET_TO_EXPLICIT,	// "unqualified"(no qualifier)
-  LIST_EDIT_QUAL_APPEND, // "append"
-  LIST_EDIT_QUAL_ADD, // "add"
-  LIST_EDIT_QUAL_DELETE, // "delete"
-  LIST_EDIT_QUAL_PREPEND // "prepend"
-)
+enum class ListEditQual {
+  ResetToExplicit,// "unqualified"(no qualifier)
+  Append, // "append"
+  Add, // "add"
+  Delete, // "delete"
+  Prepend, // "prepend"
+  Invalid
+};
 
-WISE_ENUM(Axis,
-  AXIS_X,
-  AXIS_Y,
-  AXIS_Z
-)
+enum class Axis {
+  X,
+  Y,
+  Z,
+  Invalid
+};
 
 // For PrimSpec
-WISE_ENUM(Specifier,
-  SpecifierDef,  // 0
-  SpecifierOver,
-  SpecifierClass,
-  NumSpecifiers
-)
+enum class Specifier {
+  Def,  // 0
+  Over,
+  Class,
+  Invalid
+};
 
-WISE_ENUM(Permission,
-  PermissionPublic,  // 0
-  PermissionPrivate,
-  NumPermissions
-)
+enum class Permission {
+  Public,  // 0
+  Private,
+  Invalid
+};
 
-WISE_ENUM(Variability,
-  VariabilityVarying,  // 0
-  VariabilityUniform,
-  VariabilityConfig,
-  NumVariabilities
-)
+enum class Variability {
+  Varying,  // 0
+  Uniform,
+  Config,
+  Invalid
+};
 
 struct AssetReference {
   std::string asset_reference;
@@ -1011,10 +1013,10 @@ struct PrimAttrib {
 
   std::string type_name;  // name of attrib type(e.g. "float', "color3f")
 
-  ListEditQual list_edit{LIST_EDIT_QUAL_RESET_TO_EXPLICIT};
+  ListEditQual list_edit{ListEditQual::ResetToExplicit};
 
   Variability variability;
-  Interpolation interpolation{InterpolationInvalid};
+  Interpolation interpolation{Interpolation::Invalid};
 
   //
   // Qualifiers
@@ -1242,9 +1244,9 @@ struct Xform {
 
   std::vector<XformOp> xformOps;
 
-  Orientation orientation{OrientationRightHanded};
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  Orientation orientation{Orientation::RightHanded};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   Xform() {
   }
@@ -1284,7 +1286,7 @@ struct UVCoords {
   std::string name;
   UVCoordType buffer;
 
-  Interpolation interpolation{InterpolationVertex};
+  Interpolation interpolation{Interpolation::Vertex};
   Variability variability;
 
   // non-empty when UV has its own indices.
@@ -1300,8 +1302,8 @@ struct GeomBoundable {
   // Properties
   //
   AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   MaterialBindingAPI materialBinding;
 
@@ -1320,15 +1322,15 @@ struct GeomCone {
   //
   AnimatableDouble height{2.0};
   AnimatableDouble radius{1.0};
-  Axis axis{AXIS_Z};
+  Axis axis{Axis::Z};
 
   AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1349,15 +1351,15 @@ struct GeomCapsule {
   //
   AnimatableDouble height{2.0};
   AnimatableDouble radius{0.5};
-  Axis axis{AXIS_Z};
+  Axis axis{Axis::Z};
 
   AnimatableExtent extent{Extent({-0.5, -0.5, -1.0}, {0.5, 0.5, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1379,14 +1381,14 @@ struct GeomCylinder {
   //
   AnimatableDouble height{2.0};
   AnimatableDouble radius{1.0};
-  Axis axis{AXIS_Z};
+  Axis axis{Axis::Z};
   AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1407,12 +1409,12 @@ struct GeomCube {
   //
   AnimatableDouble size{2.0};
   AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1437,12 +1439,12 @@ struct GeomSphere {
   // Properties
   //
   AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1484,12 +1486,12 @@ struct GeomBasisCurves {
   // Properties
   //
   AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1522,12 +1524,12 @@ struct GeomPoints {
   // Properties
   //
   AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1549,8 +1551,8 @@ struct BlendShape {
 
 struct SkelRoot {
   AnimatableExtent extent;
-  Purpose purpose{PurposeDefault};
-  AnimatableVisibility visibility{VisibilityInherited};
+  Purpose purpose{Purpose::Default};
+  AnimatableVisibility visibility{Visibility::Inherited};
 
   // TODO
   // std::vector<std::string> xformOpOrder;
@@ -1569,8 +1571,8 @@ struct Skelton {
   std::vector<Matrix4d> restTransforms;  // rest-pose transforms of each joint
                                          // in local coordinate.
 
-  Purpose purpose{PurposeDefault};
-  AnimatableVisibility visibility{VisibilityInherited};
+  Purpose purpose{Purpose::Default};
+  AnimatableVisibility visibility{Visibility::Inherited};
 
   // TODO
   // std::vector<std::string> xformOpOrder;
@@ -1613,9 +1615,9 @@ struct GPrim {
   // Gprim
   AnimatableExtent extent;  // bounding extent(in local coord?).
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  Orientation orientation{Orientation::RightHanded};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1675,12 +1677,12 @@ struct GeomMesh {
   //
   AnimatableExtent extent;  // bounding extent(in local coord?).
   std::string facevaryingLinearInterpolation = "cornerPlus1";
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
-  Orientation orientation{OrientationRightHanded};
+  Orientation orientation{Orientation::RightHanded};
   AnimatableVec3fArray displayColor; // primvars:displayColor
   AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
@@ -1697,7 +1699,7 @@ struct GeomMesh {
   std::vector<int32_t> holeIndices;
   std::string interpolateBoundary =
       "edgeAndCorner";  // "none", "edgeAndCorner" or "edgeOnly"
-  SubdivisionScheme subdivisionScheme;
+  SubdivisionScheme subdivisionScheme{SubdivisionScheme::CatmullClark};
 
   // List of Primitive attributes(primvars)
   std::map<std::string, PrimAttrib> attribs;
@@ -1973,8 +1975,8 @@ struct Group {
 
   int64_t parent_id{-1};
 
-  AnimatableVisibility visibility{VisibilityInherited};
-  Purpose purpose{PurposeDefault};
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
 };
 
 #if 0 // TODO: Remove
@@ -2537,5 +2539,8 @@ struct Value {
 
   nonstd::any value;
 };
+
+Interpolation InterpolationFromString(const std::string &v);
+
 
 }  // namespace tinyusdz

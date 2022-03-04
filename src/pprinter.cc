@@ -86,7 +86,7 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
     ss << Indent(indent) << "  uniform bool doubleSided = " << gprim.doubleSided << "\n";
   }
 
-  if (gprim.orientation != OrientationRightHanded) {
+  if (gprim.orientation != Orientation::RightHanded) {
     ss << Indent(indent) << "  uniform token orientation = " << to_string(gprim.orientation)
        << "\n";
   }
@@ -120,7 +120,7 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
 } // namespace
 
 std::string to_string(tinyusdz::Visibility v) {
-  if (v == tinyusdz::VisibilityInherited) {
+  if (v == tinyusdz::Visibility::Inherited) {
     return "\"inherited\"";
   } else {
     return "\"invisible\"";
@@ -128,31 +128,78 @@ std::string to_string(tinyusdz::Visibility v) {
 }
 
 std::string to_string(tinyusdz::Orientation o) {
-  if (o == tinyusdz::OrientationRightHanded) {
+  if (o == tinyusdz::Orientation::RightHanded) {
     return "\"rightHanded\"";
   } else {
     return "\"leftHanded\"";
   }
 }
 
+std::string to_string(tinyusdz::ListEditQual v) {
+  if (v == tinyusdz::ListEditQual::ResetToExplicit) {
+    return "\"unqualified\"";
+  } else if (v == tinyusdz::ListEditQual::Append) {
+    return "\"append\"";
+  } else if (v == tinyusdz::ListEditQual::Add) {
+    return "\"add\"";
+  } else if (v == tinyusdz::ListEditQual::Append) {
+    return "\"append\"";
+  } else if (v == tinyusdz::ListEditQual::Delete) {
+    return "\"delete\"";
+  } else if (v == tinyusdz::ListEditQual::Prepend) {
+    return "\"prepend\"";
+  } 
+
+  return "\"[[Invalid ListEditQual value]]\"";
+}
+
 std::string to_string(tinyusdz::Interpolation interp) {
   switch (interp) {
-    case InterpolationInvalid:
+    case Interpolation::Invalid:
       return "[[Invalid interpolation value]]";
-    case InterpolationConstant:
+    case Interpolation::Constant:
       return "constant";
-    case InterpolationUniform:
+    case Interpolation::Uniform:
       return "uniform";
-    case InterpolationVarying:
+    case Interpolation::Varying:
       return "varying";
-    case InterpolationVertex:
+    case Interpolation::Vertex:
       return "vertex";
-    case InterpolationFaceVarying:
+    case Interpolation::FaceVarying:
       return "faceVarying";
   }
 
   // Never reach here though
   return "[[Invalid interpolation value]]";
+}
+
+std::string to_string(tinyusdz::SpecType ty) {
+  if (SpecType::Unknown == ty) {
+    return "SpecTypeUnknown";
+  } else if (SpecType::Attribute == ty) {
+    return "SpecTypeAttribute";
+  } else if (SpecType::Connection == ty) {
+    return "SpecTypeConection";
+  } else if (SpecType::Expression == ty) {
+    return "SpecTypeExpression";
+  } else if (SpecType::Mapper == ty) {
+    return "SpecTypeMapper";
+  } else if (SpecType::MapperArg == ty) {
+    return "SpecTypeMapperArg";
+  } else if (SpecType::Prim == ty) {
+    return "SpecTypePrim";
+  } else if (SpecType::PseudoRoot == ty) {
+    return "SpecTypePseudoRoot";
+  } else if (SpecType::Relationship == ty) {
+    return "SpecTypeRelationship";
+  } else if (SpecType::RelationshipTarget == ty) {
+    return "SpecTypeRelationshipTarget";
+  } else if (SpecType::Variant == ty) {
+    return "SpecTypeVariant";
+  } else if (SpecType::VariantSet == ty) {
+    return "SpecTypeVariantSet";
+  }
+  return "SpecTypeInvalid";
 }
 
 
@@ -428,9 +475,9 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent) {
   ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
 
   std::string axis;
-  if (geom.axis == AXIS_X) {
+  if (geom.axis == Axis::X) {
     axis = "x";
-  } else if (geom.axis == AXIS_Y) {
+  } else if (geom.axis == Axis::Y) {
     axis = "y";
   } else {
     axis = "z";
@@ -459,9 +506,9 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent) {
   ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
 
   std::string axis;
-  if (geom.axis == AXIS_X) {
+  if (geom.axis == Axis::X) {
     axis = "x";
-  } else if (geom.axis == AXIS_Y) {
+  } else if (geom.axis == Axis::Y) {
     axis = "y";
   } else {
     axis = "z";
@@ -475,5 +522,6 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent) {
 
   return ss.str();
 }
+
 
 } // tinyusdz
