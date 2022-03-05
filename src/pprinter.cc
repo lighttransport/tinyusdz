@@ -174,9 +174,7 @@ std::string to_string(tinyusdz::Interpolation interp) {
 }
 
 std::string to_string(tinyusdz::SpecType ty) {
-  if (SpecType::Unknown == ty) {
-    return "SpecTypeUnknown";
-  } else if (SpecType::Attribute == ty) {
+  if (SpecType::Attribute == ty) {
     return "SpecTypeAttribute";
   } else if (SpecType::Connection == ty) {
     return "SpecTypeConection";

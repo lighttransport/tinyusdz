@@ -33,7 +33,6 @@
 namespace tinyusdz {
 
 enum class SpecType {
-  Unknown,
   Attribute,
   Connection,
   Expression,
