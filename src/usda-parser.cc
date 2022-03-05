@@ -32,6 +32,11 @@
 #pragma clang diagnostic pop
 #endif
 
+// Tentative
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#endif
+
 #include "io-util.hh"
 #include "str-util.hh"
 #include "math-util.inc"
@@ -2067,7 +2072,7 @@ class USDAParser::Impl {
         }
 
         // attr.buffer.Set(value);
-        attr.var = value;
+        //attr.var = value;
       }
 
     } else if (hasConnect(primattr_name)) {
@@ -2093,7 +2098,7 @@ class USDAParser::Impl {
         std::cout << TypeTrait<T>::type_name << " = None\n";
       }
 
-      attr.var = *value;
+      //attr.var = *value;
     }
 
     // optional: interpolation parameter
@@ -2338,7 +2343,7 @@ class USDAParser::Impl {
           return false;
         }
 
-        attr.var = m;
+        //attr.var = m;
       } else {
         PUSH_ERROR("TODO: type = " + type_name);
         return false;
@@ -6396,6 +6401,7 @@ bool USDAParser::Impl::ReconstructXform(
     // array of string
     auto prop = properties.at("xformOpOrder");
     if (auto attrib = nonstd::get_if<PrimAttrib>(&prop)) {
+#if 0
       if (auto parr = primvar::as_vector<std::string>(&attrib->var)) {
         for (const auto &item : *parr) {
           // remove double-quotation
@@ -6446,6 +6452,8 @@ bool USDAParser::Impl::ReconstructXform(
           }
         }
       }
+#endif
+      (void)Split;
     } else {
       _PushError("`xformOpOrder` must be an array of string type.");
       return false;
@@ -6519,6 +6527,8 @@ bool USDAParser::Impl::ReconstructGeomSphere(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomSphere *sphere) {
+  (void)sphere;
+
   //
   // Resolve prepend references
   //
@@ -6544,6 +6554,8 @@ bool USDAParser::Impl::ReconstructGeomSphere(
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
 
         for (const auto &prop : prim.props) {
+          (void)prop;
+#if 0
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
               if (auto p = primvar::as_basic<double>(&attr->var)) {
@@ -6552,6 +6564,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
               }
             }
           }
+#endif
         }
       }
     }
@@ -6559,20 +6572,20 @@ bool USDAParser::Impl::ReconstructGeomSphere(
 
   for (const auto &prop : properties) {
     if (prop.first == "material:binding") {
-      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
-        sphere->materialBinding.materialBinding = prel->path;
-      } else {
-        _PushError("`material:binding` must be 'rel' type.");
-        return false;
-      }
+      //if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+      //  sphere->materialBinding.materialBinding = prel->path;
+      //} else {
+      //  _PushError("`material:binding` must be 'rel' type.");
+      //  return false;
+      //}
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "radius") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
-          sphere->radius = *p;
-        } else {
-          _PushError("`radius` must be double type.");
-          return false;
-        }
+        //if (auto p = primvar::as_basic<double>(&attr->var)) {
+        //  sphere->radius = *p;
+        //} else {
+        //  _PushError("`radius` must be double type.");
+        //  return false;
+        //}
       } else {
         _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
@@ -6601,14 +6614,15 @@ bool USDAParser::Impl::ReconstructGeomSphere(
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
 
         for (const auto &prop : prim.props) {
-          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-            if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference radius = " << (*p) << "\n";
-                sphere->radius = *p;
-              }
-            }
-          }
+          (void)prop;
+          //if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+          //  if (prop.first == "radius") {
+          //    if (auto p = primvar::as_basic<double>(&attr->var)) {
+          //      SLOG_INFO << "append reference radius = " << (*p) << "\n";
+          //      sphere->radius = *p;
+          //    }
+          //  }
+          //}
         }
       }
     }
@@ -6621,6 +6635,8 @@ bool USDAParser::Impl::ReconstructGeomCone(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomCone *cone) {
+  (void)properties;
+  (void)cone;
   //
   // Resolve prepend references
   //
@@ -6646,6 +6662,8 @@ bool USDAParser::Impl::ReconstructGeomCone(
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
 
         for (const auto &prop : prim.props) {
+          (void)prop;
+#if 0
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
               if (auto p = primvar::as_basic<double>(&attr->var)) {
@@ -6659,11 +6677,13 @@ bool USDAParser::Impl::ReconstructGeomCone(
               }
             }
           }
+#endif
         }
       }
     }
   }
 
+#if 0
   for (const auto &prop : properties) {
     if (prop.first == "material:binding") {
       if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
@@ -6694,7 +6714,9 @@ bool USDAParser::Impl::ReconstructGeomCone(
       }
     }
   }
+#endif
 
+#if 0
   //
   // Resolve append references
   // (Overwrite variables with the referenced one).
@@ -6732,6 +6754,7 @@ bool USDAParser::Impl::ReconstructGeomCone(
       }
     }
   }
+#endif
 
   return true;
 }
@@ -6740,6 +6763,10 @@ bool USDAParser::Impl::ReconstructGeomCube(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomCube *cube) {
+
+  (void)properties;
+  (void)cube;
+#if 0
   //
   // Resolve prepend references
   //
@@ -6777,7 +6804,9 @@ bool USDAParser::Impl::ReconstructGeomCube(
       }
     }
   }
+#endif
 
+#if 0
   for (const auto &prop : properties) {
     if (prop.first == "material:binding") {
       if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
@@ -6801,7 +6830,9 @@ bool USDAParser::Impl::ReconstructGeomCube(
       }
     }
   }
+#endif
 
+#if 0
   //
   // Resolve append references
   // (Overwrite variables with the referenced one).
@@ -6834,6 +6865,7 @@ bool USDAParser::Impl::ReconstructGeomCube(
       }
     }
   }
+#endif
 
   return true;
 }
@@ -6868,6 +6900,7 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
 
         for (const auto &prop : prim.props) {
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+#if 0
             if (prop.first == "height") {
               if (auto p = primvar::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference height = " << (*p) << "\n";
@@ -6892,12 +6925,14 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
                 }
               }
             }
+#endif
           }
         }
       }
     }
   }
 
+#if 0
   for (const auto &prop : properties) {
     if (prop.first == "material:binding") {
       if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
@@ -6992,6 +7027,7 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
       }
     }
   }
+#endif
 
   return true;
 }
@@ -7000,6 +7036,7 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, AssetReference>> &references,
     GeomCylinder *cylinder) {
+#if 0
   //
   // Resolve prepend references
   //
@@ -7150,6 +7187,7 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
       }
     }
   }
+#endif
 
   return true;
 }
@@ -7205,11 +7243,11 @@ bool USDAParser::Impl::ReconstructGeomMesh(
           const Property &prop = gprim.props.at("points");
           if (auto pattr = nonstd::get_if<PrimAttrib>(&prop)) {
             // PrimVar
-            LOG_INFO("pattr:" + tinyusdz::get_type_name(pattr->var));
-            if (auto p = primvar::as_vector<Vec3f>(&pattr->var)) {
-              LOG_INFO("points. sz = " + std::to_string(p->size()));
-              mesh->points = (*p);
-            }
+            //LOG_INFO("pattr:" + tinyusdz::get_type_name(pattr->var));
+            //if (auto p = primvar::as_vector<Vec3f>(&pattr->var)) {
+            //  LOG_INFO("points. sz = " + std::to_string(p->size()));
+            //  mesh->points = (*p);
+            //}
           }
         }
 
@@ -7219,15 +7257,16 @@ bool USDAParser::Impl::ReconstructGeomMesh(
     }
   }
 
+#if 0
   for (const auto &prop : properties) {
     if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "points") {
-        if (auto p = primvar::as_vector<Vec3f>(&attr->var)) {
-          mesh->points = (*p);
-        } else {
-          _PushError("`points` must be float3[] type.");
-          return false;
-        }
+        //if (auto p = primvar::as_vector<Vec3f>(&attr->var)) {
+        //  mesh->points = (*p);
+        //} else {
+        //  _PushError("`points` must be float3[] type.");
+        //  return false;
+        //}
 
       } else {
         _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
@@ -7240,6 +7279,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
       }
     }
   }
+#endif
 
   //
   // Resolve append references

@@ -231,6 +231,7 @@ float16 float_to_half_full(float _f) {
 
 }
 
+#if 0
 // http://martinecker.com/martincodes/lambda-expression-overloading/
 template <class... Fs> struct overload_set;
 
@@ -261,6 +262,9 @@ typename overload_set<Fs...>::type overloaded(Fs... x)
     return overload_set<Fs...>(x...);
 }
 
+#endif
+
+#if 0
 std::string prim_basic_type_name(const PrimBasicType &v) {
 
   (void)v;
@@ -284,6 +288,7 @@ std::string prim_basic_type_name(const PrimBasicType &v) {
 #endif
   return "TODO";
 }
+#endif
 
 namespace primvar {
 
@@ -365,7 +370,7 @@ Interpolation InterpolationFromString(const std::string &v)
   return Interpolation::Invalid;
 }
 
-Orientation OrientationFromString(const std::string &v) 
+Orientation OrientationFromString(const std::string &v)
 {
   if ("rightHanded" == v) {
     return Orientation::RightHanded;

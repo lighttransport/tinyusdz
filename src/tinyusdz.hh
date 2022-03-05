@@ -48,7 +48,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
-#include "nonstd/variant.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -542,7 +541,7 @@ struct Scene {
 
   //
   // glTF-like scene objects
-  // TODO(syoyo): Use std::variant(C++17) like static polymorphism
+  // TODO(syoyo): Use std::variant(C++17) like static polymorphism?
   //
   std::vector<Xform> xforms;
   std::vector<GeomMesh> geom_meshes;
