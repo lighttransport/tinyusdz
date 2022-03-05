@@ -2541,6 +2541,7 @@ struct Value {
 };
 
 Interpolation InterpolationFromString(const std::string &v);
+Orientation OrientationFromString(const std::string &v);
 
 
 }  // namespace tinyusdz
