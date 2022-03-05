@@ -26,10 +26,6 @@
 #define any_CONFIG_NO_EXCEPTIONS (1)
 #include "nonstd/any.hpp"
 
-#include "nonstd/string_view.hpp"
-
-using namespace nonstd::literals; // _sv
-
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
@@ -836,6 +832,7 @@ struct Token {
   // TODO: token ID
 };
 
+#if 0
 // Types which can be TimeSampledData are restricted to frequently used one in
 // TinyUSDZ.
 typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>>
@@ -929,6 +926,7 @@ inline const std::vector<T> *as_vector(const PrimVar *v) {
   }
   return nullptr;
 }
+#endif
 
 #if 0
 // https://stackoverflow.com/questions/17032310/how-to-make-a-variadic-is-same
@@ -944,6 +942,7 @@ struct is_any<T, First, Rest...>
 {};
 #endif
 
+#if 0
 template<typename T>
 inline const T *as_timesample(const PrimVar *v) {
   if (is_time_sampled(v)) {
@@ -975,7 +974,9 @@ inline std::vector<Vec3f> to_vec3(const std::vector<float> &v) {
 //std::string type_name(const TimeSampleType &v);
 
 } // namespace primvar
+#endif
 
+#if 0
 std::string prim_basic_type_name(const PrimBasicType &v);
 
 inline std::string get_type_name(const PrimVar &v) {
@@ -988,6 +989,7 @@ inline std::string get_type_name(const PrimVar &v) {
   }
   return "TODO";
 }
+#endif
 
 
 struct ConnectionPath {
@@ -1024,7 +1026,7 @@ struct PrimAttrib {
   bool uniform{false}; // `uniform`
   bool custom{false}; // `custom`
 
-  PrimVar var;
+  //PrimVar var;
 };
 
 // UsdPrimvarReader_float2.

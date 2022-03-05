@@ -222,6 +222,7 @@ class Writer {
     ofs << Indent(level + 1)
         << "point3f[] points = " << PrintVec3fArray(mesh.points) << "\n";
 
+#if 0
     if (auto p = primvar::as_vector<Vec3f>(&mesh.normals.var)) {
       std::vector<Vec3f> normals = (*p);
 
@@ -238,6 +239,7 @@ class Writer {
         }
       }
     }
+#endif
 
     // primvars
 

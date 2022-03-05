@@ -148,7 +148,7 @@ std::string to_string(tinyusdz::ListEditQual v) {
     return "\"delete\"";
   } else if (v == tinyusdz::ListEditQual::Prepend) {
     return "\"prepend\"";
-  } 
+  }
 
   return "\"[[Invalid ListEditQual value]]\"";
 }
@@ -248,6 +248,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent) {
     if (auto prel = nonstd::get_if<tinyusdz::Rel>(&prop.second)) {
         ss << "TODO: Rel\n";
     } else if (auto pattr = nonstd::get_if<tinyusdz::PrimAttrib>(&prop.second)) {
+#if 0 // TODO
       if (auto p = tinyusdz::primvar::as_basic<double>(&pattr->var)) {
         ss << tinyusdz::Indent(indent);
         if (pattr->custom) {
@@ -260,6 +261,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent) {
       } else {
         ss << "TODO:" << pattr->type_name << "\n";
       }
+#endif
     }
 
     ss << "\n";
@@ -482,7 +484,7 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent) {
   } else {
     axis = "z";
   }
-    
+
   ss << Indent(indent) << "  uniform token axis = " << axis << "\n";
 
   ss << print_predefined(geom, indent);
@@ -513,7 +515,7 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent) {
   } else {
     axis = "z";
   }
-    
+
   ss << Indent(indent) << "  uniform token axis = " << axis << "\n";
 
   ss << print_predefined(geom, indent);
