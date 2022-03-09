@@ -1,3 +1,7 @@
+///
+/// Type-erasure technique for PrimVar, a Value class which can have 30+ different types.
+/// Neigher std::any nor std::variant is applicable for such usecases, so write our own.
+///
 #include <array>
 #include <cstring>
 #include <functional>
@@ -31,6 +35,7 @@
 #pragma clang diagnostic pop
 #endif
 
+// string literal. represent it as string_view
 using token = nonstd::string_view;
 
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10;
@@ -40,7 +45,7 @@ constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11;
 enum TypeId {
   TYPE_ID_INVALID,  // = 0
 
-  TYPE_ID_TOKEN,  // string literal. represent it as string_view
+  TYPE_ID_TOKEN,  
   TYPE_ID_STRING,
 
   TYPE_ID_BOOL,

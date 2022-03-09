@@ -320,11 +320,11 @@ class ObjectHandler : public BaseHandler {
 
   template <class T>
   void add_property(std::string name, T* pointer,
-                    unsigned flags_ = Flags::Default, uint32_t type_id__ = 0) {
+                    unsigned flags_ = Flags::Default, uint32_t tyid_ = 0) {
     FlaggedHandler fh;
     fh.handler.reset(new Handler<T>(pointer));
     fh.flags = flags_;
-    fh.type_id_ = type_id__;
+    fh.type_id_ = tyid_;
     add_handler(std::move(name), std::move(fh));
   }
 
