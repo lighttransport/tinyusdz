@@ -2536,10 +2536,6 @@ class Value {
 };
 #endif
 
-struct Value {
-
-  nonstd::any value;
-};
 
 Interpolation InterpolationFromString(const std::string &v);
 Orientation OrientationFromString(const std::string &v);

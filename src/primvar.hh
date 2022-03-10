@@ -30,9 +30,9 @@
 #define nsel_CONFIG_NO_EXCEPTIONS 1
 #define nssv_CONFIG_NO_EXCEPTIONS 1
 #endif
-#include "../../src/nonstd/expected.hpp"
-#include "../../src/nonstd/optional.hpp"
-#include "../../src/nonstd/string_view.hpp"
+//#include "../../src/nonstd/expected.hpp"
+#include "nonstd/optional.hpp"
+#include "nonstd/string_view.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -527,7 +527,9 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   }
 };
 
-static std::string GetTypeName(uint32_t tyid) {
+std::string GetTypeName(uint32_t tyid);
+#if 0
+ {
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
@@ -573,6 +575,7 @@ static std::string GetTypeName(uint32_t tyid) {
 
   return m.at(tyid);
 }
+#endif
 
 struct base_value {
   virtual ~base_value();
