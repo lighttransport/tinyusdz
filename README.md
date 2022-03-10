@@ -1,6 +1,6 @@
 # Tiny USDZ library 
 
-`TinyUSDZ` is dependency-free(depends only on C++ STL. Yes, you don't need USD library!) USDZ/USDC/USDA library written in C++14.
+`TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need USD library!) USDZ/USDC/USDA library written in C++14.
 
 ![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)
 
@@ -9,7 +9,7 @@
 ## Status
 
 TinyUSDZ is currently in work-in-progress. It does not compile and run.
-I'm rewritting TinyUSDZ to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc.
+I'm now rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc. Initial working demo in 2022 Summer expected.
 
 * [x] USDC data parse
 * [ ] USDA parse
