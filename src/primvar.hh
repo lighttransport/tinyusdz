@@ -46,6 +46,8 @@ using token = nonstd::string_view;
 // TODO(syoyo): 3D and 4D?
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10;
 constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11;
+//constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 12;
+//constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 13;
 
 // TODO(syoyo): Use compile-time string hash?
 enum TypeId {
@@ -864,10 +866,30 @@ class Value {
 };
 
 // Frequently-used utility function
+bool is_float(const Value &v);
+bool is_float2(const Value &v);
 bool is_float3(const Value &v);
 bool is_float4(const Value &v);
+bool is_double(const Value &v);
+bool is_double2(const Value &v);
 bool is_double3(const Value &v);
 bool is_double4(const Value &v);
+
+bool is_float(const Value &v) {
+  if (v.underlying_type_name() == "float") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_float2(const Value &v) {
+  if (v.underlying_type_name() == "float2") {
+    return true;
+  }
+
+  return false;
+}
 
 bool is_float3(const Value &v) {
   if (v.underlying_type_name() == "float3") {
@@ -879,6 +901,22 @@ bool is_float3(const Value &v) {
 
 bool is_float4(const Value &v) {
   if (v.underlying_type_name() == "float4") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double(const Value &v) {
+  if (v.underlying_type_name() == "double") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double2(const Value &v) {
+  if (v.underlying_type_name() == "double2") {
     return true;
   }
 
@@ -1344,6 +1382,15 @@ TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
 
 #undef TYPECAST_BASETYPE
 
+template <typename T>
+struct is_type {
+  bool operator()(const any_value &v) {
+    return TypeTrait<T>::type_id == v.type_id();
+  }
+};
+
+static_assert(sizeof(quath) == 8, "sizeof(quath) must be 8");
+static_assert(sizeof(quatf) == 16, "sizeof(quatf) must be 16");
 static_assert(sizeof(half) == 2, "sizeof(half) must be 2");
 static_assert(sizeof(float3) == 12, "sizeof(float3) must be 12");
 static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
