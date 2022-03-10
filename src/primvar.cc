@@ -372,6 +372,7 @@ struct Converter<color4d> {
 
 namespace tinyusdz {
 
+#if 0 // Test: TODO(syoyo): Move to test folder.
 // reconstruct
 
 struct Mesh {
@@ -614,6 +615,54 @@ bool ReconstructAttribTest() {
   std::cout << mesh.vertices << "\n";
 
   return ret;
+}
+#endif
+
+std::string GetTypeName(uint32_t tyid) {
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
+
+  static std::map<uint32_t, std::string> m;
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+  if (m.empty()) {
+    // initialize
+    m[TYPE_ID_BOOL] = TypeTrait<bool>::type_name();
+    m[TYPE_ID_UCHAR] = TypeTrait<uint8_t>::type_name();
+    m[TYPE_ID_INT32] = TypeTrait<int32_t>::type_name();
+    m[TYPE_ID_UINT32] = TypeTrait<uint32_t>::type_name();
+    // TODO: ...
+
+    m[TYPE_ID_INT32 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<int>>::type_name();
+    m[TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float>>::type_name();
+    m[TYPE_ID_FLOAT2 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float2>>::type_name();
+    m[TYPE_ID_FLOAT3 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float3>>::type_name();
+    m[TYPE_ID_FLOAT4 | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<float4>>::type_name();
+
+    m[TYPE_ID_VECTOR3H | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<vector3h>>::type_name();
+    m[TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<vector3f>>::type_name();
+    m[TYPE_ID_VECTOR3D | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<vector3d>>::type_name();
+  }
+
+  if (!m.count(tyid)) {
+    return "(GetTypeName) [[Unknown or unsupported type_id: " +
+           std::to_string(tyid) + "]]";
+  }
+
+  return m.at(tyid);
 }
 
 } // namespace tinyusdz
