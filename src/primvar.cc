@@ -12,403 +12,399 @@
 #pragma clang diagnostic pop
 #endif
 
-
-
-namespace staticstruct {
-
-using namespace tinyusdz;
-
-// -- 00conv
-
-template <>
-struct Converter<quath> {
-  typedef std::array<uint16_t, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            quath &value) {
-    memcpy(&value.real, &shadow[0], sizeof(uint16_t) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const quath &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.real, sizeof(uint16_t) * 4);
-  }
-};
-
-template <>
-struct Converter<quatf> {
-  typedef std::array<float, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            quatf &value) {
-    memcpy(&value.real, &shadow[0], sizeof(float) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const quatf &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.real, sizeof(float) * 4);
-  }
-};
-
-template <>
-struct Converter<quatd> {
-  typedef std::array<double, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            quatd &value) {
-    memcpy(&value.real, &shadow[0], sizeof(double) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const quatd &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.real, sizeof(double) * 4);
-  }
-};
-
-template <>
-struct Converter<matrix2d> {
-  typedef std::array<double, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix2d &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix2d &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 4);
-  }
-};
-
-template <>
-struct Converter<matrix3d> {
-  typedef std::array<double, 9> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix3d &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 9);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix3d &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 9);
-  }
-};
-
-template <>
-struct Converter<matrix4d> {
-  typedef std::array<double, 16> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix4d &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 16);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix4d &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 16);
-  }
-};
-
-template <>
-struct Converter<vector3h> {
-  typedef std::array<uint16_t, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            vector3h &value) {
-    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const vector3h &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
-  }
-};
-
-template <>
-struct Converter<vector3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            vector3f &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const vector3f &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<vector3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            vector3d &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const vector3d &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<normal3h> {
-  typedef std::array<uint16_t, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            normal3h &value) {
-    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const normal3h &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
-  }
-};
-
-template <>
-struct Converter<normal3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            normal3f &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const normal3f &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<normal3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            normal3d &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const normal3d &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<point3h> {
-  typedef std::array<uint16_t, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            point3h &value) {
-    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const point3h &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
-  }
-};
-
-template <>
-struct Converter<point3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            point3f &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const point3f &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<point3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            point3d &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const point3d &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<color3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color3f &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color3f &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-  }
-};
-
-template <>
-struct Converter<color3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color3d &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color3d &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-  }
-};
-
-template <>
-struct Converter<color4f> {
-  typedef std::array<float, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color4f &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-    value.a = shadow[3];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color4f &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-    shadow[3] = value.a;
-  }
-};
-
-template <>
-struct Converter<color4d> {
-  typedef std::array<double, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color4d &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-    value.a = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color4d &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-    shadow[3] = value.a;
-  }
-};
-
-}  // namespace staticstruct
-
 namespace tinyusdz {
 
-#if 0 // Test: TODO(syoyo): Move to test folder.
-// reconstruct
+base_value::~base_value() {}
 
-struct Mesh {
-  std::vector<vector3f> vertices;
-  std::vector<int32_t> indices;
-};
+std::ostream &operator<<(std::ostream &os, const TimeSample &ts) {
+  os << "{";
+  for (size_t i = 0; i < ts.times.size(); i++) {
+    os << ts.times[i] << ": " << ts.values[i];
 
-static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
-  if (v.type_id() == (TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT)) {
-    mesh.vertices = *reinterpret_cast<const std::vector<vector3f> *>(v.value());
+    if (i != (ts.times.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "}";
+
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const dict &v) {
+  for (auto const &item : v) {
+    static uint32_t cnt = 0;
+    os << item.first << ":" << item.second;
+
+    if (cnt != (v.size() - 1)) {
+      os << ", ";
+    }
+
+    cnt++;
+  }
+
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const any_value &v) {
+  // Simple brute-force way..
+  // TODO: Use std::function or some template technique?
+
+#define BASETYPE_CASE_EXPR(__ty)                      \
+  case TypeTrait<__ty>::type_id: {                    \
+    os << *reinterpret_cast<const __ty *>(v.value()); \
+    break;                                            \
+  }
+
+#define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
+  case TypeTrait<std::vector<__ty>>::type_id: {                    \
+    os << *reinterpret_cast<const std::vector<__ty> *>(v.value()); \
+    break;                                                         \
+  }
+
+#define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
+  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
+    os << *reinterpret_cast<const std::vector<std::vector<__ty>> *>( \
+        v.value());                                                  \
+    break;                                                           \
+  }
+
+#define CASE_EXR_LIST(__FUNC) \
+  __FUNC(token)               \
+  __FUNC(std::string)         \
+  __FUNC(half)                \
+  __FUNC(half2)               \
+  __FUNC(half3)               \
+  __FUNC(half4)               \
+  __FUNC(int32_t)             \
+  __FUNC(uint32_t)            \
+  __FUNC(int2)                \
+  __FUNC(int3)                \
+  __FUNC(int4)                \
+  __FUNC(uint2)               \
+  __FUNC(uint3)               \
+  __FUNC(uint4)               \
+  __FUNC(int64_t)             \
+  __FUNC(uint64_t)            \
+  __FUNC(float)               \
+  __FUNC(float2)              \
+  __FUNC(float3)              \
+  __FUNC(float4)              \
+  __FUNC(double)              \
+  __FUNC(double2)             \
+  __FUNC(double3)             \
+  __FUNC(double4)             \
+  __FUNC(matrix2d)            \
+  __FUNC(matrix3d)            \
+  __FUNC(matrix4d)            \
+  __FUNC(quath)               \
+  __FUNC(quatf)               \
+  __FUNC(quatd)               \
+  __FUNC(normal3h)            \
+  __FUNC(normal3f)            \
+  __FUNC(normal3d)            \
+  __FUNC(vector3h)            \
+  __FUNC(vector3f)            \
+  __FUNC(vector3d)            \
+  __FUNC(point3h)             \
+  __FUNC(point3f)             \
+  __FUNC(point3d)             \
+  __FUNC(color3f)             \
+  __FUNC(color3d)             \
+  __FUNC(color4f)             \
+  __FUNC(color4d)
+
+  switch (v.type_id()) {
+    // no `bool` type for 1D and 2D array
+    BASETYPE_CASE_EXPR(bool)
+
+    // no std::vector<dict> and std::vector<std::vector<dict>>, ...
+    BASETYPE_CASE_EXPR(dict)
+
+    // base type
+    CASE_EXR_LIST(BASETYPE_CASE_EXPR)
+
+    // 1D array
+    CASE_EXR_LIST(ARRAY1DTYPE_CASE_EXPR)
+
+    // 2D array
+    CASE_EXR_LIST(ARRAY2DTYPE_CASE_EXPR)
+
+    // TODO: List-up all case and remove `default` clause.
+    default: {
+      os << "PPRINT: TODO: (type: " << v.type_name() << ") ";
+    }
+  }
+
+#undef BASETYPE_CASE_EXPR
+#undef ARRAY1DTYPE_CASE_EXPR
+#undef ARRAY2DTYPE_CASE_EXPR
+#undef CASE_EXPR_LIST
+
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const Value &v) {
+  os << v.v_;  // delegate to operator<<(os, any_value)
+  return os;
+}
+
+bool is_float(const Value &v) {
+  if (v.underlying_type_name() == "float") {
     return true;
   }
 
   return false;
 }
 
-struct AttribMap {
-  std::map<std::string, any_value> attribs;
-};
-
-class Register {
- public:
-  Register() = default;
-
-  template <class T>
-  Register &property(std::string name, T *pointer,
-                     uint32_t flags = staticstruct::Flags::Default) {
-    h.add_property(name, pointer, flags, TypeTrait<T>::type_id);
-
-    return *this;
+bool is_float2(const Value &v) {
+  if (v.underlying_type_name() == "float2") {
+    return true;
   }
 
-  bool reconstruct(AttribMap &amap) {
-    err_.clear();
+  return false;
+}
 
-    staticstruct::Reader r;
+bool is_float3(const Value &v) {
+  if (v.underlying_type_name() == "float3") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_float4(const Value &v) {
+  if (v.underlying_type_name() == "float4") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double(const Value &v) {
+  if (v.underlying_type_name() == "double") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double2(const Value &v) {
+  if (v.underlying_type_name() == "double2") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double3(const Value &v) {
+  if (v.underlying_type_name() == "double3") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double4(const Value &v) {
+  if (v.underlying_type_name() == "double4") {
+    return true;
+  }
+
+  return false;
+}
+
+std::ostream &operator<<(std::ostream &os, const matrix2d &v) {
+  os << "(";
+  os << "(" << v.m[0][0] << ", " << v.m[0][1] << "), ";
+  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ")";
+  os << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const matrix3d &v) {
+  os << "(";
+  os << "(" << v.m[0][0] << ", " << v.m[0][1] << ", " << v.m[0][2] << "), ";
+  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ", " << v.m[1][2] << ")";
+  os << "(" << v.m[2][0] << ", " << v.m[2][1] << ", " << v.m[2][2] << ")";
+  os << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const matrix4d &v) {
+  os << "(";
+  os << "(" << v.m[0][0] << ", " << v.m[0][1] << ", " << v.m[0][2] << ", "
+     << v.m[0][3] << "), ";
+  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ", " << v.m[1][2] << ", "
+     << v.m[1][3] << ")";
+  os << "(" << v.m[2][0] << ", " << v.m[2][1] << ", " << v.m[2][2] << ", "
+     << v.m[2][3] << ")";
+  os << "(" << v.m[3][0] << ", " << v.m[3][1] << ", " << v.m[3][2] << ", "
+     << v.m[3][3] << ")";
+  os << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const int2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const int3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const int4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const uint2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const uint3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const uint4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const half2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const half3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const half4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const float2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const float3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const float4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const double2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const double3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const double4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const vector3h &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const vector3f &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const vector3d &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const normal3h &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const normal3f &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const normal3d &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const point3h &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const point3f &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const point3d &v) {
+  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color3f &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color3d &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color4f &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const color4d &v) {
+  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const quath &v) {
+  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
+     << v.imag[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const quatf &v) {
+  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
+     << v.imag[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const quatd &v) {
+  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
+     << v.imag[2] << ")";
+  return os;
+}
+
+bool Reconstructor::reconstruct(AttribMap &amap) {
+  err_.clear();
+
+  staticstruct::Reader r;
 
 #define CONVERT_TYPE_SCALAR(__ty, __value)       \
   case TypeTrait<__ty>::type_id: {               \
@@ -475,100 +471,6 @@ class Register {
   __FUNC(matrix3d, v)             \
   __FUNC(matrix4d, v)
 
-    bool ret = r.ParseStruct(
-        &h,
-        [&amap](std::string key, uint32_t flags, uint32_t user_type_id,
-                staticstruct::BaseHandler &handler) -> bool {
-          std::cout << "key = " << key
-                    << ", count = " << amap.attribs.count(key) << "\n";
-
-          if (!amap.attribs.count(key)) {
-            if (flags & staticstruct::Flags::Optional) {
-              return true;
-            } else {
-              return false;
-            }
-          }
-
-          auto &value = amap.attribs[key];
-          if (amap.attribs[key].type_id() == user_type_id) {
-            void *v = value.value();
-
-            switch (user_type_id) {
-              CONVERT_TYPE_SCALAR(bool, v)
-
-              CONVERT_TYPE_LIST(CONVERT_TYPE_SCALAR)
-              CONVERT_TYPE_LIST(CONVERT_TYPE_1D)
-              CONVERT_TYPE_LIST(CONVERT_TYPE_2D)
-
-              default: {
-                std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
-                          << "\n";
-                return false;
-              }
-            }
-          } else {
-            std::cerr << "type: " << amap.attribs[key].type_name() << "(a.k.a "
-                      << amap.attribs[key].underlying_type_name()
-                      << ") expected but got " << GetTypeName(user_type_id)
-                      << " for attribute \"" << key << "\"\n";
-            return false;
-          }
-        },
-        &err_);
-
-    return ret;
-  }
-
-#undef CONVERT_TYPE_SCALAR
-#undef CONVERT_TYPE_1D
-#undef CONVERT_TYPE_2D
-#undef CONVERT_TYPE_LIST
-
-  std::string get_error() const { return err_; }
-
- private:
-  staticstruct::ObjectHandler h;
-  std::string err_;
-};
-
-bool ReconstructAttribTest0() {
-  Mesh mesh;
-  Register r;
-
-  r.property("vertices", &mesh.vertices).property("indices", &mesh.indices);
-
-  AttribMap amap;
-  amap.attribs["vertices"] =
-      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.1f, 4.3f}});
-  amap.attribs["indices"] =
-      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.1f, 4.3f}});
-
-  bool ret = r.reconstruct(amap);
-
-  if (!ret) {
-    std::cerr << r.get_error() << "\n";
-  }
-
-  return ret;
-}
-
-bool ReconstructAttribTest() {
-  AttribMap amap;
-  amap.attribs["vertices"] =
-      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.1f, 4.3f}});
-
-  Mesh mesh;
-
-  std::cout << "mesh.vertices typename = "
-            << TypeTrait<decltype(mesh.vertices)>::type_name() << "\n";
-
-  staticstruct::ObjectHandler h;
-  h.add_property("vertices", &mesh.vertices, 0,
-                 TypeTrait<decltype(mesh.vertices)>::type_id);
-
-  staticstruct::Reader r;
-  std::string err;
   bool ret = r.ParseStruct(
       &h,
       [&amap](std::string key, uint32_t flags, uint32_t user_type_id,
@@ -586,15 +488,20 @@ bool ReconstructAttribTest() {
 
         auto &value = amap.attribs[key];
         if (amap.attribs[key].type_id() == user_type_id) {
-          if (user_type_id == (TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT)) {
-            std::vector<float3> *p =
-                reinterpret_cast<std::vector<float3> *>(value.value());
-            staticstruct::Handler<std::vector<float3>> _h(p);
-            return _h.write(&handler);
-          } else {
-            std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
-                      << "\n";
-            return false;
+          void *v = value.value();
+
+          switch (user_type_id) {
+            CONVERT_TYPE_SCALAR(bool, v)
+
+            CONVERT_TYPE_LIST(CONVERT_TYPE_SCALAR)
+            CONVERT_TYPE_LIST(CONVERT_TYPE_1D)
+            CONVERT_TYPE_LIST(CONVERT_TYPE_2D)
+
+            default: {
+              std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
+                        << "\n";
+              return false;
+            }
           }
         } else {
           std::cerr << "type: " << amap.attribs[key].type_name() << "(a.k.a "
@@ -604,19 +511,15 @@ bool ReconstructAttribTest() {
           return false;
         }
       },
-      &err);
-
-  if (!ret) {
-    if (!err.empty()) {
-      std::cerr << "Attrib reconstruction failed. ERR: " << err << "\n";
-    }
-  }
-
-  std::cout << mesh.vertices << "\n";
+      &err_);
 
   return ret;
+
+#undef CONVERT_TYPE_SCALAR
+#undef CONVERT_TYPE_1D
+#undef CONVERT_TYPE_2D
+#undef CONVERT_TYPE_LIST
 }
-#endif
 
 std::string GetTypeName(uint32_t tyid) {
 #ifdef __clang__
@@ -665,5 +568,5 @@ std::string GetTypeName(uint32_t tyid) {
   return m.at(tyid);
 }
 
-} // namespace tinyusdz
+}  // namespace tinyusdz
 
