@@ -148,6 +148,22 @@ std::ostream &operator<<(std::ostream &os, const Value &v) {
   return os;
 }
 
+bool is_float(const any_value &v) {
+  if (v.underlying_type_name() == "float") {
+    return true;
+  }
+
+  return false;
+}
+
+bool is_double(const any_value &v) {
+  if (v.underlying_type_name() == "double") {
+    return true;
+  }
+
+  return false;
+}
+
 bool is_float(const Value &v) {
   if (v.underlying_type_name() == "float") {
     return true;

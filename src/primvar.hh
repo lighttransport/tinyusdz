@@ -817,6 +817,9 @@ class Value {
   any_value v_;
 };
 
+bool is_float(const any_value &v);
+bool is_double(const any_value &v);
+
 // Frequently-used utility function
 bool is_float(const Value &v);
 bool is_float2(const Value &v);
