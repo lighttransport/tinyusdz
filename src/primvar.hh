@@ -1358,6 +1358,7 @@ std::ostream &operator<<(std::ostream &os, const Value &v) {
 
 //
 // typecast from type_id
+// It does not throw exception. 
 //
 template <uint32_t tid>
 struct typecast {};
@@ -1373,12 +1374,18 @@ struct typecast {};
 TYPECAST_BASETYPE(TYPE_ID_BOOL, bool);
 TYPECAST_BASETYPE(TYPE_ID_UCHAR, uint8_t);
 TYPECAST_BASETYPE(TYPE_ID_HALF, half);
+TYPECAST_BASETYPE(TYPE_ID_HALF2, half2);
+TYPECAST_BASETYPE(TYPE_ID_HALF3, half3);
+TYPECAST_BASETYPE(TYPE_ID_HALF4, half4);
 
 TYPECAST_BASETYPE(TYPE_ID_UINT32, uint32_t);
 TYPECAST_BASETYPE(TYPE_ID_FLOAT, float);
 TYPECAST_BASETYPE(TYPE_ID_DOUBLE, double);
 
+TYPE
 TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
+
+// TODO(syoyo): Implement more types...
 
 #undef TYPECAST_BASETYPE
 
