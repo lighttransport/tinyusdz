@@ -21,7 +21,7 @@ $ sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-8
 ## How to compile
 
 ```
-$ CXX=clang++ CC=clang meson build
+$ CXX=clang++ CC=clang meson build -Db_sanitize=address
 $ cd build
 $ ninja
 ```
