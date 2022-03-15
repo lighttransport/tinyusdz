@@ -41,6 +41,7 @@
 #include "external/staticstruct.hh"
 
 namespace tinyusdz {
+namespace primvar {
 
 // string literal. represent it as string_view
 using token = nonstd::string_view;
@@ -975,11 +976,12 @@ struct AttribMap {
   std::map<std::string, any_value> attribs;
 };
 
+} // namespace primvar
 } // namespace tinyusdz
 
 namespace staticstruct {
 
-using namespace tinyusdz;
+using namespace tinyusdz::primvar;
 
 // -- For Reconstructor
 
@@ -1334,6 +1336,7 @@ struct Converter<color4d> {
 }  // namespace staticstruct
 
 namespace tinyusdz {
+namespace primvar {
 
 //
 // Concrete struct reconstruction from AttribMap
@@ -1366,4 +1369,5 @@ static_assert(sizeof(float3) == 12, "sizeof(float3) must be 12");
 static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
 static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 
+} // namespace primvar 
 } // namespace tinyusdz
