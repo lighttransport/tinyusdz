@@ -20,6 +20,8 @@ option(TINYUSDZ_BUILD_EXAMPLES
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
+option(TINYUSDZ_WITH_USDVOX "Build with usdVox support(import MagicaVoxel .vox)"
+       ON)
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
@@ -148,6 +150,10 @@ if(TINYUSDZ_WITH_USDOBJ)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usdObj.cc)
   list(APPEND TINYUSDZ_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
+endif()
+
+if(TINYUSDZ_WITH_USDVOX)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
 endif()
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
@@ -352,6 +358,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_USDOBJ)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_USE_USDOBJ")
+  endif()
+
+  if(TINYUSDZ_WITH_USDVOX)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDVOX")
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}

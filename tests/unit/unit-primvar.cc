@@ -4,7 +4,7 @@
 #include "unit-primvar.h"
 #include "primvar.hh"
 
-using namespace tinyusdz;
+using namespace tinyusdz::primvar;
 
 struct Mesh {
   std::vector<vector3f> vertices;

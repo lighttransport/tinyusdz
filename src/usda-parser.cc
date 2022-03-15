@@ -26,7 +26,7 @@
 #include "mapbox/recursive_wrapper.hpp"  // for recursive types
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
-#include "nonstd/variant.hpp"
+//#include "nonstd/variant.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -47,6 +47,7 @@
 #include "tinyusdz.hh"
 #include "usdObj.hh"
 #include "usda-parser.hh"
+#include "primvar.hh"
 
 // s = std::string
 #define PUSH_ERROR(s)                                              \
@@ -187,6 +188,8 @@ struct Path {
 };
 
 using PathList = std::vector<Path>;
+
+#if 1
 
 // If you want to add more items, you need to regenerate nonstd::variant.hpp
 // file, since nonstd::variant has a limited number of types to use(currently
@@ -439,13 +442,16 @@ class Variable {
   // representation of Object.
 };
 
+#endif
+
 namespace {
 
 using AssetReferenceList = std::vector<std::pair<ListEditQual, AssetReference>>;
 
+#if 0
 // Extract array of AssetReferences from Variable.
 AssetReferenceList GetAssetReferences(
-    const std::tuple<ListEditQual, Variable> &_var) {
+    const std::tuple<ListEditQual, primvar::any_value> &_var) {
   AssetReferenceList result;
 
   ListEditQual qual = std::get<0>(_var);
@@ -485,6 +491,7 @@ AssetReferenceList GetAssetReferences(
 
   return result;
 }
+#endif
 
 // https://www.techiedelight.com/trim-string-cpp-remove-leading-trailing-spaces/
 std::string TrimString(const std::string &str) {
@@ -542,7 +549,7 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
 }  // namespace
 
-#if 1
+#if 0
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
   if (var.IsValue()) {
     // const Value &v = nonstd::get<Value>(var.value);
@@ -5732,8 +5739,9 @@ class USDAParser::Impl {
              std::to_string(args.count("references")));
 
     if (args.count("references")) {
-      references = GetAssetReferences(args["references"]);
-      LOG_INFO("`references.size` = " + std::to_string(references.size()));
+      // TODO
+      //references = GetAssetReferences(args["references"]);
+      //LOG_INFO("`references.size` = " + std::to_string(references.size()));
     }
 
     std::map<std::string, Property> props;

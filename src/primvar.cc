@@ -13,6 +13,7 @@
 #endif
 
 namespace tinyusdz {
+namespace primvar {
 
 base_value::~base_value() {}
 
@@ -584,5 +585,6 @@ std::string GetTypeName(uint32_t tyid) {
   return m.at(tyid);
 }
 
+} // namespace primvar
 }  // namespace tinyusdz
 

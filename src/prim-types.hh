@@ -1961,8 +1961,16 @@ struct OpenVDBAsset {
   std::string filePath; // asset
 };
 
+// MagicaVoxel Vox 
+struct VoxAsset {
+  std::string fieldDataType{"float"};
+  std::string fieldName{"density"};
+  std::string filePath; // asset
+};
+
 struct Volume {
   OpenVDBAsset vdb;
+  VoxAsset vox;
 };
 
 
