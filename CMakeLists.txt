@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.17)
 
 set(TINYUSDZ_TARGET "tinyusdz") # TODO: drop `z`
 set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # static lib is always built.
@@ -31,7 +31,7 @@ set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
-option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
+option(TINYUSDZ_WITH_PYTHON "Build with Python binding through nanobind" OFF)
 
 option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ON)
 
@@ -55,6 +55,7 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 option(TINYUSDZ_WITH_USDA_PARSER "Build with USDA parser program" ON)
 # --------------
 
+
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
@@ -66,8 +67,13 @@ if (TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
   endif()
 endif()
 
-# Require strict C++14 mode(e.g. `-std=c++14`)
-set(CMAKE_CXX_STANDARD 14)
+if (TINYUSDZ_WITH_PYTHON)
+  # nanobind requires C++17
+  set(CMAKE_CXX_STANDARD 17)
+else()
+  # Require strict C++14 mode(e.g. `-std=c++14`)
+  set(CMAKE_CXX_STANDARD 14)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -108,8 +114,12 @@ if(TINYUSDZ_WITH_PYTHON)
   # We build monolithic python module, so build libtinyusdz as a static library
   # with PIC enabled.
   set(CMAKE_POSITION_INDEPENDENT_CODE On)
+  set(NB_SHARED OFF CACHE INTERNAL "")
 
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11 pybind11_build)
+  # workaround: find_package() does not work well inside of nanobind, so call it here.
+  find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/nanobind nanobind_build)
 endif()
 
 set(TINYUSDZ_SOURCES
@@ -415,7 +425,7 @@ endif()
 if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
   # build monolithic .dll
-  pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
+  nanobind_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
