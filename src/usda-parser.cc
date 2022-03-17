@@ -549,7 +549,7 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
 }  // namespace
 
-#if 0
+#if 1
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
   if (var.IsValue()) {
     // const Value &v = nonstd::get<Value>(var.value);
@@ -599,6 +599,11 @@ std::ostream &operator<<(std::ostream &os, const Variable &var) {
     os << "[???Variable???]";
   }
 
+  return os;
+}
+#else
+std::ostream &operator<<(std::ostream &os, const Variable &var) {
+  // TODO
   return os;
 }
 #endif
