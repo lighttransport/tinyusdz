@@ -8,14 +8,14 @@
 
 ## Status
 
-TinyUSDZ is currently in work-in-progress. It does not compile and run.
-I'm now rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc. Initial working demo in 2022 Summer expected.
+TinyUSDZ is currently work-in-progress. It does not compile and run.
+I'm now rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc. Initial working demo in 2022 Summer planned.
 
 * [x] USDC data parse
 * [ ] USDA parse
   * Initial USDA parser starting to work(see `sandbox/usda/`)
-  * Support Blender-exported USDA support in 2022 Summer planned.
-* [ ] Reconstuct primitive and scene graph representaion(2022 Spring expected)
+  * Support Blender-exported USDA support in 2022 Fall planned.
+* [ ] Reconstuct primitive and scene graph representaion(2022 Summer expected)
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
   * [ ] GeomPoints(for particles)
@@ -36,6 +36,7 @@ I'm now rewritting TinyUSDZ core to support more USD features including Composit
 * [ ] Polygon triangulation using mapxbo/earcut.hpp
 * [ ] USDZ(USDC) writer
 * [ ] USDA writer
+* [ ] USD <-> glTF converter
 
 ## Notice
 
@@ -241,6 +242,7 @@ TinyUSDZ is licensed under MIT license.
 * cnpy(uncompressed ZIP decode/encode code) : MIT license https://github.com/rogersce/cnpy
 * tinyexr: BSD license.
 * tinyobjloader: MIT license.
+* tinygltf: MIT license.
 * stb_image: public domain. 
 * dr_libs: public domain. https://github.com/mackron/dr_libs
 * miniaudio: public domain or MIT no attribution. https://github.com/dr-soft/miniaudio
