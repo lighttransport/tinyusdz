@@ -2105,12 +2105,17 @@ class USDAParser::Impl {
       }
 
       if (value) {
-        std::cout << TypeTrait<T>::type_name << " = " << (*value) << "\n";
+        std::cout << "ParseBasicPrimAttr: " << TypeTrait<T>::type_name << " = " << (*value) << "\n";
+
+        // TODO: TimeSampled
+        primvar::TimeSample ts;
+        ts.values.push_back(*value);
+        attr.var.var = ts;
+
       } else {
-        std::cout << TypeTrait<T>::type_name << " = None\n";
+        std::cout << "ParseBasicPrimAttr: " <<  TypeTrait<T>::type_name << " = None\n";
       }
 
-      //attr.var = *value;
     }
 
     // optional: interpolation parameter
@@ -2348,6 +2353,14 @@ class USDAParser::Impl {
         if (!_ParseBasicPrimAttr<Vec4d>(array_qual, primattr_name, &attr)) {
           return false;
         }
+      } else if (type_name == "point3f") {
+        if (!_ParseBasicPrimAttr<Vec3f>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "point3d") {
+        if (!_ParseBasicPrimAttr<Vec3d>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
       } else if (type_name == "matrix4d") {
         Matrix4d m;
         if (!ParseMatrix4d(m.m)) {
@@ -2365,7 +2378,7 @@ class USDAParser::Impl {
       attr.uniform = uniform_qual;
       attr.name = primattr_name;
 
-      (*props)[primattr_name] = attr;
+      (*props)[primattr_name].attrib = attr;
 
 #if 0  // TODO
       if (type_name == "matrix4d") {
@@ -5992,6 +6005,15 @@ class USDAParser::Impl {
 
 
         } else if (prim_type == "BasisCurves") {
+          GeomBasisCurves curves;
+          std::cout << "Reconstruct Cylinder\n";
+          if (!ReconstructBasisCurves(props, references, &curves)) {
+            _PushError("Failed to reconstruct GeomBasisCurves.");
+            return false;
+          }
+          curves.name = node_name;
+          std::cout << to_string(curves, nestlevel) << "\n";
+
         } else {
           PUSH_ERROR(" TODO: " + prim_type);
           return false;
@@ -6062,9 +6084,9 @@ class USDAParser::Impl {
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
       GeomMesh *mesh);
 
-  // bool ReconstructBasisCurves(const std::map<std::string, Variable>
-  // &properties,
-  //                            GeomBasisCurves *curves);
+  bool ReconstructBasisCurves(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              GeomBasisCurves *curves);
 
   bool CheckHeader() { return ParseMagicHeader(); }
 
@@ -6339,11 +6361,11 @@ bool USDAParser::Impl::ReconstructGPrim(
 
   // Update props;
   for (auto item : properties) {
-    if (auto p = nonstd::get_if<PrimAttrib>(&item.second)) {
-      gprim->props[item.first] = *p;
-    } else {
+    if (item.second.is_rel) {
       PUSH_ERROR("TODO: rel");
       return false;
+    } else {
+      gprim->props[item.first].attrib = item.second.attrib;
     }
   }
 
@@ -6413,7 +6435,9 @@ bool USDAParser::Impl::ReconstructXform(
 
     // array of string
     auto prop = properties.at("xformOpOrder");
-    if (auto attrib = nonstd::get_if<PrimAttrib>(&prop)) {
+    if (prop.is_rel) {
+      PUSH_ERROR("TODO: Rel type for `xformOpOrder`");
+    } else {
 #if 0
       if (auto parr = primvar::as_vector<std::string>(&attrib->var)) {
         for (const auto &item : *parr) {
@@ -6465,11 +6489,9 @@ bool USDAParser::Impl::ReconstructXform(
           }
         }
       }
+      _PushError("`xformOpOrder` must be an array of string type.");
 #endif
       (void)Split;
-    } else {
-      _PushError("`xformOpOrder` must be an array of string type.");
-      return false;
     }
 
   } else {
@@ -6591,18 +6613,22 @@ bool USDAParser::Impl::ReconstructGeomSphere(
       //  _PushError("`material:binding` must be 'rel' type.");
       //  return false;
       //}
-    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-      if (prop.first == "radius") {
-        //if (auto p = primvar::as_basic<double>(&attr->var)) {
-        //  sphere->radius = *p;
-        //} else {
-        //  _PushError("`radius` must be double type.");
-        //  return false;
-        //}
+    } else {
+      if (prop.second.is_rel) {
+        PUSH_ERROR("TODO: Rel");
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
+        if (prop.first == "radius") {
+          const tinyusdz::PrimAttrib &attr = prop.second.attrib;
+          //if (auto p = primvar::as_basic<double>(&attr->var)) {
+          //  sphere->radius = *p;
+          //} else {
+          //  _PushError("`radius` must be double type.");
+          //  return false;
+          //}
+        } else {
+          PUSH_ERROR("TODO: type: " + prop.first);
+          return false;
+        }
       }
     }
   }
@@ -6912,7 +6938,10 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
 
         for (const auto &prop : prim.props) {
-          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+          if (prop.second.is_rel) {
+            PUSH_ERROR("TODO: Rel");
+          } else {
+            const PrimAttrib &attrib = prop.second.attrib;
 #if 0
             if (prop.first == "height") {
               if (auto p = primvar::as_basic<double>(&attr->var)) {
@@ -7242,7 +7271,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
         LOG_INFO("Reading .obj file: " + filepath);
 
         if (!usdObj::ReadObjFromFile(filepath, &gprim, &err)) {
-          _PushError("Failed to read .obj(usdObj). err = " + err);
+          PUSH_ERROR("Failed to read .obj(usdObj). err = " + err);
           return false;
         }
         LOG_INFO("Loaded .obj file: " + filepath);
@@ -7254,13 +7283,27 @@ bool USDAParser::Impl::ReconstructGeomMesh(
         if (gprim.props.count("points")) {
           LOG_INFO("points");
           const Property &prop = gprim.props.at("points");
-          if (auto pattr = nonstd::get_if<PrimAttrib>(&prop)) {
+          if (prop.is_rel) {
+            PUSH_ERROR("TODO: points Rel\n");
+          } else {
+            const PrimAttrib &attr = prop.attrib;
             // PrimVar
-            //LOG_INFO("pattr:" + tinyusdz::get_type_name(pattr->var));
-            //if (auto p = primvar::as_vector<Vec3f>(&pattr->var)) {
-            //  LOG_INFO("points. sz = " + std::to_string(p->size()));
-            //  mesh->points = (*p);
-            //}
+            LOG_INFO("points.type:" + attr.var.type_name());
+            if (attr.var.is_scalar()) {
+
+              auto p = attr.var.get_value<std::vector<Vec3f>>();
+              if (p) {
+                  mesh->points = p.value();
+              } else {
+                PUSH_ERROR("TODO: points.type = " + attr.var.type_name());
+              }
+              //if (auto p = primvar::as_vector<Vec3f>(&pattr->var)) {
+              //  LOG_INFO("points. sz = " + std::to_string(p->size()));
+              //  mesh->points = (*p);
+              //}
+            } else {
+              PUSH_ERROR("TODO: timesample points.");
+            }
           }
         }
 
@@ -7270,10 +7313,17 @@ bool USDAParser::Impl::ReconstructGeomMesh(
     }
   }
 
-#if 0
   for (const auto &prop : properties) {
-    if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+    if (prop.second.is_rel) {
+      if (prop.first == "material:binding") {
+        mesh->materialBinding.materialBinding = prop.second.rel.path;
+      } else {
+        PUSH_ERROR("TODO: rel");
+      }
+    } else {
+      const PrimAttrib &attr = prop.second.attrib;
       if (prop.first == "points") {
+
         //if (auto p = primvar::as_vector<Vec3f>(&attr->var)) {
         //  mesh->points = (*p);
         //} else {
@@ -7282,17 +7332,11 @@ bool USDAParser::Impl::ReconstructGeomMesh(
         //}
 
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
+        PUSH_ERROR(" TODO: prop: " + prop.first);
         return false;
-      }
-    } else if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
-      if (prop.first == "material:binding") {
-        mesh->materialBinding.materialBinding = prel->path;
       }
     }
   }
-#endif
 
   //
   // Resolve append references
@@ -7306,13 +7350,19 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   return true;
 }
 
-#if 0  // TODO
-bool USDAParser::Impl::ReconstructBasisCurves(
-    const std::map<std::string, Variable> &properties,
-    GeomBasisCurves *curves) {
+bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              GeomBasisCurves *curves) {
+
   for (const auto &prop : properties) {
     if (prop.first == "points") {
-      if (!prop.second.IsFloat3() && !prop.second.IsArray()) {
+      if (prop.second.is_rel) {
+        PUSH_ERROR("TODO: Rel");
+      } else {
+        const PrimAttrib &attrib = prop.second.attrib;
+#if 0 // TODO
+        attrib.
+        attrib.IsFloat3() && !prop.second.IsArray()) {
         _PushError("`points` must be float3 array type.");
         return false;
       }
@@ -7322,8 +7372,11 @@ bool USDAParser::Impl::ReconstructBasisCurves(
 
       curves->points.resize(p.size() * 3);
       memcpy(curves->points.data(), p.data(), p.size() * 3);
+#endif
+      }
 
     } else if (prop.first == "curveVertexCounts") {
+#if 0 // TODO
       if (!prop.second.IsInt() && !prop.second.IsArray()) {
         _PushError("`curveVertexCounts` must be int array type.");
         return false;
@@ -7334,6 +7387,7 @@ bool USDAParser::Impl::ReconstructBasisCurves(
 
       curves->curveVertexCounts.resize(p.size());
       memcpy(curves->curveVertexCounts.data(), p.data(), p.size());
+#endif
 
     } else {
       std::cout << "TODO: " << prop.first << "\n";
@@ -7342,7 +7396,6 @@ bool USDAParser::Impl::ReconstructBasisCurves(
 
   return true;
 }
-#endif
 
 // 'None'
 bool USDAParser::Impl::MaybeNone() {

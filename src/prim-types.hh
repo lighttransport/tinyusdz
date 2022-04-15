@@ -30,6 +30,8 @@
 #pragma clang diagnostic pop
 #endif
 
+#include "primvar.hh"
+
 namespace tinyusdz {
 
 enum class SpecType {
@@ -1025,7 +1027,15 @@ struct PrimAttrib {
   bool uniform{false}; // `uniform`
   bool custom{false}; // `custom`
 
-  //PrimVar var;
+  primvar::PrimVar var;
+};
+
+struct Property
+{
+  PrimAttrib attrib;
+  Rel rel;
+
+  bool is_rel{false};
 };
 
 // UsdPrimvarReader_float2.
@@ -1045,7 +1055,8 @@ using PrimvarReader_float3 = PrimvarReader<Vec3f>;
 
 using PrimvarReaderType = nonstd::variant<PrimvarReader_float2, PrimvarReader_float3>;
 
-using Property = nonstd::variant<PrimAttrib, Rel>;
+//using Property = nonstd::variant<PrimAttrib, Rel>;
+//using Property = nonstd::variant<PrimAttrib, Rel>;
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`

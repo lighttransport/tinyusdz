@@ -6225,12 +6225,12 @@ void GeomMesh::Initialize(const GPrim &gprim)
   for (auto &prop_item : gprim.props) {
     std::string attr_name = std::get<0>(prop_item);
     const Property &prop = std::get<1>(prop_item);
-    if (!nonstd::get_if<PrimAttrib>(&prop)) {
+    if (prop.is_rel) {
       //LOG_INFO("TODO: Rel property:" + attr_name);
       continue;
     }
 
-    const PrimAttrib &attr = nonstd::get<PrimAttrib>(prop);
+    const PrimAttrib &attr = prop.attrib;
 
     if (attr_name == "points") {
       //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
