@@ -2354,7 +2354,7 @@ class USDAParser::Impl {
           return false;
         }
       } else if (type_name == "point3f") {
-        if (!_ParseBasicPrimAttr<Vec3f>(array_qual, primattr_name, &attr)) {
+        if (!_ParseBasicPrimAttr<primvar::point3f>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "point3d") {
@@ -3123,6 +3123,7 @@ class USDAParser::Impl {
   bool ReadBasicType(Matrix2d *value);
   bool ReadBasicType(Matrix3d *value);
   bool ReadBasicType(Matrix4d *value);
+  bool ReadBasicType(primvar::point3f *value);
 
   // TimeSample data
   bool ReadTimeSampleData(nonstd::optional<Vec2f> *value);
@@ -7291,7 +7292,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
             LOG_INFO("points.type:" + attr.var.type_name());
             if (attr.var.is_scalar()) {
 
-              auto p = attr.var.get_value<std::vector<Vec3f>>();
+              auto p = attr.var.get_value<std::vector<primvar::point3f>>();
               if (p) {
                   mesh->points = p.value();
               } else {
@@ -7324,16 +7325,35 @@ bool USDAParser::Impl::ReconstructGeomMesh(
       const PrimAttrib &attr = prop.second.attrib;
       if (prop.first == "points") {
 
-        //if (auto p = primvar::as_vector<Vec3f>(&attr->var)) {
-        //  mesh->points = (*p);
-        //} else {
-        //  _PushError("`points` must be float3[] type.");
-        //  return false;
-        //}
-
+        auto p = attr.var.get_value<std::vector<primvar::point3f>>();
+        if (p) {
+          mesh->points = (*p);
+        } else {
+          PUSH_ERROR("`GeomMesh::points` must be point3[] type, but got " + attr.var.type_name());
+          return false;
+        }
+      } else if (prop.first == "subdivisionScheme") {
+        auto p = attr.var.get_value<std::string>();
+        if (!p) {
+          PUSH_ERROR("Invalid type for \'subdivisionScheme\'. expected \'STRING\' but got " + attr.var.type_name());
+          return false;
+        } else {
+          LOG_INFO("subdivisionScheme = " + (*p));
+          if (p->compare("none") == 0) {
+            mesh->subdivisionScheme = SubdivisionScheme::None;
+          } else if (p->compare("catmullClark") == 0) {
+            mesh->subdivisionScheme = SubdivisionScheme::CatmullClark;
+          } else if (p->compare("bilinear") == 0) {
+            mesh->subdivisionScheme = SubdivisionScheme::Bilinear;
+          } else if (p->compare("loop") == 0) {
+            mesh->subdivisionScheme = SubdivisionScheme::Loop;
+          } else {
+            PUSH_ERROR("Unknown subdivision scheme: " + (*p));
+            return false;
+          }
+        }  
       } else {
-        PUSH_ERROR(" TODO: prop: " + prop.first);
-        return false;
+        LOG_WARN(" TODO: prop: " + prop.first);
       }
     }
   }
@@ -7344,6 +7364,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   //
   for (const auto &ref : references) {
     if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
+      // TODO
     }
   }
 
@@ -7758,6 +7779,10 @@ bool USDAParser::Impl::ReadBasicType(Vec4d *value) {
   return ParseBasicTypeTuple(value);
 }
 
+bool USDAParser::Impl::ReadBasicType(primvar::point3f *value) {
+  return ParseBasicTypePoint3f(value);
+}
+
 bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -7847,6 +7872,22 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec4d> *value) {
 
   return false;
 }
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::point3f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  primvar::point3f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 
 bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
