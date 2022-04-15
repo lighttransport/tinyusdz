@@ -1652,7 +1652,7 @@ struct GeomMesh {
   //
   // Predefined attribs.
   //
-  std::vector<Vec3f> points;  // point3f
+  std::vector<primvar::point3f> points;  // point3f
   PrimAttrib normals;         // float3f[]
 
   //

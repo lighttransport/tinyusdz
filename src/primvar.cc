@@ -556,6 +556,9 @@ std::string GetTypeName(uint32_t tyid) {
     m[TYPE_ID_UCHAR] = TypeTrait<uint8_t>::type_name();
     m[TYPE_ID_INT32] = TypeTrait<int32_t>::type_name();
     m[TYPE_ID_UINT32] = TypeTrait<uint32_t>::type_name();
+    m[TYPE_ID_POINT3H] = TypeTrait<point3h>::type_name();
+    m[TYPE_ID_POINT3F] = TypeTrait<point3f>::type_name();
+    m[TYPE_ID_POINT3D] = TypeTrait<point3d>::type_name();
     // TODO: ...
 
     m[TYPE_ID_INT32 | TYPE_ID_1D_ARRAY_BIT] =
@@ -568,6 +571,13 @@ std::string GetTypeName(uint32_t tyid) {
         TypeTrait<std::vector<float3>>::type_name();
     m[TYPE_ID_FLOAT4 | TYPE_ID_1D_ARRAY_BIT] =
         TypeTrait<std::vector<float4>>::type_name();
+
+    m[TYPE_ID_POINT3H | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<point3h>>::type_name();
+    m[TYPE_ID_POINT3F | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<point3f>>::type_name();
+    m[TYPE_ID_POINT3D | TYPE_ID_1D_ARRAY_BIT] =
+        TypeTrait<std::vector<point3d>>::type_name();
 
     m[TYPE_ID_VECTOR3H | TYPE_ID_1D_ARRAY_BIT] =
         TypeTrait<std::vector<vector3h>>::type_name();

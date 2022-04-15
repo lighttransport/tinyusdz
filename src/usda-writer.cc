@@ -167,6 +167,24 @@ std::string PrintVec3fArray(const std::vector<Vec3f> &data) {
   return ofs.str();
 }
 
+std::string PrintPoint3fArray(const std::vector<primvar::point3f> &data) {
+  std::stringstream ofs;
+
+  ofs << "[";
+  // TODO: Use ryu print?
+  for (size_t i = 0; i < data.size(); i++) {
+    ofs << "(" << data[i].x << ", " << data[i].y << ", "
+        << data[i].z << ")";
+
+    if (i != (data.size() - 1)) {
+      ofs << ", ";
+    }
+  }
+  ofs << "]";
+
+  return ofs.str();
+}
+
 
 #if 0
 std::string PrintAsVec3fArray(const std::vector<float> &data) {
@@ -220,7 +238,7 @@ class Writer {
         << "int[] faceVertexIndices = " << PrintIntArray(mesh.faceVertexIndices)
         << "\n";
     ofs << Indent(level + 1)
-        << "point3f[] points = " << PrintVec3fArray(mesh.points) << "\n";
+        << "point3f[] points = " << PrintPoint3fArray(mesh.points) << "\n";
 
 #if 0
     if (auto p = primvar::as_vector<Vec3f>(&mesh.normals.var)) {
