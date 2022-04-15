@@ -4,6 +4,8 @@
 /// Type-erasure technique for Attribute/PrimVar(Primitive Variables), a Value class which can have 30+ different types(and can be compound-types(e.g. 1D/2D array, dictionary).
 /// Neigher std::any nor std::variant is applicable for such usecases, so write our own, handy typesystem.
 ///
+#pragma once
+
 #include <array>
 #include <cstring>
 #include <functional>
@@ -22,7 +24,7 @@
 // TODO(syoyo): Use C++17 std::optional, std::string_view when compiled with C++-17 compiler
 
 // clang and gcc
-#if defined(__EXCEPTIONS) || defined(__cpp_exceptions) 
+#if defined(__EXCEPTIONS) || defined(__cpp_exceptions)
 #define nsel_CONFIG_NO_EXCEPTIONS 0
 #define nssv_CONFIG_NO_EXCEPTIONS 0
 #else
@@ -56,7 +58,7 @@ constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11;
 enum TypeId {
   TYPE_ID_INVALID,  // = 0
 
-  TYPE_ID_TOKEN,  
+  TYPE_ID_TOKEN,
   TYPE_ID_STRING,
 
   TYPE_ID_BOOL,
@@ -654,6 +656,13 @@ struct any_value {
     return *(reinterpret_cast<const T *>(p->value()));
   }
 
+  template <class T>
+  operator std::vector<T>() const {
+    assert(TypeTrait<std::vector<T>>::type_id == p->type_id());
+
+    return *(reinterpret_cast<const std::vector<T> *>(p->value()));
+  }
+
   std::shared_ptr<base_value> p;
 };
 
@@ -680,7 +689,7 @@ struct LinearInterpolator
     size_t idx1 = std::max(n-1, idx0+1);
 
     return (1.0 - t) * values[idx0] + t * values[idx1];
-  } 
+  }
 };
 
 // Explicitly typed version of `TimeSample`
@@ -749,6 +758,25 @@ struct PrimVar {
 
     return var.values[0].type_id();
   }
+
+  // Type-safe way to get concrete value.
+  template <class T>
+  nonstd::optional<T> get_value() const {
+
+    if (!is_scalar()) {
+      return nonstd::nullopt;
+    }
+
+    if (TypeTrait<T>::type_id == var.values[0].type_id()) {
+      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+    } else if (TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+    }
+    return nonstd::nullopt;
+  }
+
 };
 
 // using Object = std::map<std::string, any_value>;
@@ -932,7 +960,7 @@ std::ostream &operator<<(std::ostream &os,
 
 //
 // typecast from type_id
-// It does not throw exception. 
+// It does not throw exception.
 //
 template <uint32_t tid>
 struct typecast {};
@@ -1369,5 +1397,5 @@ static_assert(sizeof(float3) == 12, "sizeof(float3) must be 12");
 static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
 static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 
-} // namespace primvar 
+} // namespace primvar
 } // namespace tinyusdz
