@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.16)
 
 set(TINYUSDZ_TARGET "tinyusdz") # TODO: drop `z`
 set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # static lib is always built.
