@@ -12,8 +12,8 @@ TinyUSDZ is currently work-in-progress. It does not compile and run.
 I'm now rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc. Initial working demo in 2022 Summer planned.
 
 * [x] USDC data parse
-* [ ] USDA parse
-  * Initial USDA parser starting to work(see `sandbox/usda/`)
+* [ ] USDA parser
+  * Initial USDA parser starting to work(see `src/usda-parser.cc`)
   * Support Blender-exported USDA support in 2022 Fall planned.
 * [ ] Reconstuct primitive and scene graph representaion(2022 Summer expected)
   * [ ] GeomMesh
@@ -23,6 +23,8 @@ I'm now rewritting TinyUSDZ core to support more USD features including Composit
   * [ ] etc.
   * [ ] Built-in usdObj(wavefront .obj mesh support)
     * See [doc/usdObj.md](doc/usdObj.md) for details.
+  * [ ] MagicaVoxel vox for Volume?
+  * [ ] VDBVolume support through TinyVDBIO? https://github.com/syoyo/tinyvdbio
 * [ ] Composition
   * [ ] subLayers
   * [ ] references
