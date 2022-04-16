@@ -2072,19 +2072,19 @@ class USDAParser::Impl {
     PrimAttrib attr;
 
     if (array_qual) {
-      if (TypeTrait<T>::type_name == "bool") {
+      if (primvar::TypeTrait<T>::type_name() == "bool") {
         _PushError("Array of bool type is not supported.");
         return false;
       } else {
         std::vector<T> value;
         if (!ParseBasicTypeArray(&value)) {
-          _PushError("Failed to parse " + std::string(TypeTrait<T>::type_name) +
+          _PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
                      " array.\n");
           return false;
         }
 
-        // attr.buffer.Set(value);
-        //attr.var = value;
+        LOG_INFO("Got it: ty = " + std::string(primvar::TypeTrait<T>::type_name()) + ", sz = " + std::to_string(value.size()));
+        attr.var.set_scalar(value);
       }
 
     } else if (hasConnect(primattr_name)) {
@@ -2099,13 +2099,13 @@ class USDAParser::Impl {
     } else {
       nonstd::optional<T> value;
       if (!ReadBasicType(&value)) {
-        _PushError("Failed to parse " + std::string(TypeTrait<T>::type_name) +
+        _PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
                    " .\n");
         return false;
       }
 
       if (value) {
-        std::cout << "ParseBasicPrimAttr: " << TypeTrait<T>::type_name << " = " << (*value) << "\n";
+        std::cout << "ParseBasicPrimAttr: " << primvar::TypeTrait<T>::type_name() << " = " << (*value) << "\n";
 
         // TODO: TimeSampled
         primvar::TimeSample ts;
@@ -2113,7 +2113,7 @@ class USDAParser::Impl {
         attr.var.var = ts;
 
       } else {
-        std::cout << "ParseBasicPrimAttr: " <<  TypeTrait<T>::type_name << " = None\n";
+        std::cout << "ParseBasicPrimAttr: " <<  primvar::TypeTrait<T>::type_name() << " = None\n";
       }
 
     }
@@ -2354,9 +2354,12 @@ class USDAParser::Impl {
           return false;
         }
       } else if (type_name == "point3f") {
+        LOG_INFO("point3f, array_qual = " + std::to_string(array_qual)); 
         if (!_ParseBasicPrimAttr<primvar::point3f>(array_qual, primattr_name, &attr)) {
+          LOG_INFO("Failed to parse point3f data."); 
           return false;
         }
+        LOG_INFO("Got it");
       } else if (type_name == "point3d") {
         if (!_ParseBasicPrimAttr<Vec3d>(array_qual, primattr_name, &attr)) {
           return false;
@@ -2378,9 +2381,10 @@ class USDAParser::Impl {
       attr.uniform = uniform_qual;
       attr.name = primattr_name;
 
+      LOG_INFO("primattr_name = " + primattr_name); 
       (*props)[primattr_name].attrib = attr;
 
-#if 0  // TODO
+#if 0  // TODO: Remove
       if (type_name == "matrix4d") {
         double m[4][4];
         if (!ParseMatrix4d(m)) {
@@ -3106,6 +3110,7 @@ class USDAParser::Impl {
   bool ReadBasicType(nonstd::optional<Matrix2d> *value);
   bool ReadBasicType(nonstd::optional<Matrix3d> *value);
   bool ReadBasicType(nonstd::optional<Matrix4d> *value);
+  bool ReadBasicType(nonstd::optional<primvar::point3f> *value);
 
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
@@ -7351,7 +7356,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
             PUSH_ERROR("Unknown subdivision scheme: " + (*p));
             return false;
           }
-        }  
+        }
       } else {
         LOG_WARN(" TODO: prop: " + prop.first);
       }
@@ -7780,7 +7785,36 @@ bool USDAParser::Impl::ReadBasicType(Vec4d *value) {
 }
 
 bool USDAParser::Impl::ReadBasicType(primvar::point3f *value) {
-  return ParseBasicTypePoint3f(value);
+
+    if (!Expect('(')) {
+      return false;
+    }
+    // std::cout << "got (\n";
+
+    std::vector<float> values;
+    if (!SepBy1BasicType<float>(',', &values)) {
+      return false;
+    }
+
+    // std::cout << "try to parse )\n";
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    if (values.size() != 3) {
+      std::string msg = "The number of tuple elements must be " +
+                        std::to_string(3) + ", but got " +
+                        std::to_string(values.size()) + "\n";
+      PUSH_ERROR(msg);
+      return false;
+    }
+
+    value->x = values[0];
+    value->y = values[1];
+    value->z = values[2];
+
+    return true;
 }
 
 bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2f> *value) {

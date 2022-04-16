@@ -75,6 +75,7 @@ inline std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Matrix4d &m) 
   return ofs;
 }
 
+#if 0 // TODO: remove
 template<typename T>
 inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
   os << "[";
@@ -87,6 +88,7 @@ inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
   os << "]";
   return os;
 }
+#endif
 
 
 } // namespace std

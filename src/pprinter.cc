@@ -372,8 +372,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent) {
   ss << Indent(indent) << "{\n";
 
   // members
-  // FIXME
-  //ss << Indent(indent) << "  " << primvar::get_type_name(mesh.points) << " points = " << mesh.points << "\n";
+  ss << Indent(indent) << "  point3[] points = " << mesh.points << "\n";
 
   ss << print_predefined(mesh, indent);
 
@@ -392,8 +391,7 @@ std::string to_string(const GeomPoints &points, const uint32_t indent) {
   ss << Indent(indent) << "{\n";
 
   // members
-  // FIXME
-  //ss << Indent(indent) << "  " << primvar::get_type_name(points.points) << " points = " << points.points << "\n";
+  //ss << Indent(indent) << "  point3[] points = " << points.points << "\n";
 
   ss << print_predefined(points, indent);
 
