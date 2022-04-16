@@ -777,6 +777,14 @@ struct PrimVar {
     return nonstd::nullopt;
   }
 
+  template <class T>
+  void set_scalar(const T &v) {
+    var.times.clear();
+    var.values.clear();
+
+    var.values.push_back(v); 
+  }
+
 };
 
 // using Object = std::map<std::string, any_value>;
@@ -912,8 +920,6 @@ std::ostream &operator<<(std::ostream &os, const quatd &v);
 std::ostream &operator<<(std::ostream &os, const dict &v);
 std::ostream &operator<<(std::ostream &os, const TimeSample &ts);
 
-std::ostream &operator<<(std::ostream &os, const any_value &v);
-
 std::ostream &operator<<(std::ostream &os, const matrix2d &v);
 std::ostream &operator<<(std::ostream &os, const matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const matrix4d &v);
@@ -956,6 +962,8 @@ std::ostream &operator<<(std::ostream &os,
   os << "]";
   return os;
 }
+
+std::ostream &operator<<(std::ostream &os, const any_value &v);
 
 
 //
