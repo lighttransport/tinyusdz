@@ -1,3 +1,7 @@
+#ifdef _MSC_VER
+#define NOMINMAX
+#endif
+
 #define TEST_NO_MAIN
 #include "acutest.h"
 

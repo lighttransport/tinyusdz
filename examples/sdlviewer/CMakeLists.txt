@@ -219,11 +219,27 @@ list(APPEND SOURCES
     # tinyusdz
     ../../src/tinyusdz.cc
     ../../src/io-util.cc
-    ../../src/integerCoding.cpp
-    ../../src/pxrLZ4/lz4.cpp
-    ../../src/lz4-compression.cc
     ../../src/prim-types.cc
+    ../../src/pprinter.cc
+    ../../src/primvar.cc
+    ../../src/usda-parser.cc
+    ../../src/usda-writer.cc
+    ../../src/image-loader.cc
+    ../../src/usdObj.cc
+    #../../src/integerCoding.cpp
+    #../../src/pxrLZ4/lz4.cpp
+    #../../src/lz4-compression.cc
 )
+
+set(TINYUSDZ_DEP_SOURCES
+    ../../src/integerCoding.cpp
+    ../../src/lz4-compression.cc
+    ../../src/pxrLZ4/lz4.cpp
+    ../../src/external/fpng.cpp
+    ../../src/external/staticstruct.cc
+    ../../src/external/ryu/ryu/s2d.c
+    ../../src/external/ryu/ryu/s2f.c)
+
 
 set(GUI_SOURCES
     ../common/trackball.cc
@@ -236,7 +252,7 @@ set(GUI_SOURCES
     ../common/imgui_sdl/imgui_sdl.cpp
     )
 
-add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
+add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES} ${TINYUSDZ_DEP_SOURCES})
 add_sanitizers(${BUILD_TARGET})
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
 
@@ -249,6 +265,11 @@ target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../com
 
 # tinyusdz dir
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
+
+# ryu
+target_include_directories(${BUILD_TARGET}
+                             PRIVATE ${PROJECT_SOURCE_DIR}/../../src/external/ryu/)
+
 
 #target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/SDL2-2.0.12/include"
 
