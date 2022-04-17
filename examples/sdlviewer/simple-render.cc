@@ -107,24 +107,27 @@ bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere, DrawGeomMesh* dst) 
 }
 
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
+#if 0
   // Trianglate mesh
   // vertex points should be vec3f
   if (dst->vertices.size() != (mesh.GetNumPoints() * 3)) {
-    std::cerr << "The number of vertices mismatch. " << dst->vertices.size()
-              << " must be equal to " << mesh.GetNumPoints() * 3 << "\n";
+    std::cerr << __func__ << ":The number of vertices mismatch. " << dst->vertices.size()
+              << " must be equal to mesh.GetNumPoints() * 3: " << mesh.GetNumPoints() * 3 << "\n";
     return false;
   }
+#endif
   dst->vertices.resize(mesh.points.size() * 3);
   memcpy(dst->vertices.data(), mesh.points.data(), dst->vertices.size() * sizeof(float));
+  std::cout << __func__ << ": mesh.points = " << mesh.points.size() * 3 << "\n";
 
   std::vector<float> facevarying_normals;
   if (!mesh.GetFacevaryingNormals(&facevarying_normals)) {
-    std::cout << "Warn: failed to retrieve facevarying normals\n";
+    std::cout << __func__ << ":Warn: failed to retrieve facevarying normals\n";
   }
 
   std::vector<float> facevarying_texcoords;
   if (!mesh.GetFacevaryingTexcoords(&facevarying_texcoords)) {
-    std::cout << "Warn: failed to retrieve facevarying texcoords\n";
+    std::cout << __func__ << ":Warn: failed to retrieve facevarying texcoords\n";
   }
 
   std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3

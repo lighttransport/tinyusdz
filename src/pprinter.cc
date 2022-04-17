@@ -200,6 +200,39 @@ std::string to_string(tinyusdz::SpecType ty) {
   return "SpecTypeInvalid";
 }
 
+std::string to_string(tinyusdz::Specifier s) {
+  if (s == tinyusdz::Specifier::Def) {
+    return "\"def\"";
+  } else if (s == tinyusdz::Specifier::Over) {
+    return "\"over\"";
+  } else if (s == tinyusdz::Specifier::Class) {
+    return "\"class\"";
+  } else {
+    return "\"[[SpecifierInvalid]]\"";
+  }
+}
+
+std::string to_string(tinyusdz::Permission s) {
+  if (s == tinyusdz::Permission::Public) {
+    return "\"public\"";
+  } else if (s == tinyusdz::Permission::Private) {
+    return "\"private\"";
+  } else {
+    return "\"[[PermissionInvalid]]\"";
+  }
+}
+
+std::string to_string(tinyusdz::Variability v) {
+  if (v == tinyusdz::Variability::Varying) {
+    return "\"varying\"";
+  } else if (v == tinyusdz::Variability::Uniform) {
+    return "\"uniform\"";
+  } else if (v == tinyusdz::Variability::Config) {
+    return "\"config\"";
+  } else {
+    return "\"[[VariabilityInvalid]]\"";
+  }
+}
 
 std::string to_string(tinyusdz::Extent e) {
   std::stringstream ss;

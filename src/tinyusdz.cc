@@ -729,7 +729,7 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size,
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
 float to_float(uint16_t h) {
   float16 f;
-  f.u = h;
+  f = h;
   return half_to_float(f);
 }
 #endif
@@ -3006,8 +3006,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Quatf[" << i << "] = " << v[i][0] << ", " << v[i][1]
-                    << ", " << v[i][2] << "\n";
+          std::cout << "Quatf[" << i << "] = " << v[i].v[0] << ", " << v[i].v[1]
+                    << ", " << v[i].v[2] << ", " << v[i].v[3] << "\n";
         }
 #endif
         value->SetQuatfArray(v.data(), v.size());
@@ -3021,8 +3021,8 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
         }
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "value.quatf = " << v[0] << ", " << v[1] << ", " << v[2]
-                  << ", " << v[3] << "\n";
+        std::cout << "value.quatf = " << v.v[0] << ", " << v.v[1] << ", " << v.v[2]
+                  << ", " << v.v[3] << "\n";
 #endif
         value->SetQuatf(v);
       }
@@ -3925,6 +3925,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
       std::cout << "fv.second.GetTypeName = " << fv.second.GetTypeName()
                 << "\n";
 #endif
+
       if (fv.second.GetTypeName() == "Float") {
         float value;
 
@@ -3932,6 +3933,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
           _err += "Failed to decode Float value.";
           return false;
         }
+        attr->var.set_scalar(value);
         success = true;
 
       } else if (fv.second.GetTypeName() == "Bool") {
@@ -3941,7 +3943,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
           return false;
         }
 
-        //attr->var = boolVal;
+        attr->var.set_scalar(boolVal);
         success = true;
 
       } else if (fv.second.GetTypeName() == "Int") {
@@ -3951,12 +3953,12 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
           return false;
         }
 
-        //attr->var = value;
+        attr->var.set_scalar(value);
         success = true;
       } else if (fv.second.GetTypeName() == "Vec3f") {
         Vec3f value = *reinterpret_cast<const Vec3f*>(fv.second.GetData().data());
         (void)value;
-        //attr->var = value;
+        attr->var.set_scalar(value);
 
         attr->variability = variability;
         attr->interpolation = interpolation;
@@ -3966,7 +3968,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         std::vector<float> value;
         value.resize(fv.second.GetData().size() / sizeof(float));
         memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
-        //attr->var = value;
+        attr->var.set_scalar(value);
 
         attr->variability = variability;
         attr->interpolation = interpolation;
@@ -3975,18 +3977,34 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         std::vector<Vec2f> value;
         value.resize(fv.second.GetData().size() / sizeof(Vec2f));
         memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
-        //attr->var = value;
+        attr->var.set_scalar(value);
 
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
       } else if (fv.second.GetTypeName() == "Vec3fArray") {
 
-        std::vector<Vec3f> value;
-        value.resize(fv.second.GetData().size() / sizeof(Vec3f));
-        memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
 
-        //attr->var = value;
+        // role-type?
+        if (attr->type_name == "point3f[]") {
+          std::vector<primvar::point3f> value;
+          value.resize(fv.second.GetData().size() / sizeof(Vec3f));
+          memcpy(value.data(), fv.second.GetData().data(),
+                 fv.second.GetData().size());
+          attr->var.set_scalar(value);
+        } else if (attr->type_name == "normal3f[]") {
+          std::vector<primvar::normal3f> value;
+          value.resize(fv.second.GetData().size() / sizeof(Vec3f));
+          memcpy(value.data(), fv.second.GetData().data(),
+                 fv.second.GetData().size());
+          attr->var.set_scalar(value);
+        } else {
+          std::vector<Vec3f> value;
+          value.resize(fv.second.GetData().size() / sizeof(Vec3f));
+          memcpy(value.data(), fv.second.GetData().data(),
+                 fv.second.GetData().size());
+          attr->var.set_scalar(value);
+        }
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
@@ -3996,6 +4014,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         value.resize(fv.second.GetData().size() / sizeof(Vec4f));
         memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
 
+        attr->var.set_scalar(value);
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
@@ -4005,6 +4024,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         value.resize(fv.second.GetData().size() / sizeof(int));
         memcpy(value.data(), fv.second.GetData().data(), fv.second.GetData().size());
 
+        attr->var.set_scalar(value);
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
@@ -4012,20 +4032,20 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         std::cout << "IntArray"
                   << "\n";
 
-        const int32_t *ptr =
-            reinterpret_cast<const int32_t *>(attr->buffer.data.data());
-        for (size_t i = 0; i < attr->buffer.GetNumElements(); i++) {
-          std::cout << "[" << i << "] = " << ptr[i] << "\n";
-        }
+        //const int32_t *ptr =
+        //    reinterpret_cast<const int32_t *>(attr->buffer.data.data());
+        //for (size_t i = 0; i < attr->buffer.GetNumElements(); i++) {
+        //  std::cout << "[" << i << "] = " << ptr[i] << "\n";
+        //}
 #endif
       } else if (fv.second.GetTypeName() == "Token") {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
 #endif
 
-        //attr->var = fv.second.GetToken();
-        // attr->variability = variability;
-        // attr->facevarying = facevarying;
+        attr->var.set_scalar(fv.second.GetToken());
+        attr->variability = variability;
+        //attr->interpolation = interpolation;
         success = true;
       }
     }
@@ -4399,25 +4419,31 @@ bool Parser::_ReconstructGeomMesh(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
+          auto p = attr.var.get_value<std::vector<primvar::point3f>>();
+          if (p) {
+            mesh->points = (*p);
+          } else {
+            _err += "`points` must be point3[] type, but got " +
+                    primvar::GetTypeName(attr.var.type_id());
+            return false;
+          }
           //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
           //  mesh->points = (*p);
           //}
         } else if (prop_name == "doubleSided") {
-          //if (auto p = primvar::as_basic<bool>(&attr.var)) {
-          //  mesh->doubleSided = (*p);
-          //}
+          auto p = attr.var.get_value<bool>();
+          if (p) {
+            mesh->doubleSided = (*p);
+          }
         } else if (prop_name == "extent") {
           // vec3f[2]
-          //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
-          //  if (p->size() == 2) {
-          //    mesh->extent.value.lower = (*p)[0];
-          //    mesh->extent.value.upper = (*p)[1];
-          //  }
-          //}
+          auto p = attr.var.get_value<std::vector<Vec3f>>();
+          if (p && p->size() == 2) {
+              mesh->extent.value.lower = (*p)[0];
+             mesh->extent.value.upper = (*p)[1];
+          }
         } else if (prop_name == "normals") {
-          //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
-          //  mesh->normals = std::move(attr);
-          //}
+          mesh->normals = attr;
         } else if ((prop_name == "primvars:UVMap") &&
                    (attr.type_name == "texCoord2f[]")) {
           // Explicit UV coord attribute.
@@ -4432,23 +4458,26 @@ bool Parser::_ReconstructGeomMesh(
           //  mesh->st.variability = attr.variability;
           //}
         } else if (prop_name == "faceVertexCounts") {
-          //if (auto p = primvar::as_vector<int>(&attr.var)) {
-          //  mesh->faceVertexCounts = (*p);
+          auto p = attr.var.get_value<std::vector<int>>();
+          if (p) {
+            mesh->faceVertexCounts = (*p);
+          }
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           //  // aaa: typeName: int[]
-          //  std::cout << "got faceVertexCounts. num = "
-          //            << p->size() << "\n";
-          //  std::cout << "  num = " << mesh->faceVertexCounts.size() << "\n";
+          std::cout << "got faceVertexCounts. \n";
+          std::cout << "  num = " << mesh->faceVertexCounts.size() << "\n";
 #endif
           //}
         } else if (prop_name == "faceVertexIndices") {
-          //if (auto p = primvar::as_vector<int>(&attr.var)) {
-          //  mesh->faceVertexIndices = (*p);
+          auto p = attr.var.get_value<std::vector<int>>();
+          if (p) {
+            mesh->faceVertexIndices = (*p);
+          }
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
             // aaa: typeName: int[]
-          //  std::cout << "got faceVertexIndices\n";
-          //  std::cout << "  num = " << mesh->faceVertexIndices.size() << "\n";
+            std::cout << "got faceVertexIndices\n";
+            std::cout << "  num = " << mesh->faceVertexIndices.size() << "\n";
 #endif
           //}
 
@@ -4939,7 +4968,7 @@ bool Parser::_ReconstructSceneRecursively(
   const Spec &spec = _specs[spec_index];
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << IndentStr(level)
-            << "  specTy = " << GetSpecTypeString(spec.spec_type) << "\n";
+            << "  specTy = " << tinyusdz::to_string(spec.spec_type) << "\n";
   std::cout << IndentStr(level)
             << "  fieldSetIndex = " << spec.fieldset_index.value << "\n";
 #endif
@@ -5282,7 +5311,7 @@ bool Parser::ReadSpecs() {
   for (size_t i = 0; i != num_specs; ++i) {
     std::cout << "spec[" << i << "].pathIndex  = " << _specs[i].path_index.value
               << ", fieldset_index = " << _specs[i].fieldset_index.value
-              << ", spec_type = " << _specs[i].spec_type << "\n";
+              << ", spec_type = " << tinyusdz::to_string(_specs[i].spec_type) << "\n";
     std::cout << "spec[" << i
               << "] string_repr = " << GetSpecString(Index(uint32_t(i)))
               << "\n";
