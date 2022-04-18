@@ -1725,6 +1725,10 @@ struct Material {
 
   int64_t parent_id{-1};
 
+  std::string outputs_surface; // Intermediate variable. Path of `outputs:surface.connect`
+  std::string outputs_volume; // Intermediate variable. Path of `outputs:volume.connect`
+
+  // Id will be filled after resolving paths
   int64_t surface_shader_id{-1};  // Index to `Scene::shaders`
   int64_t volume_shader_id{-1};   // Index to `Scene::shaders`
   // int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
@@ -1818,6 +1822,11 @@ struct PreviewSurface {
   std::string doc;
 
   //
+  // Infos
+  //
+  std::string info_id; // `uniform token`
+
+  //
   // Inputs
   //
   // Currently we don't support nested shader description.
@@ -1841,6 +1850,9 @@ struct PreviewSurface {
   Color3OrTexture normal{0.0f, 0.0f, 1.0f};
   FloatOrTexture displacement{0.0f};
   FloatOrTexture occlusion{1.0f};
+
+  // Blender Specific?
+  FloatOrTexture specular{0.5f};
 
   //
   // Outputs
