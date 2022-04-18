@@ -426,9 +426,16 @@ class Variable {
   // For Value
   template <typename T>
   const nonstd::optional<T> cast() const {
+    printf("cast\n");
     if (IsValue()) {
+      std::cout << "type_name = " << Variable::type_name(*this) << "\n";
       const T *p = nonstd::get_if<T>(&value);
-      return *p;
+      printf("p = %p\n", static_cast<const void *>(p));
+      if (p) {
+        return *p;
+      } else {
+        return nonstd::nullopt;
+      }
     }
     return nonstd::nullopt;
   }
@@ -2130,7 +2137,8 @@ class USDAParser::Impl {
     }
 
     if (meta.count("interpolation")) {
-      auto p = meta.at("interpolation").cast<std::string>();
+      const Variable& var = meta.at("interpolation");
+      auto p = var.cast<std::string>();
       if (p) {
         attr.interpolation = tinyusdz::InterpolationFromString(*p);
       }
