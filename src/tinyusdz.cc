@@ -3872,7 +3872,30 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "aaa: typeName: " << attr->type_name << "\n";
 #endif
+    } else if (fv.first == "targetPaths") {
+      // e.g. connection to Material.
+      const ListOp<Path> paths = fv.second.GetPathListOp();
 
+      #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+      paths.Print();
+#endif
+      // Currently we only support single explicit path.
+      if ((paths.GetExplicitItems().size() == 1)) {
+        const Path &path = paths.GetExplicitItems()[0];
+        (void)path;
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+        std::cout << "full path: " << path.full_path_name() << "\n";
+        std::cout << "local path: " << path.local_path_name() << "\n";
+#endif
+
+        attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
+
+        has_connection = true;
+
+      } else {
+        return false;
+      }
     } else if (fv.first == "connectionPaths") {
       // e.g. connection to texture file.
       const ListOp<Path> paths = fv.second.GetPathListOp();
@@ -3891,7 +3914,7 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         std::cout << "local path: " << path.local_path_name() << "\n";
 #endif
 
-        //attr->var = path;
+        attr->var.set_scalar(path.full_path_name()); // TODO: store `Path`
 
         has_connection = true;
 
@@ -4412,6 +4435,8 @@ bool Parser::ReconstructGeomMesh(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
 #endif
+      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+
       if (ret) {
         // TODO(syoyo): Support more prop names
         if (prop_name == "points") {
@@ -4526,6 +4551,12 @@ bool Parser::ReconstructGeomMesh(
           //    return false;
           //  }
           //}
+        } else if (prop_name.compare("material:binding") == 0) {
+          // rel
+          auto p = attr.var.get_value<std::string>(); // rel, but treat as sting
+          if (p) {
+            mesh->materialBinding.materialBinding = (*p);
+          }
         } else {
           // Assume Primvar.
           if (mesh->attribs.count(prop_name)) {
@@ -4624,9 +4655,16 @@ bool Parser::ReconstructMaterial(
     {
       std::string prop_name = path.GetPropPart();
 
+      PrimAttrib attr;
+
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
+      if (ret) {
+        if (prop_name.compare("outputs:surface") == 0) {
+        }
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "prop: " << prop_name << "\n";
+        std::cout << "prop: " << prop_name << "\n";
 #endif
+      }
     }
   }
 
@@ -4656,155 +4694,9 @@ bool Parser::ReconstructShader(
     }
   }
 
-#if 0
-  auto ParseAttribute = [](const FieldValuePairVector &fvs, PrimAttrib *attr,
-                           const std::string &prop_name) -> bool {
-    bool success = false;
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "fvs.size = " << fvs.size() << "\n";
-#endif
-
-    std::string type_name;
-    Variability variability{VariabilityVarying};
-    bool facevarying{false};
-
-    for (const auto &fv : fvs) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "  fvs.first " << fv.first
-                << ", second: " << fv.second.GetTypeName() << "\n";
-#endif
-      if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
-        type_name = fv.second.GetToken();
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "aaa: typeName: " << type_name << "\n";
-#endif
-
-        (void)attr;
-      } else if (fv.first == "connectionPaths") {
-        // e.g. connection to texture file.
-        const ListOp<Path> paths = fv.second.GetPathListOp();
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        paths.Print();
-#endif
-
-        // Currently we only support single explicit path.
-        if ((paths.GetExplicitItems().size() == 1)) {
-          const Path &path = paths.GetExplicitItems()[0];
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "full path: " << path.full_path_name() << "\n";
-          std::cout << "local path: " << path.local_path_name() << "\n";
-#endif
-
-        } else {
-          return false;
-        }
-      } else if ((fv.first == "variablity") &&
-                 (fv.second.GetTypeName() == "Variability")) {
-        variability = fv.second.GetVariability();
-      } else if ((fv.first == "interpolation") &&
-                 (fv.second.GetTypeName() == "Token")) {
-        if (fv.second.GetToken() == "faceVarying") {
-          facevarying = true;
-        }
-      }
-    }
-
-    // Decode value(stored in "default" field)
-    for (const auto &fv : fvs) {
-      if (fv.first == "default") {
-        attr->name = prop_name;
-        attr->basic_type = std::string();
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "fv.second.GetTypeName = " << fv.second.GetTypeName()
-                  << "\n";
-#endif
-        if (fv.second.GetTypeName() == "Float") {
-          attr->floatVal = fv.second.GetFloat();
-          attr->basic_type = "float";
-          success = true;
-
-        } else if (fv.second.GetTypeName() == "Int") {
-          if (!fv.second.GetInt(&attr->intVal)) {
-            success = false;
-            break;
-          }
-
-          attr->basic_type = "int";
-          success = true;
-        } else if (fv.second.GetTypeName() == "Vec3f") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
-                           /* stride */ sizeof(float), fv.second.GetData());
-          // attr->variability = variability;
-          // attr->facevarying = facevarying;
-          success = true;
-
-        } else if (fv.second.GetTypeName() == "FloatArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 1,
-                           /* stride */ sizeof(float), fv.second.GetData());
-          attr->variability = variability;
-          attr->facevarying = facevarying;
-          success = true;
-        } else if (fv.second.GetTypeName() == "Vec2fArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 2,
-                           /* stride */ sizeof(float) * 2, fv.second.GetData());
-          attr->variability = variability;
-          attr->facevarying = facevarying;
-          success = true;
-        } else if (fv.second.GetTypeName() == "Vec3fArray") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "fv.second.data.size = " << fv.second.GetData().size()
-                    << "\n";
-#endif
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 3,
-                           /* stride */ sizeof(float) * 3, fv.second.GetData());
-          attr->variability = variability;
-          attr->facevarying = facevarying;
-          success = true;
-        } else if (fv.second.GetTypeName() == "Vec4fArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_FLOAT, 4,
-                           /* stride */ sizeof(float) * 4, fv.second.GetData());
-          attr->variability = variability;
-          attr->facevarying = facevarying;
-          success = true;
-        } else if (fv.second.GetTypeName() == "IntArray") {
-          attr->buffer.Set(BufferData::BUFFER_DATA_TYPE_INT, 1,
-                           /* stride */ sizeof(int32_t), fv.second.GetData());
-          attr->variability = variability;
-          attr->facevarying = facevarying;
-          success = true;
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "IntArray"
-                    << "\n";
-
-          const int32_t *ptr =
-              reinterpret_cast<const int32_t *>(attr->buffer.data.data());
-          for (size_t i = 0; i < attr->buffer.GetNumElements(); i++) {
-            std::cout << "[" << i << "] = " << ptr[i] << "\n";
-          }
-#endif
-        } else if (fv.second.GetTypeName() == "Token") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
-#endif
-          attr->stringVal = fv.second.GetToken();
-          attr->basic_type = "string";
-          // attr->variability = variability;
-          // attr->facevarying = facevarying;
-          success = true;
-        }
-      }
-    }
-
-    return success;
-  };
-#endif
 
   //
-  // NOTE: Currently we assume one deeper node has Material's attribute
+  // NOTE: Currently we assume one deeper node has Shader's attribute
   //
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
@@ -4862,35 +4754,82 @@ bool Parser::ReconstructShader(
       if (ret) {
         // Currently we only support predefined PBR attributes.
 
-        if (prop_name.compare("outputs:surface") == 0) {
+        if (prop_name.compare("info:id") == 0) { 
+          auto p = attr.var.get_value<std::string>(); // `token` type, but treat it as string
+          if (p) {
+            shader->info_id = (*p);
+          }
+        }
+        else if (prop_name.compare("outputs:surface") == 0) {
           // Surface shader output available
         } else if (prop_name.compare("outputs:displacement") == 0) {
           // Displacement shader output available
+        } else if (prop_name.compare("inputs:roughness") == 0) {
+          // type: float
+          auto p = attr.var.get_value<float>();
+          if (p) {
+            shader->roughness.value = (*p);
+          }
+        } else if (prop_name.compare("inputs:specular") == 0) {
+          // type: float
+          auto p = attr.var.get_value<float>();
+          if (p) {
+            shader->specular.value = (*p);
+          }
+        } else if (prop_name.compare("inputs:ior") == 0) {
+          // type: float
+          auto p = attr.var.get_value<float>();
+          if (p) {
+            shader->ior.value = (*p);
+          }
+        } else if (prop_name.compare("inputs:opacity") == 0) {
+          // type: float
+          auto p = attr.var.get_value<float>();
+          if (p) {
+            shader->opacity.value = (*p);
+          }
+        } else if (prop_name.compare("inputs:clearcoat") == 0) {
+          // type: float
+          auto p = attr.var.get_value<float>();
+          if (p) {
+            shader->clearcoat.value = (*p);
+          }
+        } else if (prop_name.compare("inputs:clearcoatRoughness") == 0) {
+          // type: float
+          auto p = attr.var.get_value<float>();
+          if (p) {
+            shader->clearcoatRoughness.value = (*p);
+          }
         } else if (prop_name.compare("inputs:metallic") == 0) {
           // type: float
-            //if (auto p = primvar::as_basic<float>(&attr.var)) {
-            //  shader->metallic.value = (*p);
-            //}
+          auto p = attr.var.get_value<float>();
+          if (p) {
+           shader->metallic.value = (*p);
+          }
         } else if (prop_name.compare("inputs:metallic.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          //if (auto p = primvar::as_basic<std::string>(&attr.var)) {
-          //  shader->metallic.path = *p;
-          //}
-        } else if (prop_name.compare("inputs:diffuseColor") == 0) {
-            //if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
-            //  shader->diffuseColor.color = (*p);
+          auto p = attr.var.get_value<std::string>();
+          if (p) {
+           shader->metallic.path = *p;
+          }
+        } else if (prop_name.compare("inputs:diffuseColor") == 0) 
+  {
+          auto p = attr.var.get_value<primvar::float3>();
+          if (p) {
+            shader->diffuseColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            //  std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
-            //            << ", " << shader->diffuseColor.color[1] << ", "
-            //            << shader->diffuseColor.color[2] << "\n";
+              std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
+                        << ", " << shader->diffuseColor.color[1] << ", "
+                        << shader->diffuseColor.color[2] << "\n";
 #endif
-            //}
+            }
         } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          //if (auto p = primvar::as_basic<std::string>(&attr.var)) {
-          //  shader->diffuseColor.path = *p;
-          //}
+          auto p = attr.var.get_value<std::string>();
+          if (p) {
+              shader->diffuseColor.path = *p;
+          }
         } else if (prop_name.compare("inputs:emissiveColor") == 0) {
             //if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
             //  shader->emissiveColor.color = (*p);
@@ -5115,11 +5054,13 @@ bool Parser::ReconstructSceneRecursively(
   } else if (node_type == "Shader") {
     PreviewSurface shader;
     if (!ReconstructShader(node, fields, path_index_to_spec_index_map,
-                            &shader)) {
+                           &shader)) {
       _err += "Failed to reconstruct PreviewSurface(Shader).\n";
       return false;
     }
     scene->shaders.push_back(shader);
+  } else if (node_type == "Scope") {
+    std::cout << "Scope\n";
   } else {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "TODO or we can ignore this node: node_type: " << node_type
@@ -5161,8 +5102,14 @@ bool Parser::ReconstructScene(Scene *scene) {
 
   int root_node_id = 0;
 
-  return ReconstructSceneRecursively(root_node_id, /* level */ 0,
+  bool ret = ReconstructSceneRecursively(root_node_id, /* level */ 0,
                                       path_index_to_spec_index_map, scene);
+
+  if (!ret) {
+    _err += "Failed to reconstruct scene.\n";
+    return false;
+  }
+
 }
 
 bool Parser::ReadSpecs() {
