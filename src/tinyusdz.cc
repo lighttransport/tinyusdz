@@ -1008,22 +1008,22 @@ struct ValueRep {
   explicit constexpr ValueRep(uint64_t d) : data(d) {}
 
   constexpr ValueRep(int32_t t, bool isInlined, bool isArray, uint64_t payload)
-      : data(_Combine(t, isInlined, isArray, payload)) {}
+      : data(Combine(t, isInlined, isArray, payload)) {}
 
-  static const uint64_t _IsArrayBit = 1ull << 63;
-  static const uint64_t _IsInlinedBit = 1ull << 62;
-  static const uint64_t _IsCompressedBit = 1ull << 61;
+  static const uint64_t IsArrayBit_ = 1ull << 63;
+  static const uint64_t IsInlinedBit_ = 1ull << 62;
+  static const uint64_t IsCompressedBit_ = 1ull << 61;
 
-  static const uint64_t _PayloadMask = ((1ull << 48) - 1);
+  static const uint64_t PayloadMask_ = ((1ull << 48) - 1);
 
-  inline bool IsArray() const { return data & _IsArrayBit; }
-  inline void SetIsArray() { data |= _IsArrayBit; }
+  inline bool IsArray() const { return data & IsArrayBit_; }
+  inline void SetIsArray() { data |= IsArrayBit_; }
 
-  inline bool IsInlined() const { return data & _IsInlinedBit; }
-  inline void SetIsInlined() { data |= _IsInlinedBit; }
+  inline bool IsInlined() const { return data & IsInlinedBit_; }
+  inline void SetIsInlined() { data |= IsInlinedBit_; }
 
-  inline bool IsCompressed() const { return data & _IsCompressedBit; }
-  inline void SetIsCompressed() { data |= _IsCompressedBit; }
+  inline bool IsCompressed() const { return data & IsCompressedBit_; }
+  inline void SetIsCompressed() { data |= IsCompressedBit_; }
 
   inline int32_t GetType() const {
     return static_cast<int32_t>((data >> 48) & 0xFF);
@@ -1033,11 +1033,11 @@ struct ValueRep {
     data |= (static_cast<uint64_t>(t) << 48);  // set it.
   }
 
-  inline uint64_t GetPayload() const { return data & _PayloadMask; }
+  inline uint64_t GetPayload() const { return data & PayloadMask_; }
 
   inline void SetPayload(uint64_t payload) {
-    data &= ~_PayloadMask;  // clear existing payload.
-    data |= payload & _PayloadMask;
+    data &= ~PayloadMask_;  // clear existing payload.
+    data |= payload & PayloadMask_;
   }
 
   inline uint64_t GetData() const { return data; }
@@ -1059,10 +1059,10 @@ struct ValueRep {
   }
 
  private:
-  static constexpr uint64_t _Combine(int32_t t, bool isInlined, bool isArray,
+  static constexpr uint64_t Combine(int32_t t, bool isInlined, bool isArray,
                                      uint64_t payload) {
-    return (isArray ? _IsArrayBit : 0) | (isInlined ? _IsInlinedBit : 0) |
-           (static_cast<uint64_t>(t) << 48) | (payload & _PayloadMask);
+    return (isArray ? IsArrayBit_ : 0) | (isInlined ? IsInlinedBit_ : 0) |
+           (static_cast<uint64_t>(t) << 48) | (payload & PayloadMask_);
   }
 
   uint64_t data;
@@ -1101,7 +1101,7 @@ struct TableOfContents {
 };
 
 template <class Int>
-static inline bool _ReadCompressedInts(const StreamReader *sr, Int *out,
+static inline bool ReadCompressedInts(const StreamReader *sr, Int *out,
                                        size_t size) {
   // TODO(syoyo): Error check
   using Compressor =
@@ -1296,33 +1296,33 @@ class Parser {
   std::map<Index, FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
-  bool _BuildLiveFieldSets();
+  bool BuildLiveFieldSets();
 
   ///
   /// Parse node's attribute from FieldValuePairVector.
   ///
-  bool _ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
+  bool ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
                        const std::string &prop_name);
 
-  bool _ReconstructXform(const Node &node,
+  bool ReconstructXform(const Node &node,
                          const FieldValuePairVector &fields,
                          const std::unordered_map<uint32_t, uint32_t>
                              &path_index_to_spec_index_map,
                          Xform *xform);
 
-  bool _ReconstructGeomMesh(const Node &node,
+  bool ReconstructGeomMesh(const Node &node,
                             const FieldValuePairVector &fields,
                             const std::unordered_map<uint32_t, uint32_t>
                                 &path_index_to_spec_index_map,
                             GeomMesh *mesh);
 
-  bool _ReconstructGeomBasisCurves(const Node &node,
+  bool ReconstructGeomBasisCurves(const Node &node,
                             const FieldValuePairVector &fields,
                             const std::unordered_map<uint32_t, uint32_t>
                                 &path_index_to_spec_index_map,
                             GeomBasisCurves *curves);
 
-  bool _ReconstructMaterial(const Node &node,
+  bool ReconstructMaterial(const Node &node,
                             const FieldValuePairVector &fields,
                             const std::unordered_map<uint32_t, uint32_t>
                                 &path_index_to_spec_index_map,
@@ -1331,12 +1331,12 @@ class Parser {
   ///
   /// NOTE: Currently we only support UsdPreviewSurface
   ///
-  bool _ReconstructShader(const Node &node, const FieldValuePairVector &fields,
+  bool ReconstructShader(const Node &node, const FieldValuePairVector &fields,
                           const std::unordered_map<uint32_t, uint32_t>
                               &path_index_to_spec_index_map,
                           PreviewSurface *shader);
 
-  bool _ReconstructSceneRecursively(int parent_id, int level,
+  bool ReconstructSceneRecursively(int parent_id, int level,
                                     const std::unordered_map<uint32_t, uint32_t>
                                         &path_index_to_spec_index_map,
                                     Scene *scene);
@@ -1397,17 +1397,17 @@ class Parser {
 
   std::vector<Node> _nodes;  // [0] = root node
 
-  bool _BuildDecompressedPathsImpl(
+  bool BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
       std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
 
-  bool _UnpackValueRep(const ValueRep &rep, Value *value);
+  bool UnpackValueRep(const ValueRep &rep, Value *value);
 
   //
   // Construct node hierarchy.
   //
-  bool _BuildNodeHierarchy(std::vector<uint32_t> const &pathIndexes,
+  bool BuildNodeHierarchy(std::vector<uint32_t> const &pathIndexes,
                            std::vector<int32_t> const &elementTokenIndexes,
                            std::vector<int32_t> const &jumps, size_t curIndex,
                            int64_t parentNodeIndex);
@@ -1415,33 +1415,33 @@ class Parser {
   //
   // Reader util functions
   //
-  bool _ReadIndex(Index *i);
+  bool ReadIndex(Index *i);
 
-  // bool _ReadToken(std::string *s);
-  bool _ReadString(std::string *s);
+  // bool ReadToken(std::string *s);
+  bool ReadString(std::string *s);
 
-  bool _ReadValueRep(ValueRep *rep);
+  bool ReadValueRep(ValueRep *rep);
 
-  bool _ReadPathArray(std::vector<Path> *d);
+  bool ReadPathArray(std::vector<Path> *d);
 
   // Dictionary
-  bool _ReadDictionary(Value::Dictionary *d);
+  bool ReadDictionary(Value::Dictionary *d);
 
-  bool _ReadTimeSamples(TimeSamples *d);
+  bool ReadTimeSamples(TimeSamples *d);
 
   // integral array
   template <typename T>
-  bool _ReadIntArray(bool is_compressed, std::vector<T> *d);
+  bool ReadIntArray(bool is_compressed, std::vector<T> *d);
 
-  bool _ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d);
-  bool _ReadFloatArray(bool is_compressed, std::vector<float> *d);
-  bool _ReadDoubleArray(bool is_compressed, std::vector<double> *d);
+  bool ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d);
+  bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
+  bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
   // PathListOp
-  bool _ReadPathListOp(ListOp<Path> *d);
+  bool ReadPathListOp(ListOp<Path> *d);
 };
 
-bool Parser::_ReadIndex(Index *i) {
+bool Parser::ReadIndex(Index *i) {
   // string is serialized as StringIndex
   uint32_t value;
   if (!_sr->read4(&value)) {
@@ -1453,9 +1453,9 @@ bool Parser::_ReadIndex(Index *i) {
 }
 
 /* Currently unused
-bool Parser::_ReadToken(std::string *s) {
+bool Parser::ReadToken(std::string *s) {
   Index token_index;
-  if (!_ReadIndex(&token_index)) {
+  if (!ReadIndex(&token_index)) {
     _err += "Failed to read Index for token data.\n";
     return false;
   }
@@ -1466,10 +1466,10 @@ bool Parser::_ReadToken(std::string *s) {
 }
 */
 
-bool Parser::_ReadString(std::string *s) {
+bool Parser::ReadString(std::string *s) {
   // string is serialized as StringIndex
   Index string_index;
-  if (!_ReadIndex(&string_index)) {
+  if (!ReadIndex(&string_index)) {
     _err += "Failed to read Index for string data.\n";
     return false;
   }
@@ -1479,7 +1479,7 @@ bool Parser::_ReadString(std::string *s) {
   return true;
 }
 
-bool Parser::_ReadValueRep(ValueRep *rep) {
+bool Parser::ReadValueRep(ValueRep *rep) {
   if (!_sr->read8(reinterpret_cast<uint64_t *>(rep))) {
     _err += "Failed to read ValueRep.\n";
     return false;
@@ -1493,7 +1493,7 @@ bool Parser::_ReadValueRep(ValueRep *rep) {
 }
 
 template <typename T>
-bool Parser::_ReadIntArray(bool is_compressed, std::vector<T> *d) {
+bool Parser::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -1562,11 +1562,11 @@ bool Parser::_ReadIntArray(bool is_compressed, std::vector<T> *d) {
       return true;
     }
 
-    return _ReadCompressedInts(_sr, d->data(), d->size());
+    return ReadCompressedInts(_sr, d->data(), d->size());
   }
 }
 
-bool Parser::_ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
+bool Parser::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -1649,7 +1649,7 @@ bool Parser::_ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
   if (code == 'i') {
     // Compressed integers.
     std::vector<int32_t> ints(length);
-    if (!_ReadCompressedInts(_sr, ints.data(), ints.size())) {
+    if (!ReadCompressedInts(_sr, ints.data(), ints.size())) {
       _err += "Failed to read compressed ints in ReadHalfArray.\n";
       return false;
     }
@@ -1674,7 +1674,7 @@ bool Parser::_ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
     }
 
     std::vector<uint32_t> indexes(length);
-    if (!_ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
+    if (!ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
       _err += "Failed to read lut indices in ReadHalfArray.\n";
       return false;
     }
@@ -1691,7 +1691,7 @@ bool Parser::_ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
   return true;
 }
 
-bool Parser::_ReadFloatArray(bool is_compressed, std::vector<float> *d) {
+bool Parser::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -1774,7 +1774,7 @@ bool Parser::_ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   if (code == 'i') {
     // Compressed integers.
     std::vector<int32_t> ints(length);
-    if (!_ReadCompressedInts(_sr, ints.data(), ints.size())) {
+    if (!ReadCompressedInts(_sr, ints.data(), ints.size())) {
       _err += "Failed to read compressed ints in ReadFloatArray.\n";
       return false;
     }
@@ -1795,7 +1795,7 @@ bool Parser::_ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     }
 
     std::vector<uint32_t> indexes(length);
-    if (!_ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
+    if (!ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
       _err += "Failed to read lut indices in ReadFloatArray.\n";
       return false;
     }
@@ -1812,7 +1812,7 @@ bool Parser::_ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   return true;
 }
 
-bool Parser::_ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
+bool Parser::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -1895,7 +1895,7 @@ bool Parser::_ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   if (code == 'i') {
     // Compressed integers.
     std::vector<int32_t> ints(length);
-    if (!_ReadCompressedInts(_sr, ints.data(), ints.size())) {
+    if (!ReadCompressedInts(_sr, ints.data(), ints.size())) {
       _err += "Failed to read compressed ints in ReadDoubleArray.\n";
       return false;
     }
@@ -1916,7 +1916,7 @@ bool Parser::_ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     }
 
     std::vector<uint32_t> indexes(length);
-    if (!_ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
+    if (!ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
       _err += "Failed to read lut indices in ReadDoubleArray.\n";
       return false;
     }
@@ -1933,7 +1933,7 @@ bool Parser::_ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   return true;
 }
 
-bool Parser::_ReadTimeSamples(TimeSamples *d) {
+bool Parser::ReadTimeSamples(TimeSamples *d) {
   (void)d;
 
   // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
@@ -1942,7 +1942,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
   std::cout << "ReadTimeSamples: offt before tell = " << _sr->tell() << "\n";
 #endif
 
-  // 8byte for the offset for recursive value. See _RecursiveRead() in
+  // 8byte for the offset for recursive value. See RecursiveRead() in
   // crateFile.cpp for details.
   int64_t offset{0};
   if (!_sr->read8(&offset)) {
@@ -1965,7 +1965,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
   // TODO(syoyo): Deduplicate times?
 
   ValueRep rep{0};
-  if (!_ReadValueRep(&rep)) {
+  if (!ReadValueRep(&rep)) {
     _err += "Failed to read ValueRep for TimeSample' times element.\n";
     return false;
   }
@@ -1974,7 +1974,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
   size_t values_offset = _sr->tell();
 
   Value value;
-  if (!_UnpackValueRep(rep, &value)) {
+  if (!UnpackValueRep(rep, &value)) {
     _err += "Failed to unpack value of TimeSample's times element.\n";
     return false;
   }
@@ -1996,7 +1996,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
     return false;
   }
 
-  // 8byte for the offset for recursive value. See _RecursiveRead() in
+  // 8byte for the offset for recursive value. See RecursiveRead() in
   // crateFile.cpp for details.
   if (!_sr->read8(&offset)) {
     _err += "Failed to read the offset for value in TimeSamples.\n";
@@ -2038,7 +2038,7 @@ bool Parser::_ReadTimeSamples(TimeSamples *d) {
   return true;
 }
 
-bool Parser::_ReadPathListOp(ListOp<Path> *d) {
+bool Parser::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
@@ -2141,7 +2141,7 @@ bool Parser::_ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
-bool Parser::_ReadDictionary(Value::Dictionary *d) {
+bool Parser::ReadDictionary(Value::Dictionary *d) {
   Value::Dictionary dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
@@ -2159,7 +2159,7 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "key before tell = " << _sr->tell() << "\n";
 #endif
-    if (!_ReadString(&key)) {
+    if (!ReadString(&key)) {
       _err += "Failed to read key string for Dictionary element.\n";
       return false;
     }
@@ -2168,7 +2168,7 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
     std::cout << "offt before tell = " << _sr->tell() << "\n";
 #endif
 
-    // 8byte for the offset for recursive value. See _RecursiveRead() in
+    // 8byte for the offset for recursive value. See RecursiveRead() in
     // crateFile.cpp for details.
     int64_t offset{0};
     if (!_sr->read8(&offset)) {
@@ -2196,7 +2196,7 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
 #endif
 
     ValueRep rep{0};
-    if (!_ReadValueRep(&rep)) {
+    if (!ReadValueRep(&rep)) {
       _err += "Failed to read value for Dictionary element.\n";
       return false;
     }
@@ -2209,7 +2209,7 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
     size_t saved_position = _sr->tell();
 
     Value value;
-    if (!_UnpackValueRep(rep, &value)) {
+    if (!UnpackValueRep(rep, &value)) {
       _err += "Failed to unpack value of Dictionary element.\n";
       return false;
     }
@@ -2227,7 +2227,7 @@ bool Parser::_ReadDictionary(Value::Dictionary *d) {
   return true;
 }
 
-bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
+bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
   ValueType ty = GetValueType(rep.GetType());
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << GetValueTypeRepr(rep.GetType()) << "\n";
@@ -2597,7 +2597,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       assert(rep.IsArray());
 
       std::vector<int32_t> v;
-      if (!_ReadIntArray(rep.IsCompressed(), &v)) {
+      if (!ReadIntArray(rep.IsCompressed(), &v)) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cerr << "Failed to read Int array\n";
 #endif
@@ -2810,7 +2810,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_HALF) {
       if (rep.IsArray()) {
         std::vector<uint16_t> v;
-        if (!_ReadHalfArray(rep.IsCompressed(), &v)) {
+        if (!ReadHalfArray(rep.IsCompressed(), &v)) {
           _err += "Failed to read half array value\n";
           return false;
         }
@@ -2828,7 +2828,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_FLOAT) {
       if (rep.IsArray()) {
         std::vector<float> v;
-        if (!_ReadFloatArray(rep.IsCompressed(), &v)) {
+        if (!ReadFloatArray(rep.IsCompressed(), &v)) {
           _err += "Failed to read float array value\n";
           return false;
         }
@@ -2853,7 +2853,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_DOUBLE) {
       if (rep.IsArray()) {
         std::vector<double> v;
-        if (!_ReadDoubleArray(rep.IsCompressed(), &v)) {
+        if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
           _err += "Failed to read Double value\n";
           return false;
         }
@@ -3064,7 +3064,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
       Value::Dictionary dict;
 
-      if (!_ReadDictionary(&dict)) {
+      if (!ReadDictionary(&dict)) {
         _err += "Failed to read Dictionary value\n";
         return false;
       }
@@ -3082,7 +3082,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
       // => underliying storage is the array of ListOp[PathIndex]
       ListOp<Path> lst;
 
-      if (!_ReadPathListOp(&lst)) {
+      if (!ReadPathListOp(&lst)) {
         _err += "Failed to read PathListOp data\n";
         return false;
       }
@@ -3093,7 +3093,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
     } else if (ty.id == VALUE_TYPE_TIME_SAMPLES) {
       TimeSamples ts;
-      if (!_ReadTimeSamples(&ts)) {
+      if (!ReadTimeSamples(&ts)) {
         _err += "Failed to read TimeSamples data\n";
         return false;
       }
@@ -3104,7 +3104,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
 
     } else if (ty.id == VALUE_TYPE_DOUBLE_VECTOR) {
       std::vector<double> v;
-      if (!_ReadDoubleArray(rep.IsCompressed(), &v)) {
+      if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
         _err += "Failed to read DoubleVector value\n";
         return false;
       }
@@ -3130,7 +3130,7 @@ bool Parser::_UnpackValueRep(const ValueRep &rep, Value *value) {
   }
 }
 
-bool Parser::_BuildDecompressedPathsImpl(
+bool Parser::BuildDecompressedPathsImpl(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath) {
@@ -3156,7 +3156,7 @@ bool Parser::_BuildDecompressedPathsImpl(
       std::cout << "tokenIndex = " << tokenIndex << "\n";
 #endif
       if (tokenIndex >= int32_t(_tokens.size())) {
-        _err += "Invalid tokenIndex in _BuildDecompressedPathsImpl.\n";
+        _err += "Invalid tokenIndex in BuildDecompressedPathsImpl.\n";
         return false;
       }
       auto const &elemToken = _tokens[size_t(tokenIndex)];
@@ -3187,7 +3187,7 @@ bool Parser::_BuildDecompressedPathsImpl(
       if (hasSibling) {
         // NOTE(syoyo): This recursive call can be parallelized
         auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes,
+        if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes,
                                          jumps, siblingIndex, parentPath)) {
           return false;
         }
@@ -3204,7 +3204,7 @@ bool Parser::_BuildDecompressedPathsImpl(
 }
 
 // TODO(syoyo): Refactor
-bool Parser::_BuildNodeHierarchy(
+bool Parser::BuildNodeHierarchy(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex,
@@ -3260,7 +3260,7 @@ bool Parser::_BuildNodeHierarchy(
     if (hasChild) {
       if (hasSibling) {
         auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+        if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
                                  siblingIndex, parentNodeIndex)) {
           return false;
         }
@@ -3400,13 +3400,13 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
   _nodes.resize(static_cast<size_t>(numPaths));
 
   // Now build the paths.
-  if (!_BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps,
+  if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps,
                                    /* curIndex */ 0, Path())) {
     return false;
   }
 
   // Now build node hierarchy.
-  if (!_BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+  if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
                            /* curIndex */ 0, /* parent node index */ -1)) {
     return false;
   }
@@ -3796,7 +3796,7 @@ bool Parser::ReadFieldSets() {
   return true;
 }
 
-bool Parser::_BuildLiveFieldSets() {
+bool Parser::BuildLiveFieldSets() {
   for (auto fsBegin = _fieldset_indices.begin(),
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index());
        fsBegin != _fieldset_indices.end(); fsBegin = fsEnd + 1,
@@ -3816,9 +3816,9 @@ bool Parser::_BuildLiveFieldSets() {
 #endif
       auto const &field = _fields[fsBegin->value];
       pairs[i].first = GetToken(field.token_index);
-      if (!_UnpackValueRep(field.value_rep, &pairs[i].second)) {
+      if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "_BuildLiveFieldSets: Failed to unpack ValueRep : "
+        std::cerr << "BuildLiveFieldSets: Failed to unpack ValueRep : "
                   << field.value_rep.GetStringRepr() << "\n";
 #endif
         return false;
@@ -3830,28 +3830,23 @@ bool Parser::_BuildLiveFieldSets() {
   std::cout << "# of live fieldsets = " << _live_fieldsets.size() << "\n";
 #endif
 
-  size_t sum = 0;
-  for (const auto &item : _live_fieldsets) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+  for (const auto &item : _live_fieldsets) {
     std::cout << "livefieldsets[" << item.first.value
               << "].count = " << item.second.size() << "\n";
-#endif
     sum += item.second.size();
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
     for (size_t i = 0; i < item.second.size(); i++) {
       std::cout << " [" << i << "] name = " << item.second[i].first << "\n";
     }
-#endif
   }
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << "Total fields used = " << sum << "\n";
 #endif
 
   return true;
 }
 
-bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
+bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
                              const std::string &prop_name) {
   bool success = false;
 
@@ -4059,7 +4054,7 @@ bool Parser::_ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
   return success;
 }
 
-bool Parser::_ReconstructXform(
+bool Parser::ReconstructXform(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Xform *xform) {
@@ -4123,7 +4118,7 @@ bool Parser::_ReconstructXform(
       std::string prop_name = path.GetPropPart();
 
       PrimAttrib attr;
-      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "Xform: prop: " << prop_name << ", ret = " << ret << "\n";
 #endif
@@ -4136,7 +4131,7 @@ bool Parser::_ReconstructXform(
   return true;
 }
 
-bool Parser::_ReconstructGeomBasisCurves(
+bool Parser::ReconstructGeomBasisCurves(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomBasisCurves *curves) {
@@ -4157,6 +4152,8 @@ bool Parser::_ReconstructGeomBasisCurves(
       }
     }
   }
+
+  (void)has_position;
 
   //
   // NOTE: Currently we assume one deeper node has GeomMesh's attribute
@@ -4213,7 +4210,7 @@ bool Parser::_ReconstructGeomBasisCurves(
       std::string prop_name = path.GetPropPart();
 
       PrimAttrib attr;
-      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
 #endif
@@ -4322,7 +4319,7 @@ bool Parser::_ReconstructGeomBasisCurves(
   return true;
 }
 
-bool Parser::_ReconstructGeomMesh(
+bool Parser::ReconstructGeomMesh(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomMesh *mesh) {
@@ -4343,6 +4340,8 @@ bool Parser::_ReconstructGeomMesh(
       }
     }
   }
+
+  (void)has_position;
 
   // Disable has_position check for a while, since Mesh may not have "points",
   // but "position"
@@ -4409,7 +4408,7 @@ bool Parser::_ReconstructGeomMesh(
       std::string prop_name = path.GetPropPart();
 
       PrimAttrib attr;
-      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
 #endif
@@ -4547,7 +4546,7 @@ bool Parser::_ReconstructGeomMesh(
   return true;
 }
 
-bool Parser::_ReconstructMaterial(
+bool Parser::ReconstructMaterial(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Material *material) {
@@ -4634,7 +4633,7 @@ bool Parser::_ReconstructMaterial(
   return true;
 }
 
-bool Parser::_ReconstructShader(
+bool Parser::ReconstructShader(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     PreviewSurface *shader) {
@@ -4855,7 +4854,7 @@ bool Parser::_ReconstructShader(
 
       PrimAttrib attr;
 
-      bool ret = _ParseAttribute(child_fields, &attr, prop_name);
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
 #endif
@@ -4915,7 +4914,7 @@ bool Parser::_ReconstructShader(
   return true;
 }
 
-bool Parser::_ReconstructSceneRecursively(
+bool Parser::ReconstructSceneRecursively(
     int parent, int level,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Scene *scene) {
@@ -5059,12 +5058,12 @@ bool Parser::_ReconstructSceneRecursively(
       // Check if TokenArray contains known child nodes
       const auto &tokens = fv.second.GetStringArray();
 
-      bool valid = true;
+      //bool valid = true;
       for (const auto &token : tokens) {
         if (!node.GetPrimChildren().count(token)) {
           _err += "primChild '" + token + "' not found in node '" +
                   node.GetPath().full_path_name() + "'\n";
-          valid = false;
+          //valid = false;
           break;
         }
       }
@@ -5081,7 +5080,7 @@ bool Parser::_ReconstructSceneRecursively(
 
   if (node_type == "Xform") {
     Xform xform;
-    if (!_ReconstructXform(node, fields, path_index_to_spec_index_map,
+    if (!ReconstructXform(node, fields, path_index_to_spec_index_map,
                            &xform)) {
       _err += "Failed to reconstruct Xform.\n";
       return false;
@@ -5089,7 +5088,7 @@ bool Parser::_ReconstructSceneRecursively(
     scene->xforms.push_back(xform);
   } else if (node_type == "BasisCurves") {
     GeomBasisCurves curves;
-    if (!_ReconstructGeomBasisCurves(node, fields, path_index_to_spec_index_map,
+    if (!ReconstructGeomBasisCurves(node, fields, path_index_to_spec_index_map,
                               &curves)) {
       _err += "Failed to reconstruct GeomBasisCurves.\n";
       return false;
@@ -5098,7 +5097,7 @@ bool Parser::_ReconstructSceneRecursively(
     scene->geom_basis_curves.push_back(curves);
   } else if (node_type == "Mesh") {
     GeomMesh mesh;
-    if (!_ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
+    if (!ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
                               &mesh)) {
       _err += "Failed to reconstruct GeomMesh.\n";
       return false;
@@ -5107,7 +5106,7 @@ bool Parser::_ReconstructSceneRecursively(
     scene->geom_meshes.push_back(mesh);
   } else if (node_type == "Material") {
     Material material;
-    if (!_ReconstructMaterial(node, fields, path_index_to_spec_index_map,
+    if (!ReconstructMaterial(node, fields, path_index_to_spec_index_map,
                               &material)) {
       _err += "Failed to reconstruct Material.\n";
       return false;
@@ -5115,7 +5114,7 @@ bool Parser::_ReconstructSceneRecursively(
     scene->materials.push_back(material);
   } else if (node_type == "Shader") {
     PreviewSurface shader;
-    if (!_ReconstructShader(node, fields, path_index_to_spec_index_map,
+    if (!ReconstructShader(node, fields, path_index_to_spec_index_map,
                             &shader)) {
       _err += "Failed to reconstruct PreviewSurface(Shader).\n";
       return false;
@@ -5129,7 +5128,7 @@ bool Parser::_ReconstructSceneRecursively(
   }
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    if (!_ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
+    if (!ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
                                       path_index_to_spec_index_map, scene)) {
       return false;
     }
@@ -5162,7 +5161,7 @@ bool Parser::ReconstructScene(Scene *scene) {
 
   int root_node_id = 0;
 
-  return _ReconstructSceneRecursively(root_node_id, /* level */ 0,
+  return ReconstructSceneRecursively(root_node_id, /* level */ 0,
                                       path_index_to_spec_index_map, scene);
 }
 
@@ -5611,7 +5610,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   ///
   /// Reconstruct C++ representation of USD scene graph.
   ///
-  if (!parser._BuildLiveFieldSets()) {
+  if (!parser.BuildLiveFieldSets()) {
     if (warn) {
       (*warn) = parser.GetWarning();
     }

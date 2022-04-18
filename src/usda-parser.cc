@@ -26,7 +26,11 @@
 #include "mapbox/recursive_wrapper.hpp"  // for recursive types
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
-//#include "nonstd/variant.hpp"
+
+// Workaround: Compilation fails when using C++17 std::variant for Variable class.
+// so use nonstd::variant on C++17
+#define variant_CONFIG_SELECT_VARIANT variant_VARIANT_NONSTD
+#include "nonstd/variant.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -55,7 +59,7 @@
     std::ostringstream ss;                                         \
     ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
     ss << s;                                                       \
-    _PushError(ss.str());                                          \
+    PushError(ss.str());                                          \
   } while (0)
 
 #define SLOG_INFO                                                         \
@@ -1088,10 +1092,10 @@ class USDAParser::Impl {
   };
 
   Impl(tinyusdz::StreamReader *sr) : _sr(sr) {
-    _RegisterBuiltinMeta();
-    _RegisterNodeTypes();
-    _RegisterNodeArgs();
-    _RegisterPrimAttrTypes();
+    RegisterBuiltinMeta();
+    RegisterNodeTypes();
+    RegisterNodeArgs();
+    RegisterPrimAttrTypes();
   }
 
   // Return the flag if the .usda is read from `references`
@@ -1384,8 +1388,8 @@ class USDAParser::Impl {
 
     std::cout << "varname = `" << varname << "`\n";
 
-    if (!_IsNodeArg(varname)) {
-      _PushError("Unsupported or invalid/empty variable name `" + varname +
+    if (!IsNodeArg(varname)) {
+      PushError("Unsupported or invalid/empty variable name `" + varname +
                  "`\n");
       return false;
     }
@@ -1395,7 +1399,7 @@ class USDAParser::Impl {
     }
 
     if (!Expect('=')) {
-      _PushError("`=` expected.");
+      PushError("`=` expected.");
       return false;
     }
 
@@ -1403,7 +1407,7 @@ class USDAParser::Impl {
       return false;
     }
 
-    auto pvardef = _GetNodeArg(varname);
+    auto pvardef = GetNodeArg(varname);
     if (!pvardef) {
       // This should not happen though;
       return false;
@@ -1417,7 +1421,7 @@ class USDAParser::Impl {
     if (vardef.type == "path") {
       std::string value;
       if (!ReadPathIdentifier(&value)) {
-        _PushError("Failed to parse path identifier");
+        PushError("Failed to parse path identifier");
         return false;
       }
 
@@ -1426,7 +1430,7 @@ class USDAParser::Impl {
     } else if (vardef.type == "path[]") {
       std::vector<std::string> value;
       if (!ParsePathIdentifierArray(&value)) {
-        _PushError("Failed to parse array of path identifier");
+        PushError("Failed to parse array of path identifier");
 
         std::cout << __LINE__ << " ParsePathIdentifierArray failed\n";
         return false;
@@ -1445,7 +1449,7 @@ class USDAParser::Impl {
     } else if (vardef.type == "ref[]") {
       std::vector<AssetReference> value;
       if (!ParseAssetReferenceArray(&value)) {
-        _PushError("Failed to parse array of assert reference");
+        PushError("Failed to parse array of assert reference");
 
         return false;
       }
@@ -1573,7 +1577,7 @@ class USDAParser::Impl {
         std::string key;
         Variable var;
         if (!ParseDictElement(&key, &var)) {
-          _PushError(std::to_string(__LINE__) +
+          PushError(std::to_string(__LINE__) +
                      "Failed to parse dict element.");
           return false;
         }
@@ -1676,7 +1680,7 @@ class USDAParser::Impl {
         }
 
         if ((token != "interpolation") && (token != "customData")) {
-          _PushError(
+          PushError(
               "Currently only `interpolation` or `customData` is supported but "
               "got: " +
               token);
@@ -1814,15 +1818,15 @@ class USDAParser::Impl {
 
       // next token should be type
       if (!ReadIdentifier(&type_name)) {
-        _PushError("`type` identifier expected but got non-identifier\n");
+        PushError("`type` identifier expected but got non-identifier\n");
         return false;
       }
 
       // `type_name` is then overwritten.
     }
 
-    if (!_IsRegisteredPrimAttrType(type_name)) {
-      _PushError("Unknown or unsupported primtive attribute type `" +
+    if (!IsRegisteredPrimAttrType(type_name)) {
+      PushError("Unknown or unsupported primtive attribute type `" +
                  type_name + "`\n");
       return false;
     }
@@ -1844,7 +1848,7 @@ class USDAParser::Impl {
           array_qual = true;
         } else {
           // Invalid syntax
-          _PushError("Invalid syntax found.\n");
+          PushError("Invalid syntax found.\n");
           return false;
         }
 
@@ -1863,7 +1867,7 @@ class USDAParser::Impl {
 
     std::string primattr_name;
     if (!ReadPrimAttrIdentifier(&primattr_name)) {
-      _PushError("Failed to parse primAttr identifier.\n");
+      PushError("Failed to parse primAttr identifier.\n");
       return false;
     }
 
@@ -1886,14 +1890,14 @@ class USDAParser::Impl {
     if (type_name == "string") {
       std::string value;
       if (!ReadStringLiteral(&value)) {
-        _PushError("Failed to parse string literal.\n");
+        PushError("Failed to parse string literal.\n");
         return false;
       }
 
       std::cout << "string = " << value << "\n";
 
     } else {
-      _PushError("Unimplemented or unsupported type: " + type_name + "\n");
+      PushError("Unimplemented or unsupported type: " + type_name + "\n");
       return false;
     }
 
@@ -1929,7 +1933,7 @@ class USDAParser::Impl {
 
       uint64_t timeVal;
       if (!ReadBasicType(&timeVal)) {
-        _PushError("Parse time value failed.");
+        PushError("Parse time value failed.");
         return false;
       }
 
@@ -1982,8 +1986,8 @@ class USDAParser::Impl {
       return false;
     }
 
-    if (!_IsRegisteredPrimAttrType(type_name)) {
-      _PushError("Unknown or unsupported type `" + type_name + "`\n");
+    if (!IsRegisteredPrimAttrType(type_name)) {
+      PushError("Unknown or unsupported type `" + type_name + "`\n");
       return false;
     }
 
@@ -2004,7 +2008,7 @@ class USDAParser::Impl {
           array_qual = true;
         } else {
           // Invalid syntax
-          _PushError("Invalid syntax found.\n");
+          PushError("Invalid syntax found.\n");
           return false;
         }
 
@@ -2027,7 +2031,7 @@ class USDAParser::Impl {
       if (ReadStringLiteral(&key_name)) {
         // ok
       } else {
-        _PushError("Failed to parse dictionary key identifier.\n");
+        PushError("Failed to parse dictionary key identifier.\n");
         return false;
       }
     }
@@ -2046,7 +2050,7 @@ class USDAParser::Impl {
 
     // Variable var;
 
-    _PushError("TODO: ParseDictElement: Implement value parser for type: " +
+    PushError("TODO: ParseDictElement: Implement value parser for type: " +
                type_name + "\n");
     return false;
   }
@@ -2067,18 +2071,18 @@ class USDAParser::Impl {
   }
 
   template <typename T>
-  bool _ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
+  bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
                            PrimAttrib *out_attr) {
     PrimAttrib attr;
 
     if (array_qual) {
       if (primvar::TypeTrait<T>::type_name() == "bool") {
-        _PushError("Array of bool type is not supported.");
+        PushError("Array of bool type is not supported.");
         return false;
       } else {
         std::vector<T> value;
         if (!ParseBasicTypeArray(&value)) {
-          _PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
+          PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
                      " array.\n");
           return false;
         }
@@ -2090,7 +2094,7 @@ class USDAParser::Impl {
     } else if (hasConnect(primattr_name)) {
       std::string value;  // TODO: Path
       if (!ReadPathIdentifier(&value)) {
-        _PushError("Failed to parse path identifier for `token`.\n");
+        PushError("Failed to parse path identifier for `token`.\n");
         return false;
       }
       std::cout << "Path identifier = " << value << "\n";
@@ -2099,7 +2103,7 @@ class USDAParser::Impl {
     } else {
       nonstd::optional<T> value;
       if (!ReadBasicType(&value)) {
-        _PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
+        PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
                    " .\n");
         return false;
       }
@@ -2121,7 +2125,7 @@ class USDAParser::Impl {
     // optional: interpolation parameter
     std::map<std::string, Variable> meta;
     if (!ParseAttrMeta(&meta)) {
-      _PushError("Failed to parse PrimAttrib meta.");
+      PushError("Failed to parse PrimAttrib meta.");
       return false;
     }
 
@@ -2166,15 +2170,15 @@ class USDAParser::Impl {
 
       // next token should be type
       if (!ReadIdentifier(&type_name)) {
-        _PushError("`type` identifier expected but got non-identifier\n");
+        PushError("`type` identifier expected but got non-identifier\n");
         return false;
       }
 
       // `type_name` is then overwritten.
     }
 
-    if (!_IsRegisteredPrimAttrType(type_name)) {
-      _PushError("Unknown or unsupported primtive attribute type `" +
+    if (!IsRegisteredPrimAttrType(type_name)) {
+      PushError("Unknown or unsupported primtive attribute type `" +
                  type_name + "`\n");
       return false;
     }
@@ -2196,7 +2200,7 @@ class USDAParser::Impl {
           array_qual = true;
         } else {
           // Invalid syntax
-          _PushError("Invalid syntax found.\n");
+          PushError("Invalid syntax found.\n");
           return false;
         }
 
@@ -2215,7 +2219,7 @@ class USDAParser::Impl {
 
     std::string primattr_name;
     if (!ReadPrimAttrIdentifier(&primattr_name)) {
-      _PushError("Failed to parse primAttr identifier.\n");
+      PushError("Failed to parse primAttr identifier.\n");
       return false;
     }
 
@@ -2295,83 +2299,110 @@ class USDAParser::Impl {
         (*props)[primattr_name] = var;
 
       } else {
-        _PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
+        PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
         return false;
       }
 #endif
 
-      _PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " +
+      PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " +
                  type_name);
       return false;
 
     } else {
+
       PrimAttrib attr;
+      Rel rel;
+
+      bool is_rel = false;
 
       if (type_name == "bool") {
-        if (!_ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "float") {
-        if (!_ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "int") {
+        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "double") {
-        if (!_ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "string") {
-        if (!_ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
+        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
                                               &attr)) {
           return false;
         }
       } else if (type_name == "token") {
-        if (!_ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
+        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
                                               &attr)) {
           return false;
         }
       } else if (type_name == "float2") {
-        if (!_ParseBasicPrimAttr<Vec2f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<Vec2f>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "float3") {
-        if (!_ParseBasicPrimAttr<Vec3f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<Vec3f>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "float4") {
-        if (!_ParseBasicPrimAttr<Vec4f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<Vec4f>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "double2") {
-        if (!_ParseBasicPrimAttr<Vec2d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<Vec2d>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "double3") {
-        if (!_ParseBasicPrimAttr<Vec3d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<Vec3d>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "double4") {
-        if (!_ParseBasicPrimAttr<Vec4d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<Vec4d>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "point3f") {
-        LOG_INFO("point3f, array_qual = " + std::to_string(array_qual)); 
-        if (!_ParseBasicPrimAttr<primvar::point3f>(array_qual, primattr_name, &attr)) {
-          LOG_INFO("Failed to parse point3f data."); 
+        LOG_INFO("point3f, array_qual = " + std::to_string(array_qual));
+        if (!ParseBasicPrimAttr<primvar::point3f>(array_qual, primattr_name, &attr)) {
+          LOG_INFO("Failed to parse point3f data.");
           return false;
         }
         LOG_INFO("Got it");
       } else if (type_name == "point3d") {
-        if (!_ParseBasicPrimAttr<Vec3d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<primvar::point3d>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == "normal3f") {
+        LOG_INFO("normal3f, array_qual = " + std::to_string(array_qual));
+        if (!ParseBasicPrimAttr<primvar::normal3f>(array_qual, primattr_name, &attr)) {
+          LOG_INFO("Failed to parse normal3f data.");
+          return false;
+        }
+        LOG_INFO("Got it");
+      } else if (type_name == "normal3d") {
+        if (!ParseBasicPrimAttr<primvar::normal3d>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "matrix4d") {
         Matrix4d m;
         if (!ParseMatrix4d(m.m)) {
-          _PushError("Failed to parse value with type `matrix4d`.\n");
+          PushError("Failed to parse value with type `matrix4d`.\n");
           return false;
         }
 
         //attr.var = m;
+      } else if (type_name == "rel") {
+        if (!ParseRel(&rel)) {
+          PushError("Failed to parse value with type `rel`.\n");
+          return false;
+        }
+
+        is_rel = true;
+
       } else {
         PUSH_ERROR("TODO: type = " + type_name);
         return false;
@@ -2381,14 +2412,21 @@ class USDAParser::Impl {
       attr.uniform = uniform_qual;
       attr.name = primattr_name;
 
-      LOG_INFO("primattr_name = " + primattr_name); 
-      (*props)[primattr_name].attrib = attr;
+      LOG_INFO("primattr_name = " + primattr_name);
+
+      if (is_rel) {
+        (*props)[primattr_name].rel = rel;
+        (*props)[primattr_name].is_rel = true;
+
+      } else {
+        (*props)[primattr_name].attrib = attr;
+      }
 
 #if 0  // TODO: Remove
       if (type_name == "matrix4d") {
         double m[4][4];
         if (!ParseMatrix4d(m)) {
-          _PushError("Failed to parse value with type `matrix4d`.\n");
+          PushError("Failed to parse value with type `matrix4d`.\n");
           return false;
         }
 
@@ -2406,14 +2444,14 @@ class USDAParser::Impl {
           // Assume people only use array access to vector<bool>
           std::vector<nonstd::optional<bool>> value;
           if (!ParseBasicTypeArray(&value)) {
-            _PushError(
+            PushError(
                 "Failed to parse array of string literal for `uniform "
                 "bool[]`.\n");
           }
         } else {
           nonstd::optional<bool> value;
           if (!ReadBasicType(&value)) {
-            _PushError("Failed to parse value for `uniform bool`.\n");
+            PushError("Failed to parse value for `uniform bool`.\n");
           }
           if (value) {
             std::cout << "bool value = " << *value << "\n";
@@ -2422,13 +2460,13 @@ class USDAParser::Impl {
       } else if (type_name == "token") {
         if (array_qual) {
           if (!uniform_qual) {
-            _PushError("TODO: token[]\n");
+            PushError("TODO: token[]\n");
             return false;
           }
 
           std::vector<nonstd::optional<std::string>> value;
           if (!ParseBasicTypeArray(&value)) {
-            _PushError(
+            PushError(
                 "Failed to parse array of string literal for `uniform "
                 "token[]`.\n");
           }
@@ -2453,7 +2491,7 @@ class USDAParser::Impl {
             std::cout << "uniform_qual\n";
             std::string value;
             if (!ReadStringLiteral(&value)) {
-              _PushError(
+              PushError(
                   "Failed to parse string literal for `uniform token`.\n");
             }
             std::cout << "StringLiteral = " << value << "\n";
@@ -2461,7 +2499,7 @@ class USDAParser::Impl {
             std::cout << "hasConnect\n";
             std::string value;  // TODO: Path
             if (!ReadPathIdentifier(&value)) {
-              _PushError("Failed to parse path identifier for `token`.\n");
+              PushError("Failed to parse path identifier for `token`.\n");
             }
             std::cout << "Path identifier = " << value << "\n";
 
@@ -2473,7 +2511,7 @@ class USDAParser::Impl {
             std::cout << "??? " << primattr_name << "\n";
             std::string value;
             if (!ReadStringLiteral(&value)) {
-              _PushError("Failed to parse string literal for `token`.\n");
+              PushError("Failed to parse string literal for `token`.\n");
             }
           }
         }
@@ -2481,19 +2519,19 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<nonstd::optional<int>> value;
           if (!ParseBasicTypeArray(&value)) {
-            _PushError("Failed to parse int array.\n");
+            PushError("Failed to parse int array.\n");
           }
         } else {
           nonstd::optional<int> value;
           if (!ReadBasicType(&value)) {
-            _PushError("Failed to parse int value.\n");
+            PushError("Failed to parse int value.\n");
           }
         }
       } else if (type_name == "float") {
         if (array_qual) {
           std::vector<nonstd::optional<float>> value;
           if (!ParseBasicTypeArray(&value)) {
-            _PushError("Failed to parse float array.\n");
+            PushError("Failed to parse float array.\n");
           }
           std::cout << "float = \n";
 
@@ -2515,14 +2553,14 @@ class USDAParser::Impl {
         } else if (hasConnect(primattr_name)) {
           std::string value;  // TODO: Path
           if (!ReadPathIdentifier(&value)) {
-            _PushError("Failed to parse path identifier for `token`.\n");
+            PushError("Failed to parse path identifier for `token`.\n");
             return false;
           }
           std::cout << "Path identifier = " << value << "\n";
         } else {
           nonstd::optional<float> value;
           if (!ReadBasicType(&value)) {
-            _PushError("Failed to parse float.\n");
+            PushError("Failed to parse float.\n");
           }
           if (value) {
             std::cout << "float = " << *value << "\n";
@@ -2541,7 +2579,7 @@ class USDAParser::Impl {
         // optional: interpolation parameter
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttrib meta.");
+          PushError("Failed to parse PrimAttrib meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2553,7 +2591,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<float, 2>> value;
           if (!ParseTupleArray(&value)) {
-            _PushError("Failed to parse float2 array.\n");
+            PushError("Failed to parse float2 array.\n");
           }
           std::cout << "float2 = \n";
           for (size_t i = 0; i < value.size(); i++) {
@@ -2562,7 +2600,7 @@ class USDAParser::Impl {
         } else {
           std::array<float, 2> value;
           if (!ParseBasicTypeTuple<float, 2>(&value)) {
-            _PushError("Failed to parse float2.\n");
+            PushError("Failed to parse float2.\n");
           }
           std::cout << "float2 = (" << value[0] << ", " << value[1] << ")\n";
         }
@@ -2570,7 +2608,7 @@ class USDAParser::Impl {
         // optional: interpolation parameter
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2583,7 +2621,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<float, 3>> value;
           if (!ParseTupleArray(&value)) {
-            _PushError("Failed to parse float3 array.\n");
+            PushError("Failed to parse float3 array.\n");
           }
           std::cout << "float3 = \n";
           for (size_t i = 0; i < value.size(); i++) {
@@ -2598,7 +2636,7 @@ class USDAParser::Impl {
         } else {
           std::array<float, 3> value;
           if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            _PushError("Failed to parse float3.\n");
+            PushError("Failed to parse float3.\n");
           }
           std::cout << "float3 = (" << value[0] << ", " << value[1] << ", "
                     << value[2] << ")\n";
@@ -2606,7 +2644,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2618,7 +2656,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<float, 4>> values;
           if (!ParseTupleArray(&values)) {
-            _PushError("Failed to parse float4 array.\n");
+            PushError("Failed to parse float4 array.\n");
           }
           std::cout << "float4 = \n";
           for (size_t i = 0; i < values.size(); i++) {
@@ -2641,7 +2679,7 @@ class USDAParser::Impl {
         } else {
           std::array<float, 4> value;
           if (!ParseBasicTypeTuple<float, 4>(&value)) {
-            _PushError("Failed to parse float4.\n");
+            PushError("Failed to parse float4.\n");
           }
           std::cout << "float4 = (" << value[0] << ", " << value[1] << ", "
                     << value[2] << ", " << value[3] << ")\n";
@@ -2649,7 +2687,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2661,7 +2699,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<nonstd::optional<double>> values;
           if (!ParseBasicTypeArray(&values)) {
-            _PushError("Failed to parse double array.\n");
+            PushError("Failed to parse double array.\n");
           }
           std::cout << "double = \n";
           for (size_t i = 0; i < values.size(); i++) {
@@ -2691,14 +2729,14 @@ class USDAParser::Impl {
         } else if (hasConnect(primattr_name)) {
           std::string value;  // TODO: Path
           if (!ReadPathIdentifier(&value)) {
-            _PushError("Failed to parse path identifier for `token`.\n");
+            PushError("Failed to parse path identifier for `token`.\n");
             return false;
           }
           std::cout << "Path identifier = " << value << "\n";
         } else {
           nonstd::optional<double> value;
           if (!ReadBasicType(&value)) {
-            _PushError("Failed to parse double.\n");
+            PushError("Failed to parse double.\n");
           }
           if (value) {
             std::cout << "double = " << *value << "\n";
@@ -2717,7 +2755,7 @@ class USDAParser::Impl {
         // optional: interpolation parameter
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2729,7 +2767,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<double, 2>> values;
           if (!ParseTupleArray(&values)) {
-            _PushError("Failed to parse double2 array.\n");
+            PushError("Failed to parse double2 array.\n");
           }
           std::cout << "double2 = \n";
           for (size_t i = 0; i < values.size(); i++) {
@@ -2749,7 +2787,7 @@ class USDAParser::Impl {
         } else {
           std::array<double, 2> value;
           if (!ParseBasicTypeTuple<double, 2>(&value)) {
-            _PushError("Failed to parse double2.\n");
+            PushError("Failed to parse double2.\n");
           }
           std::cout << "double2 = (" << value[0] << ", " << value[1] << ")\n";
 
@@ -2763,7 +2801,7 @@ class USDAParser::Impl {
         // optional: interpolation parameter
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2776,7 +2814,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<double, 3>> values;
           if (!ParseTupleArray(&values)) {
-            _PushError("Failed to parse double3 array.\n");
+            PushError("Failed to parse double3 array.\n");
           }
           std::cout << "double3 = \n";
           for (size_t i = 0; i < values.size(); i++) {
@@ -2799,7 +2837,7 @@ class USDAParser::Impl {
         } else {
           std::array<double, 3> value;
           if (!ParseBasicTypeTuple<double, 3>(&value)) {
-            _PushError("Failed to parse double3.\n");
+            PushError("Failed to parse double3.\n");
           }
           std::cout << "double3 = (" << value[0] << ", " << value[1] << ", "
                     << value[2] << ")\n";
@@ -2812,7 +2850,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2825,7 +2863,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<double, 4>> values;
           if (!ParseTupleArray(&values)) {
-            _PushError("Failed to parse double4 array.\n");
+            PushError("Failed to parse double4 array.\n");
           }
           std::cout << "double4 = \n";
           for (size_t i = 0; i < values.size(); i++) {
@@ -2847,7 +2885,7 @@ class USDAParser::Impl {
         } else {
           std::array<double, 4> value;
           if (!ParseBasicTypeTuple<double, 4>(&value)) {
-            _PushError("Failed to parse double4.\n");
+            PushError("Failed to parse double4.\n");
           }
           std::cout << "double4 = (" << value[0] << ", " << value[1] << ", "
                     << value[2] << ", " << value[3] << ")\n";
@@ -2860,7 +2898,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2874,7 +2912,7 @@ class USDAParser::Impl {
           // TODO: connection
           std::vector<std::array<float, 3>> value;
           if (!ParseTupleArray(&value)) {
-            _PushError("Failed to parse color3f array.\n");
+            PushError("Failed to parse color3f array.\n");
           }
           std::cout << "color3f = \n";
           for (size_t i = 0; i < value.size(); i++) {
@@ -2890,14 +2928,14 @@ class USDAParser::Impl {
         } else if (hasConnect(primattr_name)) {
           std::string value;  // TODO: Path
           if (!ReadPathIdentifier(&value)) {
-            _PushError("Failed to parse path identifier for `token`.\n");
+            PushError("Failed to parse path identifier for `token`.\n");
             return false;
           }
           std::cout << "Path identifier = " << value << "\n";
         } else {
           std::array<float, 3> value;
           if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            _PushError("Failed to parse color3f.\n");
+            PushError("Failed to parse color3f.\n");
           }
           std::cout << "color3f = (" << value[0] << ", " << value[1] << ", "
                     << value[2] << ")\n";
@@ -2905,7 +2943,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2921,7 +2959,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<float, 3>> value;
           if (!ParseTupleArray(&value)) {
-            _PushError("Failed to parse normal3f array.\n");
+            PushError("Failed to parse normal3f array.\n");
           }
           std::cout << "normal3f = \n";
           for (size_t i = 0; i < value.size(); i++) {
@@ -2937,14 +2975,14 @@ class USDAParser::Impl {
         } else if (hasConnect(primattr_name)) {
           std::string value;  // TODO: Path
           if (!ReadPathIdentifier(&value)) {
-            _PushError("Failed to parse path identifier for `token`.\n");
+            PushError("Failed to parse path identifier for `token`.\n");
             return false;
           }
           std::cout << "Path identifier = " << value << "\n";
         } else {
           std::array<float, 3> value;
           if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            _PushError("Failed to parse normal3f.\n");
+            PushError("Failed to parse normal3f.\n");
           }
           std::cout << "normal3f = (" << value[0] << ", " << value[1] << ", "
                     << value[2] << ")\n";
@@ -2957,7 +2995,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -2970,7 +3008,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<float, 3>> value;
           if (!ParseTupleArray(&value)) {
-            _PushError("Failed to parse point3f array.\n");
+            PushError("Failed to parse point3f array.\n");
           }
           std::cout << "point3f = \n";
           for (size_t i = 0; i < value.size(); i++) {
@@ -2986,7 +3024,7 @@ class USDAParser::Impl {
         } else {
           std::array<float, 3> value;
           if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            _PushError("Failed to parse point3f.\n");
+            PushError("Failed to parse point3f.\n");
           }
           std::cout << "point3f = (" << value[0] << ", " << value[1] << ", "
                     << value[2] << ")\n";
@@ -2999,7 +3037,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
         if (meta.count("interpolation")) {
@@ -3012,7 +3050,7 @@ class USDAParser::Impl {
         if (array_qual) {
           std::vector<std::array<float, 2>> value;
           if (!ParseTupleArray(&value)) {
-            _PushError("Failed to parse texCoord2f array.\n");
+            PushError("Failed to parse texCoord2f array.\n");
           }
           std::cout << "texCoord2f = \n";
           for (size_t i = 0; i < value.size(); i++) {
@@ -3021,7 +3059,7 @@ class USDAParser::Impl {
         } else {
           std::array<float, 2> value;
           if (!ParseBasicTypeTuple<float, 2>(&value)) {
-            _PushError("Failed to parse texCoord2f.\n");
+            PushError("Failed to parse texCoord2f.\n");
           }
           std::cout << "texCoord2f = (" << value[0] << ", " << value[1]
                     << ")\n";
@@ -3029,7 +3067,7 @@ class USDAParser::Impl {
 
         std::map<std::string, Variable> meta;
         if (!ParseAttrMeta(&meta)) {
-          _PushError("Failed to parse PrimAttr meta.");
+          PushError("Failed to parse PrimAttr meta.");
           return false;
         }
 
@@ -3042,7 +3080,7 @@ class USDAParser::Impl {
       } else if (type_name == "rel") {
         Rel rel;
         if (ParseRel(&rel)) {
-          _PushError("Failed to parse rel.\n");
+          PushError("Failed to parse rel.\n");
         }
 
         std::cout << "rel: " << rel.path << "\n";
@@ -3050,7 +3088,7 @@ class USDAParser::Impl {
         // 'todos'
 
       } else {
-        _PushError("TODO: ParsePrimAttr: Implement value parser for type: " +
+        PushError("TODO: ParsePrimAttr: Implement value parser for type: " +
                    type_name + "\n");
         return false;
       }
@@ -3111,6 +3149,9 @@ class USDAParser::Impl {
   bool ReadBasicType(nonstd::optional<Matrix3d> *value);
   bool ReadBasicType(nonstd::optional<Matrix4d> *value);
   bool ReadBasicType(nonstd::optional<primvar::point3f> *value);
+  bool ReadBasicType(nonstd::optional<primvar::point3d> *value);
+  bool ReadBasicType(nonstd::optional<primvar::normal3f> *value);
+  bool ReadBasicType(nonstd::optional<primvar::normal3d> *value);
 
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
@@ -3129,6 +3170,9 @@ class USDAParser::Impl {
   bool ReadBasicType(Matrix3d *value);
   bool ReadBasicType(Matrix4d *value);
   bool ReadBasicType(primvar::point3f *value);
+  bool ReadBasicType(primvar::point3d *value);
+  bool ReadBasicType(primvar::normal3f *value);
+  bool ReadBasicType(primvar::normal3d *value);
 
   // TimeSample data
   bool ReadTimeSampleData(nonstd::optional<Vec2f> *value);
@@ -3194,7 +3238,7 @@ class USDAParser::Impl {
       bool triple_deliminated{false};
 
       if (!ParseAssetReference(&ref, &triple_deliminated)) {
-        _PushError("Failed to parse AssetReference.\n");
+        PushError("Failed to parse AssetReference.\n");
         return false;
       }
 
@@ -3247,7 +3291,7 @@ class USDAParser::Impl {
     // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -3270,7 +3314,7 @@ class USDAParser::Impl {
     {
       nonstd::optional<T> value;
       if (!ReadBasicType(&value)) {
-        _PushError("Not starting with the value of requested type.\n");
+        PushError("Not starting with the value of requested type.\n");
         return false;
       }
 
@@ -3319,7 +3363,7 @@ class USDAParser::Impl {
     // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -3341,7 +3385,7 @@ class USDAParser::Impl {
     {
       T value;
       if (!ReadBasicType(&value)) {
-        _PushError("Not starting with the value of requested type.\n");
+        PushError("Not starting with the value of requested type.\n");
         return false;
       }
 
@@ -3390,7 +3434,7 @@ class USDAParser::Impl {
     // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -3415,7 +3459,7 @@ class USDAParser::Impl {
     } else {
       std::array<T, N> value;
       if (!ParseBasicTypeTuple<T, N>(&value)) {
-        _PushError("Not starting with the tuple value of requested type.\n");
+        PushError("Not starting with the tuple value of requested type.\n");
         return false;
       }
 
@@ -3464,7 +3508,7 @@ class USDAParser::Impl {
     // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -3486,7 +3530,7 @@ class USDAParser::Impl {
     {
       std::array<T, N> value;
       if (!ParseBasicTypeTuple<T, N>(&value)) {
-        _PushError("Not starting with the tuple value of requested type.\n");
+        PushError("Not starting with the tuple value of requested type.\n");
         return false;
       }
 
@@ -3532,7 +3576,7 @@ class USDAParser::Impl {
     // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -3648,7 +3692,7 @@ class USDAParser::Impl {
       std::string path;
 
       if (!ReadPathIdentifier(&path)) {
-        _PushError("Failed to parse Path.\n");
+        PushError("Failed to parse Path.\n");
         return false;
       }
 
@@ -3697,7 +3741,7 @@ class USDAParser::Impl {
     // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -3762,7 +3806,7 @@ class USDAParser::Impl {
       std::string msg = "The number of tuple elements must be " +
                         std::to_string(N) + ", but got " +
                         std::to_string(values.size()) + "\n";
-      _PushError(msg);
+      PushError(msg);
       return false;
     }
 
@@ -3804,7 +3848,7 @@ class USDAParser::Impl {
       std::string msg = "The number of tuple elements must be " +
                         std::to_string(N) + ", but got " +
                         std::to_string(values.size()) + "\n";
-      _PushError(msg);
+      PushError(msg);
       return false;
     }
 
@@ -3835,7 +3879,7 @@ class USDAParser::Impl {
     }
 
     if (content.size() != 4) {
-      _PushError("# of rows in matrix4f must be 4, but got " +
+      PushError("# of rows in matrix4f must be 4, but got " +
                  std::to_string(content.size()) + "\n");
       return false;
     }
@@ -3871,7 +3915,7 @@ class USDAParser::Impl {
     }
 
     if (content.size() != 4) {
-      _PushError("# of rows in matrix4d must be 4, but got " +
+      PushError("# of rows in matrix4d must be 4, but got " +
                  std::to_string(content.size()) + "\n");
       return false;
     }
@@ -3905,7 +3949,7 @@ class USDAParser::Impl {
       Matrix4d m;
 
       if (!ParseMatrix4d(m.m)) {
-        _PushError("Failed to parse Matrix4d.\n");
+        PushError("Failed to parse Matrix4d.\n");
         return false;
       }
 
@@ -3950,7 +3994,7 @@ class USDAParser::Impl {
     }
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -3970,7 +4014,7 @@ class USDAParser::Impl {
     }
 
     if (content.size() != 3) {
-      _PushError("# of rows in matrix3d must be 3, but got " +
+      PushError("# of rows in matrix3d must be 3, but got " +
                  std::to_string(content.size()) + "\n");
       return false;
     }
@@ -3999,7 +4043,7 @@ class USDAParser::Impl {
       Matrix3d m;
 
       if (!ParseMatrix3d(m.m)) {
-        _PushError("Failed to parse Matrix3d.\n");
+        PushError("Failed to parse Matrix3d.\n");
         return false;
       }
 
@@ -4044,7 +4088,7 @@ class USDAParser::Impl {
     }
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -4064,7 +4108,7 @@ class USDAParser::Impl {
     }
 
     if (content.size() != 2) {
-      _PushError("# of rows in matrix2d must be 2, but got " +
+      PushError("# of rows in matrix2d must be 2, but got " +
                  std::to_string(content.size()) + "\n");
       return false;
     }
@@ -4092,7 +4136,7 @@ class USDAParser::Impl {
       Matrix2d m;
 
       if (!ParseMatrix2d(m.m)) {
-        _PushError("Failed to parse Matrix2d.\n");
+        PushError("Failed to parse Matrix2d.\n");
         return false;
       }
 
@@ -4137,7 +4181,7 @@ class USDAParser::Impl {
     }
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -4155,7 +4199,7 @@ class USDAParser::Impl {
       Matrix4f m;
 
       if (!ParseMatrix4f(m.m)) {
-        _PushError("Failed to parse Matrix4f.\n");
+        PushError("Failed to parse Matrix4f.\n");
         return false;
       }
 
@@ -4200,7 +4244,7 @@ class USDAParser::Impl {
     }
 
     if (result->empty()) {
-      _PushError("Empty array.\n");
+      PushError("Empty array.\n");
       return false;
     }
 
@@ -4366,13 +4410,13 @@ class USDAParser::Impl {
       } else if (c == ':') {  // namespace
         // ':' must lie in the middle of string literal
         if (ss.str().size() == 0) {
-          _PushError("PrimAttr name must not starts with `:`\n");
+          PushError("PrimAttr name must not starts with `:`\n");
           return false;
         }
       } else if (c == '.') {  // delimiter for `connect`
         // '.' must lie in the middle of string literal
         if (ss.str().size() == 0) {
-          _PushError("PrimAttr name must not starts with `.`\n");
+          PushError("PrimAttr name must not starts with `.`\n");
           return false;
         }
       } else if (!std::isalpha(int(c))) {
@@ -4388,13 +4432,13 @@ class USDAParser::Impl {
 
     // ':' must lie in the middle of string literal
     if (ss.str().back() == ':') {
-      _PushError("PrimAttr name must not ends with `:`\n");
+      PushError("PrimAttr name must not ends with `:`\n");
       return false;
     }
 
     // '.' must lie in the middle of string literal
     if (ss.str().back() == '.') {
-      _PushError("PrimAttr name must not ends with `.`\n");
+      PushError("PrimAttr name must not ends with `.`\n");
       return false;
     }
 
@@ -4403,7 +4447,7 @@ class USDAParser::Impl {
 
     if (contains(tok, '.')) {
       if (endsWith(tok, ".connect")) {
-        _PushError(
+        PushError(
             "Must ends with `.connect` when a name contains punctuation `.`");
         return false;
       }
@@ -4478,7 +4522,7 @@ class USDAParser::Impl {
 
     // Must start with '/'
     if (!Expect('/')) {
-      _PushError("Path identifier must start with '/'");
+      PushError("Path identifier must start with '/'");
       return false;
     }
 
@@ -4705,7 +4749,7 @@ class USDAParser::Impl {
     if (!ret) {
       std::string msg = "Expected `" + std::string(&expect_c, 1) +
                         "` but got `" + std::string(&c, 1) + "`\n";
-      _PushError(msg);
+      PushError(msg);
 
       // unwind
       _sr->seek_from_current(-1);
@@ -4829,7 +4873,7 @@ class USDAParser::Impl {
 
       if (s != '@') {
         std::string sstr{s};
-        _PushError("AssetReference must start with '@', but got '" + sstr +
+        PushError("AssetReference must start with '@', but got '" + sstr +
                    "'");
         return false;
       }
@@ -4947,7 +4991,7 @@ class USDAParser::Impl {
       std::string value;
       if (!ReadStringLiteral(&value)) {
         std::string msg = "String literal expected for `" + varname + "`.\n";
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
       var.value = value;
@@ -4957,7 +5001,7 @@ class USDAParser::Impl {
       if (!ParseAssetReferenceArray(&values)) {
         std::string msg =
             "Array of AssetReference expected for `" + varname + "`.\n";
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
 
@@ -4977,7 +5021,7 @@ class USDAParser::Impl {
       std::vector<int> values;
       if (!ParseBasicTypeArray<int>(&values)) {
         // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; _PushError(msg);
+        // "`.\n"; PushError(msg);
         return false;
       }
 
@@ -5039,7 +5083,7 @@ class USDAParser::Impl {
         if (!ferr.empty()) {
           msg += ferr;
         }
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
       // std::cout << "float : " << fval << "\n";
@@ -5050,7 +5094,7 @@ class USDAParser::Impl {
         if (!ferr.empty()) {
           msg += ret.error();
         }
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
       std::cout << "parsed float : " << ret.value() << "\n";
@@ -5061,7 +5105,7 @@ class USDAParser::Impl {
       std::array<int, 3> values;
       if (!ParseBasicTypeTuple<int, 3>(&values)) {
         // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; _PushError(msg);
+        // "`.\n"; PushError(msg);
         return false;
       }
 
@@ -5079,7 +5123,7 @@ class USDAParser::Impl {
       var.value = arr;
     } else if (vartype == "object") {
       if (!Expect('{')) {
-        _PushError("'{' expected.\n");
+        PushError("'{' expected.\n");
         return false;
       }
 
@@ -5102,7 +5146,7 @@ class USDAParser::Impl {
           }
 
           if (!ParseCustomMetaValue()) {
-            _PushError("Failed to parse meta definition.\n");
+            PushError("Failed to parse meta definition.\n");
             return false;
           }
         }
@@ -5146,15 +5190,15 @@ class USDAParser::Impl {
       return false;
     }
 
-    if (!_IsBuiltinMeta(varname)) {
+    if (!IsBuiltinMeta(varname)) {
       std::string msg =
           "'" + varname + "' is not a builtin Metadata variable.\n";
-      _PushError(msg);
+      PushError(msg);
       return false;
     }
 
     if (!Expect('=')) {
-      _PushError("'=' expected in Metadata line.\n");
+      PushError("'=' expected in Metadata line.\n");
       return false;
     }
     SkipWhitespace();
@@ -5162,7 +5206,7 @@ class USDAParser::Impl {
     VariableDef &vardef = _builtin_metas.at(varname);
     Variable var;
     if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
-      _PushError("Failed to parse meta value.\n");
+      PushError("Failed to parse meta value.\n");
       return false;
     }
 
@@ -5239,14 +5283,14 @@ class USDAParser::Impl {
       std::cout << "read string literal\n";
       if (!ReadStringLiteral(&value)) {
         std::string msg = "String literal expected for `" + var.name + "`.\n";
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
     } else if (var.type == "int[]") {
       std::vector<int> values;
       if (!ParseBasicTypeArray<int>(&values)) {
         // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; _PushError(msg);
+        // "`.\n"; PushError(msg);
         return false;
       }
 
@@ -5281,7 +5325,7 @@ class USDAParser::Impl {
         if (!ferr.empty()) {
           msg += ferr;
         }
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
       std::cout << "float : " << fval << "\n";
@@ -5292,7 +5336,7 @@ class USDAParser::Impl {
         if (!ferr.empty()) {
           msg += ferr;
         }
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
       std::cout << "parsed float : " << value << "\n";
@@ -5301,7 +5345,7 @@ class USDAParser::Impl {
       std::array<int, 3> values;
       if (!ParseBasicTypeTuple<int, 3>(&values)) {
         // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; _PushError(msg);
+        // "`.\n"; PushError(msg);
         return false;
       }
 
@@ -5473,7 +5517,7 @@ class USDAParser::Impl {
       }
 
       if (tok != "class") {
-        _PushError("`class` is expected.");
+        PushError("`class` is expected.");
         return false;
       }
     }
@@ -5593,7 +5637,7 @@ class USDAParser::Impl {
     }
 
     if (tok != "over") {
-      _PushError("`over` is expected.");
+      PushError("`over` is expected.");
       return false;
     }
 
@@ -5660,7 +5704,7 @@ class USDAParser::Impl {
     }
 
     if (def != "def") {
-      _PushError("`def` is expected.");
+      PushError("`def` is expected.");
       return false;
     }
 
@@ -5701,7 +5745,7 @@ class USDAParser::Impl {
         std::string msg =
             "`" + prim_type +
             "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
-        _PushError(msg);
+        PushError(msg);
         return false;
       }
 
@@ -5925,7 +5969,7 @@ class USDAParser::Impl {
         GPrim gprim;
         std::cout << "Reconstruct GPrim\n";
         if (!ReconstructGPrim(props, references, &gprim)) {
-          _PushError("Failed to reconstruct GPrim.");
+          PushError("Failed to reconstruct GPrim.");
           return false;
         }
         gprim.name = node_name;
@@ -5938,7 +5982,7 @@ class USDAParser::Impl {
           Xform xform;
           std::cout << "Reconstruct Xform\n";
           if (!ReconstructXform(props, references, &xform)) {
-            _PushError("Failed to reconstruct Xform.");
+            PushError("Failed to reconstruct Xform.");
             return false;
           }
           xform.name = node_name;
@@ -5949,7 +5993,7 @@ class USDAParser::Impl {
           GeomMesh mesh;
           std::cout << "Reconstruct GeomMesh\n";
           if (!ReconstructGeomMesh(props, references, &mesh)) {
-            _PushError("Failed to reconstruct GeomMesh.");
+            PushError("Failed to reconstruct GeomMesh.");
             return false;
           }
           mesh.name = node_name;
@@ -5960,7 +6004,7 @@ class USDAParser::Impl {
           GeomSphere sphere;
           std::cout << "Reconstruct Sphere\n";
           if (!ReconstructGeomSphere(props, references, &sphere)) {
-            _PushError("Failed to reconstruct GeomSphere.");
+            PushError("Failed to reconstruct GeomSphere.");
             return false;
           }
 
@@ -5970,7 +6014,7 @@ class USDAParser::Impl {
           GeomCone cone;
           std::cout << "Reconstruct Cone\n";
           if (!ReconstructGeomCone(props, references, &cone)) {
-            _PushError("Failed to reconstruct GeomCone.");
+            PushError("Failed to reconstruct GeomCone.");
             return false;
           }
 
@@ -5980,7 +6024,7 @@ class USDAParser::Impl {
           GeomCube cube;
           std::cout << "Reconstruct Cube\n";
           if (!ReconstructGeomCube(props, references, &cube)) {
-            _PushError("Failed to reconstruct GeomCube.");
+            PushError("Failed to reconstruct GeomCube.");
             return false;
           }
 
@@ -5991,7 +6035,7 @@ class USDAParser::Impl {
           GeomCapsule capsule;
           std::cout << "Reconstruct Capsule\n";
           if (!ReconstructGeomCapsule(props, references, &capsule)) {
-            _PushError("Failed to reconstruct GeomCapsule.");
+            PushError("Failed to reconstruct GeomCapsule.");
             return false;
           }
 
@@ -6002,7 +6046,7 @@ class USDAParser::Impl {
           GeomCylinder cylinder;
           std::cout << "Reconstruct Cylinder\n";
           if (!ReconstructGeomCylinder(props, references, &cylinder)) {
-            _PushError("Failed to reconstruct GeomCylinder.");
+            PushError("Failed to reconstruct GeomCylinder.");
             return false;
           }
 
@@ -6014,7 +6058,7 @@ class USDAParser::Impl {
           GeomBasisCurves curves;
           std::cout << "Reconstruct Cylinder\n";
           if (!ReconstructBasisCurves(props, references, &curves)) {
-            _PushError("Failed to reconstruct GeomBasisCurves.");
+            PushError("Failed to reconstruct GeomBasisCurves.");
             return false;
           }
           curves.name = node_name;
@@ -6031,7 +6075,7 @@ class USDAParser::Impl {
       GPrim gprim;
       std::cout << "Reconstruct GPrim\n";
       if (!ReconstructGPrim(props, references, &gprim)) {
-        _PushError("Failed to reconstruct GPrim.");
+        PushError("Failed to reconstruct GPrim.");
         return false;
       }
       gprim.name = node_name;
@@ -6115,7 +6159,7 @@ class USDAParser::Impl {
 
     bool header_ok = ParseMagicHeader();
     if (!header_ok) {
-      _PushError("Failed to parse USDA magic header.\n");
+      PushError("Failed to parse USDA magic header.\n");
       return false;
     }
 
@@ -6143,7 +6187,7 @@ class USDAParser::Impl {
 
       std::string tok;
       if (!ReadToken(&tok)) {
-        _PushError("Token expected.\n");
+        PushError("Token expected.\n");
         return false;
       }
 
@@ -6155,23 +6199,23 @@ class USDAParser::Impl {
       if (tok == "def") {
         bool block_ok = ParseDefBlock();
         if (!block_ok) {
-          _PushError("Failed to parse `def` block.\n");
+          PushError("Failed to parse `def` block.\n");
           return false;
         }
       } else if (tok == "over") {
         bool block_ok = ParseOverBlock();
         if (!block_ok) {
-          _PushError("Failed to parse `over` block.\n");
+          PushError("Failed to parse `over` block.\n");
           return false;
         }
       } else if (tok == "class") {
         bool block_ok = ParseClassBlock();
         if (!block_ok) {
-          _PushError("Failed to parse `class` block.\n");
+          PushError("Failed to parse `class` block.\n");
           return false;
         }
       } else {
-        _PushError("Unknown token '" + tok + "'");
+        PushError("Unknown token '" + tok + "'");
         return false;
       }
     }
@@ -6202,11 +6246,11 @@ class USDAParser::Impl {
   }
 
  private:
-  bool _IsRegisteredPrimAttrType(const std::string &ty) {
+  bool IsRegisteredPrimAttrType(const std::string &ty) {
     return _registered_prim_attr_types.count(ty);
   }
 
-  void _RegisterPrimAttrTypes() {
+  void RegisterPrimAttrTypes() {
     _registered_prim_attr_types.insert("int");
 
     _registered_prim_attr_types.insert("float");
@@ -6239,7 +6283,7 @@ class USDAParser::Impl {
     // TODO: array type
   }
 
-  void _PushError(const std::string &msg) {
+  void PushError(const std::string &msg) {
     ErrorDiagnositc diag;
     diag.line_row = _line_row;
     diag.line_col = _line_col;
@@ -6248,21 +6292,21 @@ class USDAParser::Impl {
   }
 
   // This function is used to cancel recent parsing error.
-  void _PopError() {
+  void PopError() {
     if (!err_stack.empty()) {
       err_stack.pop();
     }
   }
 
-  bool _IsBuiltinMeta(const std::string &name) {
+  bool IsBuiltinMeta(const std::string &name) {
     return _builtin_metas.count(name) ? true : false;
   }
 
-  bool _IsNodeArg(const std::string &name) {
+  bool IsNodeArg(const std::string &name) {
     return _node_args.count(name) ? true : false;
   }
 
-  void _RegisterNodeArgs() {
+  void RegisterNodeArgs() {
     _node_args["kind"] = VariableDef("string", "kind");
     _node_args["references"] = VariableDef("ref[]", "references");
     _node_args["inherits"] = VariableDef("path", "inherits");
@@ -6274,7 +6318,7 @@ class USDAParser::Impl {
     _node_args["specializes"] = VariableDef("path[]", "specializes");
   }
 
-  nonstd::optional<VariableDef> _GetNodeArg(const std::string &arg) {
+  nonstd::optional<VariableDef> GetNodeArg(const std::string &arg) {
     if (_node_args.count(arg)) {
       return _node_args.at(arg);
     }
@@ -6282,7 +6326,7 @@ class USDAParser::Impl {
     return nonstd::nullopt;
   }
 
-  void _RegisterBuiltinMeta() {
+  void RegisterBuiltinMeta() {
     _builtin_metas["doc"] = VariableDef("string", "doc");
     _builtin_metas["metersPerUnit"] = VariableDef("float", "metersPerUnit");
     _builtin_metas["defaultPrim"] = VariableDef("string", "defaultPrim");
@@ -6294,7 +6338,7 @@ class USDAParser::Impl {
     _builtin_metas["subLayers"] = VariableDef("ref[]", "subLayers");
   }
 
-  void _RegisterNodeTypes() {
+  void RegisterNodeTypes() {
     _node_types.insert("Xform");
     _node_types.insert("Sphere");
     _node_types.insert("Cube");
@@ -6471,7 +6515,7 @@ bool USDAParser::Impl::ReconstructXform(
           }
 
           if (!properties.count(target_name)) {
-            _PushError("Property '" + target_name +
+            PushError("Property '" + target_name +
                        "' not found in Xform node.");
             return false;
           }
@@ -6495,7 +6539,7 @@ bool USDAParser::Impl::ReconstructXform(
           }
         }
       }
-      _PushError("`xformOpOrder` must be an array of string type.");
+      PushError("`xformOpOrder` must be an array of string type.");
 #endif
       (void)Split;
     }
@@ -6510,7 +6554,7 @@ bool USDAParser::Impl::ReconstructXform(
 
       if (prop.first == "xformOpOrder") {
         if (!prop.second.IsArray()) {
-          _PushError("`xformOpOrder` must be an array type.");
+          PushError("`xformOpOrder` must be an array type.");
           return false;
         }
 
@@ -6536,16 +6580,16 @@ bool USDAParser::Impl::ReconstructXform(
             std::cout << "rotateZ value = " << *p << "\n";
 
           } else {
-            _PushError("`xformOp:rotateZ` must be an float type.");
+            PushError("`xformOp:rotateZ` must be an float type.");
             return false;
           }
         } else {
-          _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+          PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                      "\n");
         }
 
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
         return false;
       }
@@ -6616,7 +6660,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
       //if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
       //  sphere->materialBinding.materialBinding = prel->path;
       //} else {
-      //  _PushError("`material:binding` must be 'rel' type.");
+      //  PushError("`material:binding` must be 'rel' type.");
       //  return false;
       //}
     } else {
@@ -6624,11 +6668,11 @@ bool USDAParser::Impl::ReconstructGeomSphere(
         PUSH_ERROR("TODO: Rel");
       } else {
         if (prop.first == "radius") {
-          const tinyusdz::PrimAttrib &attr = prop.second.attrib;
+          //const tinyusdz::PrimAttrib &attr = prop.second.attrib;
           //if (auto p = primvar::as_basic<double>(&attr->var)) {
           //  sphere->radius = *p;
           //} else {
-          //  _PushError("`radius` must be double type.");
+          //  PushError("`radius` must be double type.");
           //  return false;
           //}
         } else {
@@ -6734,7 +6778,7 @@ bool USDAParser::Impl::ReconstructGeomCone(
       if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
         cone->materialBinding.materialBinding = prel->path;
       } else {
-        _PushError("`material:binding` must be 'rel' type.");
+        PushError("`material:binding` must be 'rel' type.");
         return false;
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
@@ -6742,18 +6786,18 @@ bool USDAParser::Impl::ReconstructGeomCone(
         if (auto p = primvar::as_basic<double>(&attr->var)) {
           cone->radius = *p;
         } else {
-          _PushError("`radius` must be double type.");
+          PushError("`radius` must be double type.");
           return false;
         }
       } else if (prop.first == "height") {
         if (auto p = primvar::as_basic<double>(&attr->var)) {
           cone->height = *p;
         } else {
-          _PushError("`height` must be double type.");
+          PushError("`height` must be double type.");
           return false;
         }
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
         return false;
       }
@@ -6857,7 +6901,7 @@ bool USDAParser::Impl::ReconstructGeomCube(
       if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
         cube->materialBinding.materialBinding = prel->path;
       } else {
-        _PushError("`material:binding` must be 'rel' type.");
+        PushError("`material:binding` must be 'rel' type.");
         return false;
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
@@ -6865,11 +6909,11 @@ bool USDAParser::Impl::ReconstructGeomCube(
         if (auto p = primvar::as_basic<double>(&attr->var)) {
           cube->size = *p;
         } else {
-          _PushError("`size` must be double type.");
+          PushError("`size` must be double type.");
           return false;
         }
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
         return false;
       }
@@ -6947,7 +6991,7 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
           if (prop.second.is_rel) {
             PUSH_ERROR("TODO: Rel");
           } else {
-            const PrimAttrib &attrib = prop.second.attrib;
+            //const PrimAttrib &attrib = prop.second.attrib;
 #if 0
             if (prop.first == "height") {
               if (auto p = primvar::as_basic<double>(&attr->var)) {
@@ -6986,7 +7030,7 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
       if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
         capsule->materialBinding.materialBinding = prel->path;
       } else {
-        _PushError("`material:binding` must be 'rel' type.");
+        PushError("`material:binding` must be 'rel' type.");
         return false;
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
@@ -6994,14 +7038,14 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
         if (auto p = primvar::as_basic<double>(&attr->var)) {
           capsule->height = *p;
         } else {
-          _PushError("`height` must be double type.");
+          PushError("`height` must be double type.");
           return false;
         }
       } else if (prop.first == "radius") {
         if (auto p = primvar::as_basic<double>(&attr->var)) {
           capsule->radius = *p;
         } else {
-          _PushError("`radius` must be double type.");
+          PushError("`radius` must be double type.");
           return false;
         }
       } else if (prop.first == "axis") {
@@ -7014,11 +7058,11 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
             capsule->axis = Axis::Z;
           }
         } else {
-          _PushError("`axis` must be token type.");
+          PushError("`axis` must be token type.");
           return false;
         }
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
         return false;
       }
@@ -7146,7 +7190,7 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
       if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
         cylinder->materialBinding.materialBinding = prel->path;
       } else {
-        _PushError("`material:binding` must be 'rel' type.");
+        PushError("`material:binding` must be 'rel' type.");
         return false;
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
@@ -7154,14 +7198,14 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
         if (auto p = primvar::as_basic<double>(&attr->var)) {
           cylinder->height = *p;
         } else {
-          _PushError("`height` must be double type.");
+          PushError("`height` must be double type.");
           return false;
         }
       } else if (prop.first == "radius") {
         if (auto p = primvar::as_basic<double>(&attr->var)) {
           cylinder->radius = *p;
         } else {
-          _PushError("`radius` must be double type.");
+          PushError("`radius` must be double type.");
           return false;
         }
       } else if (prop.first == "axis") {
@@ -7174,11 +7218,11 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
             cylinder->axis = Axis::Z;
           }
         } else {
-          _PushError("`axis` must be token type.");
+          PushError("`axis` must be token type.");
           return false;
         }
       } else {
-        _PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
+        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
                    "\n");
         return false;
       }
@@ -7385,11 +7429,11 @@ bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Proper
       if (prop.second.is_rel) {
         PUSH_ERROR("TODO: Rel");
       } else {
-        const PrimAttrib &attrib = prop.second.attrib;
+        //const PrimAttrib &attrib = prop.second.attrib;
 #if 0 // TODO
         attrib.
         attrib.IsFloat3() && !prop.second.IsArray()) {
-        _PushError("`points` must be float3 array type.");
+        PushError("`points` must be float3 array type.");
         return false;
       }
 
@@ -7404,7 +7448,7 @@ bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Proper
     } else if (prop.first == "curveVertexCounts") {
 #if 0 // TODO
       if (!prop.second.IsInt() && !prop.second.IsArray()) {
-        _PushError("`curveVertexCounts` must be int array type.");
+        PushError("`curveVertexCounts` must be int array type.");
         return false;
       }
 
@@ -7579,7 +7623,7 @@ bool USDAParser::Impl::ReadBasicType(bool *value) {
     (*value) = true;
     return true;
   } else {
-    _PushError("'0' or '1' expected.\n");
+    PushError("'0' or '1' expected.\n");
     return false;
   }
 }
@@ -7606,7 +7650,7 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
 
   // head character
   bool has_sign = false;
-  bool negative = false;
+  //bool negative = false;
   {
     char sc;
     if (!_sr->read1(&sc)) {
@@ -7618,15 +7662,15 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
 
     // sign or [0-9]
     if (sc == '+') {
-      negative = false;
+      //negative = false;
       has_sign = true;
     } else if (sc == '-') {
-      negative = true;
+      //negative = true;
       has_sign = true;
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
     } else {
-      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
                  "'.\n");
       return false;
     }
@@ -7650,12 +7694,12 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
 
   if (has_sign && (ss.str().size() == 1)) {
     // sign only
-    _PushError("Integer value expected but got sign character only.\n");
+    PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
   if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
-    _PushError("Zero padded integer value is not allowed.\n");
+    PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
 
@@ -7666,11 +7710,11 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
     (*value) = std::stoi(ss.str());
   } catch (const std::invalid_argument &e) {
     (void)e;
-    _PushError("Not an integer literal.\n");
+    PushError("Not an integer literal.\n");
     return false;
   } catch (const std::out_of_range &e) {
     (void)e;
-    _PushError("Integer value out of range.\n");
+    PushError("Integer value out of range.\n");
     return false;
   }
 
@@ -7702,7 +7746,7 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
     } else {
-      _PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
                  "'.\n");
       return false;
     }
@@ -7711,7 +7755,7 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
   }
 
   if (negative) {
-    _PushError("Unsigned value expected but got '-' sign.");
+    PushError("Unsigned value expected but got '-' sign.");
     return false;
   }
 
@@ -7731,12 +7775,12 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
 
   if (has_sign && (ss.str().size() == 1)) {
     // sign only
-    _PushError("Integer value expected but got sign character only.\n");
+    PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
   if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
-    _PushError("Zero padded integer value is not allowed.\n");
+    PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
 
@@ -7747,11 +7791,11 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
     (*value) = std::stoull(ss.str());
   } catch (const std::invalid_argument &e) {
     (void)e;
-    _PushError("Not an 64bit unsigned integer literal.\n");
+    PushError("Not an 64bit unsigned integer literal.\n");
     return false;
   } catch (const std::out_of_range &e) {
     (void)e;
-    _PushError("64bit unsigned integer value out of range.\n");
+    PushError("64bit unsigned integer value out of range.\n");
     return false;
   }
 
@@ -7793,6 +7837,105 @@ bool USDAParser::Impl::ReadBasicType(primvar::point3f *value) {
 
     std::vector<float> values;
     if (!SepBy1BasicType<float>(',', &values)) {
+      return false;
+    }
+
+    // std::cout << "try to parse )\n";
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    if (values.size() != 3) {
+      std::string msg = "The number of tuple elements must be " +
+                        std::to_string(3) + ", but got " +
+                        std::to_string(values.size()) + "\n";
+      PUSH_ERROR(msg);
+      return false;
+    }
+
+    value->x = values[0];
+    value->y = values[1];
+    value->z = values[2];
+
+    return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(primvar::normal3f *value) {
+
+    if (!Expect('(')) {
+      return false;
+    }
+    // std::cout << "got (\n";
+
+    std::vector<float> values;
+    if (!SepBy1BasicType<float>(',', &values)) {
+      return false;
+    }
+
+    // std::cout << "try to parse )\n";
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    if (values.size() != 3) {
+      std::string msg = "The number of tuple elements must be " +
+                        std::to_string(3) + ", but got " +
+                        std::to_string(values.size()) + "\n";
+      PUSH_ERROR(msg);
+      return false;
+    }
+
+    value->x = values[0];
+    value->y = values[1];
+    value->z = values[2];
+
+    return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(primvar::point3d *value) {
+
+    if (!Expect('(')) {
+      return false;
+    }
+    // std::cout << "got (\n";
+
+    std::vector<double> values;
+    if (!SepBy1BasicType<double>(',', &values)) {
+      return false;
+    }
+
+    // std::cout << "try to parse )\n";
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    if (values.size() != 3) {
+      std::string msg = "The number of tuple elements must be " +
+                        std::to_string(3) + ", but got " +
+                        std::to_string(values.size()) + "\n";
+      PUSH_ERROR(msg);
+      return false;
+    }
+
+    value->x = values[0];
+    value->y = values[1];
+    value->z = values[2];
+
+    return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(primvar::normal3d *value) {
+
+    if (!Expect('(')) {
+      return false;
+    }
+    // std::cout << "got (\n";
+
+    std::vector<double> values;
+    if (!SepBy1BasicType<double>(',', &values)) {
       return false;
     }
 
@@ -7922,6 +8065,50 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::point3f> *value) 
   return false;
 }
 
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::point3d> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  primvar::point3d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::normal3f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  primvar::normal3f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::normal3d> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  primvar::normal3d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
 
 bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
@@ -8179,7 +8366,7 @@ bool USDAParser::Impl::ReadBasicType(float *value) {
     if (err.size()) {
       msg += err;
     }
-    _PushError(msg);
+    PushError(msg);
 
     return false;
   }
@@ -8192,7 +8379,7 @@ bool USDAParser::Impl::ReadBasicType(float *value) {
     if (err.size()) {
       msg += flt.error() + "\n";
     }
-    _PushError(msg);
+    PushError(msg);
     return false;
   }
 
@@ -8231,7 +8418,7 @@ bool USDAParser::Impl::ReadBasicType(double *value) {
     if (err.size()) {
       msg += err;
     }
-    _PushError(msg);
+    PushError(msg);
 
     return false;
   }
@@ -8240,7 +8427,7 @@ bool USDAParser::Impl::ReadBasicType(double *value) {
   if (!flt) {
     std::string msg = "Failed to parse float value literal.\n";
     msg += flt.error();
-    _PushError(msg);
+    PushError(msg);
     return false;
   } else {
     (*value) = flt.value();
