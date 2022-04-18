@@ -279,7 +279,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent) {
     if (prop.second.is_rel) {
         ss << "TODO: Rel\n";
     } else {
-      const PrimAttrib &attrib = prop.second.attrib;
+      //const PrimAttrib &attrib = prop.second.attrib;
 #if 0 // TODO
       if (auto p = tinyusdz::primvar::as_basic<double>(&pattr->var)) {
         ss << tinyusdz::Indent(indent);
