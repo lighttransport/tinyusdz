@@ -1925,7 +1925,7 @@ struct Shader {
   std::string info_id; // Shader type. 
 
   // Currently we only support PreviewSurface, UVTexture and PrimvarReader_float2
-  nonstd::variant<PreviewSurface, UVTexture, PrimvarReader_float2> value;
+  nonstd::variant<nonstd::monostate, PreviewSurface, UVTexture, PrimvarReader_float2> value;
 };
 
 

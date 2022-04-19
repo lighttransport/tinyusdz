@@ -304,6 +304,20 @@ bool LoadModel(const std::string& filename, tinyusdz::Scene* scene) {
       std::cerr << "Failed to load USDZ file: " << filename << "\n";
       return false;
     }
+  } else if (ext.compare("usda") == 0) {
+    std::cout << "usda\n";
+    bool ret = tinyusdz::LoadUSDAFromFile(filename, scene, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDA file: " << filename << "\n";
+      return false;
+    }
   } else {  // assume usdc
     bool ret = tinyusdz::LoadUSDCFromFile(filename, scene, &warn, &err);
     if (!warn.empty()) {

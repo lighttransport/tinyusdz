@@ -52,6 +52,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "tinyusdz.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
+#include "usda-parser.hh"
 
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
 
@@ -1328,13 +1329,26 @@ class Parser {
                                 &path_index_to_spec_index_map,
                             Material *material);
 
-  ///
-  /// NOTE: Currently we only support UsdPreviewSurface
-  ///
   bool ReconstructShader(const Node &node, const FieldValuePairVector &fields,
                           const std::unordered_map<uint32_t, uint32_t>
                               &path_index_to_spec_index_map,
-                          PreviewSurface *shader);
+                          Shader *shader);
+
+  bool ReconstructPreviewSurface(const Node &node, const FieldValuePairVector &fields,
+                         const std::unordered_map<uint32_t, uint32_t>
+                             &path_index_to_spec_index_map,
+                         PreviewSurface *surface);
+
+  bool ReconstructUVTexture(const Node &node, const FieldValuePairVector &fields,
+                         const std::unordered_map<uint32_t, uint32_t>
+                             &path_index_to_spec_index_map,
+                         UVTexture *uvtex);
+
+  bool ReconstructPrimvarReader_float2(const Node &node,
+                            const FieldValuePairVector &fields,
+                            const std::unordered_map<uint32_t, uint32_t>
+                                &path_index_to_spec_index_map,
+                            PrimvarReader_float2 *preader);
 
   bool ReconstructSceneRecursively(int parent_id, int level,
                                     const std::unordered_map<uint32_t, uint32_t>
@@ -4674,7 +4688,7 @@ bool Parser::ReconstructMaterial(
 bool Parser::ReconstructShader(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    PreviewSurface *shader) {
+    Shader *shader) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << "Parse shader\n";
 #endif
@@ -4694,6 +4708,108 @@ bool Parser::ReconstructShader(
     }
   }
 
+
+  //
+  // Find shader type.
+  //
+  std::string shader_type;
+
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    // const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      _err += "No specifier found for node id: " + std::to_string(child_index) +
+              "\n";
+      return false;
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index << "\n";
+#endif
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+      PrimAttrib attr;
+
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+#endif
+
+      if (ret) {
+        // Currently we only support predefined PBR attributes.
+
+        if (prop_name.compare("info:id") == 0) { 
+          auto p = attr.var.get_value<std::string>(); // `token` type, but treat it as string
+          if (p) {
+            shader_type = (*p);
+          }
+        }
+      }
+    }
+  }
+
+  if (shader_type.empty()) {
+    _err += "`info:id` is missing in Shader.\n";
+    return false;
+  }
+
+  return true;
+}
+
+bool Parser::ReconstructPreviewSurface(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    PreviewSurface *shader) {
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+  std::cout << "Parse shader\n";
+#endif
+
+  (void)shader;
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+      assert(fv.second.IsArray());
+
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      }
+    }
+  }
 
   //
   // NOTE: Currently we assume one deeper node has Shader's attribute
@@ -4754,13 +4870,16 @@ bool Parser::ReconstructShader(
       if (ret) {
         // Currently we only support predefined PBR attributes.
 
-        if (prop_name.compare("info:id") == 0) { 
-          auto p = attr.var.get_value<std::string>(); // `token` type, but treat it as string
+        if (prop_name.compare("info:id") == 0) {
+          auto p = attr.var.get_value<std::string>();  // `token` type, but
+                                                       // treat it as string
           if (p) {
-            shader->info_id = (*p);
+            if (p->compare("UsdPreviewSurface") != 0) {
+              _err += "`info:id` must be `UsdPreviewSurface`.\n";
+              return false;
+            }
           }
-        }
-        else if (prop_name.compare("outputs:surface") == 0) {
+        } else if (prop_name.compare("outputs:surface") == 0) {
           // Surface shader output available
         } else if (prop_name.compare("outputs:displacement") == 0) {
           // Displacement shader output available
@@ -4804,45 +4923,44 @@ bool Parser::ReconstructShader(
           // type: float
           auto p = attr.var.get_value<float>();
           if (p) {
-           shader->metallic.value = (*p);
+            shader->metallic.value = (*p);
           }
         } else if (prop_name.compare("inputs:metallic.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
           auto p = attr.var.get_value<std::string>();
           if (p) {
-           shader->metallic.path = *p;
+            shader->metallic.path = *p;
           }
-        } else if (prop_name.compare("inputs:diffuseColor") == 0) 
-  {
+        } else if (prop_name.compare("inputs:diffuseColor") == 0) {
           auto p = attr.var.get_value<primvar::float3>();
           if (p) {
             shader->diffuseColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-              std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
-                        << ", " << shader->diffuseColor.color[1] << ", "
-                        << shader->diffuseColor.color[2] << "\n";
+            std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
+                      << ", " << shader->diffuseColor.color[1] << ", "
+                      << shader->diffuseColor.color[2] << "\n";
 #endif
-            }
+          }
         } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
           auto p = attr.var.get_value<std::string>();
           if (p) {
-              shader->diffuseColor.path = *p;
+            shader->diffuseColor.path = *p;
           }
         } else if (prop_name.compare("inputs:emissiveColor") == 0) {
-            //if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
-            //  shader->emissiveColor.color = (*p);
+          // if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
+          //  shader->emissiveColor.color = (*p);
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            //  std::cout << "emissiveColor: " << shader->emissiveColor.color[0]
-            //            << ", " << shader->emissiveColor.color[1] << ", "
-            //            << shader->emissiveColor.color[2] << "\n";
+          //  std::cout << "emissiveColor: " << shader->emissiveColor.color[0]
+          //            << ", " << shader->emissiveColor.color[1] << ", "
+          //            << shader->emissiveColor.color[2] << "\n";
 #endif
-            //}
+          //}
         } else if (prop_name.compare("inputs:emissiveColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
-          //if (auto p = primvar::as_basic<std::string>(&attr.var)) {
+          // if (auto p = primvar::as_basic<std::string>(&attr.var)) {
           //  shader->emissiveColor.path = *p;
           //}
         }
@@ -5052,13 +5170,17 @@ bool Parser::ReconstructSceneRecursively(
     }
     scene->materials.push_back(material);
   } else if (node_type == "Shader") {
-    PreviewSurface shader;
+    Shader shader;
     if (!ReconstructShader(node, fields, path_index_to_spec_index_map,
                            &shader)) {
       _err += "Failed to reconstruct PreviewSurface(Shader).\n";
       return false;
     }
-    scene->shaders.push_back(shader);
+
+    auto p = nonstd::get_if<PreviewSurface>(&shader.value);
+    if (p) {
+      scene->shaders.push_back(*p);
+    }
   } else if (node_type == "Scope") {
     std::cout << "Scope\n";
   } else {
@@ -5935,7 +6057,7 @@ bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
 }
 #endif
 
-bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Scene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   if (addr == nullptr) {
@@ -5952,14 +6074,29 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
     return false;
   }
 
-  (void)length;
-  (void)warn;
+  tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
+  tinyusdz::usda::USDAParser parser(&sr);
+
+  parser.SetBaseDir(base_dir);
+
   (void)options;
 
-  if (err) {
-    (*err) += "USDA parsing is TODO\n";
-  }
+  {
+    bool ret = parser.Parse();
 
+    if (!ret) {
+      if (err) {
+        (*err) += "Failed to parse USDA\n";
+        (*err) += parser.GetError();
+      }
+
+      return false;
+    }
+  }
+  // TODO: Reconstruct Scene
+    if (err) {
+      (*err) += "USDA parsing success, but reconstructing Scene is TODO.\n";
+    }
   return false;
 }
 
@@ -5968,6 +6105,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Scene *scene,
                       const USDLoadOptions &options) {
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
+  std::string base_dir = io::GetBaseDir(_filename);
 
   std::vector<uint8_t> data;
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
@@ -5975,56 +6113,8 @@ bool LoadUSDAFromFile(const std::string &_filename, Scene *scene,
     return false;
   }
 
-#if 0
-  {
-    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
-    if (!ifs) {
-      if (err) {
-        (*err) = "File not found or cannot open file : " + filename;
-      }
-      return false;
-    }
 
-    // TODO(syoyo): Use mmap
-    ifs.seekg(0, ifs.end);
-    size_t sz = static_cast<size_t>(ifs.tellg());
-    if (int64_t(sz) < 0) {
-      // Looks reading directory, not a file.
-      if (err) {
-        (*err) += "Looks like filename is a directory : \"" + filename + "\"\n";
-      }
-      return false;
-    }
-
-    if (sz < 8) {
-      // ???
-      if (err) {
-        (*err) +=
-            "File size too short. Looks like this file is not a USDA : \"" +
-            filename + "\"\n";
-      }
-      return false;
-    }
-
-    if (sz > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
-      if (err) {
-        (*err) += "USDA file is too large(size = " + std::to_string(sz) +
-                  ", which exceeds memory limit " +
-                  std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
-      }
-
-      return false;
-    }
-
-    data.resize(sz);
-
-    ifs.seekg(0, ifs.beg);
-    ifs.read(reinterpret_cast<char *>(&data.at(0)),
-             static_cast<std::streamsize>(sz));
-  }
-#endif
-
-  return LoadUSDAFromMemory(data.data(), data.size(), scene, warn, err,
+  return LoadUSDAFromMemory(data.data(), data.size(), base_dir, scene, warn, err,
                             options);
 }
 
