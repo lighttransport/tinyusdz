@@ -5110,6 +5110,7 @@ bool Parser::ReconstructScene(Scene *scene) {
     return false;
   }
 
+  return true;
 }
 
 bool Parser::ReadSpecs() {

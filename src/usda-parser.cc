@@ -2105,8 +2105,8 @@ class USDAParser::Impl {
         return false;
       }
       std::cout << "Path identifier = " << value << "\n";
-      PUSH_ERROR("TODO:" + primattr_name);
-      return false;
+
+      attr.var.set_scalar(value); // TODO: set as `Path` type
     } else {
       nonstd::optional<T> value;
       if (!ReadBasicType(&value)) {
@@ -2410,7 +2410,24 @@ class USDAParser::Impl {
         }
 
         is_rel = true;
+      } else if (type_name == "texCoord2f") {
+        if (!ParseBasicPrimAttr<primvar::texcoord2f>(array_qual, primattr_name, &attr)) {
+          PUSH_ERROR("Failed to parse texCoord2f data.");
+          return false;
+        }
 
+      } else if (type_name == "asset") {
+
+        AssetReference assert_ref;
+        bool triple_deliminated{false};
+        if (!ParseAssetReference(&assert_ref, &triple_deliminated)) {
+          PUSH_ERROR("Failed to parse `asset` data.");
+        }
+
+        primvar::asset asset;
+        asset.asset_path = assert_ref.asset_reference;
+        attr.var.set_scalar(asset);
+    
       } else {
         PUSH_ERROR("TODO: type = " + type_name);
         return false;
@@ -3160,6 +3177,7 @@ class USDAParser::Impl {
   bool ReadBasicType(nonstd::optional<primvar::point3d> *value);
   bool ReadBasicType(nonstd::optional<primvar::normal3f> *value);
   bool ReadBasicType(nonstd::optional<primvar::normal3d> *value);
+  bool ReadBasicType(nonstd::optional<primvar::texcoord2f> *value);
 
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
@@ -3181,6 +3199,7 @@ class USDAParser::Impl {
   bool ReadBasicType(primvar::point3d *value);
   bool ReadBasicType(primvar::normal3f *value);
   bool ReadBasicType(primvar::normal3d *value);
+  bool ReadBasicType(primvar::texcoord2f *value);
 
   // TimeSample data
   bool ReadTimeSampleData(nonstd::optional<Vec2f> *value);
@@ -6072,6 +6091,28 @@ class USDAParser::Impl {
           curves.name = node_name;
           std::cout << to_string(curves, nestlevel) << "\n";
 
+        } else if (prim_type == "Camera") {
+          GeomCamera camera;
+          std::cout << "Reconstruct Camera\n";
+
+          if (!ReconstructGeomCamera(props, references, &camera)) {
+            PushError("Failed to reconstruct Camera.");
+            return false;
+          }
+          camera.name = node_name;
+          std::cout << to_string(camera, nestlevel) << "\n";
+
+        } else if (prim_type == "Shader") {
+          Shader shader; 
+          std::cout << "Reconstruct Shader\n";
+
+          if (!ReconstructShader(props, references, &shader)) {
+            PushError("Failed to reconstruct Shader.");
+            return false;
+          }
+          shader.name = node_name;
+          std::cout << to_string(shader, nestlevel) << "\n";
+
         } else {
           PUSH_ERROR(" TODO: " + prim_type);
           return false;
@@ -6145,6 +6186,30 @@ class USDAParser::Impl {
   bool ReconstructBasisCurves(const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
                               GeomBasisCurves *curves);
+
+  bool ReconstructGeomCamera(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              GeomCamera *curves);
+
+  bool ReconstructShader(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              Shader *shader);
+
+  bool ReconstructPreviewSurface(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              PreviewSurface *surface);
+
+  bool ReconstructUVTexture(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              UVTexture *texture);
+
+  bool ReconstructPrimvarReader_float2(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              PrimvarReader_float2 *reader_float2);
+
+  bool ReconstructLuxSphereLight(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              LuxSphereLight *light);
 
   bool CheckHeader() { return ParseMagicHeader(); }
 
@@ -7475,6 +7540,62 @@ bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Proper
   return true;
 }
 
+bool USDAParser::Impl::ReconstructGeomCamera(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              GeomCamera *camera) {
+
+  for (const auto &prop : properties) {
+    if (prop.first == "focalLength") {
+      // TODO
+    } else {
+      std::cout << "TODO: " << prop.first << "\n";
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructShader(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              Shader *shader) {
+
+  for (const auto &prop : properties) {
+    if (prop.first == "info:id") {
+      const PrimAttrib &attr = prop.second.attrib;
+
+      auto p =  attr.var.get_value<std::string>();
+      if (p) {
+        if (p->compare("UsdPreviewSurface") == 0) {
+          PreviewSurface surface;
+          if (!ReconstructPreviewSurface(properties, references, &surface)) {
+            PUSH_ERROR("Failed to reconstruct PreviewSurface.");
+            return false;
+          }
+          shader->value = surface;
+        } else if (p->compare("UsdUVTexture") == 0) {
+          PUSH_ERROR("TODO: UsdUVTexture");
+        } else if (p->compare("UsdPrimvarReader_float2") == 0) {
+          PUSH_ERROR("TODO: UsdPrimvarReader_float2");
+        } else {
+          PUSH_ERROR("TODO: Shader id: " + (*p));
+          return false;
+        }
+      }
+    } else {
+      std::cout << "TODO: " << prop.first << "\n";
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructPreviewSurface(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              PreviewSurface *surface) {
+  // TODO:
+  return true;
+}
+
 // 'None'
 bool USDAParser::Impl::MaybeNone() {
   std::vector<char> buf;
@@ -7966,6 +8087,50 @@ bool USDAParser::Impl::ReadBasicType(primvar::normal3d *value) {
     value->z = values[2];
 
     return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(primvar::texcoord2f *value) {
+
+    if (!Expect('(')) {
+      return false;
+    }
+
+    std::vector<float> values;
+    if (!SepBy1BasicType<float>(',', &values)) {
+      return false;
+    }
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    if (values.size() != 2) {
+      std::string msg = "The number of tuple elements must be " +
+                        std::to_string(2) + ", but got " +
+                        std::to_string(values.size()) + "\n";
+      PUSH_ERROR(msg);
+      return false;
+    }
+
+    value->s = values[0];
+    value->t = values[1];
+
+    return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::texcoord2f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  primvar::texcoord2f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
 }
 
 bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2f> *value) {
