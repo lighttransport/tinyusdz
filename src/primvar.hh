@@ -48,6 +48,11 @@ namespace primvar {
 // string literal. represent it as string_view
 using token = nonstd::string_view;
 
+struct asset
+{
+  std::string asset_path; 
+};
+
 // TODO(syoyo): 3D and 4D?
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10;
 constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11;
@@ -136,6 +141,8 @@ enum TypeId {
   TYPE_ID_TIMESAMPLE,
 
   TYPE_ID_DICT,
+
+  TYPE_ID_ASSET,
 
   TYPE_ID_ALL  // terminator
 };
@@ -498,6 +505,8 @@ DEFINE_ROLE_TYPE_TRAIT(texcoord3d, "texcoord3d", TYPE_ID_TEXCOORD3D, double3);
 DEFINE_TYPE_TRAIT(token, "token", TYPE_ID_TOKEN, 1);
 DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
+
+DEFINE_TYPE_TRAIT(asset, "asset", TYPE_ID_ASSET, 1);
 
 #undef DEFINE_TYPE_TRAIT
 

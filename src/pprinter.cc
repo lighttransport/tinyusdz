@@ -375,6 +375,31 @@ std::string to_string(const Xform &xform, const uint32_t indent) {
   return ss.str();
 }
 
+std::string to_string(const GeomCamera &camera, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Camera \"" << camera.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "   float2 clippingRange = " << camera.clippingRange << "\n";
+  ss << Indent(indent) << "   float focalLength = " << camera.focalLength << "\n";
+  ss << Indent(indent) << "   float horizontalAperture = " << camera.horizontalAperture << "\n";
+  ss << Indent(indent) << "   float horizontalApertureOffset = " << camera.horizontalApertureOffset << "\n";
+  ss << Indent(indent) << "   token projection = \"" << camera.projection << "\"\n";
+  ss << Indent(indent) << "   float verticalAperture = " << camera.verticalAperture << "\n";
+  ss << Indent(indent) << "   float verticalApertureOffset = " << camera.verticalApertureOffset << "\n";
+
+  //ss << print_predefined(camera, indent);
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 
 std::string to_string(const GeomSphere &sphere, const uint32_t indent) {
   std::stringstream ss;
@@ -555,5 +580,45 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent) {
   return ss.str();
 }
 
+std::string to_string(const LuxSphereLight &light, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def SphereLight \"" << light.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "   color3f inputs:color = " << light.color << "\n";
+  ss << Indent(indent) << "   float inputs:intensity = " << light.intensity << "\n";
+  ss << Indent(indent) << "   float inputs:radius = " << light.radius << "\n";
+  ss << Indent(indent) << "   float inputs:specular = " << light.specular << "\n";
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string to_string(const Shader &shader, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Shader \"" << shader.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "   uniform token info:id = \"" << shader.info_id << "\"\n";
+
+  // TODO
+  //if (auto p = nonstd::get_if<PreviewSurface>(shader.value)) {
+  //}
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
 
 } // tinyusdz

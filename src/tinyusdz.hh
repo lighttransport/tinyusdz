@@ -544,6 +544,8 @@ struct Scene {
   // TODO(syoyo): Use std::variant(C++17) like static polymorphism?
   //
   std::vector<Xform> xforms;
+  std::vector<GeomCamera> geom_cameras;
+  std::vector<LuxSphereLight> lux_sphere_lights;
   std::vector<GeomMesh> geom_meshes;
   std::vector<GeomBasisCurves> geom_basis_curves;
   std::vector<GeomPoints> geom_points;

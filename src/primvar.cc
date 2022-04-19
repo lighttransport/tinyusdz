@@ -418,6 +418,11 @@ std::ostream &operator<<(std::ostream &os, const quatd &v) {
   return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const texcoord2f &v) {
+  os << "(" << v.s << ", " << v.t << ")";
+  return os;
+}
+
 bool Reconstructor::reconstruct(AttribMap &amap) {
   err_.clear();
 

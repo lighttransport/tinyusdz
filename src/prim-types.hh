@@ -124,6 +124,7 @@ enum class Variability {
   Invalid
 };
 
+// TODO: Use primvar::asset
 struct AssetReference {
   std::string asset_reference;
   std::string prim_path;
@@ -1305,6 +1306,33 @@ struct UVCoords {
   std::vector<uint32_t> indices;  // UV indices. Usually varying
 };
 
+struct GeomCamera {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  //
+  // Properties
+  //
+  AnimatableExtent extent;  // bounding extent(in local coord?).
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
+
+  // TODO: Animatable?
+  Vec2f clippingRange{{0.1f, 100.0f}};
+  float focalLength{50.0f};
+  float horizontalAperture{36.0f};
+  float horizontalApertureOffset{0.0f};
+  std::string projection{"perspective"};
+  float verticalAperture{20.25f};
+  float verticalApertureOffset{0.0f};
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
+  std::map<std::string, PrimAttrib> attribs;
+
+};
+
 struct GeomBoundable {
   std::string name;
 
@@ -1549,6 +1577,35 @@ struct GeomPoints {
   // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
   // parameter)
   std::map<std::string, PrimAttrib> attribs;
+};
+
+struct LuxSphereLight
+{
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to xform node
+
+  //
+  // Predefined attribs.
+  //
+  // TODO: Support texture?
+  primvar::color3f color{}; 
+  float intensity{10.0f};
+  float radius{0.1f};
+  float specular{1.0f};
+
+  //
+  // Properties
+  //
+  AnimatableExtent extent;  // bounding extent(in local coord?).
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
+  // parameter)
+  std::map<std::string, PrimAttrib> attribs;
+
 };
 
 // BlendShapes
@@ -1815,6 +1872,7 @@ struct UVTexture {
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
 };
 
+// UsdPreviewSurface
 // USD's default? PBR shader
 // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
 // $USD/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
@@ -1859,6 +1917,15 @@ struct PreviewSurface {
   //
   int64_t surface_id{-1};       // index to `Scene::shaders`
   int64_t displacement_id{-1};  // index to `Scene::shaders`
+};
+
+struct Shader {
+  std::string name;
+
+  std::string info_id; // Shader type. 
+
+  // Currently we only support PreviewSurface, UVTexture and PrimvarReader_float2
+  nonstd::variant<PreviewSurface, UVTexture, PrimvarReader_float2> value;
 };
 
 
