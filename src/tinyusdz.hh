@@ -665,6 +665,7 @@ bool LoadUSDAFromFile(const std::string &filename, Scene *scene,
 ///
 /// @param[in] addr Memory address of USDA data
 /// @param[in] length Byte length of USDA data
+/// @param[in[ base_dir Base directory(can be empty)
 /// @param[out] scene USD scene.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
@@ -672,7 +673,7 @@ bool LoadUSDAFromFile(const std::string &filename, Scene *scene,
 ///
 /// @return true upon success
 ///
-bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Scene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
 

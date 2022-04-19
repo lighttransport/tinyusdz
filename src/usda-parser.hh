@@ -66,9 +66,15 @@ class USDAParser {
   ///
   std::string GetError();
 
+  /// 
+  /// Get as scene
+  ///
+  const Scene& GetScene() const;
+  
  private:
   class Impl;
   Impl *_impl;
+
 };
 
 } // namespace usda

@@ -1093,6 +1093,9 @@ static bool ParseTupleThreaded(
 #endif
 
 class USDAParser::Impl {
+ private:
+  Scene scene_;
+
  public:
   struct ParseState {
     int64_t loc{-1};  // byte location in StreamReder
@@ -6015,7 +6018,7 @@ class USDAParser::Impl {
           xform.name = node_name;
 
           std::cout << to_string(xform, nestlevel) << "\n";
-
+          
         } else if (prim_type == "Mesh") {
           GeomMesh mesh;
           std::cout << "Reconstruct GeomMesh\n";
@@ -6026,6 +6029,8 @@ class USDAParser::Impl {
           mesh.name = node_name;
 
           std::cout << to_string(mesh, nestlevel) << "\n";
+          
+          scene_.geom_meshes.push_back(mesh);
 
         } else if (prim_type == "Sphere") {
           GeomSphere sphere;
