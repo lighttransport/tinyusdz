@@ -2155,8 +2155,8 @@ class USDAParser::Impl {
   // bool ParsePrimAttr(std::map<std::string, Variable> *props) {
   bool ParsePrimAttr(std::map<std::string, Property> *props) {
     // prim_attr : (custom?) uniform type (array_qual?) name '=' value
-    // interpolation?
     //           | (custom?) type (array_qual?) name '=' value interpolation?
+    //           | (custom?) uniform type (array_qual?) name interpolation?
     //           ;
 
     bool custom_qual = MaybeCustom();
@@ -2247,10 +2247,39 @@ class USDAParser::Impl {
 
     bool isTimeSample = endsWith(primattr_name, ".timeSamples");
 
-    if (!Expect('=')) {
-      return false;
+    bool define_only = false;
+    {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c != '=') {
+        // Define only(e.g. output variable)
+        define_only = true;
+      }
     }
 
+    if (define_only) {
+
+      // TODO:
+
+      //attr.custom = custom_qual;
+      //attr.uniform = uniform_qual;
+      //attr.name = primattr_name;
+
+      //LOG_INFO("primattr_name = " + primattr_name);
+
+      //// FIXME
+      //{
+      //  (*props)[primattr_name].rel = rel;
+      //  (*props)[primattr_name].is_rel = true;
+      //}
+
+      return true;
+    }
+
+    // Continue to parse argument
     if (!SkipWhitespace()) {
       return false;
     }
@@ -7578,9 +7607,19 @@ bool USDAParser::Impl::ReconstructShader(const std::map<std::string, Property> &
           }
           shader->value = surface;
         } else if (p->compare("UsdUVTexture") == 0) {
-          PUSH_ERROR("TODO: UsdUVTexture");
+          UVTexture texture;
+          if (!ReconstructUVTexture(properties, references, &texture)) {
+            PUSH_ERROR("Failed to reconstruct UVTexture.");
+            return false;
+          }
+          shader->value = texture;
         } else if (p->compare("UsdPrimvarReader_float2") == 0) {
-          PUSH_ERROR("TODO: UsdPrimvarReader_float2");
+          PrimvarReader_float2 preader;
+          if (!ReconstructPrimvarReader_float2(properties, references, &preader)) {
+            PUSH_ERROR("Failed to reconstruct PrimvarReader_float2.");
+            return false;
+          }
+          shader->value = preader;
         } else {
           PUSH_ERROR("TODO: Shader id: " + (*p));
           return false;
@@ -7598,7 +7637,21 @@ bool USDAParser::Impl::ReconstructPreviewSurface(const std::map<std::string, Pro
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
                               PreviewSurface *surface) {
   // TODO:
-  return true;
+  return false;
+}
+
+bool USDAParser::Impl::ReconstructUVTexture(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              UVTexture *texture) {
+  // TODO:
+  return false;
+}
+
+bool USDAParser::Impl::ReconstructPrimvarReader_float2(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              PrimvarReader_float2 *preader) {
+  // TODO:
+  return false;
 }
 
 // 'None'
