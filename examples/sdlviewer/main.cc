@@ -29,6 +29,7 @@
 // common
 #include "imgui.h"
 #include "imgui_sdl/imgui_sdl.h"
+#include "imnodes.h"
 #include "roboto_mono_embed.inc.h"
 #include "simple-render.hh"
 #include "tinyusdz.hh"
@@ -658,6 +659,30 @@ void ShaderParamWindow(const tinyusdz::Scene& scene) {
   ImGui::End();
 }
 
+void ShaderGraphWindow(const tinyusdz::Scene &scene) {
+  ImGui::Begin("Shader graph");
+  
+  ImNodes::BeginNodeEditor();
+  ImNodes::BeginNode(1);
+
+          ImNodes::BeginNodeTitleBar();
+  ImGui::TextUnformatted("simple node :)");
+  ImNodes::EndNodeTitleBar();
+
+  ImNodes::BeginInputAttribute(2);
+  ImGui::Text("input");
+  ImNodes::EndInputAttribute();
+
+  ImNodes::BeginOutputAttribute(3);
+  ImGui::Indent(40);
+  ImGui::Text("output");
+  ImNodes::EndOutputAttribute();
+
+  ImNodes::EndNode();
+  ImNodes::EndNodeEditor();
+
+  ImGui::End();
+}
 
 }  // namespace
 
@@ -748,6 +773,7 @@ int main(int argc, char** argv) {
   bool done = false;
 
   ImGui::CreateContext();
+  ImNodes::CreateContext();
 
   {
     ImGuiIO& io = ImGui::GetIO();
@@ -969,6 +995,7 @@ int main(int argc, char** argv) {
     NodeTreeWindow(gui_ctx.scene);
     MaterialsParamWindow(gui_ctx.scene);
     ShaderParamWindow(gui_ctx.scene);
+    ShaderGraphWindow(gui_ctx.scene);
 
     if (update) {
       gui_ctx.redraw = true;
@@ -1026,7 +1053,8 @@ int main(int argc, char** argv) {
 
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
-
+  
+  ImNodes::DestroyContext();
   ImGui::DestroyContext();
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
