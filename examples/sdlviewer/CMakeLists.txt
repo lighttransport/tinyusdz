@@ -250,6 +250,9 @@ set(GUI_SOURCES
     ../common/imgui/imgui_tables.cpp
 
     ../common/imgui_sdl/imgui_sdl.cpp
+
+    # imnodes
+    ../common/imnodes/imnodes.cpp
     )
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES} ${TINYUSDZ_DEP_SOURCES})
@@ -262,6 +265,7 @@ endif()
 
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common")
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/imgui")
+target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/imnodes")
 
 # tinyusdz dir
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
