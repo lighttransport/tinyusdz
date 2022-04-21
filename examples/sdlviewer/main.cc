@@ -576,6 +576,88 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
 
 #endif
 
+void NodeTreeSubWindow(const tinyusdz::Node& node, uint32_t indent) {
+  if (node.name.empty()) {
+   // Do not traverse children of the node without name
+    return;
+  }
+
+  if (ImGui::TreeNode(node.name.c_str())) {
+    for (const auto& c : node.children) {
+      NodeTreeSubWindow(c, indent + 1);
+    }
+
+    ImGui::TreePop();
+  }
+}
+
+
+void NodeTreeWindow(const tinyusdz::Scene& scene) {
+
+  ImGui::Begin("Node");
+
+  if (scene.nodes.size()) {
+    size_t root_node_id =
+        (scene.default_root_node >= 0) ? size_t(scene.default_root_node) : 0;
+    NodeTreeSubWindow(scene.nodes[root_node_id], /* indent */ 0);
+  }
+
+  ImGui::End();
+}
+
+
+void ShaderParamWindow(const tinyusdz::Scene& scene) {
+  ImGui::Begin("Shaders");
+
+  for (const auto& item : scene.shaders) {
+    if (item.name.empty()) {
+        continue;
+    }
+
+    if (ImGui::TreeNode(item.name.c_str())) {
+      if (nonstd::get_if<tinyusdz::PreviewSurface>(&item.value)) {
+        ImGui::Text("type:id UsdPreviewSurface");
+
+
+      } else if (nonstd::get_if<tinyusdz::UVTexture>(&item.value)) {
+        ImGui::Text("type:id UVTexture");
+      } else if (nonstd::get_if<tinyusdz::PrimvarReader_float2>(&item.value)) {
+        ImGui::Text("type:id PrimvarReader_float2");
+      } else {
+        ImGui::Text("Unsupported Shader type");
+      }
+      ImGui::TreePop();
+    }
+  }
+  ImGui::End();
+}
+    
+    void MaterialsParamWindow(const tinyusdz::Scene& scene) {
+  ImGui::Begin("Materials");
+
+  for (const auto& item : scene.materials) {
+    if (!item.name.empty()) {
+      if (ImGui::TreeNode(item.name.c_str())) {
+
+        int nrow = 1;
+
+        ImGui::BeginTable("props", /* columns*/2);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("output.surface");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Text(item.outputs_surface.c_str());
+        
+        ImGui::EndTable();
+        ImGui::TreePop();
+      }
+    }
+  }
+
+  ImGui::End();
+}
+
 
 }  // namespace
 
@@ -754,6 +836,16 @@ int main(int argc, char** argv) {
 #else
   // Enable drop file
   SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
+  
+  #if 0
+  // Enable Docking;
+  {
+    ImGuiIO& io& io = ImGui::GetIO();
+
+    // Enable docking(available in imgui `docking` branch at the moment)
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  }
+  #endif
 
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
@@ -872,6 +964,11 @@ int main(int argc, char** argv) {
     ImGui::Image(gui_ctx.texture,
                  ImVec2(gui_ctx.render_width, gui_ctx.render_height));
     ImGui::End();
+
+
+    NodeTreeWindow(gui_ctx.scene);
+    MaterialsParamWindow(gui_ctx.scene);
+    ShaderParamWindow(gui_ctx.scene);
 
     if (update) {
       gui_ctx.redraw = true;

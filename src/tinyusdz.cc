@@ -4674,6 +4674,10 @@ bool Parser::ReconstructMaterial(
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
       if (ret) {
         if (prop_name.compare("outputs:surface") == 0) {
+          auto p = attr.var.get_value<std::string>();
+          if (p) {
+            material->outputs_surface = (*p);
+          }
         }
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cout << "prop: " << prop_name << "\n";
@@ -5168,6 +5172,7 @@ bool Parser::ReconstructSceneRecursively(
       _err += "Failed to reconstruct Material.\n";
       return false;
     }
+    material.name = node.GetLocalPath(); // FIXME
     scene->materials.push_back(material);
   } else if (node_type == "Shader") {
     Shader shader;
@@ -5177,12 +5182,11 @@ bool Parser::ReconstructSceneRecursively(
       return false;
     }
 
-    auto p = nonstd::get_if<PreviewSurface>(&shader.value);
-    if (p) {
-      scene->shaders.push_back(*p);
-    }
+    shader.name = node.GetLocalPath(); // FIXME
+    
+    scene->shaders.push_back(shader);
   } else if (node_type == "Scope") {
-    std::cout << "Scope\n";
+    std::cout << "TODO: Scope\n";
   } else {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "TODO or we can ignore this node: node_type: " << node_type
