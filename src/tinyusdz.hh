@@ -550,7 +550,7 @@ struct Scene {
   std::vector<GeomBasisCurves> geom_basis_curves;
   std::vector<GeomPoints> geom_points;
   std::vector<Material> materials;
-  std::vector<PreviewSurface> shaders;  // TODO(syoyo): Support othre shaders
+  std::vector<Shader> shaders;  // TODO(syoyo): Support othre shaders
   std::vector<Group> groups;
   std::vector<Volume> volumes;
 
