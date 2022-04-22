@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.5.1)
 
 set(BUILD_TARGET "usdz_view")
 
-project(${BUILD_TARGET} CXX)
+project(${BUILD_TARGET} CXX C)
 
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_WITH_OPENSUBDIV "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)" ON)

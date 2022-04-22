@@ -633,7 +633,7 @@ void ShaderParamWindow(const tinyusdz::Scene& scene) {
   ImGui::End();
 }
     
-    void MaterialsParamWindow(const tinyusdz::Scene& scene) {
+void MaterialsParamWindow(const tinyusdz::Scene& scene) {
   ImGui::Begin("Materials");
 
   for (const auto& item : scene.materials) {
@@ -648,7 +648,8 @@ void ShaderParamWindow(const tinyusdz::Scene& scene) {
         ImGui::TableSetColumnIndex(0);
         ImGui::Text("output.surface");
         ImGui::TableSetColumnIndex(1);
-        ImGui::Text(item.outputs_surface.c_str());
+        
+        ImGui::Text("%s", item.outputs_surface.c_str());
         
         ImGui::EndTable();
         ImGui::TreePop();
@@ -659,13 +660,46 @@ void ShaderParamWindow(const tinyusdz::Scene& scene) {
   ImGui::End();
 }
 
+void UVTextureNode(int node_id, const tinyusdz::UVTexture &texture) {
+
+  constexpr int kMaxSlots = 100;
+  constexpr int kOutputOffset = kMaxSlots / 2;
+
+  ImNodes::BeginNode(kMaxSlots * node_id);
+
+  ImNodes::BeginNodeTitleBar();
+  ImGui::TextUnformatted("UsdUVTexture");
+  ImNodes::EndNodeTitleBar();
+
+  ImNodes::BeginInputAttribute(kMaxSlots * node_id + 1);
+  ImGui::Text("inputs:file");
+  ImNodes::EndInputAttribute();
+
+  ImNodes::BeginInputAttribute(kMaxSlots * node_id + 2);
+  ImGui::Text("inputs:sourceColorSpace");
+  ImNodes::EndInputAttribute();
+
+  ImNodes::BeginInputAttribute(kMaxSlots * node_id + 3);
+  ImGui::Text("inputs:st");
+  ImNodes::EndInputAttribute();
+
+  ImNodes::BeginOutputAttribute(kMaxSlots * node_id + kOutputOffset + 1);
+  ImGui::Indent(40);
+  ImGui::Text("outputs:rgb");
+  ImNodes::EndOutputAttribute();
+
+  ImNodes::EndNode();
+
+}
+
 void ShaderGraphWindow(const tinyusdz::Scene &scene) {
   ImGui::Begin("Shader graph");
   
   ImNodes::BeginNodeEditor();
+
   ImNodes::BeginNode(1);
 
-          ImNodes::BeginNodeTitleBar();
+  ImNodes::BeginNodeTitleBar();
   ImGui::TextUnformatted("simple node :)");
   ImNodes::EndNodeTitleBar();
 
@@ -679,6 +713,11 @@ void ShaderGraphWindow(const tinyusdz::Scene &scene) {
   ImNodes::EndOutputAttribute();
 
   ImNodes::EndNode();
+
+  tinyusdz::UVTexture texture;
+  int texture_node_id = 1;
+  UVTextureNode(texture_node_id, texture);
+
   ImNodes::EndNodeEditor();
 
   ImGui::End();
