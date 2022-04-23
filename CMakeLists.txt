@@ -144,6 +144,7 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
     ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
     ${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c)
 
