@@ -237,6 +237,7 @@ set(TINYUSDZ_DEP_SOURCES
     ../../src/pxrLZ4/lz4.cpp
     ../../src/external/fpng.cpp
     ../../src/external/staticstruct.cc
+    ../../src/external/tinyxml2/tinyxml2.cpp
     ../../src/external/ryu/ryu/s2d.c
     ../../src/external/ryu/ryu/s2f.c)
 
