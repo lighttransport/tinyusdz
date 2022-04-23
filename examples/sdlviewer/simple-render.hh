@@ -155,21 +155,36 @@ struct UDIMTexture {
 // base color(fallback color) or Texture
 template<typename T>
 struct ShaderParam {
+  ShaderParam(const T& t) {
+    value = t;
+  }
+
   T value;
   int32_t texture_id{-1};
+
 };
 
 // UsdPreviewSurface 
-struct Shader {
+struct PreviewSurfaceShader {
 
-  ShaderParam<vec3> diffuseColor;
-  ShaderParam<float> metallic;
+  bool useSpecularWorkFlow{false};
 
-  // TODO: Other PreviewSurface parameters
+  ShaderParam<vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
+  ShaderParam<float> metallic{0.0f}; 
+  ShaderParam<float> roughness{0.5f};
+  ShaderParam<float> clearcoat{0.0f};
+  ShaderParam<float> clearcoatRoughness{0.01f};
+  ShaderParam<float> opacity{1.0f};
+  ShaderParam<float> opacityThreshold{0.0f};
+  ShaderParam<float> ior{1.5f};
+  ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
+  ShaderParam<float> displacement{0.0f};
+  ShaderParam<float> occlusion{0.0f};
+
 };
 
 struct Material {
-  Shader shader;
+  PreviewSurfaceShader shader;
 };
 
 // Simple LDR texture
