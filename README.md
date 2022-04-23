@@ -227,6 +227,7 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 * [ ] Support Nested USDZ
 * [ ] UDIM texture support
 * [ ] Support big endian architecture.
+* [ ] MaterialX support
 
 ## Fuzzing test
 
@@ -258,3 +259,5 @@ TinyUSDZ is licensed under MIT license.
 * mapbox/recursive_wrapper: BSL 1.0 license. https://github.com/mapbox/variant
 * par_shapes.h generate parametric surfaces and other simple shapes: MIT license https://github.com/prideout/par
 * staticstruct: MIT license. https://github.com/syoyo/staticstruct
+* MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
+* tinyxml2: zlib license. https://github.com/leethomason/tinyxml2
