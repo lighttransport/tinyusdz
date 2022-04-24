@@ -9,7 +9,13 @@ tinyusdz_sources=[
   '../../src/pprinter.cc',
   '../../src/prim-types.cc',
   '../../src/usdObj.cc',
+  '../../src/primvar.cc',
+  '../../src/usda-parser.cc',
+  '../../src/usda-writer.cc',
   # deps
+  '../../src/external/fpng.cpp',
+  '../../src/external/staticstruct.cc',
+  '../../src/external/tinyxml2/tinyxml2.cpp',
   '../../src/external/ryu/ryu/d2s.c',
   '../../src/external/ryu/ryu/f2s.c',
   '../../src/external/ryu/ryu/s2f.c',
