@@ -700,16 +700,16 @@ void ShaderGraphWindow(const tinyusdz::Scene &scene) {
   ImNodes::BeginNode(1);
 
   ImNodes::BeginNodeTitleBar();
-  ImGui::TextUnformatted("simple node :)");
+  ImGui::TextUnformatted("File");
   ImNodes::EndNodeTitleBar();
 
-  ImNodes::BeginInputAttribute(2);
-  ImGui::Text("input");
-  ImNodes::EndInputAttribute();
+  //ImNodes::BeginInputAttribute(2);
+  //ImGui::Text("file");
+  //ImNodes::EndInputAttribute();
 
   ImNodes::BeginOutputAttribute(3);
   ImGui::Indent(40);
-  ImGui::Text("output");
+  ImGui::Text("checkerboard.png");
   ImNodes::EndOutputAttribute();
 
   ImNodes::EndNode();
@@ -717,6 +717,8 @@ void ShaderGraphWindow(const tinyusdz::Scene &scene) {
   tinyusdz::UVTexture texture;
   int texture_node_id = 1;
   UVTextureNode(texture_node_id, texture);
+
+  ImNodes::MiniMap();
 
   ImNodes::EndNodeEditor();
 
