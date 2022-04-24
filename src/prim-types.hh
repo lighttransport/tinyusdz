@@ -995,7 +995,7 @@ inline std::string get_type_name(const PrimVar &v) {
 
 
 struct ConnectionPath {
-  bool input{false};  // true: Input connection. false: Ouput connection.
+  bool is_input{false};  // true: Input connection. false: Output connection.
 
   Path path;  // original Path information in USD
 
@@ -1003,6 +1003,14 @@ struct ConnectionPath {
   int64_t index{-1};  // corresponding array index(e.g. the array index to
                       // `Scene.shaders`)
 };
+
+struct Connection
+{
+  int64_t src_index{-1};
+  int64_t dest_index{-1};
+};
+
+using connection_id_map = std::unordered_map<std::pair<std::string, std::string>, Connection>;
 
 // Relation
 struct Rel {
@@ -1045,7 +1053,7 @@ struct Property
 template<typename T>
 struct PrimvarReader {
   std::string output_type = TypeTrait<T>::type_name;
-  T fallback{};  // fallback value
+  T fallback_value{};  // fallback value
 
   ConnectionPath
       varname;  // Name of the primvar to be fetched from the geometry.
