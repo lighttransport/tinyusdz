@@ -6064,6 +6064,8 @@ bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
 bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Scene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
+  (void)warn;
+
   if (addr == nullptr) {
     if (err) {
       (*err) = "null pointer for `addr` argument.\n";
