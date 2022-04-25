@@ -44,7 +44,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 // local debug flag(now defined in tinyusdz.hh)
-//#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
+#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
 
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -512,6 +512,13 @@ class Value {
     string_array = d;
   }
 
+  void SetPathVector(const std::vector<Path> &d) {
+    dtype.name = "PathVector";
+    dtype.id = VALUE_TYPE_PATH_VECTOR;
+    array_length = int64_t(d.size());
+    path_vector = d;
+  }
+
   void SetPathListOp(const ListOp<Path> &d) {
     dtype.name = "PathListOp";
     dtype.id = VALUE_TYPE_PATH_LIST_OP;
@@ -642,6 +649,7 @@ class Value {
 
   // Dictonary, ListOp and array of string has separated storage
   std::vector<std::string> string_array;
+  std::vector<Path> path_vector;
   Dictionary dict;
   ListOp<Path> path_list_op;
   ListOp<std::string> token_list_op;
@@ -1505,6 +1513,80 @@ bool Parser::ReadValueRep(ValueRep *rep) {
 
   return true;
 }
+
+bool Parser::ReadPathArray(std::vector<T> *d) {
+  if (!is_compressed) {
+    size_t length;
+    // < ver 0.7.0  use 32bit
+    if ((_version[0] == 0) && ((_version[1] < 7))) {
+      uint32_t n;
+      if (!_sr->read4(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+      length = size_t(n);
+    } else {
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+
+      length = size_t(n);
+    }
+
+    d->resize(length);
+
+    // TODO(syoyo): Zero-copy
+    if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read integer array data.\n";
+      return false;
+    }
+
+    return true;
+
+  } else {
+    size_t length;
+    // < ver 0.7.0  use 32bit
+    if ((_version[0] == 0) && ((_version[1] < 7))) {
+      uint32_t n;
+      if (!_sr->read4(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+      length = size_t(n);
+    } else {
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        _err += "Failed to read the number of array elements.\n";
+        return false;
+      }
+
+      length = size_t(n);
+    }
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "array.len = " << length << "\n";
+#endif
+
+    d->resize(length);
+
+    if (length < kMinCompressedArraySize) {
+      size_t sz = sizeof(T) * length;
+      // Not stored in compressed.
+      // reader.ReadContiguous(odata, osize);
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+      return true;
+    }
+
+    return ReadCompressedInts(_sr, d->data(), d->size());
+  }
+}
+
 
 template <typename T>
 bool Parser::ReadIntArray(bool is_compressed, std::vector<T> *d) {
@@ -3133,6 +3215,25 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
 
+    } else if (ty.id == VALUE_TYPE_PATH_VECTOR) {
+      std::vector<Path> v;
+      assert(!rep.IsCompressed());
+      if (!ReadPathArray(&v)) {
+        _err += "Failed to read PathVector value\n";
+        return false;
+      }
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+      for (size_t i = 0; i < v.size(); i++) {
+        std::cout << "Path[" << i << "] = " << v[i].full_path_name() << "\n";
+      }
+#endif
+
+      value->SetPathVector(v);
+
+      return true;
+
+
     } else {
       // TODO(syoyo)
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -3845,6 +3946,7 @@ bool Parser::BuildLiveFieldSets() {
 #endif
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+  size_t sum = 0;
   for (const auto &item : _live_fieldsets) {
     std::cout << "livefieldsets[" << item.first.value
               << "].count = " << item.second.size() << "\n";
@@ -5078,8 +5180,12 @@ bool Parser::ReconstructSceneRecursively(
       } else if ((fv.first == "defaultPrim") &&
                  (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
         scene->defaultPrim = fv.second.GetToken();
+      } else if (fv.first == "customLayerData") {
+        std::cout << "ty " << fv.second.GetTypeId() << "\n";
       } else {
-        // TODO(syoyo): `customLayerData`
+        _err += "TODO: " + fv.first + "\n";
+        return false;
+        // TODO(syoyo):
       }
     }
   }
@@ -5136,6 +5242,8 @@ bool Parser::ReconstructSceneRecursively(
         std::cout << IndentStr(level + 2) << str << "\n";
       }
 #endif
+    } else {
+        // TODO
     }
   }
 
