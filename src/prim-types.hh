@@ -1052,7 +1052,7 @@ struct Property
 // Currently for UV texture coordinate
 template<typename T>
 struct PrimvarReader {
-  std::string output_type = TypeTrait<T>::type_name;
+  //const char *output_type = TypeTrait<T>::type_name;
   T fallback_value{};  // fallback value
 
   ConnectionPath
