@@ -9,6 +9,7 @@
 #endif
 
 #include "tinyxml2/tinyxml2.h"
+#include "nlohmann/json.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -33,6 +34,11 @@ int main(int argc, char **argv)
 
   tinyxml2::XMLPrinter printer;
   doc.Print(&printer);
+
+  const tinyxml2::XMLNode *node = doc.FirstChild();
+  if (node) {
+    // TODO
+  }
 
   std::cout << printer.CStr() << "\n";
 
