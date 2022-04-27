@@ -98,6 +98,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma clang diagnostic pop
 #endif
 
+#define PUSH_ERROR(s) { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  _err += ss.str(); \
+} while (0)
+
 namespace tinyusdz {
 
 namespace {
@@ -609,6 +616,14 @@ class Value {
     return std::string();
   }
 
+  std::vector<std::string> GetTokenArray() const {
+    if (dtype.id == VALUE_TYPE_TOKEN_VECTOR) {
+      return string_array;
+    }
+    std::vector<std::string> empty;
+    return empty;
+  }
+
   std::string GetString() const {
     if (dtype.id == VALUE_TYPE_STRING) {
       std::string s(reinterpret_cast<const char *>(data.data()), data.size());
@@ -648,7 +663,7 @@ class Value {
   int64_t array_length{-1};
 
   // Dictonary, ListOp and array of string has separated storage
-  std::vector<std::string> string_array;
+  std::vector<std::string> string_array; // also TokenArray
   std::vector<Path> path_vector;
   Dictionary dict;
   ListOp<Path> path_list_op;
@@ -1514,80 +1529,6 @@ bool Parser::ReadValueRep(ValueRep *rep) {
   return true;
 }
 
-bool Parser::ReadPathArray(std::vector<T> *d) {
-  if (!is_compressed) {
-    size_t length;
-    // < ver 0.7.0  use 32bit
-    if ((_version[0] == 0) && ((_version[1] < 7))) {
-      uint32_t n;
-      if (!_sr->read4(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-      length = size_t(n);
-    } else {
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-
-      length = size_t(n);
-    }
-
-    d->resize(length);
-
-    // TODO(syoyo): Zero-copy
-    if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
-                   reinterpret_cast<uint8_t *>(d->data()))) {
-      _err += "Failed to read integer array data.\n";
-      return false;
-    }
-
-    return true;
-
-  } else {
-    size_t length;
-    // < ver 0.7.0  use 32bit
-    if ((_version[0] == 0) && ((_version[1] < 7))) {
-      uint32_t n;
-      if (!_sr->read4(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-      length = size_t(n);
-    } else {
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-
-      length = size_t(n);
-    }
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "array.len = " << length << "\n";
-#endif
-
-    d->resize(length);
-
-    if (length < kMinCompressedArraySize) {
-      size_t sz = sizeof(T) * length;
-      // Not stored in compressed.
-      // reader.ReadContiguous(odata, osize);
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-        _err += "Failed to read uncompressed array data.\n";
-        return false;
-      }
-      return true;
-    }
-
-    return ReadCompressedInts(_sr, d->data(), d->size());
-  }
-}
-
-
 template <typename T>
 bool Parser::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   if (!is_compressed) {
@@ -2133,6 +2074,45 @@ bool Parser::ReadTimeSamples(TimeSamples *d) {
 
   return true;
 }
+
+bool Parser::ReadPathArray(std::vector<Path> *d) {
+
+  // array data is not compressed
+  auto ReadFn = [this](std::vector<Path> &result) -> bool {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read # of elements in ListOp.\n";
+      return false;
+    }
+
+    std::vector<Index> ivalue(static_cast<size_t>(n));
+
+    if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+      _err += "Failed to read ListOp data.\n";
+      return false;
+    }
+
+    // reconstruct
+    result.resize(static_cast<size_t>(n));
+    for (size_t i = 0; i < n; i++) {
+      result[i] = GetPath(ivalue[i]);
+    }
+
+    return true;
+  };
+
+  std::vector<Path> items;
+  if (!ReadFn(items)) {
+    _err += "Failed to read Path vector.\n";
+    return false;
+  }
+
+  (*d) = items;
+
+  return true;
+}
+
 
 bool Parser::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
@@ -3236,6 +3216,7 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
 
     } else {
       // TODO(syoyo)
+      PUSH_ERROR("TODO: " + GetValueTypeRepr(rep.GetType()));
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cerr << "[" << __LINE__
                 << "] TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
@@ -5182,8 +5163,16 @@ bool Parser::ReconstructSceneRecursively(
         scene->defaultPrim = fv.second.GetToken();
       } else if (fv.first == "customLayerData") {
         std::cout << "ty " << fv.second.GetTypeId() << "\n";
+      } else if (fv.first == "primChildren") {
+        if (fv.second.GetTypeId() != VALUE_TYPE_TOKEN_VECTOR) {
+          PUSH_ERROR("Type must be TokenArray for `primChildren`, but got " + fv.second.GetTypeName() + "\n");
+          return false;
+        }
+        
+        scene->primChildren = fv.second.GetTokenArray();
       } else {
-        _err += "TODO: " + fv.first + "\n";
+        PUSH_ERROR("TODO: " + fv.first + "\n");
+        //_err += "TODO: " + fv.first + "\n";
         return false;
         // TODO(syoyo):
       }

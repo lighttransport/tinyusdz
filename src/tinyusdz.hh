@@ -538,6 +538,7 @@ struct Scene {
   std::string defaultPrim;           // prim node name
   double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
+  std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
 
   //
   // glTF-like scene objects
