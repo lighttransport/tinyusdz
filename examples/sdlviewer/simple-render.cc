@@ -21,6 +21,18 @@ typedef nanort::real3<float> float3;
 
 namespace example {
 
+struct DifferentialGeometry
+{
+  float t; // hit t
+  float bary_u, bary_v; // barycentric coordinate.
+  uint32_t geom_id; // geom id(Currently GeomMesh only)
+  float tex_u, tex_v; // texture u and v
+
+  float3 shading_normal;
+  float3 geometric_normal;
+};
+
+
 inline float3 Lerp3(float3 v0, float3 v1, float3 v2, float u, float v) {
   return (1.0f - u - v) * v0 + u * v1 + v * v2;
 }
@@ -319,6 +331,14 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   return true;
 }
 
+float3 Shade(const DrawGeomMesh& mesh, DifferentialGeometry &dg) {
+  // TODO
+
+  float3 color;
+
+  return color;
+}
+
 void BuildCameraFrame(float3* origin, float3* corner, float3* u, float3* v,
                       const float quat[4], float eye[3], float lookat[3],
                       float up[3], float fov, int width, int height) {
@@ -469,7 +489,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
           if (scene.draw_meshes.size()) {
 
-            // HACK. Use the first mesh
+            // FIXME(syoyo): Use NanoSG to trace meshes in the scene.
             const DrawGeomMesh& mesh = scene.draw_meshes[0];
 
             // Intersector functor.
@@ -552,6 +572,16 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
                 texcoord = Lerp3(t0, t1, t2, isect.u, isect.v);
               }
+
+              // For shading
+              DifferentialGeometry dg;
+              dg.tex_u = texcoord[0];
+              dg.tex_v = texcoord[1];
+              dg.bary_u = isect.u;
+              dg.bary_v = isect.v;
+              dg.geom_id = 0; // FIXME
+              dg.geometric_normal = Ng;
+              dg.shading_normal = Ns;
 
               output->rgb[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
               output->rgb[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
