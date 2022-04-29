@@ -35,7 +35,7 @@ I'm now rewritting TinyUSDZ core to support more USD features including Composit
 * [ ] Character animation(usdSkel, blendshapes, animations) support(2022 Summer expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] Write iOS and Android example(2022 Fall expected)
-* [ ] Polygon triangulation using mapxbo/earcut.hpp
+* [ ] Polygon triangulation using mapbox/earcut.hpp
 * [ ] USDZ(USDC) writer
 * [ ] USDA writer
 * [ ] USD <-> glTF converter
@@ -43,6 +43,15 @@ I'm now rewritting TinyUSDZ core to support more USD features including Composit
 ## Notice
 
 TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses proprietary file format and we cannot understand it(so no conversion support from/to Reality also).
+
+## Commercial support
+
+TinyUSDZ focuses on loading/writing USDA/USDC/USDZ functionalities.
+Example viewer is just for demo purpose.
+Currently TinyUSDZ project is run as personal project by `syoyo` and `syoyo` does not provide commercial support as an individual.
+
+If you need commercial support, eco-system development(e.g. plug-ins, authorization tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
+
 
 ## Other related projects
 
