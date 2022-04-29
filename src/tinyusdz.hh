@@ -540,6 +540,9 @@ struct Scene {
   double timeCodesPerSecond = 24.0;  // default 24 fps
   std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
 
+  // Currently `string` type value only.
+  std::map<std::string, std::string> customLayerData; // TODO(syoyo): Support arbitrary value
+
   //
   // glTF-like scene objects
   // TODO(syoyo): Use std::variant(C++17) like static polymorphism?
@@ -558,8 +561,6 @@ struct Scene {
   StringAndIdMap geom_meshes_map;  // Path <-> array index map
   StringAndIdMap materials_map;    // Path <-> array index map
 
-  // TODO(syoyo): User defined custom layer data
-  // "customLayerData"
 };
 
 struct USDLoadOptions {
