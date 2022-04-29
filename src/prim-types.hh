@@ -2613,7 +2613,7 @@ class Value {
   bool IsDictionary() const { return dtype.id == VALUE_TYPE_DICTIONARY; }
 
   void SetDictionary(const Dictionary &d) {
-    // Dictonary has separated storage
+    // Dictionary has separated storage
     dict = d;
   }
 
@@ -2625,7 +2625,7 @@ class Value {
   std::vector<uint8_t> data;  // value as opaque binary data.
   int64_t array_length{-1};
 
-  // Dictonary, ListOp and array of string has separated storage
+  // Dictionary, ListOp and array of string has separated storage
   std::vector<std::string> string_array;
   Dictionary dict;
   ListOp<Path> path_list_op;
