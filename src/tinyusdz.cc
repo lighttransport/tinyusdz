@@ -40,9 +40,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 
 
-
-
-
 // local debug flag(now defined in tinyusdz.hh)
 #define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
 
@@ -102,7 +99,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   std::ostringstream ss; \
   ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
   ss << s; \
-  _err += ss.str(); \
+  _err += ss.str() + "\n"; \
+} while (0)
+
+#define PUSH_WARN(s) { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  _warn += ss.str() + "\n"; \
 } while (0)
 
 namespace tinyusdz {
@@ -534,6 +538,14 @@ class Value {
     path_list_op = d;
   }
 
+  void SetTokenListOp(const ListOp<std::string> &d) {
+    dtype.name = "TokenListOp";
+    dtype.id = VALUE_TYPE_TOKEN_LIST_OP;
+    // FIXME(syoyo): How to determine array length?
+    // array_length = int64_t(d.size());
+    token_list_op = d;
+  }
+
   void SetTimeSamples(const TimeSamples &d) {
     dtype.name = "TimeSamples";
     dtype.id = VALUE_TYPE_TIME_SAMPLES;
@@ -543,6 +555,7 @@ class Value {
   }
 
   const ListOp<Path> &GetPathListOp() const { return path_list_op; }
+  const ListOp<std::string> &GetTokenListOp() const { return token_list_op; }
 
   // Getter for frequently used types.
   Specifier GetSpecifier() const {
@@ -650,7 +663,8 @@ class Value {
   bool IsDictionary() const { return dtype.id == VALUE_TYPE_DICTIONARY; }
 
   void SetDictionary(const Dictionary &d) {
-    // Dictonary has separated storage
+    dtype.name = "Dictionary";
+    dtype.id = VALUE_TYPE_DICTIONARY;
     dict = d;
   }
 
@@ -662,7 +676,7 @@ class Value {
   std::vector<uint8_t> data;  // value as opaque binary data.
   int64_t array_length{-1};
 
-  // Dictonary, ListOp and array of string has separated storage
+  // Dictionary, ListOp and array of string has separated storage
   std::vector<std::string> string_array; // also TokenArray
   std::vector<Path> path_vector;
   Dictionary dict;
@@ -1268,7 +1282,7 @@ class Parser {
     if (index.value <= _paths.size()) {
       // ok
     } else {
-      // TODO(syoyo): Report error
+      PUSH_ERROR("Invalid path index?");
       return Path();
     }
 
@@ -1281,6 +1295,7 @@ class Parser {
     if (index.value <= _paths.size()) {
       // ok
     } else {
+      PUSH_ERROR("Invalid path index");
       return "#INVALID path index#";
     }
 
@@ -1293,6 +1308,7 @@ class Parser {
     if (index.value <= _specs.size()) {
       // ok
     } else {
+      PUSH_ERROR("Invalid path index");
       return "#INVALID spec index#";
     }
 
@@ -1476,6 +1492,7 @@ class Parser {
 
   // PathListOp
   bool ReadPathListOp(ListOp<Path> *d);
+  bool ReadTokenListOp(ListOp<std::string> *d); // TODO(syoyo): Use `Token` type
 };
 
 bool Parser::ReadIndex(Index *i) {
@@ -2113,6 +2130,109 @@ bool Parser::ReadPathArray(std::vector<Path> *d) {
   return true;
 }
 
+bool Parser::ReadTokenListOp(ListOp<std::string> *d) {
+  // read ListOpHeader
+  ListOpHeader h;
+  if (!_sr->read1(&h.bits)) {
+    _err += "Failed to read ListOpHeader\n";
+    return false;
+  }
+
+  if (h.IsExplicit()) {
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "Explicit\n";
+#endif
+    d->ClearAndMakeExplicit();
+  }
+
+  // array data is not compressed
+  auto ReadFn = [this](std::vector<std::string> &result) -> bool {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read # of elements in ListOp.\n";
+      return false;
+    }
+
+    std::vector<Index> ivalue(static_cast<size_t>(n));
+
+    if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+      _err += "Failed to read ListOp data.\n";
+      return false;
+    }
+
+    // reconstruct
+    result.resize(static_cast<size_t>(n));
+    for (size_t i = 0; i < n; i++) {
+      result[i] = GetToken(ivalue[i]);
+    }
+
+    return true;
+  };
+
+  if (h.HasExplicitItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::ExplicitItems.\n";
+      return false;
+    }
+
+    d->SetExplicitItems(items);
+  }
+
+  if (h.HasAddedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AddedItems.\n";
+      return false;
+    }
+
+    d->SetAddedItems(items);
+  }
+
+  if (h.HasPrependedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::PrependedItems.\n";
+      return false;
+    }
+
+    d->SetPrependedItems(items);
+  }
+
+  if (h.HasAppendedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AppendedItems.\n";
+      return false;
+    }
+
+    d->SetAppendedItems(items);
+  }
+
+  if (h.HasDeletedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::DeletedItems.\n";
+      return false;
+    }
+
+    d->SetDeletedItems(items);
+  }
+
+  if (h.HasOrderedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::OrderedItems.\n";
+      return false;
+    }
+
+    d->SetOrderedItems(items);
+  }
+
+  return true;
+}
+
 
 bool Parser::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
@@ -2465,6 +2585,27 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       value->SetVec3i(v);
 
       return true;
+    } else if (ty.id == VALUE_TYPE_VEC4I) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      Vec4i v;
+      v[0] = static_cast<int32_t>(data[0]);
+      v[1] = static_cast<int32_t>(data[1]);
+      v[2] = static_cast<int32_t>(data[2]);
+      v[3] = static_cast<int32_t>(data[3]);
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "value.vec4i = " << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3]
+                << "\n";
+#endif
+
+      value->SetVec4i(v);
+
+      return true;
 
     } else if (ty.id == VALUE_TYPE_VEC3F) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
@@ -2486,6 +2627,27 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       value->SetVec3f(v);
 
       return true;
+    } else if (ty.id == VALUE_TYPE_VEC4F) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      Vec4f v;
+      v[0] = static_cast<float>(data[0]);
+      v[1] = static_cast<float>(data[1]);
+      v[2] = static_cast<float>(data[2]);
+      v[3] = static_cast<float>(data[3]);
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "value.vec3f = " << v[1] << ", " << v[1] << ", " << v[2] << ", " << v[3]
+                << "\n";
+#endif
+
+      value->SetVec4f(v);
+
+      return true;
 
     } else if (ty.id == VALUE_TYPE_VEC3D) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
@@ -2505,6 +2667,27 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
 #endif
 
       value->SetVec3d(v);
+
+      return true;
+    } else if (ty.id == VALUE_TYPE_VEC4D) {
+      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      Vec4d v;
+      v[0] = static_cast<double>(data[0]);
+      v[1] = static_cast<double>(data[1]);
+      v[2] = static_cast<double>(data[2]);
+      v[3] = static_cast<double>(data[3]);
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "value.vec4d = " << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3]
+                << "\n";
+#endif
+
+      value->SetVec4d(v);
 
       return true;
 
@@ -2582,6 +2765,7 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       std::cerr << "TODO: Inlined Value: " << GetValueTypeRepr(rep.GetType())
                 << "\n";
 #endif
+      PUSH_ERROR("TODO: Inlined Value: " + GetValueTypeRepr(rep.GetType()));
 
       return false;
     }
@@ -3214,6 +3398,16 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       return true;
 
 
+    } else if (ty.id == VALUE_TYPE_TOKEN_LIST_OP) {
+      ListOp<std::string> lst;
+
+      if (!ReadTokenListOp(&lst)) {
+        PUSH_ERROR("Failed to read TokenListOp data");
+        return false;
+      }
+
+      value->SetTokenListOp(lst);
+      return true;
     } else {
       // TODO(syoyo)
       PUSH_ERROR("TODO: " + GetValueTypeRepr(rep.GetType()));
@@ -3224,6 +3418,8 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       return false;
     }
   }
+
+  // Never should reach here.
 }
 
 bool Parser::BuildDecompressedPathsImpl(
@@ -4162,6 +4358,18 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         attr->variability = variability;
         //attr->interpolation = interpolation;
         success = true;
+      } else if (fv.second.GetTypeName() == "TokenArray") {
+
+
+        std::vector<std::string> value = fv.second.GetTokenArray();
+
+        attr->var.set_scalar(value);
+        attr->variability = variability;
+        attr->interpolation = interpolation;
+        success = true;
+
+      } else {
+        PUSH_ERROR("TODO: " + fv.second.GetTypeName());
       }
     }
   }
@@ -4244,6 +4452,7 @@ bool Parser::ReconstructXform(
 #endif
       if (ret) {
         // TODO(syoyo): Implement
+        PUSH_ERROR("TODO: Implemen Xform prop: " + prop_name);
       }
     }
   }
@@ -4857,7 +5066,7 @@ bool Parser::ReconstructShader(
       if (ret) {
         // Currently we only support predefined PBR attributes.
 
-        if (prop_name.compare("info:id") == 0) { 
+        if (prop_name.compare("info:id") == 0) {
           auto p = attr.var.get_value<std::string>(); // `token` type, but treat it as string
           if (p) {
             shader_type = (*p);
@@ -5162,13 +5371,18 @@ bool Parser::ReconstructSceneRecursively(
                  (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
         scene->defaultPrim = fv.second.GetToken();
       } else if (fv.first == "customLayerData") {
-        std::cout << "ty " << fv.second.GetTypeId() << "\n";
+        if (fv.second.GetTypeId() == VALUE_TYPE_DICTIONARY) {
+          PUSH_WARN("TODO: Store customLayerData.");
+          //scene->customLayerData = fv.second.GetDictionary();
+        } else {
+          PUSH_ERROR("customLayerData must be `dict` type.");
+        }
       } else if (fv.first == "primChildren") {
         if (fv.second.GetTypeId() != VALUE_TYPE_TOKEN_VECTOR) {
           PUSH_ERROR("Type must be TokenArray for `primChildren`, but got " + fv.second.GetTypeName() + "\n");
           return false;
         }
-        
+
         scene->primChildren = fv.second.GetTokenArray();
       } else {
         PUSH_ERROR("TODO: " + fv.first + "\n");
@@ -5231,8 +5445,24 @@ bool Parser::ReconstructSceneRecursively(
         std::cout << IndentStr(level + 2) << str << "\n";
       }
 #endif
+    } else if ((fv.first == "customLayerData") && (fv.second.GetTypeName() == "Dictionary")) {
+      const auto &dict = fv.second.GetDictionary();
+
+      for (const auto &item : dict) {
+        if (item.second.GetTypeName() == "String") {
+          scene->customLayerData[item.first] = item.second.GetString();
+        } else {
+          PUSH_WARN("TODO: name " + item.first + ", type " + item.second.GetTypeName());
+        }
+      }
+
+    } else if (fv.second.GetTypeName() == "TokenListOp") {
+      PUSH_WARN("TODO: name " + fv.first + ", type TokenListOp.");
+    } else if (fv.second.GetTypeName() == "Vec3fArray") {
+      PUSH_WARN("TODO: name: " + fv.first + ", type: " + fv.second.GetTypeName());
     } else {
-        // TODO
+      PUSH_WARN("TODO: name: " + fv.first + ", type: " + fv.second.GetTypeName());
+      //return false;
     }
   }
 
@@ -5280,7 +5510,7 @@ bool Parser::ReconstructSceneRecursively(
     }
 
     shader.name = node.GetLocalPath(); // FIXME
-    
+
     scene->shaders.push_back(shader);
   } else if (node_type == "Scope") {
     std::cout << "TODO: Scope\n";
