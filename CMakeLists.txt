@@ -22,6 +22,8 @@ option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
 option(TINYUSDZ_WITH_USDVOX "Build with usdVox support(import MagicaVoxel .vox)"
        ON)
+option(TINYUSDZ_WITH_USDNERF "Build with usdNeRF support(import NeRF model)"
+       ON)
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
@@ -166,6 +168,12 @@ endif()
 
 if(TINYUSDZ_WITH_USDVOX)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
+endif()
+
+if(TINYUSDZ_WITH_USDNERF)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usdNeRF.cc)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/cnpy.cpp)
 endif()
 
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
@@ -375,6 +383,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_USDVOX)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_USE_USDVOX")
+  endif()
+
+  if(TINYUSDZ_WITH_USDNERF)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDNERF")
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
