@@ -123,6 +123,8 @@ class Value {
 
   Value() = default;
 
+  Value &operator=(const Value&v) = default;
+
   Value(const ValueType &_dtype, const std::vector<uint8_t> &_data)
       : dtype(_dtype), data(_data), array_length(-1) {}
   Value(const ValueType &_dtype, const std::vector<uint8_t> &_data,
@@ -668,6 +670,33 @@ class Value {
     dict = d;
   }
 
+  std::vector<int> GetIntArray() const {
+    std::vector<int> ret;
+
+    if (dtype.name == "IntArray") {
+      ret.resize(array_length);
+      memcpy(ret.data(), data.data(), array_length * sizeof(uint32_t));
+    } else {
+      // TODO: Report an error
+    }
+
+    return ret; // Empty
+  }
+
+  std::vector<float> GetFloatArray() const {
+    std::vector<float> ret;
+
+    if (dtype.name == "FloatArray") {
+      ret.resize(array_length);
+      memcpy(ret.data(), data.data(), array_length * sizeof(float));
+    } else {
+      // TODO: Report an error
+    }
+
+    return ret; // Empty
+  }
+
+  Dictionary &GetDictionary() { return dict; }
   const Dictionary &GetDictionary() const { return dict; }
 
  private:
@@ -983,6 +1012,12 @@ class Node {
     return _primChildren;
   }
 
+  void SetAssetInfo(const primvar::dict &dict) {
+    _assetInfo = dict;
+  }
+
+  const primvar::dict &GetAssetInfo() const { return _assetInfo; }
+
  private:
   int64_t
       _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
@@ -990,6 +1025,7 @@ class Node {
   std::unordered_set<std::string> _primChildren;  // List of name of child nodes
 
   Path _path;  // local path
+  primvar::dict _assetInfo;
 
   NodeType _node_type;
 };
@@ -5394,6 +5430,7 @@ bool Parser::ReconstructSceneRecursively(
   }
 
   std::string node_type;
+  Value::Dictionary assetInfo;
 
   for (const auto &fv : fields) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -5411,16 +5448,22 @@ bool Parser::ReconstructSceneRecursively(
       }
       // std::cout << IndentStr(level) << "    token = " << fv.second.GetToken()
       // << "\n";
+    } else if (fv.second.GetTypeId() == VALUE_TYPE_BOOL) {
+      PUSH_WARN("TODO: name " + fv.first + ", type Bool.");
     } else if (fv.second.GetTypeId() == VALUE_TYPE_STRING) {
+      PUSH_WARN("TODO: name " + fv.first + ", type String.");
       // std::cout << IndentStr(level) << "    string = " <<
       // fv.second.GetString() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) {
+      PUSH_WARN("TODO: name " + fv.first + ", type Double.");
       // std::cout << IndentStr(level) << "    double = " <<
       // fv.second.GetDouble() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_FLOAT) {
+      PUSH_WARN("TODO: name " + fv.first + ", type Float.");
       // std::cout << IndentStr(level) << "    float  = " <<
       // fv.second.GetDouble() << "\n";
     } else if (fv.second.GetTypeId() == VALUE_TYPE_VARIABILITY) {
+      PUSH_WARN("TODO: name " + fv.first + ", type Variability.");
       // std::cout << IndentStr(level) << "    variability  = " <<
       // GetVariabilityString(fv.second.GetVariability()) << "\n";
     } else if ((fv.first == "primChildren") &&
@@ -5451,8 +5494,12 @@ bool Parser::ReconstructSceneRecursively(
       for (const auto &item : dict) {
         if (item.second.GetTypeName() == "String") {
           scene->customLayerData[item.first] = item.second.GetString();
+        } else if (item.second.GetTypeName() == "IntArray") {
+
+          const auto arr = item.second.GetIntArray();
+          scene->customLayerData[item.first] = arr;
         } else {
-          PUSH_WARN("TODO: name " + item.first + ", type " + item.second.GetTypeName());
+          PUSH_WARN("TODO(customLayerData): name " + item.first + ", type " + item.second.GetTypeName());
         }
       }
 
@@ -5460,6 +5507,12 @@ bool Parser::ReconstructSceneRecursively(
       PUSH_WARN("TODO: name " + fv.first + ", type TokenListOp.");
     } else if (fv.second.GetTypeName() == "Vec3fArray") {
       PUSH_WARN("TODO: name: " + fv.first + ", type: " + fv.second.GetTypeName());
+
+    } else if ((fv.first == "assetInfo") && (fv.second.GetTypeName() == "Dictionary")) {
+
+      node_type = "assetInfo";
+      assetInfo = fv.second.GetDictionary();
+
     } else {
       PUSH_WARN("TODO: name: " + fv.first + ", type: " + fv.second.GetTypeName());
       //return false;
@@ -5514,6 +5567,10 @@ bool Parser::ReconstructSceneRecursively(
     scene->shaders.push_back(shader);
   } else if (node_type == "Scope") {
     std::cout << "TODO: Scope\n";
+  } else if (node_type == "assetInfo") {
+
+    PUSH_WARN("TODO: Reconstruct dictionary value of `assetInfo`");
+    //_nodes[size_t(parent)].SetAssetInfo(assetInfo);
   } else {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "TODO or we can ignore this node: node_type: " << node_type
