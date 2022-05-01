@@ -598,6 +598,8 @@ struct any_value {
     p.reset(new value_impl<T>(v));
   }
 
+  any_value &operator=(const any_value &v) = default;
+
   const std::string type_name() const {
     if (p) {
       return p->type_name();
