@@ -123,8 +123,6 @@ class Value {
 
   Value() = default;
 
-  Value &operator=(const Value&v) = default;
-
   Value(const ValueType &_dtype, const std::vector<uint8_t> &_data)
       : dtype(_dtype), data(_data), array_length(-1) {}
   Value(const ValueType &_dtype, const std::vector<uint8_t> &_data,
@@ -673,9 +671,10 @@ class Value {
   std::vector<int> GetIntArray() const {
     std::vector<int> ret;
 
-    if (dtype.name == "IntArray") {
-      ret.resize(array_length);
-      memcpy(ret.data(), data.data(), array_length * sizeof(uint32_t));
+    if ((dtype.name == "IntArray") && (array_length > 0)) {
+      size_t n = size_t(array_length);
+      ret.resize(n);
+      memcpy(ret.data(), data.data(), n * sizeof(uint32_t));
     } else {
       // TODO: Report an error
     }
@@ -686,9 +685,10 @@ class Value {
   std::vector<float> GetFloatArray() const {
     std::vector<float> ret;
 
-    if (dtype.name == "FloatArray") {
-      ret.resize(array_length);
-      memcpy(ret.data(), data.data(), array_length * sizeof(float));
+    if ((dtype.name == "FloatArray") && (array_length > 0)) {
+      size_t n = size_t(array_length);
+      ret.resize(n);
+      memcpy(ret.data(), data.data(), n * sizeof(float));
     } else {
       // TODO: Report an error
     }
