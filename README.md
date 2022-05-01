@@ -270,3 +270,4 @@ TinyUSDZ is licensed under MIT license.
 * staticstruct: MIT license. https://github.com/syoyo/staticstruct
 * MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
 * tinyxml2: zlib license. https://github.com/leethomason/tinyxml2
+* cnpy: Copyright (C) 2011  Carl Rogers. MIT license https://github.com/rogersce/cnpy
