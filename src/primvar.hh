@@ -50,7 +50,7 @@ using token = nonstd::string_view;
 
 struct asset
 {
-  std::string asset_path; 
+  std::string asset_path;
 };
 
 // TODO(syoyo): 3D and 4D?
@@ -598,8 +598,6 @@ struct any_value {
     p.reset(new value_impl<T>(v));
   }
 
-  any_value &operator=(const any_value &v) = default;
-
   const std::string type_name() const {
     if (p) {
       return p->type_name();
@@ -793,7 +791,7 @@ struct PrimVar {
     var.times.clear();
     var.values.clear();
 
-    var.values.push_back(v); 
+    var.values.push_back(v);
   }
 
 };
