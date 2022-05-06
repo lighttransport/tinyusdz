@@ -13,7 +13,7 @@
 #include "trackball.h"
 
 #define PAR_SHAPES_IMPLEMENTATION
-#include "par_shapes.h" // For meshing
+#include "par_shapes.h"  // For meshing
 
 const float kPI = 3.141592f;
 
@@ -21,17 +21,15 @@ typedef nanort::real3<float> float3;
 
 namespace example {
 
-struct DifferentialGeometry
-{
-  float t; // hit t
-  float bary_u, bary_v; // barycentric coordinate.
-  uint32_t geom_id; // geom id(Currently GeomMesh only)
-  float tex_u, tex_v; // texture u and v
+struct DifferentialGeometry {
+  float t;               // hit t
+  float bary_u, bary_v;  // barycentric coordinate.
+  uint32_t geom_id;      // geom id(Currently GeomMesh only)
+  float tex_u, tex_v;    // texture u and v
 
   float3 shading_normal;
   float3 geometric_normal;
 };
-
 
 inline float3 Lerp3(float3 v0, float3 v1, float3 v2, float u, float v) {
   return (1.0f - u - v) * v0 + u * v1 + v * v2;
@@ -45,17 +43,18 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
   N = vnormalize(N);
 }
 
-bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere, DrawGeomMesh* dst) {
-
+bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere,
+                         DrawGeomMesh* dst) {
   // TODO: Write our own sphere -> polygon converter
-
 
   // TODO: Read subdivision parameter from somewhere.
   int slices = 16;
   int stacks = 8;
 
-  // icohedron subdivision does not generate UV coordinate, so use par_shapes_create_parametric_sphere for now
-  par_shapes_mesh* par_mesh = par_shapes_create_parametric_sphere(slices, stacks);
+  // icohedron subdivision does not generate UV coordinate, so use
+  // par_shapes_create_parametric_sphere for now
+  par_shapes_mesh* par_mesh =
+      par_shapes_create_parametric_sphere(slices, stacks);
 
   dst->vertices.resize(par_mesh->npoints * 3);
 
@@ -111,11 +110,9 @@ bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere, DrawGeomMesh* dst) 
 
   par_shapes_free_mesh(par_mesh);
 
-
   dst->facevertex_indices = facevertex_indices;
 
   return true;
-
 }
 
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
@@ -129,7 +126,8 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   }
 #endif
   dst->vertices.resize(mesh.points.size() * 3);
-  memcpy(dst->vertices.data(), mesh.points.data(), dst->vertices.size() * sizeof(float));
+  memcpy(dst->vertices.data(), mesh.points.data(),
+         dst->vertices.size() * sizeof(float));
   std::cout << __func__ << ": mesh.points = " << mesh.points.size() * 3 << "\n";
 
   std::vector<float> facevarying_normals;
@@ -139,7 +137,8 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 
   std::vector<float> facevarying_texcoords;
   if (!mesh.GetFacevaryingTexcoords(&facevarying_texcoords)) {
-    std::cout << __func__ << ":Warn: failed to retrieve facevarying texcoords\n";
+    std::cout << __func__
+              << ":Warn: failed to retrieve facevarying texcoords\n";
   }
 
   std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
@@ -270,7 +269,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
     }
   }
 
-#if 0 // TODO: Rewrite
+#if 0  // TODO: Rewrite
   // Other facevarying attributes(property, primvars)
   dst->float_primvars.clear();
   dst->float_primvars_map.clear();
@@ -325,13 +324,13 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 #endif
 
   std::cout << "num points = " << dst->vertices.size() / 3 << "\n";
-  std::cout << "num triangulated faces = "
-            << dst->facevertex_indices.size() / 3 << "\n";
+  std::cout << "num triangulated faces = " << dst->facevertex_indices.size() / 3
+            << "\n";
 
   return true;
 }
 
-float3 Shade(const DrawGeomMesh& mesh, DifferentialGeometry &dg) {
+float3 Shade(const DrawGeomMesh& mesh, DifferentialGeometry& dg) {
   // TODO
 
   float3 color;
@@ -486,9 +485,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
           output->rgb[3 * pixel_idx + 1] = 0.0f;
           output->rgb[3 * pixel_idx + 2] = 0.0f;
 
-
           if (scene.draw_meshes.size()) {
-
             // FIXME(syoyo): Use NanoSG to trace meshes in the scene.
             const DrawGeomMesh& mesh = scene.draw_meshes[0];
 
@@ -579,7 +576,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
               dg.tex_v = texcoord[1];
               dg.bary_u = isect.u;
               dg.bary_v = isect.v;
-              dg.geom_id = 0; // FIXME
+              dg.geom_id = 0;  // FIXME
               dg.geometric_normal = Ng;
               dg.shading_normal = Ns;
 
@@ -602,8 +599,6 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
           }
 
           if (!hit) {
-
-
             output->geometric_normal[3 * pixel_idx + 0] = 0.0f;
             output->geometric_normal[3 * pixel_idx + 1] = 0.0f;
             output->geometric_normal[3 * pixel_idx + 2] = 0.0f;

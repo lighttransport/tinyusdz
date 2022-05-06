@@ -34,10 +34,10 @@
 #include "roboto_mono_embed.inc.h"
 
 //
+#include "gui.hh"
 #include "simple-render.hh"
 #include "tinyusdz.hh"
 #include "trackball.h"
-#include "gui.hh"
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
 #include "nfd.h"
@@ -63,7 +63,6 @@ struct GUIContext {
     AOV_VERTEXCOLOR
   };
   int aov_mode{AOV_COLOR};
-
 
   example::AOV aov;  // framebuffer
 
@@ -110,7 +109,8 @@ struct GUIContext {
 #if __EMSCRIPTEN__ || defined(EMULATE_EMSCRIPTEN)
   bool render_finished{false};
   int current_render_line = 0;
-  int render_line_size = 32; // render images with this lines per animation loop.
+  int render_line_size =
+      32;  // render images with this lines per animation loop.
   // for emscripten environment
 #endif
 };
@@ -338,7 +338,6 @@ bool LoadModel(const std::string& filename, tinyusdz::Scene* scene) {
   return true;
 }
 
-
 void RenderThread(GUIContext* ctx) {
   bool done = false;
 
@@ -348,7 +347,7 @@ void RenderThread(GUIContext* ctx) {
     }
 
     if (ctx->request_reload) {
-      ctx->scene = tinyusdz::Scene(); // reset
+      ctx->scene = tinyusdz::Scene();  // reset
 
       if (LoadModel(ctx->filename, &ctx->scene)) {
         Proc(ctx->scene);
@@ -430,7 +429,6 @@ static void HelpMarker(const char* desc) {
 #if defined(__EMSCRIPTEN__) || defined(EMULATE_EMSCRIPTEN)
 
 EM_BOOL em_main_loop_frame(double tm, void* user) {
-
 #if 1
   // Render image fragment
   if (g_gui_ctx.redraw) {
@@ -442,7 +440,9 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
 
   if (!g_gui_ctx.render_finished) {
     std::cout << "RenderLines: " << g_gui_ctx.current_render_line << "\n";
-    RenderLines(g_gui_ctx.current_render_line, g_gui_ctx.current_render_line + g_gui_ctx.render_line_size, g_gui_ctx.render_scene, g_gui_ctx.camera, &g_gui_ctx.aov);
+    RenderLines(g_gui_ctx.current_render_line,
+                g_gui_ctx.current_render_line + g_gui_ctx.render_line_size,
+                g_gui_ctx.render_scene, g_gui_ctx.camera, &g_gui_ctx.aov);
 
     g_gui_ctx.current_render_line += g_gui_ctx.render_line_size;
     if (g_gui_ctx.current_render_line >= g_gui_ctx.render_height) {
@@ -506,38 +506,38 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
   bool update_display = false;
   ImGui::Begin("Scene");
 
-    update |=
-        ImGui::SliderFloat("eye.z", &g_gui_ctx.camera.eye[2], -1000.0, 1000.0f);
-    update |= ImGui::SliderFloat("fov", &g_gui_ctx.camera.fov, 0.01f, 140.0f);
+  update |=
+      ImGui::SliderFloat("eye.z", &g_gui_ctx.camera.eye[2], -1000.0, 1000.0f);
+  update |= ImGui::SliderFloat("fov", &g_gui_ctx.camera.fov, 0.01f, 140.0f);
 
-    // TODO: Validate coordinate definition.
-    if (ImGui::SliderFloat("yaw", &g_gui_ctx.yaw, -360.0f, 360.0f)) {
-      auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
-                            radians(g_gui_ctx.roll));
-      g_gui_ctx.camera.quat[0] = q[0];
-      g_gui_ctx.camera.quat[1] = q[1];
-      g_gui_ctx.camera.quat[2] = q[2];
-      g_gui_ctx.camera.quat[3] = q[3];
-      update = true;
-    }
-    if (ImGui::SliderFloat("pitch", &g_gui_ctx.pitch, -360.0f, 360.0f)) {
-      auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
-                            radians(g_gui_ctx.roll));
-      g_gui_ctx.camera.quat[0] = q[0];
-      g_gui_ctx.camera.quat[1] = q[1];
-      g_gui_ctx.camera.quat[2] = q[2];
-      g_gui_ctx.camera.quat[3] = q[3];
-      update = true;
-    }
-    if (ImGui::SliderFloat("roll", &g_gui_ctx.roll, -360.0f, 360.0f)) {
-      auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
-                            radians(g_gui_ctx.roll));
-      g_gui_ctx.camera.quat[0] = q[0];
-      g_gui_ctx.camera.quat[1] = q[1];
-      g_gui_ctx.camera.quat[2] = q[2];
-      g_gui_ctx.camera.quat[3] = q[3];
-      update = true;
-    }
+  // TODO: Validate coordinate definition.
+  if (ImGui::SliderFloat("yaw", &g_gui_ctx.yaw, -360.0f, 360.0f)) {
+    auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
+                          radians(g_gui_ctx.roll));
+    g_gui_ctx.camera.quat[0] = q[0];
+    g_gui_ctx.camera.quat[1] = q[1];
+    g_gui_ctx.camera.quat[2] = q[2];
+    g_gui_ctx.camera.quat[3] = q[3];
+    update = true;
+  }
+  if (ImGui::SliderFloat("pitch", &g_gui_ctx.pitch, -360.0f, 360.0f)) {
+    auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
+                          radians(g_gui_ctx.roll));
+    g_gui_ctx.camera.quat[0] = q[0];
+    g_gui_ctx.camera.quat[1] = q[1];
+    g_gui_ctx.camera.quat[2] = q[2];
+    g_gui_ctx.camera.quat[3] = q[3];
+    update = true;
+  }
+  if (ImGui::SliderFloat("roll", &g_gui_ctx.roll, -360.0f, 360.0f)) {
+    auto q = ToQuaternion(radians(g_gui_ctx.yaw), radians(g_gui_ctx.pitch),
+                          radians(g_gui_ctx.roll));
+    g_gui_ctx.camera.quat[0] = q[0];
+    g_gui_ctx.camera.quat[1] = q[1];
+    g_gui_ctx.camera.quat[2] = q[2];
+    g_gui_ctx.camera.quat[3] = q[3];
+    update = true;
+  }
 
   ImGui::End();
 
@@ -570,7 +570,6 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
 
   SDL_RenderPresent(g_gui_ctx.renderer);
 
-
 #endif
 
   return EM_TRUE;
@@ -580,7 +579,7 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
 
 void NodeTreeSubWindow(const tinyusdz::Node& node, uint32_t indent) {
   if (node.name.empty()) {
-   // Do not traverse children of the node without name
+    // Do not traverse children of the node without name
     return;
   }
 
@@ -593,9 +592,7 @@ void NodeTreeSubWindow(const tinyusdz::Node& node, uint32_t indent) {
   }
 }
 
-
 void NodeTreeWindow(const tinyusdz::Scene& scene) {
-
   ImGui::Begin("Node");
 
   if (scene.nodes.size()) {
@@ -607,19 +604,17 @@ void NodeTreeWindow(const tinyusdz::Scene& scene) {
   ImGui::End();
 }
 
-
 void ShaderParamWindow(const tinyusdz::Scene& scene) {
   ImGui::Begin("Shaders");
 
   for (const auto& item : scene.shaders) {
     if (item.name.empty()) {
-        continue;
+      continue;
     }
 
     if (ImGui::TreeNode(item.name.c_str())) {
       if (nonstd::get_if<tinyusdz::PreviewSurface>(&item.value)) {
         ImGui::Text("type:id UsdPreviewSurface");
-
 
       } else if (nonstd::get_if<tinyusdz::UVTexture>(&item.value)) {
         ImGui::Text("type:id UVTexture");
@@ -640,10 +635,9 @@ void MaterialsParamWindow(const tinyusdz::Scene& scene) {
   for (const auto& item : scene.materials) {
     if (!item.name.empty()) {
       if (ImGui::TreeNode(item.name.c_str())) {
-
         int nrow = 1;
 
-        ImGui::BeginTable("props", /* columns*/2);
+        ImGui::BeginTable("props", /* columns*/ 2);
 
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
@@ -661,8 +655,7 @@ void MaterialsParamWindow(const tinyusdz::Scene& scene) {
   ImGui::End();
 }
 
-void UVTextureNode(int node_id, const tinyusdz::UVTexture &texture) {
-
+void UVTextureNode(int node_id, const tinyusdz::UVTexture& texture) {
   constexpr int kMaxSlots = 100;
   constexpr int kOutputOffset = kMaxSlots / 2;
 
@@ -690,10 +683,9 @@ void UVTextureNode(int node_id, const tinyusdz::UVTexture &texture) {
   ImNodes::EndOutputAttribute();
 
   ImNodes::EndNode();
-
 }
 
-void ShaderGraphWindow(const tinyusdz::Scene &scene) {
+void ShaderGraphWindow(const tinyusdz::Scene& scene) {
   ImGui::Begin("Shader graph");
 
   ImNodes::BeginNodeEditor();
@@ -704,9 +696,9 @@ void ShaderGraphWindow(const tinyusdz::Scene &scene) {
   ImGui::TextUnformatted("File");
   ImNodes::EndNodeTitleBar();
 
-  //ImNodes::BeginInputAttribute(2);
-  //ImGui::Text("file");
-  //ImNodes::EndInputAttribute();
+  // ImNodes::BeginInputAttribute(2);
+  // ImGui::Text("file");
+  // ImNodes::EndInputAttribute();
 
   ImNodes::BeginOutputAttribute(3);
   ImGui::Indent(40);
@@ -729,9 +721,9 @@ void ShaderGraphWindow(const tinyusdz::Scene &scene) {
 }  // namespace
 
 int main(int argc, char** argv) {
-
 #if defined(USDVIEW_USE_BULLET3)
-  btDefaultCollisionConfiguration* collisionConfiguration = new btDefaultCollisionConfiguration();
+  btDefaultCollisionConfiguration* collisionConfiguration =
+      new btDefaultCollisionConfiguration();
 #endif
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
@@ -739,9 +731,9 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  SDL_Window* window =
-      SDL_CreateWindow("Simple USDZ viewer", SDL_WINDOWPOS_CENTERED,
-                       SDL_WINDOWPOS_CENTERED, 1600, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI) ;
+  SDL_Window* window = SDL_CreateWindow(
+      "Simple USDZ viewer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+      1600, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
   if (!window) {
     std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
                  "probably X11 Display is not setup correctly. Check your "
@@ -749,8 +741,8 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  SDL_Renderer* renderer =
-      SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
+  SDL_Renderer* renderer = SDL_CreateRenderer(
+      window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
 
   if (!renderer) {
     std::cerr << "Failed to create SDL2 renderer. If you are running on "
@@ -780,7 +772,7 @@ int main(int argc, char** argv) {
 
   std::cout << "Loading file " << filename << "\n";
 
-  //tinyusdz::Scene scene;
+  // tinyusdz::Scene scene;
 
   bool init_with_empty = false;
 
@@ -831,7 +823,6 @@ int main(int argc, char** argv) {
                                              roboto_mono_compressed_size,
                                              font_size, &roboto_config);
   }
-
 
   ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
   ImGui_ImplSDLRenderer_Init(renderer);
@@ -891,7 +882,7 @@ int main(int argc, char** argv) {
   std::cout << "enter loop\n";
   emscripten_request_animation_frame_loop(em_main_loop_frame, /* fps */ 0);
 
-  //render_thread.join();
+  // render_thread.join();
   std::cout << "quit\n";
 #else
 
@@ -908,7 +899,7 @@ int main(int argc, char** argv) {
   // Enable drop file
   SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
-  #if 0
+#if 0
   // Enable Docking;
   {
     ImGuiIO& io& io = ImGui::GetIO();
@@ -916,7 +907,7 @@ int main(int argc, char** argv) {
     // Enable docking(available in imgui `docking` branch at the moment)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   }
-  #endif
+#endif
 
   while (!done) {
     ImGuiIO& io = ImGui::GetIO();
@@ -937,8 +928,6 @@ int main(int argc, char** argv) {
         // Scene reloading is done in render thread.
         g_gui_ctx.filename = fname;
         g_gui_ctx.request_reload = true;
-
-
 
         SDL_free(filepath);
 
@@ -1037,7 +1026,6 @@ int main(int argc, char** argv) {
     ImGui::Image(gui_ctx.texture,
                  ImVec2(gui_ctx.render_width, gui_ctx.render_height));
     ImGui::End();
-
 
     NodeTreeWindow(gui_ctx.scene);
     MaterialsParamWindow(gui_ctx.scene);
