@@ -20,8 +20,8 @@ option(TINYUSDZ_BUILD_EXAMPLES
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
-option(TINYUSDZ_WITH_USDVOX "Build with usdVox support(import MagicaVoxel .vox)"
-       ON)
+option(TINYUSDZ_WITH_USDVOX
+       "Build with usdVox support(import MagicaVoxel .vox)" ON)
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
@@ -55,19 +55,18 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 option(TINYUSDZ_WITH_USDA_PARSER "Build with USDA parser program" ON)
 # --------------
 
-
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
-if (TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
+if(TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
     find_package(ZLIB REQUIRED)
   endif()
 endif()
 
-if (TINYUSDZ_WITH_PYTHON)
+if(TINYUSDZ_WITH_PYTHON)
   # nanobind requires C++17
   set(CMAKE_CXX_STANDARD 17)
 else()
@@ -114,10 +113,15 @@ if(TINYUSDZ_WITH_PYTHON)
   # We build monolithic python module, so build libtinyusdz as a static library
   # with PIC enabled.
   set(CMAKE_POSITION_INDEPENDENT_CODE On)
-  set(NB_SHARED OFF CACHE INTERNAL "")
+  set(NB_SHARED
+      OFF
+      CACHE INTERNAL "")
 
   # workaround: find_package() does not work well inside of nanobind, so call it here.
-  find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+  find_package(
+    Python3
+    COMPONENTS Interpreter Development.Module
+    REQUIRED)
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/nanobind nanobind_build)
 endif()
@@ -150,9 +154,8 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c)
 
 # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
-set_source_files_properties(
-  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
-  PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
+set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
+                            PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
 
 if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
@@ -215,7 +218,7 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
       PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
   endif()
 
-endif ()
+endif()
 
 if(TINYUSDZ_WITH_OPENSUBDIV)
 

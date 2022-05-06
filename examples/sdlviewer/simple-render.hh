@@ -2,10 +2,9 @@
 
 #include <unordered_map>
 
-#include "tinyusdz.hh"
-
 #include "nanort.h"
 #include "nanosg.h"
+#include "tinyusdz.hh"
 
 namespace example {
 
@@ -15,10 +14,10 @@ struct AOV {
   size_t width;
   size_t height;
 
-  std::vector<float> rgb; // 3 x width x height
-  std::vector<float> shading_normal; // 3 x width x height
-  std::vector<float> geometric_normal; // 3 x width x height
-  std::vector<float> texcoords; // 2 x width x height
+  std::vector<float> rgb;               // 3 x width x height
+  std::vector<float> shading_normal;    // 3 x width x height
+  std::vector<float> geometric_normal;  // 3 x width x height
+  std::vector<float> texcoords;         // 2 x width x height
 
   void Resize(size_t w, size_t h) {
     width = w;
@@ -36,22 +35,19 @@ struct AOV {
     texcoords.resize(width * height * 2);
     memset(texcoords.data(), 0, sizeof(float) * texcoords.size());
   }
-
 };
 
-struct Camera
-{
+struct Camera {
   float eye[3] = {0.0f, 0.0f, 25.0f};
   float up[3] = {0.0f, 1.0f, 0.0f};
   float look_at[3] = {0.0f, 0.0f, 0.0f};
   float quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-  float fov = 60.0f; // in degree
+  float fov = 60.0f;  // in degree
 };
 
-template<typename T>
-struct Buffer
-{
-  size_t num_coords{1};  // e.g. 3 for vec3 type.  
+template <typename T>
+struct Buffer {
+  size_t num_coords{1};  // e.g. 3 for vec3 type.
   std::vector<T> data;
 };
 
@@ -59,10 +55,9 @@ struct Buffer
 // Renderable Node class for NanoSG. Includes xform
 //
 struct DrawNode {
-
-  std::array<float, 3> translation{0.0f, 0.0f, 0.0f}; 
-  std::array<float, 3> rotation{0.0f, 0.0f, 0.0f}; // euler rotation 
-  std::array<float, 3> scale{1.0f, 1.0f, 1.0f}; 
+  std::array<float, 3> translation{0.0f, 0.0f, 0.0f};
+  std::array<float, 3> rotation{0.0f, 0.0f, 0.0f};  // euler rotation
+  std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
 };
 
 //
@@ -70,7 +65,6 @@ struct DrawNode {
 // Mesh data is converted to triangle meshes.
 //
 struct DrawGeomMesh {
-
   DrawGeomMesh(const tinyusdz::GeomMesh *p) : ref_mesh(p) {}
 
   // Pointer to Reference GeomMesh.
@@ -80,34 +74,35 @@ struct DrawGeomMesh {
   /// Required accessor API for NanoSG
   ///
   const float *GetVertices() const {
-    return reinterpret_cast<const float*>(ref_mesh->points.data());
+    return reinterpret_cast<const float *>(ref_mesh->points.data());
   }
 
-  size_t GetVertexStrideBytes() const {
-    return sizeof(float) * 3;
-  }
+  size_t GetVertexStrideBytes() const { return sizeof(float) * 3; }
 
   std::vector<float> vertices;  // vec3f
-  std::vector<uint32_t> facevertex_indices; // triangulated indices. 3 x num_faces
-  std::vector<float> facevarying_normals; // 3 x 3 x num_faces
-  std::vector<float> facevarying_texcoords; // 2 x 3 x num_faces
+  std::vector<uint32_t>
+      facevertex_indices;  // triangulated indices. 3 x num_faces
+  std::vector<float> facevarying_normals;    // 3 x 3 x num_faces
+  std::vector<float> facevarying_texcoords;  // 2 x 3 x num_faces
 
   // arbitrary primvars(including texcoords(float2))
   std::vector<Buffer<float>> float_primvars;
-  std::map<std::string, size_t> float_primvars_map; // <name, index to `float_primvars`>
+  std::map<std::string, size_t>
+      float_primvars_map;  // <name, index to `float_primvars`>
 
   // arbitrary primvars in int type(e.g. texcoord indices(int3))
   std::vector<Buffer<int32_t>> int_primvars;
-  std::map<std::string, size_t> int_primvars_map; // <name, index to `int_primvars`>
+  std::map<std::string, size_t>
+      int_primvars_map;  // <name, index to `int_primvars`>
 
-  int material_id{-1}; // per-geom material. index to `RenderScene::materials`
+  int material_id{-1};  // per-geom material. index to `RenderScene::materials`
 
   nanort::BVHAccel<float> accel;
 };
 
 struct UVReader {
-  int32_t st_id{-1}; // index to DrawGeomMesh::float_primvars
-  int32_t indices_id{-1}; // index to DrawGeomMesh::int_primvars
+  int32_t st_id{-1};       // index to DrawGeomMesh::float_primvars
+  int32_t indices_id{-1};  // index to DrawGeomMesh::int_primvars
 
   // Fetch interpolated UV coordinate
   std::array<float, 2> fetch_uv(size_t face_id, float varyu, float varyv);
@@ -122,18 +117,19 @@ struct Texture {
     TEXTURE_CHANNEL_RGBA,
   };
 
-  UVReader uv_reader;  
+  UVReader uv_reader;
   int32_t image_id{-1};
 
   // NOTE: for single channel(e.g. R), [0] will be filled for the return value.
-  std::array<float, 4> fetch(size_t face_id, float varyu, float varyv, Channel channel);
-
+  std::array<float, 4> fetch(size_t face_id, float varyu, float varyv,
+                             Channel channel);
 };
 
 // https://graphics.pixar.com/usd/release/spec_usdpreviewsurface.html#texture-reader
 // https://learn.foundry.com/modo/901/content/help/pages/uving/udim_workflow.html
 // Up to 10 tiles for U direction.
-// Not sure there is an limitation for V direction. Anyway maximum tile id is 9999.
+// Not sure there is an limitation for V direction. Anyway maximum tile id is
+// 9999.
 
 #if 0
 static uint32_t GetUDIMTileId(uint32_t u, uint32_t v)
@@ -144,35 +140,31 @@ static uint32_t GetUDIMTileId(uint32_t u, uint32_t v)
 }
 #endif
 
-
 struct UDIMTexture {
   UVReader uv_reader;
-  std::unordered_map<uint32_t, int32_t> images; // key: udim tile_id, value: image_id
+  std::unordered_map<uint32_t, int32_t>
+      images;  // key: udim tile_id, value: image_id
 
-  
   // NOTE: for single channel(e.g. R), [0] will be filled for the return value.
-  std::array<float, 4> fetch(size_t face_id, float varyu, float varyv, Texture::Channel channel);
+  std::array<float, 4> fetch(size_t face_id, float varyu, float varyv,
+                             Texture::Channel channel);
 };
 
 // base color(fallback color) or Texture
-template<typename T>
+template <typename T>
 struct ShaderParam {
-  ShaderParam(const T& t) {
-    value = t;
-  }
+  ShaderParam(const T &t) { value = t; }
 
   T value;
   int32_t texture_id{-1};
-
 };
 
-// UsdPreviewSurface 
+// UsdPreviewSurface
 struct PreviewSurfaceShader {
-
   bool useSpecularWorkFlow{false};
 
   ShaderParam<vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
-  ShaderParam<float> metallic{0.0f}; 
+  ShaderParam<float> metallic{0.0f};
   ShaderParam<float> roughness{0.5f};
   ShaderParam<float> clearcoat{0.0f};
   ShaderParam<float> clearcoatRoughness{0.01f};
@@ -182,7 +174,6 @@ struct PreviewSurfaceShader {
   ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<float> displacement{0.0f};
   ShaderParam<float> occlusion{0.0f};
-
 };
 
 struct Material {
@@ -194,7 +185,7 @@ struct Image {
   std::vector<uint8_t> image;
   int32_t width{-1};
   int32_t height{-1};
-  int32_t channels{-1}; // e.g. 3 for RGB.
+  int32_t channels{-1};  // e.g. 3 for RGB.
 };
 
 class RenderScene {
@@ -211,19 +202,11 @@ class RenderScene {
   bool Setup();
 };
 
-
-bool Render(
-  const RenderScene &scene,
-  const Camera &cam,
-  AOV *output);
+bool Render(const RenderScene &scene, const Camera &cam, AOV *output);
 
 // Render images for lines [start_y, end_y]
 // single-threaded. for webassembly.
-bool RenderLines(
-  int start_y,
-  int end_y,
-  const RenderScene &scene,
-  const Camera &cam,
-  AOV *output);
+bool RenderLines(int start_y, int end_y, const RenderScene &scene,
+                 const Camera &cam, AOV *output);
 
-} // namespace example
+}  // namespace example
