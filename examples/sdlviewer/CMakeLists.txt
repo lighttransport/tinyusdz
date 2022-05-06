@@ -89,7 +89,7 @@ function ( ADD_SDL2_LIB )
   # Enable static lib only
   set(SDL_SAHARED OFF CACHE INTERNAL "" FORCE)
   set(SDL_STATIC ON CACHE INTERNAL "" FORCE)
-  add_subdirectory(../common/SDL2-2.0.20/ SDL2)
+  add_subdirectory(../common/SDL2-2.0.22/ SDL2)
 endfunction ()
 
 if (EMSCRIPTEN)
@@ -250,7 +250,8 @@ set(GUI_SOURCES
     ../common/imgui/imgui_widgets.cpp
     ../common/imgui/imgui_tables.cpp
 
-    ../common/imgui_sdl/imgui_sdl.cpp
+    ../common/imgui/imgui_impl_sdl.cpp
+    ../common/imgui/imgui_impl_sdlrenderer.cpp
 
     # imnodes
     ../common/imnodes/imnodes.cpp
