@@ -135,12 +135,14 @@ struct Texture {
 // Up to 10 tiles for U direction.
 // Not sure there is an limitation for V direction. Anyway maximum tile id is 9999.
 
+#if 0
 static uint32_t GetUDIMTileId(uint32_t u, uint32_t v)
 {
   uint32_t uu = std::max(1u, std::min(10u, u+1)); // clamp U dir.
 
   return 1000 + v * 10 + uu;
 }
+#endif
 
 
 struct UDIMTexture {

@@ -28,14 +28,15 @@
 
 // common
 #include "imgui.h"
-#include "imgui_sdl/imgui_sdl.h"
+#include "imgui_impl_sdl.h"
+#include "imgui_impl_sdlrenderer.h"
 #include "imnodes.h"
 #include "roboto_mono_embed.inc.h"
+
+//
 #include "simple-render.hh"
 #include "tinyusdz.hh"
 #include "trackball.h"
-
-// sdlviewer
 #include "gui.hh"
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
@@ -355,7 +356,7 @@ void RenderThread(GUIContext* ctx) {
           std::cerr << "The scene contains no GeomMesh\n";
         } else {
           ctx->render_scene.draw_meshes.clear();
-      
+
           for (size_t i = 0; i < ctx->scene.geom_meshes.size(); i++) {
             example::DrawGeomMesh draw_mesh(&ctx->scene.geom_meshes[i]);
             ctx->render_scene.draw_meshes.push_back(draw_mesh);
@@ -632,7 +633,7 @@ void ShaderParamWindow(const tinyusdz::Scene& scene) {
   }
   ImGui::End();
 }
-    
+
 void MaterialsParamWindow(const tinyusdz::Scene& scene) {
   ImGui::Begin("Materials");
 
@@ -648,9 +649,9 @@ void MaterialsParamWindow(const tinyusdz::Scene& scene) {
         ImGui::TableSetColumnIndex(0);
         ImGui::Text("output.surface");
         ImGui::TableSetColumnIndex(1);
-        
+
         ImGui::Text("%s", item.outputs_surface.c_str());
-        
+
         ImGui::EndTable();
         ImGui::TreePop();
       }
@@ -694,7 +695,7 @@ void UVTextureNode(int node_id, const tinyusdz::UVTexture &texture) {
 
 void ShaderGraphWindow(const tinyusdz::Scene &scene) {
   ImGui::Begin("Shader graph");
-  
+
   ImNodes::BeginNodeEditor();
 
   ImNodes::BeginNode(1);
@@ -733,11 +734,14 @@ int main(int argc, char** argv) {
   btDefaultCollisionConfiguration* collisionConfiguration = new btDefaultCollisionConfiguration();
 #endif
 
-  SDL_Init(SDL_INIT_VIDEO);
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+    std::cerr << "Failed to initialize SDL2\n";
+    exit(-1);
+  }
 
   SDL_Window* window =
       SDL_CreateWindow("Simple USDZ viewer", SDL_WINDOWPOS_CENTERED,
-                       SDL_WINDOWPOS_CENTERED, 1600, 800, SDL_WINDOW_RESIZABLE);
+                       SDL_WINDOWPOS_CENTERED, 1600, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI) ;
   if (!window) {
     std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
                  "probably X11 Display is not setup correctly. Check your "
@@ -746,7 +750,7 @@ int main(int argc, char** argv) {
   }
 
   SDL_Renderer* renderer =
-      SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+      SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
 
   if (!renderer) {
     std::cerr << "Failed to create SDL2 renderer. If you are running on "
@@ -828,9 +832,9 @@ int main(int argc, char** argv) {
                                              font_size, &roboto_config);
   }
 
-  ImGuiSDL::Initialize(renderer, 1600, 800);
-  // ImGui_ImplGlfw_InitForOpenGL(window, true);
-  // ImGui_ImplOpenGL2_Init();
+
+  ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+  ImGui_ImplSDLRenderer_Init(renderer);
 
   std::cout << "Imgui initialized\n";
 
@@ -903,7 +907,7 @@ int main(int argc, char** argv) {
 #else
   // Enable drop file
   SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
-  
+
   #if 0
   // Enable Docking;
   {
@@ -967,6 +971,8 @@ int main(int argc, char** argv) {
     io.MouseDown[1] = buttons & SDL_BUTTON(SDL_BUTTON_RIGHT);
     io.MouseWheel = static_cast<float>(wheel);
 
+    ImGui_ImplSDLRenderer_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
     ImGui::Begin("Scene");
@@ -1063,7 +1069,6 @@ int main(int argc, char** argv) {
     // Imgui
 
     ImGui::Render();
-    ImGuiSDL::Render(ImGui::GetDrawData());
 
     // static int texUpdateCount = 0;
     static int frameCount = 0;
@@ -1082,6 +1087,8 @@ int main(int argc, char** argv) {
       previousTime = currentTime;
     }
 
+    SDL_RenderClear(renderer);
+    ImGui_ImplSDLRenderer_RenderDrawData(ImGui::GetDrawData());
     SDL_RenderPresent(renderer);
   };
 
@@ -1090,11 +1097,14 @@ int main(int argc, char** argv) {
 
   render_thread.join();
 
-  ImGuiSDL::Deinitialize();
+  ImGui_ImplSDLRenderer_Shutdown();
+  ImGui_ImplSDL2_Shutdown();
 
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
-  
+
+  SDL_Quit();
+
   ImNodes::DestroyContext();
   ImGui::DestroyContext();
 
