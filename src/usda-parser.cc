@@ -11,7 +11,10 @@
 #include <set>
 #include <sstream>
 #include <stack>
+#if defined(__wasi__)
+#else
 #include <thread>
+#endif
 #include <vector>
 
 #ifdef __clang__
@@ -7892,6 +7895,7 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
 
   // std::cout << "ReadInt token: " << ss.str() << "\n";
 
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   // TODO(syoyo): Use ryu parse.
   try {
     (*value) = std::stoi(ss.str());
@@ -7904,6 +7908,9 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
     PushError("Integer value out of range.\n");
     return false;
   }
+#else
+  (*value) = std::stoi(ss.str());
+#endif
 
   // std::cout << "read int ok\n";
 
@@ -7974,6 +7981,7 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
   // std::cout << "ReadInt token: " << ss.str() << "\n";
 
   // TODO(syoyo): Use ryu parse.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
     (*value) = std::stoull(ss.str());
   } catch (const std::invalid_argument &e) {
@@ -7985,6 +7993,9 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
     PushError("64bit unsigned integer value out of range.\n");
     return false;
   }
+#else
+  (*value) = std::stoull(ss.str());
+#endif
 
   // std::cout << "read int ok\n";
 
