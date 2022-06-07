@@ -12,7 +12,7 @@ TinyUSDZ is currently work-in-progress. It does not compile and run.
 I'm now rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc. Initial working demo in 2022 Summer planned.
 
 * [x] USDC data parse
-* [ ] USDA parser
+* [ ] USDA parser(W.I.P.)
   * Initial USDA parser starting to work(see `src/usda-parser.cc`)
   * Support Blender-exported USDA support in 2022 Fall planned.
 * [ ] Reconstuct primitive and scene graph representaion(2022 Summer expected)
@@ -206,38 +206,38 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 
 ## TODO
 
+### Higher priority
+
 * [ ] Built-in usdObj(wavefront .obj mesh) support.
   * Through tinyobjloader.
 * [ ] Support Crate(binary) version 0.8.0(USD v20.11 default)
-* [ ] Write parser based on the schema definition.
-* [ ] Subdivision surface using OpenSubdiv.
-  * [x] Build TinyUSDZ with OpenSubdiv(CPU)
-  * [ ] Replace OpenSubdiv with our own subdiv library or embree3's one.
 * [ ] USDA(USD Ascii) support
-  * [ ] Write our own USDA parser with PEG.
+  * [ ] Write hand-written USDA parser(W.I.P). [`src/usda-parser.cc`](src/usda-parser.cc)
   * [ ] USDA writer.
 * [ ] Animation
   * [ ] Skinning(usdSkel)
   * [ ] Blend shapes
     * [ ] In-between blend shapes
+* [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
+* [ ] USDZ saver
+* [ ] Support Nested USDZ
+* [ ] UDIM texture support
+* [ ] MaterialX support
+  * Parse XML file
+
+### Lower priority
+
+* [ ] iOS example?
+* [ ] Support AR related schema(Game-like feature added by Reality Composer?)
 * [ ] Audio play support
   * [ ] Play audio using SoLoud or miniaudio(or Oboe for Android)
   * [ ] wav(dr_wav)
   * [ ] mp3(dr_mp3)
   * [ ] m4a?
-* [ ] Support AR related schema(Game-like feature added by Reality Composer?)
-* [ ] Android example
-* [ ] iOS example?
-* [x] CPU raytracer viewer
-  * sdlviewer
 * [ ] Viewer with Vulkan API.
-* [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
-* [ ] USDZ saver
-* [ ] Support Nested USDZ
-* [ ] UDIM texture support
+* [ ] Replace OpenSubdiv with our own subdiv library.
+* [ ] Write parser based on the schema definition.
 * [ ] Support big endian architecture.
-* [ ] MaterialX support
-  * Parse XML file
 
 ## Fuzzing test
 
