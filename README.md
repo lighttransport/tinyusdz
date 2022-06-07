@@ -237,6 +237,7 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 * [ ] UDIM texture support
 * [ ] Support big endian architecture.
 * [ ] MaterialX support
+  * Parse XML file
 
 ## Fuzzing test
 
