@@ -20,10 +20,12 @@ std::wstring UTF8ToWchar(const std::string &str);
 std::string WcharToUTF8(const std::wstring &wstr);
 #endif
 
-std::string ExpandFilePath(const std::string &filepath, void *userdata = nullptr);
+std::string ExpandFilePath(const std::string &filepath,
+                           void *userdata = nullptr);
 
 bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
-                   const std::string &filepath, size_t filesize_max = 0, void *userdata = nullptr);
+                   const std::string &filepath, size_t filesize_max = 0,
+                   void *userdata = nullptr);
 
 std::string GetBaseDir(const std::string &filepath);
 std::string JoinPath(const std::string &dir, const std::string &filename);
@@ -34,7 +36,8 @@ bool IsUDIMPath(const std::string &filepath);
 //
 // diffuse.<UDIM>.png => "diffuse.", ".png"
 //
-bool SplitUDIMPath(const std::string &filepath, std::string *pre, std::string *post);
+bool SplitUDIMPath(const std::string &filepath, std::string *pre,
+                   std::string *post);
 
-} // namespace io
-} // namespace tinyusdz
+}  // namespace io
+}  // namespace tinyusdz
