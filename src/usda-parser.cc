@@ -11,7 +11,10 @@
 #include <set>
 #include <sstream>
 #include <stack>
+#if defined(__wasi__)
+#else
 #include <thread>
+#endif
 #include <vector>
 
 #ifdef __clang__
@@ -108,6 +111,66 @@ namespace tinyusdz {
 namespace usda {
 
 namespace {
+
+// parseInt
+// 0 = success
+// -1 = bad input
+// -2 = overflow
+// -3 = underflow
+int parseInt(const std::string &s, int *out_result)
+{
+  size_t n = s.size();
+  const char *c = s.c_str();
+
+  if ((c == nullptr) || (*c) == '\0') {
+    return -1;
+  }
+
+  size_t idx = 0;
+  bool negative = c[0] == '-';
+  if ((c[0] == '+') | (c[0] == '-')) {
+    idx = 1;
+    if (n == 1) {
+      // sign char only
+      return -1;
+    }
+  }
+
+  int64_t result = 0;
+
+  // allow zero-padded digits(e.g. "003")
+  while (idx < n) {
+    if ((c[idx] >= '0') && (c[idx] <= '9')) {
+      int digit = int(c[idx] - '0');
+      result = result * 10 + digit;
+    } else {
+      // bad input
+      return -1;
+    }
+
+    if (negative) {
+      if ((-result) < std::numeric_limits<int>::min()) {
+        return -3;
+      }
+    } else {
+      if (result > std::numeric_limits<int>::max()) {
+        return -2;
+      }
+    }
+
+    idx++;
+  }
+
+  if (negative) {
+    (*out_result) = -int(result);
+  } else {
+    (*out_result) = int(result);
+  }
+
+  return 0; // OK
+}
+
+// TODO: parseUInt64
 
 #if 0
 std::string to_string(const TimeSampleType &tsv) {
@@ -2459,7 +2522,7 @@ class USDAParser::Impl {
         primvar::asset asset;
         asset.asset_path = assert_ref.asset_reference;
         attr.var.set_scalar(asset);
-    
+
       } else {
         PUSH_ERROR("TODO: type = " + type_name);
         return false;
@@ -6047,7 +6110,7 @@ class USDAParser::Impl {
           xform.name = node_name;
 
           std::cout << to_string(xform, nestlevel) << "\n";
-          
+
         } else if (prim_type == "Mesh") {
           GeomMesh mesh;
           std::cout << "Reconstruct GeomMesh\n";
@@ -6058,7 +6121,7 @@ class USDAParser::Impl {
           mesh.name = node_name;
 
           std::cout << to_string(mesh, nestlevel) << "\n";
-          
+
           scene_.geom_meshes.push_back(mesh);
 
         } else if (prim_type == "Sphere") {
@@ -6137,7 +6200,7 @@ class USDAParser::Impl {
           std::cout << to_string(camera, nestlevel) << "\n";
 
         } else if (prim_type == "Shader") {
-          Shader shader; 
+          Shader shader;
           std::cout << "Reconstruct Shader\n";
 
           if (!ReconstructShader(props, references, &shader)) {
@@ -7892,20 +7955,26 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
 
   // std::cout << "ReadInt token: " << ss.str() << "\n";
 
-  // TODO(syoyo): Use ryu parse.
-  try {
-    (*value) = std::stoi(ss.str());
-  } catch (const std::invalid_argument &e) {
-    (void)e;
-    PushError("Not an integer literal.\n");
-    return false;
-  } catch (const std::out_of_range &e) {
-    (void)e;
-    PushError("Integer value out of range.\n");
-    return false;
+
+  int int_value;
+  int err = parseInt(ss.str(), &int_value);
+  if (err != 0) {
+    if (err == -1) {
+      PushError("Invalid integer input: `" + ss.str() + "`\n");
+      return false;
+    } else if (err == -2) {
+      PushError("Integer overflows: `" + ss.str() + "`\n");
+      return false;
+    } else if (err == -3) {
+      PushError("Integer underflows: `" + ss.str() + "`\n");
+      return false;
+    } else {
+      PushError("Unknown parseInt error.\n");
+      return false;
+    }
   }
 
-  // std::cout << "read int ok\n";
+  (*value) = int_value;
 
   return true;
 }
@@ -7974,6 +8043,7 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
   // std::cout << "ReadInt token: " << ss.str() << "\n";
 
   // TODO(syoyo): Use ryu parse.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
     (*value) = std::stoull(ss.str());
   } catch (const std::invalid_argument &e) {
@@ -7985,6 +8055,9 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
     PushError("64bit unsigned integer value out of range.\n");
     return false;
   }
+#else
+  (*value) = std::stoull(ss.str());
+#endif
 
   // std::cout << "read int ok\n";
 
