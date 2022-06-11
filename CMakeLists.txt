@@ -17,6 +17,9 @@ option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
 option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples area built in `examples` folder)"
        ON)
+
+option(TINYUSDZ_CXX_EXCEPTIONS "Enable/Disable C++ exceptions(default: Off)" OFF)
+
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
@@ -415,6 +418,14 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
 endforeach()
 
+if (NOT TINYUSDZ_CXX_EXCEPTIONS)
+	if (MSVC)
+		target_compile_options(${TINYUSDZ_TARGET_STATIC} PUBLIC /EHs-c-)
+	else()
+		target_compile_options(${TINYUSDZ_TARGET_STATIC} PUBLIC -fno-exceptions)
+	endif()
+endif()
+
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set_source_files_properties(
@@ -468,6 +479,7 @@ if(TINYUSDZ_WITH_BLENDER_ADDON)
     PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
 
 endif()
+
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_dump)
