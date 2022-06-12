@@ -155,6 +155,10 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
     ${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
     ${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/string_id/string_id.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/string_id/error.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/string_id/generator.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/string_id/database.cpp
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
     ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c)
 
