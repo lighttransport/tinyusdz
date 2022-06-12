@@ -96,6 +96,7 @@ sid::generation_error_handler sid::get_generation_error_handler()
     return generation_error_h;
 }
 
+#if 0
 const char* sid::generation_error::what() const FOONATHAN_NOEXCEPT try
 {
     return what_.c_str();
@@ -104,3 +105,9 @@ catch (...)
 {
     return "foonathan::string_id::generation_error: unable to generate new string id.";
 }
+#else
+const char* sid::generation_error::what() const FOONATHAN_NOEXCEPT
+{
+    return what_.c_str();
+}
+#endif

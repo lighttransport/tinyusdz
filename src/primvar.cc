@@ -17,6 +17,11 @@ namespace primvar {
 
 base_value::~base_value() {}
 
+std::ostream &operator<<(std::ostream &os, const Token &v) {
+  os << "\"" << v.str() << "\"";
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const TimeSample &ts) {
   os << "{";
   for (size_t i = 0; i < ts.times.size(); i++) {

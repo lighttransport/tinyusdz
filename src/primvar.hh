@@ -40,13 +40,18 @@
 #pragma clang diagnostic pop
 #endif
 
+#include "token-type.hh"
 #include "external/staticstruct.hh"
+
+//#include "external/string_id/string_id.hpp"
 
 namespace tinyusdz {
 namespace primvar {
 
+using token = tinyusdz::Token;
+
 // string literal. represent it as string_view
-using token = nonstd::string_view;
+//using token = nonstd::string_view;
 
 struct asset
 {
