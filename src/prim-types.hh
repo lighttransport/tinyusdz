@@ -828,11 +828,13 @@ class ndarray {
   ndarray() = default;
 };
 
+#if 0
 // For `token` type.
 struct Token {
   std::string value; // TODO: Use string_view
   // TODO: token ID
 };
+#endif
 
 #if 0
 // Types which can be TimeSampledData are restricted to frequently used one in
