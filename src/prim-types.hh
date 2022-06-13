@@ -1710,6 +1710,25 @@ struct GPrim {
   std::vector<GPrim> children;
 };
 
+// GeomSubset
+struct GeomSubset {
+  enum class ElementType {
+    Face,
+    Invalid
+  };
+
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  ElementType elementType{ElementType::Face}; // must be face
+
+  std::vector<int32_t> faces;
+
+  std::map<std::string, PrimAttrib> attribs;
+  
+};
+
 // Polygon mesh geometry
 struct GeomMesh {
   std::string name;

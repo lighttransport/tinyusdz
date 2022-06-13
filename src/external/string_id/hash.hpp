@@ -12,14 +12,14 @@
 namespace foonathan { namespace string_id
 {
     /// \brief The type of a hashed string.
-    /// \detail This is an unsigned integral type.
+    /// \details This is an unsigned integral type.
     typedef std::uint64_t hash_type;
-    
+
     namespace detail
     {
         FOONATHAN_CONSTEXPR hash_type fnv_basis = 14695981039346656037ull;
         FOONATHAN_CONSTEXPR hash_type fnv_prime = 1099511628211ull;
-        
+
         // FNV-1a 64 bit hash
         FOONATHAN_CONSTEXPR_FNC hash_type sid_hash(const char *str, hash_type hash = fnv_basis)
         {

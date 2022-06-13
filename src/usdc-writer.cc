@@ -1,5 +1,6 @@
 #include "usdc-writer.hh"
 #include "io-util.hh"
+#include "lz4-compression.hh"
 //#include "pprinter.hh"
 
 #include <fstream>
@@ -68,6 +69,11 @@ class Writer {
     memcpy(&header[16], &toc_offset, 8);
 
     return true;
+  }
+
+  bool WriteTokens() {
+    // Build single string rseparated by '\0', then compress it with lz4
+    return false;
   }
 
   //
