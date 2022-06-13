@@ -1438,6 +1438,36 @@ class USDAParser::Impl {
     return true;
   }
 
+  bool ParsePurpose(Purpose *result) {
+    if (!result) {
+      return false;
+    }
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::string token;
+    if (!ReadToken(&token)) {
+      return false;
+    }
+
+    if (token == "\"default\"") {
+      (*result) = Purpose::Default;
+    } else if (token == "\"render\"") {
+      (*result) = Purpose::Render;
+    } else if (token == "\"proxy\"") {
+      (*result) = Purpose::Proxy;
+    } else if (token == "\"guide\"") {
+      (*result) = Purpose::Guide;
+    } else {
+      PUSH_ERROR("Invalid purpose token name: " + token + "\n");
+      return false;
+    }
+
+    return true;
+  }
+
   bool ParseDefArg(std::tuple<ListEditQual, Variable> *out) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;

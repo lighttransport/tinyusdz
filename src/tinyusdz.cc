@@ -1394,6 +1394,12 @@ class Parser {
                              &path_index_to_spec_index_map,
                          Xform *xform);
 
+  bool ReconstructGeomSubset(const Node &node,
+                            const FieldValuePairVector &fields,
+                            const std::unordered_map<uint32_t, uint32_t>
+                                &path_index_to_spec_index_map,
+                            GeomSubset *mesh);
+
   bool ReconstructGeomMesh(const Node &node,
                             const FieldValuePairVector &fields,
                             const std::unordered_map<uint32_t, uint32_t>
@@ -4692,6 +4698,130 @@ bool Parser::ReconstructGeomBasisCurves(
   return true;
 }
 
+bool Parser::ReconstructGeomSubset(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    GeomSubset *geom_subset) {
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+      assert(fv.second.IsArray());
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+        //if (fv.second.GetStringArray()[i] == "points") {
+        //}
+      }
+    }
+  }
+
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    // const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      // TODO: Should we report an error?
+      continue;
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+    std::cout << "Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index << "\n";
+#endif
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+      PrimAttrib attr;
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+#endif
+      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+
+      if (ret) {
+        // TODO(syoyo): Support more prop names
+        if (prop_name == "elementType") {
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "got elementType\n";
+#endif
+          auto p = attr.var.get_value<tinyusdz::primvar::token>();
+          if (p) {
+            std::string str = p->str();
+            if (str == "face") {
+              geom_subset->elementType = GeomSubset::ElementType::Face;
+            } else {
+              _err += "`elementType` must be `face`, but got `" + str + "`";
+              return false;
+            }
+          } else {
+            _err += "`elementType` must be token type, but got " +
+                    primvar::GetTypeName(attr.var.type_id());
+            return false;
+          }
+        } else if (prop_name == "faces") {
+          auto p = attr.var.get_value<std::vector<int>>();
+          if (p) {
+            geom_subset->faces = (*p);
+          }
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+            // aaa: typeName: int[]
+            std::cout << "got faces\n";
+            std::cout << "  num = " << geom_subset->faces.size() << "\n";
+#endif
+          //}
+
+        } else {
+          // Assume Primvar.
+          if (geom_subset->attribs.count(prop_name)) {
+            _err += "Duplicated property name found: " + prop_name + "\n";
+            return false;
+          }
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cout << "add [" << prop_name << "] to generic attrs\n";
+#endif
+
+          geom_subset->attribs[prop_name] = std::move(attr);
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
 bool Parser::ReconstructGeomMesh(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
@@ -5544,6 +5674,19 @@ bool Parser::ReconstructSceneRecursively(
     }
     curves.name = node.GetLocalPath(); // FIXME
     scene->geom_basis_curves.push_back(curves);
+  } else if (node_type == "GeomSubset") {
+    GeomSubset geom_subset;
+    // TODO(syoyo): Pass Parent 'Geom' node.
+    if (!ReconstructGeomSubset(node, fields, path_index_to_spec_index_map,
+                              &geom_subset)) {
+      _err += "Failed to reconstruct GeomSubset.\n";
+      return false;
+    }
+    geom_subset.name = node.GetLocalPath(); // FIXME
+    // TODO(syoyo): add GeomSubset to parent `Mesh`.
+    _err += "TODO: Add GeomSubset to Mesh.\n";
+    return false;
+
   } else if (node_type == "Mesh") {
     GeomMesh mesh;
     if (!ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,

@@ -50,9 +50,6 @@ namespace primvar {
 
 using token = tinyusdz::Token;
 
-// string literal. represent it as string_view
-//using token = nonstd::string_view;
-
 struct asset
 {
   std::string asset_path;
@@ -931,6 +928,7 @@ std::ostream &operator<<(std::ostream &os, const quath &v);
 std::ostream &operator<<(std::ostream &os, const quatf &v);
 std::ostream &operator<<(std::ostream &os, const quatd &v);
 
+std::ostream &operator<<(std::ostream &os, const token &v);
 std::ostream &operator<<(std::ostream &os, const dict &v);
 std::ostream &operator<<(std::ostream &os, const TimeSample &ts);
 

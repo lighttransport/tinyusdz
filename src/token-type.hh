@@ -16,14 +16,28 @@
 
 #include "nonstd/optional.hpp"
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 // external
 #include "external/string_id/database.hpp"
 #include "external/string_id/string_id.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace tinyusdz {
 
 
 namespace sid = foonathan::string_id;
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
 
 // Singleton
 class TokenStorage
@@ -44,6 +58,10 @@ class TokenStorage
     ~TokenStorage() = default; 
 };
 
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 class Token {
 
  public:
@@ -60,7 +78,7 @@ class Token {
     return str_.value().string();
   }
 
-  const uint64_t hash() const {
+  uint64_t hash() const {
     if (!str_) {
       return 0;
     }
