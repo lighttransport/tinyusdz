@@ -1618,6 +1618,33 @@ struct LuxSphereLight
 
 };
 
+struct LuxDomeLight
+{
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to xform node
+
+  //
+  // Predefined attribs.
+  //
+  // TODO: Support texture?
+  primvar::color3f color{}; 
+  float intensity{10.0f};
+
+  //
+  // Properties
+  //
+  AnimatableExtent extent;  // bounding extent(in local coord?).
+  AnimatableVisibility visibility{Visibility::Inherited};
+  Purpose purpose{Purpose::Default};
+
+  // List of Primitive attributes(primvars)
+  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
+  // parameter)
+  std::map<std::string, PrimAttrib> attribs;
+
+};
+
 // BlendShapes
 // TODO(syoyo): Blendshape
 struct BlendShape {
