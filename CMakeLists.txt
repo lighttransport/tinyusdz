@@ -134,6 +134,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-file.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
@@ -425,15 +426,16 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
-endforeach()
+  if (NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if (MSVC)
+      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
+    else()
+      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE -fno-exceptions)
+    endif()
+  endif()
 
-if (NOT TINYUSDZ_CXX_EXCEPTIONS)
-	if (MSVC)
-		target_compile_options(${TINYUSDZ_TARGET_STATIC} PUBLIC /EHs-c-)
-	else()
-		target_compile_options(${TINYUSDZ_TARGET_STATIC} PUBLIC -fno-exceptions)
-	endif()
-endif()
+
+endforeach()
 
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
