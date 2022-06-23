@@ -358,6 +358,15 @@ class Value {
     memcpy(data.data(), reinterpret_cast<const void *>(v.m), sizeof(Matrix4d));
   }
 
+  void SetMatrix4dArray(const Matrix4d *d, const size_t n) {
+
+    dtype.name = "Matrix4dArray";
+    dtype.id = VALUE_TYPE_MATRIX4D;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Matrix4d));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Matrix4d));
+  }
+
   void SetToken(const std::string &s) {
     dtype.name = "Token";
     dtype.id = VALUE_TYPE_TOKEN;
@@ -3339,32 +3348,59 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
 
       return true;
     } else if (ty.id == VALUE_TYPE_MATRIX4D) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      assert(!rep.IsCompressed());
 
-      static_assert(sizeof(Matrix4d) == (8 * 16), "");
+      std::cout << "Matrix4d: IsCompressed = " << rep.IsCompressed() << "\n";
+      std::cout << "Matrix4d: IsArray = " << rep.IsArray() << "\n";
 
-      Matrix4d v;
-      if (!_sr->read(sizeof(Matrix4d), sizeof(Matrix4d),
-                     reinterpret_cast<uint8_t *>(v.m))) {
-        _err += "Failed to read Matrix4d value\n";
-        return false;
-      }
+      if (rep.IsArray()) {
+
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cerr << "Failed to read the number of array elements\n";
+#endif
+          return false;
+        }
+
+        std::vector<Matrix4d> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(Matrix4d), size_t(n) * sizeof(Matrix4d),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+          std::cerr << "Failed to read Matrix4d array\n";
+#endif
+          return false;
+        }
+
+        value->SetMatrix4dArray(v.data(), v.size());
+
+      } else {
+
+        static_assert(sizeof(Matrix4d) == (8 * 16), "");
+
+        Matrix4d v;
+        if (!_sr->read(sizeof(Matrix4d), sizeof(Matrix4d),
+                       reinterpret_cast<uint8_t *>(v.m))) {
+          _err += "Failed to read Matrix4d value\n";
+          return false;
+        }
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.matrix4d = ";
-      for (size_t i = 0; i < 4; i++) {
-        for (size_t j = 0; j < 4; j++) {
-          std::cout << v.m[i][j];
-          if ((i == 3) && (j == 3)) {
-          } else {
-            std::cout << ", ";
+        std::cout << "value.matrix4d = ";
+        for (size_t i = 0; i < 4; i++) {
+          for (size_t j = 0; j < 4; j++) {
+            std::cout << v.m[i][j];
+            if ((i == 3) && (j == 3)) {
+            } else {
+              std::cout << ", ";
+            }
           }
         }
-      }
-      std::cout << "\n";
+        std::cout << "\n";
 #endif
 
-      value->SetMatrix4d(v);
+        value->SetMatrix4d(v);
+      }
 
       return true;
 
