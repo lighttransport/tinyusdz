@@ -124,6 +124,7 @@ std::string to_string(const GeomCube &geom, const uint32_t indent = 0);
 std::string to_string(const GeomCamera &camera, const uint32_t indent = 0);
 
 std::string to_string(const LuxSphereLight &light, const uint32_t indent = 0);
+std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0);
 std::string to_string(const Shader &shader, const uint32_t indent = 0);
 
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t );

@@ -6240,6 +6240,26 @@ class USDAParser::Impl {
           shader.name = node_name;
           std::cout << to_string(shader, nestlevel) << "\n";
 
+        } else if (prim_type == "SphereLight") {
+          LuxSphereLight light;
+          std::cout << "Reconstruct SphereLight\n";
+          if (!ReconstructLuxSphereLight(props, references, &light)) {
+            PushError("Failed to reconstruct SphereLight.");
+            return false;
+          }
+
+          light.name = node_name;
+          std::cout << to_string(light, nestlevel) << "\n";
+        } else if (prim_type == "DomeLight") {
+          LuxDomeLight light;
+          std::cout << "Reconstruct DomeLight\n";
+          if (!ReconstructLuxDomeLight(props, references, &light)) {
+            PushError("Failed to reconstruct DomeLight.");
+            return false;
+          }
+
+          light.name = node_name;
+          std::cout << to_string(light, nestlevel) << "\n";
         } else {
           PUSH_ERROR(" TODO: " + prim_type);
           return false;
@@ -6337,6 +6357,10 @@ class USDAParser::Impl {
   bool ReconstructLuxSphereLight(const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, AssetReference>> &references,
                               LuxSphereLight *light);
+
+  bool ReconstructLuxDomeLight(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              LuxDomeLight *light);
 
   bool CheckHeader() { return ParseMagicHeader(); }
 
@@ -7673,6 +7697,38 @@ bool USDAParser::Impl::ReconstructGeomCamera(const std::map<std::string, Propert
 
   for (const auto &prop : properties) {
     if (prop.first == "focalLength") {
+      // TODO
+    } else {
+      std::cout << "TODO: " << prop.first << "\n";
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructLuxSphereLight(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              LuxSphereLight *light) {
+
+  // TODO: Implement
+  for (const auto &prop : properties) {
+    if (prop.first == "radius") {
+      // TODO
+    } else {
+      std::cout << "TODO: " << prop.first << "\n";
+    }
+  }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructLuxDomeLight(const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+                              LuxDomeLight *light) {
+
+  // TODO: Implement
+  for (const auto &prop : properties) {
+    if (prop.first == "radius") {
       // TODO
     } else {
       std::cout << "TODO: " << prop.first << "\n";
