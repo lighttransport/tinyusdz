@@ -600,6 +600,24 @@ std::string to_string(const LuxSphereLight &light, const uint32_t indent) {
   return ss.str();
 }
 
+std::string to_string(const LuxDomeLight &light, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def DomeLight \"" << light.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "   color3f inputs:color = " << light.color << "\n";
+  ss << Indent(indent) << "   float inputs:intensity = " << light.intensity << "\n";
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 std::string to_string(const Shader &shader, const uint32_t indent) {
   std::stringstream ss;
 
