@@ -32,7 +32,7 @@
 #else // !_WIN32
 
 #if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
-    defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+    defined(__ANDROID__) || defined(__EMSCRIPTEN__) || defined(__wasi__)
 
 // non posix
 
@@ -70,7 +70,7 @@ std::string ExpandFilePath(const std::string &filepath, void *) {
 #else
 
 #if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
-    defined(__ANDROID__) || defined(__EMSCRIPTEN__) || defined(__OpenBSD__)
+    defined(__ANDROID__) || defined(__EMSCRIPTEN__) || defined(__OpenBSD__) || defined(__wasi__)
   // no expansion
   std::string s = filepath;
 #else
