@@ -500,7 +500,7 @@ struct StringAndIdMap {
 enum NodeType {
   NODE_TYPE_NULL = 0,
   NODE_TYPE_XFORM,
-  NODE_TYPE_GROUP,
+  NODE_TYPE_SCOPE,
   NODE_TYPE_SPHERE,
   NODE_TYPE_GEOM_MESH,
   NODE_TYPE_GEOM_BASISCURVES,
@@ -541,6 +541,7 @@ struct Scene {
   std::string defaultPrim;           // prim node name
   double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
+  std::string doc; // `documentation`
   std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
 
   // Currently `string` type value only.
@@ -559,8 +560,10 @@ struct Scene {
   std::vector<GeomPoints> geom_points;
   std::vector<Material> materials;
   std::vector<Shader> shaders;  // TODO(syoyo): Support othre shaders
-  std::vector<Group> groups;
+  std::vector<Scope> scopes; // TODO(syoyo): We may not need this?
   std::vector<Volume> volumes;
+  std::vector<SkelRoot> skel_roots;
+  std::vector<Skeleton> skeletons;
 
   StringAndIdMap geom_meshes_map;  // Path <-> array index map
   StringAndIdMap materials_map;    // Path <-> array index map

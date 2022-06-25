@@ -45,7 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 // local debug flag(now defined in tinyusdz.hh)
-#define TINYUSDZ_LOCAL_DEBUG_PRINT (1)
+#define TINYUSDZ_LOCAL_DEBUG_PRINT
 
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -112,6 +112,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   ss << s; \
   _warn += ss.str() + "\n"; \
 } while (0)
+
+#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << "\n"; } while (false)
+#else
+#define DCOUT(x)
+#endif
 
 namespace tinyusdz {
 
@@ -1448,6 +1454,16 @@ class Parser {
                                 &path_index_to_spec_index_map,
                             PrimvarReader_float2 *preader);
 
+  bool ReconstructSkelRoot(const Node &node, const FieldValuePairVector &fields,
+                          const std::unordered_map<uint32_t, uint32_t>
+                              &path_index_to_spec_index_map,
+                          SkelRoot *skelRoot);
+
+  bool ReconstructSkeleton(const Node &node, const FieldValuePairVector &fields,
+                          const std::unordered_map<uint32_t, uint32_t>
+                              &path_index_to_spec_index_map,
+                          Skeleton *skeleton);
+
   bool ReconstructSceneRecursively(int parent_id, int level,
                                     const std::unordered_map<uint32_t, uint32_t>
                                         &path_index_to_spec_index_map,
@@ -2484,21 +2500,13 @@ bool Parser::ReadDictionary(Value::Dictionary *d) {
 
 bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
   ValueType ty = GetValueType(rep.GetType());
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << GetValueTypeRepr(rep.GetType()) << "\n";
-#endif
+  DCOUT(GetValueTypeRepr(rep.GetType()));
   if (rep.IsInlined()) {
     uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "d = " << d << "\n";
-    std::cout << "ty.id = " << ty.id << "\n";
-#endif
+    DCOUT("d = " << d << ", ty.id = " << ty.id);
     if (ty.id == VALUE_TYPE_BOOL) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Bool: " << d << "\n";
-#endif
 
       value->SetBool(d ? true : false);
 
@@ -2820,10 +2828,6 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       return true;
     } else {
       // TODO(syoyo)
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cerr << "TODO: Inlined Value: " << GetValueTypeRepr(rep.GetType())
-                << "\n";
-#endif
       PUSH_ERROR("TODO: Inlined Value: " + GetValueTypeRepr(rep.GetType()));
 
       return false;
@@ -4928,11 +4932,9 @@ bool Parser::ReconstructGeomMesh(
     const Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart()
+    DCOUT("Path prim part: " << path.GetPrimPart()
               << ", prop part: " << path.GetPropPart()
-              << ", spec_index = " << spec_index << "\n";
-#endif
+              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
       _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
@@ -4948,17 +4950,11 @@ bool Parser::ReconstructGeomMesh(
 
       PrimAttrib attr;
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
-#endif
-      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+      DCOUT("prop: " << prop_name << ", ret = " << ret);
 
       if (ret) {
         // TODO(syoyo): Support more prop names
         if (prop_name == "points") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "got point\n";
-#endif
           auto p = attr.var.get_value<std::vector<primvar::point3f>>();
           if (p) {
             mesh->points = (*p);
@@ -4991,9 +4987,6 @@ bool Parser::ReconstructGeomMesh(
 
           // Currently we only support vec2f for uv coords.
           //if (auto p = primvar::as_vector<Vec2f>(&attr.var)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          //  std::cout << "got explicit UVCoords!\n";
-#endif
           //  mesh->st.buffer = (*p);
           //  mesh->st.variability = attr.variability;
           //}
@@ -5002,11 +4995,6 @@ bool Parser::ReconstructGeomMesh(
           if (p) {
             mesh->faceVertexCounts = (*p);
           }
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          //  // aaa: typeName: int[]
-          std::cout << "got faceVertexCounts. \n";
-          std::cout << "  num = " << mesh->faceVertexCounts.size() << "\n";
-#endif
           //}
         } else if (prop_name == "faceVertexIndices") {
           auto p = attr.var.get_value<std::vector<int>>();
@@ -5014,19 +5002,9 @@ bool Parser::ReconstructGeomMesh(
             mesh->faceVertexIndices = (*p);
           }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            // aaa: typeName: int[]
-            std::cout << "got faceVertexIndices\n";
-            std::cout << "  num = " << mesh->faceVertexIndices.size() << "\n";
-#endif
-          //}
 
         } else if (prop_name == "holeIndices") {
           //if (auto p = primvar::as_vector<int>(&attr.var)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-              // aaa: typeName: int[]
-          //    std::cout << "got holeIdicies\n";
-#endif
           //    mesh->holeIndices = (*p);
           //}
         } else if (prop_name == "cornerIndices") {
@@ -5050,9 +5028,7 @@ bool Parser::ReconstructGeomMesh(
           //    mesh->creaseSharpnesses = (*p);
           //}
         } else if (prop_name == "subdivisionScheme") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          //std::cout << "subdivisionScheme:" << attr.stringVal << "\n";
-#endif
+          auto p = attr.var.get_value<primvar::token>();
           //if (auto p = primvar::as_basic<std::string>(&attr.var)) {
           //  if (p->compare("none") == 0) {
           //    mesh->subdivisionScheme = SubdivisionScheme::None;
@@ -5442,11 +5418,9 @@ bool Parser::ReconstructPreviewSurface(
           if (p) {
             shader->diffuseColor.color = (*p);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            std::cout << "diffuseColor: " << shader->diffuseColor.color[0]
+            DCOUT("diffuseColor: " << shader->diffuseColor.color[0]
                       << ", " << shader->diffuseColor.color[1] << ", "
-                      << shader->diffuseColor.color[2] << "\n";
-#endif
+                      << shader->diffuseColor.color[2]);
           }
         } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
@@ -5458,17 +5432,184 @@ bool Parser::ReconstructPreviewSurface(
           // if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
           //  shader->emissiveColor.color = (*p);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          //  std::cout << "emissiveColor: " << shader->emissiveColor.color[0]
-          //            << ", " << shader->emissiveColor.color[1] << ", "
-          //            << shader->emissiveColor.color[2] << "\n";
-#endif
           //}
         } else if (prop_name.compare("inputs:emissiveColor.connect") == 0) {
           // Currently we assume texture is assigned to this attribute.
           // if (auto p = primvar::as_basic<std::string>(&attr.var)) {
           //  shader->emissiveColor.path = *p;
           //}
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool Parser::ReconstructSkelRoot(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    SkelRoot *skelRoot) {
+  DCOUT("Parse skelRoot");
+  (void)skelRoot;
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        _err += "`properties` attribute must be TokenArray type\n";
+        return false;
+      }
+      assert(fv.second.IsArray());
+
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      }
+    }
+  }
+
+
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    // const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      _err += "No specifier found for node id: " + std::to_string(child_index) +
+              "\n";
+      return false;
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+    DCOUT("Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index);
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+      PrimAttrib attr;
+
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
+      DCOUT("prop:" << prop_name << ", ret = " << ret);
+
+      if (ret) {
+        // Currently we only support predefined PBR attributes.
+
+        if (prop_name.compare("info:id") == 0) {
+          auto p = attr.var.get_value<std::string>(); // `token` type, but treat it as string
+          if (p) {
+            //shader_type = (*p);
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool Parser::ReconstructSkeleton(
+    const Node &node, const FieldValuePairVector &fields,
+    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    Skeleton *skeleton) {
+  DCOUT("Parse skeleton");
+  (void)skeleton;
+
+  for (const auto &fv : fields) {
+    if (fv.first == "properties") {
+      if (fv.second.GetTypeName() != "TokenArray") {
+        PUSH_ERROR("`properties` attribute must be TokenArray type");
+        return false;
+      }
+      assert(fv.second.IsArray());
+
+      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      }
+    }
+  }
+
+
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      _err += "Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      return false;
+    }
+
+    // const Node &child_node = _nodes[size_t(child_index)];
+
+    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      _err += "No specifier found for node id: " + std::to_string(child_index) +
+              "\n";
+      return false;
+    }
+
+    uint32_t spec_index =
+        path_index_to_spec_index_map.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      _err += "Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      return false;
+    }
+
+    const Spec &spec = _specs[spec_index];
+
+    Path path = GetPath(spec.path_index);
+    DCOUT("Path prim part: " << path.GetPrimPart()
+              << ", prop part: " << path.GetPropPart()
+              << ", spec_index = " << spec_index);
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.\n";
+      return false;
+    }
+
+    const FieldValuePairVector &child_fields =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.GetPropPart();
+
+      PrimAttrib attr;
+
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
+      DCOUT("prop:" << prop_name << ", ret = " << ret);
+
+      if (ret) {
+        // Currently we only support predefined PBR attributes.
+
+        if (prop_name.compare("info:id") == 0) {
+          auto p = attr.var.get_value<std::string>(); // `token` type, but treat it as string
+          if (p) {
+            //shader_type = (*p);
+          }
         }
       }
     }
@@ -5594,6 +5735,12 @@ bool Parser::ReconstructSceneRecursively(
         }
 
         scene->primChildren = fv.second.GetTokenArray();
+      } else if (fv.first == "documentation") { // 'doc'
+        if (fv.second.GetTypeId() != VALUE_TYPE_STRING) {
+          PUSH_ERROR("Type must be String for `documentation`, but got " + fv.second.GetTypeName() + "\n");
+          return false;
+        }
+        scene->doc = fv.second.GetString();
       } else {
         PUSH_ERROR("TODO: " + fv.first + "\n");
         //_err += "TODO: " + fv.first + "\n";
@@ -5758,11 +5905,35 @@ bool Parser::ReconstructSceneRecursively(
 
     PUSH_WARN("TODO: Reconstruct dictionary value of `assetInfo`");
     //_nodes[size_t(parent)].SetAssetInfo(assetInfo);
+  } else if (node_type == "Skeleton") {
+    Skeleton skeleton;
+    if (!ReconstructSkeleton(node, fields, path_index_to_spec_index_map,
+                           &skeleton)) {
+      _err += "Failed to reconstruct Skeleton.\n";
+      return false;
+    }
+
+    skeleton.name = node.GetLocalPath(); // FIXME
+
+    scene->skeletons.push_back(skeleton);
+
+  } else if (node_type == "SkelRoot") {
+    SkelRoot skelRoot;
+    if (!ReconstructSkelRoot(node, fields, path_index_to_spec_index_map,
+                           &skelRoot)) {
+      _err += "Failed to reconstruct SkelRoot.\n";
+      return false;
+    }
+
+    skelRoot.name = node.GetLocalPath(); // FIXME
+
+    scene->skel_roots.push_back(skelRoot);
   } else {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
     std::cout << "TODO or we can ignore this node: node_type: " << node_type
               << "\n";
 #endif
+    PUSH_WARN("TODO: Reconstruct node_type " + node_type);
   }
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
