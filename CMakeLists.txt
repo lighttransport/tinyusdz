@@ -135,6 +135,11 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
+
+    # usdMtlX has less dependency(tinyxml2), so add it to core component
+    ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
+
+    ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc)
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -364,11 +369,15 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
 
-  if(TINYUSDZ_WITH_JSON)
-    target_include_directories(
-      ${TINYUSDZ_LIB_TARGET}
-      PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-  endif()
+  target_include_directories(
+    ${TINYUSDZ_LIB_TARGET}
+    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+
+  #if(TINYUSDZ_WITH_JSON)
+  #  target_include_directories(
+  #    ${TINYUSDZ_LIB_TARGET}
+  #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+  #endif()
 
   if(TINYUSDZ_WITH_USDOBJ)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

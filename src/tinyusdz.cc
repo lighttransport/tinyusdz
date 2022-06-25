@@ -33,7 +33,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fstream>
 #include <map>
 #include <sstream>
+
+#ifndef __wasi__
 #include <thread>
+#endif
+
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -1226,7 +1230,11 @@ class Parser {
  public:
   Parser(StreamReader *sr, int num_threads) : _sr(sr) {
     if (num_threads == -1) {
+#if defined(__wasi__)
+      num_threads = 1;
+#else
       num_threads = std::max(1, int(std::thread::hardware_concurrency()));
+#endif
     }
 
     // Limit to 1024 threads.
