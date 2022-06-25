@@ -1621,7 +1621,6 @@ struct LuxSphereLight
 struct LuxDomeLight
 {
   std::string name;
-
   int64_t parent_id{-1};  // Index to xform node
 
   //
@@ -1656,6 +1655,9 @@ struct BlendShape {
 };
 
 struct SkelRoot {
+  std::string name;
+  int64_t parent_id{-1};  
+
   AnimatableExtent extent;
   Purpose purpose{Purpose::Default};
   AnimatableVisibility visibility{Visibility::Inherited};
@@ -1663,10 +1665,15 @@ struct SkelRoot {
   // TODO
   // std::vector<std::string> xformOpOrder;
   // ref proxyPrim
+
+  int64_t skeleton_id{-1}; // index to scene.skeletons
 };
 
-// Skelton
-struct Skelton {
+// Skeleton
+struct Skeleton {
+
+  std::string name;
+
   std::vector<Matrix4d>
       bindTransforms;  // bind-pose transform of each joint in world coordinate.
   AnimatableExtent extent;
@@ -1707,7 +1714,7 @@ struct SkelBindingAPI {
       -1};  // index to Scene.animations. ref skel:animationSource
   int64_t blendShapeTargets{
       -1};  // index to Scene.blendshapes. ref skel:bindShapeTargets
-  int64_t skeleton{-1};  // index to Scene.skeltons. // ref skel:skelton
+  int64_t skeleton{-1};  // index to Scene.skeletons. // ref skel:skeleton
 };
 
 // Generic Prim
@@ -2121,11 +2128,10 @@ struct Volume {
 
 
 
-// Corresponds to USD's Scope.
-// `Scope` is uncommon in graphics community, so we use `Group`.
+// `Scope` is uncommon in graphics community, its something like `Group`.
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
 // the baggage of transformability.
-struct Group {
+struct Scope {
   std::string name;
 
   int64_t parent_id{-1};
