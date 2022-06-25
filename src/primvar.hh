@@ -50,7 +50,7 @@ using token = nonstd::string_view;
 
 struct asset
 {
-  std::string asset_path; 
+  std::string asset_path;
 };
 
 // TODO(syoyo): 3D and 4D?
@@ -791,7 +791,7 @@ struct PrimVar {
     var.times.clear();
     var.values.clear();
 
-    var.values.push_back(v); 
+    var.values.push_back(v);
   }
 
 };
