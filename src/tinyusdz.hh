@@ -521,6 +521,9 @@ struct Node {
   //
   int64_t index{-1};
 
+  // Metadata
+  primvar::dict assetInfo;
+
   //int64_t parent;                 // parent node index. Example: `nodes[parent]`
   std::vector<Node> children;  // child nodes
 };
@@ -541,7 +544,8 @@ struct Scene {
   std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
 
   // Currently `string` type value only.
-  std::map<std::string, std::string> customLayerData; // TODO(syoyo): Support arbitrary value
+  //std::map<std::string, std::string> customLayerData; // TODO(syoyo): Support arbitrary value
+  primvar::dict customLayerData;
 
   //
   // glTF-like scene objects
