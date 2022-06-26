@@ -1036,7 +1036,7 @@ struct PrimAttrib {
   // Qualifiers
   //
   bool uniform{false}; // `uniform`
-  bool custom{false}; // `custom`
+  //bool custom{false}; // `custom`
 
   primvar::PrimVar var;
 };
@@ -1047,6 +1047,16 @@ struct Property
   Rel rel;
 
   bool is_rel{false};
+
+  bool is_custom{false};
+
+  bool IsRel() {
+    return is_rel;
+  }
+
+  bool IsCustom() {
+    return is_custom;
+  }
 };
 
 // UsdPrimvarReader_float2.
