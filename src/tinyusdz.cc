@@ -114,9 +114,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 } while (0)
 
 #if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << "\n"; } while (false)
+#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
 #else
-#define DCOUT(x)
+#define DCOUT(x) do { (void)(x); } while(false)
 #endif
 
 namespace tinyusdz {
@@ -4477,7 +4477,11 @@ bool Parser::ReconstructXform(
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Xform *xform) {
 
-  // TODO
+  // TODO:
+  //  * [ ] !invert! suffix
+  //  * [ ] !resetXformStack! suffix
+  //  * [ ] maya:pivot support?
+
   (void)xform;
 
   for (const auto &fv : fields) {
@@ -4517,11 +4521,10 @@ bool Parser::ReconstructXform(
     const Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart()
+
+    DCOUT("Path prim part: " << path.GetPrimPart()
               << ", prop part: " << path.GetPropPart()
-              << ", spec_index = " << spec_index << "\n";
-#endif
+              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
       _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
@@ -4537,9 +4540,7 @@ bool Parser::ReconstructXform(
 
       PrimAttrib attr;
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Xform: prop: " << prop_name << ", ret = " << ret << "\n";
-#endif
+      DCOUT("Xform: prop: " << prop_name << ", ret = " << ret);
       if (ret) {
         // TODO(syoyo): Implement
         PUSH_ERROR("TODO: Implemen Xform prop: " + prop_name);
@@ -5754,39 +5755,17 @@ bool Parser::ReconstructSceneRecursively(
   Value::Dictionary assetInfo;
 
   for (const auto &fv : fields) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << IndentStr(level) << "  \"" << fv.first
-              << "\" : ty = " << fv.second.GetTypeName() << "\n";
-#endif
+    DCOUT(IndentStr(level) << "  \"" << fv.first
+              << "\" : ty = " << fv.second.GetTypeName());
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << IndentStr(level) << "    specifier = "
-                << GetSpecifierString(fv.second.GetSpecifier()) << "\n";
-#endif
+      DCOUT(IndentStr(level) << "    specifier = "
+                << GetSpecifierString(fv.second.GetSpecifier()));
     } else if (fv.second.GetTypeId() == VALUE_TYPE_TOKEN) {
       if (fv.first == "typeName") {
         node_type = fv.second.GetToken();
       }
       // std::cout << IndentStr(level) << "    token = " << fv.second.GetToken()
       // << "\n";
-    } else if (fv.second.GetTypeId() == VALUE_TYPE_BOOL) {
-      PUSH_WARN("TODO: name " + fv.first + ", type Bool.");
-    } else if (fv.second.GetTypeId() == VALUE_TYPE_STRING) {
-      PUSH_WARN("TODO: name " + fv.first + ", type String.");
-      // std::cout << IndentStr(level) << "    string = " <<
-      // fv.second.GetString() << "\n";
-    } else if (fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) {
-      PUSH_WARN("TODO: name " + fv.first + ", type Double.");
-      // std::cout << IndentStr(level) << "    double = " <<
-      // fv.second.GetDouble() << "\n";
-    } else if (fv.second.GetTypeId() == VALUE_TYPE_FLOAT) {
-      PUSH_WARN("TODO: name " + fv.first + ", type Float.");
-      // std::cout << IndentStr(level) << "    float  = " <<
-      // fv.second.GetDouble() << "\n";
-    } else if (fv.second.GetTypeId() == VALUE_TYPE_VARIABILITY) {
-      PUSH_WARN("TODO: name " + fv.first + ", type Variability.");
-      // std::cout << IndentStr(level) << "    variability  = " <<
-      // GetVariabilityString(fv.second.GetVariability()) << "\n";
     } else if ((fv.first == "primChildren") &&
                (fv.second.GetTypeName() == "TokenArray")) {
       // Check if TokenArray contains known child nodes
@@ -5803,12 +5782,11 @@ bool Parser::ReconstructSceneRecursively(
       }
     } else if (fv.second.GetTypeName() == "TokenArray") {
       assert(fv.second.IsArray());
-#if 0
       const auto &strs = fv.second.GetStringArray();
       for (const auto &str : strs) {
-        std::cout << IndentStr(level + 2) << str << "\n";
+        (void)str;
+        DCOUT(IndentStr(level + 2) << str);
       }
-#endif
     } else if ((fv.first == "customLayerData") && (fv.second.GetTypeName() == "Dictionary")) {
       const auto &dict = fv.second.GetDictionary();
 
