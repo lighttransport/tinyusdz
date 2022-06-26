@@ -2558,11 +2558,12 @@ class USDAParser::Impl {
         return false;
       }
 
-      attr.custom = custom_qual;
       attr.uniform = uniform_qual;
       attr.name = primattr_name;
 
       LOG_INFO("primattr_name = " + primattr_name);
+
+      (*props)[primattr_name].is_custom = custom_qual;
 
       if (is_rel) {
         (*props)[primattr_name].rel = rel;

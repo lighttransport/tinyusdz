@@ -168,7 +168,7 @@ $ ninja
 
 ### Examples
 
-* [Simple dump](examples/simple_dump/)
+* [Simple usdz_dump](examples/simple_usdz_dump/)
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build : See [Readme](examples/sdlviewer/README.md)
 
