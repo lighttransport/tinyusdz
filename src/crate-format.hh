@@ -1,40 +1,163 @@
-#if defined(__wasi__)
-#else
-#include <thread>
-#endif
+// SPDX-License-Identifier: MIT
+// USDC(CrateFile) format
 
+#include <cstdint>
+#include <string>
 #include <sstream>
+#include <vector>
+#include <memory>
+#include <cstdlib>
 
-#include "integerCoding.h"
-#include "crate-file.hh"
-#include "primvar.hh"
-#include "tinyusdz.hh"
-#include "pprinter.hh"
-
-#include "lz4-compression.hh"
-#include "stream-reader.hh"
-
-#define PUSH_ERROR(s) { \
-  std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  _err += ss.str() + "\n"; \
-} while (0)
-
-#if 0
-#define PUSH_WARN(s) { \
-  std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  _warn += ss.str() + "\n"; \
-} while (0)
-#endif
+#include "prim-types.hh"
 
 namespace tinyusdz {
-namespace usdc {
+namespace crate {
 
-//constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
+
+// -- from USD ----------------------------------------------------------------
+
+//
+// Copyright 2016 Pixar
+//
+// Licensed under the Apache License, Version 2.0 (the "Apache License")
+// with the following modification; you may not use this file except in
+// compliance with the Apache License and the following modification to it:
+// Section 6. Trademarks. is deleted and replaced with:
+//
+// 6. Trademarks. This License does not grant permission to use the trade
+//    names, trademarks, service marks, or product names of the Licensor
+//    and its affiliates, except as required to comply with Section 4(c) of
+//    the License and to reproduce the content of the NOTICE file.
+//
+// You may obtain a copy of the Apache License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the Apache License with the above modification is
+// distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the Apache License for the specific
+// language governing permissions and limitations under the Apache License.
+
+// Index base class.  Used to index various tables.  Deriving adds some
+// type-safety so we don't accidentally use one kind of index with the wrong
+// kind of table.
+struct Index {
+  Index() : value(~0u) {}
+  explicit Index(uint32_t v) : value(v) {}
+  bool operator==(const Index &other) const { return value == other.value; }
+  bool operator!=(const Index &other) const { return !(*this == other); }
+  bool operator<(const Index &other) const { return value < other.value; }
+  uint32_t value;
+};
+
+// Value in file representation.  Consists of a 2 bytes of type information
+// (type enum value, array bit, and inlined-value bit) and 6 bytes of data.
+// If possible, we attempt to store certain values directly in the local
+// data, such as ints, floats, enums, and special-case values of other types
+// (zero vectors, identity matrices, etc).  For values that aren't stored
+// inline, the 6 data bytes are the offset from the start of the file to the
+// value's location.
+struct ValueRep {
+  friend class CrateFile;
+
+  ValueRep() = default;
+
+  explicit constexpr ValueRep(uint64_t d) : data(d) {}
+
+  constexpr ValueRep(int32_t t, bool isInlined, bool isArray, uint64_t payload)
+      : data(Combine(t, isInlined, isArray, payload)) {}
+
+  static const uint64_t IsArrayBit_ = 1ull << 63;
+  static const uint64_t IsInlinedBit_ = 1ull << 62;
+  static const uint64_t IsCompressedBit_ = 1ull << 61;
+
+  static const uint64_t PayloadMask_ = ((1ull << 48) - 1);
+
+  inline bool IsArray() const { return data & IsArrayBit_; }
+  inline void SetIsArray() { data |= IsArrayBit_; }
+
+  inline bool IsInlined() const { return data & IsInlinedBit_; }
+  inline void SetIsInlined() { data |= IsInlinedBit_; }
+
+  inline bool IsCompressed() const { return data & IsCompressedBit_; }
+  inline void SetIsCompressed() { data |= IsCompressedBit_; }
+
+  inline int32_t GetType() const {
+    return static_cast<int32_t>((data >> 48) & 0xFF);
+  }
+  inline void SetType(int32_t t) {
+    data &= ~(0xFFull << 48);                  // clear type byte in data.
+    data |= (static_cast<uint64_t>(t) << 48);  // set it.
+  }
+
+  inline uint64_t GetPayload() const { return data & PayloadMask_; }
+
+  inline void SetPayload(uint64_t payload) {
+    data &= ~PayloadMask_;  // clear existing payload.
+    data |= payload & PayloadMask_;
+  }
+
+  inline uint64_t GetData() const { return data; }
+
+  bool operator==(ValueRep other) const { return data == other.data; }
+  bool operator!=(ValueRep other) const { return !(*this == other); }
+
+  // friend inline size_t hash_value(ValueRep v) {
+  //  return static_cast<size_t>(v.data);
+  //}
+
+  std::string GetStringRepr() const {
+    std::stringstream ss;
+    ss << "ty: " << static_cast<int>(GetType()) << ", isArray: " << IsArray()
+       << ", isInlined: " << IsInlined() << ", isCompressed: " << IsCompressed()
+       << ", payload: " << GetPayload();
+
+    return ss.str();
+  }
+
+ private:
+  static constexpr uint64_t Combine(int32_t t, bool isInlined, bool isArray,
+                                     uint64_t payload) {
+    return (isArray ? IsArrayBit_ : 0) | (isInlined ? IsInlinedBit_ : 0) |
+           (static_cast<uint64_t>(t) << 48) | (payload & PayloadMask_);
+  }
+
+  uint64_t data;
+};
+
+// ----------------------------------------------------------------------------
+
+struct Field {
+  Index token_index;
+  ValueRep value_rep;
+};
+
+//
+// Spec describes the relation of a path(i.e. node) and field(e.g. vertex data)
+//
+struct Spec {
+  Index path_index;
+  Index fieldset_index;
+  SpecType spec_type;
+};
+
+struct Section {
+  Section() { memset(this, 0, sizeof(*this)); }
+  Section(char const *name, int64_t start, int64_t size);
+  char name[kSectionNameMaxLength + 1];
+  int64_t start, size;  // byte offset to section info and its data size
+};
+
+//
+// TOC = list of sections.
+//
+struct TableOfContents {
+  // Section const *GetSection(SectionName) const;
+  // int64_t GetMinimumSectionStart() const;
+  std::vector<Section> sections;
+};
 
 ///
 /// Represent value with arbitrary type(TODO: Use primvar).
@@ -645,497 +768,9 @@ class Value {
   TimeSamples time_samples;
 };
 
+const ValueType &GetValueType(int32_t type_id);
 
-#if 0
-template <class Int>
-static inline bool ReadCompressedInts(const StreamReader *sr, Int *out,
-                                       size_t size) {
-  // TODO(syoyo): Error check
-  using Compressor =
-      typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
-                                Usd_IntegerCompression64>::type;
-  std::vector<char> compBuffer(Compressor::GetCompressedBufferSize(size));
-  uint64_t compSize;
-  if (!sr->read8(&compSize)) {
-    return false;
-  }
+} // namespace crate
+} // namespace tinyusdz
 
-  if (!sr->read(size_t(compSize), size_t(compSize),
-                reinterpret_cast<uint8_t *>(compBuffer.data()))) {
-    return false;
-  }
-  std::string err;
-  bool ret = Compressor::DecompressFromBuffer(
-      compBuffer.data(), size_t(compSize), out, size, &err);
-  (void)err;
 
-  return ret;
-}
-#endif
-
-// -- from USD ----------------------------------------------------------------
-
-//
-// Copyright 2016 Pixar
-//
-// Licensed under the Apache License, Version 2.0 (the "Apache License")
-// with the following modification; you may not use this file except in
-// compliance with the Apache License and the following modification to it:
-// Section 6. Trademarks. is deleted and replaced with:
-//
-// 6. Trademarks. This License does not grant permission to use the trade
-//    names, trademarks, service marks, or product names of the Licensor
-//    and its affiliates, except as required to comply with Section 4(c) of
-//    the License and to reproduce the content of the NOTICE file.
-//
-// You may obtain a copy of the Apache License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the Apache License with the above modification is
-// distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied. See the Apache License for the specific
-// language governing permissions and limitations under the Apache License.
-
-// Index base class.  Used to index various tables.  Deriving adds some
-// type-safety so we don't accidentally use one kind of index with the wrong
-// kind of table.
-struct Index {
-  Index() : value(~0u) {}
-  explicit Index(uint32_t v) : value(v) {}
-  bool operator==(const Index &other) const { return value == other.value; }
-  bool operator!=(const Index &other) const { return !(*this == other); }
-  bool operator<(const Index &other) const { return value < other.value; }
-  uint32_t value;
-};
-
-// Value in file representation.  Consists of a 2 bytes of type information
-// (type enum value, array bit, and inlined-value bit) and 6 bytes of data.
-// If possible, we attempt to store certain values directly in the local
-// data, such as ints, floats, enums, and special-case values of other types
-// (zero vectors, identity matrices, etc).  For values that aren't stored
-// inline, the 6 data bytes are the offset from the start of the file to the
-// value's location.
-struct ValueRep {
-  friend class CrateFile;
-
-  ValueRep() = default;
-
-  explicit constexpr ValueRep(uint64_t d) : data(d) {}
-
-  constexpr ValueRep(int32_t t, bool isInlined, bool isArray, uint64_t payload)
-      : data(Combine(t, isInlined, isArray, payload)) {}
-
-  static const uint64_t IsArrayBit_ = 1ull << 63;
-  static const uint64_t IsInlinedBit_ = 1ull << 62;
-  static const uint64_t IsCompressedBit_ = 1ull << 61;
-
-  static const uint64_t PayloadMask_ = ((1ull << 48) - 1);
-
-  inline bool IsArray() const { return data & IsArrayBit_; }
-  inline void SetIsArray() { data |= IsArrayBit_; }
-
-  inline bool IsInlined() const { return data & IsInlinedBit_; }
-  inline void SetIsInlined() { data |= IsInlinedBit_; }
-
-  inline bool IsCompressed() const { return data & IsCompressedBit_; }
-  inline void SetIsCompressed() { data |= IsCompressedBit_; }
-
-  inline int32_t GetType() const {
-    return static_cast<int32_t>((data >> 48) & 0xFF);
-  }
-  inline void SetType(int32_t t) {
-    data &= ~(0xFFull << 48);                  // clear type byte in data.
-    data |= (static_cast<uint64_t>(t) << 48);  // set it.
-  }
-
-  inline uint64_t GetPayload() const { return data & PayloadMask_; }
-
-  inline void SetPayload(uint64_t payload) {
-    data &= ~PayloadMask_;  // clear existing payload.
-    data |= payload & PayloadMask_;
-  }
-
-  inline uint64_t GetData() const { return data; }
-
-  bool operator==(ValueRep other) const { return data == other.data; }
-  bool operator!=(ValueRep other) const { return !(*this == other); }
-
-  // friend inline size_t hash_value(ValueRep v) {
-  //  return static_cast<size_t>(v.data);
-  //}
-
-  std::string GetStringRepr() const {
-    std::stringstream ss;
-    ss << "ty: " << static_cast<int>(GetType()) << ", isArray: " << IsArray()
-       << ", isInlined: " << IsInlined() << ", isCompressed: " << IsCompressed()
-       << ", payload: " << GetPayload();
-
-    return ss.str();
-  }
-
- private:
-  static constexpr uint64_t Combine(int32_t t, bool isInlined, bool isArray,
-                                     uint64_t payload) {
-    return (isArray ? IsArrayBit_ : 0) | (isInlined ? IsInlinedBit_ : 0) |
-           (static_cast<uint64_t>(t) << 48) | (payload & PayloadMask_);
-  }
-
-  uint64_t data;
-};
-
-// ----------------------------------------------------------------------------
-
-struct Field {
-  Index token_index;
-  ValueRep value_rep;
-};
-
-//
-// Spec describes the relation of a path(i.e. node) and field(e.g. vertex data)
-//
-struct Spec {
-  Index path_index;
-  Index fieldset_index;
-  SpecType spec_type;
-};
-
-struct Section {
-  Section() { memset(this, 0, sizeof(*this)); }
-  Section(char const *name, int64_t start, int64_t size);
-  char name[kSectionNameMaxLength + 1];
-  int64_t start, size;  // byte offset to section info and its data size
-};
-
-//
-// TOC = list of sections.
-//
-struct TableOfContents {
-  // Section const *GetSection(SectionName) const;
-  // int64_t GetMinimumSectionStart() const;
-  std::vector<Section> sections;
-};
-
-class Parser {
- public:
-  Parser(StreamReader *sr, int num_threads) : _sr(sr) {
-    if (num_threads == -1) {
-#if defined(__wasi__)
-      num_threads = 1;
-#else
-      num_threads = std::max(1, int(std::thread::hardware_concurrency()));
-#endif
-    }
-
-    // Limit to 1024 threads.
-    _num_threads = std::min(1024, num_threads);
-  }
-
-  bool ReadBootStrap();
-  bool ReadTOC();
-
-  // Read known sections
-  bool ReadPaths();
-  bool ReadTokens();
-  bool ReadStrings();
-  bool ReadFields();
-  bool ReadFieldSets();
-  bool ReadSpecs();
-
-  ///
-  /// Read TOC section
-  ///
-  bool ReadSection(Section *s);
-
-  const std::string GetToken(Index token_index) {
-    if (token_index.value <= _tokens.size()) {
-      return _tokens[token_index.value];
-    } else {
-      _err += "Token index out of range: " + std::to_string(token_index.value) +
-              "\n";
-      return std::string();
-    }
-  }
-
-  const std::string GetToken(Index token_index) const {
-    if (token_index.value <= _tokens.size()) {
-      return _tokens[token_index.value];
-    } else {
-      return std::string();
-    }
-  }
-
-  // Get string from string index.
-  std::string GetString(Index string_index) {
-    if (string_index.value <= _string_indices.size()) {
-      Index s_idx = _string_indices[string_index.value];
-      return GetToken(s_idx);
-    } else {
-      _err +=
-          "String index out of range: " + std::to_string(string_index.value) +
-          "\n";
-      return std::string();
-    }
-  }
-
-  bool HasField(const std::string &key) const {
-    // Simple linear search
-    for (const auto &field : _fields) {
-      const std::string field_name = GetToken(field.token_index);
-      if (field_name.compare(key) == 0) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool GetField(Index index, Field &&field) const {
-    if (index.value <= _fields.size()) {
-      field = _fields[index.value];
-      return true;
-    } else {
-      return false;
-    }
-  }
-
-  std::string GetFieldString(Index index) {
-    if (index.value <= _fields.size()) {
-      // ok
-    } else {
-      return "#INVALID field index#";
-    }
-
-    const Field &f = _fields[index.value];
-
-    std::string s = GetToken(f.token_index) + ":" + f.value_rep.GetStringRepr();
-
-    return s;
-  }
-
-  Path GetPath(Index index) {
-    if (index.value <= _paths.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index?");
-      return Path();
-    }
-
-    const Path &p = _paths[index.value];
-
-    return p;
-  }
-
-  std::string GetPathString(Index index) {
-    if (index.value <= _paths.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index");
-      return "#INVALID path index#";
-    }
-
-    const Path &p = _paths[index.value];
-
-    return p.full_path_name();
-  }
-
-  std::string GetSpecString(Index index) {
-    if (index.value <= _specs.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index");
-      return "#INVALID spec index#";
-    }
-
-    const Spec &spec = _specs[index.value];
-
-    std::string path_str = GetPathString(spec.path_index);
-    std::string specty_str = to_string(spec.spec_type);
-
-    return "[Spec] path: " + path_str +
-           ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
-           ", spec_type: " + specty_str;
-  }
-
-  ///
-  /// Methods for reconstructing `Scene` object
-  ///
-
-  // In-memory storage for a single "spec" -- prim, property, etc.
-  typedef std::pair<std::string, Value> FieldValuePair;
-  typedef std::vector<FieldValuePair> FieldValuePairVector;
-
-  // `_live_fieldsets` contains unpacked value keyed by fieldset index.
-  // Used for reconstructing Scene object
-  // TODO(syoyo): Use unordered_map(need hash function)
-  std::map<Index, FieldValuePairVector>
-      _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
-
-  bool BuildLiveFieldSets();
-
-  ///
-  /// Parse node's attribute from FieldValuePairVector.
-  ///
-  bool ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
-                       const std::string &prop_name);
-
-  bool ReconstructXform(const Node &node,
-                         const FieldValuePairVector &fields,
-                         const std::unordered_map<uint32_t, uint32_t>
-                             &path_index_to_spec_index_map,
-                         Xform *xform);
-
-  bool ReconstructGeomSubset(const Node &node,
-                            const FieldValuePairVector &fields,
-                            const std::unordered_map<uint32_t, uint32_t>
-                                &path_index_to_spec_index_map,
-                            GeomSubset *mesh);
-
-  bool ReconstructGeomMesh(const Node &node,
-                            const FieldValuePairVector &fields,
-                            const std::unordered_map<uint32_t, uint32_t>
-                                &path_index_to_spec_index_map,
-                            GeomMesh *mesh);
-
-  bool ReconstructGeomBasisCurves(const Node &node,
-                            const FieldValuePairVector &fields,
-                            const std::unordered_map<uint32_t, uint32_t>
-                                &path_index_to_spec_index_map,
-                            GeomBasisCurves *curves);
-
-  bool ReconstructMaterial(const Node &node,
-                            const FieldValuePairVector &fields,
-                            const std::unordered_map<uint32_t, uint32_t>
-                                &path_index_to_spec_index_map,
-                            Material *material);
-
-  bool ReconstructShader(const Node &node, const FieldValuePairVector &fields,
-                          const std::unordered_map<uint32_t, uint32_t>
-                              &path_index_to_spec_index_map,
-                          Shader *shader);
-
-  bool ReconstructPreviewSurface(const Node &node, const FieldValuePairVector &fields,
-                         const std::unordered_map<uint32_t, uint32_t>
-                             &path_index_to_spec_index_map,
-                         PreviewSurface *surface);
-
-  bool ReconstructUVTexture(const Node &node, const FieldValuePairVector &fields,
-                         const std::unordered_map<uint32_t, uint32_t>
-                             &path_index_to_spec_index_map,
-                         UVTexture *uvtex);
-
-  bool ReconstructPrimvarReader_float2(const Node &node,
-                            const FieldValuePairVector &fields,
-                            const std::unordered_map<uint32_t, uint32_t>
-                                &path_index_to_spec_index_map,
-                            PrimvarReader_float2 *preader);
-
-  bool ReconstructSceneRecursively(int parent_id, int level,
-                                    const std::unordered_map<uint32_t, uint32_t>
-                                        &path_index_to_spec_index_map,
-                                    Scene *scene);
-
-  bool ReconstructScene(Scene *scene);
-
-  ///
-  /// --------------------------------------------------
-  ///
-
-  std::string GetError() { return _err; }
-
-  std::string GetWarning() { return _warn; }
-
-  // Approximated memory usage in [mb]
-  size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
-
-  //
-  // APIs valid after successfull Parse()
-  //
-
-  size_t NumPaths() const { return _paths.size(); }
-
- private:
-  bool ReadCompressedPaths(const uint64_t ref_num_paths);
-
-  const StreamReader *_sr = nullptr;
-  std::string _err;
-  std::string _warn;
-
-  int _num_threads{1};
-
-  // Tracks the memory used(In advisorily manner since counting memory usage is
-  // done by manually, so not all memory consumption could be tracked)
-  size_t memory_used{0};  // in bytes.
-
-  // Header(bootstrap)
-  uint8_t _version[3] = {0, 0, 0};
-
-  TableOfContents _toc;
-
-  int64_t _toc_offset{0};
-
-  // index to _toc.sections
-  int64_t _tokens_index{-1};
-  int64_t _paths_index{-1};
-  int64_t _strings_index{-1};
-  int64_t _fields_index{-1};
-  int64_t _fieldsets_index{-1};
-  int64_t _specs_index{-1};
-
-  std::vector<std::string> _tokens;
-  std::vector<Index> _string_indices;
-  std::vector<Field> _fields;
-  std::vector<Index> _fieldset_indices;
-  std::vector<Spec> _specs;
-  std::vector<Path> _paths;
-
-  std::vector<Node> _nodes;  // [0] = root node
-
-  bool BuildDecompressedPathsImpl(
-      std::vector<uint32_t> const &pathIndexes,
-      std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
-
-  bool UnpackValueRep(const ValueRep &rep, Value *value);
-
-  //
-  // Construct node hierarchy.
-  //
-  bool BuildNodeHierarchy(std::vector<uint32_t> const &pathIndexes,
-                           std::vector<int32_t> const &elementTokenIndexes,
-                           std::vector<int32_t> const &jumps, size_t curIndex,
-                           int64_t parentNodeIndex);
-
-  //
-  // Reader util functions
-  //
-  bool ReadIndex(Index *i);
-
-  // bool ReadToken(std::string *s);
-  bool ReadString(std::string *s);
-
-  bool ReadValueRep(ValueRep *rep);
-
-  bool ReadPathArray(std::vector<Path> *d);
-
-  // Dictionary
-  bool ReadDictionary(Value::Dictionary *d);
-
-  bool ReadTimeSamples(TimeSamples *d);
-
-  // integral array
-  template <typename T>
-  bool ReadIntArray(bool is_compressed, std::vector<T> *d);
-
-  bool ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d);
-  bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
-  bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
-
-  // PathListOp
-  bool ReadPathListOp(ListOp<Path> *d);
-  bool ReadTokenListOp(ListOp<std::string> *d); // TODO(syoyo): Use `Token` type
-};
-
-
-} // namespace usdc
-} // namesapce tinyusdz
