@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-// USDC(CrateFile) parser/serializer
+#pragma once
+
+#include "tinyusdz.hh"
 
 namespace tinyusdz {
 namespace usdc {
 
 } // namespace usdc
 } // namespace tinyusdz
-
-
