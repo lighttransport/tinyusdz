@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // USDC(CrateFile) format
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -13,6 +14,7 @@
 namespace tinyusdz {
 namespace crate {
 
+constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
 
 // -- from USD ----------------------------------------------------------------
