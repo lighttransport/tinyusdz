@@ -7,6 +7,8 @@
 #include "crate-format.hh"
 #include "stream-reader.hh"
 #include "pprinter.hh"
+#include "integerCoding.h"
+#include "lz4-compression.hh"
 
 
 #define PUSH_ERROR(s) { \
@@ -45,7 +47,7 @@ static inline bool ReadCompressedInts(const StreamReader *sr, Int *out,
 }
 
 static inline bool ReadIndices(const StreamReader *sr,
-                               std::vector<Index> *indices) {
+                               std::vector<crate::Index> *indices) {
   // TODO(syoyo): Error check
   uint64_t n;
   if (!sr->read8(&n)) {
@@ -57,7 +59,7 @@ static inline bool ReadIndices(const StreamReader *sr,
 #endif
 
   indices->resize(size_t(n));
-  size_t datalen = size_t(n) * sizeof(Index);
+  size_t datalen = size_t(n) * sizeof(crate::Index);
 
   if (datalen != sr->read(datalen, datalen,
                           reinterpret_cast<uint8_t *>(indices->data()))) {
@@ -67,9 +69,9 @@ static inline bool ReadIndices(const StreamReader *sr,
   return true;
 }
 
-class Parser {
+class Parser::Impl {
  public:
-  Parser(StreamReader *sr, int num_threads) : _sr(sr) {
+   Impl(StreamReader *sr, int num_threads) : _sr(sr) {
     if (num_threads == -1) {
 #if defined(__wasi__)
       num_threads = 1;
@@ -389,7 +391,7 @@ class Parser {
 //
 // -- Impl
 //
-bool Parser::ReadIndex(crate::Index *i) {
+bool Parser::Impl::ReadIndex(crate::Index *i) {
   // string is serialized as StringIndex
   uint32_t value;
   if (!_sr->read4(&value)) {
@@ -400,9 +402,9 @@ bool Parser::ReadIndex(crate::Index *i) {
   return true;
 }
 
-bool Parser::ReadString(std::string *s) {
+bool Parser::Impl::ReadString(std::string *s) {
   // string is serialized as StringIndex
-  Index string_index;
+  crate::Index string_index;
   if (!ReadIndex(&string_index)) {
     _err += "Failed to read Index for string data.\n";
     return false;
@@ -413,7 +415,7 @@ bool Parser::ReadString(std::string *s) {
   return true;
 }
 
-bool Parser::ReadValueRep(ValueRep *rep) {
+bool Parser::Impl::ReadValueRep(crate::ValueRep *rep) {
   if (!_sr->read8(reinterpret_cast<uint64_t *>(rep))) {
     _err += "Failed to read ValueRep.\n";
     return false;
@@ -427,7 +429,7 @@ bool Parser::ReadValueRep(ValueRep *rep) {
 }
 
 template <typename T>
-bool Parser::ReadIntArray(bool is_compressed, std::vector<T> *d) {
+bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -485,7 +487,7 @@ bool Parser::ReadIntArray(bool is_compressed, std::vector<T> *d) {
 
     d->resize(length);
 
-    if (length < kMinCompressedArraySize) {
+    if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(T) * length;
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
@@ -500,7 +502,7 @@ bool Parser::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   }
 }
 
-bool Parser::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
+bool Parser::Impl::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -562,7 +564,7 @@ bool Parser::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
 
   d->resize(length);
 
-  if (length < kMinCompressedArraySize) {
+  if (length < crate::kMinCompressedArraySize) {
     size_t sz = sizeof(uint16_t) * length;
     // Not stored in compressed.
     // reader.ReadContiguous(odata, osize);
@@ -625,7 +627,7 @@ bool Parser::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
   return true;
 }
 
-bool Parser::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
+bool Parser::Impl::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -687,7 +689,7 @@ bool Parser::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
   d->resize(length);
 
-  if (length < kMinCompressedArraySize) {
+  if (length < crate::kMinCompressedArraySize) {
     size_t sz = sizeof(float) * length;
     // Not stored in compressed.
     // reader.ReadContiguous(odata, osize);
@@ -746,7 +748,7 @@ bool Parser::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   return true;
 }
 
-bool Parser::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
+bool Parser::Impl::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -808,7 +810,7 @@ bool Parser::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
   d->resize(length);
 
-  if (length < kMinCompressedArraySize) {
+  if (length < crate::kMinCompressedArraySize) {
     size_t sz = sizeof(double) * length;
     // Not stored in compressed.
     // reader.ReadContiguous(odata, osize);
@@ -867,7 +869,7 @@ bool Parser::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   return true;
 }
 
-bool Parser::ReadTimeSamples(TimeSamples *d) {
+bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
   (void)d;
 
   // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
@@ -898,7 +900,7 @@ bool Parser::ReadTimeSamples(TimeSamples *d) {
 
   // TODO(syoyo): Deduplicate times?
 
-  ValueRep rep{0};
+  crate::ValueRep rep{0};
   if (!ReadValueRep(&rep)) {
     _err += "Failed to read ValueRep for TimeSample' times element.\n";
     return false;
@@ -907,7 +909,7 @@ bool Parser::ReadTimeSamples(TimeSamples *d) {
   // Save offset
   size_t values_offset = _sr->tell();
 
-  Value value;
+  crate::Value value;
   if (!UnpackValueRep(rep, &value)) {
     _err += "Failed to unpack value of TimeSample's times element.\n";
     return false;
@@ -972,7 +974,7 @@ bool Parser::ReadTimeSamples(TimeSamples *d) {
   return true;
 }
 
-bool Parser::ReadPathArray(std::vector<Path> *d) {
+bool Parser::Impl::ReadPathArray(std::vector<Path> *d) {
 
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
@@ -982,9 +984,9 @@ bool Parser::ReadPathArray(std::vector<Path> *d) {
       return false;
     }
 
-    std::vector<Index> ivalue(static_cast<size_t>(n));
+    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+    if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
       return false;
@@ -1010,7 +1012,7 @@ bool Parser::ReadPathArray(std::vector<Path> *d) {
   return true;
 }
 
-bool Parser::ReadTokenListOp(ListOp<std::string> *d) {
+bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
@@ -1033,9 +1035,9 @@ bool Parser::ReadTokenListOp(ListOp<std::string> *d) {
       return false;
     }
 
-    std::vector<Index> ivalue(static_cast<size_t>(n));
+    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+    if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
       return false;
@@ -1114,7 +1116,7 @@ bool Parser::ReadTokenListOp(ListOp<std::string> *d) {
 }
 
 
-bool Parser::ReadPathListOp(ListOp<Path> *d) {
+bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
@@ -1137,9 +1139,9 @@ bool Parser::ReadPathListOp(ListOp<Path> *d) {
       return false;
     }
 
-    std::vector<Index> ivalue(static_cast<size_t>(n));
+    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+    if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
       return false;
@@ -1217,8 +1219,8 @@ bool Parser::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
-bool Parser::ReadDictionary(Value::Dictionary *d) {
-  Value::Dictionary dict;
+bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
+  crate::Value::Dictionary dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
     _err += "Failed to read the number of elements for Dictionary data.\n";
@@ -1271,7 +1273,7 @@ bool Parser::ReadDictionary(Value::Dictionary *d) {
     std::cout << "key = " << key << "\n";
 #endif
 
-    ValueRep rep{0};
+    crate::ValueRep rep{0};
     if (!ReadValueRep(&rep)) {
       _err += "Failed to read value for Dictionary element.\n";
       return false;
@@ -1284,7 +1286,7 @@ bool Parser::ReadDictionary(Value::Dictionary *d) {
 
     size_t saved_position = _sr->tell();
 
-    Value value;
+    crate::Value value;
     if (!UnpackValueRep(rep, &value)) {
       _err += "Failed to unpack value of Dictionary element.\n";
       return false;
@@ -1303,9 +1305,9 @@ bool Parser::ReadDictionary(Value::Dictionary *d) {
   return true;
 }
 
-bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
-  ValueType ty = GetValueType(rep.GetType());
-  DCOUT(GetValueTypeRepr(rep.GetType()));
+bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *value) {
+  ValueType ty = crate::GetValueType(rep.GetType());
+  DCOUT(crate::GetValueTypeRepr(rep.GetType()));
   if (rep.IsInlined()) {
     uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
@@ -1320,7 +1322,7 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
     } else if (ty.id == VALUE_TYPE_ASSET_PATH) {
       // AssetPath = std::string(storage format is TokenIndex).
 
-      std::string str = GetToken(Index(d));
+      std::string str = GetToken(crate::Index(d));
 
       value->SetAssetPath(str);
 
@@ -1376,7 +1378,7 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       return true;
     } else if (ty.id == VALUE_TYPE_TOKEN) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      std::string str = GetToken(Index(d));
+      std::string str = GetToken(crate::Index(d));
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "value.token = " << str << "\n";
 #endif
@@ -1387,7 +1389,7 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
 
     } else if (ty.id == VALUE_TYPE_STRING) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      std::string str = GetString(Index(d));
+      std::string str = GetString(crate::Index(d));
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
       std::cout << "value.string = " << str << "\n";
 #endif
@@ -1663,8 +1665,8 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
         return false;
       }
 
-      std::vector<Index> v(static_cast<size_t>(n));
-      if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+      std::vector<crate::Index> v(static_cast<size_t>(n));
+      if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index),
                      reinterpret_cast<uint8_t *>(v.data()))) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cerr << "Failed to read TokenIndex array\n";
@@ -1697,8 +1699,8 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
         return false;
       }
 
-      std::vector<Index> v(static_cast<size_t>(n));
-      if (!_sr->read(size_t(n) * sizeof(Index), size_t(n) * sizeof(Index),
+      std::vector<crate::Index> v(static_cast<size_t>(n));
+      if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index),
                      reinterpret_cast<uint8_t *>(v.data()))) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cerr << "Failed to read TokenIndex array\n";
@@ -1906,9 +1908,9 @@ bool Parser::UnpackValueRep(const ValueRep &rep, Value *value) {
       std::cout << "n = " << n << "\n";
 #endif
 
-      std::vector<Index> indices(static_cast<size_t>(n));
-      if (!_sr->read(static_cast<size_t>(n) * sizeof(Index),
-                     static_cast<size_t>(n) * sizeof(Index),
+      std::vector<crate::Index> indices(static_cast<size_t>(n));
+      if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
+                     static_cast<size_t>(n) * sizeof(crate::Index),
                      reinterpret_cast<uint8_t *>(indices.data()))) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
         std::cerr << "Failed to read TokenVector value\n";
@@ -2391,7 +2393,7 @@ bool Parser::BuildDecompressedPathsImpl(
 }
 
 // TODO(syoyo): Refactor
-bool Parser::BuildNodeHierarchy(
+bool Parser::Impl::BuildNodeHierarchy(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex,
@@ -2466,7 +2468,7 @@ bool Parser::BuildNodeHierarchy(
   return true;
 }
 
-bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
+bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
   std::vector<uint32_t> pathIndexes;
   std::vector<int32_t> elementTokenIndexes;
   std::vector<int32_t> jumps;
@@ -2615,7 +2617,7 @@ bool Parser::ReadCompressedPaths(const uint64_t ref_num_paths) {
   return true;
 }
 
-bool Parser::ReadSection(Section *s) {
+bool Parser::Impl::ReadSection(Section *s) {
   size_t name_len = kSectionNameMaxLength + 1;
 
   if (name_len !=
@@ -2637,7 +2639,7 @@ bool Parser::ReadSection(Section *s) {
   return true;
 }
 
-bool Parser::ReadTokens() {
+bool Parser::Impl::ReadTokens() {
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `TOKENS` section.\n";
     return false;
@@ -2758,7 +2760,7 @@ bool Parser::ReadTokens() {
   return true;
 }
 
-bool Parser::ReadStrings() {
+bool Parser::Impl::ReadStrings() {
   if ((_strings_index < 0) ||
       (_strings_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `STRINGS` section.\n";
@@ -2787,7 +2789,7 @@ bool Parser::ReadStrings() {
   return true;
 }
 
-bool Parser::ReadFields() {
+bool Parser::Impl::ReadFields() {
   if ((_fields_index < 0) || (_fields_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDS` section.\n";
     return false;
@@ -2904,7 +2906,7 @@ bool Parser::ReadFields() {
   return true;
 }
 
-bool Parser::ReadFieldSets() {
+bool Parser::Impl::ReadFieldSets() {
   if ((_fieldsets_index < 0) ||
       (_fieldsets_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDSETS` section.\n";
@@ -4764,7 +4766,7 @@ bool Parser::ReconstructScene(Scene *scene) {
   return true;
 }
 
-bool Parser::ReadSpecs() {
+bool Parser::Impl::ReadSpecs() {
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `SPECS` section.\n";
     return false;
@@ -4919,7 +4921,7 @@ bool Parser::ReadSpecs() {
   return true;
 }
 
-bool Parser::ReadPaths() {
+bool Parser::Impl::ReadPaths() {
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `PATHS` section.\n";
     return false;
@@ -4961,7 +4963,7 @@ bool Parser::ReadPaths() {
   return true;
 }
 
-bool Parser::ReadBootStrap() {
+bool Parser::Impl::ReadBootStrap() {
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
@@ -5027,7 +5029,7 @@ bool Parser::ReadBootStrap() {
   return true;
 }
 
-bool Parser::ReadTOC() {
+bool Parser::Impl::ReadTOC() {
   if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
     _err += "Invalid toc offset\n";
     return false;
@@ -5084,6 +5086,17 @@ bool Parser::ReadTOC() {
   }
 
   return true;
+}
+
+//
+// -- Interface --
+//
+Parser::Parser(StreamReader *sr, int num_threads) {
+  impl_ = new Parser::Impl(sr, num_threads); 
+}
+
+bool Parser::ReadTOC() {
+  return impl_->ReadTOC();
 }
 
 } // namespace usdc
