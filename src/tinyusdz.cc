@@ -123,6 +123,7 @@ namespace tinyusdz {
 
 namespace {
 
+#if 0
 ///
 /// Represent value(TODO: Use PrimVar).
 /// array is up to 1D array.
@@ -743,6 +744,7 @@ class Value {
 
 constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
+#endif
 
 // Decode image(png, jpg, ...)
 static bool DecodeImage(const uint8_t *bytes, const size_t size,
@@ -1049,6 +1051,7 @@ class Node {
   NodeType _node_type;
 };
 
+#if 0
 // -- from USD ----------------------------------------------------------------
 
 //
@@ -1192,7 +1195,9 @@ struct TableOfContents {
   // int64_t GetMinimumSectionStart() const;
   std::vector<Section> sections;
 };
+#endif
 
+#if 0
 template <class Int>
 static inline bool ReadCompressedInts(const StreamReader *sr, Int *out,
                                        size_t size) {
@@ -1240,7 +1245,9 @@ static inline bool ReadIndices(const StreamReader *sr,
 
   return true;
 }
+#endif
 
+#if 0
 class Parser {
  public:
   Parser(StreamReader *sr, int num_threads) : _sr(sr) {
@@ -1569,7 +1576,9 @@ class Parser {
   bool ReadPathListOp(ListOp<Path> *d);
   bool ReadTokenListOp(ListOp<std::string> *d); // TODO(syoyo): Use `Token` type
 };
+#endif
 
+#if 0
 bool Parser::ReadIndex(Index *i) {
   // string is serialized as StringIndex
   uint32_t value;
@@ -1580,6 +1589,7 @@ bool Parser::ReadIndex(Index *i) {
   (*i) = Index(value);
   return true;
 }
+#endif
 
 /* Currently unused
 bool Parser::ReadToken(std::string *s) {
@@ -1595,6 +1605,7 @@ bool Parser::ReadToken(std::string *s) {
 }
 */
 
+#if 0
 bool Parser::ReadString(std::string *s) {
   // string is serialized as StringIndex
   Index string_index;
@@ -6280,6 +6291,7 @@ bool Parser::ReadTOC() {
 
   return true;
 }
+#endif
 
 }  // namespace
 
