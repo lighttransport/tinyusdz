@@ -878,8 +878,9 @@ bool is_double2(const Value &v);
 bool is_double3(const Value &v);
 bool is_double4(const Value &v);
 
-// TODO: Move to pprinter.hh
 
+#if 0 
+// TODO: Move to pprinter.hh
 std::ostream &operator<<(std::ostream &os, const int2 &v);
 std::ostream &operator<<(std::ostream &os, const int3 &v);
 std::ostream &operator<<(std::ostream &os, const int4 &v);
@@ -936,6 +937,7 @@ std::ostream &operator<<(std::ostream &os, const matrix2d &v);
 std::ostream &operator<<(std::ostream &os, const matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const matrix4d &v);
 
+#if 0
 // Simple is_vector
 template <typename>
 struct is_vector : std::false_type {};
@@ -956,6 +958,7 @@ std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
   os << "]";
   return os;
 }
+#endif
 
 template <typename T>
 std::ostream &operator<<(std::ostream &os,
@@ -976,6 +979,7 @@ std::ostream &operator<<(std::ostream &os,
 }
 
 std::ostream &operator<<(std::ostream &os, const any_value &v);
+#endif
 
 
 //

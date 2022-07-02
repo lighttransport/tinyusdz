@@ -55,6 +55,7 @@
 #include "usdObj.hh"
 #include "usda-parser.hh"
 #include "primvar.hh"
+#include "primvar-pprint.hh"
 
 // s = std::string
 #define PUSH_ERROR(s)                                              \
@@ -70,6 +71,15 @@
     std::cout << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
   } while (0);                                                            \
   std::cout
+
+#define LOG_DEBUG(s)                                                     \
+  do {                                                                  \
+    std::ostringstream ss;                                              \
+    ss << "[debug] " << __FILE__ << ":" << __func__ << "():" << __LINE__ \
+       << " ";                                                          \
+    ss << s;                                                            \
+    std::cout << ss.str() << "\n";                                      \
+  } while (0)
 
 #define LOG_INFO(s)                                                     \
   do {                                                                  \
@@ -2212,7 +2222,7 @@ class USDAParser::Impl {
       }
 
       if (value) {
-        std::cout << "ParseBasicPrimAttr: " << primvar::TypeTrait<T>::type_name() << " = " << (*value) << "\n";
+        LOG_DEBUG("ParseBasicPrimAttr: " << primvar::TypeTrait<T>::type_name() << " = " << (*value));
 
         // TODO: TimeSampled
         primvar::TimeSample ts;

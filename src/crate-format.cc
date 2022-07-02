@@ -4,30 +4,8 @@
 #endif
 
 #include "crate-format.hh"
-
-//#include "integerCoding.h"
-//#include "primvar.hh"
-//#include "tinyusdz.hh"
-//#include "pprinter.hh"
-//
-//#include "lz4-compression.hh"
-//#include "stream-reader.hh"
-
-//#define PUSH_ERROR(s) { \
-//  std::ostringstream ss; \
-//  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-//  ss << s; \
-//  _err += ss.str() + "\n"; \
-//} while (0)
-
-#if 0
-#define PUSH_WARN(s) { \
-  std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  _warn += ss.str() + "\n"; \
-} while (0)
-#endif
+#include "pprinter.hh"
+//#include "primvar-pprint.hh"
 
 namespace tinyusdz {
 namespace crate {
@@ -156,6 +134,14 @@ const ValueType &GetValueType(int32_t type_id) {
 #endif
 
 
+std::string GetValueTypeString(int32_t type_id) {
+  ValueType dty = GetValueType(type_id);
+
+  std::stringstream ss;
+  ss << "ValueType: " << dty.name << "(" << dty.id
+     << "), supports_array = " << dty.supports_array;
+  return ss.str();
+}
 
 
 } // namespace crate
