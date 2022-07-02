@@ -564,6 +564,15 @@ class Value {
     memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Quatd));
   }
 
+  void SetMatrix4dArray(const Matrix4d *d, const size_t n) {
+
+    dtype.name = "Matrix4dArray";
+    dtype.id = VALUE_TYPE_MATRIX4D;
+    array_length = int64_t(n);
+    data.resize(n * sizeof(Matrix4d));
+    memcpy(data.data(), reinterpret_cast<const void *>(d), n * sizeof(Matrix4d));
+  }
+
   void SetTokenArray(const std::vector<std::string> &d) {
     dtype.name = "TokenArray";
     dtype.id = VALUE_TYPE_TOKEN_VECTOR;
@@ -771,6 +780,7 @@ class Value {
 };
 
 const ValueType &GetValueType(int32_t type_id);
+std::string GetValueTypeString(int32_t type_id);
 
 } // namespace crate
 } // namespace tinyusdz

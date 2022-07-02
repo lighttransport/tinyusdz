@@ -18,7 +18,8 @@ option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples area built in `examples` folder)"
        ON)
 
-option(TINYUSDZ_CXX_EXCEPTIONS "Enable/Disable C++ exceptions(default: Off)" OFF)
+option(TINYUSDZ_CXX_EXCEPTIONS "Enable/Disable C++ exceptions(default: Off)"
+       OFF)
 
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
@@ -45,6 +46,9 @@ option(
 
 option(TINYUSDZ_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
+
+option(TINYUSDZ_PRODUCTION_BUILD
+       "Build for production release(e.g. disables debug print, do not include full filepath in error messages)" OFF)
 
 # -- TIFF --
 option(TINYUSDZ_WITH_TIFF "Build with TIFF texture support" OFF)
@@ -138,12 +142,11 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
+    ${PROJECT_SOURCE_DIR}/src/primvar-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
-
     # usdMtlX has less dependency(tinyxml2), so add it to core component
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
-
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc)
 
@@ -373,14 +376,19 @@ endif()
 # -- common target props
 #
 foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
+
+  if(TINYUSDZ_PRODUCTION_BUILD)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+  endif()
+
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
 
   target_include_directories(
-    ${TINYUSDZ_LIB_TARGET}
-    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+    ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
 
   #if(TINYUSDZ_WITH_JSON)
   #  target_include_directories(
@@ -427,14 +435,13 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
-  if (NOT TINYUSDZ_CXX_EXCEPTIONS)
-    if (MSVC)
+  if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
       target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
     else()
       target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE -fno-exceptions)
     endif()
   endif()
-
 
 endforeach()
 
@@ -491,7 +498,6 @@ if(TINYUSDZ_WITH_BLENDER_ADDON)
     PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
 
 endif()
-
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_usdz_dump)

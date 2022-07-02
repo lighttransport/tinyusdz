@@ -1,4 +1,6 @@
 #include "primvar.hh"
+#include "pprinter.hh"
+#include "primvar-pprint.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -12,17 +14,15 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
-namespace primvar {
+#if 0
+namespace std {
 
-base_value::~base_value() {}
-
-std::ostream &operator<<(std::ostream &os, const token &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::token &v) {
   os << "\"" << v.str() << "\"";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const TimeSample &ts) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::TimeSample &ts) {
   os << "{";
   for (size_t i = 0; i < ts.times.size(); i++) {
     os << ts.times[i] << ": " << ts.values[i];
@@ -36,7 +36,7 @@ std::ostream &operator<<(std::ostream &os, const TimeSample &ts) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const dict &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::dict &v) {
   for (auto const &item : v) {
     static uint32_t cnt = 0;
     os << item.first << ":" << item.second;
@@ -50,6 +50,17 @@ std::ostream &operator<<(std::ostream &os, const dict &v) {
 
   return os;
 }
+
+
+
+} // namespace std
+#endif
+
+namespace tinyusdz {
+namespace primvar {
+
+base_value::~base_value() {}
+
 
 std::ostream &operator<<(std::ostream &os, const any_value &v) {
   // Simple brute-force way..
@@ -234,6 +245,7 @@ bool is_double4(const Value &v) {
   return false;
 }
 
+#if 0
 std::ostream &operator<<(std::ostream &os, const matrix2d &v) {
   os << "(";
   os << "(" << v.m[0][0] << ", " << v.m[0][1] << "), ";
@@ -427,6 +439,7 @@ std::ostream &operator<<(std::ostream &os, const texcoord2f &v) {
   os << "(" << v.s << ", " << v.t << ")";
   return os;
 }
+#endif
 
 bool Reconstructor::reconstruct(AttribMap &amap) {
   err_.clear();

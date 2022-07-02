@@ -50,6 +50,7 @@ class ListOp {
     is_explicit = true;
   }
 
+  bool IsExplicit() const { return is_explicit; }
   bool HasExplicitItems() const { return explicit_items.size(); }
 
   bool HasAddedItems() const { return added_items.size(); }
@@ -86,16 +87,6 @@ class ListOp {
 
   void SetOrderedItems(const std::vector<T> &v) { ordered_items = v; }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  void Print() const {
-    std::cout << "is_explicit:" << is_explicit << "\n";
-    std::cout << "# of explicit_items" << explicit_items.size() << "\n";
-    std::cout << "# of added_items" << added_items.size() << "\n";
-    std::cout << "# of prepended_items" << prepended_items.size() << "\n";
-    std::cout << "# of deleted_items" << deleted_items.size() << "\n";
-    std::cout << "# of ordered_items" << ordered_items.size() << "\n";
-  }
-#endif
 
  private:
   bool is_explicit{false};
