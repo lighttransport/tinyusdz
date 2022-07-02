@@ -1,3 +1,5 @@
+#include <unordered_map>
+#include <unordered_set>
 #if defined(__wasi__)
 #else
 #include <thread>
@@ -11,12 +13,46 @@
 #include "lz4-compression.hh"
 
 
+#ifdef TINYUSDZ_PRODUCTION_BUILD
+// Do not include full filepath for privacy.
+#define PUSH_ERROR(s) { \
+  std::ostringstream ss; \
+  ss << "[usdc-parser] " << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  _err += ss.str() + "\n"; \
+} while (0)
+
+#define PUSH_WARN(s) { \
+  std::ostringstream ss; \
+  ss << "[usdc-parser] " << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  _warn += ss.str() + "\n"; \
+} while (0)
+#else
 #define PUSH_ERROR(s) { \
   std::ostringstream ss; \
   ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
   ss << s; \
   _err += ss.str() + "\n"; \
 } while (0)
+
+#define PUSH_WARN(s) { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  _warn += ss.str() + "\n"; \
+} while (0)
+#endif
+
+#ifndef TINYUSDZ_PRODUCTION_BUILD
+#define TINYUSDZ_LOCAL_DEBUG_PRINT
+#endif
+
+#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
+#else
+#define DCOUT(x) do { (void)(x); } while(false)
+#endif
 
 namespace tinyusdz {
 namespace usdc {
@@ -54,9 +90,7 @@ static inline bool ReadIndices(const StreamReader *sr,
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "ReadIndices: n = " << n << "\n";
-#endif
+  DCOUT("ReadIndices: n = " << n);
 
   indices->resize(size_t(n));
   size_t datalen = size_t(n) * sizeof(crate::Index);
@@ -69,7 +103,69 @@ static inline bool ReadIndices(const StreamReader *sr,
   return true;
 }
 
+///
+/// Intermediate Node data structure.
+/// This does not contain leaf node inormation.
+///
+class Node {
+ public:
+  // -2 = initialize as invalid node
+  Node() : _parent(-2) {}
+
+  Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
+
+  int64_t GetParent() const { return _parent; }
+
+  const std::vector<size_t> &GetChildren() const { return _children; }
+
+  ///
+  /// child_name is used when reconstructing scene graph.
+  ///
+  void AddChildren(const std::string &child_name, size_t node_index) {
+    assert(_primChildren.count(child_name) == 0);
+    _primChildren.emplace(child_name);
+    _children.push_back(node_index);
+  }
+
+  ///
+  /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
+  /// this node is `bora`)
+  ///
+  // std::string GetFullPath() const { return _path.full_path_name(); }
+
+  ///
+  /// Get local path
+  ///
+  std::string GetLocalPath() const { return _path.full_path_name(); }
+
+  const Path &GetPath() const { return _path; }
+
+  NodeType GetNodeType() const { return _node_type; }
+
+  const std::unordered_set<std::string> &GetPrimChildren() const {
+    return _primChildren;
+  }
+
+  void SetAssetInfo(const primvar::dict &dict) {
+    _assetInfo = dict;
+  }
+
+  const primvar::dict &GetAssetInfo() const { return _assetInfo; }
+
+ private:
+  int64_t
+      _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
+  std::vector<size_t> _children;                  // index to child nodes.
+  std::unordered_set<std::string> _primChildren;  // List of name of child nodes
+
+  Path _path;  // local path
+  primvar::dict _assetInfo;
+
+  NodeType _node_type;
+};
+
 class Parser::Impl {
+
  public:
    Impl(StreamReader *sr, int num_threads) : _sr(sr) {
     if (num_threads == -1) {
@@ -282,6 +378,16 @@ class Parser::Impl {
                                 &path_index_to_spec_index_map,
                             PrimvarReader_float2 *preader);
 
+  bool ReconstructSkelRoot(const Node &node, const FieldValuePairVector &fields,
+                          const std::unordered_map<uint32_t, uint32_t>
+                              &path_index_to_spec_index_map,
+                          SkelRoot *skelRoot);
+
+  bool ReconstructSkeleton(const Node &node, const FieldValuePairVector &fields,
+                          const std::unordered_map<uint32_t, uint32_t>
+                              &path_index_to_spec_index_map,
+                          Skeleton *skeleton);
+
   bool ReconstructSceneRecursively(int parent_id, int level,
                                     const std::unordered_map<uint32_t, uint32_t>
                                         &path_index_to_spec_index_map,
@@ -349,6 +455,9 @@ class Parser::Impl {
       std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
 
   bool UnpackValueRep(const crate::ValueRep &rep, crate::Value *value);
+
+  bool UnpackInlinedValueRep(const crate::ValueRep &rep, crate::Value *value);
+
 
   //
   // Construct node hierarchy.
@@ -421,9 +530,7 @@ bool Parser::Impl::ReadValueRep(crate::ValueRep *rep) {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "value = " << rep->GetData() << "\n";
-#endif
+  DCOUT("value = " << rep->GetData());
 
   return true;
 }
@@ -436,14 +543,14 @@ bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
     if ((_version[0] == 0) && ((_version[1] < 7))) {
       uint32_t n;
       if (!_sr->read4(&n)) {
-        _err += "Failed to read the number of array elements.\n";
+        //PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
       length = size_t(n);
     } else {
       uint64_t n;
       if (!_sr->read8(&n)) {
-        _err += "Failed to read the number of array elements.\n";
+        //_err += "Failed to read the number of array elements.\n";
         return false;
       }
 
@@ -455,7 +562,7 @@ bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
     // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
-      _err += "Failed to read integer array data.\n";
+      //_err += "Failed to read integer array data.\n";
       return false;
     }
 
@@ -467,23 +574,21 @@ bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
     if ((_version[0] == 0) && ((_version[1] < 7))) {
       uint32_t n;
       if (!_sr->read4(&n)) {
-        _err += "Failed to read the number of array elements.\n";
+        //_err += "Failed to read the number of array elements.\n";
         return false;
       }
       length = size_t(n);
     } else {
       uint64_t n;
       if (!_sr->read8(&n)) {
-        _err += "Failed to read the number of array elements.\n";
+        //_err += "Failed to read the number of array elements.\n";
         return false;
       }
 
       length = size_t(n);
     }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "array.len = " << length << "\n";
-#endif
+    DCOUT("array.len = " << length);
 
     d->resize(length);
 
@@ -492,7 +597,7 @@ bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
       if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-        _err += "Failed to read uncompressed array data.\n";
+        PUSH_ERROR("Failed to read uncompressed array data.");
         return false;
       }
       return true;
@@ -558,9 +663,7 @@ bool Parser::Impl::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
     length = size_t(n);
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "array.len = " << length << "\n";
-#endif
+  DCOUT("array.len = " << length);
 
   d->resize(length);
 
@@ -683,9 +786,7 @@ bool Parser::Impl::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     length = size_t(n);
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "array.len = " << length << "\n";
-#endif
+  DCOUT("array.len = " << length);
 
   d->resize(length);
 
@@ -804,9 +905,7 @@ bool Parser::Impl::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     length = size_t(n);
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "array.len = " << length << "\n";
-#endif
+  DCOUT("array.len = " << length);
 
   d->resize(length);
 
@@ -874,9 +973,7 @@ bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
 
   // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "ReadTimeSamples: offt before tell = " << _sr->tell() << "\n";
-#endif
+  DCOUT("ReadTimeSamples: offt before tell = " << _sr->tell());
 
   // 8byte for the offset for recursive value. See RecursiveRead() in
   // crateFile.cpp for details.
@@ -886,10 +983,8 @@ bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "TimeSample times value offset = " << offset << "\n";
-  std::cout << "TimeSample tell = " << _sr->tell() << "\n";
-#endif
+  DCOUT("TimeSample times value offset = " << offset);
+  DCOUT("TimeSample tell = " << _sr->tell());
 
   // -8 to compensate sizeof(offset)
   if (!_sr->seek_from_current(offset - 8)) {
@@ -916,10 +1011,8 @@ bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
   }
 
   // must be an array of double.
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "TimeSample times:" << value.GetTypeName() << "\n";
-  std::cout << "TODO: Parse TimeSample values\n";
-#endif
+  DCOUT("TimeSample times:" << value.GetTypeName());
+  DCOUT("TODO: Parse TimeSample values");
 
   //
   // Parse values for TimeSamples.
@@ -939,10 +1032,8 @@ bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "TimeSample value offset = " << offset << "\n";
-  std::cout << "TimeSample tell = " << _sr->tell() << "\n";
-#endif
+  DCOUT("TimeSample value offset = " << offset);
+  DCOUT("TimeSample tell = " << _sr->tell());
 
   // -8 to compensate sizeof(offset)
   if (!_sr->seek_from_current(offset - 8)) {
@@ -957,10 +1048,7 @@ bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "Number of values = " << num_values << "\n";
-  std::cout << "TODO: TimeSamples Implement\n";
-#endif
+  DCOUT("Number of values = " << num_values);
 
   _warn += "TODO: Decode TimeSample's values\n";
 
@@ -1021,9 +1109,6 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   }
 
   if (h.IsExplicit()) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Explicit\n";
-#endif
     d->ClearAndMakeExplicit();
   }
 
@@ -1125,9 +1210,6 @@ bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
   }
 
   if (h.IsExplicit()) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Explicit\n";
-#endif
     d->ClearAndMakeExplicit();
   }
 
@@ -1227,24 +1309,16 @@ bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "# of elements in dict " << sz << "\n";
-#endif
+  DCOUT("# o elements in dict" << sz);
 
   while (sz--) {
     // key(StringIndex)
     std::string key;
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "key before tell = " << _sr->tell() << "\n";
-#endif
+
     if (!ReadString(&key)) {
       _err += "Failed to read key string for Dictionary element.\n";
       return false;
     }
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "offt before tell = " << _sr->tell() << "\n";
-#endif
 
     // 8byte for the offset for recursive value. See RecursiveRead() in
     // crateFile.cpp for details.
@@ -1254,11 +1328,6 @@ bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
       return false;
     }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "value offset = " << offset << "\n";
-    std::cout << "tell = " << _sr->tell() << "\n";
-#endif
-
     // -8 to compensate sizeof(offset)
     if (!_sr->seek_from_current(offset - 8)) {
       _err +=
@@ -1267,11 +1336,7 @@ bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
       return false;
     }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "+offset tell = " << _sr->tell() << "\n";
-
-    std::cout << "key = " << key << "\n";
-#endif
+    DCOUT("key = " << key);
 
     crate::ValueRep rep{0};
     if (!ReadValueRep(&rep)) {
@@ -1279,10 +1344,7 @@ bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
       return false;
     }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "vrep.ty = " << rep.GetType() << "\n";
-    std::cout << "vrep = " << GetValueTypeRepr(rep.GetType()) << "\n";
-#endif
+    DCOUT("vrep =" << crate::GetValueTypeString(rep.GetType()));
 
     size_t saved_position = _sr->tell();
 
@@ -1305,10 +1367,17 @@ bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
   return true;
 }
 
-bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *value) {
+bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep, crate::Value *value) {
+
+  if (!rep.IsInlined()) {
+    PUSH_ERROR("ValueRep must be inlined value representation.");
+    return false;
+  }
+
   ValueType ty = crate::GetValueType(rep.GetType());
-  DCOUT(crate::GetValueTypeRepr(rep.GetType()));
-  if (rep.IsInlined()) {
+  DCOUT(crate::GetValueTypeString(rep.GetType()));
+
+  {
     uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
     DCOUT("d = " << d << ", ty.id = " << ty.id);
@@ -1331,10 +1400,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
     } else if (ty.id == VALUE_TYPE_SPECIFIER) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Specifier: "
-                << GetSpecifierString(static_cast<Specifier>(d)) << "\n";
-#endif
+      DCOUT("Specifier: " << to_string(static_cast<Specifier>(d)));
 
       if (d >= static_cast<int>(Specifier::Invalid)) {
         _err += "Invalid value for Specifier\n";
@@ -1347,10 +1413,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
     } else if (ty.id == VALUE_TYPE_PERMISSION) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Permission: "
-                << GetPermissionString(static_cast<Permission>(d)) << "\n";
-#endif
+      DCOUT("Permission: " << to_string(static_cast<Permission>(d)));
 
       if (d >= static_cast<int>(Permission::Invalid)) {
         _err += "Invalid value for Permission\n";
@@ -1363,10 +1426,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
     } else if (ty.id == VALUE_TYPE_VARIABILITY) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Variability: "
-                << GetVariabilityString(static_cast<Variability>(d)) << "\n";
-#endif
+      DCOUT("Variability: " << to_string(static_cast<Variability>(d)));
 
       if (d >= static_cast<int>(Variability::Invalid)) {
         _err += "Invalid value for Variability\n";
@@ -1379,9 +1439,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
     } else if (ty.id == VALUE_TYPE_TOKEN) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       std::string str = GetToken(crate::Index(d));
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.token = " << str << "\n";
-#endif
+
+      DCOUT("value.token = " << str);
 
       value->SetToken(str);
 
@@ -1390,9 +1449,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
     } else if (ty.id == VALUE_TYPE_STRING) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
       std::string str = GetString(crate::Index(d));
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.string = " << str << "\n";
-#endif
+      DCOUT("value.string = " << str);
 
       value->SetString(str);
 
@@ -1403,9 +1460,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       int ival;
       memcpy(&ival, &d, sizeof(int));
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.int = " << ival << "\n";
-#endif
+      DCOUT("value.int = " << ival);
 
       value->SetInt(ival);
 
@@ -1416,9 +1471,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       float f;
       memcpy(&f, &d, sizeof(float));
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.float = " << f << "\n";
-#endif
+      DCOUT("value.float = " << f);
 
       value->SetFloat(f);
 
@@ -1431,9 +1484,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       memcpy(&f, &d, sizeof(float));
       double v = double(f);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.double = " << v << "\n";
-#endif
+      DCOUT("value.double = " << v);
 
       value->SetDouble(v);
 
@@ -1451,10 +1502,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v[1] = static_cast<int32_t>(data[1]);
       v[2] = static_cast<int32_t>(data[2]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2]
-                << "\n";
-#endif
+      DCOUT("value.vec3i = " << v);
 
       value->SetVec3i(v);
 
@@ -1472,10 +1520,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v[2] = static_cast<int32_t>(data[2]);
       v[3] = static_cast<int32_t>(data[3]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec4i = " << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3]
-                << "\n";
-#endif
+      DCOUT("value.vec4i = " << v);
 
       value->SetVec4i(v);
 
@@ -1493,10 +1538,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v[1] = static_cast<float>(data[1]);
       v[2] = static_cast<float>(data[2]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2]
-                << "\n";
-#endif
+      DCOUT("value.vec3f = " << v);
 
       value->SetVec3f(v);
 
@@ -1514,10 +1556,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v[2] = static_cast<float>(data[2]);
       v[3] = static_cast<float>(data[3]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3f = " << v[1] << ", " << v[1] << ", " << v[2] << ", " << v[3]
-                << "\n";
-#endif
+      DCOUT("value.vec3f = " << v);
 
       value->SetVec4f(v);
 
@@ -1535,10 +1574,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v[1] = static_cast<double>(data[1]);
       v[2] = static_cast<double>(data[2]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2]
-                << "\n";
-#endif
+      DCOUT("value.vec3d = " << v);
 
       value->SetVec3d(v);
 
@@ -1556,10 +1592,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v[2] = static_cast<double>(data[2]);
       v[3] = static_cast<double>(data[3]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec4d = " << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3]
-                << "\n";
-#endif
+      DCOUT( "value.vec4d = " << v);
 
       value->SetVec4d(v);
 
@@ -1578,10 +1611,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v.m[0][0] = static_cast<double>(data[0]);
       v.m[1][1] = static_cast<double>(data[1]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
-                << "\n";
-#endif
+      DCOUT("value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
+                << "\n");
 
       value->SetMatrix2d(v);
 
@@ -1601,10 +1632,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v.m[1][1] = static_cast<double>(data[1]);
       v.m[2][2] = static_cast<double>(data[2]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
-                << ", " << v.m[2][2] << "\n";
-#endif
+      DCOUT("value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
+                << ", " << v.m[2][2]);
 
       value->SetMatrix3d(v);
 
@@ -1625,28 +1654,36 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       v.m[2][2] = static_cast<double>(data[2]);
       v.m[3][3] = static_cast<double>(data[3]);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
-                << ", " << v.m[2][2] << ", " << v.m[3][3] << "\n";
-#endif
+      DCOUT("value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1]
+                << ", " << v.m[2][2] << ", " << v.m[3][3]);
 
       value->SetMatrix4d(v);
 
       return true;
     } else {
       // TODO(syoyo)
-      PUSH_ERROR("TODO: Inlined Value: " + GetValueTypeRepr(rep.GetType()));
+      PUSH_ERROR("TODO: Inlined Value: " + crate::GetValueTypeString(rep.GetType()));
 
       return false;
     }
-    // ====================================================
-  } else {
+  }
+
+}
+
+bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *value) {
+
+  if (rep.IsInlined()) {
+    return UnpackInlinedValueRep(rep, value);
+  }
+
+  ValueType ty = crate::GetValueType(rep.GetType());
+  DCOUT(crate::GetValueTypeString(rep.GetType()));
+
+  {
     // payload is the offset to data.
     uint64_t offset = rep.GetPayload();
     if (!_sr->seek_set(offset)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cerr << "Invalid offset\n";
-#endif
+      PUSH_ERROR("Invalid offset.");
       return false;
     }
 
@@ -1659,28 +1696,23 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
 
       uint64_t n;
       if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Failed to read the number of array elements\n";
-#endif
+        PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
 
       std::vector<crate::Index> v(static_cast<size_t>(n));
       if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index),
                      reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Failed to read TokenIndex array\n";
-#endif
+        PUSH_ERROR("Failed to read TokenIndex array.");
         return false;
       }
 
+      // TODO(syoyo): Use `token` type.
       std::vector<std::string> tokens(static_cast<size_t>(n));
 
       for (size_t i = 0; i < n; i++) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "Token[" << i << "] = " << GetToken(v[i]) << " ("
-                  << v[i].value << ")\n";
-#endif
+        DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " ("
+                  << v[i].value << ")");
         tokens[i] = GetToken(v[i]);
       }
 
@@ -1693,30 +1725,24 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
 
       uint64_t n;
       if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Failed to read the number of array elements\n";
-#endif
+        PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
 
       std::vector<crate::Index> v(static_cast<size_t>(n));
       if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index),
                      reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Failed to read TokenIndex array\n";
-#endif
+        PUSH_ERROR("Failed to read TokenIndex array.");
         return false;
       }
 
       std::vector<std::string> stringArray(static_cast<size_t>(n));
 
       for (size_t i = 0; i < n; i++) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "String[" << i << "] = " << GetString(v[i]) << " ("
-                  << v[i].value << ")\n";
-#endif
         stringArray[i] = GetString(v[i]);
       }
+
+      DCOUT("stringArray = " << stringArray);
 
       // In TinyUSDZ, token == string
       value->SetTokenArray(stringArray);
@@ -1728,9 +1754,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
 
       std::vector<int32_t> v;
       if (!ReadIntArray(rep.IsCompressed(), &v)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Failed to read Int array\n";
-#endif
+        PUSH_ERROR("Failed to read Int array.");
         return false;
       }
 
@@ -1761,9 +1785,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       if (rep.IsArray()) {
         uint64_t n;
         if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read the number of array elements\n";
-#endif
+          PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
 
@@ -2106,10 +2128,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3d = " << to_float(v[0]) << ", " << to_float(v[1])
-                << ", " << to_float(v[2]) << "\n";
-#endif
+      DCOUT("value.vec3h = " << v);
+
       value->SetVec3h(v);
 
       return true;
@@ -2119,9 +2139,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       if (rep.IsArray()) {
         uint64_t n;
         if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read the number of array elements\n";
-#endif
+          PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
 
@@ -2168,18 +2186,14 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
 
         uint64_t n;
         if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read the number of array elements\n";
-#endif
+          PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
 
         std::vector<Matrix4d> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(Matrix4d), size_t(n) * sizeof(Matrix4d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Matrix4d array\n";
-#endif
+          PUSH_ERROR("Failed to read Matrix4d array.");
           return false;
         }
 
@@ -2196,19 +2210,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "value.matrix4d = ";
-        for (size_t i = 0; i < 4; i++) {
-          for (size_t j = 0; j < 4; j++) {
-            std::cout << v.m[i][j];
-            if ((i == 3) && (j == 3)) {
-            } else {
-              std::cout << ", ";
-            }
-          }
-        }
-        std::cout << "\n";
-#endif
+        DCOUT("value.matrix4d = " << v);
 
         value->SetMatrix4d(v);
       }
@@ -2219,16 +2221,14 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       assert(!rep.IsCompressed());
       assert(!rep.IsArray());
 
-      Value::Dictionary dict;
+      crate::Value::Dictionary dict;
 
       if (!ReadDictionary(&dict)) {
         _err += "Failed to read Dictionary value\n";
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Dict. nelems = " << dict.size() << "\n";
-#endif
+      DCOUT("Dict. nelems = " << dict.size());
 
       value->SetDictionary(dict);
 
@@ -2266,11 +2266,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      for (size_t i = 0; i < v.size(); i++) {
-        std::cout << "Double[" << i << "] = " << v[i] << "\n";
-      }
-#endif
+      DCOUT("DoubleArray = " << v);
 
       value->SetDoubleArray(v.data(), v.size());
 
@@ -2284,11 +2280,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      for (size_t i = 0; i < v.size(); i++) {
-        std::cout << "Path[" << i << "] = " << v[i].full_path_name() << "\n";
-      }
-#endif
+      DCOUT("PathVector = " << to_string(v));
 
       value->SetPathVector(v);
 
@@ -2307,11 +2299,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
       return true;
     } else {
       // TODO(syoyo)
-      PUSH_ERROR("TODO: " + GetValueTypeRepr(rep.GetType()));
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cerr << "[" << __LINE__
-                << "] TODO: " << GetValueTypeRepr(rep.GetType()) << "\n";
-#endif
+      PUSH_ERROR("TODO: " + crate::GetValueTypeString(rep.GetType()));
       return false;
     }
   }
@@ -2319,7 +2307,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
   // Never should reach here.
 }
 
-bool Parser::BuildDecompressedPathsImpl(
+bool Parser::Impl::BuildDecompressedPathsImpl(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath) {
@@ -2329,11 +2317,8 @@ bool Parser::BuildDecompressedPathsImpl(
     if (parentPath.IsEmpty()) {
       // root node.
       // Assume single root node in the scene.
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "paths[" << pathIndexes[thisIndex]
-                << "] is parent. name = " << parentPath.full_path_name()
-                << "\n";
-#endif
+      DCOUT("paths[" << pathIndexes[thisIndex]
+                << "] is parent. name = " << parentPath.full_path_name());
       parentPath = Path::AbsoluteRootPath();
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
@@ -2341,19 +2326,14 @@ bool Parser::BuildDecompressedPathsImpl(
       bool isPrimPropertyPath = tokenIndex < 0;
       tokenIndex = std::abs(tokenIndex);
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "tokenIndex = " << tokenIndex << "\n";
-#endif
+      DCOUT("tokenIndex = " << tokenIndex);
       if (tokenIndex >= int32_t(_tokens.size())) {
-        _err += "Invalid tokenIndex in BuildDecompressedPathsImpl.\n";
+        PUSH_ERROR("Invalid tokenIndex in BuildDecompressedPathsImpl.");
         return false;
       }
       auto const &elemToken = _tokens[size_t(tokenIndex)];
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "elemToken = " << elemToken << "\n";
-      std::cout << "[" << pathIndexes[thisIndex] << "].append = " << elemToken
-                << "\n";
-#endif
+      DCOUT("elemToken = " << elemToken);
+      DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
 
       // full path
       _paths[pathIndexes[thisIndex]] =
@@ -2404,10 +2384,7 @@ bool Parser::Impl::BuildNodeHierarchy(
   // `_nodes`
   do {
     auto thisIndex = curIndex++;
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "thisIndex = " << thisIndex << ", curIndex = " << curIndex
-              << "\n";
-#endif
+    DCOUT("thisIndex = " << thisIndex << ", curIndex = " << curIndex);
     if (parentNodeIndex == -1) {
       // root node.
       // Assume single root node in the scene.
@@ -2424,10 +2401,8 @@ bool Parser::Impl::BuildNodeHierarchy(
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "Hierarhy. parent[" << pathIndexes[size_t(parentNodeIndex)]
-                << "].add_child = " << pathIndexes[thisIndex] << "\n";
-#endif
+      DCOUT("Hierarchy. parent[" << pathIndexes[size_t(parentNodeIndex)]
+                << "].add_child = " << pathIndexes[thisIndex]);
 
       Node node(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
 
@@ -2436,9 +2411,7 @@ bool Parser::Impl::BuildNodeHierarchy(
       _nodes[size_t(pathIndexes[thisIndex])] = node;
 
       std::string name = _paths[pathIndexes[thisIndex]].local_path_name();
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "childName = " << name << "\n";
-#endif
+      DCOUT("childName = " << name);
       _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(
           name, pathIndexes[thisIndex]);
     }
@@ -2456,9 +2429,7 @@ bool Parser::Impl::BuildNodeHierarchy(
       }
       // Have a child (may have also had a sibling). Reset parent node index
       parentNodeIndex = int64_t(thisIndex);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "parentNodeIndex = " << parentNodeIndex << "\n";
-#endif
+      DCOUT("parentNodeIndex = " << parentNodeIndex);
     }
     // If we had only a sibling, we just continue since the parent path is
     // unchanged and the next thing in the reader stream is the sibling's
@@ -2485,9 +2456,7 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "numPaths : " << numPaths << "\n";
-#endif
+  DCOUT("numPaths : " << numPaths);
 
   pathIndexes.resize(static_cast<size_t>(numPaths));
   elementTokenIndexes.resize(static_cast<size_t>(numPaths));
@@ -2515,10 +2484,8 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
       return false;
     }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "comBuffer.size = " << compBuffer.size() << "\n";
-    std::cout << "pathIndexesSize = " << pathIndexesSize << "\n";
-#endif
+    DCOUT("comBuffer.size = " << compBuffer.size());
+    DCOUT("pathIndexesSize = " << pathIndexesSize);
 
     std::string err;
     Usd_IntegerCompression::DecompressFromBuffer(
@@ -2542,7 +2509,7 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
         _sr->read(size_t(elementTokenIndexesSize),
                   size_t(elementTokenIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
-      _err += "Failed to read elementTokenIndexes data.\n";
+      PUSH_ERROR("Failed to read elementTokenIndexes data.");
       return false;
     }
 
@@ -2553,7 +2520,7 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
         workingSpace.data());
 
     if (!err.empty()) {
-      _err += "Failed to decode elementTokenIndexes\n" + err;
+      PUSH_ERROR("Failed to decode elementTokenIndexes.");
       return false;
     }
   }
@@ -2562,14 +2529,14 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
   {
     uint64_t jumpsSize;
     if (!_sr->read8(&jumpsSize)) {
-      _err += "Failed to read jumpsSize.\n";
+      PUSH_ERROR("Failed to read jumpsSize.");
       return false;
     }
 
     if (jumpsSize !=
         _sr->read(size_t(jumpsSize), size_t(jumpsSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
-      _err += "Failed to read jumps data.\n";
+      PUSH_ERROR("Failed to read jumps data.");
       return false;
     }
 
@@ -2579,7 +2546,7 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
         &err, workingSpace.data());
 
     if (!err.empty()) {
-      _err += "Failed to decode jumps\n" + err;
+      PUSH_ERROR("Failed to decode jumps.");
       return false;
     }
   }
@@ -2617,8 +2584,8 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
   return true;
 }
 
-bool Parser::Impl::ReadSection(Section *s) {
-  size_t name_len = kSectionNameMaxLength + 1;
+bool Parser::Impl::ReadSection(crate::Section *s) {
+  size_t name_len = crate::kSectionNameMaxLength + 1;
 
   if (name_len !=
       _sr->read(name_len, name_len, reinterpret_cast<uint8_t *>(s->name))) {
@@ -2652,15 +2619,13 @@ bool Parser::Impl::ReadTokens() {
     return false;
   }
 
-  const Section &sec = _toc.sections[size_t(_tokens_index)];
+  const crate::Section &sec = _toc.sections[size_t(_tokens_index)];
   if (!_sr->seek_set(uint64_t(sec.start))) {
     _err += "Failed to move to `TOKENS` section.\n";
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "sec.start = " << sec.start << "\n";
-#endif
+  DCOUT("sec.start = " << sec.start);
 
   // # of tokens.
   uint64_t n;
@@ -2684,11 +2649,9 @@ bool Parser::Impl::ReadTokens() {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "# of tokens = " << n
+  DCOUT("# of tokens = " << n
             << ", uncompressedSize = " << uncompressedSize
-            << ", compressedSize = " << compressedSize << "\n";
-#endif
+            << ", compressedSize = " << compressedSize);
 
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
   std::vector<char> compressed(static_cast<size_t>(compressedSize));
@@ -2751,9 +2714,7 @@ bool Parser::Impl::ReadTokens() {
       return false;
     }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "token[" << i << "] = " << token << "\n";
-#endif
+    DCOUT("token[" << i << "] = " << token);
     _tokens.push_back(token);
   }
 
@@ -2767,7 +2728,7 @@ bool Parser::Impl::ReadStrings() {
     return false;
   }
 
-  const Section &s = _toc.sections[size_t(_strings_index)];
+  const crate::Section &s = _toc.sections[size_t(_strings_index)];
 
   if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `STRINGS` section.\n";
@@ -2779,12 +2740,9 @@ bool Parser::Impl::ReadStrings() {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   for (size_t i = 0; i < _string_indices.size(); i++) {
-    std::cout << "StringIndex[" << i << "] = " << _string_indices[i].value
-              << "\n";
+    DCOUT("StringIndex[" << i << "] = " << _string_indices[i].value);
   }
-#endif
 
   return true;
 }
@@ -2802,7 +2760,7 @@ bool Parser::Impl::ReadFields() {
     return false;
   }
 
-  const Section &s = _toc.sections[size_t(_fields_index)];
+  const crate::Section &s = _toc.sections[size_t(_fields_index)];
 
   if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `FIELDS` section.\n";
@@ -2840,11 +2798,9 @@ bool Parser::Impl::ReadFields() {
     }
 
     std::string err;
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "fields_size = " << fields_size
+    DCOUT("fields_size = " << fields_size
               << ", tmp.size = " << tmp.size()
-              << ", num_fields = " << num_fields << "\n";
-#endif
+              << ", num_fields = " << num_fields);
     Usd_IntegerCompression::DecompressFromBuffer(
         comp_buffer.data(), size_t(fields_size), tmp.data(), size_t(num_fields),
         &err);
@@ -2890,18 +2846,16 @@ bool Parser::Impl::ReadFields() {
     }
 
     for (size_t i = 0; i < num_fields; i++) {
-      _fields[i].value_rep = ValueRep(reps_data[i]);
+      _fields[i].value_rep = crate::ValueRep(reps_data[i]);
     }
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "num_fields = " << num_fields << "\n";
+  DCOUT("num_fields = " << num_fields);
   for (size_t i = 0; i < num_fields; i++) {
-    std::cout << "field[" << i
+    DCOUT("field[" << i
               << "] name = " << GetToken(_fields[i].token_index)
-              << ", value = " << _fields[i].value_rep.GetStringRepr() << "\n";
+              << ", value = " << _fields[i].value_rep.GetStringRepr());
   }
-#endif
 
   return true;
 }
@@ -2920,7 +2874,7 @@ bool Parser::Impl::ReadFieldSets() {
     return false;
   }
 
-  const Section &s = _toc.sections[size_t(_fieldsets_index)];
+  const crate::Section &s = _toc.sections[size_t(_fieldsets_index)];
 
   if (!_sr->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `FIELDSETS` section.\n";
@@ -2950,11 +2904,9 @@ bool Parser::Impl::ReadFieldSets() {
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "num_fieldsets = " << num_fieldsets
+  DCOUT("num_fieldsets = " << num_fieldsets
             << ", fsets_size = " << fsets_size
-            << ", comp_buffer.size = " << comp_buffer.size() << "\n";
-#endif
+            << ", comp_buffer.size = " << comp_buffer.size());
 
   assert(fsets_size < comp_buffer.size());
 
@@ -2976,73 +2928,67 @@ bool Parser::Impl::ReadFieldSets() {
   }
 
   for (size_t i = 0; i != num_fieldsets; ++i) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "fieldset_index[" << i << "] = " << tmp[i] << "\n";
-#endif
+    DCOUT("fieldset_index[" << i << "] = " << tmp[i]);
     _fieldset_indices[i].value = tmp[i];
   }
 
   return true;
 }
 
-bool Parser::BuildLiveFieldSets() {
+bool Parser::Impl::BuildLiveFieldSets() {
   for (auto fsBegin = _fieldset_indices.begin(),
-            fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index());
+            fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
        fsBegin != _fieldset_indices.end(); fsBegin = fsEnd + 1,
-            fsEnd = std::find(fsBegin, _fieldset_indices.end(), Index())) {
+            fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index())) {
     auto &pairs =
-        _live_fieldsets[Index(uint32_t(fsBegin - _fieldset_indices.begin()))];
+        _live_fieldsets[crate::Index(uint32_t(fsBegin - _fieldset_indices.begin()))];
 
     pairs.resize(size_t(fsEnd - fsBegin));
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "range size = " << (fsEnd - fsBegin) << "\n";
-#endif
+    DCOUT("range size = " << (fsEnd - fsBegin));
     // TODO(syoyo): Parallelize.
     for (size_t i = 0; fsBegin != fsEnd; ++fsBegin, ++i) {
-      assert((fsBegin->value >= 0) && (fsBegin->value < _fields.size()));
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "fieldIndex = " << (fsBegin->value) << "\n";
-#endif
+      if (fsBegin->value < _fields.size()) {
+        // ok
+      } else {
+        PUSH_ERROR("Invalid live field set data.");
+        return false;
+      }
+
+      DCOUT("fieldIndex = " << (fsBegin->value));
       auto const &field = _fields[fsBegin->value];
       pairs[i].first = GetToken(field.token_index);
       if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "BuildLiveFieldSets: Failed to unpack ValueRep : "
-                  << field.value_rep.GetStringRepr() << "\n";
-#endif
+        PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
+                  << field.value_rep.GetStringRepr());
         return false;
       }
     }
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "# of live fieldsets = " << _live_fieldsets.size() << "\n";
-#endif
+  DCOUT("# of live fieldsets = " << _live_fieldsets.size());
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   size_t sum = 0;
   for (const auto &item : _live_fieldsets) {
-    std::cout << "livefieldsets[" << item.first.value
-              << "].count = " << item.second.size() << "\n";
+    DCOUT("livefieldsets[" << item.first.value
+              << "].count = " << item.second.size());
     sum += item.second.size();
 
     for (size_t i = 0; i < item.second.size(); i++) {
-      std::cout << " [" << i << "] name = " << item.second[i].first << "\n";
+      DCOUT(" [" << i << "] name = " << item.second[i].first);
     }
   }
-  std::cout << "Total fields used = " << sum << "\n";
+  DCOUT("Total fields used = " << sum);
 #endif
 
   return true;
 }
 
-bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
+bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
                              const std::string &prop_name) {
   bool success = false;
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "fvs.size = " << fvs.size() << "\n";
-#endif
+  DCOUT("fvs.size = " << fvs.size());
 
   bool has_connection{false};
 
@@ -3053,31 +2999,23 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
   // Parse properties
   //
   for (const auto &fv : fvs) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "===  fvs.first " << fv.first
-              << ", second: " << fv.second.GetTypeName() << "\n";
-#endif
+    DCOUT("===  fvs.first " << fv.first
+              << ", second: " << fv.second.GetTypeName());
     if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
       attr->type_name = fv.second.GetToken();
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "aaa: typeName: " << attr->type_name << "\n";
-#endif
+      DCOUT("typeName: " << attr->type_name);
     } else if (fv.first == "targetPaths") {
       // e.g. connection to Material.
       const ListOp<Path> paths = fv.second.GetPathListOp();
 
-      #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      paths.Print();
-#endif
+      DCOUT("ListOp<Path> = " << to_string(paths));
       // Currently we only support single explicit path.
       if ((paths.GetExplicitItems().size() == 1)) {
         const Path &path = paths.GetExplicitItems()[0];
         (void)path;
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "full path: " << path.full_path_name() << "\n";
-        std::cout << "local path: " << path.local_path_name() << "\n";
-#endif
+        DCOUT("full path: " << path.full_path_name());
+        DCOUT("local path: " << path.local_path_name());
 
         attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
 
@@ -3090,19 +3028,15 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
       // e.g. connection to texture file.
       const ListOp<Path> paths = fv.second.GetPathListOp();
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      paths.Print();
-#endif
+      DCOUT("ListOp<Path> = " << to_string(paths));
 
       // Currently we only support single explicit path.
       if ((paths.GetExplicitItems().size() == 1)) {
         const Path &path = paths.GetExplicitItems()[0];
         (void)path;
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "full path: " << path.full_path_name() << "\n";
-        std::cout << "local path: " << path.local_path_name() << "\n";
-#endif
+        DCOUT("full path: " << path.full_path_name());
+        DCOUT("local path: " << path.local_path_name());
 
         attr->var.set_scalar(path.full_path_name()); // TODO: store `Path`
 
@@ -3129,10 +3063,7 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
     if (fv.first == "default") {
       attr->name = prop_name;
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "fv.second.GetTypeName = " << fv.second.GetTypeName()
-                << "\n";
-#endif
+      DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
 
       if (fv.second.GetTypeName() == "Float") {
         float value;
@@ -3236,20 +3167,11 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "IntArray"
-                  << "\n";
 
-        //const int32_t *ptr =
-        //    reinterpret_cast<const int32_t *>(attr->buffer.data.data());
-        //for (size_t i = 0; i < attr->buffer.GetNumElements(); i++) {
-        //  std::cout << "[" << i << "] = " << ptr[i] << "\n";
-        //}
-#endif
+        DCOUT("IntArray = " << value);
+
       } else if (fv.second.GetTypeName() == "Token") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "bbb: token: " << fv.second.GetToken() << "\n";
-#endif
+        DCOUT("Token: " << fv.second.GetToken());
 
         attr->var.set_scalar(fv.second.GetToken());
         attr->variability = variability;
@@ -3279,7 +3201,7 @@ bool Parser::ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
   return success;
 }
 
-bool Parser::ReconstructXform(
+bool Parser::Impl::ReconstructXform(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Xform *xform) {
@@ -3325,7 +3247,7 @@ bool Parser::ReconstructXform(
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
 
@@ -3358,7 +3280,7 @@ bool Parser::ReconstructXform(
   return true;
 }
 
-bool Parser::ReconstructGeomBasisCurves(
+bool Parser::Impl::ReconstructGeomBasisCurves(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomBasisCurves *curves) {
@@ -3415,7 +3337,7 @@ bool Parser::ReconstructGeomBasisCurves(
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -3509,9 +3431,6 @@ bool Parser::ReconstructGeomBasisCurves(
           }
 #endif
         } else if (prop_name == "wrap") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          //std::cout << "wrap:" << attr.stringVal << "\n";
-#endif
 #if 0
           if (auto p = nonstd::get_if<std::string>(&attr.var)) {
             if (p->compare("nonperiodic") == 0) {
@@ -3546,7 +3465,7 @@ bool Parser::ReconstructGeomBasisCurves(
   return true;
 }
 
-bool Parser::ReconstructGeomSubset(
+bool Parser::Impl::ReconstructGeomSubset(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomSubset *geom_subset) {
@@ -3568,8 +3487,8 @@ bool Parser::ReconstructGeomSubset(
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
       return false;
     }
 
@@ -3584,19 +3503,17 @@ bool Parser::ReconstructGeomSubset(
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart()
+    DCOUT("Path prim part: " << path.GetPrimPart()
               << ", prop part: " << path.GetPropPart()
-              << ", spec_index = " << spec_index << "\n";
-#endif
+              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
       _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
@@ -3612,29 +3529,23 @@ bool Parser::ReconstructGeomSubset(
 
       PrimAttrib attr;
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
-#endif
-      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
+      DCOUT("prop: " << prop_name << ", ret = " << ret);
 
       if (ret) {
         // TODO(syoyo): Support more prop names
         if (prop_name == "elementType") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "got elementType\n";
-#endif
           auto p = attr.var.get_value<tinyusdz::primvar::token>();
           if (p) {
             std::string str = p->str();
             if (str == "face") {
               geom_subset->elementType = GeomSubset::ElementType::Face;
             } else {
-              _err += "`elementType` must be `face`, but got `" + str + "`";
+              PUSH_ERROR("`elementType` must be `face`, but got `" + str + "`");
               return false;
             }
           } else {
-            _err += "`elementType` must be token type, but got " +
-                    primvar::GetTypeName(attr.var.type_id());
+            PUSH_ERROR("`elementType` must be token type, but got " +
+                    primvar::GetTypeName(attr.var.type_id()));
             return false;
           }
         } else if (prop_name == "faces") {
@@ -3643,12 +3554,7 @@ bool Parser::ReconstructGeomSubset(
             geom_subset->faces = (*p);
           }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-            // aaa: typeName: int[]
-            std::cout << "got faces\n";
-            std::cout << "  num = " << geom_subset->faces.size() << "\n";
-#endif
-          //}
+          DCOUT("faces.num = " << geom_subset->faces.size());
 
         } else {
           // Assume Primvar.
@@ -3670,7 +3576,7 @@ bool Parser::ReconstructGeomSubset(
   return true;
 }
 
-bool Parser::ReconstructGeomMesh(
+bool Parser::Impl::ReconstructGeomMesh(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomMesh *mesh) {
@@ -3720,24 +3626,19 @@ bool Parser::ReconstructGeomMesh(
     if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
       // No specifier assigned to this child node.
       // Should we report an error?
-#if 0
-      _err += "GeomMesh: No specifier found for node id: " + std::to_string(child_index) +
-              "\n";
-      return false;
-#else
+      DCOUT("No speciefier assigned to this child node: " << child_index);
       continue;
-#endif
     }
 
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
     DCOUT("Path prim part: " << path.GetPrimPart()
@@ -3745,8 +3646,8 @@ bool Parser::ReconstructGeomMesh(
               << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
       return false;
     }
 
@@ -3767,8 +3668,8 @@ bool Parser::ReconstructGeomMesh(
           if (p) {
             mesh->points = (*p);
           } else {
-            _err += "`points` must be point3[] type, but got " +
-                    primvar::GetTypeName(attr.var.type_id());
+            PUSH_ERROR("`points` must be point3[] type, but got " +
+                    primvar::GetTypeName(attr.var.type_id()));
             return false;
           }
           //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
@@ -3860,13 +3761,11 @@ bool Parser::ReconstructGeomMesh(
         } else {
           // Assume Primvar.
           if (mesh->attribs.count(prop_name)) {
-            _err += "Duplicated property name found: " + prop_name + "\n";
+            PUSH_ERROR("Duplicated property name found: " + prop_name);
             return false;
           }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "add [" << prop_name << "] to generic attrs\n";
-#endif
+          DCOUT("add [" << prop_name << "] to generic attrs.");
 
           mesh->attribs[prop_name] = std::move(attr);
         }
@@ -3877,16 +3776,14 @@ bool Parser::ReconstructGeomMesh(
   return true;
 }
 
-bool Parser::ReconstructMaterial(
+bool Parser::Impl::ReconstructMaterial(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Material *material) {
 
   (void)material;
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "Parse mateiral\n";
-#endif
+  DCOUT("Parse mateiral");
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
@@ -3907,8 +3804,8 @@ bool Parser::ReconstructMaterial(
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
       return false;
     }
 
@@ -3928,23 +3825,21 @@ bool Parser::ReconstructMaterial(
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart()
+    DCOUT("Path prim part: " << path.GetPrimPart()
               << ", prop part: " << path.GetPropPart()
-              << ", spec_index = " << spec_index << "\n";
-#endif
+              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
       return false;
     }
 
@@ -3975,20 +3870,17 @@ bool Parser::ReconstructMaterial(
   return true;
 }
 
-bool Parser::ReconstructShader(
+bool Parser::Impl::ReconstructShader(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Shader *shader) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "Parse shader\n";
-#endif
 
   (void)shader;
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
       if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+        PUSH_ERROR("`properties` attribute must be TokenArray type.");
         return false;
       }
       assert(fv.second.IsArray());
@@ -4007,8 +3899,8 @@ bool Parser::ReconstructShader(
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
       return false;
     }
 
@@ -4016,31 +3908,28 @@ bool Parser::ReconstructShader(
 
     if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
       // No specifier assigned to this child node.
-      _err += "No specifier found for node id: " + std::to_string(child_index) +
-              "\n";
+      PUSH_ERROR("No specifier found for node id: " + std::to_string(child_index));
       return false;
     }
 
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart()
+    DCOUT("Path prim part: " << path.GetPrimPart()
               << ", prop part: " << path.GetPropPart()
-              << ", spec_index = " << spec_index << "\n";
-#endif
+              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
       return false;
     }
 
@@ -4053,9 +3942,7 @@ bool Parser::ReconstructShader(
       PrimAttrib attr;
 
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
-#endif
+      DCOUT("prop: " << prop_name << ", ret = " << ret);
 
       if (ret) {
         // Currently we only support predefined PBR attributes.
@@ -4071,20 +3958,17 @@ bool Parser::ReconstructShader(
   }
 
   if (shader_type.empty()) {
-    _err += "`info:id` is missing in Shader.\n";
+    PUSH_ERROR("`info:id` is missing in Shader.");
     return false;
   }
 
   return true;
 }
 
-bool Parser::ReconstructPreviewSurface(
+bool Parser::Impl::ReconstructPreviewSurface(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     PreviewSurface *shader) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "Parse shader\n";
-#endif
 
   (void)shader;
 
@@ -4116,31 +4000,28 @@ bool Parser::ReconstructPreviewSurface(
 
     if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
       // No specifier assigned to this child node.
-      _err += "No specifier found for node id: " + std::to_string(child_index) +
-              "\n";
+      PUSH_ERROR("No specifier found for node id: " + std::to_string(child_index));
       return false;
     }
 
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart()
+    DCOUT("Path prim part: " << path.GetPrimPart()
               << ", prop part: " << path.GetPropPart()
-              << ", spec_index = " << spec_index << "\n";
-#endif
+              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
       return false;
     }
 
@@ -4153,9 +4034,7 @@ bool Parser::ReconstructPreviewSurface(
       PrimAttrib attr;
 
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
-#endif
+      DCOUT("prop: " << prop_name << ", ret = " << ret);
 
       if (ret) {
         // Currently we only support predefined PBR attributes.
@@ -4165,7 +4044,7 @@ bool Parser::ReconstructPreviewSurface(
                                                        // treat it as string
           if (p) {
             if (p->compare("UsdPreviewSurface") != 0) {
-              _err += "`info:id` must be `UsdPreviewSurface`.\n";
+              PUSH_ERROR("`info:id` must be `UsdPreviewSurface`.");
               return false;
             }
           }
@@ -4254,7 +4133,7 @@ bool Parser::ReconstructPreviewSurface(
   return true;
 }
 
-bool Parser::ReconstructSkelRoot(
+bool Parser::Impl::ReconstructSkelRoot(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     SkelRoot *skelRoot) {
@@ -4264,13 +4143,13 @@ bool Parser::ReconstructSkelRoot(
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
       if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+        PUSH_ERROR("`properties` attribute must be TokenArray type.");
         return false;
       }
-      assert(fv.second.IsArray());
+      //assert(fv.second.IsArray());
 
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      }
+      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      //}
     }
   }
 
@@ -4278,8 +4157,8 @@ bool Parser::ReconstructSkelRoot(
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
       return false;
     }
 
@@ -4287,20 +4166,19 @@ bool Parser::ReconstructSkelRoot(
 
     if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
       // No specifier assigned to this child node.
-      _err += "No specifier found for node id: " + std::to_string(child_index) +
-              "\n";
+      PUSH_ERROR("No specifier found for node id: " + std::to_string(child_index));
       return false;
     }
 
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ").");
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
     DCOUT("Path prim part: " << path.GetPrimPart()
@@ -4340,7 +4218,7 @@ bool Parser::ReconstructSkelRoot(
   return true;
 }
 
-bool Parser::ReconstructSkeleton(
+bool Parser::Impl::ReconstructSkeleton(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Skeleton *skeleton) {
@@ -4364,8 +4242,8 @@ bool Parser::ReconstructSkeleton(
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
       return false;
     }
 
@@ -4373,20 +4251,19 @@ bool Parser::ReconstructSkeleton(
 
     if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
       // No specifier assigned to this child node.
-      _err += "No specifier found for node id: " + std::to_string(child_index) +
-              "\n";
+      PUSH_ERROR("No specifier found for node id: " + std::to_string(child_index));
       return false;
     }
 
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
       return false;
     }
 
-    const Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
     DCOUT("Path prim part: " << path.GetPrimPart()
@@ -4394,8 +4271,8 @@ bool Parser::ReconstructSkeleton(
               << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
       return false;
     }
 
@@ -4426,13 +4303,13 @@ bool Parser::ReconstructSkeleton(
   return true;
 }
 
-bool Parser::ReconstructSceneRecursively(
+bool Parser::Impl::ReconstructSceneRecursively(
     int parent, int level,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Scene *scene) {
   if ((parent < 0) || (parent >= int(_nodes.size()))) {
-    _err += "Invalid parent node id: " + std::to_string(parent) +
-            ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+    PUSH_ERROR("Invalid parent node id: " + std::to_string(parent) +
+            ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
     return false;
   }
 
@@ -4461,32 +4338,25 @@ bool Parser::ReconstructSceneRecursively(
 
   if (!path_index_to_spec_index_map.count(uint32_t(parent))) {
     // No specifier assigned to this node.
-#if 0
-    _err += "Scene: No specifier found for node id: " + std::to_string(parent) + "\n";
-    return false;
-#else
+    DCOUT("No specifier assigned to this node: " << parent);
     return true; // would be OK.
-#endif
   }
 
   uint32_t spec_index = path_index_to_spec_index_map.at(uint32_t(parent));
   if (spec_index >= _specs.size()) {
-    _err += "Invalid specifier id: " + std::to_string(spec_index) +
-            ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+    PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+            ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
     return false;
   }
 
-  const Spec &spec = _specs[spec_index];
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << IndentStr(level)
-            << "  specTy = " << tinyusdz::to_string(spec.spec_type) << "\n";
-  std::cout << IndentStr(level)
-            << "  fieldSetIndex = " << spec.fieldset_index.value << "\n";
-#endif
+  const crate::Spec &spec = _specs[spec_index];
+
+  DCOUT(Indent(uint32_t(level)) << "  specTy = " << to_string(spec.spec_type));
+  DCOUT(Indent(uint32_t(level)) << "  fieldSetIndex = " << spec.fieldset_index.value);
 
   if (!_live_fieldsets.count(spec.fieldset_index)) {
-    _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-            " must exist in live fieldsets.\n";
+    PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+            " must exist in live fieldsets.");
     return false;
   }
 
@@ -4499,8 +4369,7 @@ bool Parser::ReconstructSceneRecursively(
           (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
         std::string v = fv.second.GetToken();
         if ((v != "Y") && (v != "Z") && (v != "X")) {
-          _err += "Currently `upAxis` must be 'X', 'Y' or 'Z' but got '" + v +
-                  "'\n";
+          PUSH_ERROR("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v + "'");
           return false;
         }
         scene->upAxis = std::move(v);
@@ -4509,10 +4378,8 @@ bool Parser::ReconstructSceneRecursively(
             (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
           scene->metersPerUnit = fv.second.GetDouble();
         } else {
-          _err +=
-              "Currently `metersPerUnit` value must be double or float type, "
-              "but got '" +
-              fv.second.GetTypeName() + "'\n";
+          PUSH_ERROR("`metersPerUnit` value must be double or float type, but got '" +
+              fv.second.GetTypeName() + "'");
           return false;
         }
       } else if (fv.first == "timeCodesPerSecond") {
@@ -4520,10 +4387,9 @@ bool Parser::ReconstructSceneRecursively(
             (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
           scene->timeCodesPerSecond = fv.second.GetDouble();
         } else {
-          _err +=
-              "Currently `timeCodesPerSecond` value must be double or float "
+          PUSH_ERROR("`timeCodesPerSecond` value must be double or float "
               "type, but got '" +
-              fv.second.GetTypeName() + "'\n";
+              fv.second.GetTypeName() + "'");
           return false;
         }
       } else if ((fv.first == "defaultPrim") &&
@@ -4559,14 +4425,13 @@ bool Parser::ReconstructSceneRecursively(
   }
 
   std::string node_type;
-  Value::Dictionary assetInfo;
+  crate::Value::Dictionary assetInfo;
 
   for (const auto &fv : fields) {
     DCOUT(IndentStr(level) << "  \"" << fv.first
               << "\" : ty = " << fv.second.GetTypeName());
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
-      DCOUT(IndentStr(level) << "    specifier = "
-                << GetSpecifierString(fv.second.GetSpecifier()));
+      DCOUT(IndentStr(level) << "    specifier = " << to_string(fv.second.GetSpecifier()));
     } else if (fv.second.GetTypeId() == VALUE_TYPE_TOKEN) {
       if (fv.first == "typeName") {
         node_type = fv.second.GetToken();
@@ -4659,7 +4524,7 @@ bool Parser::ReconstructSceneRecursively(
     GeomMesh mesh;
     if (!ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
                               &mesh)) {
-      _err += "Failed to reconstruct GeomMesh.\n";
+      PUSH_ERROR("Failed to reconstruct GeomMesh.");
       return false;
     }
     mesh.name = node.GetLocalPath(); // FIXME
@@ -4668,7 +4533,7 @@ bool Parser::ReconstructSceneRecursively(
     Material material;
     if (!ReconstructMaterial(node, fields, path_index_to_spec_index_map,
                               &material)) {
-      _err += "Failed to reconstruct Material.\n";
+      PUSH_ERROR("Failed to reconstruct Material.");
       return false;
     }
     material.name = node.GetLocalPath(); // FIXME
@@ -4677,7 +4542,7 @@ bool Parser::ReconstructSceneRecursively(
     Shader shader;
     if (!ReconstructShader(node, fields, path_index_to_spec_index_map,
                            &shader)) {
-      _err += "Failed to reconstruct PreviewSurface(Shader).\n";
+      PUSH_ERROR("Failed to reconstruct PreviewSurface(Shader).");
       return false;
     }
 
@@ -4694,7 +4559,7 @@ bool Parser::ReconstructSceneRecursively(
     Skeleton skeleton;
     if (!ReconstructSkeleton(node, fields, path_index_to_spec_index_map,
                            &skeleton)) {
-      _err += "Failed to reconstruct Skeleton.\n";
+      PUSH_ERROR("Failed to reconstruct Skeleton.");
       return false;
     }
 
@@ -4706,7 +4571,7 @@ bool Parser::ReconstructSceneRecursively(
     SkelRoot skelRoot;
     if (!ReconstructSkelRoot(node, fields, path_index_to_spec_index_map,
                            &skelRoot)) {
-      _err += "Failed to reconstruct SkelRoot.\n";
+      PUSH_ERROR("Failed to reconstruct SkelRoot.");
       return false;
     }
 
@@ -4714,10 +4579,7 @@ bool Parser::ReconstructSceneRecursively(
 
     scene->skel_roots.push_back(skelRoot);
   } else {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "TODO or we can ignore this node: node_type: " << node_type
-              << "\n";
-#endif
+    DCOUT("TODO or we can ignore this node: node_type: " << node_type);
     PUSH_WARN("TODO: Reconstruct node_type " + node_type);
   }
 
@@ -4731,9 +4593,9 @@ bool Parser::ReconstructSceneRecursively(
   return true;
 }
 
-bool Parser::ReconstructScene(Scene *scene) {
+bool Parser::Impl::ReconstructScene(Scene *scene) {
   if (_nodes.empty()) {
-    _warn += "Empty scene.\n";
+    PUSH_WARN("Empty scene.");
     return true;
   }
 
@@ -4768,33 +4630,31 @@ bool Parser::ReconstructScene(Scene *scene) {
 
 bool Parser::Impl::ReadSpecs() {
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
-    _err += "Invalid index for `SPECS` section.\n";
+    PUSH_ERROR("Invalid index for `SPECS` section.");
     return false;
   }
 
   if ((_version[0] == 0) && (_version[1] < 4)) {
-    _err += "Version must be 0.4.0 or later, but got " +
+    PUSH_ERROR("Version must be 0.4.0 or later, but got " +
             std::to_string(_version[0]) + "." + std::to_string(_version[1]) +
-            "." + std::to_string(_version[2]) + "\n";
+            "." + std::to_string(_version[2]));
     return false;
   }
 
-  const Section &s = _toc.sections[size_t(_specs_index)];
+  const crate::Section &s = _toc.sections[size_t(_specs_index)];
 
   if (!_sr->seek_set(uint64_t(s.start))) {
-    _err += "Failed to move to `SPECS` section.\n";
+    PUSH_ERROR("Failed to move to `SPECS` section.");
     return false;
   }
 
   uint64_t num_specs;
   if (!_sr->read8(&num_specs)) {
-    _err += "Failed to read # of specs size at `SPECS` section.\n";
+    PUSH_ERROR("Failed to read # of specs size at `SPECS` section.");
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "num_specs " << num_specs << "\n";
-#endif
+  DCOUT("num_specs " << num_specs);
 
   _specs.resize(static_cast<size_t>(num_specs));
 
@@ -4811,7 +4671,7 @@ bool Parser::Impl::ReadSpecs() {
   {
     uint64_t path_indexes_size;
     if (!_sr->read8(&path_indexes_size)) {
-      _err += "Failed to read path indexes size at `SPECS` section.\n";
+      PUSH_ERROR("Failed to read path indexes size at `SPECS` section.");
       return false;
     }
 
@@ -4820,23 +4680,20 @@ bool Parser::Impl::ReadSpecs() {
     if (path_indexes_size !=
         _sr->read(size_t(path_indexes_size), size_t(path_indexes_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
-      _err += "Failed to read path indexes data at `SPECS` section.\n";
+      PUSH_ERROR("Failed to read path indexes data at `SPECS` section.");
       return false;
     }
 
-    std::string err;
+    std::string err; // not used
     if (!Usd_IntegerCompression::DecompressFromBuffer(
             comp_buffer.data(), size_t(path_indexes_size), tmp.data(),
             size_t(num_specs), &err, working_space.data())) {
-      _err += "Failed to decode pathIndexes at `SPECS` section.\n";
-      _err += err;
+      PUSH_ERROR("Failed to decode pathIndexes at `SPECS` section.");
       return false;
     }
 
     for (size_t i = 0; i < num_specs; ++i) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "spec[" << i << "].path_index = " << tmp[i] << "\n";
-#endif
+     DCOUT("spec[" << i << "].path_index = " << tmp[i]);
       _specs[i].path_index.value = tmp[i];
     }
   }
@@ -4845,7 +4702,7 @@ bool Parser::Impl::ReadSpecs() {
   {
     uint64_t fset_indexes_size;
     if (!_sr->read8(&fset_indexes_size)) {
-      _err += "Failed to read fieldset indexes size at `SPECS` section.\n";
+      PUSH_ERROR("Failed to read fieldset indexes size at `SPECS` section.");
       return false;
     }
 
@@ -4854,23 +4711,20 @@ bool Parser::Impl::ReadSpecs() {
     if (fset_indexes_size !=
         _sr->read(size_t(fset_indexes_size), size_t(fset_indexes_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
-      _err += "Failed to read fieldset indexes data at `SPECS` section.\n";
+      PUSH_ERROR("Failed to read fieldset indexes data at `SPECS` section.");
       return false;
     }
 
-    std::string err;
+    std::string err; // not used
     if (!Usd_IntegerCompression::DecompressFromBuffer(
             comp_buffer.data(), size_t(fset_indexes_size), tmp.data(),
             size_t(num_specs), &err, working_space.data())) {
-      _err += "Failed to decode fieldset indices at `SPECS` section.\n";
-      _err += err;
+      PUSH_ERROR("Failed to decode fieldset indices at `SPECS` section.");
       return false;
     }
 
     for (size_t i = 0; i != num_specs; ++i) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "specs[" << i << "].fieldset_index = " << tmp[i] << "\n";
-#endif
+      DCOUT("specs[" << i << "].fieldset_index = " << tmp[i]);
       _specs[i].fieldset_index.value = tmp[i];
     }
   }
@@ -4879,7 +4733,7 @@ bool Parser::Impl::ReadSpecs() {
   {
     uint64_t spectype_size;
     if (!_sr->read8(&spectype_size)) {
-      _err += "Failed to read spectype size at `SPECS` section.\n";
+      PUSH_ERROR("Failed to read spectype size at `SPECS` section.");
       return false;
     }
 
@@ -4888,16 +4742,15 @@ bool Parser::Impl::ReadSpecs() {
     if (spectype_size !=
         _sr->read(size_t(spectype_size), size_t(spectype_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
-      _err += "Failed to read spectype data at `SPECS` section.\n";
+      PUSH_ERROR("Failed to read spectype data at `SPECS` section.");
       return false;
     }
 
-    std::string err;
+    std::string err; // not used.
     if (!Usd_IntegerCompression::DecompressFromBuffer(
             comp_buffer.data(), size_t(spectype_size), tmp.data(),
             size_t(num_specs), &err, working_space.data())) {
-      _err += "Failed to decode fieldset indices at `SPECS` section.\n";
-      _err += err;
+      PUSH_ERROR("Failed to decode fieldset indices at `SPECS` section.\n");
       return false;
     }
 
@@ -4909,12 +4762,11 @@ bool Parser::Impl::ReadSpecs() {
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   for (size_t i = 0; i != num_specs; ++i) {
-    std::cout << "spec[" << i << "].pathIndex  = " << _specs[i].path_index.value
+    DCOUT("spec[" << i << "].pathIndex  = " << _specs[i].path_index.value
               << ", fieldset_index = " << _specs[i].fieldset_index.value
-              << ", spec_type = " << tinyusdz::to_string(_specs[i].spec_type) << "\n";
-    std::cout << "spec[" << i
-              << "] string_repr = " << GetSpecString(Index(uint32_t(i)))
-              << "\n";
+              << ", spec_type = " << tinyusdz::to_string(_specs[i].spec_type));
+    DCOUT("spec[" << i
+              << "] string_repr = " << GetSpecString(crate::Index(uint32_t(i))));
   }
 #endif
 
@@ -4923,32 +4775,32 @@ bool Parser::Impl::ReadSpecs() {
 
 bool Parser::Impl::ReadPaths() {
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
-    _err += "Invalid index for `PATHS` section.\n";
+    PUSH_ERROR("Invalid index for `PATHS` section.");
     return false;
   }
 
   if ((_version[0] == 0) && (_version[1] < 4)) {
-    _err += "Version must be 0.4.0 or later, but got " +
+    PUSH_ERROR("Version must be 0.4.0 or later, but got " +
             std::to_string(_version[0]) + "." + std::to_string(_version[1]) +
-            "." + std::to_string(_version[2]) + "\n";
+            "." + std::to_string(_version[2]));
     return false;
   }
 
-  const Section &s = _toc.sections[size_t(_paths_index)];
+  const crate::Section &s = _toc.sections[size_t(_paths_index)];
 
   if (!_sr->seek_set(uint64_t(s.start))) {
-    _err += "Failed to move to `PATHS` section.\n";
+    PUSH_ERROR("Failed to move to `PATHS` section.");
     return false;
   }
 
   uint64_t num_paths;
   if (!_sr->read8(&num_paths)) {
-    _err += "Failed to read # of paths at `PATHS` section.\n";
+    PUSH_ERROR("Failed to read # of paths at `PATHS` section.");
     return false;
   }
 
   if (!ReadCompressedPaths(num_paths)) {
-    _err += "Failed to read compressed paths.\n";
+    PUSH_ERROR("Failed to read compressed paths.");
     return false;
   }
 
@@ -4967,36 +4819,25 @@ bool Parser::Impl::ReadBootStrap() {
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
-    _err += "Failed to read magic number.\n";
+    PUSH_ERROR("Failed to read magic number.");
     return false;
   }
 
-  // std::cout << int(magic[0]) << "\n";
-  // std::cout << int(magic[1]) << "\n";
-  // std::cout << int(magic[2]) << "\n";
-  // std::cout << int(magic[3]) << "\n";
-  // std::cout << int(magic[4]) << "\n";
-  // std::cout << int(magic[5]) << "\n";
-  // std::cout << int(magic[6]) << "\n";
-  // std::cout << int(magic[7]) << "\n";
-
   if (memcmp(magic, "PXR-USDC", 8)) {
-    _err += "Invalid magic number. Expected 'PXR-USDC' but got '" +
-            std::string(magic, magic + 8) + "'\n";
+    PUSH_ERROR("Invalid magic number. Expected 'PXR-USDC' but got '" +
+            std::string(magic, magic + 8) + "'");
     return false;
   }
 
   // parse version(first 3 bytes from 8 bytes)
   uint8_t version[8];
   if (8 != _sr->read(8, 8, version)) {
-    _err += "Failed to read magic number.\n";
+    PUSH_ERROR("Failed to read magic number.");
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "version = " << int(version[0]) << "." << int(version[1]) << "."
-            << int(version[2]) << "\n";
-#endif
+  DCOUT("version = " << int(version[0]) << "." << int(version[1]) << "."
+            << int(version[2]));
 
   _version[0] = version[0];
   _version[1] = version[1];
@@ -5004,83 +4845,77 @@ bool Parser::Impl::ReadBootStrap() {
 
   // We only support version 0.4.0 or later.
   if ((version[0] == 0) && (version[1] < 4)) {
-    _err += "Version must be 0.4.0 or later, but got " +
+    PUSH_ERROR("Version must be 0.4.0 or later, but got " +
             std::to_string(version[0]) + "." + std::to_string(version[1]) +
-            "." + std::to_string(version[2]) + "\n";
+            "." + std::to_string(version[2]));
     return false;
   }
 
   _toc_offset = 0;
   if (!_sr->read8(&_toc_offset)) {
-    _err += "Failed to read TOC offset.\n";
+    PUSH_ERROR("Failed to read TOC offset.");
     return false;
   }
 
   if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
-    _err += "Invalid TOC offset value: " + std::to_string(_toc_offset) +
-            ", filesize = " + std::to_string(_sr->size()) + ".\n";
+    PUSH_ERROR("Invalid TOC offset value: " + std::to_string(_toc_offset) +
+            ", filesize = " + std::to_string(_sr->size()) + ".");
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "toc offset = " << _toc_offset << "\n";
-#endif
+  DCOUT("toc offset = " << _toc_offset);
 
   return true;
 }
 
 bool Parser::Impl::ReadTOC() {
   if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
-    _err += "Invalid toc offset\n";
+    PUSH_ERROR("Invalid toc offset.");
     return false;
   }
 
   if (!_sr->seek_set(uint64_t(_toc_offset))) {
-    _err += "Failed to move to TOC offset\n";
+    PUSH_ERROR("Failed to move to TOC offset.");
     return false;
   }
 
   // read # of sections.
   uint64_t num_sections{0};
   if (!_sr->read8(&num_sections)) {
-    _err += "Failed to read TOC(# of sections)\n";
+    PUSH_ERROR("Failed to read TOC(# of sections).");
     return false;
   }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "toc sections = " << num_sections << "\n";
-#endif
+  DCOUT("toc sections = " << num_sections);
 
   _toc.sections.resize(static_cast<size_t>(num_sections));
 
   for (size_t i = 0; i < num_sections; i++) {
     if (!ReadSection(&_toc.sections[i])) {
-      _err += "Failed to read TOC section at " + std::to_string(i) + "\n";
+      PUSH_ERROR("Failed to read TOC section at " + std::to_string(i));
       return false;
     }
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "section[" << i << "] name = " << _toc.sections[i].name
+    DCOUT("section[" << i << "] name = " << _toc.sections[i].name
               << ", start = " << _toc.sections[i].start
-              << ", size = " << _toc.sections[i].size << "\n";
-#endif
+              << ", size = " << _toc.sections[i].size);
 
     // find index
-    if (0 == strncmp(_toc.sections[i].name, "TOKENS", kSectionNameMaxLength)) {
+    if (0 == strncmp(_toc.sections[i].name, "TOKENS", crate::kSectionNameMaxLength)) {
       _tokens_index = int64_t(i);
     } else if (0 == strncmp(_toc.sections[i].name, "STRINGS",
-                            kSectionNameMaxLength)) {
+                            crate::kSectionNameMaxLength)) {
       _strings_index = int64_t(i);
     } else if (0 == strncmp(_toc.sections[i].name, "FIELDS",
-                            kSectionNameMaxLength)) {
+                            crate::kSectionNameMaxLength)) {
       _fields_index = int64_t(i);
     } else if (0 == strncmp(_toc.sections[i].name, "FIELDSETS",
-                            kSectionNameMaxLength)) {
+                            crate::kSectionNameMaxLength)) {
       _fieldsets_index = int64_t(i);
     } else if (0 ==
-               strncmp(_toc.sections[i].name, "SPECS", kSectionNameMaxLength)) {
+               strncmp(_toc.sections[i].name, "SPECS", crate::kSectionNameMaxLength)) {
       _specs_index = int64_t(i);
     } else if (0 ==
-               strncmp(_toc.sections[i].name, "PATHS", kSectionNameMaxLength)) {
+               strncmp(_toc.sections[i].name, "PATHS", crate::kSectionNameMaxLength)) {
       _paths_index = int64_t(i);
     }
   }
@@ -5092,11 +4927,63 @@ bool Parser::Impl::ReadTOC() {
 // -- Interface --
 //
 Parser::Parser(StreamReader *sr, int num_threads) {
-  impl_ = new Parser::Impl(sr, num_threads); 
+  impl_ = new Parser::Impl(sr, num_threads);
 }
 
 bool Parser::ReadTOC() {
   return impl_->ReadTOC();
+}
+
+bool Parser::ReadBootStrap() {
+  return impl_->ReadBootStrap();
+}
+
+bool Parser::ReadTokens() {
+  return impl_->ReadTokens();
+}
+
+bool Parser::ReadStrings() {
+  return impl_->ReadStrings();
+}
+
+bool Parser::ReadFields() {
+  return impl_->ReadFields();
+}
+
+bool Parser::ReadFieldSets() {
+  return impl_->ReadFieldSets();
+}
+
+bool Parser::ReadPaths() {
+  return impl_->ReadPaths();
+}
+
+bool Parser::ReadSpecs() {
+  return impl_->ReadSpecs();
+}
+
+bool Parser::BuildLiveFieldSets() {
+  return impl_->BuildLiveFieldSets();
+}
+
+bool Parser::ReconstructScene(Scene *scene) {
+  return impl_->ReconstructScene(scene);
+}
+
+std::string Parser::GetError() {
+  return impl_->GetError();
+}
+
+std::string Parser::GetWarning() {
+  return impl_->GetWarning();
+}
+
+size_t Parser::NumPaths() {
+  return impl_->NumPaths();
+}
+
+Path Parser::GetPath(crate::Index index) {
+  return impl_->GetPath(index);
 }
 
 } // namespace usdc

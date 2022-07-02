@@ -1,18 +1,20 @@
 #include "pprinter.hh"
+#include "primvar-pprint.hh"
 
 namespace tinyusdz {
-
-namespace {
 
 std::string Indent(uint32_t n) {
   std::stringstream ss;
 
   for (uint32_t i = 0; i < n; i++) {
-    ss << "  ";
+    ss << kIndentString;
   }
 
   return ss.str();
 }
+
+namespace {
+
 
 #if 0
 std::string to_string(const float &v) {
@@ -637,6 +639,14 @@ std::string to_string(const Shader &shader, const uint32_t indent) {
   ss << Indent(indent) << "}\n";
 
   return ss.str();
+}
+
+std::string to_string(const Path &path, bool show_full_path) {
+  if (show_full_path) {
+    return path.full_path_name();
+  } else {
+    return path.local_path_name();
+  }
 }
 
 } // tinyusdz
