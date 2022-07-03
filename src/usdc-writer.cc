@@ -12,13 +12,59 @@
 
 
 #include "usdc-writer.hh"
+#include "crate-format.hh"
 #include "io-util.hh"
 #include "lz4-compression.hh"
-//#include "pprinter.hh"
+#include "token-type.hh"
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
+
+#ifdef TINYUSDZ_PRODUCTION_BUILD
+// Do not include full filepath for privacy.
+#define PUSH_ERROR(s) { \
+  std::ostringstream ss; \
+  ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  err_ += ss.str() + "\n"; \
+} while (0)
+
+#if 0
+#define PUSH_WARN(s) { \
+  std::ostringstream ss; \
+  ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  warn_ += ss.str() + "\n"; \
+} while (0)
+#endif
+#else
+#define PUSH_ERROR(s) { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  err_ += ss.str() + "\n"; \
+} while (0)
+
+#if 0
+#define PUSH_WARN(s) { \
+  std::ostringstream ss; \
+  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+  ss << s; \
+  warn_ += ss.str() + "\n"; \
+} while (0)
+#endif
+#endif
+
+#ifndef TINYUSDZ_PRODUCTION_BUILD
+#define TINYUSDZ_LOCAL_DEBUG_PRINT
+#endif
+
+#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
+#else
+#define DCOUT(x) do { (void)(x); } while(false)
+#endif
 
 namespace tinyusdz {
 namespace usdc {
@@ -64,7 +110,101 @@ struct TableOfContents {
   std::vector<Section> sections;
 };
 
+struct Field {
+  // FIXME(syoyo): Do we need 4 bytes padding as done in pxrUSD?
+  // uint32_t padding_;
 
+  crate::TokenIndex token_index;
+  crate::ValueRep value_rep;
+};
+
+class Packer {
+ public:
+
+  crate::TokenIndex AddToken(const Token &token);
+  crate::StringIndex AddString(const std::string &str);
+  crate::PathIndex AddPath(const Path &path);
+  crate::FieldIndex AddField(const Field &field);
+  crate::FieldSetIndex AddFieldSet(const std::vector<crate::FieldIndex> &field_indices);
+
+ private:
+
+  // TODO: Custom Hasher
+  std::unordered_map<Token, crate::TokenIndex> token_to_index_map;
+  std::unordered_map<std::string, crate::StringIndex> string_to_index_map;
+  std::unordered_map<Path, crate::PathIndex> path_to_index_map;
+  std::unordered_map<Field, crate::FieldIndex> field_to_index_map;
+  std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex> fieldset_to_index_map;
+
+  std::vector<Token> tokens_;
+  std::vector<std::string> strings_;
+  std::vector<Path> paths_;
+  std::vector<Field> fields_;
+  std::vector<crate::FieldIndex> fieldsets_; // flattened 1D array of FieldSets. Each span is terminated by Index()(= ~0)
+
+};
+
+crate::TokenIndex Packer::AddToken(const Token &token) {
+  if (token_to_index_map.count(token)) {
+    return token_to_index_map[token];
+  }
+
+  // index = size of umap
+  token_to_index_map[token] = crate::TokenIndex(uint32_t(tokens_.size()));
+  tokens_.emplace_back(token);
+
+  return token_to_index_map[token];
+}
+
+crate::StringIndex Packer::AddString(const std::string &str) {
+  if (string_to_index_map.count(str)) {
+    return string_to_index_map[str];
+  }
+
+  // index = size of umap
+  string_to_index_map[str] = crate::StringIndex(uint32_t(strings_.size()));
+  strings_.emplace_back(str);
+
+  return string_to_index_map[str];
+}
+
+crate::PathIndex Packer::AddPath(const Path &path) {
+  if (path_to_index_map.count(path)) {
+    return path_to_index_map[path];
+  }
+
+  // index = size of umap
+  path_to_index_map[path] = crate::PathIndex(uint32_t(paths_.size()));
+  paths_.emplace_back(path);
+
+  return path_to_index_map[path];
+}
+
+crate::FieldIndex Packer::AddField(const Field &field) {
+  if (field_to_index_map.count(field)) {
+    return field_to_index_map[field];
+  }
+
+  // index = size of umap
+  field_to_index_map[field] = crate::FieldIndex(uint32_t(fields_.size()));
+  fields_.emplace_back(field);
+
+  return field_to_index_map[field];
+}
+
+crate::FieldSetIndex Packer::AddFieldSet(const std::vector<crate::FieldIndex> &fieldset) {
+  if (fieldset_to_index_map.count(fieldset)) {
+    return fieldset_to_index_map[fieldset];
+  }
+
+  // index = size of umap = star index of FieldSet span.
+  fieldset_to_index_map[fieldset] = crate::FieldSetIndex(uint32_t(fieldsets_.size()));
+
+  fieldsets_.insert(fieldsets_.end(), fieldset.begin(), fieldset.end());
+  fieldsets_.push_back(crate::FieldIndex()); // terminator(~0)
+
+  return fieldset_to_index_map[fieldset];
+}
 
 class Writer {
  public:
@@ -102,41 +242,68 @@ class Writer {
     memcpy(&header[8], version, 8);
     memcpy(&header[16], &toc_offset, 8);
 
+    oss_.write(reinterpret_cast<const char *>(&header[0]), 88);
+
     return true;
   }
 
   bool WriteTokens() {
     // Build single string rseparated by '\0', then compress it with lz4
+
+
+
     return false;
   }
 
-  //
-  // TODO: 
-  //  - TOC
-  //  - Tokens
-  //  - Strings
-  //  - Fields
-  //  - FieldSets
-  //  - Paths
-  //  - Specs
-  //
-
-  bool SerializeTOC() {
+  bool WriteTOC() {
     uint64_t num_sections = toc_.sections.size();
+
+    DCOUT("# of sections = " << std::to_string(num_sections));
 
     if (num_sections == 0) {
       err_ += "Zero sections in TOC.\n";
       return false;
     }
 
-    oss_toc_.clear();
-
     // # of sections
-    oss_toc_.write(reinterpret_cast<const char *>(&num_sections), 8);
-    
-    
+    oss_.write(reinterpret_cast<const char *>(&num_sections), 8);
+
+
     return true;
   }
+
+  bool Write() {
+
+    //
+    //  - TOC
+    //  - Tokens
+    //  - Strings
+    //  - Fields
+    //  - FieldSets
+    //  - Paths
+    //  - Specs
+    //
+
+    if (!WriteTokens()) {
+      PUSH_ERROR("Failed to write TOC.");
+      return false;
+    }
+
+    if (!WriteTOC()) {
+      PUSH_ERROR("Failed to write TOC.");
+      return false;
+    }
+
+    // write heder
+    oss_.seekp(0, std::ios::beg);
+    if (!WriteHeader()) {
+      PUSH_ERROR("Failed to write Header.");
+      return false;
+    }
+
+    return true;
+  }
+
 
 
   // Get serialized USDC binary data
@@ -160,7 +327,7 @@ class Writer {
   //
   // Serialized data
   //
-  std::ostringstream oss_toc_;
+  std::ostringstream oss_;
 
   std::string err_;
 };
