@@ -129,7 +129,14 @@ struct ValueRep {
   uint64_t data;
 };
 
+struct TokenIndex : Index { using Index::Index; };
+struct StringIndex : Index { using Index::Index; };
+struct FieldIndex : Index { using Index::Index; };
+struct FieldSetIndex : Index { using Index::Index; };
+struct PathIndex : Index { using Index::Index; };
+
 // ----------------------------------------------------------------------------
+
 
 struct Field {
   Index token_index;
