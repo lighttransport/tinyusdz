@@ -4,7 +4,6 @@
 // pretty-print routine(using iostream) in non-intrusive way.
 // Some build configuration may not want I/O module(e.g. mobile/embedded device), so provide print routines in separated file.
 //
-// TODO: Move `print` related code in other files to here.
 //
 
 #include <string>
@@ -73,6 +72,11 @@ inline std::ostream &operator<<(std::ostream &os, const tinyusdz::Vec3d &v) {
 
 inline std::ostream &operator<<(std::ostream &os, const tinyusdz::Vec4d &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+inline std::ostream &operator<<(std::ostream &os, const tinyusdz::Token &v) {
+  os << "\"" << v.str() << "\"";
   return os;
 }
 
@@ -182,7 +186,7 @@ std::string to_string(Variability variability);
 std::string to_string(SpecType spec_type);
 
 std::string to_string(const Path &path, bool show_full_path = true);
-std::string to_string(const std::vector<Path> &paths, bool show_full_path = true);
+std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
 
 template<typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
