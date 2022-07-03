@@ -161,7 +161,7 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const Value &v) {
-  os << v.v_;  // delegate to operator<<(os, any_value)
+  os << v.get_raw();  // delegate to operator<<(os, any_value)
   return os;
 }
 

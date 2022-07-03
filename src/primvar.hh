@@ -859,7 +859,10 @@ class Value {
 
   bool is_vector_type() const { return v_.ncomp() > 1; }
 
-  friend std::ostream &operator<<(std::ostream &os, const Value &v);
+  //friend std::ostream &operator<<(std::ostream &os, const Value &v);
+  const any_value& get_raw() const {
+    return v_;
+  }
 
  private:
   any_value v_;
