@@ -649,4 +649,20 @@ std::string to_string(const Path &path, bool show_full_path) {
   }
 }
 
+std::string to_string(const std::vector<Path> &v, bool show_full_path) {
+
+  // TODO(syoyo): indent
+  std::stringstream ss;
+  ss << "[";
+
+  for (size_t i = 0; i < v.size(); i++) {
+    ss << to_string(v[i], show_full_path);
+    if (i != (v.size() -1)) {
+      ss << ", ";
+    }
+  }
+  ss << "]";
+  return ss.str();
+}
+
 } // tinyusdz
