@@ -279,6 +279,9 @@ list(
   ../../src/prim-types.cc
   ../../src/pprinter.cc
   ../../src/primvar.cc
+  ../../src/primvar-pprint.cc
+  ../../src/crate-format.cc
+  ../../src/usdc-parser.cc
   ../../src/usda-parser.cc
   ../../src/usda-writer.cc
   ../../src/image-loader.cc
@@ -292,6 +295,9 @@ set(TINYUSDZ_DEP_SOURCES
     ../../src/integerCoding.cpp
     ../../src/lz4-compression.cc
     ../../src/pxrLZ4/lz4.cpp
+    ../../src/external/string_id/string_id.cpp
+    ../../src/external/string_id/database.cpp
+    ../../src/external/string_id/error.cpp
     ../../src/external/fpng.cpp
     ../../src/external/staticstruct.cc
     ../../src/external/tinyxml2/tinyxml2.cpp

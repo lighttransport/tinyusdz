@@ -1,5 +1,5 @@
 # Assume this cmake is called from tinyusdz root(../../)
-set(EXAMPLE_TARGET "simple_dump")
+set(EXAMPLE_TARGET "simple_usdz_dump")
 
 set(TINYUSDZ_SIMPLE_DUMP_SOURCES
     main.cc

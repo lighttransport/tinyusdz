@@ -34,8 +34,8 @@ static std::string PrintNodeType(tinyusdz::NodeType ty)
 {
   if (ty == tinyusdz::NODE_TYPE_XFORM) {
     return "node:xform";
-  } else if (ty == tinyusdz::NODE_TYPE_GROUP) {
-    return "node:group";
+  } else if (ty == tinyusdz::NODE_TYPE_SCOPE) {
+    return "node:scope";
   } else if (ty == tinyusdz::NODE_TYPE_GEOM_MESH) {
     return "node:geom_mesh";
   } else if (ty == tinyusdz::NODE_TYPE_MATERIAL) {
@@ -83,7 +83,7 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "# of geom_points: " << scene.geom_points.size() << "\n";
   std::cout << "# of materials: " << scene.geom_meshes.size() << "\n";
   std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
-  std::cout << "# of groups: " << scene.groups.size() << "\n";
+  std::cout << "# of scopes: " << scene.scopes.size() << "\n";
 
   if (scene.default_root_node > -1) {
     DumpNode(scene.nodes[size_t(scene.default_root_node)], 0);
