@@ -180,6 +180,7 @@ struct Material {
   PreviewSurfaceShader shader;
 };
 
+
 // Simple LDR texture
 struct Image {
   std::vector<uint8_t> image;
