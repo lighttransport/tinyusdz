@@ -7,6 +7,10 @@
 #include "nanort.h"
 #include "nanosg.h"
 
+// Part of TinyUSDZ core
+//#define STB_IMAGE_IMPLEMENTATION
+#include "external/stb_image.h"
+
 // common
 #include "mapbox/earcut.hpp"  // For polygon triangulation
 #include "matrix.h"
@@ -15,13 +19,13 @@
 #define PAR_SHAPES_IMPLEMENTATION
 #include "par_shapes.h"  // For meshing
 
+
 const float kPI = 3.141592f;
 
 typedef nanort::real3<float> float3;
 
 namespace example {
 
-struct DifferentialGeometry {
   float t;               // hit t
   float bary_u, bary_v;  // barycentric coordinate.
   uint32_t geom_id;      // geom id(Currently GeomMesh only)
@@ -29,6 +33,12 @@ struct DifferentialGeometry {
 
   float3 shading_normal;
   float3 geometric_normal;
+};
+
+struct PointLight {
+  float3 position{1000.0f, 1000.0f, 1000.0f};
+  float3 color{0.8f, 0.8f, 0.8f};
+  float intensity{1.0f};
 };
 
 inline float3 Lerp3(float3 v0, float3 v1, float3 v2, float u, float v) {
@@ -43,6 +53,30 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
   N = vnormalize(N);
 }
 
+bool LoadTextureImage(const tinyusdz::UVTexture &tex, Image *out_image) {
+  
+  // Asssume asset name = file name
+  std::string filename = tex.asset;
+
+  // TODO: 16bit PNG image, EXR image
+  int w, h, channels;
+  stbi_uc *image = stbi_load(filename.c_str(), &w, &h, &channels, /* desired_channels */3);     
+  if (!image) {
+    return false;      
+  }
+
+  size_t n = w * h * channels;
+  out_image->image.resize(n);
+  memcpy(out_image->image.data(), image, n);
+
+  out_image->width = w;
+  out_image->height = h;
+  out_image->channels = channels;
+
+  return true;
+ 
+}
+    
 bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere,
                          DrawGeomMesh* dst) {
   // TODO: Write our own sphere -> polygon converter
@@ -330,10 +364,17 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   return true;
 }
 
-float3 Shade(const DrawGeomMesh& mesh, DifferentialGeometry& dg) {
-  // TODO
+float3 Shade(const DrawGeomMesh& mesh, const DifferentialGeometry &dg, const PointLight &light) {
 
-  float3 color;
+  float3 ldir = vnormalize(light.position - dg.position);
+
+  // TODO
+  float d = vdot(ldir, vnormalize(dg.shading_normal));
+  float ambient = 0.2f;
+
+  d = std::max(ambient, d);
+
+  float3 color{d, d, d};
 
   return color;
 }
@@ -580,9 +621,12 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
               dg.geometric_normal = Ng;
               dg.shading_normal = Ns;
 
-              output->rgb[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
-              output->rgb[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
-              output->rgb[3 * pixel_idx + 2] = 0.5f * Ns[2] + 0.5f;
+              PointLight light; // dummy
+              float3 rgb = Shade(mesh, dg, light);
+
+              output->rgb[3 * pixel_idx + 0] = rgb[0];
+              output->rgb[3 * pixel_idx + 1] = rgb[1];
+              output->rgb[3 * pixel_idx + 2] = rgb[2];
 
               output->geometric_normal[3 * pixel_idx + 0] = 0.5f * Ns[0] + 0.5f;
               output->geometric_normal[3 * pixel_idx + 1] = 0.5f * Ns[1] + 0.5f;
