@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // C binding for TinyUSD(Z) 
+#pragma once
 
 //
 // a class for `token` type.
