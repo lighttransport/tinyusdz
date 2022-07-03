@@ -1,3 +1,16 @@
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#include <windows.h>  // include API for expanding a file path
+#endif
+
+
 #include "usdc-writer.hh"
 #include "io-util.hh"
 #include "lz4-compression.hh"
@@ -13,6 +26,27 @@ namespace usdc {
 namespace {
 
 constexpr size_t kSectionNameMaxLength = 15;
+
+#ifdef _WIN32
+std::wstring UTF8ToWchar(const std::string &str) {
+  int wstr_size =
+      MultiByteToWideChar(CP_UTF8, 0, str.data(), int(str.size()), nullptr, 0);
+  std::wstring wstr(size_t(wstr_size), 0);
+  MultiByteToWideChar(CP_UTF8, 0, str.data(), int(str.size()), &wstr[0],
+                      int(wstr.size()));
+  return wstr;
+}
+
+std::string WcharToUTF8(const std::wstring &wstr) {
+  int str_size = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()),
+                                     nullptr, 0, nullptr, nullptr);
+  std::string str(size_t(str_size), 0);
+  WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()), &str[0],
+                      int(str.size()), nullptr, nullptr);
+  return str;
+}
+#endif
+
 
 struct Section {
   Section() { memset(this, 0, sizeof(*this)); }
