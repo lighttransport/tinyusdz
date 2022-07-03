@@ -7,6 +7,7 @@
 
 #include "unit-primvar.h"
 #include "primvar.hh"
+#include "primvar-pprint.hh"
 
 using namespace tinyusdz::primvar;
 
