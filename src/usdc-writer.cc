@@ -390,6 +390,10 @@ class Writer {
 bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
                 std::string *warn, std::string *err) {
 #ifdef __ANDROID__
+  (void)filename;
+  (void)scene;
+  (void)warn;
+
   if (err) {
     (*err) += "Saving USDC to a file is not supported for Android platform.\n";
   }
