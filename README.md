@@ -272,3 +272,4 @@ TinyUSDZ is licensed under MIT license.
 * MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
 * tinyxml2: zlib license. https://github.com/leethomason/tinyxml2
 * string_id: zlib license. https://github.com/foonathan/string_id
+* cityhash: MIT license. https://github.com/google/cityhash
