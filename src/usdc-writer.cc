@@ -118,23 +118,74 @@ struct Field {
   crate::ValueRep value_rep;
 };
 
+// For unordered_map
+
+// https://stackoverflow.com/questions/8513911/how-to-create-a-good-hash-combine-with-64-bit-output-inspired-by-boosthash-co
+// From CityHash code.
+template <class T> inline void hash_combine(std::size_t& seed, const T& v)
+{
+    std::hash<T> hasher;
+    const std::size_t kMul = 0x9ddfea08eb382d69ULL;
+    std::size_t a = (hasher(v) ^ seed) * kMul;
+    a ^= (a >> 47);
+    std::size_t b = (seed ^ a) * kMul;
+    b ^= (b >> 47);
+    seed = b * kMul;
+}
+
+struct PathKeyEqual {
+  bool operator()(const Path &lhs, const Path &rhs) const {
+    bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
+    ret &= lhs.GetPropPart() == rhs.GetPropPart();
+    ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
+    ret &= lhs.IsValid() == rhs.IsValid();
+
+    return ret;
+  }
+};
+
+struct PathHasher {
+  size_t operator()(const Path &path) const {
+    size_t seed = std::hash<std::string>()(path.GetPrimPart());
+    hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
+    hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
+    hash_combine(seed, std::hash<bool>()(path.IsValid()));
+
+    return seed;
+  }
+};
+
+#if 0 // TODO
+struct FieldHasher {
+  size_t operator()(const Field &field) const {
+    size_t seed = std::hash<std::string>()(path.GetPrimPart());
+    hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
+    hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
+    hash_combine(seed, std::hash<bool>()(path.IsValid()));
+
+    return seed;
+  }
+};
+#endif
+
 class Packer {
  public:
 
   crate::TokenIndex AddToken(const Token &token);
   crate::StringIndex AddString(const std::string &str);
   crate::PathIndex AddPath(const Path &path);
-  crate::FieldIndex AddField(const Field &field);
-  crate::FieldSetIndex AddFieldSet(const std::vector<crate::FieldIndex> &field_indices);
+  // TODO
+  //crate::FieldIndex AddField(const Field &field);
+  //crate::FieldSetIndex AddFieldSet(const std::vector<crate::FieldIndex> &field_indices);
 
  private:
 
-  // TODO: Custom Hasher
-  std::unordered_map<Token, crate::TokenIndex> token_to_index_map;
+  std::unordered_map<Token, crate::TokenIndex, TokenHasher, TokenKeyEqual> token_to_index_map;
   std::unordered_map<std::string, crate::StringIndex> string_to_index_map;
-  std::unordered_map<Path, crate::PathIndex> path_to_index_map;
-  std::unordered_map<Field, crate::FieldIndex> field_to_index_map;
-  std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex> fieldset_to_index_map;
+  std::unordered_map<Path, crate::PathIndex, PathHasher, PathKeyEqual> path_to_index_map;
+  // TODO
+  //std::unordered_map<Field, crate::FieldIndex> field_to_index_map;
+  //std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex> fieldset_to_index_map;
 
   std::vector<Token> tokens_;
   std::vector<std::string> strings_;
@@ -180,6 +231,7 @@ crate::PathIndex Packer::AddPath(const Path &path) {
   return path_to_index_map[path];
 }
 
+#if 0 // TODO
 crate::FieldIndex Packer::AddField(const Field &field) {
   if (field_to_index_map.count(field)) {
     return field_to_index_map[field];
@@ -205,6 +257,7 @@ crate::FieldSetIndex Packer::AddFieldSet(const std::vector<crate::FieldIndex> &f
 
   return fieldset_to_index_map[fieldset];
 }
+#endif
 
 class Writer {
  public:

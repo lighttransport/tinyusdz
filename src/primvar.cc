@@ -160,10 +160,10 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const Value &v) {
-  os << v.get_raw();  // delegate to operator<<(os, any_value)
-  return os;
-}
+//std::ostream &operator<<(std::ostream &os, const Value &v) {
+//  os << v.get_raw();  // delegate to operator<<(os, any_value)
+//  return os;
+//}
 
 bool is_float(const any_value &v) {
   if (v.underlying_type_name() == "float") {
