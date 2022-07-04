@@ -26,11 +26,14 @@ typedef nanort::real3<float> float3;
 
 namespace example {
 
+struct DifferentialGeometry {
+
   float t;               // hit t
   float bary_u, bary_v;  // barycentric coordinate.
   uint32_t geom_id;      // geom id(Currently GeomMesh only)
   float tex_u, tex_v;    // texture u and v
 
+  float3 position;
   float3 shading_normal;
   float3 geometric_normal;
 };
