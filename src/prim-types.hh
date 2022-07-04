@@ -303,15 +303,21 @@ class Path {
 
   std::string GetPropPart() const { return prop_part; }
 
+  bool IsValid() const { return valid; }
+
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
   static Path AbsoluteRootPath() { return Path("/"); }
 
-  void SetLocalPath(const Path &rhs) {
+  void SetLocalPart(const Path &rhs) {
     // assert(rhs.valid == true);
 
     this->local_part = rhs.local_part;
     this->valid = rhs.valid;
+  }
+
+  std::string GetLocalPart() const {
+    return local_part;
   }
 
   Path AppendProperty(const std::string &elem) {
