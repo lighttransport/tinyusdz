@@ -10,12 +10,19 @@ tinyusdz_sources=[
   '../../src/prim-types.cc',
   '../../src/usdObj.cc',
   '../../src/primvar.cc',
+  '../../src/primvar-pprint.cc',
   '../../src/usda-parser.cc',
   '../../src/usda-writer.cc',
+  '../../src/usdc-parser.cc',
+  '../../src/usdc-writer.cc',
+  '../../src/crate-format.cc',
   # deps
   '../../src/external/fpng.cpp',
   '../../src/external/staticstruct.cc',
   '../../src/external/tinyxml2/tinyxml2.cpp',
+  '../../src/external/string_id/string_id.cpp',
+  '../../src/external/string_id/error.cpp',
+  '../../src/external/string_id/database.cpp',
   '../../src/external/ryu/ryu/d2s.c',
   '../../src/external/ryu/ryu/f2s.c',
   '../../src/external/ryu/ryu/s2f.c',
@@ -23,9 +30,11 @@ tinyusdz_sources=[
   ]
 
 incdirs = include_directories(['../../src','../../src/external/ryu'])
+
 executable('fuzz_tinyusdz',
   'tinyusdz_fuzzmain.cc',
   tinyusdz_sources, 
+  install: true,
   include_directories : incdirs,
   cpp_args : '-fsanitize=address,fuzzer',
   link_args : '-fsanitize=address,fuzzer' )
@@ -35,6 +44,7 @@ executable('fuzz_intcoding',
   'intCoding_fuzzmain.cc',
   '../../src/lz4-compression.cc',
   '../../src/integerCoding.cpp',
+  install: true,
   include_directories : incdirs,
   cpp_args : '-fsanitize=address,fuzzer',
   link_args : '-fsanitize=address,fuzzer' )
@@ -44,6 +54,9 @@ executable('fuzz_usdaparser',
   'usdaparser_fuzzmain.cc',
   tinyusdz_sources, 
   '../../src/usda-parser.cc',
+  install: true,
   include_directories : incdirs,
   cpp_args : '-fsanitize=address,fuzzer',
   link_args : '-fsanitize=address,fuzzer' )
+
+
