@@ -2341,7 +2341,7 @@ bool Parser::Impl::BuildDecompressedPathsImpl(
                              : parentPath.AppendElement(elemToken);
 
       // also set local path for 'primChildren' check
-      _paths[pathIndexes[thisIndex]].SetLocalPath(elemToken);
+      _paths[pathIndexes[thisIndex]].SetLocalPart(elemToken);
     }
 
     // If we have either a child or a sibling but not both, then just

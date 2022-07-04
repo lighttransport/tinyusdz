@@ -789,6 +789,14 @@ class Value {
 const ValueType &GetValueType(int32_t type_id);
 std::string GetValueTypeString(int32_t type_id);
 
+struct SimpleHasher {
+    template <class T>
+    inline size_t operator()(const T &val) const {
+        return std::hash<T>()(val);
+    }
+};
+
+
 } // namespace crate
 } // namespace tinyusdz
 

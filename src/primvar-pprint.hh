@@ -63,11 +63,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::matrix2d &v)
 std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::matrix4d &v);
 
+
 } // namespace std
 
 namespace tinyusdz {
 namespace primvar {
 
+//std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::Value &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::any_value &v);
 
 } // namespace primvar

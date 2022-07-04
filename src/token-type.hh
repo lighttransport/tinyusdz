@@ -92,6 +92,18 @@ class Token {
   nonstd::optional<sid::string_id> str_;
 };
 
+struct TokenHasher {
+  inline size_t operator()(const Token &tok) const {
+    return tok.hash();
+  } 
+};
+
+struct TokenKeyEqual {
+  bool operator()(const Token &lhs, const Token &rhs) const {
+    return lhs.str() == rhs.str();
+  } 
+};
+
 //std::ostream &operator<<(std::ostream &os, const Token &tok) {
 //
 //  os << tok.str();
