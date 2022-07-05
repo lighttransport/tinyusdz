@@ -1,6 +1,6 @@
-#include "simple-serialize.hh"
+#include "simple-type-reflection.hh"
 
-namespace simple_serialize {
+namespace simple_type_reflection {
 
 Error* TypeMismatchError(std::string expected_type, std::string actual_type) {
   return new Error(Error::TYPE_MISMATCH,
@@ -336,4 +336,4 @@ bool Parse::SetValue(const std::string& s, BaseHandler& handler) const {
   return handler.String(s.c_str(), s.size(), /* not used */ false);
 }
 
-}  // namespace simple_serialize
+}  // namespace simple_type_reflection
