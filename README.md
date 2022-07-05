@@ -69,7 +69,7 @@ If you need commercial support, eco-system development(e.g. plug-ins, authorizat
   * [ ] RISC-V(Should work)
   * [ ] SPARC, POWER(Big endian machine). May work(theoretically)
 * [x] Android arm64v8a
-* [ ] iOS(Should work)
+* [ ] iOS(Should compile)
 * [x] macOS
 * [x] Windows 10 64bit or later
   * [ ] Windows ARM(should work)
@@ -109,7 +109,7 @@ I do not recommend to use tinyusdz as a git submodule, since the repo contains l
 
 ### Compiler defines
 
-* `TINYUSDZ_USE_OPENSUBDIV` : Use OpenSubviv for subdivision surface(to get smooth mesh from USD(Z) primitive). Default enabled.
+Please see `CMake build options` and `CMakeLists.txt`. In most case same identifier is defined from cmake build options: For example if you specify `-DTINYUSDZ_PRODUCTION_BUILD=1` for cmake argument, `TINYUSDZ_PRODUCTION_BUILD` is defined.
 
 ### CMake
 
@@ -137,6 +137,7 @@ For Windows native build, we assume `ninja.exe` is installed on your system(You 
 
 #### CMake build options
 
+* `TINYUSDZ_PRODUCTION_BUILD` : Production build. Do not include debugging logs.
 * `TINYUSDZ_BUILD_TESTS` : Build tests
 * `TINYUSDZ_BUILD_EXAMPLES` : Build examples(note that not all examples in `examples` folder are built)
 * `TINYUSDZ_WITH_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.

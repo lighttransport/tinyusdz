@@ -97,22 +97,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma clang diagnostic pop
 #endif
 
-#if 0
-#define PUSH_ERROR(s) { \
-  std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  _err += ss.str() + "\n"; \
-} while (0)
-
-#define PUSH_WARN(s) { \
-  std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  _warn += ss.str() + "\n"; \
-} while (0)
-#endif
-
 #if defined(TINYUSDZ_PRODUCTION_BUILD)
 #define TINYUSDZ_LOCAL_DEBUG_PRINT
 #endif
@@ -442,56 +426,6 @@ bool LoadUSDCFromFile(const std::string &_filename, Scene *scene,
     return false;
   }
 
-#if 0
-  std::vector<uint8_t> data;
-  {
-    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
-    if (!ifs) {
-      if (err) {
-        (*err) = "File not found or cannot open file : " + filename;
-      }
-      return false;
-    }
-
-    // TODO(syoyo): Use mmap
-    ifs.seekg(0, ifs.end);
-    size_t sz = static_cast<size_t>(ifs.tellg());
-    if (int64_t(sz) < 0) {
-      // Looks reading directory, not a file.
-      if (err) {
-        (*err) += "Looks like filename is a directory : \"" + filename + "\"\n";
-      }
-      return false;
-    }
-
-    if (sz < (11 * 8)) {
-      // ???
-      if (err) {
-        (*err) +=
-            "File size too short. Looks like this file is not a USDC : \"" +
-            filename + "\"\n";
-      }
-      return false;
-    }
-
-    if (sz > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
-      if (err) {
-        (*err) += "USDZ file is too large(size = " + std::to_string(sz) +
-                  ", which exceeds memory limit " +
-                  std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
-      }
-
-      return false;
-    }
-
-    data.resize(sz);
-
-    ifs.seekg(0, ifs.beg);
-    ifs.read(reinterpret_cast<char *>(&data.at(0)),
-             static_cast<std::streamsize>(sz));
-  }
-#endif
-
   return LoadUSDCFromMemory(data.data(), data.size(), scene, warn, err,
                             options);
 }
@@ -537,45 +471,6 @@ bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
     return false;
   }
 
-#if 0
-  std::vector<uint8_t> data;
-  {
-    std::ifstream ifs(filename.c_str(), std::ifstream::binary);
-    if (!ifs) {
-      if (err) {
-        (*err) = "File not found or cannot open file : " + filename;
-      }
-      return false;
-    }
-
-    // TODO(syoyo): Use mmap
-    ifs.seekg(0, ifs.end);
-    size_t sz = static_cast<size_t>(ifs.tellg());
-    if (int64_t(sz) < 0) {
-      // Looks reading directory, not a file.
-      if (err) {
-        (*err) += "Looks like filename is a directory : \"" + filename + "\"\n";
-      }
-      return false;
-    }
-
-    if (sz < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
-      // ???
-      if (err) {
-        (*err) +=
-            "File size too short. Looks like this file is not a USDZ : \"" +
-            filename + "\"\n";
-      }
-      return false;
-    }
-
-    data.resize(sz);
-
-    ifs.seekg(0, ifs.beg);
-    ifs.read(reinterpret_cast<char *>(&data.at(0)),
-             static_cast<std::streamsize>(sz));
-  }
-#endif
 
   size_t offset = 0;
   while ((offset + 30) < data.size()) {
@@ -845,6 +740,7 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
     return false;
   }
 
+  // TODO
 #if 0
   if (auto p = nonstd::get_if<std::vector<Vec3f>>(&st.buffer)) {
     v->resize(p->size() * 3);
