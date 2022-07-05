@@ -197,6 +197,11 @@ class Packer {
   crate::FieldIndex AddField(const Field &field);
   crate::FieldSetIndex AddFieldSet(const std::vector<crate::FieldIndex> &field_indices);
 
+   
+  const std::vector<Token> &GetTokens() const {
+    return tokens_;
+  }
+
  private:
 
   std::unordered_map<Token, crate::TokenIndex, TokenHasher, TokenKeyEqual> token_to_index_map;
@@ -317,10 +322,63 @@ class Writer {
   }
 
   bool WriteTokens() {
-    // Build single string rseparated by '\0', then compress it with lz4
+    // Build single string separated by '\0', then compress it with lz4
+    std::ostringstream oss;
 
+    auto tokens = packer_.GetTokens();
 
+    for (size_t i = 0; i < tokens.size(); i++) {
+    
+      oss << tokens[i].str();
+ 
+      if (i != (tokens.size() - 1)) {
+        oss.put('\0'); // separator
+      }
+    }
+    // Last string does not terminated with `\0'
 
+    // compress
+    size_t input_bytes = oss.str().size();
+    if (input_bytes == 0) {
+      PUSH_ERROR("Invalid data size.");
+      return false;
+    }
+
+    std::vector<char> buf;
+    buf.resize(LZ4Compression::GetCompressedBufferSize(input_bytes));
+
+    std::string err;
+    size_t n = LZ4Compression::CompressToBuffer(oss.str().data(), 
+      buf.data(),
+      input_bytes, &err);
+
+    (void)n;
+
+    if (!err.empty()) {
+      PUSH_ERROR(err);
+      return false;
+    }
+
+    return true;
+  }
+
+  bool WriteStrings() {
+    return false;
+  }
+
+  bool WriteFields() {
+    return false;
+  }
+
+  bool WriteFieldSets() {
+    return false;
+  }
+
+  bool WritePaths() {
+    return false;
+  }
+
+  bool WriteSpecs() {
     return false;
   }
 
@@ -354,10 +412,41 @@ class Writer {
     //
 
     if (!WriteTokens()) {
-      PUSH_ERROR("Failed to write TOC.");
+      PUSH_ERROR("Failed to write Tokens.");
       return false;
     }
 
+    if (!WriteStrings()) {
+      PUSH_ERROR("Failed to write Strings.");
+      return false;
+    }
+
+    if (!WriteFields()) {
+      PUSH_ERROR("Failed to write Fields.");
+      return false;
+    }
+
+    if (!WriteFieldSets()) {
+      PUSH_ERROR("Failed to write FieldSets.");
+      return false;
+    }
+
+    if (!WritePaths()) {
+      PUSH_ERROR("Failed to write Paths.");
+      return false;
+    }
+
+    if (!WriteSpecs()) {
+      PUSH_ERROR("Failed to write Specs.");
+      return false;
+    }
+
+    // TODO(syoyo): Add feature to support writing unknown section(custom user data)
+    //if (!WriteUnknownSections()) {
+    //  PUSH_ERROR("Failed to write custom sections.");
+    //  return false;
+    //}
+    
     if (!WriteTOC()) {
       PUSH_ERROR("Failed to write TOC.");
       return false;
@@ -392,6 +481,8 @@ class Writer {
   Writer(const Writer &) = delete;
 
   TableOfContents toc_;
+
+  Packer packer_;
 
   //
   // Serialized data
