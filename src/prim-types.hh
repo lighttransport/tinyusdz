@@ -22,6 +22,7 @@
 
 #include "nonstd/optional.hpp"
 #include "nonstd/variant.hpp"
+#include "nonstd/expected.hpp"
 
 #define any_CONFIG_NO_EXCEPTIONS (1)
 #include "nonstd/any.hpp"
@@ -1957,6 +1958,11 @@ struct GeomMesh {
   // uniform token `subsetFamily:materialBind:familyType`
   GeomSubset::FamilyType materialBindFamilyType{GeomSubset::FamilyType::Partition};
   std::vector<uint32_t> geom_subset_children; // indices in Scene::geom_subsets
+
+  ///
+  /// Validate GeomSubset data attached to this GeomMesh.
+  ///
+  nonstd::expected<bool, std::string> ValidateGeomSubset();
 
   // List of Primitive attributes(primvars)
   std::map<std::string, PrimAttrib> attribs;
