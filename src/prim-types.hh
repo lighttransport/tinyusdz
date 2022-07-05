@@ -1862,6 +1862,13 @@ struct GeomSubset {
     Invalid
   };
 
+  enum class FamilyType {
+    Partition,  // 'partition'
+    NonOverlapping, // 'nonOverlapping'
+    Unrestricted, // 'unrestricted'
+    Invalid
+  };
+
   std::string name;
 
   int64_t parent_id{-1};  // Index to parent node
@@ -1943,6 +1950,13 @@ struct GeomMesh {
   std::string interpolateBoundary =
       "edgeAndCorner";  // "none", "edgeAndCorner" or "edgeOnly"
   SubdivisionScheme subdivisionScheme{SubdivisionScheme::CatmullClark};
+
+  //
+  // GeomSubset
+  //
+  // uniform token `subsetFamily:materialBind:familyType`
+  GeomSubset::FamilyType materialBindFamilyType{GeomSubset::FamilyType::Partition};
+  std::vector<uint32_t> geom_subset_children; // indices in Scene::geom_subsets
 
   // List of Primitive attributes(primvars)
   std::map<std::string, PrimAttrib> attribs;
