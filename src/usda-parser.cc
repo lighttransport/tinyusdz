@@ -116,6 +116,16 @@
   } while (0)
 #endif
 
+#if defined(TINYUSDZ_PRODUCTION_BUILD)
+#define TINYUSDZ_LOCAL_DEBUG_PRINT
+#endif
+
+#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
+#else
+#define DCOUT(x)
+#endif
+
 namespace tinyusdz {
 
 namespace usda {
@@ -276,7 +286,7 @@ using PathList = std::vector<Path>;
 // used type. For other array type, use Variable::Array
 using Value = nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f, double,
                               Vec2d, Vec3d, Vec4d, std::vector<Vec3f>,
-                              std::string, AssetReference, Path, PathList, Rel>;
+                              std::string, Reference, Path, PathList, Rel>;
 
 namespace {
 
@@ -306,7 +316,7 @@ std::string value_type_name(const Value &v) {
     return "float3[]";
   } else if (nonstd::get_if<std::string>(&v)) {
     return "string";
-  } else if (nonstd::get_if<AssetReference>(&v)) {
+  } else if (nonstd::get_if<Reference>(&v)) {
     return "asset_ref";
   } else if (nonstd::get_if<Path>(&v)) {
     return "path";
@@ -530,19 +540,19 @@ class Variable {
 
 namespace {
 
-using AssetReferenceList = std::vector<std::pair<ListEditQual, AssetReference>>;
+using ReferenceList = std::vector<std::pair<ListEditQual, Reference>>;
 
 #if 0
-// Extract array of AssetReferences from Variable.
-AssetReferenceList GetAssetReferences(
+// Extract array of References from Variable.
+ReferenceList GetReferences(
     const std::tuple<ListEditQual, primvar::any_value> &_var) {
-  AssetReferenceList result;
+  ReferenceList result;
 
   ListEditQual qual = std::get<0>(_var);
 
   auto var = std::get<1>(_var);
 
-  SLOG_INFO << "GetAssetReferences. var.name = " << var.name << "\n";
+  SLOG_INFO << "GetReferences. var.name = " << var.name << "\n";
 
   if (var.IsArray()) {
     LOG_INFO("IsArray");
@@ -552,8 +562,8 @@ AssetReferenceList GetAssetReferences(
       for (const auto &v : parr->values) {
         LOG_INFO("Maybe Value");
         if (v.IsValue()) {
-          LOG_INFO("Maybe AssetReference");
-          if (auto pref = nonstd::get_if<AssetReference>(v.as_value())) {
+          LOG_INFO("Maybe Reference");
+          if (auto pref = nonstd::get_if<Reference>(v.as_value())) {
             LOG_INFO("Got it");
             result.push_back({qual, *pref});
           }
@@ -563,8 +573,8 @@ AssetReferenceList GetAssetReferences(
   } else if (var.IsValue()) {
     LOG_INFO("IsValue");
     if (auto pv = var.as_value()) {
-      LOG_INFO("Maybe AssetReference");
-      if (auto pas = nonstd::get_if<AssetReference>(pv)) {
+      LOG_INFO("Maybe Reference");
+      if (auto pas = nonstd::get_if<Reference>(pv)) {
         LOG_INFO("Got it");
         result.push_back({qual, *pas});
       }
@@ -1560,8 +1570,8 @@ class USDAParser::Impl {
       var.value = arr;
 
     } else if (vardef.type == "ref[]") {
-      std::vector<AssetReference> value;
-      if (!ParseAssetReferenceArray(&value)) {
+      std::vector<Reference> value;
+      if (!ParseReferenceArray(&value)) {
         PushError("Failed to parse array of assert reference");
 
         return false;
@@ -2553,15 +2563,16 @@ class USDAParser::Impl {
 
       } else if (type_name == "asset") {
 
-        AssetReference assert_ref;
+        Reference assert_ref;
         bool triple_deliminated{false};
-        if (!ParseAssetReference(&assert_ref, &triple_deliminated)) {
+        if (!ParseReference(&assert_ref, &triple_deliminated)) {
           PUSH_ERROR("Failed to parse `asset` data.");
         }
 
         primvar::asset asset;
-        asset.asset_path = assert_ref.asset_reference;
+        asset.asset_path = assert_ref.asset_path;
         attr.var.set_scalar(asset);
+        PUSH_ERROR("TODO: `asset`");
 
       } else {
         PUSH_ERROR("TODO: type = " + type_name);
@@ -3388,8 +3399,8 @@ class USDAParser::Impl {
   /// `sep`
   /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
   ///
-  bool SepBy1AssetReference(const char sep,
-                            std::vector<AssetReference> *result) {
+  bool SepBy1Reference(const char sep,
+                            std::vector<Reference> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -3397,11 +3408,11 @@ class USDAParser::Impl {
     }
 
     {
-      AssetReference ref;
+      Reference ref;
       bool triple_deliminated{false};
 
-      if (!ParseAssetReference(&ref, &triple_deliminated)) {
-        PushError("Failed to parse AssetReference.\n");
+      if (!ParseReference(&ref, &triple_deliminated)) {
+        PushError("Failed to parse Reference.\n");
         return false;
       }
 
@@ -3441,9 +3452,9 @@ class USDAParser::Impl {
 
       // std::cout << "go to read int\n";
 
-      AssetReference ref;
+      Reference ref;
       bool triple_deliminated{false};
-      if (!ParseAssetReference(&ref, &triple_deliminated)) {
+      if (!ParseReference(&ref, &triple_deliminated)) {
         break;
       }
 
@@ -3802,7 +3813,7 @@ class USDAParser::Impl {
   /// Parse array of asset references
   /// Allow non-list version
   ///
-  bool ParseAssetReferenceArray(std::vector<AssetReference> *result) {
+  bool ParseReferenceArray(std::vector<Reference> *result) {
     if (!SkipWhitespace()) {
       return false;
     }
@@ -3817,9 +3828,9 @@ class USDAParser::Impl {
 
       std::cout << "Guess non-list version\n";
       // Guess non-list version
-      AssetReference ref;
+      Reference ref;
       bool triple_deliminated{false};
-      if (!ParseAssetReference(&ref, &triple_deliminated)) {
+      if (!ParseReference(&ref, &triple_deliminated)) {
         return false;
       }
 
@@ -3828,7 +3839,7 @@ class USDAParser::Impl {
       result->push_back(ref);
 
     } else {
-      if (!SepBy1AssetReference(',', result)) {
+      if (!SepBy1Reference(',', result)) {
         return false;
       }
 
@@ -4997,7 +5008,7 @@ class USDAParser::Impl {
   }
 
   // TODO: Return Path
-  bool ParseAssetReference(AssetReference *out, bool *triple_deliminated) {
+  bool ParseReference(Reference *out, bool *triple_deliminated) {
     // @...@
     // or @@@...@@@ (Triple '@'-deliminated asset references)
     // And optionally followed by prim path.
@@ -5036,7 +5047,7 @@ class USDAParser::Impl {
 
       if (s != '@') {
         std::string sstr{s};
-        PushError("AssetReference must start with '@', but got '" + sstr +
+        PushError("Reference must start with '@', but got '" + sstr +
                    "'");
         return false;
       }
@@ -5064,7 +5075,7 @@ class USDAParser::Impl {
                 << "\n";
 
       if (found_delimiter) {
-        out->asset_reference = tok;
+        out->asset_path = tok;
         (*triple_deliminated) = false;
 
         valid = true;
@@ -5102,7 +5113,7 @@ class USDAParser::Impl {
       }
 
       if (found_delimiter) {
-        out->asset_reference = tok;
+        out->asset_path = tok;
         (*triple_deliminated) = true;
 
         valid = true;
@@ -5160,19 +5171,19 @@ class USDAParser::Impl {
       var.value = value;
     } else if (vartype == "ref[]") {
       std::cout << "read ref[]\n";
-      std::vector<AssetReference> values;
-      if (!ParseAssetReferenceArray(&values)) {
+      std::vector<Reference> values;
+      if (!ParseReferenceArray(&values)) {
         std::string msg =
-            "Array of AssetReference expected for `" + varname + "`.\n";
+            "Array of Reference expected for `" + varname + "`.\n";
         PushError(msg);
         return false;
       }
 
       Variable::Array arr;
       for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "asset_reference[" << i
-                  << "] = " << values[i].asset_reference
-                  << ", prim_path = " << values[i].prim_path << "\n";
+        DCOUT("reference[" << std::to_string(i)
+                  << "] = " << values[i].asset_path
+                  << ", prim_path = " << values[i].prim_path);
         Variable v;
         v.value = values[i];
         arr.values.push_back(v);
@@ -5189,7 +5200,7 @@ class USDAParser::Impl {
       }
 
       for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "int[" << i << "] = " << values[i] << "\n";
+        DCOUT("int[" << i << "] = " << values[i]);
       }
 
       Variable::Array arr;
@@ -5965,13 +5976,13 @@ class USDAParser::Impl {
       return false;
     }
 
-    std::vector<std::pair<ListEditQual, AssetReference>> references;
+    std::vector<std::pair<ListEditQual, Reference>> references;
     LOG_INFO("`references.count` = " +
              std::to_string(args.count("references")));
 
     if (args.count("references")) {
       // TODO
-      //references = GetAssetReferences(args["references"]);
+      //references = GetReferences(args["references"]);
       //LOG_INFO("`references.size` = " + std::to_string(references.size()));
     }
 
@@ -6039,15 +6050,15 @@ class USDAParser::Impl {
           }
 
           auto it = references.begin();
-          const AssetReference &ref = it->second;
-          std::string filepath = ref.asset_reference;
+          const Reference &ref = it->second;
+          std::string filepath = ref.asset_path;
 
           // usdOBJ?
           if (endsWith(filepath, ".obj")) {
             prim_type = "geom_mesh";
           } else {
             if (!io::IsAbsPath(filepath)) {
-              filepath = io::JoinPath(_base_dir, ref.asset_reference);
+              filepath = io::JoinPath(_base_dir, ref.asset_path);
             }
 
             if (_reference_cache.count(filepath)) {
@@ -6303,74 +6314,74 @@ class USDAParser::Impl {
 
   bool ReconstructGPrim(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       GPrim *gprim);
 
   bool ReconstructGeomSphere(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomSphere *sphere);
 
   bool ReconstructGeomCone(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomCone *cone);
 
   bool ReconstructGeomCube(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomCube *cube);
 
   bool ReconstructGeomCapsule(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomCapsule *capsule);
 
   bool ReconstructGeomCylinder(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomCylinder *cylinder);
 
   bool ReconstructXform(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       Xform *xform);
 
   bool ReconstructGeomMesh(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomMesh *mesh);
 
   bool ReconstructBasisCurves(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               GeomBasisCurves *curves);
 
   bool ReconstructGeomCamera(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               GeomCamera *curves);
 
   bool ReconstructShader(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               Shader *shader);
 
   bool ReconstructPreviewSurface(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               PreviewSurface *surface);
 
   bool ReconstructUVTexture(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               UVTexture *texture);
 
   bool ReconstructPrimvarReader_float2(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               PrimvarReader_float2 *reader_float2);
 
   bool ReconstructLuxSphereLight(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               LuxSphereLight *light);
 
   bool ReconstructLuxDomeLight(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               LuxDomeLight *light);
 
   bool CheckHeader() { return ParseMagicHeader(); }
@@ -6634,7 +6645,7 @@ class USDAParser::Impl {
 // == impl ==
 bool USDAParser::Impl::ReconstructGPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     GPrim *gprim) {
   //
   // Resolve prepend references
@@ -6667,7 +6678,7 @@ bool USDAParser::Impl::ReconstructGPrim(
 
 bool USDAParser::Impl::ReconstructXform(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     Xform *xform) {
   (void)xform;
 
@@ -6845,7 +6856,7 @@ bool USDAParser::Impl::ReconstructXform(
 
 bool USDAParser::Impl::ReconstructGeomSphere(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomSphere *sphere) {
   (void)sphere;
 
@@ -6856,13 +6867,13 @@ bool USDAParser::Impl::ReconstructGeomSphere(
     std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
-    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -6924,9 +6935,9 @@ bool USDAParser::Impl::ReconstructGeomSphere(
   //
   for (const auto &ref : references) {
     if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -6957,7 +6968,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
 
 bool USDAParser::Impl::ReconstructGeomCone(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCone *cone) {
   (void)properties;
   (void)cone;
@@ -6968,13 +6979,13 @@ bool USDAParser::Impl::ReconstructGeomCone(
     std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
-    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7047,9 +7058,9 @@ bool USDAParser::Impl::ReconstructGeomCone(
   //
   for (const auto &ref : references) {
     if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7085,7 +7096,7 @@ bool USDAParser::Impl::ReconstructGeomCone(
 
 bool USDAParser::Impl::ReconstructGeomCube(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCube *cube) {
 
   (void)properties;
@@ -7098,13 +7109,13 @@ bool USDAParser::Impl::ReconstructGeomCube(
     std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
-    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7163,9 +7174,9 @@ bool USDAParser::Impl::ReconstructGeomCube(
   //
   for (const auto &ref : references) {
     if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7196,7 +7207,7 @@ bool USDAParser::Impl::ReconstructGeomCube(
 
 bool USDAParser::Impl::ReconstructGeomCapsule(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCapsule *capsule) {
   //
   // Resolve prepend references
@@ -7205,13 +7216,13 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
     std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
-    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7310,9 +7321,9 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
   //
   for (const auto &ref : references) {
     if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7361,7 +7372,7 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
 
 bool USDAParser::Impl::ReconstructGeomCylinder(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCylinder *cylinder) {
 #if 0
   //
@@ -7371,13 +7382,13 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
     std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
-    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7470,9 +7481,9 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
   //
   for (const auto &ref : references) {
     if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      std::string filepath = asset_ref.asset_reference;
+      std::string filepath = asset_ref.asset_path;
       if (!io::IsAbsPath(filepath)) {
         filepath = io::JoinPath(_base_dir, filepath);
       }
@@ -7521,7 +7532,7 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
 
 bool USDAParser::Impl::ReconstructGeomMesh(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, AssetReference>> &references,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomMesh *mesh) {
   //
   // Resolve prepend references
@@ -7532,20 +7543,20 @@ bool USDAParser::Impl::ReconstructGeomMesh(
     std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
               << "\n";
 
-    LOG_INFO("asset_reference = '" + std::get<1>(ref).asset_reference + "'\n");
+    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
-      const AssetReference &asset_ref = std::get<1>(ref);
+      const Reference &asset_ref = std::get<1>(ref);
 
-      if (endsWith(asset_ref.asset_reference, ".obj")) {
+      if (endsWith(asset_ref.asset_path, ".obj")) {
         std::string err;
         GPrim gprim;
 
         // abs path.
-        std::string filepath = asset_ref.asset_reference;
+        std::string filepath = asset_ref.asset_path;
 
-        if (io::IsAbsPath(asset_ref.asset_reference)) {
+        if (io::IsAbsPath(asset_ref.asset_path)) {
           // do nothing
         } else {
           if (!_base_dir.empty()) {
@@ -7656,7 +7667,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
 }
 
 bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               GeomBasisCurves *curves) {
 
   for (const auto &prop : properties) {
@@ -7703,7 +7714,7 @@ bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Proper
 }
 
 bool USDAParser::Impl::ReconstructGeomCamera(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               GeomCamera *camera) {
 
   for (const auto &prop : properties) {
@@ -7718,7 +7729,7 @@ bool USDAParser::Impl::ReconstructGeomCamera(const std::map<std::string, Propert
 }
 
 bool USDAParser::Impl::ReconstructLuxSphereLight(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               LuxSphereLight *light) {
 
   // TODO: Implement
@@ -7734,7 +7745,7 @@ bool USDAParser::Impl::ReconstructLuxSphereLight(const std::map<std::string, Pro
 }
 
 bool USDAParser::Impl::ReconstructLuxDomeLight(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               LuxDomeLight *light) {
 
   // TODO: Implement
@@ -7750,7 +7761,7 @@ bool USDAParser::Impl::ReconstructLuxDomeLight(const std::map<std::string, Prope
 }
 
 bool USDAParser::Impl::ReconstructShader(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               Shader *shader) {
 
   for (const auto &prop : properties) {
@@ -7794,21 +7805,21 @@ bool USDAParser::Impl::ReconstructShader(const std::map<std::string, Property> &
 }
 
 bool USDAParser::Impl::ReconstructPreviewSurface(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               PreviewSurface *surface) {
   // TODO:
   return false;
 }
 
 bool USDAParser::Impl::ReconstructUVTexture(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               UVTexture *texture) {
   // TODO:
   return false;
 }
 
 bool USDAParser::Impl::ReconstructPrimvarReader_float2(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, AssetReference>> &references,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
                               PrimvarReader_float2 *preader) {
   // TODO:
   return false;

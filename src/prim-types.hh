@@ -225,12 +225,6 @@ enum class Variability {
   Invalid
 };
 
-// TODO: Use primvar::asset
-struct AssetReference {
-  std::string asset_reference;
-  std::string prim_path;
-};
-
 ///
 /// We don't need the performance for USDZ, so use naiive implementation
 /// to represent Path.
@@ -448,6 +442,14 @@ struct Payload {
   Path _prim_path;
   LayerOffset _layer_offset;
 };
+
+struct Reference {
+  std::string asset_path;
+  Path prim_path;
+  LayerOffset layer_offset;
+  primvar::dict custom_data;
+};
+
 
 //
 // Colum-major order(e.g. employed in OpenGL).
@@ -1352,7 +1354,7 @@ struct Klass {
   std::string name;
   int64_t parent_id{-1};  // Index to parent node
 
-  std::vector<std::pair<ListEditQual, AssetReference>> references;
+  std::vector<std::pair<ListEditQual, Reference>> references;
 
   std::map<std::string, Property> props;
 };
@@ -1708,7 +1710,7 @@ struct LuxSphereLight
   // Predefined attribs.
   //
   // TODO: Support texture?
-  primvar::color3f color{}; 
+  primvar::color3f color{};
   float intensity{10.0f};
   float radius{0.1f};
   float specular{1.0f};
@@ -1736,7 +1738,7 @@ struct LuxDomeLight
   // Predefined attribs.
   //
   // TODO: Support texture?
-  primvar::color3f color{}; 
+  primvar::color3f color{};
   float intensity{10.0f};
 
   //
@@ -1765,7 +1767,7 @@ struct BlendShape {
 
 struct SkelRoot {
   std::string name;
-  int64_t parent_id{-1};  
+  int64_t parent_id{-1};
 
   AnimatableExtent extent;
   Purpose purpose{Purpose::Default};
@@ -1869,7 +1871,7 @@ struct GeomSubset {
   std::vector<int32_t> faces;
 
   std::map<std::string, PrimAttrib> attribs;
-  
+
 };
 
 // Polygon mesh geometry
@@ -2094,7 +2096,7 @@ struct PreviewSurface {
 struct Shader {
   std::string name;
 
-  std::string info_id; // Shader type. 
+  std::string info_id; // Shader type.
 
   // Currently we only support PreviewSurface, UVTexture and PrimvarReader_float2
   nonstd::variant<nonstd::monostate, PreviewSurface, UVTexture, PrimvarReader_float2> value;
@@ -2223,7 +2225,7 @@ struct OpenVDBAsset {
   std::string filePath; // asset
 };
 
-// MagicaVoxel Vox 
+// MagicaVoxel Vox
 struct VoxAsset {
   std::string fieldDataType{"float"};
   std::string fieldName{"density"};
