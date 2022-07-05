@@ -49,7 +49,7 @@
 #include "math-util.inc"
 #include "pprinter.hh"
 #include "prim-types.hh"
-#include "simple-serialize.hh"
+//#include "simple-type-reflection.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "usdObj.hh"

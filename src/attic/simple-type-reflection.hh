@@ -1,5 +1,5 @@
 //
-// Simple single-file statically typed value serialization/deserialization
+// Simple single-file static type reflection
 // library supporting frequently used STL containers. Code is based on
 // StaticJSON: https://github.com/netheril96/StaticJSON
 //
@@ -7,7 +7,7 @@
 //
 // Copyright (c) 2014 Siyuan Ren (netheril96@gmail.com)
 //
-// Modification: Copyright (c) 2020 Syoyo Fujita
+// Modification: Copyright (c) 2020-Present Syoyo Fujita
 //
 
 #pragma once
@@ -28,7 +28,7 @@
 
 // TODO: deque, tuple
 
-namespace simple_serialize {
+namespace simple_type_relection {
 
 // TODO:
 // [ ] EnumHandler
@@ -1927,4 +1927,4 @@ class Parse {
   }
 };
 
-}  // namespace simple_serialize
+}  // namespace simple_type_relection

@@ -549,9 +549,9 @@ bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   for (size_t i = 0; i < assets.size(); i++) {
-    std::cout << "[" << i << "] " << std::get<0>(assets[i]) << " : byte range ("
+    DCOUT("[" << i << "] " << std::get<0>(assets[i]) << " : byte range ("
               << std::get<1>(assets[i]) << ", " << std::get<2>(assets[i])
-              << ")\n";
+              << ")");
   }
 #endif
 
@@ -951,6 +951,16 @@ void GeomMesh::Initialize(const GPrim &gprim)
 #endif
 
 };
+
+nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
+  if (geom_subset_children.empty()) {
+    return true;
+  }
+
+  // TODO
+  return nonstd::make_unexpected("TODO: Implement GeomMesh::ValidateGeomSubset()");
+
+}
 
 static_assert(sizeof(crate::Index) == 4, "");
 static_assert(sizeof(crate::Field) == 16, "");
