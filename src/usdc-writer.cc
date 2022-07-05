@@ -133,17 +133,6 @@ template <class T> inline void hash_combine(std::size_t& seed, const T& v)
     seed = b * kMul;
 }
 
-struct PathKeyEqual {
-  bool operator()(const Path &lhs, const Path &rhs) const {
-    bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
-    ret &= lhs.GetPropPart() == rhs.GetPropPart();
-    ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
-    ret &= lhs.IsValid() == rhs.IsValid();
-
-    return ret;
-  }
-};
-
 struct PathHasher {
   size_t operator()(const Path &path) const {
     size_t seed = std::hash<std::string>()(path.GetPrimPart());
@@ -155,18 +144,49 @@ struct PathHasher {
   }
 };
 
-#if 0 // TODO
+struct PathKeyEqual {
+  bool operator()(const Path &lhs, const Path &rhs) const {
+    bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
+    ret &= lhs.GetPropPart() == rhs.GetPropPart();
+    ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
+    ret &= lhs.IsValid() == rhs.IsValid();
+
+    return ret;
+  }
+};
+
 struct FieldHasher {
   size_t operator()(const Field &field) const {
-    size_t seed = std::hash<std::string>()(path.GetPrimPart());
-    hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
-    hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
-    hash_combine(seed, std::hash<bool>()(path.IsValid()));
+    size_t seed = std::hash<uint32_t>()(field.token_index.value);
+    hash_combine(seed, std::hash<uint64_t>()(field.value_rep.GetData()));
 
     return seed;
   }
 };
-#endif
+
+struct FieldKeyEqual {
+  bool operator()(const Field &lhs, const Field &rhs) const {
+    bool ret = lhs.token_index == rhs.token_index;
+    ret &= lhs.value_rep == rhs.value_rep;
+
+    return ret;
+  }
+};
+
+struct FieldSetHasher {
+  size_t operator()(const std::vector<crate::FieldIndex> &fieldset) const {
+    if (fieldset.empty()) {
+      return 0;
+    }
+
+    size_t seed = std::hash<uint32_t>()(fieldset[0].value);
+    for (size_t i = 1; i < fieldset.size(); i++) {
+      hash_combine(seed, std::hash<uint32_t>()(fieldset[i].value));
+    }
+
+    return seed;
+  }
+};
 
 class Packer {
  public:
@@ -174,18 +194,16 @@ class Packer {
   crate::TokenIndex AddToken(const Token &token);
   crate::StringIndex AddString(const std::string &str);
   crate::PathIndex AddPath(const Path &path);
-  // TODO
-  //crate::FieldIndex AddField(const Field &field);
-  //crate::FieldSetIndex AddFieldSet(const std::vector<crate::FieldIndex> &field_indices);
+  crate::FieldIndex AddField(const Field &field);
+  crate::FieldSetIndex AddFieldSet(const std::vector<crate::FieldIndex> &field_indices);
 
  private:
 
   std::unordered_map<Token, crate::TokenIndex, TokenHasher, TokenKeyEqual> token_to_index_map;
   std::unordered_map<std::string, crate::StringIndex> string_to_index_map;
   std::unordered_map<Path, crate::PathIndex, PathHasher, PathKeyEqual> path_to_index_map;
-  // TODO
-  //std::unordered_map<Field, crate::FieldIndex> field_to_index_map;
-  //std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex> fieldset_to_index_map;
+  std::unordered_map<Field, crate::FieldIndex, FieldHasher, FieldKeyEqual> field_to_index_map;
+  std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex, FieldSetHasher> fieldset_to_index_map;
 
   std::vector<Token> tokens_;
   std::vector<std::string> strings_;
@@ -231,7 +249,6 @@ crate::PathIndex Packer::AddPath(const Path &path) {
   return path_to_index_map[path];
 }
 
-#if 0 // TODO
 crate::FieldIndex Packer::AddField(const Field &field) {
   if (field_to_index_map.count(field)) {
     return field_to_index_map[field];
@@ -257,7 +274,6 @@ crate::FieldSetIndex Packer::AddFieldSet(const std::vector<crate::FieldIndex> &f
 
   return fieldset_to_index_map[fieldset];
 }
-#endif
 
 class Writer {
  public:
