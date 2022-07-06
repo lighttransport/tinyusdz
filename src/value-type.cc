@@ -8,7 +8,6 @@ namespace value {
 
 base_value::~base_value() {}
 
-
 std::ostream &operator<<(std::ostream &os, const any_value &v) {
   // Simple brute-force way..
   // TODO: Use std::function or some template technique?

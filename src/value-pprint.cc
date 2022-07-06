@@ -1,6 +1,42 @@
 #include "value-pprint.hh"
+#include "prim-types.hh"
 
 namespace std {
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
+  os << tinyusdz::half_to_float(v.value);
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
@@ -141,6 +177,12 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix4d &m) 
       << m.m[3][3] << ")";
 
   ofs << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
+  ofs << tok.str();
 
   return ofs;
 }

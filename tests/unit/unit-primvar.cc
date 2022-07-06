@@ -7,8 +7,9 @@
 
 #include "unit-primvar.h"
 #include "primvar.hh"
-#include "primvar-pprint.hh"
+#include "value-pprint.hh"
 
+using namespace tinyusdz::value;
 using namespace tinyusdz::primvar;
 
 struct Mesh {
