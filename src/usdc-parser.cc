@@ -180,9 +180,9 @@ class Node {
     return _primChildren;
   }
 
-  void SetAssetInfo(const primvar::dict &dict) { _assetInfo = dict; }
+  void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
 
-  const primvar::dict &GetAssetInfo() const { return _assetInfo; }
+  const value::dict &GetAssetInfo() const { return _assetInfo; }
 
  private:
   int64_t
@@ -191,7 +191,7 @@ class Node {
   std::unordered_set<std::string> _primChildren;  // List of name of child nodes
 
   Path _path;  // local path
-  primvar::dict _assetInfo;
+  value::dict _assetInfo;
 
   NodeType _node_type;
 };
@@ -3108,8 +3108,8 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
       attr->type_name = fv.second.GetToken();
       DCOUT("typeName: " << attr->type_name);
     } else if (fv.first == "default") {
-      // Nothing to do at there. Process `default` in the later 
-      continue; 
+      // Nothing to do at there. Process `default` in the later
+      continue;
     } else if (fv.first == "targetPaths") {
       // e.g. connection to Material.
       const ListOp<Path> paths = fv.second.GetPathListOp();
@@ -3173,7 +3173,7 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
     PUSH_ERROR("`default` field not found.");
     return false;
   }
-  const auto fv = fvRet.value(); 
+  const auto fv = fvRet.value();
 
   {
     if (fv.first == "default") {
@@ -3243,13 +3243,13 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
       } else if (fv.second.GetTypeName() == "Vec3fArray") {
         // role-type?
         if (attr->type_name == "point3f[]") {
-          std::vector<primvar::point3f> value;
+          std::vector<value::point3f> value;
           value.resize(fv.second.GetData().size() / sizeof(Vec3f));
           memcpy(value.data(), fv.second.GetData().data(),
                  fv.second.GetData().size());
           attr->var.set_scalar(value);
         } else if (attr->type_name == "normal3f[]") {
-          std::vector<primvar::normal3f> value;
+          std::vector<value::normal3f> value;
           value.resize(fv.second.GetData().size() / sizeof(Vec3f));
           memcpy(value.data(), fv.second.GetData().data(),
                  fv.second.GetData().size());
@@ -3648,7 +3648,7 @@ bool Parser::Impl::ReconstructGeomSubset(
       if (ret) {
         // TODO(syoyo): Support more prop names
         if (prop_name == "elementType") {
-          auto p = attr.var.get_value<tinyusdz::primvar::token>();
+          auto p = attr.var.get_value<tinyusdz::value::token>();
           if (p) {
             std::string str = p->str();
             if (str == "face") {
@@ -3659,7 +3659,7 @@ bool Parser::Impl::ReconstructGeomSubset(
             }
           } else {
             PUSH_ERROR("`elementType` must be token type, but got " +
-                       primvar::GetTypeName(attr.var.type_id()));
+                       value::GetTypeName(attr.var.type_id()));
             return false;
           }
         } else if (prop_name == "faces") {
@@ -3778,12 +3778,12 @@ bool Parser::Impl::ReconstructGeomMesh(
       if (ret) {
         // TODO(syoyo): Support more prop names
         if (prop_name == "points") {
-          auto p = attr.var.get_value<std::vector<primvar::point3f>>();
+          auto p = attr.var.get_value<std::vector<value::point3f>>();
           if (p) {
             mesh->points = (*p);
           } else {
             PUSH_ERROR("`points` must be point3[] type, but got " +
-                       primvar::GetTypeName(attr.var.type_id()));
+                       value::GetTypeName(attr.var.type_id()));
             return false;
           }
           // if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
@@ -3850,7 +3850,7 @@ bool Parser::Impl::ReconstructGeomMesh(
           //     mesh->creaseSharpnesses = (*p);
           // }
         } else if (prop_name == "subdivisionScheme") {
-          auto p = attr.var.get_value<primvar::token>();
+          auto p = attr.var.get_value<value::token>();
           // if (auto p = primvar::as_basic<std::string>(&attr.var)) {
           //   if (p->compare("none") == 0) {
           //     mesh->subdivisionScheme = SubdivisionScheme::None;
@@ -4219,7 +4219,7 @@ bool Parser::Impl::ReconstructPreviewSurface(
             shader->metallic.path = *p;
           }
         } else if (prop_name.compare("inputs:diffuseColor") == 0) {
-          auto p = attr.var.get_value<primvar::float3>();
+          auto p = attr.var.get_value<value::float3>();
           if (p) {
             shader->diffuseColor.color = (*p);
 

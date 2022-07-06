@@ -1,66 +1,11 @@
-#include "primvar.hh"
-#include "pprinter.hh"
+// SPDX-License-Identifier: MIT
+// Copyright 2022 - Present, Syoyo Fujita.
 #include "value-type.hh"
 #include "value-pprint.hh"
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-// "src/external"
-#include "external/staticstruct.hh"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
-#if 0
-namespace std {
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::token &v) {
-  os << "\"" << v.str() << "\"";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::TimeSample &ts) {
-  os << "{";
-  for (size_t i = 0; i < ts.times.size(); i++) {
-    os << ts.times[i] << ": " << ts.values[i];
-
-    if (i != (ts.times.size() - 1)) {
-      os << ", ";
-    }
-  }
-  os << "}";
-
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::dict &v) {
-  for (auto const &item : v) {
-    static uint32_t cnt = 0;
-    os << item.first << ":" << item.second;
-
-    if (cnt != (v.size() - 1)) {
-      os << ", ";
-    }
-
-    cnt++;
-  }
-
-  return os;
-}
-
-
-
-} // namespace std
-#endif
-
 namespace tinyusdz {
-namespace primvar {
+namespace value {
 
-#if 0
 base_value::~base_value() {}
 
 
@@ -619,8 +564,6 @@ std::string GetTypeName(uint32_t tyid) {
 
   return m.at(tyid);
 }
-#endif
 
-} // namespace primvar
-}  // namespace tinyusdz
-
+} // namespace value
+} // namespace tinyusdz

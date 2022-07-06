@@ -1,8 +1,8 @@
 /// Copyright 2021-present Syoyo Fujita.
 /// MIT license.
 ///
-/// Type-erasure technique for Attribute/PrimVar(Primitive Variables), a Value class which can have 30+ different types(and can be compound-types(e.g. 1D/2D array, dictionary).
-/// Neigher std::any nor std::variant is applicable for such usecases, so write our own, handy typesystem.
+/// Type-erasure technique for Value, a Value class which can have 30+ different types(and can be compound-types(e.g. 1D/2D array, dictionary).
+/// Neigher std::any nor std::variant is applicable for such usecases, so write our own.
 ///
 #pragma once
 
@@ -21,7 +21,7 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-// TODO(syoyo): Use C++17 std::optional, std::string_view when compiled with C++-17 compiler
+// TODO(syoyo): Use C++17 std::optional when compiled with C++-17 compiler
 
 // clang and gcc
 #if defined(__EXCEPTIONS) || defined(__cpp_exceptions)
@@ -41,12 +41,10 @@
 
 #include "token-type.hh"
 #include "external/staticstruct.hh"
-#include "value-type.hh"
 
 namespace tinyusdz {
-namespace primvar {
+namespace value {
 
-#if 0
 using token = tinyusdz::Token;
 
 struct asset
@@ -740,6 +738,63 @@ struct AnimatableValue
   }
 };
 
+struct PrimVar {
+  // For scalar value, times.size() == 0, and values.size() == 1
+  TimeSample var;
+
+  bool is_scalar() const {
+    return (var.times.size() == 0) && (var.values.size() == 1);
+  }
+
+  bool is_timesample() const {
+    return (var.times.size() > 0) && (var.times.size() == var.values.size());
+  }
+
+  bool is_valid() const { return is_scalar() || is_timesample(); }
+
+  std::string type_name() const {
+    if (!is_valid()) {
+      return std::string();
+    }
+    return var.values[0].type_name();
+  }
+
+  uint32_t type_id() const {
+    if (!is_valid()) {
+      return TYPE_ID_INVALID;
+    }
+
+    return var.values[0].type_id();
+  }
+
+  // Type-safe way to get concrete value.
+  template <class T>
+  nonstd::optional<T> get_value() const {
+
+    if (!is_scalar()) {
+      return nonstd::nullopt;
+    }
+
+    if (TypeTrait<T>::type_id == var.values[0].type_id()) {
+      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+    } else if (TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+    }
+    return nonstd::nullopt;
+  }
+
+  template <class T>
+  void set_scalar(const T &v) {
+    var.times.clear();
+    var.values.clear();
+
+    var.values.push_back(v);
+  }
+
+};
+
 // using Object = std::map<std::string, any_value>;
 
 class Value {
@@ -870,12 +925,12 @@ struct AttribMap {
   std::map<std::string, any_value> attribs;
 };
 
-} // namespace primvar
+} // namespace value
 } // namespace tinyusdz
 
 namespace staticstruct {
 
-using namespace tinyusdz::primvar;
+using namespace tinyusdz::value;
 
 // -- For Reconstructor
 
@@ -1230,7 +1285,7 @@ struct Converter<color4d> {
 }  // namespace staticstruct
 
 namespace tinyusdz {
-namespace primvar {
+namespace value {
 
 //
 // Concrete struct reconstruction from AttribMap
@@ -1262,65 +1317,6 @@ static_assert(sizeof(half) == 2, "sizeof(half) must be 2");
 static_assert(sizeof(float3) == 12, "sizeof(float3) must be 12");
 static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
 static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
-#endif
 
-struct PrimVar {
-  // For scalar value, times.size() == 0, and values.size() == 1
-  value::TimeSample var;
-
-  bool is_scalar() const {
-    return (var.times.size() == 0) && (var.values.size() == 1);
-  }
-
-  bool is_timesample() const {
-    return (var.times.size() > 0) && (var.times.size() == var.values.size());
-  }
-
-  bool is_valid() const { return is_scalar() || is_timesample(); }
-
-  std::string type_name() const {
-    if (!is_valid()) {
-      return std::string();
-    }
-    return var.values[0].type_name();
-  }
-
-  uint32_t type_id() const {
-    if (!is_valid()) {
-      return value::TYPE_ID_INVALID;
-    }
-
-    return var.values[0].type_id();
-  }
-
-  // Type-safe way to get concrete value.
-  template <class T>
-  nonstd::optional<T> get_value() const {
-
-    if (!is_scalar()) {
-      return nonstd::nullopt;
-    }
-
-    if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
-      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-    } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-    }
-    return nonstd::nullopt;
-  }
-
-  template <class T>
-  void set_scalar(const T &v) {
-    var.times.clear();
-    var.values.clear();
-
-    var.values.push_back(v);
-  }
-
-};
-
-
-} // namespace primvar
+} // namespace value
 } // namespace tinyusdz
