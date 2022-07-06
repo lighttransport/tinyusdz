@@ -12,6 +12,7 @@ namespace usdc {
 class Parser {
  public:
   Parser(StreamReader *sr, int num_threads);
+  ~Parser();
 
   bool ReadBootStrap();
   bool ReadTOC();
