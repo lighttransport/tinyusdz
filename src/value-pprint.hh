@@ -64,13 +64,25 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 
+template <typename T>
+inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
 
 } // namespace std
 
 namespace tinyusdz {
 namespace value {
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::Value &v);
+//std::ostream &operator<<(std::ostream &os, const tinyusdz::value::Value &v);
 //std::ostream &operator<<(std::ostream &os, const tinyusdz::value::any_value &v);
 
 } // namespace primvar
