@@ -223,11 +223,11 @@ class Node {
     return _primChildren;
   }
 
-  void SetAssetInfo(const primvar::dict &dict) {
+  void SetAssetInfo(const value::dict &dict) {
     _assetInfo = dict;
   }
 
-  const primvar::dict &GetAssetInfo() const { return _assetInfo; }
+  const value::dict &GetAssetInfo() const { return _assetInfo; }
 
  private:
   int64_t
@@ -236,7 +236,7 @@ class Node {
   std::unordered_set<std::string> _primChildren;  // List of name of child nodes
 
   Path _path;  // local path
-  primvar::dict _assetInfo;
+  value::dict _assetInfo;
 
   NodeType _node_type;
 };

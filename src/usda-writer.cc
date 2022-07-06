@@ -167,7 +167,7 @@ std::string PrintVec3fArray(const std::vector<Vec3f> &data) {
 }
 #endif
 
-std::string PrintPoint3fArray(const std::vector<primvar::point3f> &data) {
+std::string PrintPoint3fArray(const std::vector<value::point3f> &data) {
   std::stringstream ofs;
 
   ofs << "[";
