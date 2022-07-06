@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2022 - Present Syoyo Fujita.
 #pragma once
 
 #include "tinyusdz.hh"

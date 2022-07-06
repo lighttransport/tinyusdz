@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2022 - Present, Syoyo Fujita.
 #if defined(__wasi__)
 #else
 #include <thread>

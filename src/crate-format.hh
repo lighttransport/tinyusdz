@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+// Copyright 2022 - Present, Syoyo Fujita.
+//
 // USDC(CrateFile) format
 #pragma once
 
