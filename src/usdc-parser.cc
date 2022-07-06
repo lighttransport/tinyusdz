@@ -16,6 +16,7 @@
 #include "stream-reader.hh"
 #include "usdc-parser.hh"
 #include "path-util.hh"
+#include "value-pprint.hh"
 
 //
 #ifdef __clang__
@@ -2223,7 +2224,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      DCOUT("value.vec3h = " << v);
+      //DCOUT("value.vec3h = " << v);
 
       value->SetVec3h(v);
 
@@ -2295,18 +2296,18 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         value->SetMatrix4dArray(v.data(), v.size());
 
       } else {
-        static_assert(sizeof(Matrix4d) == (8 * 16), "");
+        static_assert(sizeof(value::matrix4d) == (8 * 16), "");
 
-        Matrix4d v;
-        if (!_sr->read(sizeof(Matrix4d), sizeof(Matrix4d),
+        value::matrix4d v;
+        if (!_sr->read(sizeof(value::matrix4d), sizeof(value::matrix4d),
                        reinterpret_cast<uint8_t *>(v.m))) {
-          _err += "Failed to read Matrix4d value\n";
+          _err += "Failed to read value of `matrix4d` type\n";
           return false;
         }
 
         DCOUT("value.matrix4d = " << v);
 
-        value->SetMatrix4d(v);
+        //value->SetMatrix4d(v);
       }
 
       return true;
