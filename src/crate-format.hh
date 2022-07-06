@@ -11,6 +11,17 @@
 
 #include "prim-types.hh"
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "nonstd/expected.hpp"
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
 namespace tinyusdz {
 namespace crate {
 
@@ -786,10 +797,10 @@ class Value {
   TimeSamples time_samples;
 };
 
-const ValueType &GetValueType(int32_t type_id);
+nonstd::expected<ValueType, std::string> GetValueType(int32_t type_id);
 std::string GetValueTypeString(int32_t type_id);
 
-struct SimpleHasher {
+struct StdHashWrapper {
     template <class T>
     inline size_t operator()(const T &val) const {
         return std::hash<T>()(val);

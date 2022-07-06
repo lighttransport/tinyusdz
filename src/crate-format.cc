@@ -5,7 +5,16 @@
 
 #include "crate-format.hh"
 #include "pprinter.hh"
-//#include "primvar-pprint.hh"
+
+#ifndef TINYUSDZ_PRODUCTION_BUILD
+#define TINYUSDZ_LOCAL_DEBUG_PRINT
+#endif
+
+#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
+#else
+#define DCOUT(x)
+#endif
 
 namespace tinyusdz {
 namespace crate {
@@ -14,15 +23,14 @@ namespace crate {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
 #endif
-const ValueType &GetValueType(int32_t type_id) {
+nonstd::expected<ValueType, std::string> GetValueType(int32_t type_id) {
   static std::map<uint32_t, ValueType> table;
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "type_id = " << type_id << "\n";
-#endif
+  DCOUT("type_id = " << type_id);
+
   if (table.size() == 0) {
     // Register data types
     // NOTE(syoyo): We can use C++11 template to create compile-time table for
-    // data types, but this way(use std::map) is easier to read and maintain, I
+    // data types, but this way(using std::map) is easier to read and maintain, I
     // think.
 
     // reference: crateDataTypes.h
@@ -33,6 +41,7 @@ const ValueType &GetValueType(int32_t type_id) {
     table[TYPE_ID] = ValueType(NAME_STR, TYPE_ID, SUPPORTS_ARRAY); \
   }
 
+    // Add invalid type just in case.
     ADD_VALUE_TYPE("InvaldOrUnsupported", 0, false)
 
     // Array types.
@@ -113,18 +122,13 @@ const ValueType &GetValueType(int32_t type_id) {
 #undef ADD_VALUE_TYPE
 
   if (type_id < 0) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cerr << "Unknonw type id: " << type_id << "\n";
-#endif
-    return table.at(0);
+    return nonstd::make_unexpected("Unknown type id: " + std::to_string(type_id));
+
   }
 
   if (!table.count(uint32_t(type_id))) {
     // Invalid or unsupported.
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cerr << "Unknonw type id: " << type_id << "\n";
-#endif
-    return table.at(0);
+    return nonstd::make_unexpected("Unknown or unspported type id: " + std::to_string(type_id));
   }
 
   return table.at(uint32_t(type_id));
@@ -135,7 +139,12 @@ const ValueType &GetValueType(int32_t type_id) {
 
 
 std::string GetValueTypeString(int32_t type_id) {
-  ValueType dty = GetValueType(type_id);
+  auto tyRet = GetValueType(type_id);
+  if (!tyRet) {
+    return "[[InvalidValueType]]";
+  }
+
+  const ValueType dty = tyRet.value();
 
   std::stringstream ss;
   ss << "ValueType: " << dty.name << "(" << dty.id
