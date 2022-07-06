@@ -197,22 +197,22 @@ struct BufferData {
     stride = sizeof(double);
   }
 
-  void Set(const std::vector<Vec2f> &v) {
-    data.resize(v.size() * sizeof(Vec2f));
-    memcpy(data.data(), v.data(), sizeof(Vec2f) * v.size());
+  void Set(const std::vector<value::float2> &v) {
+    data.resize(v.size() * sizeof(value::float2));
+    memcpy(data.data(), v.data(), sizeof(value::float2) * v.size());
 
     data_type = BUFFER_DATA_TYPE_FLOAT;
     num_coords = 2;
-    stride = sizeof(Vec2f);
+    stride = sizeof(value::float2);
   }
 
-  void Set(const std::vector<Vec3f> &v) {
-    data.resize(v.size() * sizeof(Vec3f));
-    memcpy(data.data(), v.data(), sizeof(Vec3f) * v.size());
+  void Set(const std::vector<value::float3> &v) {
+    data.resize(v.size() * sizeof(value::float3));
+    memcpy(data.data(), v.data(), sizeof(value::float3) * v.size());
 
     data_type = BUFFER_DATA_TYPE_FLOAT;
     num_coords = 3;
-    stride = sizeof(Vec3f);
+    stride = sizeof(value::float3);
   }
 
 
@@ -222,7 +222,7 @@ struct BufferData {
 
     data_type = BUFFER_DATA_TYPE_INT;
     num_coords = 1;
-    stride = sizeof(Vec3f);
+    stride = sizeof(value::float3);
   }
 
   nonstd::optional<float> GetAsFloat() const {
@@ -310,13 +310,13 @@ struct BufferData {
     return nonstd::nullopt;
   }
 
-  nonstd::optional<std::vector<Vec2f>> GetAsVec2fArray() const {
+  nonstd::optional<std::vector<value::float2>> GetAsVec2fArray() const {
 
     if (((GetStride() == 0) || (GetStride() == 2 * sizeof(float))) &&
         (GetNumCoords() == 2) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      std::vector<Vec2f> buf;
+      std::vector<value::float2> buf;
       buf.resize(GetNumElements());
-      memcpy(buf.data(), data.data(), buf.size() * sizeof(Vec2f));
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(value::float2));
 
       return std::move(buf);
     }
@@ -324,7 +324,7 @@ struct BufferData {
     return nonstd::nullopt;
   }
 
-  nonstd::optional<std::vector<Vec3f>> GetAsVec3fArray() const {
+  nonstd::optional<std::vector<value::float3>> GetAsVec3fArray() const {
 
     // std::cout << "stride = " << GetStride() << ", num_coords = " <<
     // GetNumCoords() << ", dtype = " << GetDataType() << ", num_elements = " <<
@@ -332,9 +332,9 @@ struct BufferData {
 
     if (((GetStride() == 0) || (GetStride() == 3 * sizeof(float))) &&
         (GetNumCoords() == 3) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      std::vector<Vec3f> buf;
+      std::vector<value::float3> buf;
       buf.resize(GetNumElements());
-      memcpy(buf.data(), data.data(), buf.size() * sizeof(Vec3f));
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(value::float3));
 
       return std::move(buf);
     }
@@ -342,13 +342,13 @@ struct BufferData {
     return nonstd::nullopt;
   }
 
-  nonstd::optional<std::vector<Vec4f>> GetAsVec4fArray() const {
+  nonstd::optional<std::vector<value::float4>> GetAsVec4fArray() const {
 
     if (((GetStride() == 0) || (GetStride() == 4 * sizeof(float))) &&
         (GetNumCoords() == 4) && (GetDataType() == BUFFER_DATA_TYPE_FLOAT)) {
-      std::vector<Vec4f> buf;
+      std::vector<value::float4> buf;
       buf.resize(GetNumElements());
-      memcpy(buf.data(), data.data(), buf.size() * sizeof(Vec4f));
+      memcpy(buf.data(), data.data(), buf.size() * sizeof(value::float4));
 
       return std::move(buf);
     }
@@ -358,7 +358,7 @@ struct BufferData {
 };
 
 
-Matrix4d GetTransform(XformOp xform);
+value::matrix4d GetTransform(XformOp xform);
 
 
 // Simple bidirectional Path(string) <-> index lookup

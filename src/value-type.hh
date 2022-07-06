@@ -47,9 +47,17 @@ namespace value {
 
 using token = tinyusdz::Token;
 
-struct asset
+// SdfAssetPath
+class asset
 {
+  public:
+    asset() = default;
+    asset(const std::string &a) : asset_path(a) {}
+    asset(const std::string &a, const std::string &r) : asset_path(a), resolved_path(r) {}
+
+ private:
   std::string asset_path;
+  std::string resolved_path;
 };
 
 // TODO(syoyo): 3D and 4D?
@@ -142,6 +150,7 @@ enum TypeId {
   TYPE_ID_DICT,
 
   TYPE_ID_ASSET,
+  TYPE_ID_ASSET_PATH,
 
   TYPE_ID_ALL  // terminator
 };
