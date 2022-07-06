@@ -55,7 +55,7 @@
 #include "usdObj.hh"
 #include "usda-parser.hh"
 #include "primvar.hh"
-#include "primvar-pprint.hh"
+#include "value-pprint.hh"
 
 // s = std::string
 #define PUSH_ERROR(s)                                              \
@@ -428,7 +428,7 @@ class Variable {
       auto ts_struct = v.as_timesamples();
 
       for (const TimeSampleType &item : ts_struct->values) {
-        auto tname = primvar::type_name(item);
+        auto tname = value::type_name(item);
         if (tname != "none") {
           return tname;
         }
@@ -545,7 +545,7 @@ using ReferenceList = std::vector<std::pair<ListEditQual, Reference>>;
 #if 0
 // Extract array of References from Variable.
 ReferenceList GetReferences(
-    const std::tuple<ListEditQual, primvar::any_value> &_var) {
+    const std::tuple<ListEditQual, value::any_value> &_var) {
   ReferenceList result;
 
   ListEditQual qual = std::get<0>(_var);
@@ -2199,18 +2199,18 @@ class USDAParser::Impl {
     PrimAttrib attr;
 
     if (array_qual) {
-      if (primvar::TypeTrait<T>::type_name() == "bool") {
+      if (value::TypeTrait<T>::type_name() == "bool") {
         PushError("Array of bool type is not supported.");
         return false;
       } else {
         std::vector<T> value;
         if (!ParseBasicTypeArray(&value)) {
-          PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
+          PushError("Failed to parse " + std::string(value::TypeTrait<T>::type_name()) +
                      " array.\n");
           return false;
         }
 
-        LOG_INFO("Got it: ty = " + std::string(primvar::TypeTrait<T>::type_name()) + ", sz = " + std::to_string(value.size()));
+        LOG_INFO("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) + ", sz = " + std::to_string(value.size()));
         attr.var.set_scalar(value);
       }
 
@@ -2226,21 +2226,21 @@ class USDAParser::Impl {
     } else {
       nonstd::optional<T> value;
       if (!ReadBasicType(&value)) {
-        PushError("Failed to parse " + std::string(primvar::TypeTrait<T>::type_name()) +
+        PushError("Failed to parse " + std::string(value::TypeTrait<T>::type_name()) +
                    " .\n");
         return false;
       }
 
       if (value) {
-        LOG_DEBUG("ParseBasicPrimAttr: " << primvar::TypeTrait<T>::type_name() << " = " << (*value));
+        LOG_DEBUG("ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name() << " = " << (*value));
 
         // TODO: TimeSampled
-        primvar::TimeSample ts;
+        value::TimeSample ts;
         ts.values.push_back(*value);
         attr.var.var = ts;
 
       } else {
-        std::cout << "ParseBasicPrimAttr: " <<  primvar::TypeTrait<T>::type_name() << " = None\n";
+        std::cout << "ParseBasicPrimAttr: " <<  value::TypeTrait<T>::type_name() << " = None\n";
       }
 
     }
@@ -2520,24 +2520,24 @@ class USDAParser::Impl {
         }
       } else if (type_name == "point3f") {
         LOG_INFO("point3f, array_qual = " + std::to_string(array_qual));
-        if (!ParseBasicPrimAttr<primvar::point3f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name, &attr)) {
           LOG_INFO("Failed to parse point3f data.");
           return false;
         }
         LOG_INFO("Got it");
       } else if (type_name == "point3d") {
-        if (!ParseBasicPrimAttr<primvar::point3d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "normal3f") {
         LOG_INFO("normal3f, array_qual = " + std::to_string(array_qual));
-        if (!ParseBasicPrimAttr<primvar::normal3f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name, &attr)) {
           LOG_INFO("Failed to parse normal3f data.");
           return false;
         }
         LOG_INFO("Got it");
       } else if (type_name == "normal3d") {
-        if (!ParseBasicPrimAttr<primvar::normal3d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "matrix4d") {
@@ -2556,7 +2556,7 @@ class USDAParser::Impl {
 
         is_rel = true;
       } else if (type_name == "texCoord2f") {
-        if (!ParseBasicPrimAttr<primvar::texcoord2f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name, &attr)) {
           PUSH_ERROR("Failed to parse texCoord2f data.");
           return false;
         }
@@ -2569,7 +2569,7 @@ class USDAParser::Impl {
           PUSH_ERROR("Failed to parse `asset` data.");
         }
 
-        primvar::asset asset;
+        value::asset asset;
         asset.asset_path = assert_ref.asset_path;
         attr.var.set_scalar(asset);
         PUSH_ERROR("TODO: `asset`");
@@ -3320,11 +3320,11 @@ class USDAParser::Impl {
   bool ReadBasicType(nonstd::optional<Matrix2d> *value);
   bool ReadBasicType(nonstd::optional<Matrix3d> *value);
   bool ReadBasicType(nonstd::optional<Matrix4d> *value);
-  bool ReadBasicType(nonstd::optional<primvar::point3f> *value);
-  bool ReadBasicType(nonstd::optional<primvar::point3d> *value);
-  bool ReadBasicType(nonstd::optional<primvar::normal3f> *value);
-  bool ReadBasicType(nonstd::optional<primvar::normal3d> *value);
-  bool ReadBasicType(nonstd::optional<primvar::texcoord2f> *value);
+  bool ReadBasicType(nonstd::optional<value::point3f> *value);
+  bool ReadBasicType(nonstd::optional<value::point3d> *value);
+  bool ReadBasicType(nonstd::optional<value::normal3f> *value);
+  bool ReadBasicType(nonstd::optional<value::normal3d> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord2f> *value);
 
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
@@ -3342,11 +3342,11 @@ class USDAParser::Impl {
   bool ReadBasicType(Matrix2d *value);
   bool ReadBasicType(Matrix3d *value);
   bool ReadBasicType(Matrix4d *value);
-  bool ReadBasicType(primvar::point3f *value);
-  bool ReadBasicType(primvar::point3d *value);
-  bool ReadBasicType(primvar::normal3f *value);
-  bool ReadBasicType(primvar::normal3d *value);
-  bool ReadBasicType(primvar::texcoord2f *value);
+  bool ReadBasicType(value::point3f *value);
+  bool ReadBasicType(value::point3d *value);
+  bool ReadBasicType(value::normal3f *value);
+  bool ReadBasicType(value::normal3d *value);
+  bool ReadBasicType(value::texcoord2f *value);
 
   // TimeSample data
   bool ReadTimeSampleData(nonstd::optional<Vec2f> *value);
@@ -6735,7 +6735,7 @@ bool USDAParser::Impl::ReconstructXform(
       PUSH_ERROR("TODO: Rel type for `xformOpOrder`");
     } else {
 #if 0
-      if (auto parr = primvar::as_vector<std::string>(&attrib->var)) {
+      if (auto parr = value::as_vector<std::string>(&attrib->var)) {
         for (const auto &item : *parr) {
           // remove double-quotation
           std::string identifier = item;
@@ -6772,7 +6772,7 @@ bool USDAParser::Impl::ReconstructXform(
             std::cout << "basename is xformOp::rotateZ"
                       << "\n";
             if (auto targetAttr = nonstd::get_if<PrimAttrib>(&targetProp)) {
-              if (auto p = primvar::as_basic<float>(&targetAttr->var)) {
+              if (auto p = value::as_basic<float>(&targetAttr->var)) {
                 std::cout << "xform got it "
                           << "\n";
                 op.op = XformOp::OpType::ROTATE_Z;
@@ -6889,7 +6889,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
 #if 0
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
                 sphere->radius = *p;
               }
@@ -6915,7 +6915,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
       } else {
         if (prop.first == "radius") {
           //const tinyusdz::PrimAttrib &attr = prop.second.attrib;
-          //if (auto p = primvar::as_basic<double>(&attr->var)) {
+          //if (auto p = value::as_basic<double>(&attr->var)) {
           //  sphere->radius = *p;
           //} else {
           //  PushError("`radius` must be double type.");
@@ -6952,7 +6952,7 @@ bool USDAParser::Impl::ReconstructGeomSphere(
           (void)prop;
           //if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
           //  if (prop.first == "radius") {
-          //    if (auto p = primvar::as_basic<double>(&attr->var)) {
+          //    if (auto p = value::as_basic<double>(&attr->var)) {
           //      SLOG_INFO << "append reference radius = " << (*p) << "\n";
           //      sphere->radius = *p;
           //    }
@@ -7001,12 +7001,12 @@ bool USDAParser::Impl::ReconstructGeomCone(
 #if 0
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
                 cone->radius = *p;
               }
             } else if (prop.first == "height") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference height = " << (*p) << "\n";
                 cone->height = *p;
               }
@@ -7029,14 +7029,14 @@ bool USDAParser::Impl::ReconstructGeomCone(
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "radius") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
+        if (auto p = value::as_basic<double>(&attr->var)) {
           cone->radius = *p;
         } else {
           PushError("`radius` must be double type.");
           return false;
         }
       } else if (prop.first == "height") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
+        if (auto p = value::as_basic<double>(&attr->var)) {
           cone->height = *p;
         } else {
           PushError("`height` must be double type.");
@@ -7074,12 +7074,12 @@ bool USDAParser::Impl::ReconstructGeomCone(
         for (const auto &prop : prim.props) {
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference radius = " << (*p) << "\n";
                 cone->radius = *p;
               }
             } else if (prop.first == "height") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference height = " << (*p) << "\n";
                 cone->height = *p;
               }
@@ -7129,7 +7129,7 @@ bool USDAParser::Impl::ReconstructGeomCube(
         for (const auto &prop : prim.props) {
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "size") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference size = " << (*p) << "\n";
                 cube->size = *p;
               }
@@ -7152,7 +7152,7 @@ bool USDAParser::Impl::ReconstructGeomCube(
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "size") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
+        if (auto p = value::as_basic<double>(&attr->var)) {
           cube->size = *p;
         } else {
           PushError("`size` must be double type.");
@@ -7190,7 +7190,7 @@ bool USDAParser::Impl::ReconstructGeomCube(
         for (const auto &prop : prim.props) {
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "size") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference size = " << (*p) << "\n";
                 cube->size = *p;
               }
@@ -7240,17 +7240,17 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
             //const PrimAttrib &attrib = prop.second.attrib;
 #if 0
             if (prop.first == "height") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference height = " << (*p) << "\n";
                 capsule->height = *p;
               }
             } else if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
                 capsule->radius = *p;
               }
             } else if (prop.first == "axis") {
-              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+              if (auto p = value::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   capsule->axis = Axis::X;
@@ -7281,21 +7281,21 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "height") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
+        if (auto p = value::as_basic<double>(&attr->var)) {
           capsule->height = *p;
         } else {
           PushError("`height` must be double type.");
           return false;
         }
       } else if (prop.first == "radius") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
+        if (auto p = value::as_basic<double>(&attr->var)) {
           capsule->radius = *p;
         } else {
           PushError("`radius` must be double type.");
           return false;
         }
       } else if (prop.first == "axis") {
-        if (auto p = primvar::as_basic<Token>(&attr->var)) {
+        if (auto p = value::as_basic<Token>(&attr->var)) {
           if (p->value == "x") {
             capsule->axis = Axis::X;
           } else if (p->value == "y") {
@@ -7337,17 +7337,17 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
         for (const auto &prop : prim.props) {
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "height") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference height = " << (*p) << "\n";
                 capsule->height = *p;
               }
             } else if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference radius = " << (*p) << "\n";
                 capsule->radius = *p;
               }
             } else if (prop.first == "axis") {
-              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+              if (auto p = value::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   capsule->axis = Axis::X;
@@ -7402,17 +7402,17 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
         for (const auto &prop : prim.props) {
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "height") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference height = " << (*p) << "\n";
                 cylinder->height = *p;
               }
             } else if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
                 cylinder->radius = *p;
               }
             } else if (prop.first == "axis") {
-              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+              if (auto p = value::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   cylinder->axis = Axis::X;
@@ -7441,21 +7441,21 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
       }
     } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
       if (prop.first == "height") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
+        if (auto p = value::as_basic<double>(&attr->var)) {
           cylinder->height = *p;
         } else {
           PushError("`height` must be double type.");
           return false;
         }
       } else if (prop.first == "radius") {
-        if (auto p = primvar::as_basic<double>(&attr->var)) {
+        if (auto p = value::as_basic<double>(&attr->var)) {
           cylinder->radius = *p;
         } else {
           PushError("`radius` must be double type.");
           return false;
         }
       } else if (prop.first == "axis") {
-        if (auto p = primvar::as_basic<Token>(&attr->var)) {
+        if (auto p = value::as_basic<Token>(&attr->var)) {
           if (p->value == "x") {
             cylinder->axis = Axis::X;
           } else if (p->value == "y") {
@@ -7497,17 +7497,17 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
         for (const auto &prop : prim.props) {
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "height") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference height = " << (*p) << "\n";
                 cylinder->height = *p;
               }
             } else if (prop.first == "radius") {
-              if (auto p = primvar::as_basic<double>(&attr->var)) {
+              if (auto p = value::as_basic<double>(&attr->var)) {
                 SLOG_INFO << "append reference radius = " << (*p) << "\n";
                 cylinder->radius = *p;
               }
             } else if (prop.first == "axis") {
-              if (auto p = primvar::as_basic<Token>(&attr->var)) {
+              if (auto p = value::as_basic<Token>(&attr->var)) {
                 SLOG_INFO << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   cylinder->axis = Axis::X;
@@ -7587,13 +7587,13 @@ bool USDAParser::Impl::ReconstructGeomMesh(
             LOG_INFO("points.type:" + attr.var.type_name());
             if (attr.var.is_scalar()) {
 
-              auto p = attr.var.get_value<std::vector<primvar::point3f>>();
+              auto p = attr.var.get_value<std::vector<value::point3f>>();
               if (p) {
                   mesh->points = p.value();
               } else {
                 PUSH_ERROR("TODO: points.type = " + attr.var.type_name());
               }
-              //if (auto p = primvar::as_vector<Vec3f>(&pattr->var)) {
+              //if (auto p = value::as_vector<Vec3f>(&pattr->var)) {
               //  LOG_INFO("points. sz = " + std::to_string(p->size()));
               //  mesh->points = (*p);
               //}
@@ -7620,7 +7620,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
       const PrimAttrib &attr = prop.second.attrib;
       if (prop.first == "points") {
 
-        auto p = attr.var.get_value<std::vector<primvar::point3f>>();
+        auto p = attr.var.get_value<std::vector<value::point3f>>();
         if (p) {
           mesh->points = (*p);
         } else {
@@ -8196,7 +8196,7 @@ bool USDAParser::Impl::ReadBasicType(Vec4d *value) {
   return ParseBasicTypeTuple(value);
 }
 
-bool USDAParser::Impl::ReadBasicType(primvar::point3f *value) {
+bool USDAParser::Impl::ReadBasicType(value::point3f *value) {
 
     if (!Expect('(')) {
       return false;
@@ -8229,7 +8229,7 @@ bool USDAParser::Impl::ReadBasicType(primvar::point3f *value) {
     return true;
 }
 
-bool USDAParser::Impl::ReadBasicType(primvar::normal3f *value) {
+bool USDAParser::Impl::ReadBasicType(value::normal3f *value) {
 
     if (!Expect('(')) {
       return false;
@@ -8262,7 +8262,7 @@ bool USDAParser::Impl::ReadBasicType(primvar::normal3f *value) {
     return true;
 }
 
-bool USDAParser::Impl::ReadBasicType(primvar::point3d *value) {
+bool USDAParser::Impl::ReadBasicType(value::point3d *value) {
 
     if (!Expect('(')) {
       return false;
@@ -8295,7 +8295,7 @@ bool USDAParser::Impl::ReadBasicType(primvar::point3d *value) {
     return true;
 }
 
-bool USDAParser::Impl::ReadBasicType(primvar::normal3d *value) {
+bool USDAParser::Impl::ReadBasicType(value::normal3d *value) {
 
     if (!Expect('(')) {
       return false;
@@ -8328,7 +8328,7 @@ bool USDAParser::Impl::ReadBasicType(primvar::normal3d *value) {
     return true;
 }
 
-bool USDAParser::Impl::ReadBasicType(primvar::texcoord2f *value) {
+bool USDAParser::Impl::ReadBasicType(value::texcoord2f *value) {
 
     if (!Expect('(')) {
       return false;
@@ -8357,13 +8357,13 @@ bool USDAParser::Impl::ReadBasicType(primvar::texcoord2f *value) {
     return true;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::texcoord2f> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::texcoord2f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  primvar::texcoord2f v;
+  value::texcoord2f v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8462,13 +8462,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec4d> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::point3f> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::point3f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  primvar::point3f v;
+  value::point3f v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8477,13 +8477,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::point3f> *value) 
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::point3d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::point3d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  primvar::point3d v;
+  value::point3d v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8492,13 +8492,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::point3d> *value) 
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::normal3f> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::normal3f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  primvar::normal3f v;
+  value::normal3f v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8507,13 +8507,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::normal3f> *value)
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<primvar::normal3d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::normal3d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  primvar::normal3d v;
+  value::normal3d v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;

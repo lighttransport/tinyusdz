@@ -1,111 +1,111 @@
-#include "primvar-pprint.hh"
+#include "value-pprint.hh"
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::uint2 &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::uint3 &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint3 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::uint4 &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::vector3h &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::vector3f &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::vector3f &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::vector3d &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::vector3d &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::normal3h &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::normal3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::normal3f &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::normal3f &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::normal3d &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::normal3d &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::point3h &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::point3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::point3f &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::point3f &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::point3d &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::point3d &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::color3f &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color3f &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::color3d &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color3d &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::color4f &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color4f &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::color4d &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color4d &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::quath &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::quath &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::quatf &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::quatf &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::quatd &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::quatd &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::primvar::texcoord2f &v) {
+std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::texcoord2f &v) {
   os << "(" << v.s << ", " << v.t << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::primvar::matrix2d &m) {
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix2d &m) {
   ofs << "( ";
 
   ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << "), ";
@@ -116,7 +116,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::primvar::matrix2d &m
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::primvar::matrix3d &m) {
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix3d &m) {
   ofs << "( ";
 
   ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << "), ";
@@ -128,7 +128,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::primvar::matrix3d &m
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::primvar::matrix4d &m) {
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix4d &m) {
   ofs << "( ";
 
   ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << ", "
@@ -145,7 +145,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::primvar::matrix4d &m
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::primvar::dict &m) {
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
   (void)m;
   ofs << "[TODO] dict type[/TODO]";
 

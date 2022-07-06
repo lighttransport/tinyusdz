@@ -142,7 +142,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
-    ${PROJECT_SOURCE_DIR}/src/primvar-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/value-type.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     # usdMtlX has less dependency(tinyxml2), so add it to core component

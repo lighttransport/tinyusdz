@@ -448,7 +448,7 @@ struct Reference {
   std::string asset_path;
   Path prim_path;
   LayerOffset layer_offset;
-  primvar::dict custom_data;
+  value::dict custom_data;
 };
 
 
@@ -1711,7 +1711,7 @@ struct LuxSphereLight
   // Predefined attribs.
   //
   // TODO: Support texture?
-  primvar::color3f color{};
+  value::color3f color{};
   float intensity{10.0f};
   float radius{0.1f};
   float specular{1.0f};
@@ -1739,7 +1739,7 @@ struct LuxDomeLight
   // Predefined attribs.
   //
   // TODO: Support texture?
-  primvar::color3f color{};
+  value::color3f color{};
   float intensity{10.0f};
 
   //
@@ -1891,7 +1891,7 @@ struct GeomMesh {
   //
   // Predefined attribs.
   //
-  std::vector<primvar::point3f> points;  // point3f
+  std::vector<value::point3f> points;  // point3f
   PrimAttrib normals;         // normal3f[]
 
   //
