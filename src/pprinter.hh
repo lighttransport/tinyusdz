@@ -14,6 +14,7 @@
 
 namespace std {
 
+#if 0
 inline std::ostream &operator<<(std::ostream &os, const tinyusdz::Vec2i &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
@@ -122,6 +123,7 @@ inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
   os << "]";
   return os;
 }
+#endif
 
 #if 0
 std::ostream &operator<<(std::ostream &os, const tinyusdz::primvar::point3h &v);

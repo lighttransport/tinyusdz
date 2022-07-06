@@ -14,6 +14,7 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint2 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint3 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v);
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half3 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v);
@@ -69,8 +70,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 namespace tinyusdz {
 namespace value {
 
-//std::ostream &operator<<(std::ostream &os, const tinyusdz::value::Value &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::any_value &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::Value &v);
+//std::ostream &operator<<(std::ostream &os, const tinyusdz::value::any_value &v);
 
 } // namespace primvar
 } // namespace tinyusdz

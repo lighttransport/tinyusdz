@@ -151,7 +151,9 @@ struct timecode
   double value;
 };
 
-using half = uint16_t;
+struct half {
+  uint16_t value;
+};
 
 using half2 = std::array<half, 2>;
 using half3 = std::array<half, 3>;
@@ -935,6 +937,22 @@ using namespace tinyusdz::value;
 // -- For Reconstructor
 
 template <>
+struct Converter<half> {
+  typedef uint16_t shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            half &value) {
+    value.value = shadow;
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const half &value, shadow_type &shadow) {
+    shadow = value.value;
+  }
+};
+
+template <>
 struct Converter<quath> {
   typedef std::array<uint16_t, 4> shadow_type;
 
@@ -1314,6 +1332,9 @@ class Reconstructor {
 static_assert(sizeof(quath) == 8, "sizeof(quath) must be 8");
 static_assert(sizeof(quatf) == 16, "sizeof(quatf) must be 16");
 static_assert(sizeof(half) == 2, "sizeof(half) must be 2");
+static_assert(sizeof(half2) == 4, "sizeof(half2) must be 4");
+static_assert(sizeof(half3) == 6, "sizeof(half3) must be 6");
+static_assert(sizeof(half4) == 8, "sizeof(half4) must be 8");
 static_assert(sizeof(float3) == 12, "sizeof(float3) must be 12");
 static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
 static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
