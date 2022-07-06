@@ -228,26 +228,26 @@ class Parser::Impl {
   ///
   bool ReadSection(crate::Section *s);
 
-  const std::string GetToken(crate::Index token_index) {
+  const value::token GetToken(crate::Index token_index) {
     if (token_index.value <= _tokens.size()) {
       return _tokens[token_index.value];
     } else {
       _err += "Token index out of range: " + std::to_string(token_index.value) +
               "\n";
-      return std::string();
+      return value::token();
     }
   }
 
-  const std::string GetToken(crate::Index token_index) const {
+  const value::token GetToken(crate::Index token_index) const {
     if (token_index.value <= _tokens.size()) {
       return _tokens[token_index.value];
     } else {
-      return std::string();
+      return value::token();
     }
   }
 
-  // Get string from string index.
-  std::string GetString(crate::Index string_index) {
+  // Get string token from string index.
+  const value::token GetStringToken(crate::Index string_index) {
     if (string_index.value <= _string_indices.size()) {
       crate::Index s_idx = _string_indices[string_index.value];
       return GetToken(s_idx);
@@ -255,15 +255,15 @@ class Parser::Impl {
       _err +=
           "String index out of range: " + std::to_string(string_index.value) +
           "\n";
-      return std::string();
+      return value::token();
     }
   }
 
   bool HasField(const std::string &key) const {
     // Simple linear search
     for (const auto &field : _fields) {
-      const std::string field_name = GetToken(field.token_index);
-      if (field_name.compare(key) == 0) {
+      const value::token field_name = GetToken(field.token_index);
+      if (field_name.str().compare(key) == 0) {
         return true;
       }
     }
@@ -288,7 +288,7 @@ class Parser::Impl {
 
     const crate::Field &f = _fields[index.value];
 
-    std::string s = GetToken(f.token_index) + ":" + f.value_rep.GetStringRepr();
+    std::string s = GetToken(f.token_index).str() + ":" + f.value_rep.GetStringRepr();
 
     return s;
   }
@@ -342,7 +342,7 @@ class Parser::Impl {
   ///
 
   // In-memory storage for a single "spec" -- prim, property, etc.
-  typedef std::pair<std::string, crate::Value> FieldValuePair;
+  typedef std::pair<std::string, crate::CrateValue> FieldValuePair;
   typedef std::vector<FieldValuePair> FieldValuePairVector;
 
   ///
@@ -522,7 +522,7 @@ class Parser::Impl {
   int64_t _fieldsets_index{-1};
   int64_t _specs_index{-1};
 
-  std::vector<std::string> _tokens;
+  std::vector<value::token> _tokens;
   std::vector<crate::Index> _string_indices;
   std::vector<crate::Field> _fields;
   std::vector<crate::Index> _fieldset_indices;
@@ -536,9 +536,9 @@ class Parser::Impl {
       std::vector<int32_t> const &elementTokenIndexes,
       std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
 
-  bool UnpackValueRep(const crate::ValueRep &rep, crate::Value *value);
+  bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
 
-  bool UnpackInlinedValueRep(const crate::ValueRep &rep, crate::Value *value);
+  bool UnpackInlinedValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
 
   //
   // Construct node hierarchy.
@@ -561,7 +561,7 @@ class Parser::Impl {
   bool ReadPathArray(std::vector<Path> *d);
 
   // Dictionary
-  bool ReadDictionary(crate::Value::Dictionary *d);
+  bool ReadDictionary(value::dict *d);
 
   bool ReadTimeSamples(TimeSamples *d);
 
@@ -569,14 +569,14 @@ class Parser::Impl {
   template <typename T>
   bool ReadIntArray(bool is_compressed, std::vector<T> *d);
 
-  bool ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d);
+  bool ReadHalfArray(bool is_compressed, std::vector<value::half> *d);
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
   // PathListOp
   bool ReadPathListOp(ListOp<Path> *d);
   bool ReadTokenListOp(
-      ListOp<std::string> *d);  // TODO(syoyo): Use `Token` type
+      ListOp<value::token> *d);
 };
 
 //
@@ -601,7 +601,7 @@ bool Parser::Impl::ReadString(std::string *s) {
     return false;
   }
 
-  (*s) = GetString(string_index);
+  (*s) = GetStringToken(string_index).str();
 
   return true;
 }
@@ -689,7 +689,7 @@ bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   }
 }
 
-bool Parser::Impl::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
+bool Parser::Impl::ReadHalfArray(bool is_compressed, std::vector<value::half> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -776,7 +776,7 @@ bool Parser::Impl::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
     }
     for (size_t i = 0; i < length; i++) {
       float f = float(ints[i]);
-      float16 h = float_to_half_full(f);
+      value::half h = float_to_half_full(f);
       (*d)[i] = h;
     }
   } else if (code == 't') {
@@ -787,8 +787,8 @@ bool Parser::Impl::ReadHalfArray(bool is_compressed, std::vector<uint16_t> *d) {
       return false;
     }
 
-    std::vector<uint16_t> lut(lutSize);
-    if (!_sr->read(sizeof(uint16_t) * lutSize, sizeof(uint16_t) * lutSize,
+    std::vector<value::half> lut(lutSize);
+    if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
                    reinterpret_cast<uint8_t *>(lut.data()))) {
       _err += "Failed to read lut table in ReadHalfArray.\n";
       return false;
@@ -1086,7 +1086,7 @@ bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
   // Save offset
   size_t values_offset = _sr->tell();
 
-  crate::Value value;
+  crate::CrateValue value;
   if (!UnpackValueRep(rep, &value)) {
     _err += "Failed to unpack value of TimeSample's times element.\n";
     return false;
@@ -1182,7 +1182,7 @@ bool Parser::Impl::ReadPathArray(std::vector<Path> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
+bool Parser::Impl::ReadTokenListOp(ListOp<value::token> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
@@ -1195,7 +1195,7 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   }
 
   // array data is not compressed
-  auto ReadFn = [this](std::vector<std::string> &result) -> bool {
+  auto ReadFn = [this](std::vector<value::token> &result) -> bool {
     uint64_t n;
     if (!_sr->read8(&n)) {
       _err += "Failed to read # of elements in ListOp.\n";
@@ -1221,7 +1221,7 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   };
 
   if (h.HasExplicitItems()) {
-    std::vector<std::string> items;
+    std::vector<value::token> items;
     if (!ReadFn(items)) {
       _err += "Failed to read ListOp::ExplicitItems.\n";
       return false;
@@ -1231,7 +1231,7 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   }
 
   if (h.HasAddedItems()) {
-    std::vector<std::string> items;
+    std::vector<value::token> items;
     if (!ReadFn(items)) {
       _err += "Failed to read ListOp::AddedItems.\n";
       return false;
@@ -1241,7 +1241,7 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   }
 
   if (h.HasPrependedItems()) {
-    std::vector<std::string> items;
+    std::vector<value::token> items;
     if (!ReadFn(items)) {
       _err += "Failed to read ListOp::PrependedItems.\n";
       return false;
@@ -1251,7 +1251,7 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   }
 
   if (h.HasAppendedItems()) {
-    std::vector<std::string> items;
+    std::vector<value::token> items;
     if (!ReadFn(items)) {
       _err += "Failed to read ListOp::AppendedItems.\n";
       return false;
@@ -1261,7 +1261,7 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   }
 
   if (h.HasDeletedItems()) {
-    std::vector<std::string> items;
+    std::vector<value::token> items;
     if (!ReadFn(items)) {
       _err += "Failed to read ListOp::DeletedItems.\n";
       return false;
@@ -1271,7 +1271,7 @@ bool Parser::Impl::ReadTokenListOp(ListOp<std::string> *d) {
   }
 
   if (h.HasOrderedItems()) {
-    std::vector<std::string> items;
+    std::vector<value::token> items;
     if (!ReadFn(items)) {
       _err += "Failed to read ListOp::OrderedItems.\n";
       return false;
@@ -1384,8 +1384,8 @@ bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
-  crate::Value::Dictionary dict;
+bool Parser::Impl::ReadDictionary(value::dict *d) {
+  value::dict dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
     _err += "Failed to read the number of elements for Dictionary data.\n";
@@ -1431,7 +1431,7 @@ bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
 
     size_t saved_position = _sr->tell();
 
-    crate::Value value;
+    crate::CrateValue value;
     if (!UnpackValueRep(rep, &value)) {
       _err += "Failed to unpack value of Dictionary element.\n";
       return false;
@@ -1450,7 +1450,7 @@ bool Parser::Impl::ReadDictionary(crate::Value::Dictionary *d) {
 }
 
 bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
-                                         crate::Value *value) {
+                                         crate::CrateValue *value) {
   if (!rep.IsInlined()) {
     PUSH_ERROR("ValueRep must be inlined value representation.");
     return false;
@@ -1473,16 +1473,17 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
     if (ty.id == VALUE_TYPE_BOOL) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      value->SetBool(d ? true : false);
+      value->Set(d ? true : false);
 
       return true;
 
     } else if (ty.id == VALUE_TYPE_ASSET_PATH) {
       // AssetPath = std::string(storage format is TokenIndex).
 
-      std::string str = GetToken(crate::Index(d));
+      std::string str = GetToken(crate::Index(d)).str();
 
-      value->SetAssetPath(str);
+      value::asset asset(str);
+      value->Set(asset);
 
       return true;
 
@@ -1495,8 +1496,9 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
         _err += "Invalid value for Specifier\n";
         return false;
       }
+      Specifier specifier = static_cast<Specifier>(d);
 
-      value->SetSpecifier(d);
+      value->Set(specifier);
 
       return true;
     } else if (ty.id == VALUE_TYPE_PERMISSION) {
@@ -1509,7 +1511,8 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->SetPermission(d);
+      Permission perm = static_cast<Permission>(d);
+      value->Set(perm);
 
       return true;
     } else if (ty.id == VALUE_TYPE_VARIABILITY) {
@@ -1522,25 +1525,26 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->SetVariability(d);
+      Variability variability = static_cast<Variability>(d);
+      value->Set(variability);
 
       return true;
     } else if (ty.id == VALUE_TYPE_TOKEN) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      std::string str = GetToken(crate::Index(d));
+      value::token tok = GetToken(crate::Index(d));
 
-      DCOUT("value.token = " << str);
+      DCOUT("value.token = " << tok);
 
-      value->SetToken(str);
+      value->Set(tok);
 
       return true;
 
     } else if (ty.id == VALUE_TYPE_STRING) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      std::string str = GetString(crate::Index(d));
+      std::string str = GetStringToken(crate::Index(d)).str();
       DCOUT("value.string = " << str);
 
-      value->SetString(str);
+      value->Set(str);
 
       return true;
 
@@ -1551,7 +1555,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       DCOUT("value.int = " << ival);
 
-      value->SetInt(ival);
+      value->Set(ival);
 
       return true;
 
@@ -1562,7 +1566,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       DCOUT("value.float = " << f);
 
-      value->SetFloat(f);
+      value->Set(f);
 
       return true;
 
@@ -1575,7 +1579,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       DCOUT("value.double = " << v);
 
-      value->SetDouble(v);
+      value->Set(v);
 
       return true;
 
@@ -1586,14 +1590,14 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[3];
       memcpy(&data, &d, 3);
 
-      Vec3i v;
+      value::int3 v;
       v[0] = static_cast<int32_t>(data[0]);
       v[1] = static_cast<int32_t>(data[1]);
       v[2] = static_cast<int32_t>(data[2]);
 
-      DCOUT("value.vec3i = " << v);
+      DCOUT("value.int3 = " << v);
 
-      value->SetVec3i(v);
+      value->Set(v);
 
       return true;
     } else if (ty.id == VALUE_TYPE_VEC4I) {
@@ -1603,7 +1607,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[4];
       memcpy(&data, &d, 4);
 
-      Vec4i v;
+      value::int4 v;
       v[0] = static_cast<int32_t>(data[0]);
       v[1] = static_cast<int32_t>(data[1]);
       v[2] = static_cast<int32_t>(data[2]);
@@ -1611,7 +1615,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       DCOUT("value.vec4i = " << v);
 
-      value->SetVec4i(v);
+      value->Set(v);
 
       return true;
 
@@ -1622,14 +1626,14 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[3];
       memcpy(&data, &d, 3);
 
-      Vec3f v;
+      value::float3 v;
       v[0] = static_cast<float>(data[0]);
       v[1] = static_cast<float>(data[1]);
       v[2] = static_cast<float>(data[2]);
 
       DCOUT("value.vec3f = " << v);
 
-      value->SetVec3f(v);
+      value->Set(v);
 
       return true;
     } else if (ty.id == VALUE_TYPE_VEC4F) {
@@ -1639,7 +1643,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[4];
       memcpy(&data, &d, 4);
 
-      Vec4f v;
+      value::float4 v;
       v[0] = static_cast<float>(data[0]);
       v[1] = static_cast<float>(data[1]);
       v[2] = static_cast<float>(data[2]);
@@ -1647,7 +1651,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       DCOUT("value.vec3f = " << v);
 
-      value->SetVec4f(v);
+      value->Set(v);
 
       return true;
 
@@ -1658,14 +1662,14 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[3];
       memcpy(&data, &d, 3);
 
-      Vec3d v;
+      value::double3 v;
       v[0] = static_cast<double>(data[0]);
       v[1] = static_cast<double>(data[1]);
       v[2] = static_cast<double>(data[2]);
 
       DCOUT("value.vec3d = " << v);
 
-      value->SetVec3d(v);
+      value->Set(v);
 
       return true;
     } else if (ty.id == VALUE_TYPE_VEC4D) {
@@ -1675,7 +1679,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[4];
       memcpy(&data, &d, 4);
 
-      Vec4d v;
+      value::double4 v;
       v[0] = static_cast<double>(data[0]);
       v[1] = static_cast<double>(data[1]);
       v[2] = static_cast<double>(data[2]);
@@ -1683,7 +1687,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       DCOUT("value.vec4d = " << v);
 
-      value->SetVec4d(v);
+      value->Set(v);
 
       return true;
 
@@ -1695,14 +1699,14 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[2];
       memcpy(&data, &d, 2);
 
-      Matrix2d v;
-      memset(v.m, 0, sizeof(Matrix2d));
+      value::matrix2d v;
+      memset(v.m, 0, sizeof(value::matrix2d));
       v.m[0][0] = static_cast<double>(data[0]);
       v.m[1][1] = static_cast<double>(data[1]);
 
       DCOUT("value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1] << "\n");
 
-      value->SetMatrix2d(v);
+      value->Set(v);
 
       return true;
 
@@ -1714,8 +1718,8 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[3];
       memcpy(&data, &d, 3);
 
-      Matrix3d v;
-      memset(v.m, 0, sizeof(Matrix3d));
+      value::matrix3d v;
+      memset(v.m, 0, sizeof(value::matrix3d));
       v.m[0][0] = static_cast<double>(data[0]);
       v.m[1][1] = static_cast<double>(data[1]);
       v.m[2][2] = static_cast<double>(data[2]);
@@ -1723,7 +1727,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       DCOUT("value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1] << ", "
                                     << v.m[2][2]);
 
-      value->SetMatrix3d(v);
+      value->Set(v);
 
       return true;
 
@@ -1735,8 +1739,8 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[4];
       memcpy(&data, &d, 4);
 
-      Matrix4d v;
-      memset(v.m, 0, sizeof(Matrix4d));
+      value::matrix4d v;
+      memset(v.m, 0, sizeof(value::matrix4d));
       v.m[0][0] = static_cast<double>(data[0]);
       v.m[1][1] = static_cast<double>(data[1]);
       v.m[2][2] = static_cast<double>(data[2]);
@@ -1745,7 +1749,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       DCOUT("value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1] << ", "
                                     << v.m[2][2] << ", " << v.m[3][3]);
 
-      value->SetMatrix4d(v);
+      value->Set(v);
 
       return true;
     } else {
@@ -1759,7 +1763,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 }
 
 bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
-                                  crate::Value *value) {
+                                  crate::CrateValue *value) {
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
   }
@@ -1802,8 +1806,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      // TODO(syoyo): Use `token` type.
-      std::vector<std::string> tokens(static_cast<size_t>(n));
+      std::vector<value::token> tokens(static_cast<size_t>(n));
 
       for (size_t i = 0; i < n; i++) {
         DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
@@ -1811,7 +1814,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         tokens[i] = GetToken(v[i]);
       }
 
-      value->SetTokenArray(tokens);
+      value->Set(tokens);
 
       return true;
     } else if (ty.id == VALUE_TYPE_STRING) {
@@ -1835,13 +1838,13 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       std::vector<std::string> stringArray(static_cast<size_t>(n));
 
       for (size_t i = 0; i < n; i++) {
-        stringArray[i] = GetString(v[i]);
+        stringArray[i] = GetStringToken(v[i]).str();
       }
 
       DCOUT("stringArray = " << stringArray);
 
-      // In TinyUSDZ, token == string
-      value->SetTokenArray(stringArray);
+      // TODO: Use token type?
+      value->Set(stringArray);
 
       return true;
 
@@ -1855,22 +1858,16 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
 
       if (v.empty()) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Empty Int array\n";
-#endif
+        PUSH_ERROR("Empty int array.");
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      for (size_t i = 0; i < v.size(); i++) {
-        std::cout << "Int[" << i << "] = " << v[i] << "\n";
-      }
-#endif
+      DCOUT("IntArray = " << v);
 
       if (rep.IsArray()) {
-        value->SetIntArray(v.data(), v.size());
+        value->Set(v);
       } else {
-        value->SetInt(v[0]);
+        value->Set(v[0]);
       }
 
       return true;
@@ -1885,39 +1882,28 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<Vec2f> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(Vec2f), size_t(n) * sizeof(Vec2f),
+        std::vector<value::float2> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::float2), size_t(n) * sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Vec2f array\n";
-#endif
+          PUSH_ERROR("Failed to read float2 array.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Vec2f[" << i << "] = " << v[i][0] << ", " << v[i][1]
-                    << "\n";
-        }
-#endif
+        DCOUT("float2 = " << v);
 
-        value->SetVec2fArray(v.data(), v.size());
+        value->Set(v);
 
       } else {
-        Vec2f v;
-        if (!_sr->read(sizeof(Vec2f), sizeof(Vec2f),
+        value::float2 v;
+        if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(&v))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Vec2f\n";
-#endif
+          PUSH_ERROR("Failed to read float2 data.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "Vec2f = " << v[0] << ", " << v[1] << "\n";
-#endif
+        DCOUT("float2 = " << v);
 
-        value->SetVec2f(v);
+        value->Set(v);
       }
 
       return true;
@@ -1927,44 +1913,31 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         uint64_t n;
         if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read the number of array elements\n";
-#endif
+          PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
 
-        std::vector<Vec3f> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(Vec3f), size_t(n) * sizeof(Vec3f),
+        std::vector<value::float3> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::float3), size_t(n) * sizeof(value::float3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Vec3f array\n";
-#endif
+          PUSH_ERROR("Failed to read Vec3f array.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Vec3f[" << i << "] = " << v[i][0] << ", " << v[i][1]
-                    << ", " << v[i][2] << "\n";
-        }
-#endif
-        value->SetVec3fArray(v.data(), v.size());
+        DCOUT("float3f = " << v);
+        value->Set(v);
 
       } else {
-        Vec3f v;
-        if (!_sr->read(sizeof(Vec3f), sizeof(Vec3f),
+        value::float3 v;
+        if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
                        reinterpret_cast<uint8_t *>(&v))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Vec3f\n";
-#endif
+          PUSH_ERROR("Failed to read Vec3f");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "Vec3f = " << v[0] << ", " << v[1] << ", " << v[2] << "\n";
-#endif
+        DCOUT("float3 = " << v);
 
-        value->SetVec3f(v);
+        value->Set(v);
       }
 
       return true;
@@ -1981,33 +1954,26 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<Vec4f> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(Vec4f), size_t(n) * sizeof(Vec4f),
+        std::vector<value::float4> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::float4), size_t(n) * sizeof(value::float4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Vec4f array\n";
-#endif
+          PUSH_ERROR("Failed to read float4 array.");
           return false;
         }
 
-        value->SetVec4fArray(v.data(), v.size());
+        value->Set(v);
 
       } else {
-        Vec4f v;
-        if (!_sr->read(sizeof(Vec4f), sizeof(Vec4f),
+        value::float4 v;
+        if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
                        reinterpret_cast<uint8_t *>(&v))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Vec4f\n";
-#endif
+          PUSH_ERROR("Failed to read float4.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "Vec4f = " << v[0] << ", " << v[1] << ", " << v[2] << ", "
-                  << v[3] << "\n";
-#endif
+        DCOUT("float4 = " << v);
 
-        value->SetVec4f(v);
+        value->Set(v);
       }
 
       return true;
@@ -2017,84 +1983,64 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       // std::vector<Index>
       uint64_t n;
       if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Failed to read TokenVector value\n";
-#endif
+        PUSH_ERROR("Failed to read TokenVector value.");
         return false;
       }
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "n = " << n << "\n";
-#endif
 
       std::vector<crate::Index> indices(static_cast<size_t>(n));
       if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
                      static_cast<size_t>(n) * sizeof(crate::Index),
                      reinterpret_cast<uint8_t *>(indices.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cerr << "Failed to read TokenVector value\n";
-#endif
+        PUSH_ERROR("Failed to read TokenVector value.");
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      for (size_t i = 0; i < indices.size(); i++) {
-        std::cout << "tokenIndex[" << i << "] = " << int(indices[i].value)
-                  << "\n";
-      }
-#endif
+      DCOUT("TokenVector(index) = " << indices);
 
-      std::vector<std::string> tokens(indices.size());
+      std::vector<value::token> tokens(indices.size());
       for (size_t i = 0; i < indices.size(); i++) {
         tokens[i] = GetToken(indices[i]);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "tokenVector[" << i << "] = " << tokens[i] << ", ("
-                  << int(indices[i].value) << ")\n";
-#endif
       }
 
-      value->SetTokenArray(tokens);
+      DCOUT("TokenVector = " << tokens);
+
+      value->Set(tokens);
 
       return true;
     } else if (ty.id == VALUE_TYPE_HALF) {
       if (rep.IsArray()) {
-        std::vector<uint16_t> v;
+        std::vector<value::half> v;
         if (!ReadHalfArray(rep.IsCompressed(), &v)) {
-          _err += "Failed to read half array value\n";
+          PUSH_ERROR("Failed to read half array value.");
           return false;
         }
 
-        value->SetHalfArray(v.data(), v.size());
+        value->Set(v);
 
         return true;
       } else {
         assert(!rep.IsCompressed());
 
-        // ???
-        _err += "Non-inlined, non-array Half value is not supported.\n";
+        PUSH_ERROR("Non-inlined, non-array Half value is not supported.");
         return false;
       }
     } else if (ty.id == VALUE_TYPE_FLOAT) {
       if (rep.IsArray()) {
         std::vector<float> v;
         if (!ReadFloatArray(rep.IsCompressed(), &v)) {
-          _err += "Failed to read float array value\n";
+          PUSH_ERROR("Failed to read float array value.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Float[" << i << "] = " << v[i] << "\n";
-        }
-#endif
+        DCOUT("FloatArray = " << v);
 
-        value->SetFloatArray(v.data(), v.size());
+        value->Set(v);
 
         return true;
       } else {
         assert(!rep.IsCompressed());
 
-        // ???
-        _err += "Non-inlined, non-array Float value is not supported.\n";
+        PUSH_ERROR("Non-inlined, non-array Float value is not supported.");
         return false;
       }
 
@@ -2102,17 +2048,12 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<double> v;
         if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
-          _err += "Failed to read Double value\n";
+          PUSH_ERROR("Failed to read Double value.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Double[" << i << "] = " << v[i] << "\n";
-        }
-#endif
-
-        value->SetDoubleArray(v.data(), v.size());
+        DCOUT("DoubleArray = " << v);
+        value->Set(v);
 
         return true;
       } else {
@@ -2120,15 +2061,13 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         double v;
         if (!_sr->read_double(&v)) {
-          _err += "Failed to read Double value\n";
+          PUSH_ERROR("Failed to read Double value.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "Double " << v << "\n";
-#endif
+        DCOUT("Double " << v);
 
-        value->SetDouble(v);
+        value->Set(v);
 
         return true;
       }
@@ -2136,36 +2075,31 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       assert(!rep.IsCompressed());
       assert(rep.IsArray());
 
-      Vec3i v;
-      if (!_sr->read(sizeof(Vec3i), sizeof(Vec3i),
+      value::int3 v;
+      if (!_sr->read(sizeof(value::int3), sizeof(value::int3),
                      reinterpret_cast<uint8_t *>(&v))) {
         _err += "Failed to read Vec3i value\n";
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3i = " << v[0] << ", " << v[1] << ", " << v[2]
-                << "\n";
-#endif
-      value->SetVec3i(v);
+      DCOUT("int3 = " << v);
+      value->Set(v);
 
       return true;
     } else if (ty.id == VALUE_TYPE_VEC3F) {
       assert(!rep.IsCompressed());
       assert(rep.IsArray());
 
-      Vec3f v;
-      if (!_sr->read(sizeof(Vec3f), sizeof(Vec3f),
+      value::float3 v;
+      if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
                      reinterpret_cast<uint8_t *>(&v))) {
-        _err += "Failed to read Vec3f value\n";
+        PUSH_ERROR("Failed to read Vec3f value.");
         return false;
       }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "value.vec3f = " << v[0] << ", " << v[1] << ", " << v[2]
-                << "\n";
-#endif
-      value->SetVec3f(v);
+      DCOUT("vec3f = " << v);
+
+      value->Set(v);
 
       return true;
     } else if (ty.id == VALUE_TYPE_VEC3D) {
@@ -2180,8 +2114,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<Vec3d> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(Vec3d), size_t(n) * sizeof(Vec3d),
+        std::vector<value::double3> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::double3), size_t(n) * sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cerr << "Failed to read Vec3d array\n";
@@ -2189,27 +2123,21 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Vec3d[" << i << "] = " << v[i][0] << ", " << v[i][1]
-                    << ", " << v[i][2] << "\n";
-        }
-#endif
-        value->SetVec3dArray(v.data(), v.size());
+        DCOUT("double3 array = " << v);
+
+        value->Set(v);
 
       } else {
-        Vec3d v;
-        if (!_sr->read(sizeof(Vec3d), sizeof(Vec3d),
+        value::double3 v;
+        if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Vec3d value\n";
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "value.vec3d = " << v[0] << ", " << v[1] << ", " << v[2]
-                  << "\n";
-#endif
-        value->SetVec3d(v);
+        DCOUT("double3 array = " << v);
+
+        value->Set(v);
       }
 
       return true;
@@ -2217,16 +2145,16 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       assert(!rep.IsCompressed());
       assert(rep.IsArray());
 
-      Vec3h v;
-      if (!_sr->read(sizeof(Vec3h), sizeof(Vec3h),
+      value::half3 v;
+      if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
                      reinterpret_cast<uint8_t *>(&v))) {
         _err += "Failed to read Vec3h value\n";
         return false;
       }
 
-      //DCOUT("value.vec3h = " << v);
+      DCOUT("value.vec3h = " << v);
 
-      value->SetVec3h(v);
+      value->Set(v);
 
       return true;
     } else if (ty.id == VALUE_TYPE_QUATF) {
@@ -2239,36 +2167,27 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<Quatf> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(Quatf), size_t(n) * sizeof(Quatf),
+        std::vector<value::quatf> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::quatf), size_t(n) * sizeof(value::quatf),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Quatf array\n";
-#endif
+          PUSH_ERROR("Failed to read Quatf array.");
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        for (size_t i = 0; i < v.size(); i++) {
-          std::cout << "Quatf[" << i << "] = " << v[i].v[0] << ", " << v[i].v[1]
-                    << ", " << v[i].v[2] << ", " << v[i].v[3] << "\n";
-        }
-#endif
-        value->SetQuatfArray(v.data(), v.size());
+        DCOUT("Quatf[] = " << v);
+
+        value->Set(v);
 
       } else {
-        Quatf v;
-        if (!_sr->read(sizeof(Quatf), sizeof(Quatf),
+        value::quatf v;
+        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatf value\n";
           return false;
         }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "value.quatf = " << v.v[0] << ", " << v.v[1] << ", "
-                  << v.v[2] << ", " << v.v[3] << "\n";
-#endif
-        value->SetQuatf(v);
+        DCOUT("Quatf = " << v);
+        value->Set(v);
       }
 
       return true;
@@ -2285,15 +2204,15 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<Matrix4d> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(Matrix4d),
-                       size_t(n) * sizeof(Matrix4d),
+        std::vector<value::matrix4d> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix4d),
+                       size_t(n) * sizeof(value::matrix4d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Matrix4d array.");
           return false;
         }
 
-        value->SetMatrix4dArray(v.data(), v.size());
+        value->Set(v);
 
       } else {
         static_assert(sizeof(value::matrix4d) == (8 * 16), "");
@@ -2307,7 +2226,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("value.matrix4d = " << v);
 
-        //value->SetMatrix4d(v);
+        value->Set(v);
       }
 
       return true;
@@ -2316,7 +2235,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       assert(!rep.IsCompressed());
       assert(!rep.IsArray());
 
-      crate::Value::Dictionary dict;
+      //crate::CrateValue::Dictionary dict;
+      value::dict dict;
 
       if (!ReadDictionary(&dict)) {
         _err += "Failed to read Dictionary value\n";
@@ -2325,7 +2245,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("Dict. nelems = " << dict.size());
 
-      value->SetDictionary(dict);
+      value->Set(dict);
 
       return true;
 
@@ -2339,7 +2259,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->SetPathListOp(lst);
+      value->Set(lst);
 
       return true;
 
@@ -2350,7 +2270,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->SetTimeSamples(ts);
+      value->Set(ts);
 
       return true;
 
@@ -2363,7 +2283,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("DoubleArray = " << v);
 
-      value->SetDoubleArray(v.data(), v.size());
+      value->Set(v);
 
       return true;
 
@@ -2377,19 +2297,19 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("PathVector = " << to_string(v));
 
-      value->SetPathVector(v);
+      value->Set(v);
 
       return true;
 
     } else if (ty.id == VALUE_TYPE_TOKEN_LIST_OP) {
-      ListOp<std::string> lst;
+      ListOp<value::token> lst;
 
       if (!ReadTokenListOp(&lst)) {
         PUSH_ERROR("Failed to read TokenListOp data");
         return false;
       }
 
-      value->SetTokenListOp(lst);
+      value->Set(lst);
       return true;
     } else {
       // TODO(syoyo)
@@ -2431,11 +2351,11 @@ bool Parser::Impl::BuildDecompressedPathsImpl(
 
       // full path
       _paths[pathIndexes[thisIndex]] =
-          isPrimPropertyPath ? parentPath.AppendProperty(elemToken)
-                             : parentPath.AppendElement(elemToken);
+          isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
+                             : parentPath.AppendElement(elemToken.str());
 
       // also set local path for 'primChildren' check
-      _paths[pathIndexes[thisIndex]].SetLocalPart(elemToken);
+      _paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
     }
 
     // If we have either a child or a sibling but not both, then just
@@ -2794,10 +2714,11 @@ bool Parser::Impl::ReadTokens() {
       return false;
     }
 
-    std::string token;
+    std::string str;
     if (len > 0) {
-      token = std::string(p, len);
+      str = std::string(p, len);
     }
+
 
     p += len + 1;  // +1 = '\0'
     n_remain = size_t(pe - p);
@@ -2807,8 +2728,10 @@ bool Parser::Impl::ReadTokens() {
       return false;
     }
 
-    DCOUT("token[" << i << "] = " << token);
-    _tokens.push_back(token);
+    value::token tok(str);
+
+    DCOUT("token[" << i << "] = " << tok);
+    _tokens.push_back(tok);
   }
 
   return true;
@@ -3047,7 +2970,7 @@ bool Parser::Impl::BuildLiveFieldSets() {
 
       DCOUT("fieldIndex = " << (fsBegin->value));
       auto const &field = _fields[fsBegin->value];
-      pairs[i].first = GetToken(field.token_index);
+      pairs[i].first = GetToken(field.token_index).str();
       if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
         PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
                    << field.value_rep.GetStringRepr());
@@ -3106,14 +3029,14 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
     DCOUT("===  fvs.first " << fv.first
                             << ", second: " << fv.second.GetTypeName());
     if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
-      attr->type_name = fv.second.GetToken();
+      attr->type_name = fv.second.value<value::token>().str();
       DCOUT("typeName: " << attr->type_name);
     } else if (fv.first == "default") {
       // Nothing to do at there. Process `default` in the later
       continue;
     } else if (fv.first == "targetPaths") {
       // e.g. connection to Material.
-      const ListOp<Path> paths = fv.second.GetPathListOp();
+      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
 
       DCOUT("ListOp<Path> = " << to_string(paths));
       // Currently we only support single explicit path.
@@ -3133,7 +3056,7 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
       }
     } else if (fv.first == "connectionPaths") {
       // e.g. connection to texture file.
-      const ListOp<Path> paths = fv.second.GetPathListOp();
+      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
 
       DCOUT("ListOp<Path> = " << to_string(paths));
 
@@ -3154,16 +3077,17 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
       }
     } else if ((fv.first == "variablity") &&
                (fv.second.GetTypeName() == "Variability")) {
-      variability = fv.second.GetVariability();
+      variability = fv.second.value<Variability>();
     } else if ((fv.first == "interpolation") &&
                (fv.second.GetTypeName() == "Token")) {
-      interpolation = InterpolationFromString(fv.second.GetToken());
+      interpolation = InterpolationFromString(fv.second.value<value::token>().str());
     } else {
       DCOUT("TODO: name: " << fv.first << ", type: " << fv.second.GetTypeName());
     }
   }
 
   attr->variability = variability;
+  attr->interpolation = interpolation;
 
   //
   // Decode value(stored in "default" field)
@@ -3182,82 +3106,60 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
 
       DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
 
-      if (fv.second.GetTypeName() == "Float") {
-        float value;
-
-        if (!fv.second.GetFloat(&value)) {
-          _err += "Failed to decode Float value.";
-          return false;
-        }
-        attr->var.set_scalar(value);
+#define PROC_SCALAR(__tyname, __ty) \
+      } else if (fv.second.GetTypeName() == __tyname) { \
+        auto ret = fv.second.get_value<__ty>(); \
+        if (!ret) { \
+          _err += "Failed to decode " __tyname " value."; \
+          return false; \
+        } \
+        attr->var.set_scalar(ret.value()); \
         success = true;
 
-      } else if (fv.second.GetTypeName() == "Bool") {
-        bool boolVal;
-        if (!fv.second.GetBool(&boolVal)) {
-          _err += "Failed to decode Int data";
-          return false;
-        }
-
-        attr->var.set_scalar(boolVal);
+#define PROC_ARRAY(__tyname, __ty) \
+      } else if (fv.second.GetTypeName() == __tyname) { \
+        auto ret = fv.second.get_value<std::vector<__ty>>(); \
+        if (!ret) { \
+          _err += "Failed to decode " __tyname "[] value."; \
+          return false; \
+        } \
+        attr->var.set_scalar(ret.value()); \
         success = true;
 
-      } else if (fv.second.GetTypeName() == "Int") {
-        int value;
-        if (!fv.second.GetInt(&value)) {
-          _err += "Failed to decode Int data";
-          return false;
-        }
+      if (0) { // dummy
+      PROC_SCALAR("Float", float)
+      PROC_SCALAR("Bool", bool)
+      PROC_SCALAR("Int", int)
+      PROC_SCALAR("Vec3f", value::float3)
+      PROC_SCALAR("Token", value::token)
+      PROC_ARRAY("FloatArray", float)
+      PROC_ARRAY("Vec2fArray", value::float2)
+      PROC_ARRAY("Vec3fArray", value::float3)
+      PROC_ARRAY("Vec4fArray", value::float4)
+      PROC_ARRAY("IntArray", int)
+      PROC_ARRAY("TokenArray", value::token)
+      } else {
+        PUSH_ERROR("TODO: " + fv.second.GetTypeName());
+      }
 
-        attr->var.set_scalar(value);
-        success = true;
-      } else if (fv.second.GetTypeName() == "Vec3f") {
-        Vec3f value =
-            *reinterpret_cast<const Vec3f *>(fv.second.GetData().data());
-        (void)value;
-        attr->var.set_scalar(value);
+      // TODO: role-type
+#if 0
 
-        attr->variability = variability;
-        attr->interpolation = interpolation;
-        success = true;
-
-      } else if (fv.second.GetTypeName() == "FloatArray") {
-        std::vector<float> value;
-        value.resize(fv.second.GetData().size() / sizeof(float));
-        memcpy(value.data(), fv.second.GetData().data(),
-               fv.second.GetData().size());
-        attr->var.set_scalar(value);
-
-        attr->variability = variability;
-        attr->interpolation = interpolation;
-        success = true;
-      } else if (fv.second.GetTypeName() == "Vec2fArray") {
-        std::vector<Vec2f> value;
-        value.resize(fv.second.GetData().size() / sizeof(Vec2f));
-        memcpy(value.data(), fv.second.GetData().data(),
-               fv.second.GetData().size());
-        attr->var.set_scalar(value);
-
-        attr->variability = variability;
-        attr->interpolation = interpolation;
-        success = true;
-      } else if (fv.second.GetTypeName() == "Vec3fArray") {
-        // role-type?
         if (attr->type_name == "point3f[]") {
           std::vector<value::point3f> value;
-          value.resize(fv.second.GetData().size() / sizeof(Vec3f));
+          value.resize(fv.second.GetData().size() / sizeof(value::float3));
           memcpy(value.data(), fv.second.GetData().data(),
                  fv.second.GetData().size());
           attr->var.set_scalar(value);
         } else if (attr->type_name == "normal3f[]") {
           std::vector<value::normal3f> value;
-          value.resize(fv.second.GetData().size() / sizeof(Vec3f));
+          value.resize(fv.second.GetData().size() / sizeof(value::float3));
           memcpy(value.data(), fv.second.GetData().data(),
                  fv.second.GetData().size());
           attr->var.set_scalar(value);
         } else {
-          std::vector<Vec3f> value;
-          value.resize(fv.second.GetData().size() / sizeof(Vec3f));
+          std::vector<value::float3> value;
+          value.resize(fv.second.GetData().size() / sizeof(value::float3));
           memcpy(value.data(), fv.second.GetData().data(),
                  fv.second.GetData().size());
           attr->var.set_scalar(value);
@@ -3265,47 +3167,8 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
         attr->variability = variability;
         attr->interpolation = interpolation;
         success = true;
-      } else if (fv.second.GetTypeName() == "Vec4fArray") {
-        std::vector<Vec4f> value;
-        value.resize(fv.second.GetData().size() / sizeof(Vec4f));
-        memcpy(value.data(), fv.second.GetData().data(),
-               fv.second.GetData().size());
+#endif
 
-        attr->var.set_scalar(value);
-        attr->variability = variability;
-        attr->interpolation = interpolation;
-        success = true;
-      } else if (fv.second.GetTypeName() == "IntArray") {
-        std::vector<int> value;
-        value.resize(fv.second.GetData().size() / sizeof(int));
-        memcpy(value.data(), fv.second.GetData().data(),
-               fv.second.GetData().size());
-
-        attr->var.set_scalar(value);
-        attr->variability = variability;
-        attr->interpolation = interpolation;
-        success = true;
-
-        DCOUT("IntArray = " << value);
-
-      } else if (fv.second.GetTypeName() == "Token") {
-        DCOUT("Token: " << fv.second.GetToken());
-
-        attr->var.set_scalar(fv.second.GetToken());
-        attr->variability = variability;
-        // attr->interpolation = interpolation;
-        success = true;
-      } else if (fv.second.GetTypeName() == "TokenArray") {
-        std::vector<std::string> value = fv.second.GetTokenArray();
-
-        attr->var.set_scalar(value);
-        attr->variability = variability;
-        attr->interpolation = interpolation;
-        success = true;
-
-      } else {
-        PUSH_ERROR("TODO: " + fv.second.GetTypeName());
-      }
     }
   }
 
@@ -3403,13 +3266,20 @@ bool Parser::Impl::ReconstructGeomBasisCurves(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
+
       if (fv.second.GetTypeName() != "TokenArray") {
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
       }
-      assert(fv.second.IsArray());
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-        if (fv.second.GetStringArray()[i] == "points") {
+
+      auto ret = fv.second.get_value<std::vector<value::token>>();
+      if (!ret) {
+        _err += "`properties` data isn't a TokenArray type\n";
+        return false;
+      }
+      
+      for (size_t i = 0; i < ret.value().size(); i++) {
+        if (ret.value()[i].str() == "points") {
           has_position = true;
         }
       }
@@ -3483,19 +3353,19 @@ bool Parser::Impl::ReconstructGeomBasisCurves(
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
           std::cout << "got point\n";
 #endif
-          // if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
+          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
           //   curves->points = *p;
           // }
         } else if (prop_name == "extent") {
           // vec3f[2]
-          // if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
+          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
           //  if (p->size() == 2) {
           //    curves->extent.value.lower = (*p)[0];
           //    curves->extent.value.upper = (*p)[1];
           //  }
           //}
         } else if (prop_name == "normals") {
-          // if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
+          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
           //   curves->normals = (*p);
           // }
         } else if (prop_name == "widths") {
@@ -3589,11 +3459,11 @@ bool Parser::Impl::ReconstructGeomSubset(
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
       }
-      assert(fv.second.IsArray());
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-        // if (fv.second.GetStringArray()[i] == "points") {
-        // }
-      }
+
+      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      //  // if (fv.second.GetStringArray()[i] == "points") {
+      //  // }
+      //}
     }
   }
 
@@ -3703,7 +3573,6 @@ bool Parser::Impl::ReconstructGeomMesh(
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
       }
-      assert(fv.second.IsArray());
       for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
         if (fv.second.GetStringArray()[i] == "points") {
           has_position = true;
@@ -3787,7 +3656,7 @@ bool Parser::Impl::ReconstructGeomMesh(
                        value::GetTypeName(attr.var.type_id()));
             return false;
           }
-          // if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
+          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
           //   mesh->points = (*p);
           // }
         } else if (prop_name == "doubleSided") {
@@ -3797,7 +3666,7 @@ bool Parser::Impl::ReconstructGeomMesh(
           }
         } else if (prop_name == "extent") {
           // vec3f[2]
-          auto p = attr.var.get_value<std::vector<Vec3f>>();
+          auto p = attr.var.get_value<std::vector<value::float3>>();
           if (p && p->size() == 2) {
             mesh->extent.value.lower = (*p)[0];
             mesh->extent.value.upper = (*p)[1];
@@ -4235,7 +4104,7 @@ bool Parser::Impl::ReconstructPreviewSurface(
             shader->diffuseColor.path = *p;
           }
         } else if (prop_name.compare("inputs:emissiveColor") == 0) {
-          // if (auto p = primvar::as_basic<Vec3f>(&attr.var)) {
+          // if (auto p = primvar::as_basic<value::float3>(&attr.var)) {
           //  shader->emissiveColor.color = (*p);
 
           //}
@@ -4555,7 +4424,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
   }
 
   std::string node_type;
-  crate::Value::Dictionary assetInfo;
+  crate::CrateValue::Dictionary assetInfo;
 
   for (const auto &fv : fields) {
     DCOUT(IndentStr(level) << "  \"" << fv.first

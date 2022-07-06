@@ -181,6 +181,7 @@ struct TableOfContents {
   std::vector<Section> sections;
 };
 
+#if 0
 ///
 /// Represent value with arbitrary type(TODO: Use primvar).
 /// array is up to 1D array.
@@ -798,6 +799,87 @@ class Value {
 
   TimeSamples time_samples;
 };
+#else
+class CrateValue {
+ public:
+  typedef std::map<std::string, CrateValue> Dictionary;
+
+  std::string GetTypeName() const;
+
+#define SET_TYPE_SCALAR(__ty) void Set(const __ty&);
+#define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &);
+
+#define SET_TYPE_LIST(__FUNC) \
+  __FUNC(value::half) \
+  __FUNC(value::half2) \
+  __FUNC(value::half3) \
+  __FUNC(value::half4) \
+  __FUNC(int) \
+  __FUNC(value::int2) \
+  __FUNC(value::int3) \
+  __FUNC(value::int4) \
+  __FUNC(uint32_t) \
+  __FUNC(value::uint2) \
+  __FUNC(value::uint3) \
+  __FUNC(value::uint4) \
+  __FUNC(float) \
+  __FUNC(value::float2) \
+  __FUNC(value::float3) \
+  __FUNC(value::float4) \
+  __FUNC(double) \
+  __FUNC(value::double2) \
+  __FUNC(value::double3) \
+  __FUNC(value::double4) \
+  __FUNC(value::quath) \
+  __FUNC(value::quatf) \
+  __FUNC(value::quatd) \
+  __FUNC(value::matrix2d) \
+  __FUNC(value::matrix3d) \
+  __FUNC(value::matrix4d) \
+  __FUNC(value::asset) \
+  __FUNC(value::token) \
+  __FUNC(std::string) 
+
+
+  SET_TYPE_SCALAR(bool)
+  SET_TYPE_SCALAR(Specifier)
+  SET_TYPE_SCALAR(Permission)
+  SET_TYPE_SCALAR(Variability)
+  SET_TYPE_SCALAR(value::dict)
+
+  SET_TYPE_SCALAR(ListOp<value::token>)
+  SET_TYPE_SCALAR(ListOp<Path>)
+  SET_TYPE_SCALAR(std::vector<Path>)
+  SET_TYPE_SCALAR(TimeSamples)
+
+  SET_TYPE_LIST(SET_TYPE_SCALAR)
+  SET_TYPE_LIST(SET_TYPE_1D)
+
+  // Useful function to retrieve concrete value with type T.
+  // Undefined behavior(usually will triger segmentation fault) when
+  // type-mismatch. (We don't throw exception)
+  template <class T>
+  const T &value() const {
+    return (*reinterpret_cast<const T *>(value_.value()));
+  }
+
+  // Type-safe way to get concrete value.
+  template <class T>
+  nonstd::optional<T> get_value() const {
+    if (TypeTrait<T>::type_id == value_.type_id()) {
+      return std::move(value<T>());
+    } else if (TypeTrait<T>::underlying_type_id == value_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      return std::move(value<T>());
+    }
+    return nonstd::nullopt;
+  }
+
+ private:
+  value::any_value value_;
+};
+#endif
 
 nonstd::expected<ValueType, std::string> GetValueType(int32_t type_id);
 std::string GetValueTypeString(int32_t type_id);

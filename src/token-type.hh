@@ -68,6 +68,10 @@ class Token {
  public:
   Token() {}
 
+  explicit Token(const std::string &str) {
+    str_ = sid::string_id(str.c_str(), TokenStorage::GetInstance());
+  }
+
   explicit Token(const char *str) {
     str_ = sid::string_id(str, TokenStorage::GetInstance());
   }

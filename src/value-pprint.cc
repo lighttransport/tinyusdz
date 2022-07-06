@@ -53,6 +53,36 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v) {
   return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
@@ -199,7 +229,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
 namespace tinyusdz {
 namespace value {
 
-std::ostream &operator<<(std::ostream &os, const any_value &v) {
+inline std::ostream &operator<<(std::ostream &os, const any_value &v) {
     // Simple brute-force way..
     // TODO: Use std::function or some template technique?
 

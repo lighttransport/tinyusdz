@@ -760,33 +760,33 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
   return false;
 }
 
-Matrix4d GetTransform(XformOp xform)
+value::matrix4d GetTransform(XformOp xform)
 {
-  Matrix4d m;
+  value::matrix4d m;
   Identity(&m);
 
   if (xform.op == XformOp::OpType::TRANSFORM) {
-    m = nonstd::get<Matrix4d>(xform.value);
+    m = nonstd::get<value::matrix4d>(xform.value);
   } else if (xform.op == XformOp::OpType::TRANSLATE) {
-    if (xform.precision == XformOp::PRECISION_DOUBLE) {
-      auto s = nonstd::get<Vec3f>(xform.value);
+    if (xform.precision == XformOp::PRECISION_FLOAT) {
+      auto s = nonstd::get<value::float3>(xform.value);
       m.m[0][0] = double(s[0]);
       m.m[1][1] = double(s[1]);
       m.m[2][2] = double(s[2]);
     } else {
-      auto s = nonstd::get<Vec3d>(xform.value);
+      auto s = nonstd::get<value::double3>(xform.value);
       m.m[0][0] = s[0];
       m.m[1][1] = s[1];
       m.m[2][2] = s[2];
     }
   } else if (xform.op == XformOp::OpType::SCALE) {
-    if (xform.precision == XformOp::PRECISION_DOUBLE) {
-      auto s = nonstd::get<Vec3f>(xform.value);
+    if (xform.precision == XformOp::PRECISION_FLOAT) {
+      auto s = nonstd::get<value::float3>(xform.value);
       m.m[0][0] = double(s[0]);
       m.m[1][1] = double(s[1]);
       m.m[2][2] = double(s[2]);
     } else {
-      auto s = nonstd::get<Vec3d>(xform.value);
+      auto s = nonstd::get<value::double3>(xform.value);
       m.m[0][0] = s[0];
       m.m[1][1] = s[1];
       m.m[2][2] = s[2];
@@ -797,23 +797,23 @@ Matrix4d GetTransform(XformOp xform)
   return m;
 }
 
-bool Xform::EvaluateXformOps(Matrix4d *out_matrix) const {
+bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
     Identity(out_matrix);
 
-    Matrix4d cm;
+    value::matrix4d cm;
 
     // Concat matrices
     for (const auto &x : xformOps) {
-      Matrix4d m;
+      value::matrix4d m;
       Identity(&m);
       if (x.op == XformOp::TRANSLATE) {
         if (x.precision == XformOp::PRECISION_FLOAT) {
-          Vec3f tx = nonstd::get<Vec3f>(x.value);
+          value::float3 tx = nonstd::get<value::float3>(x.value);
           m.m[3][0] = double(tx[0]);
           m.m[3][1] = double(tx[1]);
           m.m[3][2] = double(tx[2]);
         } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          Vec3d tx = nonstd::get<Vec3d>(x.value);
+          auto tx = nonstd::get<value::double3>(x.value);
           m.m[3][0] = tx[0];
           m.m[3][1] = tx[1];
           m.m[3][2] = tx[2];
@@ -868,7 +868,7 @@ bool Xform::EvaluateXformOps(Matrix4d *out_matrix) const {
         return false;
       }
 
-      cm = Mult(cm, m);
+      cm = Mult<value::matrix4d, double, 4>(cm, m);
     }
 
     (*out_matrix) = cm;
@@ -892,7 +892,7 @@ void GeomMesh::Initialize(const GPrim &gprim)
     const PrimAttrib &attr = prop.attrib;
 
     if (attr_name == "points") {
-      //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
+      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
       //  points = *p;
       //}
     } else if (attr_name == "faceVertexIndices") {
@@ -904,12 +904,12 @@ void GeomMesh::Initialize(const GPrim &gprim)
       //  faceVertexCounts = *p;
       //}
     } else if (attr_name == "normals") {
-      //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
+      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
       //  normals.var = *p;
       //  normals.interpolation = attr.interpolation;
       //}
     } else if (attr_name == "velocitiess") {
-      //if (auto p = primvar::as_vector<Vec3f>(&attr.var)) {
+      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
       //  velocitiess.var = (*p);
       //  velocitiess.interpolation = attr.interpolation;
       //}
@@ -917,7 +917,7 @@ void GeomMesh::Initialize(const GPrim &gprim)
       //if (auto pv2f = primvar::as_vector<Vec2f>(&attr.var)) {
       //  st.buffer = (*pv2f);
       //  st.interpolation = attr.interpolation;
-      //} else if (auto pv3f = primvar::as_vector<Vec3f>(&attr.var)) {
+      //} else if (auto pv3f = primvar::as_vector<value::float3>(&attr.var)) {
       //  st.buffer = (*pv3f);
       //  st.interpolation = attr.interpolation;
       //}
@@ -965,13 +965,13 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
 static_assert(sizeof(crate::Index) == 4, "");
 static_assert(sizeof(crate::Field) == 16, "");
 static_assert(sizeof(crate::Spec) == 12, "");
-static_assert(sizeof(Vec4h) == 8, "");
-static_assert(sizeof(Vec2f) == 8, "");
-static_assert(sizeof(Vec3f) == 12, "");
-static_assert(sizeof(Vec4f) == 16, "");
-static_assert(sizeof(Vec2d) == 16, "");
-static_assert(sizeof(Vec3d) == 24, "");
-static_assert(sizeof(Vec4d) == 32, "");
-static_assert(sizeof(Matrix4d) == (8 * 16), "");
+//static_assert(sizeof(Vec4h) == 8, "");
+//static_assert(sizeof(Vec2f) == 8, "");
+//static_assert(sizeof(Vec3f) == 12, "");
+//static_assert(sizeof(Vec4f) == 16, "");
+//static_assert(sizeof(Vec2d) == 16, "");
+//static_assert(sizeof(Vec3d) == 24, "");
+//static_assert(sizeof(Vec4d) == 32, "");
+//static_assert(sizeof(value::matrix4d) == (8 * 16), "");
 
 }  // namespace tinyusdz
