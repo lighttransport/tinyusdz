@@ -457,29 +457,42 @@ struct Reference {
 // For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to
 // the translation.
 //
-template <typename T, size_t N>
-struct Matrix {
-  T m[N][N];
-  constexpr static uint32_t n = N;
-};
+//template <typename T, size_t N>
+//struct Matrix {
+//  T m[N][N];
+//  constexpr static uint32_t n = N;
+//};
 
-template <typename T, size_t N>
-void Identity(Matrix<T, N> *mat) {
-  memset(mat->m, 0, sizeof(T) * N * N);
-  for (size_t i = 0; i < N; i++) {
-    mat->m[i][i] = static_cast<T>(1);
+inline void Identity(value::matrix2d *mat) {
+  memset(mat->m, 0, sizeof(value::matrix2d));
+  for (size_t i = 0; i < 2; i++) {
+    mat->m[i][i] = static_cast<double>(1);
+  }
+}
+
+inline void Identity(value::matrix3d *mat) {
+  memset(mat->m, 0, sizeof(value::matrix3d));
+  for (size_t i = 0; i < 3; i++) {
+    mat->m[i][i] = static_cast<double>(1);
+  }
+}
+
+inline void Identity(value::matrix4d *mat) {
+  memset(mat->m, 0, sizeof(value::matrix4d));
+  for (size_t i = 0; i < 4; i++) {
+    mat->m[i][i] = static_cast<double>(1);
   }
 }
 
 // ret = m x n
-template <typename T, size_t N>
-Matrix<T, N> Mult(Matrix<T, N> &m, Matrix<T, N> &n) {
-  Matrix<T, N> ret;
-  memset(ret.m, 0, sizeof(T) * N * N);
+template <typename MTy, typename STy, size_t N>
+MTy Mult(MTy &m, MTy &n) {
+  MTy ret;
+  memset(ret.m, 0, sizeof(MTy));
 
   for (size_t j = 0; j < N; j++) {
     for (size_t i = 0; i < N; i++) {
-      T value = static_cast<T>(0);
+      STy value = static_cast<STy>(0);
       for (size_t k = 0; k < N; k++) {
         value += m.m[k][i] * n.m[j][k];
       }
@@ -490,43 +503,43 @@ Matrix<T, N> Mult(Matrix<T, N> &m, Matrix<T, N> &n) {
   return ret;
 }
 
-typedef uint16_t float16;
-float half_to_float(float16 h);
-float16 float_to_half_full(float f);
+//typedef uint16_t float16;
+float half_to_float(value::half h);
+value::half float_to_half_full(float f);
 
-using Matrix2f = Matrix<float, 2>;
-using Matrix2d = Matrix<double, 2>;
-using Matrix3f = Matrix<float, 3>;
-using Matrix3d = Matrix<double, 3>;
-using Matrix4f = Matrix<float, 4>;
-using Matrix4d = Matrix<double, 4>;
+//using Matrix2f = Matrix<float, 2>;
+//using Matrix2d = Matrix<double, 2>;
+//using Matrix3f = Matrix<float, 3>;
+//using Matrix3d = Matrix<double, 3>;
+//using Matrix4f = Matrix<float, 4>;
+//using Matrix4d = Matrix<double, 4>;
 
-using Vec4i = std::array<int32_t, 4>;
-using Vec3i = std::array<int32_t, 3>;
-using Vec2i = std::array<int32_t, 2>;
+//using Vec4i = std::array<int32_t, 4>;
+//using Vec3i = std::array<int32_t, 3>;
+//using Vec2i = std::array<int32_t, 2>;
 
 // Use uint16_t for storage of half type.
 // Need to decode/encode value through half converter functions
-using Vec4h = std::array<uint16_t, 4>;
-using Vec3h = std::array<uint16_t, 3>;
-using Vec2h = std::array<uint16_t, 2>;
+//using Vec4h = std::array<uint16_t, 4>;
+//using Vec3h = std::array<uint16_t, 3>;
+//using Vec2h = std::array<uint16_t, 2>;
+//
+//using Vec4f = std::array<float, 4>;
+//using Vec3f = std::array<float, 3>;
+//using Vec2f = std::array<float, 2>;
+//
+//using Vec4d = std::array<double, 4>;
+//using Vec3d = std::array<double, 3>;
+//using Vec2d = std::array<double, 2>;
 
-using Vec4f = std::array<float, 4>;
-using Vec3f = std::array<float, 3>;
-using Vec2f = std::array<float, 2>;
-
-using Vec4d = std::array<double, 4>;
-using Vec3d = std::array<double, 3>;
-using Vec2d = std::array<double, 2>;
-
-template <typename T>
-struct Quat {
-  std::array<T, 4> v;
-};
-
-using Quath = Quat<uint16_t>;
-using Quatf = Quat<float>;
-using Quatd = Quat<double>;
+//template <typename T>
+//struct Quat {
+//  std::array<T, 4> v;
+//};
+//
+//using Quath = Quat<uint16_t>;
+//using Quatf = Quat<float>;
+//using Quatd = Quat<double>;
 // using Quaternion = Quat<double>;  // Storage layout is same with Quadd,
 // so we can delete this
 
@@ -651,17 +664,17 @@ struct ValueType {
 };
 
 struct Extent {
-  Vec3f lower{{std::numeric_limits<float>::infinity(),
+  value::float3 lower{{std::numeric_limits<float>::infinity(),
                std::numeric_limits<float>::infinity(),
                std::numeric_limits<float>::infinity()}};
 
-  Vec3f upper{{-std::numeric_limits<float>::infinity(),
+  value::float3 upper{{-std::numeric_limits<float>::infinity(),
                -std::numeric_limits<float>::infinity(),
                -std::numeric_limits<float>::infinity()}};
 
   Extent() = default;
 
-  Extent(const Vec3f &l, const Vec3f &u) : lower(l), upper(u) {}
+  Extent(const value::float3 &l, const value::float3 &u) : lower(l), upper(u) {}
 
   bool Valid() const {
     if (lower[0] > upper[0]) return false;
@@ -726,61 +739,79 @@ struct TypeTrait<double> {
 };
 
 template <>
-struct TypeTrait<float16> {
+struct TypeTrait<value::half> {
   static constexpr auto type_name = "half";
   static constexpr ValueTypeId type_id = VALUE_TYPE_HALF;
 };
 
 template <>
-struct TypeTrait<Vec2f> {
+struct TypeTrait<value::float2> {
   static constexpr auto type_name = "float2";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2F;
 };
 
 template <>
-struct TypeTrait<Vec3f> {
+struct TypeTrait<value::float3> {
   static constexpr auto type_name = "float3";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3F;
 };
 
 template <>
-struct TypeTrait<Vec4f> {
+struct TypeTrait<value::float4> {
   static constexpr auto type_name = "float4";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4F;
 };
 
 template <>
-struct TypeTrait<Vec2d> {
+struct TypeTrait<value::double2> {
   static constexpr auto type_name = "double2";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2D;
 };
 
 template <>
-struct TypeTrait<Vec3d> {
+struct TypeTrait<value::double3> {
   static constexpr auto type_name = "double3";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3D;
 };
 
 template <>
-struct TypeTrait<Vec4d> {
+struct TypeTrait<value::double4> {
   static constexpr auto type_name = "double4";
   static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4D;
 };
 
 template <>
-struct TypeTrait<Quatf> {
+struct TypeTrait<value::quath> {
+  static constexpr auto type_name = "quath";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATH;
+};
+
+template <>
+struct TypeTrait<value::quatf> {
   static constexpr auto type_name = "quatf";
   static constexpr ValueTypeId type_id = VALUE_TYPE_QUATF;
 };
 
 template <>
-struct TypeTrait<Quatd> {
+struct TypeTrait<value::quatd> {
   static constexpr auto type_name = "quatd";
   static constexpr ValueTypeId type_id = VALUE_TYPE_QUATD;
 };
 
 template <>
-struct TypeTrait<Matrix4d> {
+struct TypeTrait<value::matrix2d> {
+  static constexpr auto type_name = "matrix2d";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX2D;
+};
+
+template <>
+struct TypeTrait<value::matrix3d> {
+  static constexpr auto type_name = "matrix3d";
+  static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX3D;
+};
+
+template <>
+struct TypeTrait<value::matrix4d> {
   static constexpr auto type_name = "matrix4d";
   static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX4D;
 };
@@ -909,7 +940,7 @@ class PrimValue<std::vector<std::vector<std::vector<T>>>> {
 struct None {};
 
 using TimeSampleType =
-    nonstd::variant<None, float, double, Vec3f, Quatf, Matrix4d>;
+    nonstd::variant<None, float, double, value::float3, value::quatf, value::matrix4d>;
 
 struct TimeSamples {
   std::vector<double> times;
@@ -1173,8 +1204,8 @@ struct PrimvarReader {
       varname;  // Name of the primvar to be fetched from the geometry.
 };
 
-using PrimvarReader_float2 = PrimvarReader<Vec2f>;
-using PrimvarReader_float3 = PrimvarReader<Vec3f>;
+using PrimvarReader_float2 = PrimvarReader<value::float2>;
+using PrimvarReader_float3 = PrimvarReader<value::float3>;
 
 using PrimvarReaderType = nonstd::variant<PrimvarReader_float2, PrimvarReader_float3>;
 
@@ -1183,7 +1214,7 @@ using PrimvarReaderType = nonstd::variant<PrimvarReader_float2, PrimvarReader_fl
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`
-using XformOpValueType = nonstd::variant<float, Vec3f, Quatf, double, Vec3d, Quatd, Matrix4d>;
+using XformOpValueType = nonstd::variant<float, value::float3, value::quatf, double, value::double3, value::quatd, value::matrix4d>;
 
 struct XformOp
 {
@@ -1344,8 +1375,8 @@ using AnimatableFloat = Animatable<float>;
 using AnimatableDouble = Animatable<double>;
 using AnimatableExtent = Animatable<Extent>;
 using AnimatableVisibility = Animatable<Visibility>;
-using AnimatableVec3f = Animatable<Vec3f>;
-using AnimatableVec3fArray = Animatable<std::vector<Vec3f>>;
+using AnimatableVec3f = Animatable<value::float3>;
+using AnimatableVec3fArray = Animatable<std::vector<value::float3>>;
 using AnimatableFloatArray = Animatable<std::vector<float>>;
 
 // Generic "class" Node
@@ -1389,14 +1420,14 @@ struct Xform {
   ///
   /// Evaluate XformOps
   ///
-  bool EvaluateXformOps(Matrix4d *out_matrix) const;
+  bool EvaluateXformOps(value::matrix4d *out_matrix) const;
 
   ///
   /// Get concatenated matrix.
   ///
-  nonstd::optional<Matrix4d> GetMatrix() const {
+  nonstd::optional<value::matrix4d> GetMatrix() const {
     if (_dirty) {
-      Matrix4d m;
+      value::matrix4d m;
       if (EvaluateXformOps(&m)) {
         _matrix = m;
         _dirty = false;
@@ -1410,13 +1441,13 @@ struct Xform {
 
 
   mutable bool _dirty{true};
-  mutable Matrix4d _matrix; // Resulting matrix of evaluated XformOps.
+  mutable value::matrix4d _matrix; // Resulting matrix of evaluated XformOps.
 
 };
 
 struct UVCoords {
 
-  using UVCoordType = nonstd::variant<std::vector<Vec2f>, std::vector<Vec3f>>;
+  using UVCoordType = nonstd::variant<std::vector<value::float2>, std::vector<value::float3>>;
 
   std::string name;
   UVCoordType buffer;
@@ -1441,7 +1472,7 @@ struct GeomCamera {
   Purpose purpose{Purpose::Default};
 
   // TODO: Animatable?
-  Vec2f clippingRange{{0.1f, 100.0f}};
+  value::float2 clippingRange{{0.1f, 100.0f}};
   float focalLength{50.0f};
   float horizontalAperture{36.0f};
   float horizontalApertureOffset{0.0f};
@@ -1637,12 +1668,12 @@ struct GeomBasisCurves {
   //
   // Predefined attribs.
   //
-  std::vector<Vec3f> points;
-  std::vector<Vec3f> normals;  // normal3f
+  std::vector<value::float3> points;
+  std::vector<value::float3> normals;  // normal3f
   std::vector<int> curveVertexCounts;
   std::vector<float> widths;
-  std::vector<Vec3f> velocities;     // vector3f
-  std::vector<Vec3f> accelerations;  // vector3f
+  std::vector<value::float3> velocities;     // vector3f
+  std::vector<value::float3> accelerations;  // vector3f
 
   //
   // Properties
@@ -1675,12 +1706,12 @@ struct GeomPoints {
   //
   // Predefined attribs.
   //
-  std::vector<Vec3f> points;   // float3
-  std::vector<Vec3f> normals;  // normal3f
+  std::vector<value::float3> points;   // float3
+  std::vector<value::float3> normals;  // normal3f
   std::vector<float> widths;
   std::vector<int64_t> ids;          // per-point ids
-  std::vector<Vec3f> velocities;     // vector3f
-  std::vector<Vec3f> accelerations;  // vector3f
+  std::vector<value::float3> velocities;     // vector3f
+  std::vector<value::float3> accelerations;  // vector3f
 
   //
   // Properties
@@ -1786,14 +1817,14 @@ struct Skeleton {
 
   std::string name;
 
-  std::vector<Matrix4d>
+  std::vector<value::matrix4d>
       bindTransforms;  // bind-pose transform of each joint in world coordinate.
   AnimatableExtent extent;
 
   std::vector<std::string> jointNames;
   std::vector<std::string> joints;
 
-  std::vector<Matrix4d> restTransforms;  // rest-pose transforms of each joint
+  std::vector<value::matrix4d> restTransforms;  // rest-pose transforms of each joint
                                          // in local coordinate.
 
   Purpose purpose{Purpose::Default};
@@ -1808,15 +1839,15 @@ struct SkelAnimation {
   std::vector<std::string> blendShapes;
   std::vector<float> blendShapeWeights;
   std::vector<std::string> joints;
-  std::vector<Quatf> rotations;  // Joint-local unit quaternion rotations
-  std::vector<Vec3f> scales;  // Joint-local scaling. pxr USD schema uses half3,
+  std::vector<value::quatf> rotations;  // Joint-local unit quaternion rotations
+  std::vector<value::float3> scales;  // Joint-local scaling. pxr USD schema uses half3,
                               // but we use float3 for convenience.
-  std::vector<Vec3f> translations;  // Joint-local translation.
+  std::vector<value::float3> translations;  // Joint-local translation.
 };
 
 // W.I.P.
 struct SkelBindingAPI {
-  Matrix4d geomBindTransform;            // primvars:skel:geomBindTransform
+  value::matrix4d geomBindTransform;            // primvars:skel:geomBindTransform
   std::vector<int> jointIndices;         // primvars:skel:jointIndices
   std::vector<float> jointWeights;       // primvars:skel:jointWeights
   std::vector<std::string> blendShapes;  // optional?
@@ -2130,7 +2161,7 @@ struct Shader {
 struct Preliminary_PhysicsGravitationalForce
 {
   // physics::gravitatioalForce::acceleration
-  Vec3d acceleration{{0.0, -9.81, 0.0}}; // [m/s^2]
+  value::double3 acceleration{{0.0, -9.81, 0.0}}; // [m/s^2]
 
 };
 
@@ -2164,8 +2195,8 @@ struct Preliminary_PhysicsColliderAPI
 
 struct Preliminary_InfiniteColliderPlane
 {
-  Vec3d position{{0.0, 0.0, 0.0}};
-  Vec3d normal{{0.0, 0.0, 0.0}};
+  value::double3 position{{0.0, 0.0, 0.0}};
+  value::double3 normal{{0.0, 0.0, 0.0}};
 
   Extent extent; // [-FLT_MAX, FLT_MAX]
 
