@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2022 - Present Syoyo Fujita.
+//
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX

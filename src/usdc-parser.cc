@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2020-Present Syoyo Fujita.
+//
+// Experimental USD to JSON converter
 #include <unordered_map>
 #include <unordered_set>
 #if defined(__wasi__)
@@ -11,6 +15,7 @@
 #include "pprinter.hh"
 #include "stream-reader.hh"
 #include "usdc-parser.hh"
+#include "path-util.hh"
 
 //
 #ifdef __clang__
