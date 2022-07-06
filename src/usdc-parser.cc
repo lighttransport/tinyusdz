@@ -51,7 +51,7 @@
 #if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
 #define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
 #else
-#define DCOUT(x) do { (void)(x); } while(false)
+#define DCOUT(x)
 #endif
 
 namespace tinyusdz {
@@ -1374,7 +1374,14 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep, crate::Valu
     return false;
   }
 
-  ValueType ty = crate::GetValueType(rep.GetType());
+  const auto tyRet = crate::GetValueType(rep.GetType());
+  if (!tyRet) {
+    PUSH_ERROR(tyRet.error());
+    return false;
+  }
+
+  const ValueType ty = tyRet.value();
+
   DCOUT(crate::GetValueTypeString(rep.GetType()));
 
   {
@@ -1676,8 +1683,14 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep, crate::Value *valu
     return UnpackInlinedValueRep(rep, value);
   }
 
-  ValueType ty = crate::GetValueType(rep.GetType());
+  auto tyRet = crate::GetValueType(rep.GetType());
+  if (!tyRet) {
+    PUSH_ERROR(tyRet.error());
+  }
+
   DCOUT(crate::GetValueTypeString(rep.GetType()));
+
+  const ValueType ty = tyRet.value();
 
   {
     // payload is the offset to data.
