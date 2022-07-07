@@ -200,7 +200,7 @@ std::string to_string(const TimeSampleType &tsv) {
     ss << (*f);
   } else if (const double *d = nonstd::get_if<double>(&tsv)) {
     ss << (*d);
-  } else if (auto p = nonstd::get_if<Vec3f>(&tsv)) {
+  } else if (auto p = nonstd::get_if<value::float3>(&tsv)) {
     ss << to_string(*p);
   } else {
     ss << "[[Unsupported/unimplemented TimeSampledValue type]]";
@@ -276,20 +276,22 @@ struct Path {
 
 using PathList = std::vector<Path>;
 
-#if 1
+#if 0
 
 // If you want to add more items, you need to regenerate nonstd::variant.hpp
 // file, since nonstd::variant has a limited number of types to use(currently
-// 32).
+// 33).
 //
-// std::vector<Vec3f> is the first citizen of `Value`, since it is frequently
+// std::vector<value::float3> is the first citizen of `Value`, since it is frequently
 // used type. For other array type, use Variable::Array
-using Value = nonstd::variant<bool, int, float, Vec2f, Vec3f, Vec4f, double,
-                              Vec2d, Vec3d, Vec4d, std::vector<Vec3f>,
+using Value = nonstd::variant<bool, int, float, value::float2, value::float3, Vec4f, double,
+                              value::double2, value::double3, value::double4, std::vector<value::float3>,
                               std::string, Reference, Path, PathList, Rel>;
+#endif
 
 namespace {
 
+#if 0
 std::string value_type_name(const Value &v) {
   // TODO: use nonstd::visit
   if (nonstd::get_if<bool>(&v)) {
@@ -298,21 +300,21 @@ std::string value_type_name(const Value &v) {
     return "int";
   } else if (nonstd::get_if<float>(&v)) {
     return "float";
-  } else if (nonstd::get_if<Vec2f>(&v)) {
+  } else if (nonstd::get_if<value::float2>(&v)) {
     return "float2";
-  } else if (nonstd::get_if<Vec3f>(&v)) {
+  } else if (nonstd::get_if<value::float3>(&v)) {
     return "float3";
-  } else if (nonstd::get_if<Vec4f>(&v)) {
+  } else if (nonstd::get_if<value::float4>(&v)) {
     return "float4";
   } else if (nonstd::get_if<double>(&v)) {
     return "double";
-  } else if (nonstd::get_if<Vec2d>(&v)) {
+  } else if (nonstd::get_if<value::double2>(&v)) {
     return "double2";
-  } else if (nonstd::get_if<Vec3d>(&v)) {
+  } else if (nonstd::get_if<value::double3>(&v)) {
     return "double3";
-  } else if (nonstd::get_if<Vec4d>(&v)) {
+  } else if (nonstd::get_if<value::double4>(&v)) {
     return "double4";
-  } else if (nonstd::get_if<std::vector<Vec3f>>(&v)) {
+  } else if (nonstd::get_if<std::vector<value::float3>>(&v)) {
     return "float3[]";
   } else if (nonstd::get_if<std::string>(&v)) {
     return "string";
@@ -328,6 +330,7 @@ std::string value_type_name(const Value &v) {
     return "[[Unknown/unimplementef type for Value]]";
   }
 }
+#endif
 
 }  // namespace
 
@@ -350,7 +353,7 @@ class VariableDef {
   }
 };
 
-// TODO: Use std::any?
+// TODO(syoyo): Use value::any_value
 class Variable {
  public:
   std::string type;  // Explicit name of type
@@ -367,7 +370,7 @@ class Variable {
 
   // (non)std::variant itself cannot handle recursive types.
   // Use mapbox::recursive_wrapper to handle recursive types
-  using ValueType = nonstd::variant<nonstd::monostate, Value, TimeSamples,
+  using ValueType = nonstd::variant<nonstd::monostate, value::any_value, TimeSamples,
                                     mapbox::util::recursive_wrapper<Array>,
                                     mapbox::util::recursive_wrapper<Object>>;
   ValueType value;
@@ -439,9 +442,9 @@ class Variable {
       return ts_type;
 
     } else if (v.IsValue()) {
-      const Value &_value = nonstd::get<Value>(v.value);
+      const value::any_value &_value = nonstd::get<value::any_value>(v.value);
 
-      return value_type_name(_value);
+      return _value.type_name();
 
     } else if (v.IsEmpty()) {
       return "none";
@@ -471,7 +474,7 @@ class Variable {
   }
 
   bool IsEmpty() const { return is<nonstd::monostate>(); }
-  bool IsValue() const { return is<Value>(); }
+  bool IsValue() const { return is<value::any_value>(); }
   bool IsArray() const { return is<mapbox::util::recursive_wrapper<Array>>(); }
   // bool IsArray() const {
   //  auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
@@ -490,8 +493,8 @@ class Variable {
     return p->get_pointer();
   }
 
-  const Value *as_value() const {
-    const auto p = nonstd::get_if<Value>(&value);
+  const value::any_value *as_value() const {
+    const auto p = nonstd::get_if<value::any_value>(&value);
     return p;
   }
 
@@ -535,8 +538,6 @@ class Variable {
   // friend std::string str_object(const Object &obj, int indent = 0); // string
   // representation of Object.
 };
-
-#endif
 
 namespace {
 
@@ -2442,7 +2443,7 @@ class USDAParser::Impl {
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
       } else if (type_name == "matrix4d") {
-        TimeSampledDataMatrix4d values;
+        TimeSampledDatavalue::matrix4d values;
         if (!ParseTimeSamples(&values)) {
           return false;
         }
@@ -2495,27 +2496,27 @@ class USDAParser::Impl {
           return false;
         }
       } else if (type_name == "float2") {
-        if (!ParseBasicPrimAttr<Vec2f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "float3") {
-        if (!ParseBasicPrimAttr<Vec3f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "float4") {
-        if (!ParseBasicPrimAttr<Vec4f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "double2") {
-        if (!ParseBasicPrimAttr<Vec2d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "double3") {
-        if (!ParseBasicPrimAttr<Vec3d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "double4") {
-        if (!ParseBasicPrimAttr<Vec4d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == "point3f") {
@@ -2541,7 +2542,7 @@ class USDAParser::Impl {
           return false;
         }
       } else if (type_name == "matrix4d") {
-        Matrix4d m;
+        value::matrix4d m;
         if (!ParseMatrix4d(m.m)) {
           PushError("Failed to parse value with type `matrix4d`.\n");
           return false;
@@ -3308,18 +3309,18 @@ class USDAParser::Impl {
   bool ReadBasicType(nonstd::optional<std::string> *value);
   bool ReadBasicType(nonstd::optional<int> *value);
   bool ReadBasicType(nonstd::optional<float> *value);
-  bool ReadBasicType(nonstd::optional<Vec2f> *value);
-  bool ReadBasicType(nonstd::optional<Vec3f> *value);
-  bool ReadBasicType(nonstd::optional<Vec4f> *value);
+  bool ReadBasicType(nonstd::optional<value::float2> *value);
+  bool ReadBasicType(nonstd::optional<value::float3> *value);
+  bool ReadBasicType(nonstd::optional<value::float4> *value);
   bool ReadBasicType(nonstd::optional<double> *value);
-  bool ReadBasicType(nonstd::optional<Vec2d> *value);
-  bool ReadBasicType(nonstd::optional<Vec3d> *value);
-  bool ReadBasicType(nonstd::optional<Vec4d> *value);
+  bool ReadBasicType(nonstd::optional<value::double2> *value);
+  bool ReadBasicType(nonstd::optional<value::double3> *value);
+  bool ReadBasicType(nonstd::optional<value::double4> *value);
   bool ReadBasicType(nonstd::optional<bool> *value);
-  bool ReadBasicType(nonstd::optional<Matrix4f> *value);
-  bool ReadBasicType(nonstd::optional<Matrix2d> *value);
-  bool ReadBasicType(nonstd::optional<Matrix3d> *value);
-  bool ReadBasicType(nonstd::optional<Matrix4d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix4f> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
   bool ReadBasicType(nonstd::optional<value::point3f> *value);
   bool ReadBasicType(nonstd::optional<value::point3d> *value);
   bool ReadBasicType(nonstd::optional<value::normal3f> *value);
@@ -3329,19 +3330,19 @@ class USDAParser::Impl {
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
   bool ReadBasicType(float *value);
-  bool ReadBasicType(Vec2f *value);
-  bool ReadBasicType(Vec3f *value);
-  bool ReadBasicType(Vec4f *value);
+  bool ReadBasicType(value::float2 *value);
+  bool ReadBasicType(value::float3 *value);
+  bool ReadBasicType(value::float4 *value);
   bool ReadBasicType(double *value);
-  bool ReadBasicType(Vec2d *value);
-  bool ReadBasicType(Vec3d *value);
-  bool ReadBasicType(Vec4d *value);
+  bool ReadBasicType(value::double2 *value);
+  bool ReadBasicType(value::double3 *value);
+  bool ReadBasicType(value::double4 *value);
   bool ReadBasicType(bool *value);
   bool ReadBasicType(uint64_t *value);
-  bool ReadBasicType(Matrix4f *value);
-  bool ReadBasicType(Matrix2d *value);
-  bool ReadBasicType(Matrix3d *value);
-  bool ReadBasicType(Matrix4d *value);
+  bool ReadBasicType(value::matrix4f *value);
+  bool ReadBasicType(value::matrix2d *value);
+  bool ReadBasicType(value::matrix3d *value);
+  bool ReadBasicType(value::matrix4d *value);
   bool ReadBasicType(value::point3f *value);
   bool ReadBasicType(value::point3d *value);
   bool ReadBasicType(value::normal3f *value);
@@ -3349,28 +3350,28 @@ class USDAParser::Impl {
   bool ReadBasicType(value::texcoord2f *value);
 
   // TimeSample data
-  bool ReadTimeSampleData(nonstd::optional<Vec2f> *value);
-  bool ReadTimeSampleData(nonstd::optional<Vec3f> *value);
-  bool ReadTimeSampleData(nonstd::optional<Vec4f> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::float2> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::float3> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::float4> *value);
   bool ReadTimeSampleData(nonstd::optional<float> *value);
   bool ReadTimeSampleData(nonstd::optional<double> *value);
-  bool ReadTimeSampleData(nonstd::optional<Vec2d> *value);
-  bool ReadTimeSampleData(nonstd::optional<Vec3d> *value);
-  bool ReadTimeSampleData(nonstd::optional<Vec4d> *value);
-  bool ReadTimeSampleData(nonstd::optional<Matrix4f> *value);
-  bool ReadTimeSampleData(nonstd::optional<Matrix4d> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::double2> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::double3> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::double4> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::matrix4f> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::matrix4d> *value);
 
   // Array version
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Vec2f>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Vec3f>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Vec4f>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float2>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float3>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float4>> *value);
   bool ReadTimeSampleData(nonstd::optional<std::vector<float>> *value);
   bool ReadTimeSampleData(nonstd::optional<std::vector<double>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Vec2d>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Vec3d>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Vec4d>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Matrix4f>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<Matrix4d>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double2>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double3>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double4>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::matrix4f>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::matrix4d>> *value);
 
   bool MaybeNone();
 
@@ -4112,7 +4113,7 @@ class USDAParser::Impl {
   /// Parses 1 or more occurences of matrix4d, separated by
   /// `sep`
   ///
-  bool SepBy1Matrix4d(const char sep, std::vector<Matrix4d> *result) {
+  bool SepBy1Matrix4d(const char sep, std::vector<value::matrix4d> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -4120,7 +4121,7 @@ class USDAParser::Impl {
     }
 
     {
-      Matrix4d m;
+      value::matrix4d m;
 
       if (!ParseMatrix4d(m.m)) {
         PushError("Failed to parse Matrix4d.\n");
@@ -4159,7 +4160,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      Matrix4d m;
+      value::matrix4d m;
       if (!ParseMatrix4d(m.m)) {
         break;
       }
@@ -4206,7 +4207,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool SepBy1Matrix3d(const char sep, std::vector<Matrix3d> *result) {
+  bool SepBy1Matrix3d(const char sep, std::vector<value::matrix3d> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -4214,7 +4215,7 @@ class USDAParser::Impl {
     }
 
     {
-      Matrix3d m;
+      value::matrix3d m;
 
       if (!ParseMatrix3d(m.m)) {
         PushError("Failed to parse Matrix3d.\n");
@@ -4253,7 +4254,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      Matrix3d m;
+      value::matrix3d m;
       if (!ParseMatrix3d(m.m)) {
         break;
       }
@@ -4299,7 +4300,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool SepBy1Matrix2d(const char sep, std::vector<Matrix2d> *result) {
+  bool SepBy1Matrix2d(const char sep, std::vector<value::matrix2d> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -4307,7 +4308,7 @@ class USDAParser::Impl {
     }
 
     {
-      Matrix2d m;
+      value::matrix2d m;
 
       if (!ParseMatrix2d(m.m)) {
         PushError("Failed to parse Matrix2d.\n");
@@ -4346,7 +4347,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      Matrix2d m;
+      value::matrix2d m;
       if (!ParseMatrix2d(m.m)) {
         break;
       }
@@ -4362,7 +4363,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool SepBy1Matrix4f(const char sep, std::vector<Matrix4f> *result) {
+  bool SepBy1Matrix4f(const char sep, std::vector<value::matrix4f> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -4370,7 +4371,7 @@ class USDAParser::Impl {
     }
 
     {
-      Matrix4f m;
+      value::matrix4f m;
 
       if (!ParseMatrix4f(m.m)) {
         PushError("Failed to parse Matrix4f.\n");
@@ -4409,7 +4410,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      Matrix4f m;
+      value::matrix4f m;
       if (!ParseMatrix4f(m.m)) {
         break;
       }
@@ -4425,7 +4426,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool ParseMatrix4dArray(std::vector<Matrix4d> *result) {
+  bool ParseMatrix4dArray(std::vector<value::matrix4d> *result) {
     if (!Expect('[')) {
       return false;
     }
@@ -4441,7 +4442,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool ParseMatrix4fArray(std::vector<Matrix4f> *result) {
+  bool ParseMatrix4fArray(std::vector<value::matrix4f> *result) {
     if (!Expect('[')) {
       return false;
     }
@@ -7593,7 +7594,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
               } else {
                 PUSH_ERROR("TODO: points.type = " + attr.var.type_name());
               }
-              //if (auto p = value::as_vector<Vec3f>(&pattr->var)) {
+              //if (auto p = value::as_vector<value::float3>(&pattr->var)) {
               //  LOG_INFO("points. sz = " + std::to_string(p->size()));
               //  mesh->points = (*p);
               //}
@@ -7874,7 +7875,7 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Matrix4f> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(Matrix2d *value) {
+bool USDAParser::Impl::ReadBasicType(value::matrix2d *value) {
   if (value) {
     return ParseMatrix2d(value->m);
   } else {
@@ -7882,13 +7883,13 @@ bool USDAParser::Impl::ReadBasicType(Matrix2d *value) {
   }
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Matrix2d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::matrix2d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Matrix2d v;
+  value::matrix2d v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -7897,7 +7898,7 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Matrix2d> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(Matrix3d *value) {
+bool USDAParser::Impl::ReadBasicType(value::matrix3d *value) {
   if (value) {
     return ParseMatrix3d(value->m);
   } else {
@@ -7905,13 +7906,13 @@ bool USDAParser::Impl::ReadBasicType(Matrix3d *value) {
   }
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Matrix3d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::matrix3d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Matrix3d v;
+  value::matrix3d v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -7920,7 +7921,7 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Matrix3d> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(Matrix4d *value) {
+bool USDAParser::Impl::ReadBasicType(value::matrix4d *value) {
   if (value) {
     return ParseMatrix4d(value->m);
   } else {
@@ -7928,13 +7929,13 @@ bool USDAParser::Impl::ReadBasicType(Matrix4d *value) {
   }
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Matrix4d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::matrix4d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Matrix4d v;
+  value::matrix4d v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8172,27 +8173,27 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
   return true;
 }
 
-bool USDAParser::Impl::ReadBasicType(Vec2f *value) {
+bool USDAParser::Impl::ReadBasicType(value::float2 *value) {
   return ParseBasicTypeTuple(value);
 }
 
-bool USDAParser::Impl::ReadBasicType(Vec3f *value) {
+bool USDAParser::Impl::ReadBasicType(value::float3 *value) {
   return ParseBasicTypeTuple(value);
 }
 
-bool USDAParser::Impl::ReadBasicType(Vec4f *value) {
+bool USDAParser::Impl::ReadBasicType(value::float4 *value) {
   return ParseBasicTypeTuple(value);
 }
 
-bool USDAParser::Impl::ReadBasicType(Vec2d *value) {
+bool USDAParser::Impl::ReadBasicType(value::double2 *value) {
   return ParseBasicTypeTuple(value);
 }
 
-bool USDAParser::Impl::ReadBasicType(Vec3d *value) {
+bool USDAParser::Impl::ReadBasicType(value::double3 *value) {
   return ParseBasicTypeTuple(value);
 }
 
-bool USDAParser::Impl::ReadBasicType(Vec4d *value) {
+bool USDAParser::Impl::ReadBasicType(value::double4 *value) {
   return ParseBasicTypeTuple(value);
 }
 
@@ -8372,13 +8373,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::texcoord2f> *value)
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2f> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::float2> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Vec2f v;
+  value::float2 v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8387,13 +8388,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2f> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec3f> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::float3> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Vec3f v;
+  value::float3 v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8402,13 +8403,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec3f> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec4f> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::float4> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Vec4f v;
+  value::float4 v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8417,13 +8418,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec4f> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::double2> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Vec2d v;
+  value::double2 v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8432,13 +8433,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec2d> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec3d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::double3> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Vec3d v;
+  value::double3 v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8447,13 +8448,13 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec3d> *value) {
   return false;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Vec4d> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::double4> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Vec4d v;
+  value::double4 v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8540,7 +8541,7 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
 //
 // -- impl ReadTimeSampleData
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec2f> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float2> *out_value) {
   nonstd::optional<std::array<float, 2>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8551,7 +8552,7 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec2f> *out_value) {
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec3f> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float3> *out_value) {
   nonstd::optional<std::array<float, 3>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8562,7 +8563,7 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec3f> *out_value) {
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec4f> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float4> *out_value) {
   nonstd::optional<std::array<float, 4>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8595,8 +8596,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<double> *out_value) {
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec2d> *out_value) {
-  nonstd::optional<Vec2d> value;
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double2> *out_value) {
+  nonstd::optional<value::double2> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
   }
@@ -8606,8 +8607,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec2d> *out_value) {
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec3d> *out_value) {
-  nonstd::optional<Vec3d> value;
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double3> *out_value) {
+  nonstd::optional<value::double3> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
   }
@@ -8617,8 +8618,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec3d> *out_value) {
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec4d> *out_value) {
-  nonstd::optional<Vec4d> value;
+bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double4> *out_value) {
+  nonstd::optional<value::double4> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
   }
@@ -8629,7 +8630,7 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<Vec4d> *out_value) {
 }
 
 bool USDAParser::Impl::ReadTimeSampleData(
-    nonstd::optional<std::vector<Vec3f>> *out_value) {
+    nonstd::optional<std::vector<value::float3>> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
     return true;
@@ -8646,7 +8647,7 @@ bool USDAParser::Impl::ReadTimeSampleData(
 }
 
 bool USDAParser::Impl::ReadTimeSampleData(
-    nonstd::optional<std::vector<Vec3d>> *out_value) {
+    nonstd::optional<std::vector<value::double3>> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
     return true;
@@ -8730,12 +8731,12 @@ bool USDAParser::Impl::ReadTimeSampleData(
 }
 
 bool USDAParser::Impl::ReadTimeSampleData(
-    nonstd::optional<std::vector<Matrix4d>> *out_value) {
+    nonstd::optional<std::vector<value::matrix4d>> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
   }
 
-  std::vector<Matrix4d> value;
+  std::vector<value::matrix4d> value;
   if (!ParseMatrix4dArray(&value)) {
     return false;
   }
@@ -8746,12 +8747,12 @@ bool USDAParser::Impl::ReadTimeSampleData(
 }
 
 bool USDAParser::Impl::ReadTimeSampleData(
-    nonstd::optional<Matrix4d> *out_value) {
+    nonstd::optional<value::matrix4d> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
   }
 
-  Matrix4d value;
+  value::matrix4d value;
   if (!ParseMatrix4d(value.m)) {
     return false;
   }

@@ -700,6 +700,7 @@ struct Extent {
 };
 
 
+#if 0
 ///
 /// Simple type-erased primitive value class for frequently used data types(e.g.
 /// `float[]`)
@@ -815,6 +816,7 @@ struct TypeTrait<value::matrix4d> {
   static constexpr auto type_name = "matrix4d";
   static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX4D;
 };
+#endif
 
 #if 0
 template<typename T>

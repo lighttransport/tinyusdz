@@ -12,6 +12,7 @@
 #include <cstdlib>
 
 #include "prim-types.hh"
+#include "value-type.hh"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -839,7 +840,7 @@ class CrateValue {
   __FUNC(value::matrix4d) \
   __FUNC(value::asset) \
   __FUNC(value::token) \
-  __FUNC(std::string) 
+  __FUNC(std::string)
 
 
   SET_TYPE_SCALAR(bool)
@@ -868,9 +869,9 @@ class CrateValue {
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
-    if (TypeTrait<T>::type_id == value_.type_id()) {
+    if (value::TypeTrait<T>::type_id == value_.type_id()) {
       return std::move(value<T>());
-    } else if (TypeTrait<T>::underlying_type_id == value_.underlying_type_id()) {
+    } else if (value::TypeTrait<T>::underlying_type_id == value_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       return std::move(value<T>());
