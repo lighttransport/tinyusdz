@@ -852,6 +852,7 @@ class CrateValue {
   SET_TYPE_SCALAR(ListOp<Path>)
   SET_TYPE_SCALAR(std::vector<Path>)
   SET_TYPE_SCALAR(TimeSamples)
+  SET_TYPE_SCALAR(Dictionary)
 
   SET_TYPE_LIST(SET_TYPE_SCALAR)
   SET_TYPE_LIST(SET_TYPE_1D)
