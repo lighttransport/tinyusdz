@@ -60,6 +60,8 @@ class asset
   std::string resolved_path;
 };
 
+class reference;
+
 // TODO(syoyo): 3D and 4D?
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10;
 constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11;
@@ -152,9 +154,12 @@ enum TypeId {
   TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
-  //TYPE_ID_REFERENCE,
+  TYPE_ID_REFERENCE,
 
-  TYPE_ID_ALL  // terminator
+  // Base ID for user data
+  TYPE_ID_USER_BEGIN = 512,
+
+  TYPE_ID_ALL = 1024  // terminator. 1024 should suffice.
 };
 
 struct timecode
@@ -571,8 +576,7 @@ DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(asset, "asset", TYPE_ID_ASSET, 1);
-
-//DEFINE_TYPE_TRAIT(Reference, "asset", TYPE_ID_ASSET, 1);
+DEFINE_TYPE_TRAIT(reference, "ref", TYPE_ID_REF, 1);
 
 #undef DEFINE_TYPE_TRAIT
 
