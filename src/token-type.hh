@@ -92,9 +92,14 @@ class Token {
     return str_.value().hash_code();
   }
 
+
  private:
   nonstd::optional<sid::string_id> str_;
 };
+
+inline bool operator==(const Token &tok, const std::string &rhs) {
+  return tok.str().compare(rhs) == 0;
+}
 
 struct TokenHasher {
   inline size_t operator()(const Token &tok) const {

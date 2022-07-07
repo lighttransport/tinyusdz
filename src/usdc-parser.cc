@@ -3277,7 +3277,7 @@ bool Parser::Impl::ReconstructGeomBasisCurves(
         _err += "`properties` data isn't a TokenArray type\n";
         return false;
       }
-      
+
       for (size_t i = 0; i < ret.value().size(); i++) {
         if (ret.value()[i].str() == "points") {
           has_position = true;
@@ -3573,8 +3573,13 @@ bool Parser::Impl::ReconstructGeomMesh(
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
       }
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-        if (fv.second.GetStringArray()[i] == "points") {
+
+      const auto arr = fv.second.get_value<std::vector<value::token>>();
+      if (!arr) {
+        return false;
+      }
+      for (size_t i = 0; i < arr.value().size(); i++) {
+        if (arr.value()[i] == "points") {
           has_position = true;
         }
       }
@@ -3774,10 +3779,9 @@ bool Parser::Impl::ReconstructMaterial(
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
       }
-      assert(fv.second.IsArray());
 
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      }
+      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      //}
     }
   }
 
@@ -3867,10 +3871,10 @@ bool Parser::Impl::ReconstructShader(
         PUSH_ERROR("`properties` attribute must be TokenArray type.");
         return false;
       }
-      assert(fv.second.IsArray());
+      //assert(fv.second.IsArray());
 
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      }
+      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      //}
     }
   }
 
@@ -3964,10 +3968,10 @@ bool Parser::Impl::ReconstructPreviewSurface(
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
       }
-      assert(fv.second.IsArray());
+      //assert(fv.second.IsArray());
 
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      }
+      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      //}
     }
   }
 
@@ -4222,10 +4226,10 @@ bool Parser::Impl::ReconstructSkeleton(
         PUSH_ERROR("`properties` attribute must be TokenArray type");
         return false;
       }
-      assert(fv.second.IsArray());
+      //assert(fv.second.IsArray());
 
-      for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      }
+      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      //}
     }
   }
 
@@ -4360,18 +4364,26 @@ bool Parser::Impl::ReconstructSceneRecursively(
   // root only attributes.
   if (parent == 0) {
     for (const auto &fv : fields) {
-      if ((fv.first == "upAxis") &&
-          (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
-        std::string v = fv.second.GetToken();
+      if (fv.first == "upAxis") {
+        auto vt = fv.second.get_value<value::token>();
+        if (!vt) {
+          PUSH_ERROR("`upAxis` must be `token` type.");
+          return false;
+        }
+
+        std::string v = vt.value().str();
         if ((v != "Y") && (v != "Z") && (v != "X")) {
           PUSH_ERROR("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v + "'");
           return false;
         }
         scene->upAxis = std::move(v);
+
       } else if (fv.first == "metersPerUnit") {
-        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) ||
-            (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
-          scene->metersPerUnit = fv.second.GetDouble();
+
+        if (auto vf = fv.second.get_value<float>()) {
+          scene->metersPerUnit = double(vf.value());
+        } else if (auto vd = fv.second.get_value<double>()) {
+          scene->metersPerUnit = vd.value();
         } else {
           PUSH_ERROR(
               "`metersPerUnit` value must be double or float type, but got '" +
@@ -4379,9 +4391,11 @@ bool Parser::Impl::ReconstructSceneRecursively(
           return false;
         }
       } else if (fv.first == "timeCodesPerSecond") {
-        if ((fv.second.GetTypeId() == VALUE_TYPE_DOUBLE) ||
-            (fv.second.GetTypeId() == VALUE_TYPE_FLOAT)) {
-          scene->timeCodesPerSecond = fv.second.GetDouble();
+
+        if (auto vf = fv.second.get_value<float>()) {
+          scene->timeCodesPerSecond = double(vf.value());
+        } else if (auto vd = fv.second.get_value<double>()) {
+          scene->timeCodesPerSecond = vd.value();
         } else {
           PUSH_ERROR(
               "`timeCodesPerSecond` value must be double or float "
@@ -4389,9 +4403,15 @@ bool Parser::Impl::ReconstructSceneRecursively(
               fv.second.GetTypeName() + "'");
           return false;
         }
-      } else if ((fv.first == "defaultPrim") &&
-                 (fv.second.GetTypeId() == VALUE_TYPE_TOKEN)) {
-        scene->defaultPrim = fv.second.GetToken();
+      } else if ((fv.first == "defaultPrim")) {
+
+        auto v = fv.second.get_value<value::token>();
+        if (!v) {
+          PUSH_ERROR("`defaultPrim` must be `token` type.");
+          return false;
+        }
+
+        scene->defaultPrim = v.value().str();
       } else if (fv.first == "customLayerData") {
         if (fv.second.GetTypeId() == VALUE_TYPE_DICTIONARY) {
           PUSH_WARN("TODO: Store customLayerData.");
@@ -4400,20 +4420,29 @@ bool Parser::Impl::ReconstructSceneRecursively(
           PUSH_ERROR("customLayerData must be `dict` type.");
         }
       } else if (fv.first == "primChildren") {
-        if (fv.second.GetTypeId() != VALUE_TYPE_TOKEN_VECTOR) {
+
+        auto v = fv.second.get_value<std::vector<value::token>>();
+        if (!v) {
           PUSH_ERROR("Type must be TokenArray for `primChildren`, but got " +
                      fv.second.GetTypeName() + "\n");
           return false;
         }
 
-        scene->primChildren = fv.second.GetTokenArray();
+        // convert to string.
+        std::vector<std::string> children;
+        for (const auto &item : v.value()) {
+          children.push_back(item.str());
+        }
+        scene->primChildren = children;
       } else if (fv.first == "documentation") {  // 'doc'
-        if (fv.second.GetTypeId() != VALUE_TYPE_STRING) {
+
+        auto v = fv.second.get_value<std::string>();
+        if (!v) {
           PUSH_ERROR("Type must be String for `documentation`, but got " +
                      fv.second.GetTypeName() + "\n");
           return false;
         }
-        scene->doc = fv.second.GetString();
+        scene->doc = v.value();
       } else {
         PUSH_ERROR("TODO: " + fv.first + "\n");
         //_err += "TODO: " + fv.first + "\n";
