@@ -152,6 +152,8 @@ enum TypeId {
   TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
+  //TYPE_ID_REFERENCE,
+
   TYPE_ID_ALL  // terminator
 };
 
@@ -569,6 +571,8 @@ DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(asset, "asset", TYPE_ID_ASSET, 1);
+
+//DEFINE_TYPE_TRAIT(Reference, "asset", TYPE_ID_ASSET, 1);
 
 #undef DEFINE_TYPE_TRAIT
 
