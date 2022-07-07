@@ -26,14 +26,13 @@
 #include "ryu/ryu.h"
 #include "ryu/ryu_parse.h"
 
-#include "mapbox/recursive_wrapper.hpp"  // for recursive types
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
 // Workaround: Compilation fails when using C++17 std::variant for Variable class.
 // so use nonstd::variant on C++17
-#define variant_CONFIG_SELECT_VARIANT variant_VARIANT_NONSTD
-#include "nonstd/variant.hpp"
+//#define variant_CONFIG_SELECT_VARIANT variant_VARIANT_NONSTD
+//#include "nonstd/variant.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -353,42 +352,27 @@ class VariableDef {
   }
 };
 
-// TODO(syoyo): Use value::any_value
 class Variable {
  public:
   std::string type;  // Explicit name of type
   std::string name;
   bool custom{false};
 
-  // typedef std::vector<Variable> Array; // TODO: limit possible types to
-  // Value, TimeSamples or (nested) Array typedef std::map<std::string,
-  // Variable> Object;
+  //using Array = std::vector<Variable>; 
+  using Object = std::map<std::string, Variable>;
 
-  // Forward decl.
-  struct Array;
-  struct Object;
-
-  // (non)std::variant itself cannot handle recursive types.
-  // Use mapbox::recursive_wrapper to handle recursive types
-  using ValueType = nonstd::variant<nonstd::monostate, value::any_value, TimeSamples,
-                                    mapbox::util::recursive_wrapper<Array>,
-                                    mapbox::util::recursive_wrapper<Object>>;
-  ValueType value;
-
-  // compound types
-  struct Array {
-    std::vector<Variable> values;
-  };
-
-  struct Object {
-    std::map<std::string, Variable> values;
-  };
+  value::Value value;
+  //Array arr_value;
+  Object obj_value;
+  TimeSamples timeSamples;
 
   Variable &operator=(const Variable &rhs) {
     type = rhs.type;
     name = rhs.name;
     custom = rhs.custom;
     value = rhs.value;
+    //arr_value = rhs.arr_value;
+    obj_value = rhs.obj_value;
 
     return *this;
   }
@@ -398,6 +382,7 @@ class Variable {
     name = rhs.name;
     custom = rhs.custom;
     value = rhs.value;
+    obj_value = rhs.obj_value;
   }
 
   static std::string type_name(const Variable &v) {
@@ -408,24 +393,8 @@ class Variable {
     // infer type from value content
     if (v.IsObject()) {
       return "dict";
-    } else if (v.IsArray()) {
-      // Assume all elements in array have all same type.
-      std::string arr_type = "none";
-      auto parr = v.as_array();
-      if (parr) {
-        for (const auto &item : parr->values) {
-          std::string tname = Variable::type_name(item);
-          if (tname != "none") {
-            return tname + "[]";
-          }
-        }
-      }
-
-      // ???Array contains all `None` values
-      return arr_type;
-
     } else if (v.IsTimeSamples()) {
-      std::string ts_type = "none";
+      std::string ts_type = "TODO: TimeSample typee";
       // FIXME
 #if 0
       auto ts_struct = v.as_timesamples();
@@ -441,19 +410,10 @@ class Variable {
       // ??? TimeSamples data contains all `None` values
       return ts_type;
 
-    } else if (v.IsValue()) {
-      const value::any_value &_value = nonstd::get<value::any_value>(v.value);
-
-      return _value.type_name();
-
     } else if (v.IsEmpty()) {
       return "none";
     } else {
-      std::cout << "IsArray " << v.IsArray() << ", "
-                << ValueType::index_of<mapbox::util::recursive_wrapper<Array>>()
-                << "\n";
-      return "[[Variable type Unknown. index = " +
-             std::to_string(v.value.index()) + "]]";
+      return v.value.type_name();
     }
   }
 
@@ -468,14 +428,17 @@ class Variable {
   Object object;
 #endif
 
-  template <typename T>
-  bool is() const {
-    return value.index() == ValueType::index_of<T>();
-  }
+  //template <typename T>
+  //bool is() const {
+  //  return value.index() == ValueType::index_of<T>();
+  //}
 
-  bool IsEmpty() const { return is<nonstd::monostate>(); }
-  bool IsValue() const { return is<value::any_value>(); }
-  bool IsArray() const { return is<mapbox::util::recursive_wrapper<Array>>(); }
+  // TODO
+  bool IsEmpty() const { return false; }
+  bool IsValue() const { return false; }
+  //bool IsArray() const {
+  //}
+
   // bool IsArray() const {
   //  auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
   //
@@ -483,33 +446,36 @@ class Variable {
   //}
 
   bool IsObject() const {
-    return is<mapbox::util::recursive_wrapper<Object>>();
+    return obj_value.size();
   }
-  bool IsTimeSamples() const { return is<TimeSamples>(); }
+  
+  // TODO
+  bool IsTimeSamples() const { return false; }
 
-  const Array *as_array() const {
-    const auto p =
-        nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
-    return p->get_pointer();
-  }
+  //const Array *as_array() const {
+  //  const auto p =
+  //      nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
+  //  return p->get_pointer();
+  //}
 
-  const value::any_value *as_value() const {
-    const auto p = nonstd::get_if<value::any_value>(&value);
-    return p;
-  }
+  //const value::any_value *as_value() const {
+  //  const auto p = nonstd::get_if<value::any_value>(&value);
+  //  return p;
+  //}
 
-  const Object *as_object() const {
-    const auto p =
-        nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
-    return p->get_pointer();
-  }
+  //const Object *as_object() const {
+  //  const auto p =
+  //      nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
+  //  return p->get_pointer();
+  //}
 
-  const TimeSamples *as_timesamples() const {
-    const auto p = nonstd::get_if<TimeSamples>(&value);
-    return p;
-  }
+  //const TimeSamples *as_timesamples() const {
+  //  const auto p = nonstd::get_if<TimeSamples>(&value);
+  //  return p;
+  //}
 
   // For Value
+#if 0
   template <typename T>
   const nonstd::optional<T> cast() const {
     printf("cast\n");
@@ -525,6 +491,7 @@ class Variable {
     }
     return nonstd::nullopt;
   }
+#endif
 
   bool valid() const { return !IsEmpty(); }
 
@@ -622,12 +589,13 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
   ss << "{\n";
 
-  for (const auto &item : obj.values) {
+  for (const auto &item : obj) {
     if (item.second.IsObject()) {
       ss << Indent(indent + 1) << "dict " << item.first << " = ";
-      std::string str = str_object(
-          nonstd::get<Variable::Object>(item.second.value), indent + 1);
-      ss << str;
+      ss << "TODO: str_object()";
+      //std::string str = str_object(
+      //    nonstd::get<Variable::Object>(item.second.value), indent + 1);
+      //ss << str;
     } else if (item.second.IsValue()) {
       // TODO
       // Value
@@ -646,6 +614,10 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
 #if 1
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
+
+  os << "TODO: Variable";
+
+#if 0
   if (var.IsValue()) {
     // const Value &v = nonstd::get<Value>(var.value);
 
@@ -693,6 +665,7 @@ std::ostream &operator<<(std::ostream &os, const Variable &var) {
   } else {
     os << "[???Variable???]";
   }
+#endif
 
   return os;
 }
@@ -1560,15 +1533,18 @@ class USDAParser::Impl {
         return false;
       }
 
-      Variable::Array arr;
-      for (const auto &v : value) {
-        std::cout << "  " << v << "\n";
-        Variable _var;
-        _var.value = v;
-        arr.values.push_back(_var);
-      }
+      //std::vector<Path> paths;
+      //Variable::Array arr;
+      //for (const auto &v : value) {
+      //  std::cout << "  " << v << "\n";
+      //  Variable _var;
+      //  _var.value = v;
+      //  arr.values.push_back(_var);
+      //}
 
-      var.value = arr;
+      //var.value = arr;
+      PushError("TODO: Implement");
+      return false;
 
     } else if (vardef.type == "ref[]") {
       std::vector<Reference> value;
@@ -1578,14 +1554,16 @@ class USDAParser::Impl {
         return false;
       }
 
-      Variable::Array arr;
-      for (const auto &v : value) {
-        Variable _var;
-        _var.value = v;
-        arr.values.push_back(_var);
-      }
+      ///Variable::Array arr;
+      ///for (const auto &v : value) {
+      ///  Variable _var;
+      ///  _var.value = v;
+      ///  arr.values.push_back(_var);
+      ///}
+      //var.value = arr;
 
-      var.value = arr;
+      PushError("TODO: Implement");
+      return false;
 
     } else if (vardef.type == "string") {
       std::string value;
@@ -1846,12 +1824,12 @@ class USDAParser::Impl {
             return false;
           }
 
-          Variable::Object d;
-          d.values = dict;
+          //Variable::Object d;
+          //d.obj_value = dict;
 
           Variable var;
           var.name = token;
-          var.value = d;
+          var.obj_value = dict;
 
           assert(var.valid());
 
@@ -2255,9 +2233,9 @@ class USDAParser::Impl {
 
     if (meta.count("interpolation")) {
       const Variable& var = meta.at("interpolation");
-      auto p = var.cast<std::string>();
+      auto p = var.value.get_value<value::token>();
       if (p) {
-        attr.interpolation = tinyusdz::InterpolationFromString(*p);
+        attr.interpolation = tinyusdz::InterpolationFromString(p.value().str());
       }
     }
 
@@ -2564,14 +2542,13 @@ class USDAParser::Impl {
 
       } else if (type_name == "asset") {
 
-        Reference assert_ref;
+        Reference asset_ref;
         bool triple_deliminated{false};
-        if (!ParseReference(&assert_ref, &triple_deliminated)) {
+        if (!ParseReference(&asset_ref, &triple_deliminated)) {
           PUSH_ERROR("Failed to parse `asset` data.");
         }
 
-        value::asset asset;
-        asset.asset_path = assert_ref.asset_path;
+        value::asset asset(asset_ref.asset_path);
         attr.var.set_scalar(asset);
         PUSH_ERROR("TODO: `asset`");
 
@@ -5180,17 +5157,17 @@ class USDAParser::Impl {
         return false;
       }
 
-      Variable::Array arr;
-      for (size_t i = 0; i < values.size(); i++) {
-        DCOUT("reference[" << std::to_string(i)
-                  << "] = " << values[i].asset_path
-                  << ", prim_path = " << values[i].prim_path);
-        Variable v;
-        v.value = values[i];
-        arr.values.push_back(v);
-      }
+      //Variable::Array arr;
+      //for (size_t i = 0; i < values.size(); i++) {
+      //  DCOUT("reference[" << std::to_string(i)
+      //            << "] = " << values[i].asset_path
+      //            << ", prim_path = " << values[i].prim_path);
+      //  Variable v;
+      //  v.value = values[i];
+      //  arr.values.push_back(v);
+      //}
 
-      var.value = arr;
+      var.value = values;
 
     } else if (vartype == "int[]") {
       std::vector<int> values;
@@ -5204,14 +5181,14 @@ class USDAParser::Impl {
         DCOUT("int[" << i << "] = " << values[i]);
       }
 
-      Variable::Array arr;
-      for (size_t i = 0; i < values.size(); i++) {
-        Variable v;
-        v.value = values[i];
-        arr.values.push_back(v);
-      }
+      //Variable::Array arr;
+      //for (size_t i = 0; i < values.size(); i++) {
+      //  Variable v;
+      //  v.value = values[i];
+      //  arr.values.push_back(v);
+      //}
 
-      var.value = arr;
+      var.value = values;
     } else if (vartype == "float[]") {
       std::vector<float> values;
       if (!ParseBasicTypeArray<float>(&values)) {
@@ -5222,14 +5199,14 @@ class USDAParser::Impl {
         std::cout << "float[" << i << "] = " << values[i] << "\n";
       }
 
-      Variable::Array arr;
-      for (size_t i = 0; i < values.size(); i++) {
-        Variable v;
-        v.value = values[i];
-        arr.values.push_back(v);
-      }
+      //Variable::Array arr;
+      //for (size_t i = 0; i < values.size(); i++) {
+      //  Variable v;
+      //  v.value = values[i];
+      //  arr.values.push_back(v);
+      //}
 
-      var.value = arr;
+      var.value = values;
     } else if (vartype == "float3[]") {
       std::vector<std::array<float, 3>> values;
       if (!ParseTupleArray<float, 3>(&values)) {
@@ -5241,14 +5218,14 @@ class USDAParser::Impl {
                   << values[i][1] << ", " << values[i][2] << "\n";
       }
 
-      Variable::Array arr;
-      for (size_t i = 0; i < values.size(); i++) {
-        Variable v;
-        v.value = values[i];
-        arr.values.push_back(v);
-      }
+      //Variable::Array arr;
+      //for (size_t i = 0; i < values.size(); i++) {
+      //  Variable v;
+      //  v.value = values[i];
+      //  arr.values.push_back(v);
+      //}
 
-      var.value = arr;
+      var.value = values;
     } else if (vartype == "float") {
       std::string fval;
       std::string ferr;
@@ -5288,14 +5265,14 @@ class USDAParser::Impl {
         std::cout << "int[" << i << "] = " << values[i] << "\n";
       }
 
-      Variable::Array arr;
-      for (size_t i = 0; i < values.size(); i++) {
-        Variable v;
-        v.value = values[i];
-        arr.values.push_back(v);
-      }
+      //Variable::Array arr;
+      //for (size_t i = 0; i < values.size(); i++) {
+      //  Variable v;
+      //  v.value = values[i];
+      //  arr.values.push_back(v);
+      //}
 
-      var.value = arr;
+      var.value = values;
     } else if (vartype == "object") {
       if (!Expect('{')) {
         PushError("'{' expected.\n");
@@ -5388,6 +5365,7 @@ class USDAParser::Impl {
     //
     // Materialize builtin variables
     //
+#if 0 // TODO
     if (varname == "defaultPrim") {
       if (auto pv = var.as_value()) {
         if (auto p = nonstd::get_if<std::string>(pv)) {
@@ -5395,8 +5373,10 @@ class USDAParser::Impl {
         }
       }
     }
+#endif
 
     std::vector<std::string> sublayers;
+#if 0 // TODO
     if (varname == "subLayers") {
       if (var.IsArray()) {
         auto parr = var.as_array();
@@ -5414,6 +5394,7 @@ class USDAParser::Impl {
         }
       }
     }
+#endif
 
     // Load subLayers
     if (sublayers.size()) {
@@ -7852,7 +7833,7 @@ bool USDAParser::Impl::MaybeNone() {
 // -- impl ReadBasicType
 //
 
-bool USDAParser::Impl::ReadBasicType(Matrix4f *value) {
+bool USDAParser::Impl::ReadBasicType(value::matrix4f *value) {
   if (value) {
     return ParseMatrix4f(value->m);
   } else {
@@ -7860,13 +7841,13 @@ bool USDAParser::Impl::ReadBasicType(Matrix4f *value) {
   }
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<Matrix4f> *value) {
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::matrix4f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  Matrix4f v;
+  value::matrix4f v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -8698,13 +8679,13 @@ bool USDAParser::Impl::ReadTimeSampleData(
 }
 
 bool USDAParser::Impl::ReadTimeSampleData(
-    nonstd::optional<std::vector<Matrix4f>> *out_value) {
+    nonstd::optional<std::vector<value::matrix4f>> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
     return true;
   }
 
-  std::vector<Matrix4f> value;
+  std::vector<value::matrix4f> value;
   if (!ParseMatrix4fArray(&value)) {
     return false;
   }
@@ -8715,12 +8696,12 @@ bool USDAParser::Impl::ReadTimeSampleData(
 }
 
 bool USDAParser::Impl::ReadTimeSampleData(
-    nonstd::optional<Matrix4f> *out_value) {
+    nonstd::optional<value::matrix4f> *out_value) {
   if (MaybeNone()) {
     (*out_value) = nonstd::nullopt;
   }
 
-  Matrix4f value;
+  value::matrix4f value;
   if (!ParseMatrix4f(value.m)) {
     return false;
   }
