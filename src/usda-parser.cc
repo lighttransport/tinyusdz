@@ -54,6 +54,7 @@
 #include "usdObj.hh"
 #include "usda-parser.hh"
 #include "primvar.hh"
+#include "value-type.hh"
 #include "value-pprint.hh"
 
 // s = std::string
@@ -364,7 +365,7 @@ class Variable {
   value::Value value;
   //Array arr_value;
   Object obj_value;
-  TimeSamples timeSamples;
+  value::TimeSamples timeSamples;
 
   Variable &operator=(const Variable &rhs) {
     type = rhs.type;
@@ -574,6 +575,7 @@ std::string TrimString(const std::string &str) {
   return s;
 }
 
+#if 0 // TODO
 std::string str_object(const Variable::Object &obj, int indent) {
   std::stringstream ss;
 
@@ -609,6 +611,7 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
   return ss.str();
 }
+#endif
 
 }  // namespace
 
@@ -2214,7 +2217,7 @@ class USDAParser::Impl {
         LOG_DEBUG("ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name() << " = " << (*value));
 
         // TODO: TimeSampled
-        value::TimeSample ts;
+        value::TimeSamples ts;
         ts.values.push_back(*value);
         attr.var.var = ts;
 

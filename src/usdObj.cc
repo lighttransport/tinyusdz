@@ -95,7 +95,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   PrimAttrib pointsAttr;
   pointsAttr.type_name = "float3[]";
-  //pointsAttr.var = primvar::to_vec3(attrs.vertices); // std::vector<float> -> std::vector<Vec3f>
+  //pointsAttr.var = primvar::to_vec3(attrs.vertices); // std::vector<float> -> std::vector<value::float3>
   prim->props["points"].attrib = pointsAttr;
 
   const auto &shapes = reader.GetShapes();
@@ -105,8 +105,8 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   std::vector<int32_t> vertexCounts;
 
   // normals and texcoords are facevarying
-  std::vector<Vec2f> facevaryingTexcoords;
-  std::vector<Vec3f> facevaryingNormals;
+  std::vector<value::float2> facevaryingTexcoords;
+  std::vector<value::float3> facevaryingNormals;
 
   {
     size_t index_offset = 0;
@@ -132,7 +132,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
           vertexIndices.push_back(int32_t(idx.vertex_index));
 
           if (idx.normal_index > -1) {
-            Vec3f normal;
+            value::float3 normal;
             normal[0] = attrs.normals[3 * size_t(idx.normal_index) + 0];
             normal[1] = attrs.normals[3 * size_t(idx.normal_index) + 1];
             normal[2] = attrs.normals[3 * size_t(idx.normal_index) + 2];
@@ -143,7 +143,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
           }
 
           if (idx.texcoord_index > -1) {
-            Vec2f texcoord;
+            value::float2 texcoord;
             texcoord[0] = attrs.texcoords[2 * size_t(idx.texcoord_index) + 0];
             texcoord[1] = attrs.texcoords[2 * size_t(idx.texcoord_index) + 1];
           } else {
@@ -155,7 +155,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
           // No per-vertex normal.
           // Compute geometric normal from p0, p1, p(N-1)
           // This won't give correct geometric normal for n-gons(n >= 4)
-          Vec3f p0, p1, p2;
+          value::float3 p0, p1, p2;
 
           uint32_t vidx0 = uint32_t(shape.mesh.indices[index_offset + 0].vertex_index);
           uint32_t vidx1 = uint32_t(shape.mesh.indices[index_offset + 1].vertex_index);
@@ -173,7 +173,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
           p2[1] = attrs.vertices[3 * vidx2 + 1];
           p2[2] = attrs.vertices[3 * vidx2 + 2];
 
-          Vec3f n = math::geometric_normal(p0, p1, p2);
+          value::float3 n = math::geometric_normal(p0, p1, p2);
 
           for (size_t v = 0; v < num_v; v++) {
             facevaryingNormals.push_back(n);

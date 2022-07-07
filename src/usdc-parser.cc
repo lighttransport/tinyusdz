@@ -564,7 +564,7 @@ class Parser::Impl {
   // Dictionary
   bool ReadDictionary(crate::CrateValue::Dictionary *d);
 
-  bool ReadTimeSamples(TimeSamples *d);
+  bool ReadTimeSamples(value::TimeSamples *d);
 
   // integral array
   template <typename T>
@@ -1051,7 +1051,7 @@ bool Parser::Impl::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadTimeSamples(TimeSamples *d) {
+bool Parser::Impl::ReadTimeSamples(value::TimeSamples *d) {
   (void)d;
 
   // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
@@ -2264,7 +2264,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
 
     } else if (ty.id == VALUE_TYPE_TIME_SAMPLES) {
-      TimeSamples ts;
+      value::TimeSamples ts;
       if (!ReadTimeSamples(&ts)) {
         _err += "Failed to read TimeSamples data\n";
         return false;
