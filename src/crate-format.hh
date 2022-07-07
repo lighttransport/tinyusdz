@@ -805,6 +805,7 @@ class CrateValue {
   typedef std::map<std::string, CrateValue> Dictionary;
 
   std::string GetTypeName() const;
+  uint32_t GetTypeId() const;
 
 #define SET_TYPE_SCALAR(__ty) void Set(const __ty&);
 #define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &);
