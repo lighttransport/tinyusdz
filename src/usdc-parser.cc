@@ -17,6 +17,7 @@
 #include "usdc-parser.hh"
 #include "path-util.hh"
 #include "value-pprint.hh"
+#include "crate-pprint.hh"
 
 //
 #ifdef __clang__
@@ -561,7 +562,7 @@ class Parser::Impl {
   bool ReadPathArray(std::vector<Path> *d);
 
   // Dictionary
-  bool ReadDictionary(value::dict *d);
+  bool ReadDictionary(crate::CrateValue::Dictionary *d);
 
   bool ReadTimeSamples(TimeSamples *d);
 
@@ -1384,8 +1385,8 @@ bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadDictionary(value::dict *d) {
-  value::dict dict;
+bool Parser::Impl::ReadDictionary(crate::CrateValue::Dictionary *d) {
+  crate::CrateValue::Dictionary dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
     _err += "Failed to read the number of elements for Dictionary data.\n";
@@ -2235,8 +2236,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       assert(!rep.IsCompressed());
       assert(!rep.IsArray());
 
-      //crate::CrateValue::Dictionary dict;
-      value::dict dict;
+      crate::CrateValue::Dictionary dict;
 
       if (!ReadDictionary(&dict)) {
         _err += "Failed to read Dictionary value\n";
@@ -4458,15 +4458,18 @@ bool Parser::Impl::ReconstructSceneRecursively(
   for (const auto &fv : fields) {
     DCOUT(IndentStr(level) << "  \"" << fv.first
                            << "\" : ty = " << fv.second.GetTypeName());
+
+    if (fv.first == "typeName") {
+      auto v = fv.second.get_value<value::token>();
+      if (v) {
+        node_type = v.value().str();
+      }
+    }
+
+#if 0 // TODO: Refactor)
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
       DCOUT(IndentStr(level)
             << "    specifier = " << to_string(fv.second.GetSpecifier()));
-    } else if (fv.second.GetTypeId() == VALUE_TYPE_TOKEN) {
-      if (fv.first == "typeName") {
-        node_type = fv.second.GetToken();
-      }
-      // std::cout << IndentStr(level) << "    token = " << fv.second.GetToken()
-      // << "\n";
     } else if ((fv.first == "primChildren") &&
                (fv.second.GetTypeName() == "TokenArray")) {
       // Check if TokenArray contains known child nodes
@@ -4520,6 +4523,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
                 ", type: " + fv.second.GetTypeName());
       // return false;
     }
+#endif
   }
 
   if (node_type == "Xform") {
