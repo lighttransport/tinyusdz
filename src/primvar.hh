@@ -48,7 +48,7 @@ namespace primvar {
 
 struct PrimVar {
   // For scalar value, times.size() == 0, and values.size() == 1
-  value::TimeSample var;
+  value::TimeSamples var;
 
   bool is_scalar() const {
     return (var.times.size() == 0) && (var.values.size() == 1);
