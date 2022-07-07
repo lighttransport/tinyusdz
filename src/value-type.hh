@@ -184,6 +184,62 @@ using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
+struct matrix2f {
+  matrix2f() {
+    m[0][0] = 1.0f;
+    m[0][1] = 0.0f;
+
+    m[1][0] = 0.0f;
+    m[1][1] = 1.0f;
+  }
+
+  float m[2][2];
+};
+
+struct matrix3f {
+  matrix3f() {
+    m[0][0] = 1.0f;
+    m[0][1] = 0.0f;
+    m[0][2] = 0.0f;
+
+    m[1][0] = 0.0f;
+    m[1][1] = 1.0f;
+    m[1][2] = 0.0f;
+
+    m[2][0] = 0.0f;
+    m[2][1] = 0.0f;
+    m[2][2] = 1.0f;
+  }
+
+  float m[3][3];
+};
+
+struct matrix4f {
+  matrix4f() {
+    m[0][0] = 1.0f;
+    m[0][1] = 0.0f;
+    m[0][2] = 0.0f;
+    m[0][3] = 0.0f;
+
+    m[1][0] = 0.0f;
+    m[1][1] = 1.0f;
+    m[1][2] = 0.0f;
+    m[1][3] = 0.0f;
+
+    m[2][0] = 0.0f;
+    m[2][1] = 0.0f;
+    m[2][2] = 1.0f;
+    m[2][3] = 0.0f;
+
+    m[3][0] = 0.0f;
+    m[3][1] = 0.0f;
+    m[3][2] = 0.0f;
+    m[3][3] = 1.0f;
+  }
+
+  float m[4][4];
+};
+
 struct matrix2d {
   matrix2d() {
     m[0][0] = 1.0;
@@ -398,10 +454,6 @@ using double4 = std::array<double, 4>;
 struct any_value;
 
 using dict = std::map<std::string, any_value>;
-
-//
-// Simple variant-lile type
-//
 
 template <class dtype>
 struct TypeTrait;
@@ -1006,6 +1058,54 @@ struct Converter<quatd> {
 
   static void to_shadow(const quatd &value, shadow_type &shadow) {
     memcpy(&shadow[0], &value.real, sizeof(double) * 4);
+  }
+};
+
+template <>
+struct Converter<matrix2f> {
+  typedef std::array<float, 4> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            matrix2f &value) {
+    memcpy(&value.m[0][0], &shadow[0], sizeof(float) * 4);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const matrix2f &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.m[0][0], sizeof(float) * 4);
+  }
+};
+
+template <>
+struct Converter<matrix3f> {
+  typedef std::array<float, 9> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            matrix3f &value) {
+    memcpy(&value.m[0][0], &shadow[0], sizeof(float) * 9);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const matrix3f &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.m[0][0], sizeof(float) * 9);
+  }
+};
+
+template <>
+struct Converter<matrix4f> {
+  typedef std::array<float, 16> shadow_type;
+
+  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
+                                            matrix4f &value) {
+    memcpy(&value.m[0][0], &shadow[0], sizeof(float) * 16);
+
+    return nullptr;  // success
+  }
+
+  static void to_shadow(const matrix4f &value, shadow_type &shadow) {
+    memcpy(&shadow[0], &value.m[0][0], sizeof(float) * 16);
   }
 };
 
