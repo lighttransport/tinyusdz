@@ -451,6 +451,41 @@ struct Reference {
   value::dict custom_data;
 };
 
+// Same macro in value-type.hh
+#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
+  template <>                                                    \
+  struct value::TypeTrait<__dty> {                                      \
+    using value_type = __dty;                                    \
+    using value_underlying_type = __dty;                         \
+    static constexpr uint32_t ndim = 0; /* array dim */          \
+    static constexpr uint32_t ncomp =                            \
+        __nc; /* the number of components(e.g. float3 => 3) */   \
+    static constexpr uint32_t type_id = __tyid;                  \
+    static constexpr uint32_t underlying_type_id = __tyid;       \
+    static std::string type_name() { return __name; }            \
+    static std::string underlying_type_name() { return __name; } \
+  }
+
+DEFINE_TYPE_TRAIT(Reference, "ref", TYPE_ID_REFERENCE, 1);
+DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
+DEFINE_TYPE_TRAIT(Permission, "permission", TYPE_ID_PERMISSION, 1);
+DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
+
+DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN, 1);
+DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING, 1);
+DEFINE_TYPE_TRAIT(ListOp<Path>, "ListOpPath", TYPE_ID_LIST_OP_PATH, 1);
+
+// TODO(syoyo): Define as 1D array?
+DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
+DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector", TYPE_ID_TOKEN_VECTOR, 1);
+
+DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+// TODO: ListOp<int>, ... 
+
+#undef DEFINE_TYPE_TRAIT
+
+
 
 //
 // Colum-major order(e.g. employed in OpenGL).
@@ -580,6 +615,7 @@ value::half float_to_half_full(float f);
 #pragma clang diagnostic ignored "-Wpadded"
 #endif
 
+// TODO: move to `value-type.hh`
 enum ValueTypeId {
   VALUE_TYPE_INVALID = 0,
 
@@ -701,239 +737,6 @@ struct Extent {
 
 
 #if 0
-///
-/// Simple type-erased primitive value class for frequently used data types(e.g.
-/// `float[]`)
-///
-template <class dtype>
-struct TypeTrait;
-
-// TODO(syoyo): Support `Token` type
-template <>
-struct TypeTrait<std::string> {
-  static constexpr auto type_name = "string";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_STRING;
-};
-
-template <>
-struct TypeTrait<bool> {
-  static constexpr auto type_name = "bool";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_BOOL;
-};
-
-template <>
-struct TypeTrait<int> {
-  static constexpr auto type_name = "int";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_INT;
-};
-
-template <>
-struct TypeTrait<float> {
-  static constexpr auto type_name = "float";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_FLOAT;
-};
-
-template <>
-struct TypeTrait<double> {
-  static constexpr auto type_name = "double";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_DOUBLE;
-};
-
-template <>
-struct TypeTrait<value::half> {
-  static constexpr auto type_name = "half";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_HALF;
-};
-
-template <>
-struct TypeTrait<value::float2> {
-  static constexpr auto type_name = "float2";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2F;
-};
-
-template <>
-struct TypeTrait<value::float3> {
-  static constexpr auto type_name = "float3";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3F;
-};
-
-template <>
-struct TypeTrait<value::float4> {
-  static constexpr auto type_name = "float4";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4F;
-};
-
-template <>
-struct TypeTrait<value::double2> {
-  static constexpr auto type_name = "double2";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC2D;
-};
-
-template <>
-struct TypeTrait<value::double3> {
-  static constexpr auto type_name = "double3";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC3D;
-};
-
-template <>
-struct TypeTrait<value::double4> {
-  static constexpr auto type_name = "double4";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_VEC4D;
-};
-
-template <>
-struct TypeTrait<value::quath> {
-  static constexpr auto type_name = "quath";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATH;
-};
-
-template <>
-struct TypeTrait<value::quatf> {
-  static constexpr auto type_name = "quatf";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATF;
-};
-
-template <>
-struct TypeTrait<value::quatd> {
-  static constexpr auto type_name = "quatd";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_QUATD;
-};
-
-template <>
-struct TypeTrait<value::matrix2d> {
-  static constexpr auto type_name = "matrix2d";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX2D;
-};
-
-template <>
-struct TypeTrait<value::matrix3d> {
-  static constexpr auto type_name = "matrix3d";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX3D;
-};
-
-template <>
-struct TypeTrait<value::matrix4d> {
-  static constexpr auto type_name = "matrix4d";
-  static constexpr ValueTypeId type_id = VALUE_TYPE_MATRIX4D;
-};
-#endif
-
-#if 0
-template<typename T>
-struct GetDim {
-  static constexpr size_t dim() {
-    return 0;
-  }
-};
-
-template<typename T>
-struct GetDim<std::vector<T>> {
-  static constexpr size_t dim() {
-    return 1 + GetDim<T>::dim();
-  }
-};
-#endif
-
-#if 0
-template <class T>
-class PrimValue {
- private:
-  T m_value;
-
- public:
-  T value() const { return m_value; }
-
-  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
-                            * = nullptr>
-  PrimValue<T> &operator=(const U &u) {
-    m_value = u;
-
-    return (*this);
-  }
-
-  std::string type_name() { return std::string(TypeTrait<T>::type_name); }
-  bool is_array() const { return false; }
-  size_t array_dim() const { return 0; }
-};
-
-///
-/// Array of PrimValue
-///
-template <class T>
-class PrimValue<std::vector<T>> {
- private:
-  std::vector<T> m_value;
-
- public:
-  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
-                            * = nullptr>
-  PrimValue<T> &operator=(const std::vector<U> &u) {
-    m_value = u;
-
-    return (*this);
-  }
-
-  std::string type_name() {
-    return std::string(TypeTrait<T>::type_name) + "[]";
-  }
-
-  bool is_array() const { return true; }
-  size_t array_dim() const { return 1; }
-};
-
-///
-/// 2D array of PrimValue
-///
-template <class T>
-class PrimValue<std::vector<std::vector<T>>> {
- private:
-  std::vector<std::vector<T>> m_value;
-
- public:
-  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
-                            * = nullptr>
-  PrimValue<T> &operator=(const std::vector<std::vector<U>> &u) {
-    m_value = u;
-
-    return (*this);
-  }
-
-  std::string type_name() {
-    return std::string(TypeTrait<T>::type_name) + "[][]";
-  }
-
-  bool is_array() const { return true; }
-  int array_dim() const { return 2; }
-};
-
-///
-/// 3D array of PrimValue
-///
-template <class T>
-class PrimValue<std::vector<std::vector<std::vector<T>>>> {
- private:
-  std::vector<std::vector<std::vector<T>>> m_value;
-
- public:
-  template <typename U, typename std::enable_if<std::is_same<T, U>::value>::type
-                            * = nullptr>
-  PrimValue<T> &operator=(const std::vector<std::vector<std::vector<U>>> &u) {
-    m_value = u;
-
-    return (*this);
-  }
-
-  std::string type_name() {
-    return std::string(TypeTrait<T>::type_name) + "[][][]";
-  }
-
-  bool is_array() const { return true; }
-  int array_dim() const { return 3; }
-};
-
-// TODO: Privide generic multidimensional array type?
-#endif
-
 //
 // TimeSample datatype
 //
@@ -941,6 +744,7 @@ class PrimValue<std::vector<std::vector<std::vector<T>>>> {
 // monostate = `None`
 struct None {};
 
+// TODO: Use value::any_value?
 using TimeSampleType =
     nonstd::variant<None, float, double, value::float3, value::quatf, value::matrix4d>;
 
@@ -948,8 +752,10 @@ struct TimeSamples {
   std::vector<double> times;
   std::vector<TimeSampleType> values;
 };
+#endif
 
 
+#if 0
 //
 // Simple NumPy like NDArray up to 4D
 // Based on NumCpp
@@ -970,6 +776,7 @@ class ndarray {
 
   ndarray() = default;
 };
+#endif
 
 #if 0
 // Types which can be TimeSampledData are restricted to frequently used one in
@@ -1210,9 +1017,6 @@ using PrimvarReader_float2 = PrimvarReader<value::float2>;
 using PrimvarReader_float3 = PrimvarReader<value::float3>;
 
 using PrimvarReaderType = nonstd::variant<PrimvarReader_float2, PrimvarReader_float3>;
-
-//using Property = nonstd::variant<PrimAttrib, Rel>;
-//using Property = nonstd::variant<PrimAttrib, Rel>;
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`

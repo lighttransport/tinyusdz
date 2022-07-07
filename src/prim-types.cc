@@ -110,7 +110,7 @@ float half_to_float_be(float16be h) {
 }
 
 
-float16 float_to_half_full_be(float _f) {
+value::half float_to_half_full_be(float _f) {
   FP32be f;
   f.f = _f;
   float16be o = {0};
@@ -147,11 +147,13 @@ float16 float_to_half_full_be(float _f) {
 
   o.s.Sign = f.s.Sign;
 
-  float16 ret = (*reinterpret_cast<const uint16_t *>(&o));
+  value::half ret;
+  ret.value = (*reinterpret_cast<const uint16_t *>(&o));
+
   return ret;
 }
 
-float16 float_to_half_full_le(float _f) {
+value::half float_to_half_full_le(float _f) {
   FP32le f;
   f.f = _f;
   float16le o = {0};
@@ -188,23 +190,24 @@ float16 float_to_half_full_le(float _f) {
 
   o.s.Sign = f.s.Sign;
 
-  float16 ret = (*reinterpret_cast<const uint16_t *>(&o));
+  value::half ret;
+  ret.value = (*reinterpret_cast<const uint16_t *>(&o));
   return ret;
 }
 
 } // namespace
 
-float half_to_float(float16 h) {
+float half_to_float(value::half h) {
   // TODO: Compile time detection of endianness
   HostEndianness endian;
 
   if (endian.isBig()) {
     float16be f;
-    f.u = h;
+    f.u = h.value;
     return half_to_float_be(f);
   } else if (endian.isLittle()) {
     float16le f;
-    f.u = h;
+    f.u = h.value;
     return half_to_float_le(f);
   }
 
@@ -214,7 +217,7 @@ float half_to_float(float16 h) {
 }
 
 
-float16 float_to_half_full(float _f) {
+value::half float_to_half_full(float _f) {
   // TODO: Compile time detection of endianness
   HostEndianness endian;
 
@@ -225,134 +228,12 @@ float16 float_to_half_full(float _f) {
   }
 
   ///???
-  float16 fp16{0}; // TODO: Raise exception or return NaN
+  value::half fp16{0}; // TODO: Raise exception or return NaN
   return fp16;
 
 
 }
 
-#if 0
-// http://martinecker.com/martincodes/lambda-expression-overloading/
-template <class... Fs> struct overload_set;
-
-template <class F1, class... Fs>
-struct overload_set<F1, Fs...> : F1, overload_set<Fs...>::type
-{
-    typedef overload_set type;
-
-    overload_set(F1 head, Fs... tail)
-        : F1(head), overload_set<Fs...>::type(tail...)
-    {}
-
-    using F1::operator();
-    using overload_set<Fs...>::type::operator();
-};
-
-template <class F>
-struct overload_set<F> : F
-{
-    typedef F type;
-    using F::operator();
-};
-
-template <class... Fs>
-//auto overloaded(Fs... x) for C++14
-typename overload_set<Fs...>::type overloaded(Fs... x)
-{
-    return overload_set<Fs...>(x...);
-}
-
-#endif
-
-#if 0
-std::string prim_basic_type_name(const PrimBasicType &v) {
-
-  (void)v;
-#if 0
-  std::string ty =  nonstd::visit(overloaded (
-            [](auto) { return "[[TODO: PrimBasicType. ]]"; },
-            [](std::string) { return "string"; },
-            [](Token) { return "token"; },
-            [](float) { return "float"; },
-            [](Vec2f) { return "float2"; },
-            [](Vec3f) { return "float3"; },
-            [](Vec4f) { return "float4"; },
-            [](double) { return "double"; },
-            [](Vec2d) { return "double2"; },
-            [](Vec3d) { return "double3"; },
-            [](Vec4d) { return "double4"; },
-            [](Matrix4d) { return "matrix4d"; }
-  ), v);
-
-  return ty;
-#endif
-  return "TODO";
-}
-#endif
-
-namespace primvar {
-
-
-#if 0 // FIXME
-std::string type_name(const TimeSampleType &v) {
-
-  std::string ty =  nonstd::visit(overloaded (
-            [](auto) { return "[[TODO: TypeSampleType. ]]"; },
-            [](TimeSampledDataDouble) { return "double"; },
-            [](TimeSampledDataDouble3) { return "double3"; },
-            [](TimeSampledDataFloat) { return "float"; },
-            [](TimeSampledDataFloat3) { return "float"; },
-            [](TimeSampledDataMatrix4d) { return "matrix4d"; }
-  ), v);
-
-  return ty;
-}
-
-
-static std::string get_type_name(const PrimArrayType &v) {
-
-  std::string ty =  nonstd::visit(overloaded (
-            [](auto) { return "[[TODO: PrimAarrayType. ]]"; },
-            [](const std::vector<std::string>&) { return "string[]"; },
-            [](const std::vector<Token>&) { return "token[]"; },
-            [](const std::vector<float>&) { return "float[]"; },
-            [](const std::vector<Vec2f>&) { return "float2[]"; },
-            [](const std::vector<Vec3f>&) { return "float3[]"; },
-            [](const std::vector<Vec4f>&) { return "float4[]"; },
-            [](const std::vector<double>&) { return "double"; },
-            [](const std::vector<Vec2d>&) { return "double2[]"; },
-            [](const std::vector<Vec3d>&) { return "double3[]"; },
-            [](const std::vector<Vec4d>&) { return "double4[]"; },
-            [](const std::vector<Matrix4d>&) { return "matrix4d[]"; }
-  ), v);
-
-  return ty;
-}
-#endif
-
-#if 0
-std::string get_type_name(const PrimVar &v) {
-  (void)v;
-
-  //if (auto p = nonstd::get_if<None>(&v)) {
-  //  return "None";
-  //}
-
-  //if (auto p = nonstd::get_if<PrimBasicType>(&v)) {
-  //  return type_name(*p);
-  //}
-  //if (auto p = nonstd::get_if<PrimArrayType>(&v)) {
-  //  return type_name(*p);
-  //}
-  //if (auto p = nonstd::get_if<TimeSampleType>(&v)) {
-  //  return type_name(*p);
-  //}
-
-  return "[[Invalid PrimVar type]]";
-}
-#endif
-
-} // namespace primvar
 
 Interpolation InterpolationFromString(const std::string &v)
 {

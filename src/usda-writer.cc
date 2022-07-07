@@ -1,5 +1,6 @@
 #include "usda-writer.hh"
 #include "pprinter.hh"
+#include "value-pprint.hh"
 
 #include <fstream>
 #include <iostream>
@@ -9,73 +10,6 @@ namespace tinyusdz {
 namespace usda {
 
 namespace {
-
-// TODO: Use ryu print for precise floating point output?
-
-#if 0
-std::ostream &operator<<(std::ostream &ofs, const Matrix4f &m) {
-  ofs << "( ";
-
-  ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << ", " << m.m[0][3] << "), ";
-  ofs << "(" << m.m[1][0] << ", " << m.m[1][1] << ", " << m.m[1][2] << ", " << m.m[1][3] << "), ";
-  ofs << "(" << m.m[2][0] << ", " << m.m[2][1] << ", " << m.m[2][2] << ", " << m.m[2][3] << "), ";
-  ofs << "(" << m.m[3][0] << ", " << m.m[3][1] << ", " << m.m[3][2] << ", " << m.m[3][3] << ")";
-
-  ofs << " )";
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const Matrix4d &m) {
-  ofs << "( ";
-
-  ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << ", "
-      << m.m[0][3] << "), ";
-  ofs << "(" << m.m[1][0] << ", " << m.m[1][1] << ", " << m.m[1][2] << ", "
-      << m.m[1][3] << "), ";
-  ofs << "(" << m.m[2][0] << ", " << m.m[2][1] << ", " << m.m[2][2] << ", "
-      << m.m[2][3] << "), ";
-  ofs << "(" << m.m[3][0] << ", " << m.m[3][1] << ", " << m.m[3][2] << ", "
-      << m.m[3][3] << ")";
-
-  ofs << " )";
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &os, XformOpValueType const &v) {
-  switch (v.index()) {
-    case 0:
-      os << nonstd::get<0>(v);
-      break;
-    case 1:
-      os << nonstd::get<1>(v);
-      break;
-    case 2:
-      os << nonstd::get<2>(v);
-      break;
-    case 3:
-      os << nonstd::get<3>(v);
-      break;
-    case 4:
-      os << nonstd::get<4>(v);
-      break;
-    case 5:
-      os << nonstd::get<5>(v);
-      break;
-    case 6:
-      os << nonstd::get<6>(v);
-      break;
-    case 7:
-      os << nonstd::get<7>(v);
-      break;
-    default:
-      os << "XformOpValueType:???";
-  }
-
-  return os;
-}
-#endif
 
 inline std::string GetTypeName(XformOpValueType const &v) {
   if (auto pval = nonstd::get_if<float>(&v)) {
@@ -88,23 +22,23 @@ inline std::string GetTypeName(XformOpValueType const &v) {
     return "double";
   }
 
-  if (auto pval = nonstd::get_if<Vec3f>(&v)) {
+  if (auto pval = nonstd::get_if<value::float3>(&v)) {
     (void)pval;
     return "float3";
   }
-  if (auto pval = nonstd::get_if<Vec3d>(&v)) {
+  if (auto pval = nonstd::get_if<value::double3>(&v)) {
     (void)pval;
     return "double3";
   }
-  if (auto pval = nonstd::get_if<Matrix4d>(&v)) {
+  if (auto pval = nonstd::get_if<value::matrix4d>(&v)) {
     (void)pval;
     return "matrix4d";
   }
-  if (auto pval = nonstd::get_if<Quatf>(&v)) {
+  if (auto pval = nonstd::get_if<value::quatf>(&v)) {
     (void)pval;
     return "quatf";
   }
-  if (auto pval = nonstd::get_if<Quatd>(&v)) {
+  if (auto pval = nonstd::get_if<value::quatd>(&v)) {
     (void)pval;
     return "quatd";
   }
@@ -112,60 +46,7 @@ inline std::string GetTypeName(XformOpValueType const &v) {
   return "TypeName(XformOpValueType) = ???";
 }
 
-std::string PrintIntArray(const std::vector<int32_t> &data) {
-  std::stringstream ofs;
 
-  ofs << "[";
-  for (size_t i = 0; i < data.size(); i++) {
-    ofs << data[i];
-
-    if (i != (data.size() - 1)) {
-      ofs << ", ";
-    }
-  }
-  ofs << "]";
-
-  return ofs.str();
-}
-
-#if 0
-std::string PrintVec3fArray(const std::vector<Vec3f> &data)
-{
-  std::stringstream ofs;
-
-  ofs << "[";
-  for (size_t i = 0; i < data.size(); i++) {
-
-    ofs << "(" << data[i][0] << ", " << data[i][1] << ", " << data[i][2] << ")";
-
-    if (i != (data.size() - 1)) {
-      ofs << ", ";
-    }
-  }
-  ofs << "]";
-
-  return ofs.str();
-
-}
-
-std::string PrintVec3fArray(const std::vector<Vec3f> &data) {
-  std::stringstream ofs;
-
-  ofs << "[";
-  // TODO: Use ryu print?
-  for (size_t i = 0; i < data.size(); i++) {
-    ofs << "(" << data[i][0] << ", " << data[i][1] << ", "
-        << data[i][2] << ")";
-
-    if (i != (data.size() - 1)) {
-      ofs << ", ";
-    }
-  }
-  ofs << "]";
-
-  return ofs.str();
-}
-#endif
 
 std::string PrintPoint3fArray(const std::vector<value::point3f> &data) {
   std::stringstream ofs;
@@ -185,30 +66,6 @@ std::string PrintPoint3fArray(const std::vector<value::point3f> &data) {
   return ofs.str();
 }
 
-
-#if 0
-std::string PrintAsVec3fArray(const std::vector<float> &data) {
-  std::stringstream ofs;
-
-  if ((data.size() % 3) != 0) {
-    throw std::runtime_error("data is not a valid array of float3");
-  }
-
-  ofs << "[";
-  // TODO: Use ryu print?
-  for (size_t i = 0; i < data.size() / 3; i++) {
-    ofs << "(" << data[3 * i + 0] << ", " << data[3 * i + 1] << ", "
-        << data[3 * i + 2] << ")";
-
-    if (i != ((data.size() / 3) - 1)) {
-      ofs << ", ";
-    }
-  }
-  ofs << "]";
-
-  return ofs.str();
-}
-#endif
 
 class Writer {
  public:
@@ -232,10 +89,10 @@ class Writer {
 
     // params
     ofs << Indent(level + 1)
-        << "int[] faceVertexCounts = " << PrintIntArray(mesh.faceVertexCounts)
+        << "int[] faceVertexCounts = " << mesh.faceVertexCounts
         << "\n";
     ofs << Indent(level + 1)
-        << "int[] faceVertexIndices = " << PrintIntArray(mesh.faceVertexIndices)
+        << "int[] faceVertexIndices = " << mesh.faceVertexIndices
         << "\n";
     ofs << Indent(level + 1)
         << "point3f[] points = " << PrintPoint3fArray(mesh.points) << "\n";

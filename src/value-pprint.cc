@@ -4,7 +4,7 @@
 namespace std {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
-  os << tinyusdz::half_to_float(v.value);
+  os << tinyusdz::half_to_float(v);
   return os;
 }
 

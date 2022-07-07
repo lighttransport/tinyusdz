@@ -1,7 +1,8 @@
 /// Copyright 2021-present Syoyo Fujita.
 /// MIT license.
 ///
-/// Type-erasure technique for Value, a Value class which can have 30+ different types(and can be compound-types(e.g. 1D/2D array, dictionary).
+/// Type-erasure technique for Value, a Value class which can represent USD's mandatory and frequently used types(e.g. `float3`, `token`, `asset`)
+/// and its array and compound-types(1D/2D array, dictionary).
 /// Neigher std::any nor std::variant is applicable for such usecases, so write our own.
 ///
 #pragma once
@@ -60,11 +61,9 @@ class asset
   std::string resolved_path;
 };
 
-class reference;
-
 // TODO(syoyo): 3D and 4D?
-constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10;
-constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11;
+constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10; // 1024
+constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11; // 2048
 //constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 12;
 //constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 13;
 
@@ -154,12 +153,24 @@ enum TypeId {
   TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
+  // Types in prim-types.hh
   TYPE_ID_REFERENCE,
+  TYPE_ID_SPECIFIER,
+  TYPE_ID_PERMISSION,
+  TYPE_ID_VARIABILITY,
+  TYPE_ID_LIST_OP_TOKEN,
+  TYPE_ID_LIST_OP_STRING,
+  TYPE_ID_LIST_OP_PATH,
 
-  // Base ID for user data
+  TYPE_ID_PATH_VECTOR,
+  TYPE_ID_TOKEN_VECTOR,
+
+  TYPE_ID_TIMESAMPLES,
+
+  // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 512,
 
-  TYPE_ID_ALL = 1024  // terminator. 1024 should suffice.
+  TYPE_ID_ALL = (TYPE_ID_1D_ARRAY_BIT - 1)  // terminator. 
 };
 
 struct timecode
@@ -576,7 +587,10 @@ DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(asset, "asset", TYPE_ID_ASSET, 1);
-DEFINE_TYPE_TRAIT(reference, "ref", TYPE_ID_REF, 1);
+
+//
+// Other types(e.g. TYPE_ID_REFERENCE) are defined in another header(for example prim-types.hh for `Reference` type)
+// 
 
 #undef DEFINE_TYPE_TRAIT
 
@@ -745,7 +759,7 @@ struct any_value {
   std::shared_ptr<base_value> p;
 };
 
-struct TimeSample {
+struct TimeSamples {
   std::vector<double> times;
   std::vector<any_value> values;
 };
@@ -771,7 +785,7 @@ struct LinearInterpolator
   }
 };
 
-// Explicitly typed version of `TimeSample`
+// Explicitly typed version of `TimeSamples`
 template<typename T>
 struct AnimatableValue
 {
@@ -811,7 +825,7 @@ struct AnimatableValue
 
 struct PrimVar {
   // For scalar value, times.size() == 0, and values.size() == 1
-  TimeSample var;
+  TimeSamples var;
 
   bool is_scalar() const {
     return (var.times.size() == 0) && (var.values.size() == 1);
