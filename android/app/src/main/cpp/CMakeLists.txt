@@ -9,10 +9,12 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-parser.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/crate-format.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/io-util.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/pprinter.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/value-type.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/primvar.cc
-    ${PROJECT_SOURCE_DIR}/../../../../../src/primvar-pprint.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/usda-writer.cc)
 
 if(TINYUSDZ_USE_USDOBJ)
