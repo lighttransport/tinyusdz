@@ -736,7 +736,7 @@ struct Extent {
 };
 
 
-#if 0
+#if 0 // TODO
 //
 // TimeSample datatype
 //
@@ -755,28 +755,6 @@ struct TimeSamples {
 #endif
 
 
-#if 0
-//
-// Simple NumPy like NDArray up to 4D
-// Based on NumCpp
-//
-
-template <typename dtype, class Allocator = std::allocator<dtype>>
-class ndarray {
-  class Shape {};
-
- private:
-  static_assert(std::is_same<dtype, typename Allocator::value_type>::value,
-                "dtype and Allocator::value_type must match");
-
- public:
-  using value_type = dtype;
-  using allocator_type = Allocator;
-  // using pointer = typename AllocTraits::pointer;
-
-  ndarray() = default;
-};
-#endif
 
 #if 0
 // Types which can be TimeSampledData are restricted to frequently used one in
@@ -802,139 +780,7 @@ using TimeSampledValue =
                     TimeSampledDataDouble, TimeSampledDataFloat3,
                     TimeSampledDataDouble3, TimeSampledDataMatrix4d, TimeSampledDataToken>;
 
-using PrimBasicType =
-    nonstd::variant<bool, int, uint32_t, float, Vec2f, Vec3f, Vec4f, double, Vec2d, Vec3d,
-                    Vec4d, Matrix4d, std::string, Token, Path>;
-using PrimArrayType =
-    nonstd::variant<std::vector<bool>, std::vector<int>, std::vector<float>, std::vector<Vec2f>,
-                    std::vector<Vec3f>, std::vector<Vec4f>, std::vector<double>,
-                    std::vector<Vec2d>, std::vector<Vec3d>, std::vector<Vec4d>,
-                    std::vector<Matrix4d>, std::vector<std::string>,
-                    std::vector<Path>>;
 
-using PrimVar =
-    nonstd::variant<None, PrimBasicType, PrimArrayType, TimeSampledValue>;
-
-namespace primvar {
-
-inline bool is_basic_type(const PrimVar *v) {
-  if (nonstd::get_if<PrimBasicType>(v)) {
-    return true;
-  }
-  return false;
-}
-
-inline bool is_array_type(const PrimVar *v) {
-  if (nonstd::get_if<PrimArrayType>(v)) {
-    return true;
-  }
-  return false;
-}
-
-inline bool is_time_sampled(const PrimVar *v) {
-  if (nonstd::get_if<TimeSampledValue>(v)) {
-    return true;
-  }
-  return false;
-}
-
-template <typename T>
-using is_vector = std::is_same<T, std::vector< typename T::value_type,
-                                          typename T::allocator_type > >;
-
-
-// non-vector types
-template<typename T>
-inline const T *as_basic(const PrimVar *v) {
-  std::cout << "T is basic\n";
-  if (is_basic_type(v)) {
-    std::cout << "is_basic\n";
-    // First cast to PrimArrayType.
-    if (auto p = nonstd::get_if<PrimBasicType>(v)) {
-      std::cout << "p got\n";
-      return nonstd::get_if<T>(p);
-    }
-  }
-  return nullptr;
-}
-
-// vector types
-template<typename T>
-inline const std::vector<T> *as_vector(const PrimVar *v) {
-  std::cout << "T is vec\n";
-  if (is_array_type(v)) {
-    std::cout << "is_arary_type\n";
-    // First cast to PrimArrayType.
-    if (auto p = nonstd::get_if<PrimArrayType>(v)) {
-      std::cout << "p got\n";
-      return nonstd::get_if<std::vector<T>>(p);
-    }
-  }
-  return nullptr;
-}
-#endif
-
-#if 0
-// https://stackoverflow.com/questions/17032310/how-to-make-a-variadic-is-same
-template<typename T, typename... Rest>
-struct is_any : std::false_type {};
-
-template<typename T, typename First>
-struct is_any<T, First> : std::is_same<T, First> {};
-
-template<typename T, typename First, typename... Rest>
-struct is_any<T, First, Rest...>
-    : std::integral_constant<bool, std::is_same<T, First>::value || is_any<T, Rest...>::value>
-{};
-#endif
-
-#if 0
-template<typename T>
-inline const T *as_timesample(const PrimVar *v) {
-  if (is_time_sampled(v)) {
-    return nonstd::get_if<T>(v);
-  }
-  return nullptr;
-}
-
-
-inline std::vector<Vec3f> to_vec3(const std::vector<float> &v) {
-  std::vector<Vec3f> buf;
-  if ((v.size() % 3) != 0) {
-    // std::cout << "to_vec3: not dividable by 3\n";
-    return buf;
-  }
-
-  buf.resize(v.size() / 3);
-  memcpy(buf.data(), v.data(), v.size() * sizeof(float));
-
-  return buf;
-}
-
-//template<typename T>
-//inline std::string type_name(const std::vector<T> &) {
-//  return TypeTrait<T>::type_name + std::string("[]");
-//}
-
-//std::string type_name(const PrimBasicType &v);
-//std::string type_name(const TimeSampleType &v);
-
-} // namespace primvar
-#endif
-
-#if 0
-std::string prim_basic_type_name(const PrimBasicType &v);
-
-inline std::string get_type_name(const PrimVar &v) {
-  if (auto p = nonstd::get_if<None>(&v)) {
-    return "None";
-  }
-
-  if (auto p = nonstd::get_if<PrimBasicType>(&v)) {
-    return prim_basic_type_name(*p);
-  }
-  return "TODO";
-}
 #endif
 
 

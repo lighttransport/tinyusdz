@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Copyright 2021 - Present, Syoyo Fujita.
 #include <algorithm>
 #include <atomic>
 #include <cassert>
