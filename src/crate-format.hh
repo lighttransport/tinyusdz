@@ -273,6 +273,8 @@ class CrateDataType
   bool supports_array{false};
 };
 
+std::string GetCrateDataTypeRepr(CrateDataType dty); // for debug cout
+
 nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id);
 std::string GetCrateDataTypeName(int32_t type_id);
 std::string GetCrateDataTypeName(CrateDataTypeId type_id);
