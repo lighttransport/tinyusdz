@@ -451,41 +451,6 @@ struct Reference {
   value::dict custom_data;
 };
 
-// Same macro in value-type.hh
-#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
-  template <>                                                    \
-  struct value::TypeTrait<__dty> {                                      \
-    using value_type = __dty;                                    \
-    using value_underlying_type = __dty;                         \
-    static constexpr uint32_t ndim = 0; /* array dim */          \
-    static constexpr uint32_t ncomp =                            \
-        __nc; /* the number of components(e.g. float3 => 3) */   \
-    static constexpr uint32_t type_id = __tyid;                  \
-    static constexpr uint32_t underlying_type_id = __tyid;       \
-    static std::string type_name() { return __name; }            \
-    static std::string underlying_type_name() { return __name; } \
-  }
-
-DEFINE_TYPE_TRAIT(Reference, "ref", TYPE_ID_REFERENCE, 1);
-DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
-DEFINE_TYPE_TRAIT(Permission, "permission", TYPE_ID_PERMISSION, 1);
-DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
-
-DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN, 1);
-DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING, 1);
-DEFINE_TYPE_TRAIT(ListOp<Path>, "ListOpPath", TYPE_ID_LIST_OP_PATH, 1);
-
-// TODO(syoyo): Define as 1D array?
-DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
-DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector", TYPE_ID_TOKEN_VECTOR, 1);
-
-DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
-
-// TODO: ListOp<int>, ... 
-
-#undef DEFINE_TYPE_TRAIT
-
-
 
 //
 // Colum-major order(e.g. employed in OpenGL).
@@ -542,162 +507,6 @@ MTy Mult(MTy &m, MTy &n) {
 float half_to_float(value::half h);
 value::half float_to_half_full(float f);
 
-//using Matrix2f = Matrix<float, 2>;
-//using Matrix2d = Matrix<double, 2>;
-//using Matrix3f = Matrix<float, 3>;
-//using Matrix3d = Matrix<double, 3>;
-//using Matrix4f = Matrix<float, 4>;
-//using Matrix4d = Matrix<double, 4>;
-
-//using Vec4i = std::array<int32_t, 4>;
-//using Vec3i = std::array<int32_t, 3>;
-//using Vec2i = std::array<int32_t, 2>;
-
-// Use uint16_t for storage of half type.
-// Need to decode/encode value through half converter functions
-//using Vec4h = std::array<uint16_t, 4>;
-//using Vec3h = std::array<uint16_t, 3>;
-//using Vec2h = std::array<uint16_t, 2>;
-//
-//using Vec4f = std::array<float, 4>;
-//using Vec3f = std::array<float, 3>;
-//using Vec2f = std::array<float, 2>;
-//
-//using Vec4d = std::array<double, 4>;
-//using Vec3d = std::array<double, 3>;
-//using Vec2d = std::array<double, 2>;
-
-//template <typename T>
-//struct Quat {
-//  std::array<T, 4> v;
-//};
-//
-//using Quath = Quat<uint16_t>;
-//using Quatf = Quat<float>;
-//using Quatd = Quat<double>;
-// using Quaternion = Quat<double>;  // Storage layout is same with Quadd,
-// so we can delete this
-
-// TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
-
-/*
-#define VT_GFRANGE_VALUE_TYPES                 \
-((      GfRange3f,           Range3f        )) \
-((      GfRange3d,           Range3d        )) \
-((      GfRange2f,           Range2f        )) \
-((      GfRange2d,           Range2d        )) \
-((      GfRange1f,           Range1f        )) \
-((      GfRange1d,           Range1d        ))
-
-#define VT_RANGE_VALUE_TYPES                   \
-    VT_GFRANGE_VALUE_TYPES                     \
-((      GfInterval,          Interval       )) \
-((      GfRect2i,            Rect2i         ))
-
-#define VT_STRING_VALUE_TYPES            \
-((      std::string,           String )) \
-((      TfToken,               Token  ))
-
-#define VT_QUATERNION_VALUE_TYPES           \
-((      GfQuath,             Quath ))       \
-((      GfQuatf,             Quatf ))       \
-((      GfQuatd,             Quatd ))       \
-((      GfQuaternion,        Quaternion ))
-
-#define VT_NONARRAY_VALUE_TYPES                 \
-((      GfFrustum,           Frustum))          \
-((      GfMultiInterval,     MultiInterval))
-
-*/
-
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-#endif
-
-// TODO: move to `value-type.hh`
-enum ValueTypeId {
-  VALUE_TYPE_INVALID = 0,
-
-  VALUE_TYPE_BOOL = 1,
-  VALUE_TYPE_UCHAR = 2,
-  VALUE_TYPE_INT = 3,
-  VALUE_TYPE_UINT = 4,
-  VALUE_TYPE_INT64 = 5,
-  VALUE_TYPE_UINT64 = 6,
-
-  VALUE_TYPE_HALF = 7,
-  VALUE_TYPE_FLOAT = 8,
-  VALUE_TYPE_DOUBLE = 9,
-
-  VALUE_TYPE_STRING = 10,
-  VALUE_TYPE_TOKEN = 11,
-  VALUE_TYPE_ASSET_PATH = 12,
-
-  VALUE_TYPE_MATRIX2D = 13,
-  VALUE_TYPE_MATRIX3D = 14,
-  VALUE_TYPE_MATRIX4D = 15,
-
-  VALUE_TYPE_QUATD = 16,
-  VALUE_TYPE_QUATF = 17,
-  VALUE_TYPE_QUATH = 18,
-
-  VALUE_TYPE_VEC2D = 19,
-  VALUE_TYPE_VEC2F = 20,
-  VALUE_TYPE_VEC2H = 21,
-  VALUE_TYPE_VEC2I = 22,
-
-  VALUE_TYPE_VEC3D = 23,
-  VALUE_TYPE_VEC3F = 24,
-  VALUE_TYPE_VEC3H = 25,
-  VALUE_TYPE_VEC3I = 26,
-
-  VALUE_TYPE_VEC4D = 27,
-  VALUE_TYPE_VEC4F = 28,
-  VALUE_TYPE_VEC4H = 29,
-  VALUE_TYPE_VEC4I = 30,
-
-  VALUE_TYPE_DICTIONARY = 31,
-  VALUE_TYPE_TOKEN_LIST_OP = 32,
-  VALUE_TYPE_STRING_LIST_OP = 33,
-  VALUE_TYPE_PATH_LIST_OP = 34,
-  VALUE_TYPE_REFERENCE_LIST_OP = 35,
-  VALUE_TYPE_INT_LIST_OP = 36,
-  VALUE_TYPE_INT64_LIST_OP = 37,
-  VALUE_TYPE_UINT_LIST_OP = 38,
-  VALUE_TYPE_UINT64_LIST_OP = 39,
-
-  VALUE_TYPE_PATH_VECTOR = 40,
-  VALUE_TYPE_TOKEN_VECTOR = 41,
-
-  VALUE_TYPE_SPECIFIER = 42,
-  VALUE_TYPE_PERMISSION = 43,
-  VALUE_TYPE_VARIABILITY = 44,
-
-  VALUE_TYPE_VARIANT_SELECTION_MAP = 45,
-  VALUE_TYPE_TIME_SAMPLES = 46,
-  VALUE_TYPE_PAYLOAD = 47,
-  VALUE_TYPE_DOUBLE_VECTOR = 48,
-  VALUE_TYPE_LAYER_OFFSET_VECTOR = 49,
-  VALUE_TYPE_STRING_VECTOR = 50,
-  VALUE_TYPE_VALUE_BLOCK = 51,
-  VALUE_TYPE_VALUE = 52,
-  VALUE_TYPE_UNREGISTERED_VALUE = 53,
-  VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP = 54,
-  VALUE_TYPE_PAYLOAD_LIST_OP = 55,
-  VALUE_TYPE_TIME_CODE = 56
-};
-
-struct ValueType {
-  ValueType()
-      : name("Invalid"), id(VALUE_TYPE_INVALID), supports_array(false) {}
-  ValueType(const std::string &n, uint32_t i, bool a)
-      : name(n), id(ValueTypeId(i)), supports_array(a) {}
-
-  std::string name;
-  ValueTypeId id{VALUE_TYPE_INVALID};
-  bool supports_array{false};
-};
 
 struct Extent {
   value::float3 lower{{std::numeric_limits<float>::infinity(),
@@ -1956,6 +1765,170 @@ struct Scope {
 
 Interpolation InterpolationFromString(const std::string &v);
 Orientation OrientationFromString(const std::string &v);
+
+namespace value {
+
+// Same macro in value-type.hh
+#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
+  template <>                                                    \
+  struct TypeTrait<__dty> {                                      \
+    using value_type = __dty;                                    \
+    using value_underlying_type = __dty;                         \
+    static constexpr uint32_t ndim = 0; /* array dim */          \
+    static constexpr uint32_t ncomp =                            \
+        __nc; /* the number of components(e.g. float3 => 3) */   \
+    static constexpr uint32_t type_id = __tyid;                  \
+    static constexpr uint32_t underlying_type_id = __tyid;       \
+    static std::string type_name() { return __name; }            \
+    static std::string underlying_type_name() { return __name; } \
+  }
+
+DEFINE_TYPE_TRAIT(Reference, "ref", TYPE_ID_REFERENCE, 1);
+DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
+DEFINE_TYPE_TRAIT(Permission, "permission", TYPE_ID_PERMISSION, 1);
+DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
+
+DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN, 1);
+DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING, 1);
+DEFINE_TYPE_TRAIT(ListOp<Path>, "ListOpPath", TYPE_ID_LIST_OP_PATH, 1);
+
+// TODO(syoyo): Define as 1D array?
+DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
+DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector", TYPE_ID_TOKEN_VECTOR, 1);
+
+DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+// TODO: ListOp<int>, ... 
+
+#undef DEFINE_TYPE_TRAIT
+
+} // namespace value
+
+
+
+// TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
+
+/*
+#define VT_GFRANGE_VALUE_TYPES                 \
+((      GfRange3f,           Range3f        )) \
+((      GfRange3d,           Range3d        )) \
+((      GfRange2f,           Range2f        )) \
+((      GfRange2d,           Range2d        )) \
+((      GfRange1f,           Range1f        )) \
+((      GfRange1d,           Range1d        ))
+
+#define VT_RANGE_VALUE_TYPES                   \
+    VT_GFRANGE_VALUE_TYPES                     \
+((      GfInterval,          Interval       )) \
+((      GfRect2i,            Rect2i         ))
+
+#define VT_STRING_VALUE_TYPES            \
+((      std::string,           String )) \
+((      TfToken,               Token  ))
+
+#define VT_QUATERNION_VALUE_TYPES           \
+((      GfQuath,             Quath ))       \
+((      GfQuatf,             Quatf ))       \
+((      GfQuatd,             Quatd ))       \
+((      GfQuaternion,        Quaternion ))
+
+#define VT_NONARRAY_VALUE_TYPES                 \
+((      GfFrustum,           Frustum))          \
+((      GfMultiInterval,     MultiInterval))
+
+*/
+
+#if 0
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpadded"
+#endif
+
+// TODO: move to `value-type.hh`
+enum ValueTypeId {
+  VALUE_TYPE_INVALID = 0,
+
+  VALUE_TYPE_BOOL = 1,
+  VALUE_TYPE_UCHAR = 2,
+  VALUE_TYPE_INT = 3,
+  VALUE_TYPE_UINT = 4,
+  VALUE_TYPE_INT64 = 5,
+  VALUE_TYPE_UINT64 = 6,
+
+  VALUE_TYPE_HALF = 7,
+  VALUE_TYPE_FLOAT = 8,
+  VALUE_TYPE_DOUBLE = 9,
+
+  VALUE_TYPE_STRING = 10,
+  VALUE_TYPE_TOKEN = 11,
+  VALUE_TYPE_ASSET_PATH = 12,
+
+  VALUE_TYPE_MATRIX2D = 13,
+  VALUE_TYPE_MATRIX3D = 14,
+  VALUE_TYPE_MATRIX4D = 15,
+
+  VALUE_TYPE_QUATD = 16,
+  VALUE_TYPE_QUATF = 17,
+  VALUE_TYPE_QUATH = 18,
+
+  VALUE_TYPE_VEC2D = 19,
+  VALUE_TYPE_VEC2F = 20,
+  VALUE_TYPE_VEC2H = 21,
+  VALUE_TYPE_VEC2I = 22,
+
+  VALUE_TYPE_VEC3D = 23,
+  VALUE_TYPE_VEC3F = 24,
+  VALUE_TYPE_VEC3H = 25,
+  VALUE_TYPE_VEC3I = 26,
+
+  VALUE_TYPE_VEC4D = 27,
+  VALUE_TYPE_VEC4F = 28,
+  VALUE_TYPE_VEC4H = 29,
+  VALUE_TYPE_VEC4I = 30,
+
+  VALUE_TYPE_DICTIONARY = 31,
+  VALUE_TYPE_TOKEN_LIST_OP = 32,
+  VALUE_TYPE_STRING_LIST_OP = 33,
+  VALUE_TYPE_PATH_LIST_OP = 34,
+  VALUE_TYPE_REFERENCE_LIST_OP = 35,
+  VALUE_TYPE_INT_LIST_OP = 36,
+  VALUE_TYPE_INT64_LIST_OP = 37,
+  VALUE_TYPE_UINT_LIST_OP = 38,
+  VALUE_TYPE_UINT64_LIST_OP = 39,
+
+  VALUE_TYPE_PATH_VECTOR = 40,
+  VALUE_TYPE_TOKEN_VECTOR = 41,
+
+  VALUE_TYPE_SPECIFIER = 42,
+  VALUE_TYPE_PERMISSION = 43,
+  VALUE_TYPE_VARIABILITY = 44,
+
+  VALUE_TYPE_VARIANT_SELECTION_MAP = 45,
+  VALUE_TYPE_TIME_SAMPLES = 46,
+  VALUE_TYPE_PAYLOAD = 47,
+  VALUE_TYPE_DOUBLE_VECTOR = 48,
+  VALUE_TYPE_LAYER_OFFSET_VECTOR = 49,
+  VALUE_TYPE_STRING_VECTOR = 50,
+  VALUE_TYPE_VALUE_BLOCK = 51,
+  VALUE_TYPE_VALUE = 52,
+  VALUE_TYPE_UNREGISTERED_VALUE = 53,
+  VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP = 54,
+  VALUE_TYPE_PAYLOAD_LIST_OP = 55,
+  VALUE_TYPE_TIME_CODE = 56
+};
+
+struct ValueType {
+  ValueType()
+      : name("Invalid"), id(VALUE_TYPE_INVALID), supports_array(false) {}
+  ValueType(const std::string &n, uint32_t i, bool a)
+      : name(n), id(ValueTypeId(i)), supports_array(a) {}
+
+  std::string name;
+  ValueTypeId id{VALUE_TYPE_INVALID};
+  bool supports_array{false};
+};
+#endif
 
 
 }  // namespace tinyusdz
