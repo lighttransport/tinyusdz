@@ -21,6 +21,8 @@
 namespace tinyusdz {
 namespace crate {
 
+#if 0 
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
@@ -137,6 +139,8 @@ nonstd::expected<ValueType, std::string> GetValueType(int32_t type_id) {
 }
 #ifdef __clang__
 #pragma clang diagnostic pop
+#endif
+
 #endif
 
 

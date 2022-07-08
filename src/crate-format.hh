@@ -266,7 +266,7 @@ class CrateValue {
 
 
 
-nonstd::expected<ValueType, std::string> GetValueType(int32_t type_id);
+nonstd::expected<uint32_t, std::string> GetValueType(int32_t type_id);
 std::string GetValueTypeString(int32_t type_id);
 
 struct StdHashWrapper {
@@ -279,10 +279,12 @@ struct StdHashWrapper {
 
 } // namespace crate
 
+namespace value {
+
 // Same macro in value-type.hh
 #define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
   template <>                                                    \
-  struct value::TypeTrait<__dty> {                                      \
+  struct TypeTrait<__dty> {                                      \
     using value_type = __dty;                                    \
     using value_underlying_type = __dty;                         \
     static constexpr uint32_t ndim = 0; /* array dim */          \
@@ -296,6 +298,8 @@ struct StdHashWrapper {
 
 // synonym to `value::dict` 
 DEFINE_TYPE_TRAIT(crate::CrateValue::Dictionary, "dict", TYPE_ID_DICT, 1);
+
+} // namespace value
   
 } // namespace tinyusdz
 
