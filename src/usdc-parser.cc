@@ -10,14 +10,14 @@
 #endif
 
 #include "crate-format.hh"
+#include "crate-pprint.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
+#include "path-util.hh"
 #include "pprinter.hh"
 #include "stream-reader.hh"
 #include "usdc-parser.hh"
-#include "path-util.hh"
 #include "value-pprint.hh"
-#include "crate-pprint.hh"
 
 //
 #ifdef __clang__
@@ -289,7 +289,8 @@ class Parser::Impl {
 
     const crate::Field &f = _fields[index.value];
 
-    std::string s = GetToken(f.token_index).str() + ":" + f.value_rep.GetStringRepr();
+    std::string s =
+        GetToken(f.token_index).str() + ":" + f.value_rep.GetStringRepr();
 
     return s;
   }
@@ -375,26 +376,30 @@ class Parser::Impl {
     return false;
   }
 
-  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(const FieldValuePairVector &fvs,
-                         const std::string &name, const std::string &tyname) {
+  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
+      const FieldValuePairVector &fvs, const std::string &name,
+      const std::string &tyname) {
     for (const auto &fv : fvs) {
       if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
         return fv;
       }
     }
 
-    return nonstd::make_unexpected("FieldValuePair not found with name: `" + name + "` and specified type: `" + tyname + "`");
+    return nonstd::make_unexpected("FieldValuePair not found with name: `" +
+                                   name + "` and specified type: `" + tyname +
+                                   "`");
   }
 
-  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(const FieldValuePairVector &fvs,
-                         const std::string &name) {
+  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
+      const FieldValuePairVector &fvs, const std::string &name) {
     for (const auto &fv : fvs) {
       if (fv.first == name) {
         return fv;
       }
     }
 
-    return nonstd::make_unexpected("FieldValuePair not found with name: `" + name + "`");
+    return nonstd::make_unexpected("FieldValuePair not found with name: `" +
+                                   name + "`");
   }
 
   // `_live_fieldsets` contains unpacked value keyed by fieldset index.
@@ -539,7 +544,8 @@ class Parser::Impl {
 
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
 
-  bool UnpackInlinedValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
+  bool UnpackInlinedValueRep(const crate::ValueRep &rep,
+                             crate::CrateValue *value);
 
   //
   // Construct node hierarchy.
@@ -576,8 +582,7 @@ class Parser::Impl {
 
   // PathListOp
   bool ReadPathListOp(ListOp<Path> *d);
-  bool ReadTokenListOp(
-      ListOp<value::token> *d);
+  bool ReadTokenListOp(ListOp<value::token> *d);
 };
 
 //
@@ -690,7 +695,8 @@ bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   }
 }
 
-bool Parser::Impl::ReadHalfArray(bool is_compressed, std::vector<value::half> *d) {
+bool Parser::Impl::ReadHalfArray(bool is_compressed,
+                                 std::vector<value::half> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -1463,141 +1469,213 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
     return false;
   }
 
-#define COMPRESS_CHECK(__dty) \
-  if (rep.IsCompressed()) { \
-    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + " must not be compressed."); \
-    return false; \
+#define COMPRESS_CHECK(__dty)                                \
+  if (rep.IsCompressed()) {                                  \
+    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + \
+               " must not be compressed.");                  \
+    return false;                                            \
   }
 
-#define ARRAY_CHECK(__dty) \
-  if (rep.IsArray()) { \
-    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + " must not be array data."); \
-    return false; \
+#define ARRAY_CHECK(__dty)                                   \
+  if (rep.IsArray()) {                                       \
+    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + \
+               " must not be array data.");                  \
+    return false;                                            \
   }
 
   const auto dty = tyRet.value();
   DCOUT(crate::GetCrateDataTypeRepr(dty));
 
-
   {
     uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
     DCOUT("d = " << d);
 
-    if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL) {
-      COMPRESS_CHECK(dty)
-      ARRAY_CHECK(dty)
+    // TODO(syoyo): Use template SFINE?
+    switch (dty.dtype_id) {
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
+        PUSH_ERROR("`Invalid` DataType.");
+        return false;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
 
-      value->Set(d ? true : false);
+        value->Set(d ? true : false);
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
 
-    } else if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH) {
-      COMPRESS_CHECK(dty)
-      ARRAY_CHECK(dty)
+        // AssetPath = std::string(storage format is TokenIndex).
+        std::string str = GetToken(crate::Index(d)).str();
 
-      // AssetPath = std::string(storage format is TokenIndex).
-      std::string str = GetToken(crate::Index(d)).str();
+        value::asset_path assetp(str);
+        value->Set(assetp);
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
 
-      value::asset_path assetp(str);
-      value->Set(assetp);
+        value::token tok = GetToken(crate::Index(d));
 
-    } else {
-      // TODO(syoyo)
-      PUSH_ERROR("TODO: Inlined Value: " + crate::GetCrateDataTypeName(dty.dtype_id));
-      return false;
+        DCOUT("value.token = " << tok);
 
+        value->Set(tok);
+
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
+
+        std::string str = GetStringToken(crate::Index(d)).str();
+        DCOUT("value.string = " << str);
+
+        value->Set(str);
+
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
+
+        if (d >= static_cast<int>(Specifier::Invalid)) {
+          _err += "Invalid value for Specifier\n";
+          return false;
+        }
+        Specifier val = static_cast<Specifier>(d);
+
+        value->Set(val);
+
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
+
+        if (d >= static_cast<int>(Permission::Invalid)) {
+          _err += "Invalid value for Permission\n";
+          return false;
+        }
+        Permission val = static_cast<Permission>(d);
+
+        value->Set(val);
+
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
+
+        if (d >= static_cast<int>(Variability::Invalid)) {
+          _err += "Invalid value for Variability\n";
+          return false;
+        }
+        Variability val = static_cast<Variability>(d);
+
+        value->Set(val);
+
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
+
+        uint8_t val;
+        memcpy(&val, &d, 1);
+
+        DCOUT("value.uchar = " << val);
+
+        value->Set(val);
+
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
+
+        int ival;
+        memcpy(&ival, &d, sizeof(int));
+
+        DCOUT("value.int = " << ival);
+
+        value->Set(ival);
+
+        return true;
+      }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
+        COMPRESS_CHECK(dty)
+        ARRAY_CHECK(dty)
+
+        uint32_t val;
+        memcpy(&val, &d, sizeof(uint32_t));
+
+        DCOUT("value.uint = " << val);
+
+        value->Set(val);
+
+        return true;
+                                                         }
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
+        // TODO(syoyo)
+        PUSH_ERROR("TODO: Unimplemnted Crate DataType: " +
+                   crate::GetCrateDataTypeName(dty.dtype_id));
+        return false;
+      }
     }
 
 #undef COMPRESS_CHECK
 #undef ARRAY_CHECK
 
 #if 0
-    if (ty.id == VALUE_TYPE_BOOL) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
-      value->Set(d ? true : false);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_ASSET_PATH) {
-      // AssetPath = std::string(storage format is TokenIndex).
-
-      std::string str = GetToken(crate::Index(d)).str();
-
-      value::asset asset(str);
-      value->Set(asset);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_SPECIFIER) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      DCOUT("Specifier: " << to_string(static_cast<Specifier>(d)));
-
-      if (d >= static_cast<int>(Specifier::Invalid)) {
-        _err += "Invalid value for Specifier\n";
-        return false;
-      }
-      Specifier specifier = static_cast<Specifier>(d);
-
-      value->Set(specifier);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_PERMISSION) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      DCOUT("Permission: " << to_string(static_cast<Permission>(d)));
-
-      if (d >= static_cast<int>(Permission::Invalid)) {
-        _err += "Invalid value for Permission\n";
-        return false;
-      }
-
-      Permission perm = static_cast<Permission>(d);
-      value->Set(perm);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VARIABILITY) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      DCOUT("Variability: " << to_string(static_cast<Variability>(d)));
-
-      if (d >= static_cast<int>(Variability::Invalid)) {
-        _err += "Invalid value for Variability\n";
-        return false;
-      }
-
-      Variability variability = static_cast<Variability>(d);
-      value->Set(variability);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_TOKEN) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      value::token tok = GetToken(crate::Index(d));
-
-      DCOUT("value.token = " << tok);
-
-      value->Set(tok);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_STRING) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      std::string str = GetStringToken(crate::Index(d)).str();
-      DCOUT("value.string = " << str);
-
-      value->Set(str);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_INT) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      int ival;
-      memcpy(&ival, &d, sizeof(int));
-
-      DCOUT("value.int = " << ival);
-
-      value->Set(ival);
-
-      return true;
 
     } else if (ty.id == VALUE_TYPE_FLOAT) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
@@ -1839,16 +1917,18 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
   const auto dty = tyRet.value();
 
-#define COMPRESS_UNSUPPORTED_CHECK(__dty) \
-  if (rep.IsCompressed()) { \
-    PUSH_ERROR("Compressed [" + crate::GetCrateDataTypeName(__dty.dtype_id) + "' data is not yet supported."); \
-    return false; \
+#define COMPRESS_UNSUPPORTED_CHECK(__dty)                                     \
+  if (rep.IsCompressed()) {                                                   \
+    PUSH_ERROR("Compressed [" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+               "' data is not yet supported.");                               \
+    return false;                                                             \
   }
 
-#define NON_ARRAY_UNSUPPORTED_CHECK(__dty) \
-  if (rep.IsArray()) { \
-    PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty.dtype_id) + "' data is not yet supported."); \
-    return false; \
+#define NON_ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
+  if (rep.IsArray()) {                                                       \
+    PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+               "' data is not yet supported.");                              \
+    return false;                                                            \
   }
 
   {
@@ -1860,7 +1940,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
     }
 
     if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
@@ -2828,7 +2907,6 @@ bool Parser::Impl::ReadTokens() {
       str = std::string(p, len);
     }
 
-
     p += len + 1;  // +1 = '\0'
     n_remain = size_t(pe - p);
     assert(p <= pe);
@@ -3189,9 +3267,11 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
       variability = fv.second.value<Variability>();
     } else if ((fv.first == "interpolation") &&
                (fv.second.GetTypeName() == "Token")) {
-      interpolation = InterpolationFromString(fv.second.value<value::token>().str());
+      interpolation =
+          InterpolationFromString(fv.second.value<value::token>().str());
     } else {
-      DCOUT("TODO: name: " << fv.first << ", type: " << fv.second.GetTypeName());
+      DCOUT("TODO: name: " << fv.first
+                           << ", type: " << fv.second.GetTypeName());
     }
   }
 
@@ -3215,38 +3295,40 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
 
       DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
 
-#define PROC_SCALAR(__tyname, __ty) \
-      } else if (fv.second.GetTypeName() == __tyname) { \
-        auto ret = fv.second.get_value<__ty>(); \
-        if (!ret) { \
-          _err += "Failed to decode " __tyname " value."; \
-          return false; \
-        } \
-        attr->var.set_scalar(ret.value()); \
-        success = true;
+#define PROC_SCALAR(__tyname, __ty)                   \
+  }                                                   \
+  else if (fv.second.GetTypeName() == __tyname) {     \
+    auto ret = fv.second.get_value<__ty>();           \
+    if (!ret) {                                       \
+      _err += "Failed to decode " __tyname " value."; \
+      return false;                                   \
+    }                                                 \
+    attr->var.set_scalar(ret.value());                \
+    success = true;
 
-#define PROC_ARRAY(__tyname, __ty) \
-      } else if (fv.second.GetTypeName() == __tyname) { \
-        auto ret = fv.second.get_value<std::vector<__ty>>(); \
-        if (!ret) { \
-          _err += "Failed to decode " __tyname "[] value."; \
-          return false; \
-        } \
-        attr->var.set_scalar(ret.value()); \
-        success = true;
+#define PROC_ARRAY(__tyname, __ty)                       \
+  }                                                      \
+  else if (fv.second.GetTypeName() == __tyname) {        \
+    auto ret = fv.second.get_value<std::vector<__ty>>(); \
+    if (!ret) {                                          \
+      _err += "Failed to decode " __tyname "[] value.";  \
+      return false;                                      \
+    }                                                    \
+    attr->var.set_scalar(ret.value());                   \
+    success = true;
 
-      if (0) { // dummy
-      PROC_SCALAR("Float", float)
-      PROC_SCALAR("Bool", bool)
-      PROC_SCALAR("Int", int)
-      PROC_SCALAR("Vec3f", value::float3)
-      PROC_SCALAR("Token", value::token)
-      PROC_ARRAY("FloatArray", float)
-      PROC_ARRAY("Vec2fArray", value::float2)
-      PROC_ARRAY("Vec3fArray", value::float3)
-      PROC_ARRAY("Vec4fArray", value::float4)
-      PROC_ARRAY("IntArray", int)
-      PROC_ARRAY("TokenArray", value::token)
+      if (0) {  // dummy
+        PROC_SCALAR("Float", float)
+        PROC_SCALAR("Bool", bool)
+        PROC_SCALAR("Int", int)
+        PROC_SCALAR("Vec3f", value::float3)
+        PROC_SCALAR("Token", value::token)
+        PROC_ARRAY("FloatArray", float)
+        PROC_ARRAY("Vec2fArray", value::float2)
+        PROC_ARRAY("Vec3fArray", value::float3)
+        PROC_ARRAY("Vec4fArray", value::float4)
+        PROC_ARRAY("IntArray", int)
+        PROC_ARRAY("TokenArray", value::token)
       } else {
         PUSH_ERROR("TODO: " + fv.second.GetTypeName());
       }
@@ -3277,7 +3359,6 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
         attr->interpolation = interpolation;
         success = true;
 #endif
-
     }
   }
 
@@ -3375,7 +3456,6 @@ bool Parser::Impl::ReconstructGeomBasisCurves(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-
       if (fv.second.GetTypeName() != "TokenArray") {
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
@@ -3569,10 +3649,10 @@ bool Parser::Impl::ReconstructGeomSubset(
         return false;
       }
 
-      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      //  // if (fv.second.GetStringArray()[i] == "points") {
-      //  // }
-      //}
+      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      //   // if (fv.second.GetStringArray()[i] == "points") {
+      //   // }
+      // }
     }
   }
 
@@ -3889,8 +3969,8 @@ bool Parser::Impl::ReconstructMaterial(
         return false;
       }
 
-      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      //}
+      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      // }
     }
   }
 
@@ -3980,10 +4060,10 @@ bool Parser::Impl::ReconstructShader(
         PUSH_ERROR("`properties` attribute must be TokenArray type.");
         return false;
       }
-      //assert(fv.second.IsArray());
+      // assert(fv.second.IsArray());
 
-      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      //}
+      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      // }
     }
   }
 
@@ -4077,10 +4157,10 @@ bool Parser::Impl::ReconstructPreviewSurface(
         _err += "`properties` attribute must be TokenArray type\n";
         return false;
       }
-      //assert(fv.second.IsArray());
+      // assert(fv.second.IsArray());
 
-      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      //}
+      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      // }
     }
   }
 
@@ -4335,10 +4415,10 @@ bool Parser::Impl::ReconstructSkeleton(
         PUSH_ERROR("`properties` attribute must be TokenArray type");
         return false;
       }
-      //assert(fv.second.IsArray());
+      // assert(fv.second.IsArray());
 
-      //for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      //}
+      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
+      // }
     }
   }
 
@@ -4488,7 +4568,6 @@ bool Parser::Impl::ReconstructSceneRecursively(
         scene->upAxis = std::move(v);
 
       } else if (fv.first == "metersPerUnit") {
-
         if (auto vf = fv.second.get_value<float>()) {
           scene->metersPerUnit = double(vf.value());
         } else if (auto vd = fv.second.get_value<double>()) {
@@ -4500,7 +4579,6 @@ bool Parser::Impl::ReconstructSceneRecursively(
           return false;
         }
       } else if (fv.first == "timeCodesPerSecond") {
-
         if (auto vf = fv.second.get_value<float>()) {
           scene->timeCodesPerSecond = double(vf.value());
         } else if (auto vd = fv.second.get_value<double>()) {
@@ -4513,7 +4591,6 @@ bool Parser::Impl::ReconstructSceneRecursively(
           return false;
         }
       } else if ((fv.first == "defaultPrim")) {
-
         auto v = fv.second.get_value<value::token>();
         if (!v) {
           PUSH_ERROR("`defaultPrim` must be `token` type.");
@@ -4522,7 +4599,6 @@ bool Parser::Impl::ReconstructSceneRecursively(
 
         scene->defaultPrim = v.value().str();
       } else if (fv.first == "customLayerData") {
-
         if (auto v = fv.second.get_value<crate::CrateValue::Dictionary>()) {
           auto dict = v.value();
           (void)dict;
@@ -4532,7 +4608,6 @@ bool Parser::Impl::ReconstructSceneRecursively(
           PUSH_ERROR("customLayerData must be `dict` type.");
         }
       } else if (fv.first == "primChildren") {
-
         auto v = fv.second.get_value<std::vector<value::token>>();
         if (!v) {
           PUSH_ERROR("Type must be TokenArray for `primChildren`, but got " +
@@ -4578,7 +4653,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
       }
     }
 
-#if 0 // TODO: Refactor)
+#if 0  // TODO: Refactor)
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
       DCOUT(IndentStr(level)
             << "    specifier = " << to_string(fv.second.GetSpecifier()));
