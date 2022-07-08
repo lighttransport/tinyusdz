@@ -545,54 +545,6 @@ struct Extent {
 };
 
 
-#if 0 // TODO
-//
-// TimeSample datatype
-//
-
-// monostate = `None`
-struct None {};
-
-// TODO: Use value::any_value?
-using TimeSampleType =
-    nonstd::variant<None, float, double, value::float3, value::quatf, value::matrix4d>;
-
-struct TimeSamples {
-  std::vector<double> times;
-  std::vector<TimeSampleType> values;
-};
-#endif
-
-
-
-#if 0
-// Types which can be TimeSampledData are restricted to frequently used one in
-// TinyUSDZ.
-typedef std::vector<std::pair<uint64_t, nonstd::optional<float>>>
-    TimeSampledDataFloat;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<double>>>
-    TimeSampledDataDouble;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<std::array<float, 3>>>>
-    TimeSampledDataFloat3;
-typedef std::vector<
-    std::pair<uint64_t, nonstd::optional<std::array<double, 3>>>>
-    TimeSampledDataDouble3;
-typedef std::vector<std::pair<uint64_t, nonstd::optional<Matrix4d>>>
-    TimeSampledDataMatrix4d;
-
-// Animatable token property. e.g. `visibility`
-typedef std::vector<std::pair<uint64_t, nonstd::optional<Token>>>
-    TimeSampledDataToken;
-
-using TimeSampledValue =
-    nonstd::variant<nonstd::monostate, TimeSampledDataFloat,
-                    TimeSampledDataDouble, TimeSampledDataFloat3,
-                    TimeSampledDataDouble3, TimeSampledDataMatrix4d, TimeSampledDataToken>;
-
-
-#endif
-
-
 struct ConnectionPath {
   bool is_input{false};  // true: Input connection. false: Output connection.
 
@@ -745,7 +697,7 @@ inline T lerp(const T a, const T b, const double t) {
 
 
 template<typename T>
-struct TimeSampled {
+struct TimeSamples {
   std::vector<double> times;
   std::vector<T> values;
   // TODO: Support `none`
@@ -805,7 +757,7 @@ template<typename T>
 struct Animatable
 {
   T value;
-  TimeSampled<T> timeSamples;
+  TimeSamples<T> timeSamples;
 
   bool IsTimeSampled() const {
     return timeSamples.Valid();
@@ -1791,6 +1743,11 @@ DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
 DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN, 1);
 DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING, 1);
 DEFINE_TYPE_TRAIT(ListOp<Path>, "ListOpPath", TYPE_ID_LIST_OP_PATH, 1);
+DEFINE_TYPE_TRAIT(ListOp<Reference>, "ListOpReference", TYPE_ID_LIST_OP_REFERENCE, 1);
+DEFINE_TYPE_TRAIT(ListOp<int32_t>, "ListOpInt", TYPE_ID_LIST_OP_INT, 1);
+DEFINE_TYPE_TRAIT(ListOp<uint32_t>, "ListOpUInt", TYPE_ID_LIST_OP_UINT, 1);
+DEFINE_TYPE_TRAIT(ListOp<int64_t>, "ListOpInt64", TYPE_ID_LIST_OP_INT64, 1);
+DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
 
 // TODO(syoyo): Define as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
