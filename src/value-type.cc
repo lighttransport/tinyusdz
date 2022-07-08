@@ -426,6 +426,12 @@ std::string GetTypeName(uint32_t tyid) {
     m[TYPE_ID_POINT3H] = TypeTrait<point3h>::type_name();
     m[TYPE_ID_POINT3F] = TypeTrait<point3f>::type_name();
     m[TYPE_ID_POINT3D] = TypeTrait<point3d>::type_name();
+    m[TYPE_ID_NORMAL3H] = TypeTrait<normal3h>::type_name();
+    m[TYPE_ID_NORMAL3F] = TypeTrait<normal3f>::type_name();
+    m[TYPE_ID_NORMAL3D] = TypeTrait<normal3d>::type_name();
+
+    m[TYPE_ID_DICT] = TypeTrait<dict>::type_name();
+
     // TODO: ...
 
     m[TYPE_ID_INT32 | TYPE_ID_1D_ARRAY_BIT] =

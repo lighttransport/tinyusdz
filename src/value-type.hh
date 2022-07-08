@@ -49,16 +49,16 @@ namespace value {
 using token = tinyusdz::Token;
 
 // SdfAssetPath
-class asset
+class asset_path
 {
   public:
-    asset() = default;
-    asset(const std::string &a) : asset_path(a) {}
-    asset(const std::string &a, const std::string &r) : asset_path(a), resolved_path(r) {}
+    asset_path() = default;
+    asset_path(const std::string &a) : asset_path_(a) {}
+    asset_path(const std::string &a, const std::string &r) : asset_path_(a), resolved_path_(r) {}
 
  private:
-  std::string asset_path;
-  std::string resolved_path;
+  std::string asset_path_;
+  std::string resolved_path_;
 };
 
 // TODO(syoyo): 3D and 4D?
@@ -146,11 +146,11 @@ enum TypeId {
   TYPE_ID_TEXCOORD3D,
 
   TYPE_ID_TIMECODE,
-  TYPE_ID_TIMESAMPLE,
+  //TYPE_ID_TIMESAMPLE,
 
   TYPE_ID_DICT,
 
-  TYPE_ID_ASSET,
+  //TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
   // Types in prim-types.hh
@@ -161,11 +161,23 @@ enum TypeId {
   TYPE_ID_LIST_OP_TOKEN,
   TYPE_ID_LIST_OP_STRING,
   TYPE_ID_LIST_OP_PATH,
+  TYPE_ID_LIST_OP_REFERENCE,
+  TYPE_ID_LIST_OP_INT,
+  TYPE_ID_LIST_OP_INT64,
+  TYPE_ID_LIST_OP_UINT,
+  TYPE_ID_LIST_OP_UINT64,
+  TYPE_ID_LIST_OP_PAYLOAD,
 
   TYPE_ID_PATH_VECTOR,
   TYPE_ID_TOKEN_VECTOR,
 
   TYPE_ID_TIMESAMPLES,
+  TYPE_ID_VARIANT_SELECION_MAP,
+
+  // Types in crate-format.hh
+  TYPE_ID_VALUE,
+  TYPE_ID_UNREGISTERED_VALUE,
+  TYPE_ID_LIST_OP_UNREGISTERED_VALUE,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 512,
@@ -586,7 +598,7 @@ DEFINE_TYPE_TRAIT(token, "token", TYPE_ID_TOKEN, 1);
 DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
 
-DEFINE_TYPE_TRAIT(asset, "asset", TYPE_ID_ASSET, 1);
+DEFINE_TYPE_TRAIT(asset_path, "asset_path", TYPE_ID_ASSET_PATH, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in another header(for example prim-types.hh for `Reference` type)

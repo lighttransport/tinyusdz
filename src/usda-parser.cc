@@ -360,7 +360,7 @@ class Variable {
   std::string name;
   bool custom{false};
 
-  //using Array = std::vector<Variable>; 
+  //using Array = std::vector<Variable>;
   using Object = std::map<std::string, Variable>;
 
   value::Value value;
@@ -450,7 +450,7 @@ class Variable {
   bool IsObject() const {
     return obj_value.size();
   }
-  
+
   // TODO
   bool IsTimeSamples() const { return false; }
 
@@ -2552,8 +2552,8 @@ class USDAParser::Impl {
           PUSH_ERROR("Failed to parse `asset` data.");
         }
 
-        value::asset asset(asset_ref.asset_path);
-        attr.var.set_scalar(asset);
+        value::asset_path assetp(asset_ref.asset_path);
+        attr.var.set_scalar(assetp);
         PUSH_ERROR("TODO: `asset`");
 
       } else {
