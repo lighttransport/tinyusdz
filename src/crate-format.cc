@@ -158,6 +158,10 @@ std::string CrateValue::GetTypeName() const {
   return value_.type_name();
 }
 
+uint32_t CrateValue::GetTypeId() const {
+  return value_.type_id();
+}
+
 
 } // namespace crate
 } // namesapce tinyusdz
