@@ -182,6 +182,101 @@ struct TableOfContents {
   std::vector<Section> sections;
 };
 
+// crate data type
+// id must be identitical to <pxrUSD>/pxr/usd/usd/crateDataType.h 
+enum class CrateDataTypeId {
+  CRATE_DATA_TYPE_INVALID = 0,
+
+  CRATE_DATA_TYPE_BOOL = 1,
+  CRATE_DATA_TYPE_UCHAR = 2,
+  CRATE_DATA_TYPE_INT = 3,
+  CRATE_DATA_TYPE_UINT = 4,
+  CRATE_DATA_TYPE_INT64 = 5,
+  CRATE_DATA_TYPE_UINT64 = 6,
+
+  CRATE_DATA_TYPE_HALF = 7,
+  CRATE_DATA_TYPE_FLOAT = 8,
+  CRATE_DATA_TYPE_DOUBLE = 9,
+
+  CRATE_DATA_TYPE_STRING = 10,
+  CRATE_DATA_TYPE_TOKEN = 11,
+  CRATE_DATA_TYPE_ASSET_PATH = 12,
+
+  CRATE_DATA_TYPE_MATRIX2D = 13,
+  CRATE_DATA_TYPE_MATRIX3D = 14,
+  CRATE_DATA_TYPE_MATRIX4D = 15,
+
+  CRATE_DATA_TYPE_QUATD = 16,
+  CRATE_DATA_TYPE_QUATF = 17,
+  CRATE_DATA_TYPE_QUATH = 18,
+
+  CRATE_DATA_TYPE_VEC2D = 19,
+  CRATE_DATA_TYPE_VEC2F = 20,
+  CRATE_DATA_TYPE_VEC2H = 21,
+  CRATE_DATA_TYPE_VEC2I = 22,
+
+  CRATE_DATA_TYPE_VEC3D = 23,
+  CRATE_DATA_TYPE_VEC3F = 24,
+  CRATE_DATA_TYPE_VEC3H = 25,
+  CRATE_DATA_TYPE_VEC3I = 26,
+
+  CRATE_DATA_TYPE_VEC4D = 27,
+  CRATE_DATA_TYPE_VEC4F = 28,
+  CRATE_DATA_TYPE_VEC4H = 29,
+  CRATE_DATA_TYPE_VEC4I = 30,
+
+  CRATE_DATA_TYPE_DICTIONARY = 31,
+  CRATE_DATA_TYPE_TOKEN_LIST_OP = 32,
+  CRATE_DATA_TYPE_STRING_LIST_OP = 33,
+  CRATE_DATA_TYPE_PATH_LIST_OP = 34,
+  CRATE_DATA_TYPE_REFERENCE_LIST_OP = 35,
+  CRATE_DATA_TYPE_INT_LIST_OP = 36,
+  CRATE_DATA_TYPE_INT64_LIST_OP = 37,
+  CRATE_DATA_TYPE_UINT_LIST_OP = 38,
+  CRATE_DATA_TYPE_UINT64_LIST_OP = 39,
+
+  CRATE_DATA_TYPE_PATH_VECTOR = 40,
+  CRATE_DATA_TYPE_TOKEN_VECTOR = 41,
+
+  CRATE_DATA_TYPE_SPECIFIER = 42,
+  CRATE_DATA_TYPE_PERMISSION = 43,
+  CRATE_DATA_TYPE_VARIABILITY = 44,
+
+  CRATE_DATA_TYPE_VARIANT_SELECTION_MAP = 45,
+  CRATE_DATA_TYPE_TIME_SAMPLES = 46,
+  CRATE_DATA_TYPE_PAYLOAD = 47,
+  CRATE_DATA_TYPE_DOUBLE_VECTOR = 48,
+  CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR = 49,
+  CRATE_DATA_TYPE_STRING_VECTOR = 50,
+  CRATE_DATA_TYPE_VALUE_BLOCK = 51,
+  CRATE_DATA_TYPE_VALUE = 52,
+  CRATE_DATA_TYPE_UNREGISTERED_VALUE = 53,
+  CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP = 54,
+  CRATE_DATA_TYPE_PAYLOAD_LIST_OP = 55,
+  CRATE_DATA_TYPE_TIME_CODE = 56
+};
+
+class CrateDataType
+{
+ public:
+  CrateDataType() = default;
+
+  CrateDataType(const std::string &s, CrateDataTypeId did, bool a)
+    : name(s), dtype_id(did), supports_array(a) {
+  }
+
+  CrateDataType(const CrateDataType &rhs) = default;
+  CrateDataType &operator=(const CrateDataType&rhs) = default;
+
+  std::string name; // name of CrateDatatType
+  CrateDataTypeId dtype_id{CrateDataTypeId::CRATE_DATA_TYPE_INVALID};
+  bool supports_array{false};
+};
+
+nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id);
+std::string GetCrateDataTypeName(int32_t type_id);
+std::string GetCrateDataTypeName(CrateDataTypeId type_id);
+
 class CrateValue {
  public:
   typedef std::map<std::string, CrateValue> Dictionary;
@@ -219,7 +314,7 @@ class CrateValue {
   __FUNC(value::matrix2d) \
   __FUNC(value::matrix3d) \
   __FUNC(value::matrix4d) \
-  __FUNC(value::asset) \
+  __FUNC(value::asset_path) \
   __FUNC(value::token) \
   __FUNC(std::string)
 
@@ -266,9 +361,6 @@ class CrateValue {
 
 
 
-nonstd::expected<uint32_t, std::string> GetValueType(int32_t type_id);
-std::string GetValueTypeString(int32_t type_id);
-
 struct StdHashWrapper {
     template <class T>
     inline size_t operator()(const T &val) const {
@@ -296,11 +388,11 @@ namespace value {
     static std::string underlying_type_name() { return __name; } \
   }
 
-// synonym to `value::dict` 
+// synonym to `value::dict`
 DEFINE_TYPE_TRAIT(crate::CrateValue::Dictionary, "dict", TYPE_ID_DICT, 1);
 
 } // namespace value
-  
+
 } // namespace tinyusdz
 
 

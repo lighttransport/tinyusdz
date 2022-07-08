@@ -56,7 +56,7 @@ std::string prefix(const Animatable<T> &v) {
 }
 
 template<typename T>
-std::string print_timesampled(const TimeSampled<T> &v, const uint32_t indent) {
+std::string print_timesampled(const TimeSamples<T> &v, const uint32_t indent) {
   std::stringstream ss;
 
   ss << "{\n";

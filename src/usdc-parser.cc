@@ -1428,7 +1428,7 @@ bool Parser::Impl::ReadDictionary(crate::CrateValue::Dictionary *d) {
       return false;
     }
 
-    DCOUT("vrep =" << crate::GetValueTypeString(rep.GetType()));
+    DCOUT("vrep =" << crate::GetCrateDataTypeName(rep.GetType()));
 
     size_t saved_position = _sr->tell();
 
@@ -1457,19 +1457,18 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
     return false;
   }
 
-  const auto tyRet = crate::GetValueType(rep.GetType());
+  const auto tyRet = crate::GetCrateDataType(rep.GetType());
   if (!tyRet) {
     PUSH_ERROR(tyRet.error());
     return false;
   }
 
-  const ValueType ty = tyRet.value();
-
-  DCOUT(crate::GetValueTypeString(rep.GetType()));
+  DCOUT(crate::GetCrateDataTypeName(rep.GetType()));
 
   {
     uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
+#if 0
     DCOUT("d = " << d << ", ty.id = " << ty.id);
     if (ty.id == VALUE_TYPE_BOOL) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
@@ -1760,6 +1759,16 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       return false;
     }
+#else
+
+    {
+      (void)d;
+      (void)value;
+      // TODO(syoyo)
+      PUSH_ERROR("TODO: Inlined Value: ");
+      return false;
+    }
+#endif
   }
 }
 
@@ -1769,14 +1778,14 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
     return UnpackInlinedValueRep(rep, value);
   }
 
-  auto tyRet = crate::GetValueType(rep.GetType());
+  auto tyRet = crate::GetCrateDataType(rep.GetType());
   if (!tyRet) {
     PUSH_ERROR(tyRet.error());
   }
 
-  DCOUT(crate::GetValueTypeString(rep.GetType()));
+  //DCOUT(crate::GetValueTypeString(rep.GetType()));
 
-  const ValueType ty = tyRet.value();
+  //const ValueType ty = tyRet.value();
 
   {
     // payload is the offset to data.
@@ -1788,6 +1797,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
     // printf("rep = 0x%016lx\n", rep.GetData());
 
+#if 0
     if (ty.id == VALUE_TYPE_TOKEN) {
       // Guess array of Token
       assert(!rep.IsCompressed());
@@ -2316,6 +2326,15 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       PUSH_ERROR("TODO: " + crate::GetValueTypeString(rep.GetType()));
       return false;
     }
+#else
+    {
+      (void)value;
+      // TODO(syoyo)
+      PUSH_ERROR("TODO: Implement");
+      return false;
+    }
+
+#endif
   }
 
   // Never should reach here.
@@ -4413,7 +4432,10 @@ bool Parser::Impl::ReconstructSceneRecursively(
 
         scene->defaultPrim = v.value().str();
       } else if (fv.first == "customLayerData") {
-        if (fv.second.GetTypeId() == VALUE_TYPE_DICTIONARY) {
+
+        if (auto v = fv.second.get_value<crate::CrateValue::Dictionary>()) {
+          auto dict = v.value();
+          (void)dict;
           PUSH_WARN("TODO: Store customLayerData.");
           // scene->customLayerData = fv.second.GetDictionary();
         } else {
