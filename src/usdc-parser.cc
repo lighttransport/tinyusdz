@@ -1805,6 +1805,27 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
   return true;
 }
 
+#if 0
+template<T>
+Parser::Impl::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out) {
+  uint64_t n;
+  if (!_sr->read8(&n)) {
+    PUSH_ERROR("Failed to read the number of array elements.");
+    return false;
+  }
+
+  std::vector<crate::Index> v(static_cast<size_t>(n));
+  if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                 size_t(n) * sizeof(crate::Index),
+                 reinterpret_cast<uint8_t *>(v.data()))) {
+    PUSH_ERROR("Failed to read array data.");
+    return false;
+  }
+
+  return true;
+}
+#endif
+
 bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
                                   crate::CrateValue *value) {
   if (rep.IsInlined()) {
@@ -1816,9 +1837,19 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
     PUSH_ERROR(tyRet.error());
   }
 
-  //DCOUT(crate::GetValueTypeString(rep.GetType()));
+  const auto dty = tyRet.value();
 
-  //const ValueType ty = tyRet.value();
+#define COMPRESS_UNSUPPORTED_CHECK(__dty) \
+  if (rep.IsCompressed()) { \
+    PUSH_ERROR("Compressed [" + crate::GetCrateDataTypeName(__dty.dtype_id) + "' data is not yet supported."); \
+    return false; \
+  }
+
+#define NON_ARRAY_UNSUPPORTED_CHECK(__dty) \
+  if (rep.IsArray()) { \
+    PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty.dtype_id) + "' data is not yet supported."); \
+    return false; \
+  }
 
   {
     // payload is the offset to data.
@@ -1828,7 +1859,39 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return false;
     }
 
-    // printf("rep = 0x%016lx\n", rep.GetData());
+    if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) {
+
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      NON_ARRAY_UNSUPPORTED_CHECK(dty)
+
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+
+      std::vector<crate::Index> v(static_cast<size_t>(n));
+      if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                     size_t(n) * sizeof(crate::Index),
+                     reinterpret_cast<uint8_t *>(v.data()))) {
+        PUSH_ERROR("Failed to read TokenIndex array.");
+        return false;
+      }
+
+      std::vector<value::token> tokens(static_cast<size_t>(n));
+
+      for (size_t i = 0; i < n; i++) {
+        DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
+                       << ")");
+        tokens[i] = GetToken(v[i]);
+      }
+
+      value->Set(tokens);
+    } else {
+      // TODO(syoyo)
+      PUSH_ERROR("TODO: Implement unpack:" + crate::GetCrateDataTypeRepr(dty));
+      return false;
+    }
 
 #if 0
     if (ty.id == VALUE_TYPE_TOKEN) {
@@ -2359,18 +2422,12 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       PUSH_ERROR("TODO: " + crate::GetValueTypeString(rep.GetType()));
       return false;
     }
-#else
-    {
-      (void)value;
-      // TODO(syoyo)
-      PUSH_ERROR("TODO: Implement");
-      return false;
-    }
 
 #endif
   }
 
   // Never should reach here.
+  return true;
 }
 
 bool Parser::Impl::BuildDecompressedPathsImpl(
