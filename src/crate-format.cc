@@ -175,6 +175,21 @@ nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id) {
 #pragma clang diagnostic pop
 #endif
 
+std::string GetCrateDataTypeRepr(CrateDataType dty) {
+  auto tyRet = GetCrateDataType(static_cast<int32_t>(dty.dtype_id));
+  if (!tyRet) {
+    return "[Invalid]";
+  }
+
+  const CrateDataType ty = tyRet.value();
+
+  std::stringstream ss;
+  ss << "CrateDataType: " << ty.name << "("
+     << static_cast<uint32_t>(ty.dtype_id)
+     << "), supports_array = " << ty.supports_array;
+  return ss.str();
+}
+
 std::string GetCrateDataTypeName(int32_t type_id) {
   auto tyRet = GetCrateDataType(type_id);
   if (!tyRet) {
@@ -182,12 +197,11 @@ std::string GetCrateDataTypeName(int32_t type_id) {
   }
 
   const CrateDataType dty = tyRet.value();
+  return dty.name;
+}
 
-  std::stringstream ss;
-  ss << "CrateDataType: " << dty.name << "("
-     << static_cast<uint32_t>(dty.dtype_id)
-     << "), supports_array = " << dty.supports_array;
-  return ss.str();
+std::string GetCrateDataTypeName(CrateDataTypeId did) {
+  return GetCrateDataTypeName(static_cast<int32_t>(did));
 }
 
 std::string CrateValue::GetTypeName() const { return value_.type_name(); }

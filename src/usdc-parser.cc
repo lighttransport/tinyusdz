@@ -1463,13 +1463,53 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
     return false;
   }
 
-  DCOUT(crate::GetCrateDataTypeName(rep.GetType()));
+#define COMPRESS_CHECK(__dty) \
+  if (rep.IsCompressed()) { \
+    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + " must not be compressed."); \
+    return false; \
+  }
+
+#define ARRAY_CHECK(__dty) \
+  if (rep.IsArray()) { \
+    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + " must not be array data."); \
+    return false; \
+  }
+
+  const auto dty = tyRet.value();
+  DCOUT(crate::GetCrateDataTypeRepr(dty));
+
 
   {
     uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    DCOUT("d = " << d);
+
+    if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL) {
+      COMPRESS_CHECK(dty)
+      ARRAY_CHECK(dty)
+
+      value->Set(d ? true : false);
+
+    } else if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH) {
+      COMPRESS_CHECK(dty)
+      ARRAY_CHECK(dty)
+
+      // AssetPath = std::string(storage format is TokenIndex).
+      std::string str = GetToken(crate::Index(d)).str();
+
+      value::asset_path assetp(str);
+      value->Set(assetp);
+
+    } else {
+      // TODO(syoyo)
+      PUSH_ERROR("TODO: Inlined Value: " + crate::GetCrateDataTypeName(dty.dtype_id));
+      return false;
+
+    }
+
+#undef COMPRESS_CHECK
+#undef ARRAY_CHECK
 
 #if 0
-    DCOUT("d = " << d << ", ty.id = " << ty.id);
     if (ty.id == VALUE_TYPE_BOOL) {
       assert((!rep.IsCompressed()) && (!rep.IsArray()));
 
@@ -1759,17 +1799,10 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       return false;
     }
-#else
-
-    {
-      (void)d;
-      (void)value;
-      // TODO(syoyo)
-      PUSH_ERROR("TODO: Inlined Value: ");
-      return false;
-    }
 #endif
   }
+
+  return true;
 }
 
 bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
