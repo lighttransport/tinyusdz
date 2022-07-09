@@ -279,12 +279,14 @@ list(
   ../../src/prim-types.cc
   ../../src/pprinter.cc
   ../../src/primvar.cc
-  ../../src/primvar-pprint.cc
   ../../src/crate-format.cc
+  ../../src/crate-pprint.cc
   ../../src/usdc-parser.cc
   ../../src/usda-parser.cc
   ../../src/usda-writer.cc
   ../../src/image-loader.cc
+  ../../src/value-type.cc
+  ../../src/value-pprint.cc
   ../../src/usdObj.cc
   #../../src/integerCoding.cpp
   #../../src/pxrLZ4/lz4.cpp
