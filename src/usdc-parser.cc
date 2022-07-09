@@ -4,6 +4,9 @@
 // Experimental USD to JSON converter
 #include <unordered_map>
 #include <unordered_set>
+
+#include "prim-types.hh"
+#include "tinyusdz.hh"
 #if defined(__wasi__)
 #else
 #include <thread>
@@ -566,6 +569,7 @@ class Parser::Impl {
   bool ReadValueRep(crate::ValueRep *rep);
 
   bool ReadPathArray(std::vector<Path> *d);
+  bool ReadStringArray(std::vector<std::string> *d);
 
   // Dictionary
   bool ReadDictionary(crate::CrateValue::Dictionary *d);
@@ -580,9 +584,9 @@ class Parser::Impl {
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
-  // PathListOp
   bool ReadPathListOp(ListOp<Path> *d);
   bool ReadTokenListOp(ListOp<value::token> *d);
+  //bool ReadReferenceListOp(ListOp<Referene> *d);
 };
 
 //
@@ -1151,6 +1155,44 @@ bool Parser::Impl::ReadTimeSamples(value::TimeSamples *d) {
   return true;
 }
 
+bool Parser::Impl::ReadStringArray(std::vector<std::string> *d) {
+  // array data is not compressed
+  auto ReadFn = [this](std::vector<std::string> &result) -> bool {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read # of elements in ListOp.\n";
+      return false;
+    }
+
+    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
+
+    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                   size_t(n) * sizeof(crate::Index),
+                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+      _err += "Failed to read STRING_VECTOR data.\n";
+      return false;
+    }
+
+    // reconstruct
+    result.resize(static_cast<size_t>(n));
+    for (size_t i = 0; i < n; i++) {
+      result[i] = GetStringToken(ivalue[i]).str();
+    }
+
+    return true;
+  };
+
+  std::vector<std::string> items;
+  if (!ReadFn(items)) {
+    _err += "Failed to read String vector.\n";
+    return false;
+  }
+
+  (*d) = items;
+
+  return true;
+}
+
 bool Parser::Impl::ReadPathArray(std::vector<Path> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
@@ -1469,216 +1511,158 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
     return false;
   }
 
-#define COMPRESS_CHECK(__dty)                                \
-  if (rep.IsCompressed()) {                                  \
-    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + \
-               " must not be compressed.");                  \
-    return false;                                            \
+  if (rep.IsCompressed()) {
+    PUSH_ERROR("Inlinved value must not be compressed.");
+    return false;
   }
 
-#define ARRAY_CHECK(__dty)                                   \
-  if (rep.IsArray()) {                                       \
-    PUSH_ERROR(crate::GetCrateDataTypeName(__dty.dtype_id) + \
-               " must not be array data.");                  \
-    return false;                                            \
+  if (rep.IsArray()) {
+    PUSH_ERROR("Inlined value must not be an array.");
+    return false;
   }
 
   const auto dty = tyRet.value();
   DCOUT(crate::GetCrateDataTypeRepr(dty));
 
-  {
-    uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    DCOUT("d = " << d);
+  uint32_t d = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+  DCOUT("d = " << d);
 
-    // TODO(syoyo): Use template SFINE?
-    switch (dty.dtype_id) {
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
-        PUSH_ERROR("`Invalid` DataType.");
-        return false;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        value->Set(d ? true : false);
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        // AssetPath = std::string(storage format is TokenIndex).
-        std::string str = GetToken(crate::Index(d)).str();
-
-        value::asset_path assetp(str);
-        value->Set(assetp);
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        value::token tok = GetToken(crate::Index(d));
-
-        DCOUT("value.token = " << tok);
-
-        value->Set(tok);
-
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        std::string str = GetStringToken(crate::Index(d)).str();
-        DCOUT("value.string = " << str);
-
-        value->Set(str);
-
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        if (d >= static_cast<int>(Specifier::Invalid)) {
-          _err += "Invalid value for Specifier\n";
-          return false;
-        }
-        Specifier val = static_cast<Specifier>(d);
-
-        value->Set(val);
-
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        if (d >= static_cast<int>(Permission::Invalid)) {
-          _err += "Invalid value for Permission\n";
-          return false;
-        }
-        Permission val = static_cast<Permission>(d);
-
-        value->Set(val);
-
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        if (d >= static_cast<int>(Variability::Invalid)) {
-          _err += "Invalid value for Variability\n";
-          return false;
-        }
-        Variability val = static_cast<Variability>(d);
-
-        value->Set(val);
-
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        uint8_t val;
-        memcpy(&val, &d, 1);
-
-        DCOUT("value.uchar = " << val);
-
-        value->Set(val);
-
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        int ival;
-        memcpy(&ival, &d, sizeof(int));
-
-        DCOUT("value.int = " << ival);
-
-        value->Set(ival);
-
-        return true;
-      }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
-        COMPRESS_CHECK(dty)
-        ARRAY_CHECK(dty)
-
-        uint32_t val;
-        memcpy(&val, &d, sizeof(uint32_t));
-
-        DCOUT("value.uint = " << val);
-
-        value->Set(val);
-
-        return true;
-                                                         }
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
-      case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
-        // TODO(syoyo)
-        PUSH_ERROR("TODO: Unimplemnted Crate DataType: " +
-                   crate::GetCrateDataTypeName(dty.dtype_id));
-        return false;
-      }
+  // TODO(syoyo): Use template SFINE?
+  switch (dty.dtype_id) {
+    case crate::CrateDataTypeId::NumDataTypes:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
+      PUSH_ERROR("`Invalid` DataType.");
+      return false;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL: {
+      value->Set(d ? true : false);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
+      // AssetPath = std::string(storage format is TokenIndex).
+      std::string str = GetToken(crate::Index(d)).str();
 
-#undef COMPRESS_CHECK
-#undef ARRAY_CHECK
+      value::asset_path assetp(str);
+      value->Set(assetp);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
+      value::token tok = GetToken(crate::Index(d));
 
-#if 0
+      DCOUT("value.token = " << tok);
 
+      value->Set(tok);
 
-    } else if (ty.id == VALUE_TYPE_FLOAT) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
+      std::string str = GetStringToken(crate::Index(d)).str();
+      DCOUT("value.string = " << str);
+
+      value->Set(str);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER: {
+      if (d >= static_cast<int>(Specifier::Invalid)) {
+        _err += "Invalid value for Specifier\n";
+        return false;
+      }
+      Specifier val = static_cast<Specifier>(d);
+
+      value->Set(val);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION: {
+      if (d >= static_cast<int>(Permission::Invalid)) {
+        _err += "Invalid value for Permission\n";
+        return false;
+      }
+      Permission val = static_cast<Permission>(d);
+
+      value->Set(val);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY: {
+      if (d >= static_cast<int>(Variability::Invalid)) {
+        _err += "Invalid value for Variability\n";
+        return false;
+      }
+      Variability val = static_cast<Variability>(d);
+
+      value->Set(val);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
+      uint8_t val;
+      memcpy(&val, &d, 1);
+
+      DCOUT("value.uchar = " << val);
+
+      value->Set(val);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
+      int ival;
+      memcpy(&ival, &d, sizeof(int));
+
+      DCOUT("value.int = " << ival);
+
+      value->Set(ival);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
+      uint32_t val;
+      memcpy(&val, &d, sizeof(uint32_t));
+
+      DCOUT("value.uint = " << val);
+
+      value->Set(val);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
+      // stored as int
+      int _ival;
+      memcpy(&_ival, &d, sizeof(int));
+
+      DCOUT("value.int = " << _ival);
+
+      int64_t ival = static_cast<int64_t>(_ival);
+
+      value->Set(ival);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
+      // stored as uint32
+      uint32_t _ival;
+      memcpy(&_ival, &d, sizeof(uint32_t));
+
+      DCOUT("value.int = " << _ival);
+
+      uint64_t ival = static_cast<uint64_t>(_ival);
+
+      value->Set(ival);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
+      value::half f;
+      memcpy(&f, &d, sizeof(value::half));
+
+      DCOUT("value.half = " << f);
+
+      value->Set(f);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
       float f;
       memcpy(&f, &d, sizeof(float));
 
@@ -1687,131 +1671,19 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       value->Set(f);
 
       return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: {
+      // stored as float
+      float _f;
+      memcpy(&_f, &d, sizeof(float));
 
-    } else if (ty.id == VALUE_TYPE_DOUBLE) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-      // Value is saved as float
-      float f;
-      memcpy(&f, &d, sizeof(float));
-      double v = double(f);
+      double f = static_cast<double>(_f);
 
-      DCOUT("value.double = " << v);
-
-      value->Set(v);
+      value->Set(f);
 
       return true;
-
-    } else if (ty.id == VALUE_TYPE_VEC3I) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      // Value is represented in int8
-      int8_t data[3];
-      memcpy(&data, &d, 3);
-
-      value::int3 v;
-      v[0] = static_cast<int32_t>(data[0]);
-      v[1] = static_cast<int32_t>(data[1]);
-      v[2] = static_cast<int32_t>(data[2]);
-
-      DCOUT("value.int3 = " << v);
-
-      value->Set(v);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VEC4I) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      // Value is represented in int8
-      int8_t data[4];
-      memcpy(&data, &d, 4);
-
-      value::int4 v;
-      v[0] = static_cast<int32_t>(data[0]);
-      v[1] = static_cast<int32_t>(data[1]);
-      v[2] = static_cast<int32_t>(data[2]);
-      v[3] = static_cast<int32_t>(data[3]);
-
-      DCOUT("value.vec4i = " << v);
-
-      value->Set(v);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_VEC3F) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      // Value is represented in int8
-      int8_t data[3];
-      memcpy(&data, &d, 3);
-
-      value::float3 v;
-      v[0] = static_cast<float>(data[0]);
-      v[1] = static_cast<float>(data[1]);
-      v[2] = static_cast<float>(data[2]);
-
-      DCOUT("value.vec3f = " << v);
-
-      value->Set(v);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VEC4F) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      // Value is represented in int8
-      int8_t data[4];
-      memcpy(&data, &d, 4);
-
-      value::float4 v;
-      v[0] = static_cast<float>(data[0]);
-      v[1] = static_cast<float>(data[1]);
-      v[2] = static_cast<float>(data[2]);
-      v[3] = static_cast<float>(data[3]);
-
-      DCOUT("value.vec3f = " << v);
-
-      value->Set(v);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_VEC3D) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      // Value is represented in int8
-      int8_t data[3];
-      memcpy(&data, &d, 3);
-
-      value::double3 v;
-      v[0] = static_cast<double>(data[0]);
-      v[1] = static_cast<double>(data[1]);
-      v[2] = static_cast<double>(data[2]);
-
-      DCOUT("value.vec3d = " << v);
-
-      value->Set(v);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VEC4D) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
-      // Value is represented in int8
-      int8_t data[4];
-      memcpy(&data, &d, 4);
-
-      value::double4 v;
-      v[0] = static_cast<double>(data[0]);
-      v[1] = static_cast<double>(data[1]);
-      v[2] = static_cast<double>(data[2]);
-      v[3] = static_cast<double>(data[3]);
-
-      DCOUT("value.vec4d = " << v);
-
-      value->Set(v);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_MATRIX2D) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D: {
       // Matrix contains diagnonal components only, and values are represented
       // in int8
       int8_t data[2];
@@ -1827,10 +1699,8 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       value->Set(v);
 
       return true;
-
-    } else if (ty.id == VALUE_TYPE_MATRIX3D) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D: {
       // Matrix contains diagnonal components only, and values are represented
       // in int8
       int8_t data[3];
@@ -1843,15 +1713,14 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       v.m[2][2] = static_cast<double>(data[2]);
 
       DCOUT("value.matrix(diag) = " << v.m[0][0] << ", " << v.m[1][1] << ", "
-                                    << v.m[2][2]);
+                                    << v.m[2][2] << "\n");
 
       value->Set(v);
 
       return true;
+    }
 
-    } else if (ty.id == VALUE_TYPE_MATRIX4D) {
-      assert((!rep.IsCompressed()) && (!rep.IsArray()));
-
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D: {
       // Matrix contains diagnonal components only, and values are represented
       // in int8
       int8_t data[4];
@@ -1870,17 +1739,159 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
       value->Set(v);
 
       return true;
-    } else {
-      // TODO(syoyo)
-      PUSH_ERROR("TODO: Inlined Value: " +
-                 crate::GetValueTypeString(rep.GetType()));
-
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH: {
+      // Seems quaternion type is not allowed for Inlined Value.
+      PUSH_ERROR("Quaternion type is not allowed for Inlined Value.");
       return false;
     }
-#endif
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H: {
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      value::half3 v;
+      v[0] = float_to_half_full(float(data[0]));
+      v[1] = float_to_half_full(float(data[1]));
+      v[2] = float_to_half_full(float(data[2]));
+
+      DCOUT("value.half3 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I: {
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      value::int3 v;
+      v[0] = static_cast<int32_t>(data[0]);
+      v[1] = static_cast<int32_t>(data[1]);
+      v[2] = static_cast<int32_t>(data[2]);
+
+      DCOUT("value.int3 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D: {
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      value::double4 v;
+      v[0] = static_cast<double>(data[0]);
+      v[1] = static_cast<double>(data[1]);
+      v[2] = static_cast<double>(data[2]);
+      v[3] = static_cast<double>(data[3]);
+
+      DCOUT("value.doublef = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F: {
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      value::float4 v;
+      v[0] = static_cast<float>(data[0]);
+      v[1] = static_cast<float>(data[1]);
+      v[2] = static_cast<float>(data[2]);
+      v[3] = static_cast<float>(data[3]);
+
+      DCOUT("value.vec4f = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H: {
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      value::half4 v;
+      v[0] = float_to_half_full(float(data[0]));
+      v[1] = float_to_half_full(float(data[0]));
+      v[2] = float_to_half_full(float(data[0]));
+      v[3] = float_to_half_full(float(data[0]));
+
+      DCOUT("value.vec4h = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I: {
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &d, 4);
+
+      value::int4 v;
+      v[0] = static_cast<int32_t>(data[0]);
+      v[1] = static_cast<int32_t>(data[1]);
+      v[2] = static_cast<int32_t>(data[2]);
+      v[3] = static_cast<int32_t>(data[3]);
+
+      DCOUT("value.vec4i = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY: {
+      // empty dict is allowed
+      // TODO: empty(zero value) check?
+      crate::CrateValue::Dictionary dict;
+      value->Set(dict);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
+      PUSH_ERROR(
+          "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
+          "Inlined value: " +
+          crate::GetCrateDataTypeName(dty.dtype_id));
+      return false;
+    }
   }
 
-  return true;
+  // Should never reach here.
+  return false;
 }
 
 #if 0
@@ -1917,6 +1928,13 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
   const auto dty = tyRet.value();
 
+#define TODO_IMPLEMENT(__dty)                                     \
+  { \
+  PUSH_ERROR("TODO: '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+             "' data is not yet implemented.");                               \
+  return false;                                                             \
+  }
+
 #define COMPRESS_UNSUPPORTED_CHECK(__dty)                                     \
   if (rep.IsCompressed()) {                                                   \
     PUSH_ERROR("Compressed [" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
@@ -1925,141 +1943,83 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
   }
 
 #define NON_ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
-  if (rep.IsArray()) {                                                       \
+  if (!rep.IsArray()) {                                                       \
     PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
                "' data is not yet supported.");                              \
     return false;                                                            \
   }
 
-  {
-    // payload is the offset to data.
-    uint64_t offset = rep.GetPayload();
-    if (!_sr->seek_set(offset)) {
-      PUSH_ERROR("Invalid offset.");
+#define ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
+  if (rep.IsArray()) {                                                       \
+    PUSH_ERROR("Array of '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+               "' data type is not yet supported.");                              \
+    return false;                                                            \
+  }
+
+
+  // payload is the offset to data.
+  uint64_t offset = rep.GetPayload();
+  if (!_sr->seek_set(offset)) {
+    PUSH_ERROR("Invalid offset.");
+    return false;
+  }
+
+  switch (dty.dtype_id) {
+    case crate::CrateDataTypeId::NumDataTypes:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
+      PUSH_ERROR("`Invalid` DataType.");
       return false;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL: {
 
-    if (dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) {
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
+      if (rep.IsArray()) {
+        TODO_IMPLEMENT(dty)
+      } else {
         return false;
       }
-
-      std::vector<crate::Index> v(static_cast<size_t>(n));
-      if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                     size_t(n) * sizeof(crate::Index),
-                     reinterpret_cast<uint8_t *>(v.data()))) {
-        PUSH_ERROR("Failed to read TokenIndex array.");
-        return false;
-      }
-
-      std::vector<value::token> tokens(static_cast<size_t>(n));
-
-      for (size_t i = 0; i < n; i++) {
-        DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
-                       << ")");
-        tokens[i] = GetToken(v[i]);
-      }
-
-      value->Set(tokens);
-    } else {
-      // TODO(syoyo)
-      PUSH_ERROR("TODO: Implement unpack:" + crate::GetCrateDataTypeRepr(dty));
-      return false;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
 
-#if 0
-    if (ty.id == VALUE_TYPE_TOKEN) {
-      // Guess array of Token
-      assert(!rep.IsCompressed());
-      assert(rep.IsArray());
-
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
-        return false;
-      }
-
-      std::vector<crate::Index> v(static_cast<size_t>(n));
-      if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                     size_t(n) * sizeof(crate::Index),
-                     reinterpret_cast<uint8_t *>(v.data()))) {
-        PUSH_ERROR("Failed to read TokenIndex array.");
-        return false;
-      }
-
-      std::vector<value::token> tokens(static_cast<size_t>(n));
-
-      for (size_t i = 0; i < n; i++) {
-        DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
-                       << ")");
-        tokens[i] = GetToken(v[i]);
-      }
-
-      value->Set(tokens);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_STRING) {
-      assert(!rep.IsCompressed());
-      assert(rep.IsArray());
-
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
-        return false;
-      }
-
-      std::vector<crate::Index> v(static_cast<size_t>(n));
-      if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                     size_t(n) * sizeof(crate::Index),
-                     reinterpret_cast<uint8_t *>(v.data()))) {
-        PUSH_ERROR("Failed to read TokenIndex array.");
-        return false;
-      }
-
-      std::vector<std::string> stringArray(static_cast<size_t>(n));
-
-      for (size_t i = 0; i < n; i++) {
-        stringArray[i] = GetStringToken(v[i]).str();
-      }
-
-      DCOUT("stringArray = " << stringArray);
-
-      // TODO: Use token type?
-      value->Set(stringArray);
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_INT) {
-      assert(rep.IsArray());
-
-      std::vector<int32_t> v;
-      if (!ReadIntArray(rep.IsCompressed(), &v)) {
-        PUSH_ERROR("Failed to read Int array.");
-        return false;
-      }
-
-      if (v.empty()) {
-        PUSH_ERROR("Empty int array.");
-        return false;
-      }
-
-      DCOUT("IntArray = " << v);
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        value->Set(v);
+        // AssetPath = std::string(storage format is TokenIndex).
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                       size_t(n) * sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read TokenIndex array.");
+          return false;
+        }
+
+        std::vector<value::asset_path> apaths(static_cast<size_t>(n));
+
+        for (size_t i = 0; i < n; i++) {
+          DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
+                         << ")");
+          apaths[i] = value::asset_path(GetToken(v[i]).str());
+        }
+
+        value->Set(apaths);
+        return true;
       } else {
-        value->Set(v[0]);
+        return false;
       }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
 
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_VEC2F) {
-      assert(!rep.IsCompressed());
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
         uint64_t n;
@@ -2068,33 +2028,32 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<value::float2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float2), size_t(n) * sizeof(value::float2),
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                       size_t(n) * sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read float2 array.");
+          PUSH_ERROR("Failed to read TokenIndex array.");
           return false;
         }
 
-        DCOUT("float2 = " << v);
+        std::vector<value::token> tokens(static_cast<size_t>(n));
 
-        value->Set(v);
+        for (size_t i = 0; i < n; i++) {
+          DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
+                         << ")");
+          tokens[i] = GetToken(v[i]);
+        }
 
+        value->Set(tokens);
+        return true;
       } else {
-        value::float2 v;
-        if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
-                       reinterpret_cast<uint8_t *>(&v))) {
-          PUSH_ERROR("Failed to read float2 data.");
-          return false;
-        }
 
-        DCOUT("float2 = " << v);
+        return false;
 
-        value->Set(v);
       }
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VEC3F) {
-      assert(!rep.IsCompressed());
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
         uint64_t n;
@@ -2103,97 +2062,157 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<value::float3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float3), size_t(n) * sizeof(value::float3),
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                       size_t(n) * sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read Vec3f array.");
+          PUSH_ERROR("Failed to read TokenIndex array.");
           return false;
         }
 
-        DCOUT("float3f = " << v);
-        value->Set(v);
+        std::vector<std::string> stringArray(static_cast<size_t>(n));
 
+        for (size_t i = 0; i < n; i++) {
+          stringArray[i] = GetStringToken(v[i]).str();
+        }
+
+        DCOUT("stringArray = " << stringArray);
+
+        // TODO: Use token type?
+        value->Set(stringArray);
+
+        return true;
       } else {
-        value::float3 v;
-        if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
-                       reinterpret_cast<uint8_t *>(&v))) {
-          PUSH_ERROR("Failed to read Vec3f");
-          return false;
-        }
-
-        DCOUT("float3 = " << v);
-
-        value->Set(v);
+        return false;
       }
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_VEC4F) {
-      assert(!rep.IsCompressed());
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY:
+    {
+      TODO_IMPLEMENT(dty)
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
+      NON_ARRAY_UNSUPPORTED_CHECK(dty)
+      TODO_IMPLEMENT(dty)
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
+      NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read the number of array elements\n";
-#endif
+        std::vector<int32_t> v;
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read Int array.");
           return false;
         }
 
-        std::vector<value::float4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float4), size_t(n) * sizeof(value::float4),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read float4 array.");
+        if (v.empty()) {
+          PUSH_ERROR("Empty int array.");
           return false;
         }
+
+        DCOUT("IntArray = " << v);
 
         value->Set(v);
-
+        return true;
       } else {
-        value::float4 v;
-        if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
-                       reinterpret_cast<uint8_t *>(&v))) {
-          PUSH_ERROR("Failed to read float4.");
+        return false;
+      }
+
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
+      NON_ARRAY_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        std::vector<uint32_t> v;
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read UInt array.");
           return false;
         }
 
-        DCOUT("float4 = " << v);
+        if (v.empty()) {
+          PUSH_ERROR("Empty uint array.");
+          return false;
+        }
+
+        DCOUT("UIntArray = " << v);
 
         value->Set(v);
-      }
-
-      return true;
-
-    } else if (ty.id == VALUE_TYPE_TOKEN_VECTOR) {
-      assert(!rep.IsCompressed());
-      // std::vector<Index>
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        PUSH_ERROR("Failed to read TokenVector value.");
+        return true;
+      } else {
         return false;
       }
 
-      std::vector<crate::Index> indices(static_cast<size_t>(n));
-      if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
-                     static_cast<size_t>(n) * sizeof(crate::Index),
-                     reinterpret_cast<uint8_t *>(indices.data()))) {
-        PUSH_ERROR("Failed to read TokenVector value.");
-        return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
+      if (rep.IsArray()) {
+        std::vector<int64_t> v;
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read Int64 array.");
+          return false;
+        }
+
+        if (v.empty()) {
+          PUSH_ERROR("Empty int64 array.");
+          return false;
+        }
+
+        DCOUT("Int64Array = " << v);
+
+        value->Set(v);
+        return true;
+      } else {
+        COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        int64_t v;
+        if (!_sr->read(sizeof(int64_t), sizeof(int64_t),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read int64 data.");
+          return false;
+        }
+
+        DCOUT("int64 = " << v);
+
+        value->Set(v);
+        return true;
       }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
 
-      DCOUT("TokenVector(index) = " << indices);
+      if (rep.IsArray()) {
+        std::vector<uint64_t> v;
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read UInt64 array.");
+          return false;
+        }
 
-      std::vector<value::token> tokens(indices.size());
-      for (size_t i = 0; i < indices.size(); i++) {
-        tokens[i] = GetToken(indices[i]);
+        if (v.empty()) {
+          PUSH_ERROR("Empty uint64 array.");
+          return false;
+        }
+
+        DCOUT("UInt64Array = " << v);
+
+        value->Set(v);
+        return true;
+      } else {
+        COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        uint64_t v;
+        if (!_sr->read(sizeof(uint64_t), sizeof(uint64_t),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read uint64 data.");
+          return false;
+        }
+
+        DCOUT("uint64 = " << v);
+
+        value->Set(v);
+        return true;
       }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
 
-      DCOUT("TokenVector = " << tokens);
-
-      value->Set(tokens);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_HALF) {
       if (rep.IsArray()) {
         std::vector<value::half> v;
         if (!ReadHalfArray(rep.IsCompressed(), &v)) {
@@ -2205,12 +2224,13 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       } else {
-        assert(!rep.IsCompressed());
 
-        PUSH_ERROR("Non-inlined, non-array Half value is not supported.");
+        PUSH_ERROR("Non-inlined, non-array Half value is invalid.");
         return false;
       }
-    } else if (ty.id == VALUE_TYPE_FLOAT) {
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
+
       if (rep.IsArray()) {
         std::vector<float> v;
         if (!ReadFloatArray(rep.IsCompressed(), &v)) {
@@ -2224,13 +2244,13 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       } else {
-        assert(!rep.IsCompressed());
+        COMPRESS_UNSUPPORTED_CHECK(dty)
 
         PUSH_ERROR("Non-inlined, non-array Float value is not supported.");
         return false;
       }
-
-    } else if (ty.id == VALUE_TYPE_DOUBLE) {
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: {
       if (rep.IsArray()) {
         std::vector<double> v;
         if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
@@ -2243,7 +2263,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       } else {
-        assert(!rep.IsCompressed());
+        COMPRESS_UNSUPPORTED_CHECK(dty)
 
         double v;
         if (!_sr->read_double(&v)) {
@@ -2257,94 +2277,9 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       }
-    } else if (ty.id == VALUE_TYPE_VEC3I) {
-      assert(!rep.IsCompressed());
-      assert(rep.IsArray());
-
-      value::int3 v;
-      if (!_sr->read(sizeof(value::int3), sizeof(value::int3),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        _err += "Failed to read Vec3i value\n";
-        return false;
-      }
-
-      DCOUT("int3 = " << v);
-      value->Set(v);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VEC3F) {
-      assert(!rep.IsCompressed());
-      assert(rep.IsArray());
-
-      value::float3 v;
-      if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR("Failed to read Vec3f value.");
-        return false;
-      }
-
-      DCOUT("vec3f = " << v);
-
-      value->Set(v);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VEC3D) {
-      assert(!rep.IsCompressed());
-
-      if (rep.IsArray()) {
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read the number of array elements\n";
-#endif
-          return false;
-        }
-
-        std::vector<value::double3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double3), size_t(n) * sizeof(value::double3),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cerr << "Failed to read Vec3d array\n";
-#endif
-          return false;
-        }
-
-        DCOUT("double3 array = " << v);
-
-        value->Set(v);
-
-      } else {
-        value::double3 v;
-        if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
-                       reinterpret_cast<uint8_t *>(&v))) {
-          _err += "Failed to read Vec3d value\n";
-          return false;
-        }
-
-        DCOUT("double3 array = " << v);
-
-        value->Set(v);
-      }
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_VEC3H) {
-      assert(!rep.IsCompressed());
-      assert(rep.IsArray());
-
-      value::half3 v;
-      if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        _err += "Failed to read Vec3h value\n";
-        return false;
-      }
-
-      DCOUT("value.vec3h = " << v);
-
-      value->Set(v);
-
-      return true;
-    } else if (ty.id == VALUE_TYPE_QUATF) {
-      assert(!rep.IsCompressed());
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
         uint64_t n;
@@ -2353,35 +2288,73 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<value::quatf> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quatf), size_t(n) * sizeof(value::quatf),
+        std::vector<value::matrix2d> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix2d),
+                       size_t(n) * sizeof(value::matrix2d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read Quatf array.");
+          PUSH_ERROR("Failed to read Matrix2d array.");
           return false;
         }
-
-        DCOUT("Quatf[] = " << v);
 
         value->Set(v);
 
       } else {
-        value::quatf v;
-        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
-                       reinterpret_cast<uint8_t *>(&v))) {
-          _err += "Failed to read Quatf value\n";
+        static_assert(sizeof(value::matrix2d) == (8 * 4), "");
+
+        value::matrix4d v;
+        if (!_sr->read(sizeof(value::matrix2d), sizeof(value::matrix2d),
+                       reinterpret_cast<uint8_t *>(v.m))) {
+          _err += "Failed to read value of `matrix2d` type\n";
           return false;
         }
 
-        DCOUT("Quatf = " << v);
+        DCOUT("value.matrix2d = " << v);
+
         value->Set(v);
       }
 
       return true;
-    } else if (ty.id == VALUE_TYPE_MATRIX4D) {
-      assert(!rep.IsCompressed());
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
 
-      std::cout << "Matrix4d: IsCompressed = " << rep.IsCompressed() << "\n";
-      std::cout << "Matrix4d: IsArray = " << rep.IsArray() << "\n";
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::matrix3d> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix3d),
+                       size_t(n) * sizeof(value::matrix3d),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Matrix3d array.");
+          return false;
+        }
+
+        value->Set(v);
+
+      } else {
+        static_assert(sizeof(value::matrix3d) == (8 * 9), "");
+
+        value::matrix4d v;
+        if (!_sr->read(sizeof(value::matrix3d), sizeof(value::matrix3d),
+                       reinterpret_cast<uint8_t *>(v.m))) {
+          _err += "Failed to read value of `matrix3d` type\n";
+          return false;
+        }
+
+        DCOUT("value.matrix3d = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
         uint64_t n;
@@ -2416,10 +2389,539 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
 
       return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD: {
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
 
-    } else if (ty.id == VALUE_TYPE_DICTIONARY) {
-      assert(!rep.IsCompressed());
-      assert(!rep.IsArray());
+        std::vector<value::quatd> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::quatd), size_t(n) * sizeof(value::quatd),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Quatf array.");
+          return false;
+        }
+
+        DCOUT("Quatf[] = " << v);
+
+        value->Set(v);
+
+      } else {
+        COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        value::quatd v;
+        if (!_sr->read(sizeof(value::quatd), sizeof(value::quatd),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          _err += "Failed to read Quatd value\n";
+          return false;
+        }
+
+        DCOUT("Quatd = " << v);
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF: {
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::quatf> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::quatf), size_t(n) * sizeof(value::quatf),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Quatf array.");
+          return false;
+        }
+
+        DCOUT("Quatf[] = " << v);
+
+        value->Set(v);
+
+      } else {
+        COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        value::quatf v;
+        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          _err += "Failed to read Quatf value\n";
+          return false;
+        }
+
+        DCOUT("Quatf = " << v);
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH: {
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::quath> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::quath), size_t(n) * sizeof(value::quath),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Quath array.");
+          return false;
+        }
+
+        DCOUT("Quath[] = " << v);
+
+        value->Set(v);
+
+      } else {
+        COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        value::quath v;
+        if (!_sr->read(sizeof(value::quath), sizeof(value::quath),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          _err += "Failed to read Quath value\n";
+          return false;
+        }
+
+        DCOUT("Quath = " << v);
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::double2> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::double2), size_t(n) * sizeof(value::double2),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read double2 array.");
+          return false;
+        }
+
+        DCOUT("double2 = " << v);
+
+        value->Set(v);
+        return true;
+      } else {
+        value::double2 v;
+        if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read double2 data.");
+          return false;
+        }
+
+        DCOUT("double2 = " << v);
+
+        value->Set(v);
+        return true;
+      }
+    }
+
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::float2> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::float2), size_t(n) * sizeof(value::float2),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read float2 array.");
+          return false;
+        }
+
+        DCOUT("float2 = " << v);
+
+        value->Set(v);
+        return true;
+      } else {
+        value::float2 v;
+        if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read float2 data.");
+          return false;
+        }
+
+        DCOUT("float2 = " << v);
+
+        value->Set(v);
+        return true;
+      }
+    }
+
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::half2> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::half2), size_t(n) * sizeof(value::half2),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read half2 array.");
+          return false;
+        }
+
+        DCOUT("half2 = " << v);
+        value->Set(v);
+
+      } else {
+        value::half2 v;
+        if (!_sr->read(sizeof(value::half2), sizeof(value::half2),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read half2");
+          return false;
+        }
+
+        DCOUT("half2 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::int2> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::int2), size_t(n) * sizeof(value::int2),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read int2 array.");
+          return false;
+        }
+
+        DCOUT("int2 = " << v);
+        value->Set(v);
+
+      } else {
+        value::int2 v;
+        if (!_sr->read(sizeof(value::int2), sizeof(value::int2),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read int2");
+          return false;
+        }
+
+        DCOUT("int2 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::double3> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::double3), size_t(n) * sizeof(value::double3),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read double3 array.");
+          return false;
+        }
+
+        DCOUT("double3 = " << v);
+        value->Set(v);
+
+      } else {
+        value::double3 v;
+        if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read double3");
+          return false;
+        }
+
+        DCOUT("double3 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::float3> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::float3), size_t(n) * sizeof(value::float3),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read float3 array.");
+          return false;
+        }
+
+        DCOUT("float3f = " << v);
+        value->Set(v);
+
+      } else {
+        value::float3 v;
+        if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read float3");
+          return false;
+        }
+
+        DCOUT("float3 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::half3> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::half3), size_t(n) * sizeof(value::half3),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read half3 array.");
+          return false;
+        }
+
+        DCOUT("half3 = " << v);
+        value->Set(v);
+
+      } else {
+        value::half3 v;
+        if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read half3");
+          return false;
+        }
+
+        DCOUT("half3 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::int3> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::int3), size_t(n) * sizeof(value::int3),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read int3 array.");
+          return false;
+        }
+
+        DCOUT("int3 = " << v);
+        value->Set(v);
+
+      } else {
+        value::int3 v;
+        if (!_sr->read(sizeof(value::int3), sizeof(value::int3),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read int3");
+          return false;
+        }
+
+        DCOUT("int3 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::double4> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::double4), size_t(n) * sizeof(value::double4),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read double4 array.");
+          return false;
+        }
+
+        DCOUT("double4 = " << v);
+        value->Set(v);
+
+      } else {
+        value::double4 v;
+        if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read double4");
+          return false;
+        }
+
+        DCOUT("double4 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::float4> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::float4), size_t(n) * sizeof(value::float4),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read float4 array.");
+          return false;
+        }
+
+        DCOUT("float4 = " << v);
+        value->Set(v);
+
+      } else {
+        value::float4 v;
+        if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read float4");
+          return false;
+        }
+
+        DCOUT("float4 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::half4> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::half4), size_t(n) * sizeof(value::half4),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read half4 array.");
+          return false;
+        }
+
+        DCOUT("half4 = " << v);
+        value->Set(v);
+
+      } else {
+        value::half4 v;
+        if (!_sr->read(sizeof(value::half4), sizeof(value::half4),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read half4");
+          return false;
+        }
+
+        DCOUT("half4 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        std::vector<value::int4> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::int4), size_t(n) * sizeof(value::int4),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read int4 array.");
+          return false;
+        }
+
+        DCOUT("int4 = " << v);
+        value->Set(v);
+
+      } else {
+        value::int4 v;
+        if (!_sr->read(sizeof(value::int4), sizeof(value::int4),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read int4");
+          return false;
+        }
+
+        DCOUT("int4 = " << v);
+
+        value->Set(v);
+      }
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      ARRAY_UNSUPPORTED_CHECK(dty)
 
       crate::CrateValue::Dictionary dict;
 
@@ -2433,22 +2935,84 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       value->Set(dict);
 
       return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP: {
+      ListOp<value::token> lst;
 
-    } else if (ty.id == VALUE_TYPE_PATH_LIST_OP) {
+      if (!ReadTokenListOp(&lst)) {
+        PUSH_ERROR("Failed to read TokenListOp data");
+        return false;
+      }
+
+      value->Set(lst);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
       // SdfListOp<class SdfPath>
       // => underliying storage is the array of ListOp[PathIndex]
       ListOp<Path> lst;
 
       if (!ReadPathListOp(&lst)) {
-        _err += "Failed to read PathListOp data\n";
+        PUSH_ERROR("Failed to read PathListOp data.");
         return false;
       }
 
       value->Set(lst);
 
       return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
 
-    } else if (ty.id == VALUE_TYPE_TIME_SAMPLES) {
+      std::vector<Path> v;
+      if (!ReadPathArray(&v)) {
+        _err += "Failed to read PathVector value\n";
+        return false;
+      }
+
+      DCOUT("PathVector = " << to_string(v));
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR: {
+
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      // std::vector<Index>
+      uint64_t n;
+      if (!_sr->read8(&n)) {
+        PUSH_ERROR("Failed to read TokenVector value.");
+        return false;
+      }
+
+      std::vector<crate::Index> indices(static_cast<size_t>(n));
+      if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
+                     static_cast<size_t>(n) * sizeof(crate::Index),
+                     reinterpret_cast<uint8_t *>(indices.data()))) {
+        PUSH_ERROR("Failed to read TokenVector value.");
+        return false;
+      }
+
+      DCOUT("TokenVector(index) = " << indices);
+
+      std::vector<value::token> tokens(indices.size());
+      for (size_t i = 0; i < indices.size(); i++) {
+        tokens[i] = GetToken(indices[i]);
+      }
+
+      DCOUT("TokenVector = " << tokens);
+
+      value->Set(tokens);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES: {
+
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
       value::TimeSamples ts;
       if (!ReadTimeSamples(&ts)) {
         _err += "Failed to read TimeSamples data\n";
@@ -2458,8 +3022,9 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       value->Set(ts);
 
       return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR: {
 
-    } else if (ty.id == VALUE_TYPE_DOUBLE_VECTOR) {
       std::vector<double> v;
       if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
         _err += "Failed to read DoubleVector value\n";
@@ -2471,42 +3036,52 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       value->Set(v);
 
       return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR: {
 
-    } else if (ty.id == VALUE_TYPE_PATH_VECTOR) {
-      std::vector<Path> v;
-      assert(!rep.IsCompressed());
-      if (!ReadPathArray(&v)) {
-        _err += "Failed to read PathVector value\n";
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      std::vector<std::string> v;
+      if (!ReadStringArray(&v)) {
+        _err += "Failed to read StringVector value\n";
         return false;
       }
 
-      DCOUT("PathVector = " << to_string(v));
+      DCOUT("StringArray = " << v);
 
       value->Set(v);
 
       return true;
-
-    } else if (ty.id == VALUE_TYPE_TOKEN_LIST_OP) {
-      ListOp<value::token> lst;
-
-      if (!ReadTokenListOp(&lst)) {
-        PUSH_ERROR("Failed to read TokenListOp data");
-        return false;
-      }
-
-      value->Set(lst);
-      return true;
-    } else {
-      // TODO(syoyo)
-      PUSH_ERROR("TODO: " + crate::GetValueTypeString(rep.GetType()));
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
+      PUSH_ERROR(
+          "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
+          "Inlined value: " +
+          crate::GetCrateDataTypeName(dty.dtype_id));
       return false;
     }
-
-#endif
   }
 
+#undef TODO_IMPLEMENT
+#undef COMPRESS_UNSUPPORTED_CHECK
+#undef NON_ARRAY_UNSUPPORTED_CHECK
+
   // Never should reach here.
-  return true;
+  return false;
 }
 
 bool Parser::Impl::BuildDecompressedPathsImpl(
@@ -3381,10 +3956,13 @@ bool Parser::Impl::ReconstructXform(
 
   (void)xform;
 
+  DCOUT("Reconstruct Xform");
+
   for (const auto &fv : fields) {
+    DCOUT("field = " << fv.first << ", type = " << fv.second.GetTypeName());
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type, but got " + fv.second.GetTypeName());
         return false;
       }
     }
@@ -3396,8 +3974,8 @@ bool Parser::Impl::ReconstructXform(
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
       return false;
     }
 
@@ -3410,8 +3988,8 @@ bool Parser::Impl::ReconstructXform(
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
       return false;
     }
 
@@ -3424,8 +4002,8 @@ bool Parser::Impl::ReconstructXform(
                              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
       return false;
     }
 
@@ -3454,10 +4032,12 @@ bool Parser::Impl::ReconstructGeomBasisCurves(
     GeomBasisCurves *curves) {
   bool has_position{false};
 
+  DCOUT("Reconstruct Xform");
+
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type, bot got " + fv.second.GetTypeName());
         return false;
       }
 
@@ -3642,6 +4222,9 @@ bool Parser::Impl::ReconstructGeomSubset(
     const Node &node, const FieldValuePairVector &fields,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomSubset *geom_subset) {
+
+  DCOUT("Reconstruct Xform");
+
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
       if (fv.second.GetTypeName() != "TokenArray") {
@@ -3756,10 +4339,12 @@ bool Parser::Impl::ReconstructGeomMesh(
     GeomMesh *mesh) {
   bool has_position{false};
 
+  DCOUT("Reconstruct Xform");
+
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type, but got " + fv.second.GetTypeName());
         return false;
       }
 
@@ -4494,6 +5079,9 @@ bool Parser::Impl::ReconstructSceneRecursively(
     int parent, int level,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     Scene *scene) {
+
+  DCOUT("ReconstructSceneRecursively: parent = " << std::to_string(parent) << ", level = " << std::to_string(level));
+
   if ((parent < 0) || (parent >= int(_nodes.size()))) {
     PUSH_ERROR("Invalid parent node id: " + std::to_string(parent) +
                ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
@@ -4565,6 +5153,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
           PUSH_ERROR("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v + "'");
           return false;
         }
+        DCOUT("upAxis = " << v);
         scene->upAxis = std::move(v);
 
       } else if (fv.first == "metersPerUnit") {
@@ -4578,6 +5167,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
               fv.second.GetTypeName() + "'");
           return false;
         }
+        DCOUT("metersPerUnit = " << scene->metersPerUnit);
       } else if (fv.first == "timeCodesPerSecond") {
         if (auto vf = fv.second.get_value<float>()) {
           scene->timeCodesPerSecond = double(vf.value());
@@ -4590,6 +5180,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
               fv.second.GetTypeName() + "'");
           return false;
         }
+        DCOUT("timeCodesPerSecond = " << scene->timeCodesPerSecond);
       } else if ((fv.first == "defaultPrim")) {
         auto v = fv.second.get_value<value::token>();
         if (!v) {
@@ -4598,6 +5189,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
         }
 
         scene->defaultPrim = v.value().str();
+        DCOUT("defaultPrim = " << scene->defaultPrim);
       } else if (fv.first == "customLayerData") {
         if (auto v = fv.second.get_value<crate::CrateValue::Dictionary>()) {
           auto dict = v.value();
@@ -4606,6 +5198,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
           // scene->customLayerData = fv.second.GetDictionary();
         } else {
           PUSH_ERROR("customLayerData must be `dict` type.");
+          return false;
         }
       } else if (fv.first == "primChildren") {
         auto v = fv.second.get_value<std::vector<value::token>>();
@@ -4621,6 +5214,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
           children.push_back(item.str());
         }
         scene->primChildren = children;
+        DCOUT("primChildren = " << children);
       } else if (fv.first == "documentation") {  // 'doc'
 
         auto v = fv.second.get_value<std::string>();
@@ -4630,8 +5224,9 @@ bool Parser::Impl::ReconstructSceneRecursively(
           return false;
         }
         scene->doc = v.value();
+        DCOUT("doc = " << v.value());
       } else {
-        PUSH_ERROR("TODO: " + fv.first + "\n");
+        PUSH_WARN("TODO: " + fv.first + "\n");
         //_err += "TODO: " + fv.first + "\n";
         return false;
         // TODO(syoyo):
@@ -4642,18 +5237,33 @@ bool Parser::Impl::ReconstructSceneRecursively(
   std::string node_type;
   crate::CrateValue::Dictionary assetInfo;
 
+  auto GetTypeName = [](const FieldValuePairVector &fvs) -> nonstd::optional<std::string> {
+    for (const auto &fv : fvs) {
+      DCOUT(" fv.first = " << fv.first);
+      if (fv.first == "typeName") {
+        auto v = fv.second.get_value<value::token>();
+        if (v) {
+          return v.value().str();
+        }
+      }
+    }
+
+    return nonstd::nullopt;
+  };
+
+  DCOUT("---");
+
+  if (auto v = GetTypeName(fields)) {
+    node_type = v.value();
+  }
+
+  DCOUT("===");
+
+#if 0  // TODO: Refactor)
   for (const auto &fv : fields) {
     DCOUT(IndentStr(level) << "  \"" << fv.first
                            << "\" : ty = " << fv.second.GetTypeName());
 
-    if (fv.first == "typeName") {
-      auto v = fv.second.get_value<value::token>();
-      if (v) {
-        node_type = v.value().str();
-      }
-    }
-
-#if 0  // TODO: Refactor)
     if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
       DCOUT(IndentStr(level)
             << "    specifier = " << to_string(fv.second.GetSpecifier()));
@@ -4710,8 +5320,11 @@ bool Parser::Impl::ReconstructSceneRecursively(
                 ", type: " + fv.second.GetTypeName());
       // return false;
     }
-#endif
   }
+#endif
+
+  DCOUT("node_type = " << node_type);
+
 
   if (node_type == "Xform") {
     Xform xform;
@@ -4800,9 +5413,12 @@ bool Parser::Impl::ReconstructSceneRecursively(
 
     scene->skel_roots.push_back(skelRoot);
   } else {
-    DCOUT("TODO or we can ignore this node: node_type: " << node_type);
-    PUSH_WARN("TODO: Reconstruct node_type " + node_type);
+    if (!node_type.empty()) {
+      DCOUT("TODO or we can ignore this node: node_type: " << node_type);
+    }
   }
+
+  DCOUT("Children.size = " << node.GetChildren().size());
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     if (!ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
