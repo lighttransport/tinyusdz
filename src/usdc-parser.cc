@@ -3865,6 +3865,10 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
   }
   const auto fv = fvRet.value();
 
+  auto add1DArraySuffix = [](const std::string &a) -> std::string {
+    return a + "[]";
+  };
+
   {
     if (fv.first == "default") {
       attr->name = prop_name;
@@ -3884,10 +3888,10 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
 
 #define PROC_ARRAY(__tyname, __ty)                       \
   }                                                      \
-  else if (fv.second.GetTypeName() == __tyname) {        \
+  else if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) {        \
     auto ret = fv.second.get_value<std::vector<__ty>>(); \
     if (!ret) {                                          \
-      _err += "Failed to decode " __tyname " value.";  \
+      PUSH_ERROR("Failed to decode " << __tyname << "[] value.");  \
       return false;                                      \
     }                                                    \
     attr->var.set_scalar(ret.value());                   \
@@ -3900,29 +3904,44 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
         PROC_SCALAR(value::kFloat2, value::float2)
         PROC_SCALAR(value::kFloat3, value::float3)
         PROC_SCALAR(value::kFloat4, value::float4)
+        PROC_SCALAR(value::kHalf2, value::half2)
+        PROC_SCALAR(value::kHalf3, value::half3)
+        PROC_SCALAR(value::kHalf4, value::half4)
         PROC_SCALAR(value::kToken, value::token)
         PROC_SCALAR(value::kAssetPath, value::asset_path)
 
+        PROC_SCALAR(value::kMatrix2d, value::matrix2d)
+        PROC_SCALAR(value::kMatrix3d, value::matrix3d)
+        PROC_SCALAR(value::kMatrix4d, value::matrix4d)
+
+        // It seems `token[]` is defined as `TokenVector` in CrateData.
+        // We tret it as scalar
+        PROC_SCALAR("TokenVector", std::vector<value::token>)
+
         // TODO(syoyo): Use constexpr concat
-        PROC_ARRAY("int[]", int32_t)
-        PROC_ARRAY("uint[]", uint32_t)
-        PROC_ARRAY("float[]", float)
-        PROC_ARRAY("float2[]", value::float2)
-        PROC_ARRAY("float3[]", value::float3)
-        PROC_ARRAY("float4[]", value::float4)
-        PROC_ARRAY("token[]", value::token)
+        PROC_ARRAY(value::kInt, int32_t)
+        PROC_ARRAY(value::kUInt, uint32_t)
+        PROC_ARRAY(value::kFloat, float)
+        PROC_ARRAY(value::kFloat2, value::float2)
+        PROC_ARRAY(value::kFloat3, value::float3)
+        PROC_ARRAY(value::kFloat4, value::float4)
+        PROC_ARRAY(value::kToken, value::token)
 
-        PROC_ARRAY("point3h[]", value::point3h)
-        PROC_ARRAY("point3f[]", value::point3f)
-        PROC_ARRAY("point3d[]", value::point3d)
+        PROC_ARRAY(value::kMatrix2d, value::matrix2d)
+        PROC_ARRAY(value::kMatrix3d, value::matrix3d)
+        PROC_ARRAY(value::kMatrix4d, value::matrix4d)
 
-        PROC_ARRAY("vector3h[]", value::vector3h)
-        PROC_ARRAY("vector3f[]", value::vector3f)
-        PROC_ARRAY("vector3d[]", value::vector3d)
+        PROC_ARRAY(value::kPoint3h, value::point3h)
+        PROC_ARRAY(value::kPoint3f, value::point3f)
+        PROC_ARRAY(value::kPoint3d, value::point3d)
 
-        PROC_ARRAY("normal3h[]", value::normal3h)
-        PROC_ARRAY("normal3f[]", value::normal3f)
-        PROC_ARRAY("normal3d[]", value::normal3d)
+        PROC_ARRAY(value::kVector3h, value::vector3h)
+        PROC_ARRAY(value::kVector3f, value::vector3f)
+        PROC_ARRAY(value::kVector3d, value::vector3d)
+
+        PROC_ARRAY(value::kNormal3h, value::normal3h)
+        PROC_ARRAY(value::kNormal3f, value::normal3f)
+        PROC_ARRAY(value::kNormal3d, value::normal3d)
 
         //PROC_ARRAY("Vec2fArray", value::float2)
         //PROC_ARRAY("Vec3fArray", value::float3)
@@ -3930,8 +3949,6 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
         //PROC_ARRAY("IntArray", int)
         //PROC_ARRAY(kTokenArray, value::token)
 
-        // It seems `token[]` is defined as `TokenVector` in CrateData.
-        PROC_ARRAY("TokenVector", value::token)
       } else {
         PUSH_ERROR("TODO: " + fv.second.GetTypeName());
       }
