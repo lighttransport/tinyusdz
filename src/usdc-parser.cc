@@ -7,6 +7,7 @@
 
 #include "prim-types.hh"
 #include "tinyusdz.hh"
+#include "value-type.hh"
 #if defined(__wasi__)
 #else
 #include <thread>
@@ -3893,17 +3894,29 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
     success = true;
 
       if (0) {  // dummy
-        PROC_SCALAR("Float", float)
-        PROC_SCALAR("Bool", bool)
-        PROC_SCALAR("Int", int)
-        PROC_SCALAR("Vec3f", value::float3)
+        PROC_SCALAR("float", float)
+        PROC_SCALAR("bool", bool)
+        PROC_SCALAR("int", int)
+        PROC_SCALAR("float2", value::float2)
+        PROC_SCALAR("float3", value::float3)
+        PROC_SCALAR("float4", value::float4)
         PROC_SCALAR("Token", value::token)
-        PROC_ARRAY("FloatArray", float)
+        PROC_SCALAR("AssetPath", value::asset_path)
+
+        PROC_ARRAY("int[]", int32_t)
+        PROC_ARRAY("uint[]", uint32_t)
+        PROC_ARRAY("float[]", float)
+        PROC_ARRAY("float2[]", value::float2)
+        PROC_ARRAY("float3[]", value::float3)
+        PROC_ARRAY("float4[]", value::float4)
+        PROC_ARRAY("token[]", value::token)
+
         PROC_ARRAY("Vec2fArray", value::float2)
         PROC_ARRAY("Vec3fArray", value::float3)
         PROC_ARRAY("Vec4fArray", value::float4)
         PROC_ARRAY("IntArray", int)
         PROC_ARRAY("TokenArray", value::token)
+        PROC_ARRAY("TokenVector", value::token)
       } else {
         PUSH_ERROR("TODO: " + fv.second.GetTypeName());
       }
@@ -4227,8 +4240,8 @@ bool Parser::Impl::ReconstructGeomSubset(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type.");
         return false;
       }
 
@@ -4549,8 +4562,8 @@ bool Parser::Impl::ReconstructMaterial(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type.");
         return false;
       }
 
@@ -4641,8 +4654,8 @@ bool Parser::Impl::ReconstructShader(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        PUSH_ERROR("`properties` attribute must be TokenArray type.");
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
         return false;
       }
       // assert(fv.second.IsArray());
@@ -4712,10 +4725,9 @@ bool Parser::Impl::ReconstructShader(
         // Currently we only support predefined PBR attributes.
 
         if (prop_name.compare("info:id") == 0) {
-          auto p = attr.var.get_value<std::string>();  // `token` type, but
-                                                       // treat it as string
+          auto p = attr.var.get_value<value::token>();  
           if (p) {
-            shader_type = (*p);
+            shader_type = p.value().str();
           }
         }
       }
@@ -4738,8 +4750,8 @@ bool Parser::Impl::ReconstructPreviewSurface(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        _err += "`properties` attribute must be TokenArray type\n";
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
         return false;
       }
       // assert(fv.second.IsArray());
@@ -4908,8 +4920,8 @@ bool Parser::Impl::ReconstructSkelRoot(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        PUSH_ERROR("`properties` attribute must be TokenArray type.");
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
         return false;
       }
       // assert(fv.second.IsArray());
@@ -4996,8 +5008,8 @@ bool Parser::Impl::ReconstructSkeleton(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenArray") {
-        PUSH_ERROR("`properties` attribute must be TokenArray type");
+      if (fv.second.GetTypeName() != "TokenVector") {
+        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
         return false;
       }
       // assert(fv.second.IsArray());
