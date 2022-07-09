@@ -46,6 +46,78 @@
 namespace tinyusdz {
 namespace value {
 
+constexpr char kToken[] = "Token";
+constexpr char kString[] = "String";
+constexpr char kPath[] = "Path";
+constexpr char kAssetPath[] = "AssetPath";
+constexpr char kDictionary[] = "Dictionary";
+constexpr char kTimeCode[] = "TimeCode";
+
+constexpr char kBool[] = "bool";
+constexpr char kUChar[] = "uchar";
+constexpr char kHalf[] = "half";
+constexpr char kInt[] = "int";
+constexpr char kUInt[] = "uint";
+constexpr char kInt64[] = "int64";
+constexpr char kUInt64[] = "uint64";
+
+constexpr char kInt2[] = "int2";
+constexpr char kInt3[] = "int3";
+constexpr char kInt4[] = "int4";
+
+constexpr char kUInt2[] = "uint2";
+constexpr char kUInt3[] = "uint3";
+constexpr char kUInt4[] = "uint4";
+
+constexpr char kHalf2[] = "half2";
+constexpr char kHalf3[] = "half3";
+constexpr char kHalf4[] = "half4";
+
+constexpr char kMatrix2d[] = "matrix2d";
+constexpr char kMatrix3d[] = "matrix3d";
+constexpr char kMatrix4d[] = "matrix4d";
+
+constexpr char kFloat[]  = "float";
+constexpr char kFloat2[] = "float2";
+constexpr char kFloat3[] = "float3";
+constexpr char kFloat4[] = "float4";
+
+constexpr char kDouble[]  = "double";
+constexpr char kDouble2[] = "double2";
+constexpr char kDouble3[] = "double3";
+constexpr char kDouble4[] = "double4";
+
+constexpr char kQuath[] = "quath";
+constexpr char kQuatf[] = "quatf";
+constexpr char kQuatd[] = "quatd";
+
+constexpr char kVector3h[] = "vector3h";
+constexpr char kVector3f[] = "vector3f";
+constexpr char kVector3d[] = "vector3d";
+
+constexpr char kPoint3h[] = "point3h";
+constexpr char kPoint3f[] = "point3f";
+constexpr char kPoint3d[] = "point3d";
+
+constexpr char kNormal3h[] = "normal3h";
+constexpr char kNormal3f[] = "normal3f";
+constexpr char kNormal3d[] = "normal3d";
+
+constexpr char kColor3f[] = "color3f";
+constexpr char kColor3d[] = "color3d";
+constexpr char kColor4f[] = "color4f";
+constexpr char kColor4d[] = "color4d";
+
+constexpr char kFrame4d[] = "frame4d";
+
+constexpr char kTexCoord2h[] = "texcoord2h";
+constexpr char kTexCoord2f[] = "texcoord2f";
+constexpr char kTexCoord2d[] = "texcoord2d";
+
+constexpr char kTexCoord3h[] = "texcoord3h";
+constexpr char kTexCoord3f[] = "texcoord3f";
+constexpr char kTexCoord3d[] = "texcoord3d";
+
 using token = tinyusdz::Token;
 
 // SdfAssetPath
@@ -61,7 +133,7 @@ class asset_path
   std::string resolved_path_;
 };
 
-// TODO(syoyo): 3D and 4D?
+// TODO(syoyo): Support 3D and 4D?
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10; // 1024
 constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11; // 2048
 //constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 12;
@@ -522,90 +594,90 @@ struct TypeTrait;
     }                                                                         \
   }
 
-DEFINE_TYPE_TRAIT(bool, "bool", TYPE_ID_BOOL, 1);
-DEFINE_TYPE_TRAIT(uint8_t, "uchar", TYPE_ID_UCHAR, 1);
-DEFINE_TYPE_TRAIT(half, "half", TYPE_ID_HALF, 1);
+DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
+DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
+DEFINE_TYPE_TRAIT(half, kHalf, TYPE_ID_HALF, 1);
 
-DEFINE_TYPE_TRAIT(int32_t, "int", TYPE_ID_INT32, 1);
-DEFINE_TYPE_TRAIT(uint32_t, "uint", TYPE_ID_UINT32, 1);
+DEFINE_TYPE_TRAIT(int32_t, kInt, TYPE_ID_INT32, 1);
+DEFINE_TYPE_TRAIT(uint32_t, kUInt, TYPE_ID_UINT32, 1);
 
-DEFINE_TYPE_TRAIT(int64_t, "int64", TYPE_ID_INT64, 1);
-DEFINE_TYPE_TRAIT(uint64_t, "uint64", TYPE_ID_UINT64, 1);
+DEFINE_TYPE_TRAIT(int64_t, kInt64, TYPE_ID_INT64, 1);
+DEFINE_TYPE_TRAIT(uint64_t, kUInt64, TYPE_ID_UINT64, 1);
 
-DEFINE_TYPE_TRAIT(int2, "int2", TYPE_ID_INT2, 2);
-DEFINE_TYPE_TRAIT(int3, "int3", TYPE_ID_INT3, 3);
-DEFINE_TYPE_TRAIT(int4, "int4", TYPE_ID_INT4, 4);
+DEFINE_TYPE_TRAIT(int2, kInt2, TYPE_ID_INT2, 2);
+DEFINE_TYPE_TRAIT(int3, kInt3, TYPE_ID_INT3, 3);
+DEFINE_TYPE_TRAIT(int4, kInt4, TYPE_ID_INT4, 4);
 
-DEFINE_TYPE_TRAIT(uint2, "uint2", TYPE_ID_UINT2, 2);
-DEFINE_TYPE_TRAIT(uint3, "uint3", TYPE_ID_UINT3, 3);
-DEFINE_TYPE_TRAIT(uint4, "uint4", TYPE_ID_UINT4, 4);
+DEFINE_TYPE_TRAIT(uint2, kUInt2, TYPE_ID_UINT2, 2);
+DEFINE_TYPE_TRAIT(uint3, kUInt3, TYPE_ID_UINT3, 3);
+DEFINE_TYPE_TRAIT(uint4, kUInt4, TYPE_ID_UINT4, 4);
 
-DEFINE_TYPE_TRAIT(half2, "half2", TYPE_ID_HALF2, 2);
-DEFINE_TYPE_TRAIT(half3, "half3", TYPE_ID_HALF3, 3);
-DEFINE_TYPE_TRAIT(half4, "half4", TYPE_ID_HALF4, 4);
+DEFINE_TYPE_TRAIT(half2, kHalf2, TYPE_ID_HALF2, 2);
+DEFINE_TYPE_TRAIT(half3, kHalf3, TYPE_ID_HALF3, 3);
+DEFINE_TYPE_TRAIT(half4, kHalf4, TYPE_ID_HALF4, 4);
 
-DEFINE_TYPE_TRAIT(float, "float", TYPE_ID_FLOAT, 1);
-DEFINE_TYPE_TRAIT(float2, "float2", TYPE_ID_FLOAT2, 2);
-DEFINE_TYPE_TRAIT(float3, "float3", TYPE_ID_FLOAT3, 3);
-DEFINE_TYPE_TRAIT(float4, "float4", TYPE_ID_FLOAT4, 4);
+DEFINE_TYPE_TRAIT(float, kFloat, TYPE_ID_FLOAT, 1);
+DEFINE_TYPE_TRAIT(float2, kFloat2, TYPE_ID_FLOAT2, 2);
+DEFINE_TYPE_TRAIT(float3, kFloat3, TYPE_ID_FLOAT3, 3);
+DEFINE_TYPE_TRAIT(float4, kFloat4, TYPE_ID_FLOAT4, 4);
 
-DEFINE_TYPE_TRAIT(double, "double", TYPE_ID_DOUBLE, 1);
-DEFINE_TYPE_TRAIT(double2, "double2", TYPE_ID_DOUBLE2, 2);
-DEFINE_TYPE_TRAIT(double3, "double3", TYPE_ID_DOUBLE3, 3);
-DEFINE_TYPE_TRAIT(double4, "double4", TYPE_ID_DOUBLE4, 4);
+DEFINE_TYPE_TRAIT(double, kDouble, TYPE_ID_DOUBLE, 1);
+DEFINE_TYPE_TRAIT(double2, kDouble2, TYPE_ID_DOUBLE2, 2);
+DEFINE_TYPE_TRAIT(double3, kDouble3, TYPE_ID_DOUBLE3, 3);
+DEFINE_TYPE_TRAIT(double4, kDouble4, TYPE_ID_DOUBLE4, 4);
 
 
-DEFINE_TYPE_TRAIT(quath, "quath", TYPE_ID_QUATH, 1);
-DEFINE_TYPE_TRAIT(quatf, "quatf", TYPE_ID_QUATF, 1);
-DEFINE_TYPE_TRAIT(quatd, "quatd", TYPE_ID_QUATD, 1);
+DEFINE_TYPE_TRAIT(quath, kQuath, TYPE_ID_QUATH, 1);
+DEFINE_TYPE_TRAIT(quatf, kQuatf, TYPE_ID_QUATF, 1);
+DEFINE_TYPE_TRAIT(quatd, kQuatd, TYPE_ID_QUATD, 1);
 
-DEFINE_TYPE_TRAIT(matrix2d, "matrix2d", TYPE_ID_MATRIX2D, 1);
-DEFINE_TYPE_TRAIT(matrix3d, "matrix3d", TYPE_ID_MATRIX3D, 1);
-DEFINE_TYPE_TRAIT(matrix4d, "matrix4d", TYPE_ID_MATRIX4D, 1);
+DEFINE_TYPE_TRAIT(matrix2d, kMatrix2d, TYPE_ID_MATRIX2D, 1);
+DEFINE_TYPE_TRAIT(matrix3d, kMatrix3d, TYPE_ID_MATRIX3D, 1);
+DEFINE_TYPE_TRAIT(matrix4d, kMatrix4d, TYPE_ID_MATRIX4D, 1);
 
-DEFINE_TYPE_TRAIT(timecode, "timecode", TYPE_ID_TIMECODE, 1);
+DEFINE_TYPE_TRAIT(timecode, kTimeCode, TYPE_ID_TIMECODE, 1);
 
 //
 // Role types
 //
-DEFINE_ROLE_TYPE_TRAIT(vector3h, "vector3h", TYPE_ID_VECTOR3H, half3);
-DEFINE_ROLE_TYPE_TRAIT(vector3f, "vector3f", TYPE_ID_VECTOR3F, float3);
-DEFINE_ROLE_TYPE_TRAIT(vector3d, "vector3d", TYPE_ID_VECTOR3D, double3);
+DEFINE_ROLE_TYPE_TRAIT(vector3h, kVector3h, TYPE_ID_VECTOR3H, half3);
+DEFINE_ROLE_TYPE_TRAIT(vector3f, kVector3f, TYPE_ID_VECTOR3F, float3);
+DEFINE_ROLE_TYPE_TRAIT(vector3d, kVector3d, TYPE_ID_VECTOR3D, double3);
 
-DEFINE_ROLE_TYPE_TRAIT(normal3h, "normal3h", TYPE_ID_NORMAL3H, half3);
-DEFINE_ROLE_TYPE_TRAIT(normal3f, "normal3f", TYPE_ID_NORMAL3F, float3);
-DEFINE_ROLE_TYPE_TRAIT(normal3d, "normal3d", TYPE_ID_NORMAL3D, double3);
+DEFINE_ROLE_TYPE_TRAIT(normal3h, kNormal3h, TYPE_ID_NORMAL3H, half3);
+DEFINE_ROLE_TYPE_TRAIT(normal3f, kNormal3f, TYPE_ID_NORMAL3F, float3);
+DEFINE_ROLE_TYPE_TRAIT(normal3d, kNormal3d, TYPE_ID_NORMAL3D, double3);
 
-DEFINE_ROLE_TYPE_TRAIT(point3h, "point3h", TYPE_ID_POINT3H, half3);
-DEFINE_ROLE_TYPE_TRAIT(point3f, "point3f", TYPE_ID_POINT3F, float3);
-DEFINE_ROLE_TYPE_TRAIT(point3d, "point3d", TYPE_ID_POINT3D, double3);
+DEFINE_ROLE_TYPE_TRAIT(point3h, kPoint3h, TYPE_ID_POINT3H, half3);
+DEFINE_ROLE_TYPE_TRAIT(point3f, kPoint3f, TYPE_ID_POINT3F, float3);
+DEFINE_ROLE_TYPE_TRAIT(point3d, kPoint3d, TYPE_ID_POINT3D, double3);
 
-DEFINE_ROLE_TYPE_TRAIT(frame4d, "frame4d", TYPE_ID_FRAME4D, matrix4d);
+DEFINE_ROLE_TYPE_TRAIT(frame4d, kFrame4d, TYPE_ID_FRAME4D, matrix4d);
 
-DEFINE_ROLE_TYPE_TRAIT(color3f, "color3f", TYPE_ID_COLOR3F, float3);
-DEFINE_ROLE_TYPE_TRAIT(color4f, "color4f", TYPE_ID_COLOR4F, float4);
-DEFINE_ROLE_TYPE_TRAIT(color3d, "color3d", TYPE_ID_COLOR3D, double3);
-DEFINE_ROLE_TYPE_TRAIT(color4d, "color4d", TYPE_ID_COLOR4D, double4);
+DEFINE_ROLE_TYPE_TRAIT(color3f, kColor3f, TYPE_ID_COLOR3F, float3);
+DEFINE_ROLE_TYPE_TRAIT(color4f, kColor4f, TYPE_ID_COLOR4F, float4);
+DEFINE_ROLE_TYPE_TRAIT(color3d, kColor3d, TYPE_ID_COLOR3D, double3);
+DEFINE_ROLE_TYPE_TRAIT(color4d, kColor4d, TYPE_ID_COLOR4D, double4);
 
-DEFINE_ROLE_TYPE_TRAIT(texcoord2h, "texcoord2h", TYPE_ID_TEXCOORD2H, half2);
-DEFINE_ROLE_TYPE_TRAIT(texcoord2f, "texcoord2f", TYPE_ID_TEXCOORD2F, float2);
-DEFINE_ROLE_TYPE_TRAIT(texcoord2d, "texcoord2d", TYPE_ID_TEXCOORD2D, double2);
+DEFINE_ROLE_TYPE_TRAIT(texcoord2h, kTexCoord2h, TYPE_ID_TEXCOORD2H, half2);
+DEFINE_ROLE_TYPE_TRAIT(texcoord2f, kTexCoord2f, TYPE_ID_TEXCOORD2F, float2);
+DEFINE_ROLE_TYPE_TRAIT(texcoord2d, kTexCoord2d, TYPE_ID_TEXCOORD2D, double2);
 
-DEFINE_ROLE_TYPE_TRAIT(texcoord3h, "texcoord3h", TYPE_ID_TEXCOORD3H, half3);
-DEFINE_ROLE_TYPE_TRAIT(texcoord3f, "texcoord3f", TYPE_ID_TEXCOORD3F, float3);
-DEFINE_ROLE_TYPE_TRAIT(texcoord3d, "texcoord3d", TYPE_ID_TEXCOORD3D, double3);
-
-//
-//
-//
-DEFINE_TYPE_TRAIT(token, "Token", TYPE_ID_TOKEN, 1);
-DEFINE_TYPE_TRAIT(std::string, "String", TYPE_ID_STRING, 1);
-DEFINE_TYPE_TRAIT(dict, "Dictionary", TYPE_ID_DICT, 1);
-
-DEFINE_TYPE_TRAIT(asset_path, "AssetPath", TYPE_ID_ASSET_PATH, 1);
+DEFINE_ROLE_TYPE_TRAIT(texcoord3h, kTexCoord3h, TYPE_ID_TEXCOORD3H, half3);
+DEFINE_ROLE_TYPE_TRAIT(texcoord3f, kTexCoord3f, TYPE_ID_TEXCOORD3F, float3);
+DEFINE_ROLE_TYPE_TRAIT(texcoord3d, kTexCoord3d, TYPE_ID_TEXCOORD3D, double3);
 
 //
-// Other types(e.g. TYPE_ID_REFERENCE) are defined in another header(for example prim-types.hh for `Reference` type)
+//
+//
+DEFINE_TYPE_TRAIT(token, kToken, TYPE_ID_TOKEN, 1);
+DEFINE_TYPE_TRAIT(std::string, kString, TYPE_ID_STRING, 1);
+DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
+
+DEFINE_TYPE_TRAIT(asset_path, kAssetPath, TYPE_ID_ASSET_PATH, 1);
+
+//
+// Other types(e.g. TYPE_ID_REFERENCE) are defined in `prim-types.hh` and `crate-format.hh`(Data types used in Crate data)
 // 
 
 #undef DEFINE_TYPE_TRAIT
