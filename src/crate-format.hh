@@ -183,7 +183,7 @@ struct TableOfContents {
 };
 
 // crate data type
-// id must be identitical to <pxrUSD>/pxr/usd/usd/crateDataType.h 
+// id must be identitical to <pxrUSD>/pxr/usd/usd/crateDataType.h
 enum class CrateDataTypeId {
   CRATE_DATA_TYPE_INVALID = 0,
 
@@ -253,7 +253,9 @@ enum class CrateDataTypeId {
   CRATE_DATA_TYPE_UNREGISTERED_VALUE = 53,
   CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP = 54,
   CRATE_DATA_TYPE_PAYLOAD_LIST_OP = 55,
-  CRATE_DATA_TYPE_TIME_CODE = 56
+  CRATE_DATA_TYPE_TIME_CODE = 56,
+
+  NumDataTypes // terminator
 };
 
 class CrateDataType
@@ -290,6 +292,8 @@ class CrateValue {
 #define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &v) { value_ = v; }
 
 #define SET_TYPE_LIST(__FUNC) \
+  __FUNC(int64_t) \
+  __FUNC(uint64_t) \
   __FUNC(value::half) \
   __FUNC(value::half2) \
   __FUNC(value::half3) \
@@ -328,12 +332,26 @@ class CrateValue {
   SET_TYPE_SCALAR(value::dict)
 
   SET_TYPE_SCALAR(ListOp<value::token>)
+  SET_TYPE_SCALAR(ListOp<std::string>)
   SET_TYPE_SCALAR(ListOp<Path>)
+  SET_TYPE_SCALAR(ListOp<Reference>)
+  SET_TYPE_SCALAR(ListOp<int32_t>)
+  SET_TYPE_SCALAR(ListOp<uint32_t>)
+  SET_TYPE_SCALAR(ListOp<int64_t>)
+  SET_TYPE_SCALAR(ListOp<uint64_t>)
+  SET_TYPE_SCALAR(ListOp<Payload>)
+
   SET_TYPE_SCALAR(std::vector<Path>)
+  // vector<double> is defined in SET_TYPE_LIST(SET_TYPE_1D)
+  //SET_TYPE_SCALAR(std::vector<double>)
+  SET_TYPE_SCALAR(std::vector<LayerOffset>)
+
   SET_TYPE_SCALAR(value::TimeSamples)
   SET_TYPE_SCALAR(Dictionary)
 
   SET_TYPE_LIST(SET_TYPE_SCALAR)
+
+
   SET_TYPE_LIST(SET_TYPE_1D)
 
   // Useful function to retrieve concrete value with type T.

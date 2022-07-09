@@ -1740,6 +1740,9 @@ DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
 DEFINE_TYPE_TRAIT(Permission, "permission", TYPE_ID_PERMISSION, 1);
 DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
 
+DEFINE_TYPE_TRAIT(Payload, "payload", TYPE_ID_PAYLOAD, 1);
+DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);
+
 DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN, 1);
 DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING, 1);
 DEFINE_TYPE_TRAIT(ListOp<Path>, "ListOpPath", TYPE_ID_LIST_OP_PATH, 1);
@@ -1748,6 +1751,7 @@ DEFINE_TYPE_TRAIT(ListOp<int32_t>, "ListOpInt", TYPE_ID_LIST_OP_INT, 1);
 DEFINE_TYPE_TRAIT(ListOp<uint32_t>, "ListOpUInt", TYPE_ID_LIST_OP_UINT, 1);
 DEFINE_TYPE_TRAIT(ListOp<int64_t>, "ListOpInt64", TYPE_ID_LIST_OP_INT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
+DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
 // TODO(syoyo): Define as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
@@ -1755,7 +1759,7 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector", TYPE_ID_TOKEN_VECTOR
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
-// TODO: ListOp<int>, ... 
+// TODO: ListOp<int>, ...
 
 #undef DEFINE_TYPE_TRAIT
 

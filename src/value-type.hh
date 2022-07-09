@@ -145,6 +145,9 @@ enum TypeId {
   TYPE_ID_TEXCOORD3F,
   TYPE_ID_TEXCOORD3D,
 
+  TYPE_ID_LAYER_OFFSET,
+  TYPE_ID_PAYLOAD,
+
   TYPE_ID_TIMECODE,
   //TYPE_ID_TIMESAMPLE,
 
@@ -175,9 +178,10 @@ enum TypeId {
   TYPE_ID_VARIANT_SELECION_MAP,
 
   // Types in crate-format.hh
-  TYPE_ID_VALUE,
-  TYPE_ID_UNREGISTERED_VALUE,
-  TYPE_ID_LIST_OP_UNREGISTERED_VALUE,
+  TYPE_ID_CRATE_BEGIN = 256,
+  TYPE_ID_CRATE_VALUE,
+  TYPE_ID_CRATE_UNREGISTERED_VALUE,
+  TYPE_ID_CRATE_LIST_OP_UNREGISTERED_VALUE,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 512,
@@ -594,11 +598,11 @@ DEFINE_ROLE_TYPE_TRAIT(texcoord3d, "texcoord3d", TYPE_ID_TEXCOORD3D, double3);
 //
 //
 //
-DEFINE_TYPE_TRAIT(token, "token", TYPE_ID_TOKEN, 1);
-DEFINE_TYPE_TRAIT(std::string, "string", TYPE_ID_STRING, 1);
-DEFINE_TYPE_TRAIT(dict, "dictionary", TYPE_ID_DICT, 1);
+DEFINE_TYPE_TRAIT(token, "Token", TYPE_ID_TOKEN, 1);
+DEFINE_TYPE_TRAIT(std::string, "String", TYPE_ID_STRING, 1);
+DEFINE_TYPE_TRAIT(dict, "Dictionary", TYPE_ID_DICT, 1);
 
-DEFINE_TYPE_TRAIT(asset_path, "asset_path", TYPE_ID_ASSET_PATH, 1);
+DEFINE_TYPE_TRAIT(asset_path, "AssetPath", TYPE_ID_ASSET_PATH, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in another header(for example prim-types.hh for `Reference` type)

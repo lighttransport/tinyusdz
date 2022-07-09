@@ -124,11 +124,10 @@ int main(int argc, char **argv) {
     bool ret = tinyusdz::LoadUSDZFromFile(filepath, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
     }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
+      //return EXIT_FAILURE;
     }
 
     if (!ret) {
@@ -139,11 +138,10 @@ int main(int argc, char **argv) {
     bool ret = tinyusdz::LoadUSDCFromFile(filepath, &scene, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
     }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
+      //return EXIT_FAILURE;
     }
 
     if (!ret) {

@@ -376,10 +376,12 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   //DCOUT("num_paths: " << std::to_string(parser.NumPaths()));
 
-  for (size_t i = 0; i < parser.NumPaths(); i++) {
-    Path path = parser.GetPath(crate::Index(uint32_t(i)));
+  //for (size_t i = 0; i < parser.NumPaths(); i++) {
+    //Path path = parser.GetPath(crate::Index(uint32_t(i)));
     //DCOUT("path[" << i << "].name = " << path.full_path_name());
-  }
+  //}
+
+  std::cout << "dbg: 1\n";
 
   // Create `Scene` object
   // std::cout << "reconstruct scene:\n";
@@ -398,6 +400,12 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   if (warn) {
     (*warn) = parser.GetWarning();
+  }
+
+  // TODO(syoyo): Return false?
+  if (err) {
+    std::cout << "err msg = " << parser.GetError() << "\n";
+    (*err) = parser.GetError();
   }
 
   return true;
