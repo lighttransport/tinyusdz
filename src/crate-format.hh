@@ -31,6 +31,9 @@ namespace crate {
 constexpr size_t kMinCompressedArraySize = 16;
 constexpr size_t kSectionNameMaxLength = 15;
 
+constexpr char kTokenVector[] = "TokenVector";
+constexpr char kStringVector[] = "StringVector";
+
 // -- from USD ----------------------------------------------------------------
 
 //

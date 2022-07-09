@@ -3876,7 +3876,7 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
   else if (fv.second.GetTypeName() == __tyname) {     \
     auto ret = fv.second.get_value<__ty>();           \
     if (!ret) {                                       \
-      _err += "Failed to decode " __tyname " value."; \
+      PUSH_ERROR("Failed to decode " << __tyname << " value."); \
       return false;                                   \
     }                                                 \
     attr->var.set_scalar(ret.value());                \
@@ -3887,22 +3887,23 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
   else if (fv.second.GetTypeName() == __tyname) {        \
     auto ret = fv.second.get_value<std::vector<__ty>>(); \
     if (!ret) {                                          \
-      _err += "Failed to decode " __tyname "[] value.";  \
+      _err += "Failed to decode " __tyname " value.";  \
       return false;                                      \
     }                                                    \
     attr->var.set_scalar(ret.value());                   \
     success = true;
 
       if (0) {  // dummy
-        PROC_SCALAR("float", float)
-        PROC_SCALAR("bool", bool)
-        PROC_SCALAR("int", int)
-        PROC_SCALAR("float2", value::float2)
-        PROC_SCALAR("float3", value::float3)
-        PROC_SCALAR("float4", value::float4)
-        PROC_SCALAR("Token", value::token)
-        PROC_SCALAR("AssetPath", value::asset_path)
+        PROC_SCALAR(value::kFloat, float)
+        PROC_SCALAR(value::kBool, bool)
+        PROC_SCALAR(value::kInt, int)
+        PROC_SCALAR(value::kFloat2, value::float2)
+        PROC_SCALAR(value::kFloat3, value::float3)
+        PROC_SCALAR(value::kFloat4, value::float4)
+        PROC_SCALAR(value::kToken, value::token)
+        PROC_SCALAR(value::kAssetPath, value::asset_path)
 
+        // TODO(syoyo): Use constexpr concat
         PROC_ARRAY("int[]", int32_t)
         PROC_ARRAY("uint[]", uint32_t)
         PROC_ARRAY("float[]", float)
@@ -3911,42 +3912,30 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
         PROC_ARRAY("float4[]", value::float4)
         PROC_ARRAY("token[]", value::token)
 
-        PROC_ARRAY("Vec2fArray", value::float2)
-        PROC_ARRAY("Vec3fArray", value::float3)
-        PROC_ARRAY("Vec4fArray", value::float4)
-        PROC_ARRAY("IntArray", int)
-        PROC_ARRAY("TokenArray", value::token)
+        PROC_ARRAY("point3h[]", value::point3h)
+        PROC_ARRAY("point3f[]", value::point3f)
+        PROC_ARRAY("point3d[]", value::point3d)
+
+        PROC_ARRAY("vector3h[]", value::vector3h)
+        PROC_ARRAY("vector3f[]", value::vector3f)
+        PROC_ARRAY("vector3d[]", value::vector3d)
+
+        PROC_ARRAY("normal3h[]", value::normal3h)
+        PROC_ARRAY("normal3f[]", value::normal3f)
+        PROC_ARRAY("normal3d[]", value::normal3d)
+
+        //PROC_ARRAY("Vec2fArray", value::float2)
+        //PROC_ARRAY("Vec3fArray", value::float3)
+        //PROC_ARRAY("Vec4fArray", value::float4)
+        //PROC_ARRAY("IntArray", int)
+        //PROC_ARRAY(kTokenArray, value::token)
+
+        // It seems `token[]` is defined as `TokenVector` in CrateData.
         PROC_ARRAY("TokenVector", value::token)
       } else {
         PUSH_ERROR("TODO: " + fv.second.GetTypeName());
       }
 
-      // TODO: role-type
-#if 0
-
-        if (attr->type_name == "point3f[]") {
-          std::vector<value::point3f> value;
-          value.resize(fv.second.GetData().size() / sizeof(value::float3));
-          memcpy(value.data(), fv.second.GetData().data(),
-                 fv.second.GetData().size());
-          attr->var.set_scalar(value);
-        } else if (attr->type_name == "normal3f[]") {
-          std::vector<value::normal3f> value;
-          value.resize(fv.second.GetData().size() / sizeof(value::float3));
-          memcpy(value.data(), fv.second.GetData().data(),
-                 fv.second.GetData().size());
-          attr->var.set_scalar(value);
-        } else {
-          std::vector<value::float3> value;
-          value.resize(fv.second.GetData().size() / sizeof(value::float3));
-          memcpy(value.data(), fv.second.GetData().data(),
-                 fv.second.GetData().size());
-          attr->var.set_scalar(value);
-        }
-        attr->variability = variability;
-        attr->interpolation = interpolation;
-        success = true;
-#endif
     }
   }
 
@@ -3956,6 +3945,15 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
   }
 
   return success;
+}
+
+#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type) { \
+  if (__fv.first == __name) { \
+    if (__fv.second.GetTypeName() != __req_type) { \
+      PUSH_ERROR("`" << __name << "` attribute must be " << __req_type << " type, but got " << __fv.second.GetTypeName()); \
+      return false; \
+    } \
+  } \
 }
 
 bool Parser::Impl::ReconstructXform(
@@ -3973,12 +3971,9 @@ bool Parser::Impl::ReconstructXform(
 
   for (const auto &fv : fields) {
     DCOUT("field = " << fv.first << ", type = " << fv.second.GetTypeName());
-    if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type, but got " + fv.second.GetTypeName());
-        return false;
-      }
-    }
+
+    FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector) 
+
   }
 
   //
@@ -4049,14 +4044,12 @@ bool Parser::Impl::ReconstructGeomBasisCurves(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type, bot got " + fv.second.GetTypeName());
-        return false;
-      }
+
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       auto ret = fv.second.get_value<std::vector<value::token>>();
       if (!ret) {
-        _err += "`properties` data isn't a TokenArray type\n";
+        PUSH_ERROR("Invalid `properties` data");
         return false;
       }
 
@@ -4240,10 +4233,7 @@ bool Parser::Impl::ReconstructGeomSubset(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type.");
-        return false;
-      }
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
       //   // if (fv.second.GetStringArray()[i] == "points") {
@@ -4356,10 +4346,7 @@ bool Parser::Impl::ReconstructGeomMesh(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type, but got " + fv.second.GetTypeName());
-        return false;
-      }
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       const auto arr = fv.second.get_value<std::vector<value::token>>();
       if (!arr) {
@@ -4562,10 +4549,7 @@ bool Parser::Impl::ReconstructMaterial(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type.");
-        return false;
-      }
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
       // }
@@ -4654,11 +4638,7 @@ bool Parser::Impl::ReconstructShader(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
-        return false;
-      }
-      // assert(fv.second.IsArray());
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
       // }
@@ -4750,11 +4730,7 @@ bool Parser::Impl::ReconstructPreviewSurface(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
-        return false;
-      }
-      // assert(fv.second.IsArray());
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
       // }
@@ -4920,11 +4896,7 @@ bool Parser::Impl::ReconstructSkelRoot(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
-        return false;
-      }
-      // assert(fv.second.IsArray());
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
       // }
@@ -5008,11 +4980,7 @@ bool Parser::Impl::ReconstructSkeleton(
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
-      if (fv.second.GetTypeName() != "TokenVector") {
-        PUSH_ERROR("`properties` attribute must be TokenVector type but got " + fv.second.GetTypeName());
-        return false;
-      }
-      // assert(fv.second.IsArray());
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
       // }
