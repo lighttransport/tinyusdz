@@ -46,27 +46,6 @@ inline std::string GetTypeName(XformOpValueType const &v) {
   return "TypeName(XformOpValueType) = ???";
 }
 
-
-
-std::string PrintPoint3fArray(const std::vector<value::point3f> &data) {
-  std::stringstream ofs;
-
-  ofs << "[";
-  // TODO: Use ryu print?
-  for (size_t i = 0; i < data.size(); i++) {
-    ofs << "(" << data[i].x << ", " << data[i].y << ", "
-        << data[i].z << ")";
-
-    if (i != (data.size() - 1)) {
-      ofs << ", ";
-    }
-  }
-  ofs << "]";
-
-  return ofs.str();
-}
-
-
 class Writer {
  public:
   Writer(const Scene &scene) : _scene(scene) {}
@@ -80,52 +59,16 @@ class Writer {
     return ss.str();
   }
 
-  bool WriteGeomMesh(std::ostream &ofs, const GeomMesh &mesh, size_t level) {
-    std::cout << "Writing GeomMesh: " << mesh.name << " ...\n";
+  bool WriteGeomMesh(std::ostream &ofs, const GeomMesh &mesh, uint32_t level) {
 
-    ofs << Indent(level) << "\n";
-    ofs << Indent(level) << "def GeomMesh \"" << mesh.name << "\"\n";
-    ofs << Indent(level) << "{\n";
+    ofs << to_string(mesh, level, /* closing brace */false);
 
-    // params
-    ofs << Indent(level + 1)
-        << "int[] faceVertexCounts = " << mesh.faceVertexCounts
-        << "\n";
-    ofs << Indent(level + 1)
-        << "int[] faceVertexIndices = " << mesh.faceVertexIndices
-        << "\n";
-    ofs << Indent(level + 1)
-        << "point3f[] points = " << PrintPoint3fArray(mesh.points) << "\n";
-
-#if 0
-    if (auto p = primvar::as_vector<Vec3f>(&mesh.normals.var)) {
-      std::vector<Vec3f> normals = (*p);
-
-      if (normals.size()) {
-        ofs << Indent(level + 1)
-            << "normal3f[] normals = " << PrintVec3fArray(normals);
-
-        if (mesh.normals.interpolation != Interpolation::Invalid) {
-          ofs << Indent(level + 2) << "(\n";
-          ofs << Indent(level + 3) << "interpolation = \"" << to_string(mesh.normals.interpolation) << "\"\n";
-          ofs << Indent(level + 2) << ")\n";
-        } else {
-          ofs << "\n";
-        }
-      }
-    }
-#endif
-
-    // primvars
-
-    // uniforms
-    // TODO
-    ofs << Indent(level + 1) << "uniform token subdivisionScheme = \"none\"\n";
+    ofs << Indent(level) << "}\n";
 
     return true;
   }
 
-  bool WriteXform(std::ostream &ofs, const Xform &xform, size_t level) {
+  bool WriteXform(std::ostream &ofs, const Xform &xform, uint32_t level) {
     std::cout << "Writing Xform: " << xform.name << " ...\n";
 
     ofs << Indent(level) << "\n";
@@ -164,7 +107,7 @@ class Writer {
     return true;
   }
 
-  bool WriteNode(std::ostream &ofs, const Node &node, size_t level) {
+  bool WriteNode(std::ostream &ofs, const Node &node, uint32_t level) {
     if (node.type == NODE_TYPE_XFORM) {
       if ((node.index < 0) || (size_t(node.index) >= _scene.xforms.size())) {
         // invalid index
@@ -188,8 +131,8 @@ class Writer {
       }
 
     } else {
-      // unsupported node.
-      _err += "Unsupported node type.\n";
+      // unimplemented/unsupported node.
+      _err += "TODO: Unimplemnted node type.\n";
       return false;
     }
 
@@ -207,29 +150,35 @@ class Writer {
   const Scene &_scene;
 
   const std::string &Error() const { return _err; }
+  const std::string &Warn() const { return _warn; }
 
  private:
   Writer() = delete;
   Writer(const Writer &) = delete;
 
   std::string _err;
+  std::string _warn;
 };
 
 }  // namespace
 
 bool SaveAsUSDA(const std::string &filename, const Scene &scene,
                 std::string *warn, std::string *err) {
-  (void)warn;
 
   std::stringstream ss;
 
   ss << "#usda 1.0\n";
   ss << "(\n";
-  ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
-     << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
+  if (scene.doc.empty()) {
+    ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
+       << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
+  } else {
+    ss << "  doc = \"" << scene.doc << "\"\n";
+  }
   ss << "  metersPerUnit = " << scene.metersPerUnit << "\n";
   ss << "  upAxis = \"" << scene.upAxis << "\"\n";
   ss << "  timeCodesPerSecond = \"" << scene.timeCodesPerSecond << "\"\n";
+  // TODO: write other header data.
   ss << ")\n";
 
   // TODO
@@ -241,6 +190,10 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
     if (!writer.WriteNode(ss, root, 0)) {
       if (err && writer.Error().size()) {
         (*err) += writer.Error();
+      }
+
+      if (warn && writer.Warn().size()) {
+        (*warn) += writer.Warn();
       }
 
       return false;
