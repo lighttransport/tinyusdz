@@ -11,6 +11,9 @@
 namespace tinyusdz {
 namespace usdc {
 
+///
+/// USDC(Crate) parser
+///
 class Parser {
  public:
   Parser(StreamReader *sr, int num_threads);

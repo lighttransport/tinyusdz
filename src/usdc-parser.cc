@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2020-Present Syoyo Fujita.
 //
-// Experimental USD to JSON converter
+// USDC(Crate) parser
+//
+// TODO:
+//
+// - [ ] Refactor Reconstruct*** function
+// - [ ] Set `custom` in property by looking up schema.
+// - [ ] And more...
+//
 #include <unordered_map>
 #include <unordered_set>
 
@@ -2091,7 +2098,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY:
     {
-      TODO_IMPLEMENT(dty)
+      PUSH_ERROR("TODO: Specifier/Permission/Variability. isArray " << rep.IsArray() << ", isCompressed " << rep.IsCompressed());
+      return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
@@ -3989,7 +3997,7 @@ bool Parser::Impl::ReconstructXform(
   for (const auto &fv : fields) {
     DCOUT("field = " << fv.first << ", type = " << fv.second.GetTypeName());
 
-    FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector) 
+    FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
   }
 
@@ -4540,14 +4548,17 @@ bool Parser::Impl::ReconstructGeomMesh(
           }
         } else {
           // Assume Primvar.
-          if (mesh->attribs.count(prop_name)) {
+          if (mesh->props.count(prop_name)) {
             PUSH_ERROR("Duplicated property name found: " + prop_name);
             return false;
           }
 
           DCOUT("add [" << prop_name << "] to generic attrs.");
 
-          mesh->attribs[prop_name] = std::move(attr);
+          // FIXME: Look-up schema to detect if the property is `custom` or not.
+          bool is_custom{false};
+
+          mesh->props.emplace(prop_name, Property(attr, is_custom));
         }
       }
     }
@@ -4722,7 +4733,7 @@ bool Parser::Impl::ReconstructShader(
         // Currently we only support predefined PBR attributes.
 
         if (prop_name.compare("info:id") == 0) {
-          auto p = attr.var.get_value<value::token>();  
+          auto p = attr.var.get_value<value::token>();
           if (p) {
             shader_type = p.value().str();
           }
@@ -5236,7 +5247,7 @@ bool Parser::Impl::ReconstructSceneRecursively(
 
   auto GetTypeName = [](const FieldValuePairVector &fvs) -> nonstd::optional<std::string> {
     for (const auto &fv : fvs) {
-      DCOUT(" fv.first = " << fv.first);
+      DCOUT(" fv.first = " << fv.first << ", type = " << fv.second.GetTypeName());
       if (fv.first == "typeName") {
         auto v = fv.second.get_value<value::token>();
         if (v) {

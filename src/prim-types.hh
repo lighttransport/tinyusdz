@@ -590,14 +590,26 @@ struct PrimAttrib {
   primvar::PrimVar var;
 };
 
+// Attribute or Relation. And has this property is custom or not
+// (Need to lookup schema if the property is custom or not for Crate data)
 struct Property
 {
   PrimAttrib attrib;
   Rel rel;
 
-  bool is_rel{false};
-
+  bool is_rel{false}; // true = Attribute
   bool is_custom{false};
+
+
+  Property() = default;
+
+  Property(const PrimAttrib &a, bool c) : attrib(a), is_custom(c) {
+    is_rel = false;
+  }
+
+  Property(const Rel &r, bool c) : rel(r), is_custom(c) {
+    is_rel = true;
+  }
 
   bool IsRel() {
     return is_rel;
@@ -1185,6 +1197,7 @@ struct LuxDomeLight
   // TODO: Support texture?
   value::color3f color{};
   float intensity{10.0f};
+  float guideRadius{1.0e5f};
 
   //
   // Properties
@@ -1210,21 +1223,6 @@ struct BlendShape {
                      // values in `offsets` and `normalOffsets`.
 };
 
-struct SkelRoot {
-  std::string name;
-  int64_t parent_id{-1};
-
-  AnimatableExtent extent;
-  Purpose purpose{Purpose::Default};
-  AnimatableVisibility visibility{Visibility::Inherited};
-
-  // TODO
-  // std::vector<std::string> xformOpOrder;
-  // ref proxyPrim
-
-  int64_t skeleton_id{-1}; // index to scene.skeletons
-};
-
 // Skeleton
 struct Skeleton {
 
@@ -1247,6 +1245,23 @@ struct Skeleton {
   // std::vector<std::string> xformOpOrder;
   // ref proxyPrim
 };
+
+struct SkelRoot {
+  std::string name;
+  int64_t parent_id{-1};
+
+  AnimatableExtent extent;
+  Purpose purpose{Purpose::Default};
+  AnimatableVisibility visibility{Visibility::Inherited};
+
+  // TODO
+  // std::vector<std::string> xformOpOrder;
+  // ref proxyPrim
+
+  int64_t skeleton_id{-1}; // index to scene.skeletons
+  //Skeleton skeleton;
+};
+
 
 struct SkelAnimation {
   std::vector<std::string> blendShapes;
@@ -1294,7 +1309,11 @@ struct GPrim {
 
   std::map<std::string, Property> props;
 
+  std::map<std::string, value::Value> args;
+
   bool _valid{true}; // default behavior is valid(allow empty GPrim)
+
+  bool active{true};
 
   // child nodes
   std::vector<GPrim> children;
@@ -1327,10 +1346,7 @@ struct GeomSubset {
 };
 
 // Polygon mesh geometry
-struct GeomMesh {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
+struct GeomMesh : GPrim {
 
   //
   // Predefined attribs.
@@ -1370,18 +1386,18 @@ struct GeomMesh {
   //
   // Properties
   //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
+  //AnimatableExtent extent;  // bounding extent(in local coord?).
   std::string facevaryingLinearInterpolation = "cornerPlus1";
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
+  //AnimatableVisibility visibility{Visibility::Inherited};
+  //Purpose purpose{Purpose::Default};
 
   // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  //bool doubleSided{false};
+  //Orientation orientation{Orientation::RightHanded};
+  //AnimatableVec3fArray displayColor; // primvars:displayColor
+  //AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
-  MaterialBindingAPI materialBinding;
+  //MaterialBindingAPI materialBinding;
 
   //
   // SubD attribs.
@@ -1409,7 +1425,7 @@ struct GeomMesh {
   nonstd::expected<bool, std::string> ValidateGeomSubset();
 
   // List of Primitive attributes(primvars)
-  std::map<std::string, PrimAttrib> attribs;
+  //std::map<std::string, PrimAttrib> attribs;
 };
 
 //
