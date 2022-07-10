@@ -204,8 +204,7 @@ int parseInt(const std::string &s, int *out_result) {
   return 0;  // OK
 }
 
-// TODO: parseUInt64
-
+// TODO:
 #if 0
 std::string to_string(const TimeSampleType &tsv) {
   std::stringstream ss;
@@ -222,9 +221,6 @@ std::string to_string(const TimeSampleType &tsv) {
 
   return ss.str();
 }
-#endif
-
-#if 0
 std::string to_string(const TimeSampledDataFloat &values, uint32_t indent = 0)
 {
   std::stringstream ss;
@@ -276,77 +272,13 @@ struct ErrorDiagnositc {
   int line_col = -1;
 };
 
-// typedef std::array<float, 2> float2;
-// typedef std::array<float, 3> float3;
-// typedef std::array<float, 4> float4;
-//
-// typedef std::array<double, 2> double2;
-// typedef std::array<double, 3> double3;
-// typedef std::array<double, 4> double4;
-
+#if 0
 struct Path {
   std::string path;
 };
 
 using PathList = std::vector<Path>;
-
-#if 0
-
-// If you want to add more items, you need to regenerate nonstd::variant.hpp
-// file, since nonstd::variant has a limited number of types to use(currently
-// 33).
-//
-// std::vector<value::float3> is the first citizen of `Value`, since it is frequently
-// used type. For other array type, use Variable::Array
-using Value = nonstd::variant<bool, int, float, value::float2, value::float3, Vec4f, double,
-                              value::double2, value::double3, value::double4, std::vector<value::float3>,
-                              std::string, Reference, Path, PathList, Rel>;
 #endif
-
-namespace {
-
-#if 0
-std::string value_type_name(const Value &v) {
-  // TODO: use nonstd::visit
-  if (nonstd::get_if<bool>(&v)) {
-    return "bool";
-  } else if (nonstd::get_if<int>(&v)) {
-    return "int";
-  } else if (nonstd::get_if<float>(&v)) {
-    return "float";
-  } else if (nonstd::get_if<value::float2>(&v)) {
-    return "float2";
-  } else if (nonstd::get_if<value::float3>(&v)) {
-    return "float3";
-  } else if (nonstd::get_if<value::float4>(&v)) {
-    return "float4";
-  } else if (nonstd::get_if<double>(&v)) {
-    return "double";
-  } else if (nonstd::get_if<value::double2>(&v)) {
-    return "double2";
-  } else if (nonstd::get_if<value::double3>(&v)) {
-    return "double3";
-  } else if (nonstd::get_if<value::double4>(&v)) {
-    return "double4";
-  } else if (nonstd::get_if<std::vector<value::float3>>(&v)) {
-    return "float3[]";
-  } else if (nonstd::get_if<std::string>(&v)) {
-    return "string";
-  } else if (nonstd::get_if<Reference>(&v)) {
-    return "asset_ref";
-  } else if (nonstd::get_if<Path>(&v)) {
-    return "path";
-  } else if (nonstd::get_if<PathList>(&v)) {
-    return "path[]";
-  } else if (nonstd::get_if<Rel>(&v)) {
-    return "rel";
-  } else {
-    return "[[Unknown/unimplementef type for Value]]";
-  }
-}
-#endif
-
-}  // namespace
 
 class VariableDef {
  public:
@@ -932,199 +864,6 @@ static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
   return result;
 #endif
 }
-
-#if 0
-template<typename T>
-struct LexResult
-{
-  uint64_t n_chars; // # of characters read
-
-  T value;
-};
-
-// Re-entrant LexFloat
-static nonstd::expected<LexResult<std::string>, std::string> LexFloatR(
-  const tinyusdz::StreamReader *sr) {
-
-  // FLOATVAL : ('+' or '-')? FLOAT
-  // FLOAT
-  //     :   ('0'..'9')+ '.' ('0'..'9')* EXPONENT?
-  //     |   '.' ('0'..'9')+ EXPONENT?
-  //     |   ('0'..'9')+ EXPONENT
-  //     ;
-  // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
-
-  std::stringstream ss;
-
-  bool has_sign{false};
-  bool leading_decimal_dots{false};
-  {
-    char sc;
-    if (!sr->read1(&sc)) {
-      return nonstd::make_unexpected("Failed to read a character");
-    }
-
-    ss << sc;
-
-    // sign, '.' or [0-9]
-    if ((sc == '+') || (sc == '-')) {
-      has_sign = true;
-
-      char c;
-      if (!sr->read1(&c)) {
-        return nonstd::make_unexpected("Failed to read a character");
-      }
-
-      if (c == '.') {
-        // ok. something like `+.7`, `-.53`
-        leading_decimal_dots = true;
-        ss << c;
-
-      } else {
-        // unwind and continue
-        sr->seek_from_current(-1);
-      }
-
-    } else if ((sc >= '0') && (sc <= '9')) {
-      // ok
-    } else if (sc == '.') {
-      // ok
-      leading_decimal_dots = true;
-    } else {
-      return nonstd::make_unexpected("Sign or `.` or 0-9 expected.");
-    }
-  }
-
-  (void)has_sign;
-
-  // 1. Read the integer part
-  char curr;
-  if (!leading_decimal_dots) {
-    // std::cout << "1 read int part: ss = " << ss.str() << "\n";
-
-    while (!sr->eof()) {
-      if (!sr->read1(&curr)) {
-        return nonstd::make_unexpected("Failed to read a character");
-      }
-
-      // std::cout << "1 curr = " << curr << "\n";
-      if ((curr >= '0') && (curr <= '9')) {
-        // continue
-        ss << curr;
-
-      } else {
-        sr->seek_from_current(-1);
-        break;
-      }
-    }
-  }
-
-  if (sr->eof()) {
-    LexResult<std::string> ret;
-    ret.n_chars = ss.str().size();
-    ret.value = ss.str();
-    return std::move(ret);
-  }
-
-  if (!sr->read1(&curr)) {
-    return nonstd::make_unexpected("Failed to read a character");
-  }
-
-  // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
-  // "\n";
-
-  // 2. Read the decimal part
-  if (curr == '.') {
-    ss << curr;
-
-    while (!sr->eof()) {
-      if (!sr->read1(&curr)) {
-        return nonstd::make_unexpected("Failed to read a character");
-      }
-
-      if ((curr >= '0') && (curr <= '9')) {
-        ss << curr;
-      } else {
-        break;
-      }
-    }
-
-  } else if ((curr == 'e') || (curr == 'E')) {
-    // go to 3.
-  } else {
-    // end
-    sr->seek_from_current(-1);
-
-    LexResult<std::string> ret;
-    ret.n_chars = ss.str().size();
-    ret.value = ss.str();
-    return std::move(ret);
-  }
-
-  if (sr->eof()) {
-    LexResult<std::string> ret;
-    ret.n_chars = ss.str().size();
-    ret.value = ss.str();
-    return std::move(ret);
-  }
-
-  // 3. Read the exponent part
-  bool has_exp_sign{false};
-  if ((curr == 'e') || (curr == 'E')) {
-    ss << curr;
-
-    if (!sr->read1(&curr)) {
-      return nonstd::make_unexpected("Failed to read a character");
-    }
-
-    if ((curr == '+') || (curr == '-')) {
-      // exp sign
-      ss << curr;
-      has_exp_sign = true;
-
-    } else if ((curr >= '0') && (curr <= '9')) {
-      // ok
-      ss << curr;
-    } else {
-      // Empty E is not allowed.
-      std::string msg = "Empty E is not allowed. curr = " + ss.str();
-      return nonstd::make_unexpected(msg);
-    }
-
-    while (!sr->eof()) {
-      if (!sr->read1(&curr)) {
-        return nonstd::make_unexpected("Failed to read a character");
-      }
-
-      if ((curr >= '0') && (curr <= '9')) {
-        // ok
-        ss << curr;
-
-      } else if ((curr == '+') || (curr == '-')) {
-        if (has_exp_sign) {
-          // No multiple sign characters
-          std::string msg = "No multiple exponential sign characters.";
-          return nonstd::make_unexpected(msg);
-        }
-
-        ss << curr;
-        has_exp_sign = true;
-      } else {
-        // end
-        sr->seek_from_current(-1);
-        break;
-      }
-    }
-  } else {
-    sr->seek_from_current(-1);
-  }
-
-  LexResult<std::string> ret;
-  ret.n_chars = ss.str().size();
-  ret.value = ss.str();
-  return std::move(ret);
-}
-#endif
 
 //
 // TODO: multi-threaded value array parser.
@@ -5417,151 +5156,42 @@ class USDAParser::Impl {
           return false;
         }
         gprim.name = node_name;
+        scene_.gprims.emplace_back(gprim);
 
 
       } else {
-        // Reconstruct concrete class object
-        if (prim_type == "Xform") {
-          Xform xform;
-          if (!ReconstructXform(props, references, &xform)) {
-            PushError("Failed to reconstruct Xform.");
-            return false;
-          }
-          xform.name = node_name;
 
+        // Reconstruct concrete C++ object
 
-        } else if (prim_type == "Mesh") {
-          GeomMesh mesh;
-          if (!ReconstructGeomMesh(props, references, &mesh)) {
-            PushError("Failed to reconstruct GeomMesh.");
-            return false;
-          }
-          mesh.name = node_name;
+#define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
+        } else if (prim_type == __tyname) { \
+          __dty node; \
+          if (!__reconstruct_fn(props, references, &node)) { \
+            PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname); \
+          } \
+          node.name = node_name; \
+          __scene.emplace_back(node); 
 
-          DCOUT(to_string(mesh, nestlevel));
+        if (0) {
+        RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
+        RECONSTRUCT_NODE("Mesh", ReconstructGeomMesh, GeomMesh, scene_.geom_meshes)
+        RECONSTRUCT_NODE("Sphere", ReconstructGeomSphere, GeomSphere, scene_.geom_spheres)
+        RECONSTRUCT_NODE("Cone", ReconstructGeomCone, GeomCone, scene_.geom_cones)
+        RECONSTRUCT_NODE("Cube", ReconstructGeomCube, GeomCube, scene_.geom_cubes)
+        RECONSTRUCT_NODE("Capsule", ReconstructGeomCapsule, GeomCapsule, scene_.geom_capsules)
+        RECONSTRUCT_NODE("Cylinder", ReconstructGeomCylinder, GeomCylinder, scene_.geom_cylinders)
+        RECONSTRUCT_NODE("BasisCurves", ReconstructBasisCurves, GeomBasisCurves, scene_.geom_basis_curves)
+        RECONSTRUCT_NODE("Camera", ReconstructGeomCamera, GeomCamera, scene_.geom_cameras)
+        RECONSTRUCT_NODE("Shader", ReconstructShader, Shader, scene_.shaders)
+        RECONSTRUCT_NODE("Material", ReconstructMaterial, Material, scene_.materials)
 
-          scene_.geom_meshes.push_back(mesh);
+        RECONSTRUCT_NODE("Scope", ReconstructScope, Scope, scene_.scopes)
 
-        } else if (prim_type == "Sphere") {
-          GeomSphere sphere;
-          if (!ReconstructGeomSphere(props, references, &sphere)) {
-            PushError("Failed to reconstruct GeomSphere.");
-            return false;
-          }
+        RECONSTRUCT_NODE("SphereLight", ReconstructLuxSphereLight, LuxSphereLight, scene_.lux_sphere_lights)
+        RECONSTRUCT_NODE("SphereLight", ReconstructLuxDomeLight, LuxDomeLight, scene_.lux_dome_lights)
 
-          sphere.name = node_name;
-        } else if (prim_type == "Cone") {
-          GeomCone cone;
-          if (!ReconstructGeomCone(props, references, &cone)) {
-            PushError("Failed to reconstruct GeomCone.");
-            return false;
-          }
-
-          cone.name = node_name;
-        } else if (prim_type == "Cube") {
-          GeomCube cube;
-          if (!ReconstructGeomCube(props, references, &cube)) {
-            PushError("Failed to reconstruct GeomCube.");
-            return false;
-          }
-
-          cube.name = node_name;
-
-        } else if (prim_type == "Capsule") {
-          GeomCapsule capsule;
-          if (!ReconstructGeomCapsule(props, references, &capsule)) {
-            PushError("Failed to reconstruct GeomCapsule.");
-            return false;
-          }
-
-          capsule.name = node_name;
-
-        } else if (prim_type == "Cylinder") {
-          GeomCylinder cylinder;
-          if (!ReconstructGeomCylinder(props, references, &cylinder)) {
-            PushError("Failed to reconstruct GeomCylinder.");
-            return false;
-          }
-
-          cylinder.name = node_name;
-
-        } else if (prim_type == "BasisCurves") {
-          GeomBasisCurves curves;
-          if (!ReconstructBasisCurves(props, references, &curves)) {
-            PushError("Failed to reconstruct GeomBasisCurves.");
-            return false;
-          }
-          curves.name = node_name;
-
-        } else if (prim_type == "Camera") {
-          GeomCamera camera;
-
-          if (!ReconstructGeomCamera(props, references, &camera)) {
-            PushError("Failed to reconstruct Camera.");
-            return false;
-          }
-          camera.name = node_name;
-
-        } else if (prim_type == "Shader") {
-          Shader shader;
-
-          if (!ReconstructShader(props, references, &shader)) {
-            PushError("Failed to reconstruct Shader.");
-            return false;
-          }
-          shader.name = node_name;
-
-        } else if (prim_type == "SphereLight") {
-          LuxSphereLight light;
-          if (!ReconstructLuxSphereLight(props, references, &light)) {
-            PushError("Failed to reconstruct SphereLight.");
-            return false;
-          }
-
-          light.name = node_name;
-        } else if (prim_type == "DomeLight") {
-          LuxDomeLight light;
-          if (!ReconstructLuxDomeLight(props, references, &light)) {
-            PushError("Failed to reconstruct DomeLight.");
-            return false;
-          }
-
-          light.name = node_name;
-        } else if (prim_type == "Material") {
-          Material material;
-          DCOUT("Reconstruct Material");
-          if (!ReconstructMaterial(props, references, &material)) {
-            PushError("Failed to reconstruct Material.");
-            return false;
-          }
-          material.name = node_name;
-        } else if (prim_type == "Scope") {
-          Scope scope;
-          DCOUT("Reconstruct Scope");
-          if (!ReconstructScope(props, references, &scope)) {
-            PushError("Failed to reconstruct Scope.");
-            return false;
-          }
-
-          scope.name = node_name;
-        } else if (prim_type == "SkelRoot") {
-          SkelRoot root;
-          DCOUT("Reconstruct SkelRoot");
-          if (!ReconstructSkelRoot(props, references, &root)) {
-            PushError("Failed to reconstruct SkelRoot.");
-            return false;
-          }
-
-          root.name = node_name;
-        } else if (prim_type == "Skeleton") {
-          Skeleton skel;
-          DCOUT("Reconstruct Skeleton");
-          if (!ReconstructSkeleton(props, references, &skel)) {
-            PushError("Failed to reconstruct Skeleton.");
-            return false;
-          }
-
-          skel.name = node_name;
+        RECONSTRUCT_NODE("SkelRoot", ReconstructSkelRoot, SkelRoot, scene_.skel_roots)
+        RECONSTRUCT_NODE("Skeleton", ReconstructSkeleton, Skeleton, scene_.skeletons)
         } else {
           PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
         }

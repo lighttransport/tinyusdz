@@ -441,12 +441,21 @@ struct Scene {
   // glTF-like scene objects
   // TODO(syoyo): Use std::variant(C++17) like static polymorphism?
   //
+  std::vector<GPrim> gprims; // Generic node
+                             
+  // Predefined class in usdGeom, usdLux, usdSkel, ...                             
   std::vector<Xform> xforms;
   std::vector<GeomCamera> geom_cameras;
   std::vector<LuxSphereLight> lux_sphere_lights;
+  std::vector<LuxDomeLight> lux_dome_lights;
   std::vector<GeomMesh> geom_meshes;
   std::vector<GeomBasisCurves> geom_basis_curves;
   std::vector<GeomPoints> geom_points;
+  std::vector<GeomCube> geom_cubes;
+  std::vector<GeomSphere> geom_spheres;
+  std::vector<GeomCone> geom_cones;
+  std::vector<GeomCylinder> geom_cylinders;
+  std::vector<GeomCapsule> geom_capsules;
   std::vector<GeomSubset> geom_subsets;
   std::vector<Material> materials;
   std::vector<Shader> shaders;  // TODO(syoyo): Support othre shaders
