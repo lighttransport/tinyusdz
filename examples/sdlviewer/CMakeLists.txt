@@ -303,8 +303,9 @@ set(TINYUSDZ_DEP_SOURCES
     ../../src/external/fpng.cpp
     ../../src/external/staticstruct.cc
     ../../src/external/tinyxml2/tinyxml2.cpp
-    ../../src/external/ryu/ryu/s2d.c
-    ../../src/external/ryu/ryu/s2f.c)
+    #../../src/external/ryu/ryu/s2d.c
+    #../../src/external/ryu/ryu/s2f.c
+    )
 
 set(GUI_SOURCES
     ../common/trackball.cc
@@ -341,6 +342,10 @@ target_include_directories(${BUILD_TARGET}
 # ryu
 target_include_directories(
   ${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/../../src/external/ryu/)
+
+# fast_float
+target_include_directories(
+  ${BUILD_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/../../src/external/fast_float/include/)
 
 #target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/SDL2-2.0.12/include"
 
