@@ -65,27 +65,30 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
 }
 
 // Do not recursively print Node info.
+//
+// Setting `closing_brace` false won't emit `}`(for printing USD scene graph recursively).
+//
 
-std::string to_string(const Klass &klass, const uint32_t indent = 0);
-std::string to_string(const GPrim &gprim, const uint32_t indent = 0);
-std::string to_string(const Xform &xform, const uint32_t indent = 0);
-std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0);
-std::string to_string(const GeomMesh &mesh, const uint32_t indent = 0);
-std::string to_string(const GeomPoints &pts, const uint32_t indent = 0);
-std::string to_string(const GeomBasisCurves &curves, const uint32_t indent = 0);
-std::string to_string(const GeomCapsule &geom, const uint32_t indent = 0);
-std::string to_string(const GeomCone &geom, const uint32_t indent = 0);
-std::string to_string(const GeomCylinder &geom, const uint32_t indent = 0);
-std::string to_string(const GeomCube &geom, const uint32_t indent = 0);
-std::string to_string(const GeomCamera &camera, const uint32_t indent = 0);
+std::string to_string(const Klass &klass, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GPrim &gprim, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const Xform &xform, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomMesh &mesh, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomPoints &pts, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomBasisCurves &curves, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomCapsule &geom, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomCone &geom, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomCylinder &geom, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomCube &geom, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomCamera &camera, const uint32_t indent = 0, bool closing_brace = true);
 
-std::string to_string(const SkelRoot &root, const uint32_t indent = 0);
-std::string to_string(const Skeleton &root, const uint32_t indent = 0);
+std::string to_string(const SkelRoot &root, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const Skeleton &root, const uint32_t indent = 0, bool closing_brace = true);
 
-std::string to_string(const LuxSphereLight &light, const uint32_t indent = 0);
-std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0);
-std::string to_string(const Shader &shader, const uint32_t indent = 0);
+std::string to_string(const LuxSphereLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const Shader &shader, const uint32_t indent = 0, bool closing_brace = true);
 
-std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t );
+std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent = 0, bool closing_brace = true);
 
 } // namespace tinyusdz
