@@ -1417,7 +1417,7 @@ struct GeomMesh : GPrim {
   //
   // uniform token `subsetFamily:materialBind:familyType`
   GeomSubset::FamilyType materialBindFamilyType{GeomSubset::FamilyType::Partition};
-  std::vector<uint32_t> geom_subset_children; // indices in Scene::geom_subsets
+  std::vector<int32_t> geom_subset_children; // indices in Scene::geom_subsets
 
   ///
   /// Validate GeomSubset data attached to this GeomMesh.
@@ -1775,7 +1775,6 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector", TYPE_ID_TOKEN_VECTOR
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
-// TODO: ListOp<int>, ...
 
 #undef DEFINE_TYPE_TRAIT
 
@@ -1815,97 +1814,6 @@ DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 */
 
-#if 0
-
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-#endif
-
-// TODO: move to `value-type.hh`
-enum ValueTypeId {
-  VALUE_TYPE_INVALID = 0,
-
-  VALUE_TYPE_BOOL = 1,
-  VALUE_TYPE_UCHAR = 2,
-  VALUE_TYPE_INT = 3,
-  VALUE_TYPE_UINT = 4,
-  VALUE_TYPE_INT64 = 5,
-  VALUE_TYPE_UINT64 = 6,
-
-  VALUE_TYPE_HALF = 7,
-  VALUE_TYPE_FLOAT = 8,
-  VALUE_TYPE_DOUBLE = 9,
-
-  VALUE_TYPE_STRING = 10,
-  VALUE_TYPE_TOKEN = 11,
-  VALUE_TYPE_ASSET_PATH = 12,
-
-  VALUE_TYPE_MATRIX2D = 13,
-  VALUE_TYPE_MATRIX3D = 14,
-  VALUE_TYPE_MATRIX4D = 15,
-
-  VALUE_TYPE_QUATD = 16,
-  VALUE_TYPE_QUATF = 17,
-  VALUE_TYPE_QUATH = 18,
-
-  VALUE_TYPE_VEC2D = 19,
-  VALUE_TYPE_VEC2F = 20,
-  VALUE_TYPE_VEC2H = 21,
-  VALUE_TYPE_VEC2I = 22,
-
-  VALUE_TYPE_VEC3D = 23,
-  VALUE_TYPE_VEC3F = 24,
-  VALUE_TYPE_VEC3H = 25,
-  VALUE_TYPE_VEC3I = 26,
-
-  VALUE_TYPE_VEC4D = 27,
-  VALUE_TYPE_VEC4F = 28,
-  VALUE_TYPE_VEC4H = 29,
-  VALUE_TYPE_VEC4I = 30,
-
-  VALUE_TYPE_DICTIONARY = 31,
-  VALUE_TYPE_TOKEN_LIST_OP = 32,
-  VALUE_TYPE_STRING_LIST_OP = 33,
-  VALUE_TYPE_PATH_LIST_OP = 34,
-  VALUE_TYPE_REFERENCE_LIST_OP = 35,
-  VALUE_TYPE_INT_LIST_OP = 36,
-  VALUE_TYPE_INT64_LIST_OP = 37,
-  VALUE_TYPE_UINT_LIST_OP = 38,
-  VALUE_TYPE_UINT64_LIST_OP = 39,
-
-  VALUE_TYPE_PATH_VECTOR = 40,
-  VALUE_TYPE_TOKEN_VECTOR = 41,
-
-  VALUE_TYPE_SPECIFIER = 42,
-  VALUE_TYPE_PERMISSION = 43,
-  VALUE_TYPE_VARIABILITY = 44,
-
-  VALUE_TYPE_VARIANT_SELECTION_MAP = 45,
-  VALUE_TYPE_TIME_SAMPLES = 46,
-  VALUE_TYPE_PAYLOAD = 47,
-  VALUE_TYPE_DOUBLE_VECTOR = 48,
-  VALUE_TYPE_LAYER_OFFSET_VECTOR = 49,
-  VALUE_TYPE_STRING_VECTOR = 50,
-  VALUE_TYPE_VALUE_BLOCK = 51,
-  VALUE_TYPE_VALUE = 52,
-  VALUE_TYPE_UNREGISTERED_VALUE = 53,
-  VALUE_TYPE_UNREGISTERED_VALUE_LIST_OP = 54,
-  VALUE_TYPE_PAYLOAD_LIST_OP = 55,
-  VALUE_TYPE_TIME_CODE = 56
-};
-
-struct ValueType {
-  ValueType()
-      : name("Invalid"), id(VALUE_TYPE_INVALID), supports_array(false) {}
-  ValueType(const std::string &n, uint32_t i, bool a)
-      : name(n), id(ValueTypeId(i)), supports_array(a) {}
-
-  std::string name;
-  ValueTypeId id{VALUE_TYPE_INVALID};
-  bool supports_array{false};
-};
-#endif
 
 
 }  // namespace tinyusdz
