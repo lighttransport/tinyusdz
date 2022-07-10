@@ -1233,6 +1233,8 @@ class USDAParser::Impl {
   bool ReadBasicType(nonstd::optional<value::color3d> *value);
   bool ReadBasicType(nonstd::optional<value::color4d> *value);
 
+  bool ReadBasicType(nonstd::optional<value::token> *value);
+
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
   bool ReadBasicType(float *value);
@@ -1259,6 +1261,8 @@ class USDAParser::Impl {
   bool ReadBasicType(value::color3d *value);
   bool ReadBasicType(value::color4f *value);
   bool ReadBasicType(value::color4d *value);
+
+  bool ReadBasicType(value::token *value);
 
   // TimeSample data
   bool ReadTimeSampleData(nonstd::optional<value::float2> *value);
@@ -1664,8 +1668,7 @@ class USDAParser::Impl {
       // }
 
       // var.value = arr;
-      PushError("TODO: Implement");
-      return false;
+      PUSH_ERROR_AND_RETURN("TODO: Implement");
 
     } else if (vardef.type == "ref[]") {
       std::vector<Reference> value;
@@ -1675,16 +1678,7 @@ class USDAParser::Impl {
         return false;
       }
 
-      /// Variable::Array arr;
-      /// for (const auto &v : value) {
-      ///   Variable _var;
-      ///   _var.value = v;
-      ///   arr.values.push_back(_var);
-      /// }
-      // var.value = arr;
-
-      PushError("TODO: Implement");
-      return false;
+      var.value = value;
 
     } else if (vardef.type == "string") {
       std::string value;
@@ -1776,7 +1770,6 @@ class USDAParser::Impl {
 
       Rewind(1);
 
-      std::cout << "c = " << std::to_string(s) << "\n";
       std::tuple<ListEditQual, Variable> arg;
       if (!ParseDefArg(&arg)) {
         return false;
@@ -1818,8 +1811,7 @@ class USDAParser::Impl {
         std::string key;
         Variable var;
         if (!ParseDictElement(&key, &var)) {
-          PushError(std::to_string(__LINE__) + "Failed to parse dict element.");
-          return false;
+          PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
         }
 
         if (!SkipWhitespaceAndNewline()) {
@@ -1968,10 +1960,7 @@ class USDAParser::Impl {
         } else if (token == "customData") {
           std::map<std::string, Variable> dict;
 
-          std::cout << "Parse customData\n";
-
           if (!ParseDict(&dict)) {
-            std::cout << "dict parse fail\n";
             return false;
           }
 
@@ -1985,8 +1974,6 @@ class USDAParser::Impl {
           assert(var.valid());
 
           (*out_meta)["customData"] = var;
-
-          std::cout << "Got customData = " << var << "\n";
 
         } else {
           // ???
@@ -2071,8 +2058,7 @@ class USDAParser::Impl {
 
       // next token should be type
       if (!ReadIdentifier(&type_name)) {
-        PushError("`type` identifier expected but got non-identifier\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("`type` identifier expected but got non-identifier");
       }
 
       // `type_name` is then overwritten.
@@ -2111,8 +2097,6 @@ class USDAParser::Impl {
       }
     }
 
-    std::cout << "array_qual " << array_qual << "\n";
-
     if (!SkipWhitespace()) {
       return false;
     }
@@ -2140,13 +2124,17 @@ class USDAParser::Impl {
     // Currently only `string` is provided
     //
     if (type_name == "string") {
-      std::string value;
-      if (!ReadStringLiteral(&value)) {
-        PushError("Failed to parse string literal.\n");
-        return false;
+      if (array_qual) {
+        std::vector<std::string> value;
+        if (!ParseBasicTypeArray(&value)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse string array.");
+        }
+      } else {
+        std::string value;
+        if (!ReadStringLiteral(&value)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse string literal.");
+        }
       }
-
-      std::cout << "string = " << value << "\n";
 
     } else {
       PUSH_ERROR_AND_RETURN("Unimplemented or unsupported type: " + type_name +
@@ -2271,7 +2259,6 @@ class USDAParser::Impl {
       }
     }
 
-    std::cout << "array_qual " << array_qual << "\n";
 
     if (!SkipWhitespace()) {
       return false;
@@ -2300,11 +2287,57 @@ class USDAParser::Impl {
       return false;
     }
 
-    // Variable var;
+    //
+    // Supports limited types for customData/Dictionary.
+    // TODO: array_qual
+    //
+    Variable var;
+    if (type_name == value::kBool) {
+      bool val;
+      if (!ReadBasicType(&val)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
+      }
+      var.value = val;
+    } else if (type_name == "float") {
+      float val;
+      if (!ReadBasicType(&val)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float`");
+      }
+      var.value = val;
+    } else if (type_name == "string") {
+      std::string str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+      }
+      var.value = str;
+    } else if (type_name == "token") {
+      if (array_qual) {
+        std::vector<value::token> toks;
+        if (!ParseBasicTypeArray(&toks)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
+        }
+        var.value = toks;
+      } else {
+        value::token tok;
+        if (!ReadBasicType(&tok)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `token`");
+        }
+        var.value = tok;
+      }
+    } else if (type_name == "dictionary") {
+      std::map<std::string, Variable> dict;
 
-    PushError("TODO: ParseDictElement: Implement value parser for type: " +
-              type_name + "\n");
-    return false;
+      if (!ParseDict(&dict)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
+    }
+
+    (*out_key) = key_name;
+    (*out_var) = var;
+
+    return true;
   }
 
   bool MaybeCustom() {
@@ -2359,7 +2392,6 @@ class USDAParser::Impl {
         PushError("Failed to parse path identifier for `token`.\n");
         return false;
       }
-      std::cout << "Path identifier = " << value << "\n";
 
       attr.var.set_scalar(value);  // TODO: set as `Path` type
     } else {
@@ -2380,8 +2412,8 @@ class USDAParser::Impl {
         attr.var.var = ts;
 
       } else {
-        std::cout << "ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name()
-                  << " = None\n";
+        //std::cout << "ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name()
+        //          << " = None\n";
       }
     }
 
@@ -2474,7 +2506,6 @@ class USDAParser::Impl {
       }
     }
 
-    std::cout << "array_qual " << array_qual << "\n";
 
     if (!SkipWhitespace()) {
       return false;
@@ -2744,7 +2775,6 @@ class USDAParser::Impl {
 
         value::asset_path assetp(asset_ref.asset_path);
         attr.var.set_scalar(assetp);
-        PUSH_ERROR_AND_RETURN("TODO: `asset`");
 
       } else {
         PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
@@ -2844,36 +2874,28 @@ class USDAParser::Impl {
       result->push_back(ref);
     }
 
-    // std::cout << "sep: " << sep << "\n";
-
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
 
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
-      // std::cout << "go to read int\n";
 
       Reference ref;
       bool triple_deliminated{false};
@@ -2885,7 +2907,6 @@ class USDAParser::Impl {
       result->push_back(ref);
     }
 
-    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       PushError("Empty array.\n");
@@ -2918,36 +2939,29 @@ class USDAParser::Impl {
       result->push_back(value);
     }
 
-    // std::cout << "sep: " << sep << "\n";
 
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
 
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
-      // std::cout << "go to read int\n";
 
       nonstd::optional<T> value;
       if (!ReadBasicType(&value)) {
@@ -2957,7 +2971,6 @@ class USDAParser::Impl {
       result->push_back(value);
     }
 
-    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       PushError("Empty array.\n");
@@ -2989,36 +3002,29 @@ class USDAParser::Impl {
       result->push_back(value);
     }
 
-    // std::cout << "sep: " << sep << "\n";
 
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
 
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
-      // std::cout << "go to read int\n";
 
       T value;
       if (!ReadBasicType(&value)) {
@@ -3028,7 +3034,6 @@ class USDAParser::Impl {
       result->push_back(value);
     }
 
-    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       PushError("Empty array.\n");
@@ -3065,31 +3070,25 @@ class USDAParser::Impl {
 
     while (!_sr->eof()) {
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        // std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
 
       if (c != sep) {
         // end
-        std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
-      // std::cout << "go to read int\n";
 
       if (MaybeNone()) {
         result->push_back(nonstd::nullopt);
@@ -3102,7 +3101,6 @@ class USDAParser::Impl {
       }
     }
 
-    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       PushError("Empty array.\n");
@@ -3136,31 +3134,25 @@ class USDAParser::Impl {
 
     while (!_sr->eof()) {
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        // std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
 
       if (c != sep) {
         // end
-        std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
-      // std::cout << "go to read int\n";
 
       std::array<T, N> value;
       if (!ParseBasicTypeTuple<T, N>(&value)) {
@@ -3170,7 +3162,6 @@ class USDAParser::Impl {
       result->push_back(value);
     }
 
-    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       PushError("Empty array.\n");
@@ -3188,20 +3179,16 @@ class USDAParser::Impl {
     if (!Expect('[')) {
       return false;
     }
-    // std::cout << "got [\n";
 
     if (!SepBy1BasicType<T>(',', result)) {
       return false;
     }
 
-    // std::cout << "try to parse ]\n";
 
     if (!Expect(']')) {
-      // std::cout << "not ]\n";
 
       return false;
     }
-    // std::cout << "got ]\n";
 
     return true;
   }
@@ -3214,21 +3201,15 @@ class USDAParser::Impl {
     if (!Expect('[')) {
       return false;
     }
-    // std::cout << "got [\n";
 
     if (!SepBy1BasicType<T>(',', result)) {
       return false;
     }
 
-    // std::cout << "try to parse ]\n";
-
     if (!Expect(']')) {
-      // std::cout << "not ]\n";
 
       return false;
     }
-    // std::cout << "got ]\n";
-
     return true;
   }
 
@@ -3249,7 +3230,7 @@ class USDAParser::Impl {
     if (c != '[') {
       Rewind(1);
 
-      std::cout << "Guess non-list version\n";
+      DCOUT("Guess non-list version");
       // Guess non-list version
       Reference ref;
       bool triple_deliminated{false};
@@ -3296,36 +3277,27 @@ class USDAParser::Impl {
       result->push_back(path);
     }
 
-    // std::cout << "sep: " << sep << "\n";
-
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
+        DCOUT("read1 failure.");
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
-
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
-
-      // std::cout << "go to read int\n";
 
       std::string path;
       if (!ReadPathIdentifier(&path)) {
@@ -3334,8 +3306,6 @@ class USDAParser::Impl {
 
       result->push_back(path);
     }
-
-    // std::cout << "result.size " << result->size() << "\n";
 
     if (result->empty()) {
       PushError("Empty array.\n");
@@ -3386,14 +3356,11 @@ class USDAParser::Impl {
     if (!Expect('(')) {
       return false;
     }
-    // std::cout << "got (\n";
 
     std::vector<T> values;
     if (!SepBy1BasicType<T>(',', &values)) {
       return false;
     }
-
-    // std::cout << "try to parse )\n";
 
     if (!Expect(')')) {
       return false;
@@ -3428,14 +3395,12 @@ class USDAParser::Impl {
     if (!Expect('(')) {
       return false;
     }
-    // std::cout << "got (\n";
 
     std::vector<T> values;
     if (!SepBy1BasicType<T>(',', &values)) {
       return false;
     }
 
-    // std::cout << "try to parse )\n";
 
     if (!Expect(')')) {
       return false;
@@ -3553,32 +3518,26 @@ class USDAParser::Impl {
       result->push_back(m);
     }
 
-    // std::cout << "sep: " << sep << "\n";
 
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
+        DCOUT("read1 failure.");
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
-
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
@@ -3647,32 +3606,24 @@ class USDAParser::Impl {
       result->push_back(m);
     }
 
-    // std::cout << "sep: " << sep << "\n";
-
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
-
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
@@ -3740,32 +3691,24 @@ class USDAParser::Impl {
       result->push_back(m);
     }
 
-    // std::cout << "sep: " << sep << "\n";
-
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
-
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
@@ -3803,32 +3746,24 @@ class USDAParser::Impl {
       result->push_back(m);
     }
 
-    // std::cout << "sep: " << sep << "\n";
-
     while (!_sr->eof()) {
       // sep
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
       char c;
       if (!_sr->read1(&c)) {
-        std::cout << "read1 failure\n";
         return false;
       }
 
-      // std::cout << "sep c = " << c << "\n";
-
       if (c != sep) {
         // end
-        // std::cout << "sepBy1 end\n";
         _sr->seek_from_current(-1);  // unwind single char
         break;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        // std::cout << "ws failure\n";
         return false;
       }
 
@@ -3890,18 +3825,15 @@ class USDAParser::Impl {
     if (!Expect('[')) {
       return false;
     }
-    std::cout << "got [\n";
 
     if (!SepBy1TupleType<T, N>(',', result)) {
       return false;
     }
 
     if (!Expect(']')) {
-      std::cout << "not ]\n";
 
       return false;
     }
-    std::cout << "got ]\n";
 
     return true;
   }
@@ -3916,18 +3848,15 @@ class USDAParser::Impl {
     if (!Expect('[')) {
       return false;
     }
-    std::cout << "got [\n";
 
     if (!SepBy1TupleType<T, N>(',', result)) {
       return false;
     }
 
     if (!Expect(']')) {
-      std::cout << "not ]\n";
 
       return false;
     }
-    std::cout << "got ]\n";
 
     return true;
   }
@@ -3941,7 +3870,6 @@ class USDAParser::Impl {
     }
 
     if (c0 != '"') {
-      std::cout << "c0 = " << c0 << "\n";
       ErrorDiagnositc diag;
       diag.err = "String literal expected but it does not start with '\"'\n";
       diag.line_col = _line_col;
@@ -3959,7 +3887,6 @@ class USDAParser::Impl {
       char c;
       if (!_sr->read1(&c)) {
         // this should not happen.
-        std::cout << "read err\n";
         return false;
       }
 
@@ -3993,8 +3920,6 @@ class USDAParser::Impl {
 
     std::stringstream ss;
 
-    std::cout << "readtoken\n";
-
     while (!_sr->eof()) {
       char c;
       if (!_sr->read1(&c)) {
@@ -4023,7 +3948,6 @@ class USDAParser::Impl {
 
       _line_col++;
 
-      std::cout << c << "\n";
       ss << c;
     }
 
@@ -4051,7 +3975,7 @@ class USDAParser::Impl {
     }
 
     (*token) = ss.str();
-    std::cout << "primAttr identifier = " << (*token) << "\n";
+    //std::cout << "primAttr identifier = " << (*token) << "\n";
     return true;
   }
 
@@ -4059,7 +3983,6 @@ class USDAParser::Impl {
     // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
     std::stringstream ss;
 
-    // std::cout << "readtoken\n";
 
     // The first character.
     {
@@ -4096,12 +4019,10 @@ class USDAParser::Impl {
 
       _line_col++;
 
-      // std::cout << c << "\n";
       ss << c;
     }
 
     (*token) = ss.str();
-    // std::cout << "ReadIdentifier: token = " << (*token) << "\n";
     return true;
   }
 
@@ -4150,7 +4071,7 @@ class USDAParser::Impl {
     }
 
     (*path_identifier) = TrimString(ss.str());
-    std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
+    //std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
 
     return true;
   }
@@ -4262,7 +4183,6 @@ class USDAParser::Impl {
         _line_row++;
         // continue
       } else {
-        // std::cout << "unwind\n";
         // end loop
         if (!_sr->seek_from_current(-1)) {
           return false;
@@ -4460,7 +4380,7 @@ class USDAParser::Impl {
     bool valid{false};
 
     if (!maybe_triple) {
-      std::cout << "maybe single-'@' asset reference\n";
+      //std::cout << "maybe single-'@' asset reference\n";
 
       SeekTo(curr);
       char s;
@@ -4470,8 +4390,7 @@ class USDAParser::Impl {
 
       if (s != '@') {
         std::string sstr{s};
-        PushError("Reference must start with '@', but got '" + sstr + "'");
-        return false;
+        PUSH_ERROR_AND_RETURN("Reference must start with '@', but got '" + sstr + "'");
       }
 
       std::string tok;
@@ -4493,8 +4412,6 @@ class USDAParser::Impl {
         tok += c;
       }
 
-      std::cout << "tok " << tok << ", found_delimiter " << found_delimiter
-                << "\n";
 
       if (found_delimiter) {
         out->asset_path = tok;
@@ -4592,7 +4509,6 @@ class USDAParser::Impl {
       }
       var.value = value;
     } else if (vartype == "ref[]") {
-      std::cout << "read ref[]\n";
       std::vector<Reference> values;
       if (!ParseReferenceArray(&values)) {
         std::string msg =
@@ -4600,16 +4516,6 @@ class USDAParser::Impl {
         PushError(msg);
         return false;
       }
-
-      // Variable::Array arr;
-      // for (size_t i = 0; i < values.size(); i++) {
-      //   DCOUT("reference[" << std::to_string(i)
-      //             << "] = " << values[i].asset_path
-      //             << ", prim_path = " << values[i].prim_path);
-      //   Variable v;
-      //   v.value = values[i];
-      //   arr.values.push_back(v);
-      // }
 
       var.value = values;
 
@@ -4625,13 +4531,6 @@ class USDAParser::Impl {
         DCOUT("int[" << i << "] = " << values[i]);
       }
 
-      // Variable::Array arr;
-      // for (size_t i = 0; i < values.size(); i++) {
-      //   Variable v;
-      //   v.value = values[i];
-      //   arr.values.push_back(v);
-      // }
-
       var.value = values;
     } else if (vartype == "float[]") {
       std::vector<float> values;
@@ -4639,9 +4538,6 @@ class USDAParser::Impl {
         return false;
       }
 
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "float[" << i << "] = " << values[i] << "\n";
-      }
 
       // Variable::Array arr;
       // for (size_t i = 0; i < values.size(); i++) {
@@ -4657,17 +4553,6 @@ class USDAParser::Impl {
         return false;
       }
 
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "float[" << i << "] = " << values[i][0] << ", "
-                  << values[i][1] << ", " << values[i][2] << "\n";
-      }
-
-      // Variable::Array arr;
-      // for (size_t i = 0; i < values.size(); i++) {
-      //   Variable v;
-      //   v.value = values[i];
-      //   arr.values.push_back(v);
-      // }
 
       var.value = values;
     } else if (vartype == "float") {
@@ -4682,7 +4567,6 @@ class USDAParser::Impl {
         PushError(msg);
         return false;
       }
-      // std::cout << "float : " << fval << "\n";
       auto ret = ParseFloat(fval);
       if (!ret) {
         std::string msg =
@@ -4693,7 +4577,6 @@ class USDAParser::Impl {
         PushError(msg);
         return false;
       }
-      std::cout << "parsed float : " << ret.value() << "\n";
 
       var.value = ret.value();
 
@@ -4704,17 +4587,6 @@ class USDAParser::Impl {
         // "`.\n"; PushError(msg);
         return false;
       }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "int[" << i << "] = " << values[i] << "\n";
-      }
-
-      // Variable::Array arr;
-      // for (size_t i = 0; i < values.size(); i++) {
-      //   Variable v;
-      //   v.value = values[i];
-      //   arr.values.push_back(v);
-      // }
 
       var.value = values;
     } else if (vartype == "object") {
@@ -4734,7 +4606,6 @@ class USDAParser::Impl {
         }
 
         if (c == '}') {
-          std::cout << "End of compound meta\n";
           break;
         } else {
           if (!Rewind(1)) {
@@ -4748,7 +4619,7 @@ class USDAParser::Impl {
         }
       }
 
-      PUSH_ERROR_AND_RETURN("TODO: object type");
+      PUSH_WARN("TODO: Implement object type(customData)");
     } else {
       PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
     }
@@ -4773,7 +4644,6 @@ class USDAParser::Impl {
         }
       } else {
         // Got note.
-        std::cout << "note = " << note << "\n";
 
         return true;
       }
@@ -4781,7 +4651,6 @@ class USDAParser::Impl {
 
     std::string varname;
     if (!ReadIdentifier(&varname)) {
-      std::cout << "token " << varname;
       return false;
     }
 
@@ -4858,17 +4727,13 @@ class USDAParser::Impl {
 
         std::string base_dir = io::GetBaseDir(filepath);
 
-        std::cout << "SubLayer.Basedir = " << base_dir << "\n";
         parser.SetBaseDir(base_dir);
 
         {
           bool ret = parser.Parse(tinyusdz::usda::LOAD_STATE_SUBLAYER);
 
           if (!ret) {
-            std::cerr << "Failed to parse .usda: \n";
-            std::cerr << parser.GetError() << "\n";
-          } else {
-            std::cout << "ok\n";
+            PUSH_WARN("Failed to parse .usda: " << parser.GetError());
           }
         }
       }
@@ -5141,7 +5006,6 @@ class USDAParser::Impl {
     }
 
     if (!Expect('{')) {
-      std::cout << "???\n";
       return false;
     }
 
@@ -5167,7 +5031,6 @@ class USDAParser::Impl {
 
       if (c == '}') {
         // end block
-        std::cout << "End of block\n";
         break;
       } else {
         if (!Rewind(1)) {
@@ -5179,17 +5042,13 @@ class USDAParser::Impl {
           return false;
         }
 
-        std::cout << "token = " << tok << ", size = " << tok.size() << "\n";
-
         if (!Rewind(tok.size())) {
           return false;
         }
 
         if (tok == "def") {
-          std::cout << "rec\n";
           // recusive call
           if (!ParseDefBlock()) {
-            std::cout << "rec failed\n";
             return false;
           }
         } else {
@@ -5210,8 +5069,6 @@ class USDAParser::Impl {
       // TODO: list-edit qual
       klass.props[prop.first] = prop.second;
     }
-
-    std::cout << to_string(klass) << "\n";
 
     // TODO: Check key existance.
     _klasses[path] = klass;
@@ -5307,8 +5164,6 @@ class USDAParser::Impl {
       return false;
     }
 
-    std::cout << "def = " << def << "\n";
-
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
@@ -5348,7 +5203,6 @@ class USDAParser::Impl {
         return false;
       }
 
-      std::cout << "prim_type: " << prim_type << "\n";
     }
 
     if (!SkipWhitespaceAndNewline()) {
@@ -5360,7 +5214,6 @@ class USDAParser::Impl {
       return false;
     }
 
-    std::cout << "prim node name: " << node_name << "\n";
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
@@ -5378,7 +5231,6 @@ class USDAParser::Impl {
       if (c == '(') {
         // arg
 
-        std::cout << "parse def args\n";
         if (!ParseDefArgs(&args)) {
           return false;
         }
@@ -5427,7 +5279,6 @@ class USDAParser::Impl {
 
       if (c == '}') {
         // end block
-        std::cout << "End of block\n";
         break;
       } else {
         if (!Rewind(1)) {
@@ -5439,17 +5290,14 @@ class USDAParser::Impl {
           return false;
         }
 
-        std::cout << "token = " << tok << ", size = " << tok.size() << "\n";
 
         if (!Rewind(tok.size())) {
           return false;
         }
 
         if (tok == "def") {
-          std::cout << "rec\n";
           // recusive call
           if (!ParseDefBlock(nestlevel + 1)) {
-            std::cout << "rec failed\n";
             return false;
           }
         } else {
@@ -5505,17 +5353,15 @@ class USDAParser::Impl {
 
             std::string base_dir = io::GetBaseDir(filepath);
 
-            std::cout << "References.Basedir = " << base_dir << "\n";
             parser.SetBaseDir(base_dir);
 
             {
               bool ret = parser.Parse(tinyusdz::usda::LOAD_STATE_REFERENCE);
 
               if (!ret) {
-                std::cerr << "Failed to parse .usda: \n";
-                std::cerr << parser.GetError() << "\n";
+                PUSH_WARN("Failed to parse .usda: " << parser.GetError());
               } else {
-                std::cout << "`references` load ok\n";
+                DCOUT("`references` load ok.");
               }
             }
 
@@ -5561,155 +5407,134 @@ class USDAParser::Impl {
       }
     }
 
-    for (auto &item : props) {
-      std::cout << "prop name: " << item.first << "\n";
-    }
-
     if (IsToplevel()) {
       if (prim_type.empty()) {
         // Reconstuct Generic Prim.
 
         GPrim gprim;
-        std::cout << "Reconstruct GPrim\n";
         if (!ReconstructGPrim(props, references, &gprim)) {
           PushError("Failed to reconstruct GPrim.");
           return false;
         }
         gprim.name = node_name;
 
-        std::cout << to_string(gprim, nestlevel) << "\n";
 
       } else {
         // Reconstruct concrete class object
         if (prim_type == "Xform") {
           Xform xform;
-          std::cout << "Reconstruct Xform\n";
           if (!ReconstructXform(props, references, &xform)) {
             PushError("Failed to reconstruct Xform.");
             return false;
           }
           xform.name = node_name;
 
-          std::cout << to_string(xform, nestlevel) << "\n";
 
         } else if (prim_type == "Mesh") {
           GeomMesh mesh;
-          std::cout << "Reconstruct GeomMesh\n";
           if (!ReconstructGeomMesh(props, references, &mesh)) {
             PushError("Failed to reconstruct GeomMesh.");
             return false;
           }
           mesh.name = node_name;
 
-          std::cout << to_string(mesh, nestlevel) << "\n";
+          DCOUT(to_string(mesh, nestlevel));
 
           scene_.geom_meshes.push_back(mesh);
 
         } else if (prim_type == "Sphere") {
           GeomSphere sphere;
-          std::cout << "Reconstruct Sphere\n";
           if (!ReconstructGeomSphere(props, references, &sphere)) {
             PushError("Failed to reconstruct GeomSphere.");
             return false;
           }
 
           sphere.name = node_name;
-          std::cout << to_string(sphere, nestlevel) << "\n";
         } else if (prim_type == "Cone") {
           GeomCone cone;
-          std::cout << "Reconstruct Cone\n";
           if (!ReconstructGeomCone(props, references, &cone)) {
             PushError("Failed to reconstruct GeomCone.");
             return false;
           }
 
           cone.name = node_name;
-          std::cout << to_string(cone, nestlevel) << "\n";
         } else if (prim_type == "Cube") {
           GeomCube cube;
-          std::cout << "Reconstruct Cube\n";
           if (!ReconstructGeomCube(props, references, &cube)) {
             PushError("Failed to reconstruct GeomCube.");
             return false;
           }
 
           cube.name = node_name;
-          std::cout << to_string(cube, nestlevel) << "\n";
 
         } else if (prim_type == "Capsule") {
           GeomCapsule capsule;
-          std::cout << "Reconstruct Capsule\n";
           if (!ReconstructGeomCapsule(props, references, &capsule)) {
             PushError("Failed to reconstruct GeomCapsule.");
             return false;
           }
 
           capsule.name = node_name;
-          std::cout << to_string(capsule, nestlevel) << "\n";
 
         } else if (prim_type == "Cylinder") {
           GeomCylinder cylinder;
-          std::cout << "Reconstruct Cylinder\n";
           if (!ReconstructGeomCylinder(props, references, &cylinder)) {
             PushError("Failed to reconstruct GeomCylinder.");
             return false;
           }
 
           cylinder.name = node_name;
-          std::cout << to_string(cylinder, nestlevel) << "\n";
 
         } else if (prim_type == "BasisCurves") {
           GeomBasisCurves curves;
-          std::cout << "Reconstruct Cylinder\n";
           if (!ReconstructBasisCurves(props, references, &curves)) {
             PushError("Failed to reconstruct GeomBasisCurves.");
             return false;
           }
           curves.name = node_name;
-          std::cout << to_string(curves, nestlevel) << "\n";
 
         } else if (prim_type == "Camera") {
           GeomCamera camera;
-          std::cout << "Reconstruct Camera\n";
 
           if (!ReconstructGeomCamera(props, references, &camera)) {
             PushError("Failed to reconstruct Camera.");
             return false;
           }
           camera.name = node_name;
-          std::cout << to_string(camera, nestlevel) << "\n";
 
         } else if (prim_type == "Shader") {
           Shader shader;
-          std::cout << "Reconstruct Shader\n";
 
           if (!ReconstructShader(props, references, &shader)) {
             PushError("Failed to reconstruct Shader.");
             return false;
           }
           shader.name = node_name;
-          std::cout << to_string(shader, nestlevel) << "\n";
 
         } else if (prim_type == "SphereLight") {
           LuxSphereLight light;
-          std::cout << "Reconstruct SphereLight\n";
           if (!ReconstructLuxSphereLight(props, references, &light)) {
             PushError("Failed to reconstruct SphereLight.");
             return false;
           }
 
           light.name = node_name;
-          std::cout << to_string(light, nestlevel) << "\n";
         } else if (prim_type == "DomeLight") {
           LuxDomeLight light;
-          std::cout << "Reconstruct DomeLight\n";
           if (!ReconstructLuxDomeLight(props, references, &light)) {
             PushError("Failed to reconstruct DomeLight.");
             return false;
           }
 
           light.name = node_name;
-          std::cout << to_string(light, nestlevel) << "\n";
+        } else if (prim_type == "Material") {
+          Material material;
+          DCOUT("Reconstruct Material");
+          if (!ReconstructMaterial(props, references, &material)) {
+            PushError("Failed to reconstruct Material.");
+            return false;
+          }
+          material.name = node_name;
         } else if (prim_type == "Scope") {
           Scope scope;
           DCOUT("Reconstruct Scope");
@@ -5745,7 +5570,6 @@ class USDAParser::Impl {
       // Store properties to GPrim.
       // TODO: Use Class?
       GPrim gprim;
-      std::cout << "Reconstruct GPrim\n";
       if (!ReconstructGPrim(props, references, &gprim)) {
         PushError("Failed to reconstruct GPrim.");
         return false;
@@ -5758,7 +5582,6 @@ class USDAParser::Impl {
         _gprims.push_back(gprim);
       }
 
-      std::cout << to_string(gprim, nestlevel) << "\n";
     }
 
     PopPath();
@@ -5820,6 +5643,11 @@ class USDAParser::Impl {
       const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
       Shader *shader);
+
+  bool ReconstructMaterial(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
+      Material *material);
 
   bool ReconstructPreviewSurface(
       const std::map<std::string, Property> &properties,
@@ -6105,6 +5933,7 @@ class USDAParser::Impl {
     _node_types.insert("Sphere");
     _node_types.insert("Cube");
     _node_types.insert("Cylinder");
+    _node_types.insert("BasisCurves");
     _node_types.insert("Mesh");
     _node_types.insert("Scope");
     _node_types.insert("Material");
@@ -6213,7 +6042,6 @@ bool USDAParser::Impl::ReconstructXform(
       // rtrim
       s = s.substr(0, s.size() - tsSuffix.size());
 
-      std::cout << "trimmed = " << s << "\n";
     }
 
     // TODO: Support multiple namespace?
@@ -6238,13 +6066,9 @@ bool USDAParser::Impl::ReconstructXform(
     }
   }
 
-  for (auto &item : properties) {
-    std::cout << "prop: " << item.first << "\n";
-  }
 
   // Lookup xform values from `xformOpOrder`
   if (properties.count("xformOpOrder")) {
-    std::cout << "xformOpOrder got";
 
     // array of string
     auto prop = properties.at("xformOpOrder");
@@ -6266,10 +6090,6 @@ bool USDAParser::Impl::ReconstructXform(
           auto isTimeSampled = std::get<2>(tup);
           (void)isTimeSampled;
 
-          std::cout << "base = " << std::get<0>(tup)
-                    << ", suffix = " << std::get<1>(tup)
-                    << ", isTimeSampled = " << std::get<2>(tup) << "\n";
-
           XformOp op;
 
           std::string target_name = basename;
@@ -6286,8 +6106,6 @@ bool USDAParser::Impl::ReconstructXform(
           auto targetProp = properties.at(target_name);
 
           if (basename == "xformOp:rotateZ") {
-            std::cout << "basename is xformOp::rotateZ"
-                      << "\n";
             if (auto targetAttr = nonstd::get_if<PrimAttrib>(&targetProp)) {
               if (auto p = value::as_basic<float>(&targetAttr->var)) {
                 std::cout << "xform got it "
@@ -6308,7 +6126,7 @@ bool USDAParser::Impl::ReconstructXform(
     }
 
   } else {
-    std::cout << "no xformOpOrder\n";
+    //std::cout << "no xformOpOrder\n";
   }
 
 #if 0
@@ -6381,8 +6199,6 @@ bool USDAParser::Impl::ReconstructGeomSphere(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
-              << "\n";
 
     LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
@@ -6492,8 +6308,6 @@ bool USDAParser::Impl::ReconstructGeomCone(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
-              << "\n";
 
     LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
@@ -6621,8 +6435,6 @@ bool USDAParser::Impl::ReconstructGeomCube(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
-              << "\n";
 
     LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
@@ -6728,8 +6540,6 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
-              << "\n";
 
     LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
@@ -6894,8 +6704,6 @@ bool USDAParser::Impl::ReconstructGeomCylinder(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
-              << "\n";
 
     LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
@@ -7052,11 +6860,8 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   //
   // Resolve prepend references
   //
-  std::cout << "# of references = " << references.size() << "\n";
 
   for (const auto &ref : references) {
-    std::cout << "list-edit qual = " << tinyusdz::to_string(std::get<0>(ref))
-              << "\n";
 
     LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
@@ -7221,7 +7026,7 @@ bool USDAParser::Impl::ReconstructBasisCurves(
 #endif
 
     } else {
-      std::cout << "TODO: " << prop.first << "\n";
+      PUSH_WARN("TODO: " << prop.first);
     }
   }
 
@@ -7236,7 +7041,7 @@ bool USDAParser::Impl::ReconstructGeomCamera(
     if (prop.first == "focalLength") {
       // TODO
     } else {
-      std::cout << "TODO: " << prop.first << "\n";
+      //std::cout << "TODO: " << prop.first << "\n";
     }
   }
 
@@ -7252,7 +7057,7 @@ bool USDAParser::Impl::ReconstructLuxSphereLight(
     if (prop.first == "radius") {
       // TODO
     } else {
-      std::cout << "TODO: " << prop.first << "\n";
+      //std::cout << "TODO: " << prop.first << "\n";
     }
   }
 
@@ -7342,31 +7147,44 @@ bool USDAParser::Impl::ReconstructShader(
         if (p->compare("UsdPreviewSurface") == 0) {
           PreviewSurface surface;
           if (!ReconstructPreviewSurface(properties, references, &surface)) {
-            PUSH_ERROR_AND_RETURN("Failed to reconstruct PreviewSurface.");
+            PUSH_WARN("TODO: reconstruct PreviewSurface.");
           }
           shader->value = surface;
         } else if (p->compare("UsdUVTexture") == 0) {
           UVTexture texture;
           if (!ReconstructUVTexture(properties, references, &texture)) {
-            PUSH_ERROR_AND_RETURN("Failed to reconstruct UVTexture.");
+            PUSH_WARN("TODO: reconstruct UVTexture.");
           }
           shader->value = texture;
         } else if (p->compare("UsdPrimvarReader_float2") == 0) {
           PrimvarReader_float2 preader;
           if (!ReconstructPrimvarReader_float2(properties, references,
                                                &preader)) {
-            PUSH_ERROR_AND_RETURN(
-                "Failed to reconstruct PrimvarReader_float2.");
+            PUSH_WARN(
+                "TODO: reconstruct PrimvarReader_float2.");
           }
           shader->value = preader;
         } else {
-          PUSH_ERROR_AND_RETURN("TODO: Shader id: " + (*p));
+          PUSH_ERROR_AND_RETURN("Invalid or Unsupported Shader id: " + (*p));
         }
       }
     } else {
-      std::cout << "TODO: " << prop.first << "\n";
+      //std::cout << "TODO: " << prop.first << "\n";
     }
   }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructMaterial(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    Material *material) {
+  (void)properties;
+  (void)references;
+  (void)material;
+
+  PUSH_WARN("TODO: Implement Material.");
 
   return true;
 }
@@ -7420,6 +7238,31 @@ bool USDAParser::Impl::MaybeNone() {
 //
 // -- impl ReadBasicType
 //
+
+bool USDAParser::Impl::ReadBasicType(value::token *value) {
+
+  std::string str;  
+  if (ReadStringLiteral(&str)) {
+    (*value) = value::token(str);
+  } 
+
+  return false;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::token> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::token v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
 
 bool USDAParser::Impl::ReadBasicType(value::matrix4f *value) {
   if (value) {
@@ -7533,7 +7376,6 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<std::string> *value) {
 }
 
 bool USDAParser::Impl::ReadBasicType(bool *value) {
-  std::cout << "ReadBool\n";
 
   // 'true', 'false', '0' or '1'
   {
@@ -7593,8 +7435,6 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<bool> *value) {
 bool USDAParser::Impl::ReadBasicType(int *value) {
   std::stringstream ss;
 
-  // std::cout << "ReadInt\n";
-
   // head character
   bool has_sign = false;
   // bool negative = false;
@@ -7604,8 +7444,6 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
       return false;
     }
     _line_col++;
-
-    std::cout << "sc " << std::to_string(sc) << "\n";
 
     // sign or [0-9]
     if (sc == '+') {
