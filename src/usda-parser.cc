@@ -27,13 +27,12 @@
 //#include "ryu/ryu.h"
 //#include "ryu/ryu_parse.h"
 
+#include "fast_float/fast_float.h"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
-#include "fast_float/fast_float.h"
-
-// Workaround: Compilation fails when using C++17 std::variant for Variable class.
-// so use nonstd::variant on C++17
+// Workaround: Compilation fails when using C++17 std::variant for Variable
+// class. so use nonstd::variant on C++17
 //#define variant_CONFIG_SELECT_VARIANT variant_VARIANT_NONSTD
 //#include "nonstd/variant.hpp"
 
@@ -47,26 +46,35 @@
 #endif
 
 #include "io-util.hh"
-#include "str-util.hh"
 #include "math-util.inc"
 #include "pprinter.hh"
 #include "prim-types.hh"
+#include "str-util.hh"
 //#include "simple-type-reflection.hh"
+#include "primvar.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "usdObj.hh"
 #include "usda-parser.hh"
-#include "primvar.hh"
-#include "value-type.hh"
 #include "value-pprint.hh"
+#include "value-type.hh"
 
 // s = std::string
-#define PUSH_ERROR(s)                                              \
+#define PUSH_ERROR_AND_RETURN(s)                                   \
   do {                                                             \
     std::ostringstream ss;                                         \
     ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
     ss << s;                                                       \
-    PushError(ss.str());                                          \
+    PushError(ss.str());                                           \
+    return false;                                                  \
+  } while (0)
+
+#define PUSH_WARN(s)                                               \
+  do {                                                             \
+    std::ostringstream ss;                                         \
+    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+    ss << s;                                                       \
+    PushWarn(ss.str());                                            \
   } while (0)
 
 #define SLOG_INFO                                                         \
@@ -76,12 +84,12 @@
   std::cout
 
 #define LOG_DEBUG(s)                                                     \
-  do {                                                                  \
-    std::ostringstream ss;                                              \
+  do {                                                                   \
+    std::ostringstream ss;                                               \
     ss << "[debug] " << __FILE__ << ":" << __func__ << "():" << __LINE__ \
-       << " ";                                                          \
-    ss << s;                                                            \
-    std::cout << ss.str() << "\n";                                      \
+       << " ";                                                           \
+    ss << s;                                                             \
+    std::cout << ss.str() << "\n";                                       \
   } while (0)
 
 #define LOG_INFO(s)                                                     \
@@ -124,7 +132,11 @@
 #endif
 
 #if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
+#define DCOUT(x)                                               \
+  do {                                                         \
+    std::cout << __FILE__ << ":" << __func__ << ":"            \
+              << std::to_string(__LINE__) << " " << x << "\n"; \
+  } while (false)
 #else
 #define DCOUT(x)
 #endif
@@ -140,8 +152,7 @@ namespace {
 // -1 = bad input
 // -2 = overflow
 // -3 = underflow
-int parseInt(const std::string &s, int *out_result)
-{
+int parseInt(const std::string &s, int *out_result) {
   size_t n = s.size();
   const char *c = s.c_str();
 
@@ -190,7 +201,7 @@ int parseInt(const std::string &s, int *out_result)
     (*out_result) = int(result);
   }
 
-  return 0; // OK
+  return 0;  // OK
 }
 
 // TODO: parseUInt64
@@ -222,7 +233,7 @@ std::string to_string(const TimeSampledDataFloat &values, uint32_t indent = 0)
 
   for (size_t i = 0; i < values.size(); i++) {
     ss << Indent(indent+1) << std::get<0>(values[i]) << ":";
-    if (auto p = std::get<1>(values[i])) {
+    ead(auto p = std::get<1>(values[i])) {
       ss << *p;
     } else {
       ss << "None";
@@ -362,11 +373,11 @@ class Variable {
   std::string name;
   bool custom{false};
 
-  //using Array = std::vector<Variable>;
+  // using Array = std::vector<Variable>;
   using Object = std::map<std::string, Variable>;
 
   value::Value value;
-  //Array arr_value;
+  // Array arr_value;
   Object obj_value;
   value::TimeSamples timeSamples;
 
@@ -375,7 +386,7 @@ class Variable {
     name = rhs.name;
     custom = rhs.custom;
     value = rhs.value;
-    //arr_value = rhs.arr_value;
+    // arr_value = rhs.arr_value;
     obj_value = rhs.obj_value;
 
     return *this;
@@ -432,16 +443,16 @@ class Variable {
   Object object;
 #endif
 
-  //template <typename T>
-  //bool is() const {
-  //  return value.index() == ValueType::index_of<T>();
-  //}
+  // template <typename T>
+  // bool is() const {
+  //   return value.index() == ValueType::index_of<T>();
+  // }
 
   // TODO
   bool IsEmpty() const { return false; }
   bool IsValue() const { return false; }
-  //bool IsArray() const {
-  //}
+  // bool IsArray() const {
+  // }
 
   // bool IsArray() const {
   //  auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
@@ -449,34 +460,32 @@ class Variable {
   //  return p ? true: false;
   //}
 
-  bool IsObject() const {
-    return obj_value.size();
-  }
+  bool IsObject() const { return obj_value.size(); }
 
   // TODO
   bool IsTimeSamples() const { return false; }
 
-  //const Array *as_array() const {
-  //  const auto p =
-  //      nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
-  //  return p->get_pointer();
-  //}
+  // const Array *as_array() const {
+  //   const auto p =
+  //       nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
+  //   return p->get_pointer();
+  // }
 
-  //const value::any_value *as_value() const {
-  //  const auto p = nonstd::get_if<value::any_value>(&value);
-  //  return p;
-  //}
+  // const value::any_value *as_value() const {
+  //   const auto p = nonstd::get_if<value::any_value>(&value);
+  //   return p;
+  // }
 
-  //const Object *as_object() const {
-  //  const auto p =
-  //      nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
-  //  return p->get_pointer();
-  //}
+  // const Object *as_object() const {
+  //   const auto p =
+  //       nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
+  //   return p->get_pointer();
+  // }
 
-  //const TimeSamples *as_timesamples() const {
-  //  const auto p = nonstd::get_if<TimeSamples>(&value);
-  //  return p;
-  //}
+  // const TimeSamples *as_timesamples() const {
+  //   const auto p = nonstd::get_if<TimeSamples>(&value);
+  //   return p;
+  // }
 
   // For Value
 #if 0
@@ -578,7 +587,7 @@ std::string TrimString(const std::string &str) {
   return s;
 }
 
-#if 0 // TODO
+#if 0  // TODO
 std::string str_object(const Variable::Object &obj, int indent) {
   std::stringstream ss;
 
@@ -620,7 +629,6 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
 #if 1
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
-
   os << "TODO: Variable";
 
 #if 0
@@ -684,7 +692,6 @@ std::ostream &operator<<(std::ostream &os, const Variable &var) {
 
 inline bool isChar(char c) { return std::isalpha(int(c)); }
 
-
 inline bool hasConnect(const std::string &str) {
   return endsWith(str, ".connect");
 }
@@ -701,7 +708,7 @@ inline bool is_digit(char x) {
   return (static_cast<unsigned int>((x) - '0') < static_cast<unsigned int>(10));
 }
 
-#if 0 // use `fast_float`
+#if 0  // use `fast_float`
 // Tries to parse a floating point number located at s.
 //
 // s_end should be a location in the string where reading should absolutely
@@ -885,7 +892,7 @@ static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
   if (ans.ec != std::errc()) {
     // Current `fast_float` implementation does not report detailed parsing err.
     return nonstd::make_unexpected("Parse failed.");
-  } 
+  }
 
   return result;
 #endif
@@ -920,7 +927,7 @@ static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
   if (ans.ec != std::errc()) {
     // Current `fast_float` implementation does not report detailed parsing err.
     return nonstd::make_unexpected("Parse failed.");
-  } 
+  }
 
   return result;
 #endif
@@ -1196,6 +1203,90 @@ class USDAParser::Impl {
     RegisterNodeArgs();
     RegisterPrimAttrTypes();
   }
+
+  //
+  // -- ReadBasicType --
+  //
+  bool ReadBasicType(nonstd::optional<std::string> *value);
+  bool ReadBasicType(nonstd::optional<int> *value);
+  bool ReadBasicType(nonstd::optional<float> *value);
+  bool ReadBasicType(nonstd::optional<value::float2> *value);
+  bool ReadBasicType(nonstd::optional<value::float3> *value);
+  bool ReadBasicType(nonstd::optional<value::float4> *value);
+  bool ReadBasicType(nonstd::optional<double> *value);
+  bool ReadBasicType(nonstd::optional<value::double2> *value);
+  bool ReadBasicType(nonstd::optional<value::double3> *value);
+  bool ReadBasicType(nonstd::optional<value::double4> *value);
+  bool ReadBasicType(nonstd::optional<bool> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix4f> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
+  bool ReadBasicType(nonstd::optional<value::point3f> *value);
+  bool ReadBasicType(nonstd::optional<value::point3d> *value);
+  bool ReadBasicType(nonstd::optional<value::normal3f> *value);
+  bool ReadBasicType(nonstd::optional<value::normal3d> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord2f> *value);
+
+  bool ReadBasicType(nonstd::optional<value::color3f> *value);
+  bool ReadBasicType(nonstd::optional<value::color4f> *value);
+  bool ReadBasicType(nonstd::optional<value::color3d> *value);
+  bool ReadBasicType(nonstd::optional<value::color4d> *value);
+
+  bool ReadBasicType(std::string *value);
+  bool ReadBasicType(int *value);
+  bool ReadBasicType(float *value);
+  bool ReadBasicType(value::float2 *value);
+  bool ReadBasicType(value::float3 *value);
+  bool ReadBasicType(value::float4 *value);
+  bool ReadBasicType(double *value);
+  bool ReadBasicType(value::double2 *value);
+  bool ReadBasicType(value::double3 *value);
+  bool ReadBasicType(value::double4 *value);
+  bool ReadBasicType(bool *value);
+  bool ReadBasicType(uint64_t *value);
+  bool ReadBasicType(value::matrix4f *value);
+  bool ReadBasicType(value::matrix2d *value);
+  bool ReadBasicType(value::matrix3d *value);
+  bool ReadBasicType(value::matrix4d *value);
+  bool ReadBasicType(value::point3f *value);
+  bool ReadBasicType(value::point3d *value);
+  bool ReadBasicType(value::normal3f *value);
+  bool ReadBasicType(value::normal3d *value);
+  bool ReadBasicType(value::texcoord2f *value);
+
+  bool ReadBasicType(value::color3f *value);
+  bool ReadBasicType(value::color3d *value);
+  bool ReadBasicType(value::color4f *value);
+  bool ReadBasicType(value::color4d *value);
+
+  // TimeSample data
+  bool ReadTimeSampleData(nonstd::optional<value::float2> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::float3> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::float4> *value);
+  bool ReadTimeSampleData(nonstd::optional<float> *value);
+  bool ReadTimeSampleData(nonstd::optional<double> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::double2> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::double3> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::double4> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::matrix4f> *value);
+  bool ReadTimeSampleData(nonstd::optional<value::matrix4d> *value);
+
+  // Array version
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float2>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float3>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float4>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<float>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<double>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double2>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double3>> *value);
+  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double4>> *value);
+  bool ReadTimeSampleData(
+      nonstd::optional<std::vector<value::matrix4f>> *value);
+  bool ReadTimeSampleData(
+      nonstd::optional<std::vector<value::matrix4d>> *value);
+
+  bool MaybeNone();
 
   // Return the flag if the .usda is read from `references`
   bool IsReferenced() { return _referenced; }
@@ -1487,8 +1578,7 @@ class USDAParser::Impl {
     } else if (token == "\"guide\"") {
       (*result) = Purpose::Guide;
     } else {
-      PUSH_ERROR("Invalid purpose token name: " + token + "\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Invalid purpose token name: " + token + "\n");
     }
 
     return true;
@@ -1518,9 +1608,8 @@ class USDAParser::Impl {
     std::cout << "varname = `" << varname << "`\n";
 
     if (!IsNodeArg(varname)) {
-      PushError("Unsupported or invalid/empty variable name `" + varname +
-                 "`\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Unsupported or invalid/empty variable name `" +
+                            varname);
     }
 
     if (!SkipWhitespaceAndNewline()) {
@@ -1565,16 +1654,16 @@ class USDAParser::Impl {
         return false;
       }
 
-      //std::vector<Path> paths;
-      //Variable::Array arr;
-      //for (const auto &v : value) {
-      //  std::cout << "  " << v << "\n";
-      //  Variable _var;
-      //  _var.value = v;
-      //  arr.values.push_back(_var);
-      //}
+      // std::vector<Path> paths;
+      // Variable::Array arr;
+      // for (const auto &v : value) {
+      //   std::cout << "  " << v << "\n";
+      //   Variable _var;
+      //   _var.value = v;
+      //   arr.values.push_back(_var);
+      // }
 
-      //var.value = arr;
+      // var.value = arr;
       PushError("TODO: Implement");
       return false;
 
@@ -1586,13 +1675,13 @@ class USDAParser::Impl {
         return false;
       }
 
-      ///Variable::Array arr;
-      ///for (const auto &v : value) {
-      ///  Variable _var;
-      ///  _var.value = v;
-      ///  arr.values.push_back(_var);
-      ///}
-      //var.value = arr;
+      /// Variable::Array arr;
+      /// for (const auto &v : value) {
+      ///   Variable _var;
+      ///   _var.value = v;
+      ///   arr.values.push_back(_var);
+      /// }
+      // var.value = arr;
 
       PushError("TODO: Implement");
       return false;
@@ -1607,10 +1696,28 @@ class USDAParser::Impl {
       std::cout << "vardef.type: " << vardef.type << ", name = " << varname
                 << "\n";
       var.value = value;
+    } else if (vardef.type == "string[]") {
+      std::vector<std::string> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PUSH_ERROR_AND_RETURN("ReadStringArray failed.");
+        return false;
+      }
+
+      DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
+      var.value = value;
+
+    } else if (vardef.type == value::kBool) {
+      bool value;
+      if (!ReadBasicType(&value)) {
+        PUSH_ERROR_AND_RETURN("ReadBool failed.");
+      }
+
+      DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
+      var.value = value;
 
     } else {
-      PUSH_ERROR("TODO: varname " + varname + ", type " + vardef.type);
-      return false;
+      PUSH_ERROR_AND_RETURN("TODO: varname " + varname + ", type " +
+                            vardef.type);
     }
 
     std::get<0>(*out) = qual;
@@ -1711,8 +1818,7 @@ class USDAParser::Impl {
         std::string key;
         Variable var;
         if (!ParseDictElement(&key, &var)) {
-          PushError(std::to_string(__LINE__) +
-                     "Failed to parse dict element.");
+          PushError(std::to_string(__LINE__) + "Failed to parse dict element.");
           return false;
         }
 
@@ -1813,9 +1919,11 @@ class USDAParser::Impl {
           return false;
         }
 
-        if ((token != "interpolation") && (token != "customData")) {
+        if ((token != "interpolation") && (token != "customData") &&
+            (token != "elementSize")) {
           PushError(
-              "Currently only `interpolation` or `customData` is supported but "
+              "Currently only `interpolation`, `elementSize` or `customData` "
+              "is supported but "
               "got: " +
               token);
           return false;
@@ -1846,6 +1954,17 @@ class USDAParser::Impl {
           assert(var.valid());
 
           (*out_meta)["interpolation"] = var;
+        } else if (token == "elementSize") {
+          int value;
+          if (!ReadBasicType(&value)) {
+            PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
+          }
+
+          Variable var;
+          var.name = token;
+          var.value = value;
+
+          (*out_meta)["elementSize"] = var;
         } else if (token == "customData") {
           std::map<std::string, Variable> dict;
 
@@ -1856,8 +1975,8 @@ class USDAParser::Impl {
             return false;
           }
 
-          //Variable::Object d;
-          //d.obj_value = dict;
+          // Variable::Object d;
+          // d.obj_value = dict;
 
           Variable var;
           var.name = token;
@@ -1960,9 +2079,8 @@ class USDAParser::Impl {
     }
 
     if (!IsRegisteredPrimAttrType(type_name)) {
-      PUSH_ERROR("Unknown or unsupported primtive attribute type `" +
-                 type_name + "`\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
+                            type_name + "`\n");
     }
 
     // Has array qualifier? `[]`
@@ -2031,8 +2149,8 @@ class USDAParser::Impl {
       std::cout << "string = " << value << "\n";
 
     } else {
-      PUSH_ERROR("Unimplemented or unsupported type: " + type_name + "\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Unimplemented or unsupported type: " + type_name +
+                            "\n");
     }
 
     (void)uniform_qual;
@@ -2121,8 +2239,8 @@ class USDAParser::Impl {
     }
 
     if (!IsRegisteredPrimAttrType(type_name)) {
-      PUSH_ERROR("Unknown or unsupported type `" + type_name + "`\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Unknown or unsupported type `" + type_name +
+                            "`\n");
     }
 
     // Has array qualifier? `[]`
@@ -2185,7 +2303,7 @@ class USDAParser::Impl {
     // Variable var;
 
     PushError("TODO: ParseDictElement: Implement value parser for type: " +
-               type_name + "\n");
+              type_name + "\n");
     return false;
   }
 
@@ -2201,14 +2319,19 @@ class USDAParser::Impl {
       return false;
     }
 
-    // cosume `custom` token.
+    if (tok == "custom") {
+      // cosume `custom` token.
+      return true;
+    }
 
-    return (tok == "custom");
+    // revert
+    SeekTo(loc);
+    return false;
   }
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
-                           PrimAttrib *out_attr) {
+                          PrimAttrib *out_attr) {
     PrimAttrib attr;
 
     if (array_qual) {
@@ -2218,12 +2341,15 @@ class USDAParser::Impl {
       } else {
         std::vector<T> value;
         if (!ParseBasicTypeArray(&value)) {
-          PushError("Failed to parse " + std::string(value::TypeTrait<T>::type_name()) +
-                     " array.\n");
+          PushError("Failed to parse " +
+                    std::string(value::TypeTrait<T>::type_name()) +
+                    " array.\n");
           return false;
         }
 
-        LOG_INFO("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) + ", sz = " + std::to_string(value.size()));
+        LOG_INFO(
+            "Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
+            ", sz = " + std::to_string(value.size()));
         attr.var.set_scalar(value);
       }
 
@@ -2235,17 +2361,18 @@ class USDAParser::Impl {
       }
       std::cout << "Path identifier = " << value << "\n";
 
-      attr.var.set_scalar(value); // TODO: set as `Path` type
+      attr.var.set_scalar(value);  // TODO: set as `Path` type
     } else {
       nonstd::optional<T> value;
       if (!ReadBasicType(&value)) {
-        PushError("Failed to parse " + std::string(value::TypeTrait<T>::type_name()) +
-                   " .\n");
+        PushError("Failed to parse " +
+                  std::string(value::TypeTrait<T>::type_name()) + " .\n");
         return false;
       }
 
       if (value) {
-        LOG_DEBUG("ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name() << " = " << (*value));
+        LOG_DEBUG("ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name()
+                                         << " = " << (*value));
 
         // TODO: TimeSampled
         value::TimeSamples ts;
@@ -2253,9 +2380,9 @@ class USDAParser::Impl {
         attr.var.var = ts;
 
       } else {
-        std::cout << "ParseBasicPrimAttr: " <<  value::TypeTrait<T>::type_name() << " = None\n";
+        std::cout << "ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name()
+                  << " = None\n";
       }
-
     }
 
     // optional: interpolation parameter
@@ -2266,7 +2393,7 @@ class USDAParser::Impl {
     }
 
     if (meta.count("interpolation")) {
-      const Variable& var = meta.at("interpolation");
+      const Variable &var = meta.at("interpolation");
       auto p = var.value.get_value<value::token>();
       if (p) {
         attr.interpolation = tinyusdz::InterpolationFromString(p.value().str());
@@ -2315,9 +2442,8 @@ class USDAParser::Impl {
     }
 
     if (!IsRegisteredPrimAttrType(type_name)) {
-      PUSH_ERROR("Unknown or unsupported primtive attribute type `" +
-                 type_name + "`\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
+                            type_name + "`\n");
     }
 
     // Has array qualifier? `[]`
@@ -2387,14 +2513,13 @@ class USDAParser::Impl {
     }
 
     if (define_only) {
-
       // TODO:
 
-      //attr.custom = custom_qual;
-      //attr.uniform = uniform_qual;
-      //attr.name = primattr_name;
+      // attr.custom = custom_qual;
+      // attr.uniform = uniform_qual;
+      // attr.name = primattr_name;
 
-      //LOG_INFO("primattr_name = " + primattr_name);
+      // LOG_INFO("primattr_name = " + primattr_name);
 
       //// FIXME
       //{
@@ -2471,11 +2596,10 @@ class USDAParser::Impl {
 #endif
 
       PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " +
-                 type_name);
+                type_name);
       return false;
 
     } else {
-
       PrimAttrib attr;
       Rel rel;
 
@@ -2499,68 +2623,105 @@ class USDAParser::Impl {
         }
       } else if (type_name == "string") {
         if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
-                                              &attr)) {
+                                             &attr)) {
           return false;
         }
       } else if (type_name == "token") {
         if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
-                                              &attr)) {
+                                             &attr)) {
           return false;
         }
       } else if (type_name == "float2") {
-        if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
+                                               &attr)) {
           return false;
         }
       } else if (type_name == "float3") {
-        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
+                                               &attr)) {
           return false;
         }
       } else if (type_name == "float4") {
-        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
+                                               &attr)) {
           return false;
         }
       } else if (type_name == "double2") {
-        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
+                                                &attr)) {
           return false;
         }
       } else if (type_name == "double3") {
-        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
+                                                &attr)) {
           return false;
         }
       } else if (type_name == "double4") {
-        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
+                                                &attr)) {
           return false;
         }
       } else if (type_name == "point3f") {
         LOG_INFO("point3f, array_qual = " + std::to_string(array_qual));
-        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
+                                                &attr)) {
           LOG_INFO("Failed to parse point3f data.");
           return false;
         }
-        LOG_INFO("Got it");
+      } else if (type_name == "color3f") {
+        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == "color4f") {
+        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
       } else if (type_name == "point3d") {
-        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
+                                                &attr)) {
           return false;
         }
       } else if (type_name == "normal3f") {
         LOG_INFO("normal3f, array_qual = " + std::to_string(array_qual));
-        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
+                                                 &attr)) {
           LOG_INFO("Failed to parse normal3f data.");
           return false;
         }
         LOG_INFO("Got it");
       } else if (type_name == "normal3d") {
-        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == "color3d") {
+        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == "color4d") {
+        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == "matrix2d") {
+        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == "matrix3d") {
+        if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
+                                                 &attr)) {
           return false;
         }
       } else if (type_name == "matrix4d") {
-        value::matrix4d m;
-        if (!ParseMatrix4d(m.m)) {
-          PushError("Failed to parse value with type `matrix4d`.\n");
+        if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
+                                                 &attr)) {
           return false;
         }
 
-        //attr.var = m;
       } else if (type_name == "rel") {
         if (!ParseRel(&rel)) {
           PushError("Failed to parse value with type `rel`.\n");
@@ -2569,26 +2730,24 @@ class USDAParser::Impl {
 
         is_rel = true;
       } else if (type_name == "texCoord2f") {
-        if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name, &attr)) {
-          PUSH_ERROR("Failed to parse texCoord2f data.");
-          return false;
+        if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
+                                                   &attr)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse texCoord2f data.");
         }
 
       } else if (type_name == "asset") {
-
         Reference asset_ref;
         bool triple_deliminated{false};
         if (!ParseReference(&asset_ref, &triple_deliminated)) {
-          PUSH_ERROR("Failed to parse `asset` data.");
+          PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
         }
 
         value::asset_path assetp(asset_ref.asset_path);
         attr.var.set_scalar(assetp);
-        PUSH_ERROR("TODO: `asset`");
+        PUSH_ERROR_AND_RETURN("TODO: `asset`");
 
       } else {
-        PUSH_ERROR("TODO: type = " + type_name);
-        return false;
+        PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
       }
 
       attr.uniform = uniform_qual;
@@ -2605,678 +2764,6 @@ class USDAParser::Impl {
       } else {
         (*props)[primattr_name].attrib = attr;
       }
-
-#if 0  // TODO: Remove
-      if (type_name == "matrix4d") {
-        double m[4][4];
-        if (!ParseMatrix4d(m)) {
-          PushError("Failed to parse value with type `matrix4d`.\n");
-          return false;
-        }
-
-        std::cout << "matrix4d = \n";
-        std::cout << m[0][0] << ", " << m[0][1] << ", " << m[0][2] << ", "
-                  << m[0][3] << "\n";
-        std::cout << m[1][0] << ", " << m[1][1] << ", " << m[1][2] << ", "
-                  << m[1][3] << "\n";
-        std::cout << m[2][0] << ", " << m[2][1] << ", " << m[2][2] << ", "
-                  << m[2][3] << "\n";
-        std::cout << m[3][0] << ", " << m[3][1] << ", " << m[3][2] << ", "
-                  << m[3][3] << "\n";
-      } else if (type_name == "bool") {
-        if (array_qual) {
-          // Assume people only use array access to vector<bool>
-          std::vector<nonstd::optional<bool>> value;
-          if (!ParseBasicTypeArray(&value)) {
-            PushError(
-                "Failed to parse array of string literal for `uniform "
-                "bool[]`.\n");
-          }
-        } else {
-          nonstd::optional<bool> value;
-          if (!ReadBasicType(&value)) {
-            PushError("Failed to parse value for `uniform bool`.\n");
-          }
-          if (value) {
-            std::cout << "bool value = " << *value << "\n";
-          }
-        }
-      } else if (type_name == "token") {
-        if (array_qual) {
-          if (!uniform_qual) {
-            PushError("TODO: token[]\n");
-            return false;
-          }
-
-          std::vector<nonstd::optional<std::string>> value;
-          if (!ParseBasicTypeArray(&value)) {
-            PushError(
-                "Failed to parse array of string literal for `uniform "
-                "token[]`.\n");
-          }
-
-          Variable var;
-          Variable::Array arr;
-          for (size_t i = 0; i < value.size(); i++) {
-            Variable v;
-            if (value[i]) {
-              v.value = (*value[i]);
-            } else {
-              v.value = nonstd::monostate{};  // None
-            }
-            arr.values.push_back(v);
-          }
-
-          std::cout << "add token[] primattr: " << primattr_name << "\n";
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        } else {
-          if (uniform_qual) {
-            std::cout << "uniform_qual\n";
-            std::string value;
-            if (!ReadStringLiteral(&value)) {
-              PushError(
-                  "Failed to parse string literal for `uniform token`.\n");
-            }
-            std::cout << "StringLiteral = " << value << "\n";
-          } else if (hasConnect(primattr_name)) {
-            std::cout << "hasConnect\n";
-            std::string value;  // TODO: Path
-            if (!ReadPathIdentifier(&value)) {
-              PushError("Failed to parse path identifier for `token`.\n");
-            }
-            std::cout << "Path identifier = " << value << "\n";
-
-          } else if (hasOutputs(primattr_name)) {
-            std::cout << "output\n";
-            // Output node.
-            // OK
-          } else {
-            std::cout << "??? " << primattr_name << "\n";
-            std::string value;
-            if (!ReadStringLiteral(&value)) {
-              PushError("Failed to parse string literal for `token`.\n");
-            }
-          }
-        }
-      } else if (type_name == "int") {
-        if (array_qual) {
-          std::vector<nonstd::optional<int>> value;
-          if (!ParseBasicTypeArray(&value)) {
-            PushError("Failed to parse int array.\n");
-          }
-        } else {
-          nonstd::optional<int> value;
-          if (!ReadBasicType(&value)) {
-            PushError("Failed to parse int value.\n");
-          }
-        }
-      } else if (type_name == "float") {
-        if (array_qual) {
-          std::vector<nonstd::optional<float>> value;
-          if (!ParseBasicTypeArray(&value)) {
-            PushError("Failed to parse float array.\n");
-          }
-          std::cout << "float = \n";
-
-          Variable::Array arr;
-          for (size_t i = 0; i < value.size(); i++) {
-            Variable v;
-            if (value[i]) {
-              std::cout << *value[i] << "\n";
-              v.value = (*value[i]);
-            } else {
-              std::cout << "None\n";
-              v.value = nonstd::monostate{};
-            }
-            arr.values.push_back(v);
-          }
-          Variable var;
-          var.value = arr;
-          (*props)[primattr_name] = var;
-        } else if (hasConnect(primattr_name)) {
-          std::string value;  // TODO: Path
-          if (!ReadPathIdentifier(&value)) {
-            PushError("Failed to parse path identifier for `token`.\n");
-            return false;
-          }
-          std::cout << "Path identifier = " << value << "\n";
-        } else {
-          nonstd::optional<float> value;
-          if (!ReadBasicType(&value)) {
-            PushError("Failed to parse float.\n");
-          }
-          if (value) {
-            std::cout << "float = " << *value << "\n";
-          } else {
-            std::cout << "float = None\n";
-          }
-
-          Variable var;
-          if (value) {
-            var.value = (*value);
-          }
-
-          (*props)[primattr_name] = var;
-        }
-
-        // optional: interpolation parameter
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttrib meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-      } else if (type_name == "float2") {
-        if (array_qual) {
-          std::vector<std::array<float, 2>> value;
-          if (!ParseTupleArray(&value)) {
-            PushError("Failed to parse float2 array.\n");
-          }
-          std::cout << "float2 = \n";
-          for (size_t i = 0; i < value.size(); i++) {
-            std::cout << "(" << value[i][0] << ", " << value[i][1] << ")\n";
-          }
-        } else {
-          std::array<float, 2> value;
-          if (!ParseBasicTypeTuple<float, 2>(&value)) {
-            PushError("Failed to parse float2.\n");
-          }
-          std::cout << "float2 = (" << value[0] << ", " << value[1] << ")\n";
-        }
-
-        // optional: interpolation parameter
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-
-      } else if (type_name == "float3") {
-        if (array_qual) {
-          std::vector<std::array<float, 3>> value;
-          if (!ParseTupleArray(&value)) {
-            PushError("Failed to parse float3 array.\n");
-          }
-          std::cout << "float3 = \n";
-          for (size_t i = 0; i < value.size(); i++) {
-            std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
-                      << value[i][2] << ")\n";
-          }
-
-          Variable var;
-          var.value = value;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        } else {
-          std::array<float, 3> value;
-          if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            PushError("Failed to parse float3.\n");
-          }
-          std::cout << "float3 = (" << value[0] << ", " << value[1] << ", "
-                    << value[2] << ")\n";
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-      } else if (type_name == "float4") {
-        if (array_qual) {
-          std::vector<std::array<float, 4>> values;
-          if (!ParseTupleArray(&values)) {
-            PushError("Failed to parse float4 array.\n");
-          }
-          std::cout << "float4 = \n";
-          for (size_t i = 0; i < values.size(); i++) {
-            std::cout << "(" << values[i][0] << ", " << values[i][1] << ", "
-                      << values[i][2] << ", " << values[i][3] << ")\n";
-          }
-
-          Variable::Array arr;
-          for (size_t i = 0; i < values.size(); i++) {
-            Variable v;
-            v.value = values[i];
-            arr.values.push_back(v);
-          }
-
-          Variable var;
-          var.value = arr;
-          var.custom = custom_qual;
-
-          (*props)[primattr_name] = var;
-        } else {
-          std::array<float, 4> value;
-          if (!ParseBasicTypeTuple<float, 4>(&value)) {
-            PushError("Failed to parse float4.\n");
-          }
-          std::cout << "float4 = (" << value[0] << ", " << value[1] << ", "
-                    << value[2] << ", " << value[3] << ")\n";
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-      } else if (type_name == "double") {
-        if (array_qual) {
-          std::vector<nonstd::optional<double>> values;
-          if (!ParseBasicTypeArray(&values)) {
-            PushError("Failed to parse double array.\n");
-          }
-          std::cout << "double = \n";
-          for (size_t i = 0; i < values.size(); i++) {
-            if (values[i]) {
-              std::cout << *values[i] << "\n";
-            } else {
-              std::cout << "None\n";
-            }
-          }
-
-          Variable::Array arr;
-          for (size_t i = 0; i < values.size(); i++) {
-            Variable v;
-            if (values[i]) {
-              v.value = *values[i];
-            } else {
-              v.value = nonstd::monostate{};
-            }
-            arr.values.push_back(v);
-          }
-
-          Variable var;
-          var.value = arr;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-
-        } else if (hasConnect(primattr_name)) {
-          std::string value;  // TODO: Path
-          if (!ReadPathIdentifier(&value)) {
-            PushError("Failed to parse path identifier for `token`.\n");
-            return false;
-          }
-          std::cout << "Path identifier = " << value << "\n";
-        } else {
-          nonstd::optional<double> value;
-          if (!ReadBasicType(&value)) {
-            PushError("Failed to parse double.\n");
-          }
-          if (value) {
-            std::cout << "double = " << *value << "\n";
-
-            Variable var;
-            var.value = Value(*value);
-            var.custom = custom_qual;
-
-            (*props)[primattr_name] = var;
-          } else {
-            std::cout << "double = None\n";
-            // TODO: invalidate attr?
-          }
-        }
-
-        // optional: interpolation parameter
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-      } else if (type_name == "double2") {
-        if (array_qual) {
-          std::vector<std::array<double, 2>> values;
-          if (!ParseTupleArray(&values)) {
-            PushError("Failed to parse double2 array.\n");
-          }
-          std::cout << "double2 = \n";
-          for (size_t i = 0; i < values.size(); i++) {
-            std::cout << "(" << values[i][0] << ", " << values[i][1] << ")\n";
-          }
-
-          Variable::Array arr;
-          for (size_t i = 0; i < values.size(); i++) {
-            Variable v;
-            v.value = values[i];
-            arr.values.push_back(v);
-          }
-
-          Variable var;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        } else {
-          std::array<double, 2> value;
-          if (!ParseBasicTypeTuple<double, 2>(&value)) {
-            PushError("Failed to parse double2.\n");
-          }
-          std::cout << "double2 = (" << value[0] << ", " << value[1] << ")\n";
-
-          Variable var;
-          var.value = value;
-          var.custom = custom_qual;
-
-          (*props)[primattr_name] = var;
-        }
-
-        // optional: interpolation parameter
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-
-      } else if (type_name == "double3") {
-        if (array_qual) {
-          std::vector<std::array<double, 3>> values;
-          if (!ParseTupleArray(&values)) {
-            PushError("Failed to parse double3 array.\n");
-          }
-          std::cout << "double3 = \n";
-          for (size_t i = 0; i < values.size(); i++) {
-            std::cout << "(" << values[i][0] << ", " << values[i][1] << ", "
-                      << values[i][2] << ")\n";
-          }
-
-          Variable::Array arr;
-          for (size_t i = 0; i < values.size(); i++) {
-            Variable v;
-            v.value = values[i];
-            arr.values.push_back(v);
-          }
-
-          Variable var;
-          var.value = arr;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-
-        } else {
-          std::array<double, 3> value;
-          if (!ParseBasicTypeTuple<double, 3>(&value)) {
-            PushError("Failed to parse double3.\n");
-          }
-          std::cout << "double3 = (" << value[0] << ", " << value[1] << ", "
-                    << value[2] << ")\n";
-
-          Variable var;
-          var.value = value;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-
-      } else if (type_name == "double4") {
-        if (array_qual) {
-          std::vector<std::array<double, 4>> values;
-          if (!ParseTupleArray(&values)) {
-            PushError("Failed to parse double4 array.\n");
-          }
-          std::cout << "double4 = \n";
-          for (size_t i = 0; i < values.size(); i++) {
-            std::cout << "(" << values[i][0] << ", " << values[i][1] << ", "
-                      << values[i][2] << ", " << values[i][3] << ")\n";
-          }
-
-          Variable::Array arr;
-          for (size_t i = 0; i < values.size(); i++) {
-            Variable v;
-            v.value = values[i];
-            arr.values.push_back(v);
-          }
-
-          Variable var;
-          var.value = arr;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        } else {
-          std::array<double, 4> value;
-          if (!ParseBasicTypeTuple<double, 4>(&value)) {
-            PushError("Failed to parse double4.\n");
-          }
-          std::cout << "double4 = (" << value[0] << ", " << value[1] << ", "
-                    << value[2] << ", " << value[3] << ")\n";
-
-          Variable var;
-          var.value = value;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-
-      } else if (type_name == "color3f") {
-        if (array_qual) {
-          // TODO: connection
-          std::vector<std::array<float, 3>> value;
-          if (!ParseTupleArray(&value)) {
-            PushError("Failed to parse color3f array.\n");
-          }
-          std::cout << "color3f = \n";
-          for (size_t i = 0; i < value.size(); i++) {
-            std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
-                      << value[i][2] << ")\n";
-          }
-
-          Variable var;
-          var.value = value;  // float3 array is the first-class type
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-
-        } else if (hasConnect(primattr_name)) {
-          std::string value;  // TODO: Path
-          if (!ReadPathIdentifier(&value)) {
-            PushError("Failed to parse path identifier for `token`.\n");
-            return false;
-          }
-          std::cout << "Path identifier = " << value << "\n";
-        } else {
-          std::array<float, 3> value;
-          if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            PushError("Failed to parse color3f.\n");
-          }
-          std::cout << "color3f = (" << value[0] << ", " << value[1] << ", "
-                    << value[2] << ")\n";
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-        if (meta.count("customData")) {
-          std::cout << "has customData\n";
-        }
-
-      } else if (type_name == "normal3f") {
-        if (array_qual) {
-          std::vector<std::array<float, 3>> value;
-          if (!ParseTupleArray(&value)) {
-            PushError("Failed to parse normal3f array.\n");
-          }
-          std::cout << "normal3f = \n";
-          for (size_t i = 0; i < value.size(); i++) {
-            std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
-                      << value[i][2] << ")\n";
-          }
-
-          Variable var;
-          var.value = value;  // float3 array is the first-class type
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-
-        } else if (hasConnect(primattr_name)) {
-          std::string value;  // TODO: Path
-          if (!ReadPathIdentifier(&value)) {
-            PushError("Failed to parse path identifier for `token`.\n");
-            return false;
-          }
-          std::cout << "Path identifier = " << value << "\n";
-        } else {
-          std::array<float, 3> value;
-          if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            PushError("Failed to parse normal3f.\n");
-          }
-          std::cout << "normal3f = (" << value[0] << ", " << value[1] << ", "
-                    << value[2] << ")\n";
-
-          Variable var;
-          var.value = value;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-
-      } else if (type_name == "point3f") {
-        if (array_qual) {
-          std::vector<std::array<float, 3>> value;
-          if (!ParseTupleArray(&value)) {
-            PushError("Failed to parse point3f array.\n");
-          }
-          std::cout << "point3f = \n";
-          for (size_t i = 0; i < value.size(); i++) {
-            std::cout << "(" << value[i][0] << ", " << value[i][1] << ", "
-                      << value[i][2] << ")\n";
-          }
-
-          Variable var;
-          var.value = value;  // float3 array is the first-class type
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-
-        } else {
-          std::array<float, 3> value;
-          if (!ParseBasicTypeTuple<float, 3>(&value)) {
-            PushError("Failed to parse point3f.\n");
-          }
-          std::cout << "point3f = (" << value[0] << ", " << value[1] << ", "
-                    << value[2] << ")\n";
-
-          Variable var;
-          var.value = value;
-          var.custom = custom_qual;
-          (*props)[primattr_name] = var;
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-
-      } else if (type_name == "texCoord2f") {
-        if (array_qual) {
-          std::vector<std::array<float, 2>> value;
-          if (!ParseTupleArray(&value)) {
-            PushError("Failed to parse texCoord2f array.\n");
-          }
-          std::cout << "texCoord2f = \n";
-          for (size_t i = 0; i < value.size(); i++) {
-            std::cout << "(" << value[i][0] << ", " << value[i][1] << ")\n";
-          }
-        } else {
-          std::array<float, 2> value;
-          if (!ParseBasicTypeTuple<float, 2>(&value)) {
-            PushError("Failed to parse texCoord2f.\n");
-          }
-          std::cout << "texCoord2f = (" << value[0] << ", " << value[1]
-                    << ")\n";
-        }
-
-        std::map<std::string, Variable> meta;
-        if (!ParseAttrMeta(&meta)) {
-          PushError("Failed to parse PrimAttr meta.");
-          return false;
-        }
-
-        if (meta.count("interpolation")) {
-          std::cout << "interpolation: "
-                    << nonstd::get<std::string>(meta.at("interpolation").value)
-                    << "\n";
-        }
-
-      } else if (type_name == "rel") {
-        Rel rel;
-        if (ParseRel(&rel)) {
-          PushError("Failed to parse rel.\n");
-        }
-
-        std::cout << "rel: " << rel.path << "\n";
-
-        // 'todos'
-
-      } else {
-        PushError("TODO: ParsePrimAttr: Implement value parser for type: " +
-                   type_name + "\n");
-        return false;
-      }
-#endif
 
       return true;
     }
@@ -3301,8 +2788,7 @@ class USDAParser::Impl {
       }
 
       if (tok == "rel") {
-        PUSH_ERROR("TODO: Parse rel");
-        return false;
+        PUSH_ERROR_AND_RETURN("TODO: Parse rel");
       } else {
         SeekTo(loc);
       }
@@ -3311,80 +2797,6 @@ class USDAParser::Impl {
     // attribute
     return ParsePrimAttr(props);
   }
-
-  // Allow value 'None', which is represented as nullopt.
-
-  //
-  // -- ReadBasicType --
-  //
-  bool ReadBasicType(nonstd::optional<std::string> *value);
-  bool ReadBasicType(nonstd::optional<int> *value);
-  bool ReadBasicType(nonstd::optional<float> *value);
-  bool ReadBasicType(nonstd::optional<value::float2> *value);
-  bool ReadBasicType(nonstd::optional<value::float3> *value);
-  bool ReadBasicType(nonstd::optional<value::float4> *value);
-  bool ReadBasicType(nonstd::optional<double> *value);
-  bool ReadBasicType(nonstd::optional<value::double2> *value);
-  bool ReadBasicType(nonstd::optional<value::double3> *value);
-  bool ReadBasicType(nonstd::optional<value::double4> *value);
-  bool ReadBasicType(nonstd::optional<bool> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix4f> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
-  bool ReadBasicType(nonstd::optional<value::point3f> *value);
-  bool ReadBasicType(nonstd::optional<value::point3d> *value);
-  bool ReadBasicType(nonstd::optional<value::normal3f> *value);
-  bool ReadBasicType(nonstd::optional<value::normal3d> *value);
-  bool ReadBasicType(nonstd::optional<value::texcoord2f> *value);
-
-  bool ReadBasicType(std::string *value);
-  bool ReadBasicType(int *value);
-  bool ReadBasicType(float *value);
-  bool ReadBasicType(value::float2 *value);
-  bool ReadBasicType(value::float3 *value);
-  bool ReadBasicType(value::float4 *value);
-  bool ReadBasicType(double *value);
-  bool ReadBasicType(value::double2 *value);
-  bool ReadBasicType(value::double3 *value);
-  bool ReadBasicType(value::double4 *value);
-  bool ReadBasicType(bool *value);
-  bool ReadBasicType(uint64_t *value);
-  bool ReadBasicType(value::matrix4f *value);
-  bool ReadBasicType(value::matrix2d *value);
-  bool ReadBasicType(value::matrix3d *value);
-  bool ReadBasicType(value::matrix4d *value);
-  bool ReadBasicType(value::point3f *value);
-  bool ReadBasicType(value::point3d *value);
-  bool ReadBasicType(value::normal3f *value);
-  bool ReadBasicType(value::normal3d *value);
-  bool ReadBasicType(value::texcoord2f *value);
-
-  // TimeSample data
-  bool ReadTimeSampleData(nonstd::optional<value::float2> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::float3> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::float4> *value);
-  bool ReadTimeSampleData(nonstd::optional<float> *value);
-  bool ReadTimeSampleData(nonstd::optional<double> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::double2> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::double3> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::double4> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::matrix4f> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::matrix4d> *value);
-
-  // Array version
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float2>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float3>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float4>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<float>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<double>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double2>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double3>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double4>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::matrix4f>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::matrix4d>> *value);
-
-  bool MaybeNone();
 
   /// == DORA ==
 
@@ -3411,8 +2823,7 @@ class USDAParser::Impl {
   /// `sep`
   /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
   ///
-  bool SepBy1Reference(const char sep,
-                            std::vector<Reference> *result) {
+  bool SepBy1Reference(const char sep, std::vector<Reference> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -4066,7 +3477,7 @@ class USDAParser::Impl {
 
     if (content.size() != 4) {
       PushError("# of rows in matrix4f must be 4, but got " +
-                 std::to_string(content.size()) + "\n");
+                std::to_string(content.size()) + "\n");
       return false;
     }
 
@@ -4102,7 +3513,7 @@ class USDAParser::Impl {
 
     if (content.size() != 4) {
       PushError("# of rows in matrix4d must be 4, but got " +
-                 std::to_string(content.size()) + "\n");
+                std::to_string(content.size()) + "\n");
       return false;
     }
 
@@ -4201,7 +3612,7 @@ class USDAParser::Impl {
 
     if (content.size() != 3) {
       PushError("# of rows in matrix3d must be 3, but got " +
-                 std::to_string(content.size()) + "\n");
+                std::to_string(content.size()) + "\n");
       return false;
     }
 
@@ -4295,7 +3706,7 @@ class USDAParser::Impl {
 
     if (content.size() != 2) {
       PushError("# of rows in matrix2d must be 2, but got " +
-                 std::to_string(content.size()) + "\n");
+                std::to_string(content.size()) + "\n");
       return false;
     }
 
@@ -5059,8 +4470,7 @@ class USDAParser::Impl {
 
       if (s != '@') {
         std::string sstr{s};
-        PushError("Reference must start with '@', but got '" + sstr +
-                   "'");
+        PushError("Reference must start with '@', but got '" + sstr + "'");
         return false;
       }
 
@@ -5191,15 +4601,15 @@ class USDAParser::Impl {
         return false;
       }
 
-      //Variable::Array arr;
-      //for (size_t i = 0; i < values.size(); i++) {
-      //  DCOUT("reference[" << std::to_string(i)
-      //            << "] = " << values[i].asset_path
-      //            << ", prim_path = " << values[i].prim_path);
-      //  Variable v;
-      //  v.value = values[i];
-      //  arr.values.push_back(v);
-      //}
+      // Variable::Array arr;
+      // for (size_t i = 0; i < values.size(); i++) {
+      //   DCOUT("reference[" << std::to_string(i)
+      //             << "] = " << values[i].asset_path
+      //             << ", prim_path = " << values[i].prim_path);
+      //   Variable v;
+      //   v.value = values[i];
+      //   arr.values.push_back(v);
+      // }
 
       var.value = values;
 
@@ -5215,12 +4625,12 @@ class USDAParser::Impl {
         DCOUT("int[" << i << "] = " << values[i]);
       }
 
-      //Variable::Array arr;
-      //for (size_t i = 0; i < values.size(); i++) {
-      //  Variable v;
-      //  v.value = values[i];
-      //  arr.values.push_back(v);
-      //}
+      // Variable::Array arr;
+      // for (size_t i = 0; i < values.size(); i++) {
+      //   Variable v;
+      //   v.value = values[i];
+      //   arr.values.push_back(v);
+      // }
 
       var.value = values;
     } else if (vartype == "float[]") {
@@ -5233,12 +4643,12 @@ class USDAParser::Impl {
         std::cout << "float[" << i << "] = " << values[i] << "\n";
       }
 
-      //Variable::Array arr;
-      //for (size_t i = 0; i < values.size(); i++) {
-      //  Variable v;
-      //  v.value = values[i];
-      //  arr.values.push_back(v);
-      //}
+      // Variable::Array arr;
+      // for (size_t i = 0; i < values.size(); i++) {
+      //   Variable v;
+      //   v.value = values[i];
+      //   arr.values.push_back(v);
+      // }
 
       var.value = values;
     } else if (vartype == "float3[]") {
@@ -5252,12 +4662,12 @@ class USDAParser::Impl {
                   << values[i][1] << ", " << values[i][2] << "\n";
       }
 
-      //Variable::Array arr;
-      //for (size_t i = 0; i < values.size(); i++) {
-      //  Variable v;
-      //  v.value = values[i];
-      //  arr.values.push_back(v);
-      //}
+      // Variable::Array arr;
+      // for (size_t i = 0; i < values.size(); i++) {
+      //   Variable v;
+      //   v.value = values[i];
+      //   arr.values.push_back(v);
+      // }
 
       var.value = values;
     } else if (vartype == "float") {
@@ -5299,12 +4709,12 @@ class USDAParser::Impl {
         std::cout << "int[" << i << "] = " << values[i] << "\n";
       }
 
-      //Variable::Array arr;
-      //for (size_t i = 0; i < values.size(); i++) {
-      //  Variable v;
-      //  v.value = values[i];
-      //  arr.values.push_back(v);
-      //}
+      // Variable::Array arr;
+      // for (size_t i = 0; i < values.size(); i++) {
+      //   Variable v;
+      //   v.value = values[i];
+      //   arr.values.push_back(v);
+      // }
 
       var.value = values;
     } else if (vartype == "object") {
@@ -5338,10 +4748,9 @@ class USDAParser::Impl {
         }
       }
 
-      PUSH_ERROR("TODO: object type");
+      PUSH_ERROR_AND_RETURN("TODO: object type");
     } else {
-      PUSH_ERROR("TODO: vartype = " + vartype);
-      return false;
+      PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
     }
 
     (*outvar) = var;
@@ -5399,7 +4808,7 @@ class USDAParser::Impl {
     //
     // Materialize builtin variables
     //
-#if 0 // TODO
+#if 0  // TODO
     if (varname == "defaultPrim") {
       if (auto pv = var.as_value()) {
         if (auto p = nonstd::get_if<std::string>(pv)) {
@@ -5410,7 +4819,7 @@ class USDAParser::Impl {
 #endif
 
     std::vector<std::string> sublayers;
-#if 0 // TODO
+#if 0  // TODO
     if (varname == "subLayers") {
       if (var.IsArray()) {
         auto parr = var.as_array();
@@ -5440,7 +4849,7 @@ class USDAParser::Impl {
         std::vector<uint8_t> data;
         std::string err;
         if (!io::ReadWholeFile(&data, &err, filepath, /* max_filesize */ 0)) {
-          PUSH_ERROR("Failed to read file: " + filepath);
+          PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
         }
 
         tinyusdz::StreamReader sr(data.data(), data.size(),
@@ -5998,8 +5407,8 @@ class USDAParser::Impl {
 
     if (args.count("references")) {
       // TODO
-      //references = GetReferences(args["references"]);
-      //LOG_INFO("`references.size` = " + std::to_string(references.size()));
+      // references = GetReferences(args["references"]);
+      // LOG_INFO("`references.size` = " + std::to_string(references.size()));
     }
 
     std::map<std::string, Property> props;
@@ -6087,7 +5496,7 @@ class USDAParser::Impl {
             std::string err;
             if (!io::ReadWholeFile(&data, &err, filepath,
                                    /* max_filesize */ 0)) {
-              PUSH_ERROR("Failed to read file: " + filepath);
+              PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
             }
 
             tinyusdz::StreamReader sr(data.data(), data.size(),
@@ -6118,15 +5527,19 @@ class USDAParser::Impl {
             if (root_nodes.empty()) {
               LOG_WARN("USD file does not contain any Prim node.");
             } else {
+              size_t default_idx =
+                  0;  // Use the first element when corresponding defaultPrim
+                      // node is not found.
 
-              size_t default_idx = 0; // Use the first element when corresponding defaultPrim node is not found.
-
-              auto node_it = std::find_if(root_nodes.begin(), root_nodes.end(), [defaultPrim](const GPrim &a) {
-                return !defaultPrim.empty() && (a.name == defaultPrim);
-              });
+              auto node_it = std::find_if(root_nodes.begin(), root_nodes.end(),
+                                          [defaultPrim](const GPrim &a) {
+                                            return !defaultPrim.empty() &&
+                                                   (a.name == defaultPrim);
+                                          });
 
               if (node_it != root_nodes.end()) {
-                default_idx = size_t(std::distance(root_nodes.begin(), node_it));
+                default_idx =
+                    size_t(std::distance(root_nodes.begin(), node_it));
               }
 
               LOG_INFO("defaultPrim node: " + root_nodes[default_idx].name);
@@ -6245,7 +5658,6 @@ class USDAParser::Impl {
           cylinder.name = node_name;
           std::cout << to_string(cylinder, nestlevel) << "\n";
 
-
         } else if (prim_type == "BasisCurves") {
           GeomBasisCurves curves;
           std::cout << "Reconstruct Cylinder\n";
@@ -6298,9 +5710,35 @@ class USDAParser::Impl {
 
           light.name = node_name;
           std::cout << to_string(light, nestlevel) << "\n";
+        } else if (prim_type == "Scope") {
+          Scope scope;
+          DCOUT("Reconstruct Scope");
+          if (!ReconstructScope(props, references, &scope)) {
+            PushError("Failed to reconstruct Scope.");
+            return false;
+          }
+
+          scope.name = node_name;
+        } else if (prim_type == "SkelRoot") {
+          SkelRoot root;
+          DCOUT("Reconstruct SkelRoot");
+          if (!ReconstructSkelRoot(props, references, &root)) {
+            PushError("Failed to reconstruct SkelRoot.");
+            return false;
+          }
+
+          root.name = node_name;
+        } else if (prim_type == "Skeleton") {
+          Skeleton skel;
+          DCOUT("Reconstruct Skeleton");
+          if (!ReconstructSkeleton(props, references, &skel)) {
+            PushError("Failed to reconstruct Skeleton.");
+            return false;
+          }
+
+          skel.name = node_name;
         } else {
-          PUSH_ERROR(" TODO: " + prim_type);
-          return false;
+          PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
         }
       }
     } else {
@@ -6368,37 +5806,60 @@ class USDAParser::Impl {
       std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomMesh *mesh);
 
-  bool ReconstructBasisCurves(const std::map<std::string, Property> &properties,
+  bool ReconstructBasisCurves(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              GeomBasisCurves *curves);
+      GeomBasisCurves *curves);
 
-  bool ReconstructGeomCamera(const std::map<std::string, Property> &properties,
+  bool ReconstructGeomCamera(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              GeomCamera *curves);
+      GeomCamera *curves);
 
-  bool ReconstructShader(const std::map<std::string, Property> &properties,
+  bool ReconstructShader(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              Shader *shader);
+      Shader *shader);
 
-  bool ReconstructPreviewSurface(const std::map<std::string, Property> &properties,
+  bool ReconstructPreviewSurface(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              PreviewSurface *surface);
+      PreviewSurface *surface);
 
-  bool ReconstructUVTexture(const std::map<std::string, Property> &properties,
+  bool ReconstructUVTexture(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              UVTexture *texture);
+      UVTexture *texture);
 
-  bool ReconstructPrimvarReader_float2(const std::map<std::string, Property> &properties,
+  bool ReconstructPrimvarReader_float2(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              PrimvarReader_float2 *reader_float2);
+      PrimvarReader_float2 *reader_float2);
 
-  bool ReconstructLuxSphereLight(const std::map<std::string, Property> &properties,
+  bool ReconstructLuxSphereLight(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              LuxSphereLight *light);
+      LuxSphereLight *light);
 
-  bool ReconstructLuxDomeLight(const std::map<std::string, Property> &properties,
+  bool ReconstructLuxDomeLight(
+      const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
-                              LuxDomeLight *light);
+      LuxDomeLight *light);
+
+  bool ReconstructScope(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
+      Scope *scope);
+
+  bool ReconstructSkelRoot(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
+      SkelRoot *skelroot);
+
+  bool ReconstructSkeleton(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
+      Skeleton *skeleton);
 
   bool CheckHeader() { return ParseMagicHeader(); }
 
@@ -6507,6 +5968,24 @@ class USDAParser::Impl {
     return ss.str();
   }
 
+  std::string GetWarning() {
+    if (warn_stack.empty()) {
+      return std::string();
+    }
+
+    std::stringstream ss;
+    while (!warn_stack.empty()) {
+      ErrorDiagnositc diag = warn_stack.top();
+
+      ss << "Near line " << diag.line_row << ", col " << diag.line_col << ": ";
+      ss << diag.err << "\n";
+
+      warn_stack.pop();
+    }
+
+    return ss.str();
+  }
+
  private:
   bool IsRegisteredPrimAttrType(const std::string &ty) {
     return _registered_prim_attr_types.count(ty);
@@ -6562,6 +6041,21 @@ class USDAParser::Impl {
     }
   }
 
+  void PushWarn(const std::string &msg) {
+    ErrorDiagnositc diag;
+    diag.line_row = _line_row;
+    diag.line_col = _line_col;
+    diag.err = msg;
+    warn_stack.push(diag);
+  }
+
+  // This function is used to cancel recent parsing warning.
+  void PopWarn() {
+    if (!warn_stack.empty()) {
+      warn_stack.pop();
+    }
+  }
+
   bool IsBuiltinMeta(const std::string &name) {
     return _builtin_metas.count(name) ? true : false;
   }
@@ -6580,6 +6074,10 @@ class USDAParser::Impl {
     _node_args["variantSets"] = VariableDef("string", "variantSets");
     _node_args["payload"] = VariableDef("ref[]", "payload");
     _node_args["specializes"] = VariableDef("path[]", "specializes");
+    _node_args["active"] = VariableDef(value::kBool, "active");
+
+    // ListOp
+    _node_args["apiSchemas"] = VariableDef("string[]", "apiSchemas");
   }
 
   nonstd::optional<VariableDef> GetNodeArg(const std::string &arg) {
@@ -6614,6 +6112,8 @@ class USDAParser::Impl {
     _node_types.insert("SphereLight");
     _node_types.insert("DomeLight");
     _node_types.insert("Camera");
+    _node_types.insert("SkelRoot");
+    _node_types.insert("Skeleton");
   }
 
   ///
@@ -6628,6 +6128,7 @@ class USDAParser::Impl {
   std::map<std::string, VariableDef> _node_args;
 
   std::stack<ErrorDiagnositc> err_stack;
+  std::stack<ErrorDiagnositc> warn_stack;
   std::stack<ParseState> parse_stack;
 
   int _line_row{0};
@@ -6664,8 +6165,7 @@ class USDAParser::Impl {
 // == impl ==
 bool USDAParser::Impl::ReconstructGPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
-    GPrim *gprim) {
+    std::vector<std::pair<ListEditQual, Reference>> &references, GPrim *gprim) {
   //
   // Resolve prepend references
   //
@@ -6677,8 +6177,7 @@ bool USDAParser::Impl::ReconstructGPrim(
   // Update props;
   for (auto item : properties) {
     if (item.second.is_rel) {
-      PUSH_ERROR("TODO: rel");
-      return false;
+      PUSH_WARN("TODO: rel");
     } else {
       gprim->props[item.first].attrib = item.second.attrib;
     }
@@ -6697,8 +6196,7 @@ bool USDAParser::Impl::ReconstructGPrim(
 
 bool USDAParser::Impl::ReconstructXform(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
-    Xform *xform) {
+    std::vector<std::pair<ListEditQual, Reference>> &references, Xform *xform) {
   (void)xform;
 
   // ret = (basename, suffix, isTimeSampled?)
@@ -6751,7 +6249,7 @@ bool USDAParser::Impl::ReconstructXform(
     // array of string
     auto prop = properties.at("xformOpOrder");
     if (prop.is_rel) {
-      PUSH_ERROR("TODO: Rel type for `xformOpOrder`");
+      PUSH_WARN("TODO: Rel type for `xformOpOrder`");
     } else {
 #if 0
       if (auto parr = value::as_vector<std::string>(&attrib->var)) {
@@ -6922,27 +6420,26 @@ bool USDAParser::Impl::ReconstructGeomSphere(
 
   for (const auto &prop : properties) {
     if (prop.first == "material:binding") {
-      //if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
-      //  sphere->materialBinding.materialBinding = prel->path;
-      //} else {
-      //  PushError("`material:binding` must be 'rel' type.");
-      //  return false;
-      //}
+      // if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
+      //   sphere->materialBinding.materialBinding = prel->path;
+      // } else {
+      //   PushError("`material:binding` must be 'rel' type.");
+      //   return false;
+      // }
     } else {
       if (prop.second.is_rel) {
-        PUSH_ERROR("TODO: Rel");
+        PUSH_WARN("TODO: Rel");
       } else {
         if (prop.first == "radius") {
-          //const tinyusdz::PrimAttrib &attr = prop.second.attrib;
-          //if (auto p = value::as_basic<double>(&attr->var)) {
-          //  sphere->radius = *p;
-          //} else {
-          //  PushError("`radius` must be double type.");
-          //  return false;
-          //}
+          // const tinyusdz::PrimAttrib &attr = prop.second.attrib;
+          // if (auto p = value::as_basic<double>(&attr->var)) {
+          //   sphere->radius = *p;
+          // } else {
+          //   PushError("`radius` must be double type.");
+          //   return false;
+          // }
         } else {
-          PUSH_ERROR("TODO: type: " + prop.first);
-          return false;
+          PUSH_ERROR_AND_RETURN("TODO: type: " + prop.first);
         }
       }
     }
@@ -6969,14 +6466,14 @@ bool USDAParser::Impl::ReconstructGeomSphere(
 
         for (const auto &prop : prim.props) {
           (void)prop;
-          //if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-          //  if (prop.first == "radius") {
-          //    if (auto p = value::as_basic<double>(&attr->var)) {
-          //      SLOG_INFO << "append reference radius = " << (*p) << "\n";
-          //      sphere->radius = *p;
-          //    }
-          //  }
-          //}
+          // if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+          //   if (prop.first == "radius") {
+          //     if (auto p = value::as_basic<double>(&attr->var)) {
+          //       SLOG_INFO << "append reference radius = " << (*p) << "\n";
+          //       sphere->radius = *p;
+          //     }
+          //   }
+          // }
         }
       }
     }
@@ -7117,7 +6614,6 @@ bool USDAParser::Impl::ReconstructGeomCube(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCube *cube) {
-
   (void)properties;
   (void)cube;
 #if 0
@@ -7254,9 +6750,9 @@ bool USDAParser::Impl::ReconstructGeomCapsule(
 
         for (const auto &prop : prim.props) {
           if (prop.second.is_rel) {
-            PUSH_ERROR("TODO: Rel");
+            PUSH_WARN("TODO: Rel");
           } else {
-            //const PrimAttrib &attrib = prop.second.attrib;
+            // const PrimAttrib &attrib = prop.second.attrib;
 #if 0
             if (prop.first == "height") {
               if (auto p = value::as_basic<double>(&attr->var)) {
@@ -7586,8 +7082,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
         LOG_INFO("Reading .obj file: " + filepath);
 
         if (!usdObj::ReadObjFromFile(filepath, &gprim, &err)) {
-          PUSH_ERROR("Failed to read .obj(usdObj). err = " + err);
-          return false;
+          PUSH_ERROR_AND_RETURN("Failed to read .obj(usdObj). err = " + err);
         }
         LOG_INFO("Loaded .obj file: " + filepath);
 
@@ -7599,25 +7094,25 @@ bool USDAParser::Impl::ReconstructGeomMesh(
           LOG_INFO("points");
           const Property &prop = gprim.props.at("points");
           if (prop.is_rel) {
-            PUSH_ERROR("TODO: points Rel\n");
+            PUSH_WARN("TODO: points Rel\n");
           } else {
             const PrimAttrib &attr = prop.attrib;
             // PrimVar
             LOG_INFO("points.type:" + attr.var.type_name());
             if (attr.var.is_scalar()) {
-
               auto p = attr.var.get_value<std::vector<value::point3f>>();
               if (p) {
-                  mesh->points = p.value();
+                mesh->points = p.value();
               } else {
-                PUSH_ERROR("TODO: points.type = " + attr.var.type_name());
+                PUSH_ERROR_AND_RETURN("TODO: points.type = " +
+                                      attr.var.type_name());
               }
-              //if (auto p = value::as_vector<value::float3>(&pattr->var)) {
-              //  LOG_INFO("points. sz = " + std::to_string(p->size()));
-              //  mesh->points = (*p);
-              //}
+              // if (auto p = value::as_vector<value::float3>(&pattr->var)) {
+              //   LOG_INFO("points. sz = " + std::to_string(p->size()));
+              //   mesh->points = (*p);
+              // }
             } else {
-              PUSH_ERROR("TODO: timesample points.");
+              PUSH_ERROR_AND_RETURN("TODO: timesample points.");
             }
           }
         }
@@ -7633,24 +7128,26 @@ bool USDAParser::Impl::ReconstructGeomMesh(
       if (prop.first == "material:binding") {
         mesh->materialBinding.materialBinding = prop.second.rel.path;
       } else {
-        PUSH_ERROR("TODO: rel");
+        PUSH_WARN("TODO: rel");
       }
     } else {
       const PrimAttrib &attr = prop.second.attrib;
       if (prop.first == "points") {
-
         auto p = attr.var.get_value<std::vector<value::point3f>>();
         if (p) {
           mesh->points = (*p);
         } else {
-          PUSH_ERROR("`GeomMesh::points` must be point3[] type, but got " + attr.var.type_name());
-          return false;
+          PUSH_ERROR_AND_RETURN(
+              "`GeomMesh::points` must be point3[] type, but got " +
+              attr.var.type_name());
         }
       } else if (prop.first == "subdivisionScheme") {
         auto p = attr.var.get_value<std::string>();
         if (!p) {
-          PUSH_ERROR("Invalid type for \'subdivisionScheme\'. expected \'STRING\' but got " + attr.var.type_name());
-          return false;
+          PUSH_ERROR_AND_RETURN(
+              "Invalid type for \'subdivisionScheme\'. expected \'STRING\' but "
+              "got " +
+              attr.var.type_name());
         } else {
           LOG_INFO("subdivisionScheme = " + (*p));
           if (p->compare("none") == 0) {
@@ -7662,8 +7159,7 @@ bool USDAParser::Impl::ReconstructGeomMesh(
           } else if (p->compare("loop") == 0) {
             mesh->subdivisionScheme = SubdivisionScheme::Loop;
           } else {
-            PUSH_ERROR("Unknown subdivision scheme: " + (*p));
-            return false;
+            PUSH_ERROR_AND_RETURN("Unknown subdivision scheme: " + (*p));
           }
         }
       } else {
@@ -7685,17 +7181,17 @@ bool USDAParser::Impl::ReconstructGeomMesh(
   return true;
 }
 
-bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              GeomBasisCurves *curves) {
-
+bool USDAParser::Impl::ReconstructBasisCurves(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    GeomBasisCurves *curves) {
   for (const auto &prop : properties) {
     if (prop.first == "points") {
       if (prop.second.is_rel) {
-        PUSH_ERROR("TODO: Rel");
+        PUSH_WARN("TODO: Rel");
       } else {
-        //const PrimAttrib &attrib = prop.second.attrib;
-#if 0 // TODO
+        // const PrimAttrib &attrib = prop.second.attrib;
+#if 0  // TODO
         attrib.
         attrib.IsFloat3() && !prop.second.IsArray()) {
         PushError("`points` must be float3 array type.");
@@ -7711,7 +7207,7 @@ bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Proper
       }
 
     } else if (prop.first == "curveVertexCounts") {
-#if 0 // TODO
+#if 0  // TODO
       if (!prop.second.IsInt() && !prop.second.IsArray()) {
         PushError("`curveVertexCounts` must be int array type.");
         return false;
@@ -7732,10 +7228,10 @@ bool USDAParser::Impl::ReconstructBasisCurves(const std::map<std::string, Proper
   return true;
 }
 
-bool USDAParser::Impl::ReconstructGeomCamera(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              GeomCamera *camera) {
-
+bool USDAParser::Impl::ReconstructGeomCamera(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    GeomCamera *camera) {
   for (const auto &prop : properties) {
     if (prop.first == "focalLength") {
       // TODO
@@ -7747,10 +7243,10 @@ bool USDAParser::Impl::ReconstructGeomCamera(const std::map<std::string, Propert
   return true;
 }
 
-bool USDAParser::Impl::ReconstructLuxSphereLight(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              LuxSphereLight *light) {
-
+bool USDAParser::Impl::ReconstructLuxSphereLight(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    LuxSphereLight *light) {
   // TODO: Implement
   for (const auto &prop : properties) {
     if (prop.first == "radius") {
@@ -7763,56 +7259,108 @@ bool USDAParser::Impl::ReconstructLuxSphereLight(const std::map<std::string, Pro
   return true;
 }
 
-bool USDAParser::Impl::ReconstructLuxDomeLight(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              LuxDomeLight *light) {
+#define PARSE_PROPERTY_BEGIN if (0) {
+// TODO(syoyo): TimeSamples, Reference
+#define PARSE_PROPERTY(__prop, __name, __ty, __target)             \
+  }                                                                \
+  else if (__prop.first == __name) {                               \
+    const PrimAttrib &attr = __prop.second.attrib;                 \
+    if (auto v = attr.var.get_value<__ty>()) {                     \
+      __target = v.value();                                        \
+    } else {                                                       \
+      PUSH_ERROR_AND_RETURN("Type mismatch. "                      \
+                            << __name << " expects "               \
+                            << value::TypeTrait<__ty>::type_name); \
+    }
 
+//#define PARSE_PROPERTY_END }
+
+bool USDAParser::Impl::ReconstructLuxDomeLight(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    LuxDomeLight *light) {
   // TODO: Implement
   for (const auto &prop : properties) {
-    if (prop.first == "radius") {
-      // TODO
-    } else {
-      std::cout << "TODO: " << prop.first << "\n";
-    }
+    PARSE_PROPERTY_BEGIN
+    PARSE_PROPERTY(prop, "guideRadius", float, light->guideRadius)
+    PARSE_PROPERTY(prop, "inputs:color", value::color3f, light->color)
+    PARSE_PROPERTY(prop, "inputs:intensity", float, light->intensity)
   }
+  else {
+    DCOUT("TODO: " << prop.first);
+  }
+}
+
+return true;
+}  // namespace usda
+
+bool USDAParser::Impl::ReconstructScope(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references, Scope *scope) {
+  (void)scope;
+
+  // TODO: Implement
+  DCOUT("Implement Scope");
 
   return true;
 }
 
-bool USDAParser::Impl::ReconstructShader(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              Shader *shader) {
+bool USDAParser::Impl::ReconstructSkelRoot(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    SkelRoot *root) {
+  (void)root;
 
+  // TODO: Implement
+  DCOUT("Implement SkelRoot");
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructSkeleton(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    Skeleton *skel) {
+  (void)skel;
+
+  // TODO: Implement
+  DCOUT("Implement Skeleton");
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructShader(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    Shader *shader) {
   for (const auto &prop : properties) {
     if (prop.first == "info:id") {
       const PrimAttrib &attr = prop.second.attrib;
 
-      auto p =  attr.var.get_value<std::string>();
+      auto p = attr.var.get_value<std::string>();
       if (p) {
         if (p->compare("UsdPreviewSurface") == 0) {
           PreviewSurface surface;
           if (!ReconstructPreviewSurface(properties, references, &surface)) {
-            PUSH_ERROR("Failed to reconstruct PreviewSurface.");
-            return false;
+            PUSH_ERROR_AND_RETURN("Failed to reconstruct PreviewSurface.");
           }
           shader->value = surface;
         } else if (p->compare("UsdUVTexture") == 0) {
           UVTexture texture;
           if (!ReconstructUVTexture(properties, references, &texture)) {
-            PUSH_ERROR("Failed to reconstruct UVTexture.");
-            return false;
+            PUSH_ERROR_AND_RETURN("Failed to reconstruct UVTexture.");
           }
           shader->value = texture;
         } else if (p->compare("UsdPrimvarReader_float2") == 0) {
           PrimvarReader_float2 preader;
-          if (!ReconstructPrimvarReader_float2(properties, references, &preader)) {
-            PUSH_ERROR("Failed to reconstruct PrimvarReader_float2.");
-            return false;
+          if (!ReconstructPrimvarReader_float2(properties, references,
+                                               &preader)) {
+            PUSH_ERROR_AND_RETURN(
+                "Failed to reconstruct PrimvarReader_float2.");
           }
           shader->value = preader;
         } else {
-          PUSH_ERROR("TODO: Shader id: " + (*p));
-          return false;
+          PUSH_ERROR_AND_RETURN("TODO: Shader id: " + (*p));
         }
       }
     } else {
@@ -7823,23 +7371,26 @@ bool USDAParser::Impl::ReconstructShader(const std::map<std::string, Property> &
   return true;
 }
 
-bool USDAParser::Impl::ReconstructPreviewSurface(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              PreviewSurface *surface) {
+bool USDAParser::Impl::ReconstructPreviewSurface(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    PreviewSurface *surface) {
   // TODO:
   return false;
 }
 
-bool USDAParser::Impl::ReconstructUVTexture(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              UVTexture *texture) {
+bool USDAParser::Impl::ReconstructUVTexture(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    UVTexture *texture) {
   // TODO:
   return false;
 }
 
-bool USDAParser::Impl::ReconstructPrimvarReader_float2(const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-                              PrimvarReader_float2 *preader) {
+bool USDAParser::Impl::ReconstructPrimvarReader_float2(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    PrimvarReader_float2 *preader) {
   // TODO:
   return false;
 }
@@ -7984,7 +7535,26 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<std::string> *value) {
 bool USDAParser::Impl::ReadBasicType(bool *value) {
   std::cout << "ReadBool\n";
 
-  // '0' or '1'
+  // 'true', 'false', '0' or '1'
+  {
+    std::string tok;
+
+    auto loc = CurrLoc();
+    bool ok = ReadIdentifier(&tok);
+
+    if (ok) {
+      if (tok == "true") {
+        (*value) = true;
+        return true;
+      } else if (tok == "false") {
+        (*value) = false;
+        return true;
+      }
+    }
+
+    // revert
+    SeekTo(loc);
+  }
 
   char sc;
   if (!_sr->read1(&sc)) {
@@ -8027,7 +7597,7 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
 
   // head character
   bool has_sign = false;
-  //bool negative = false;
+  // bool negative = false;
   {
     char sc;
     if (!_sr->read1(&sc)) {
@@ -8039,16 +7609,16 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
 
     // sign or [0-9]
     if (sc == '+') {
-      //negative = false;
+      // negative = false;
       has_sign = true;
     } else if (sc == '-') {
-      //negative = true;
+      // negative = true;
       has_sign = true;
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
     } else {
       PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
-                 "'.\n");
+                "'.\n");
       return false;
     }
 
@@ -8081,7 +7651,6 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
   }
 
   // std::cout << "ReadInt token: " << ss.str() << "\n";
-
 
   int int_value;
   int err = parseInt(ss.str(), &int_value);
@@ -8130,7 +7699,7 @@ bool USDAParser::Impl::ReadBasicType(uint64_t *value) {
       // ok
     } else {
       PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
-                 "'.\n");
+                "'.\n");
       return false;
     }
 
@@ -8216,167 +7785,281 @@ bool USDAParser::Impl::ReadBasicType(value::double4 *value) {
 }
 
 bool USDAParser::Impl::ReadBasicType(value::point3f *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+  // std::cout << "got (\n";
 
-    if (!Expect('(')) {
-      return false;
-    }
-    // std::cout << "got (\n";
+  std::vector<float> values;
+  if (!SepBy1BasicType<float>(',', &values)) {
+    return false;
+  }
 
-    std::vector<float> values;
-    if (!SepBy1BasicType<float>(',', &values)) {
-      return false;
-    }
+  // std::cout << "try to parse )\n";
 
-    // std::cout << "try to parse )\n";
+  if (!Expect(')')) {
+    return false;
+  }
 
-    if (!Expect(')')) {
-      return false;
-    }
+  if (values.size() != 3) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(3) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
 
-    if (values.size() != 3) {
-      std::string msg = "The number of tuple elements must be " +
-                        std::to_string(3) + ", but got " +
-                        std::to_string(values.size()) + "\n";
-      PUSH_ERROR(msg);
-      return false;
-    }
+  value->x = values[0];
+  value->y = values[1];
+  value->z = values[2];
 
-    value->x = values[0];
-    value->y = values[1];
-    value->z = values[2];
-
-    return true;
+  return true;
 }
 
 bool USDAParser::Impl::ReadBasicType(value::normal3f *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+  // std::cout << "got (\n";
 
-    if (!Expect('(')) {
-      return false;
-    }
-    // std::cout << "got (\n";
+  std::vector<float> values;
+  if (!SepBy1BasicType<float>(',', &values)) {
+    return false;
+  }
 
-    std::vector<float> values;
-    if (!SepBy1BasicType<float>(',', &values)) {
-      return false;
-    }
+  // std::cout << "try to parse )\n";
 
-    // std::cout << "try to parse )\n";
+  if (!Expect(')')) {
+    return false;
+  }
 
-    if (!Expect(')')) {
-      return false;
-    }
+  if (values.size() != 3) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(3) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
 
-    if (values.size() != 3) {
-      std::string msg = "The number of tuple elements must be " +
-                        std::to_string(3) + ", but got " +
-                        std::to_string(values.size()) + "\n";
-      PUSH_ERROR(msg);
-      return false;
-    }
+  value->x = values[0];
+  value->y = values[1];
+  value->z = values[2];
 
-    value->x = values[0];
-    value->y = values[1];
-    value->z = values[2];
+  return true;
+}
 
-    return true;
+bool USDAParser::Impl::ReadBasicType(value::color3f *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+  // std::cout << "got (\n";
+
+  std::vector<float> values;
+  if (!SepBy1BasicType<float>(',', &values)) {
+    return false;
+  }
+
+  // std::cout << "try to parse )\n";
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  if (values.size() != 3) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(3) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
+
+  value->r = values[0];
+  value->g = values[1];
+  value->b = values[2];
+
+  return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(value::color3d *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+  // std::cout << "got (\n";
+
+  std::vector<double> values;
+  if (!SepBy1BasicType<double>(',', &values)) {
+    return false;
+  }
+
+  // std::cout << "try to parse )\n";
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  if (values.size() != 3) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(3) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
+
+  value->r = values[0];
+  value->g = values[1];
+  value->b = values[2];
+
+  return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(value::color4f *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<float> values;
+  if (!SepBy1BasicType<float>(',', &values)) {
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  if (values.size() != 4) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(4) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
+
+  value->r = values[0];
+  value->g = values[1];
+  value->b = values[2];
+  value->a = values[3];
+
+  return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(value::color4d *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+  // std::cout << "got (\n";
+
+  std::vector<double> values;
+  if (!SepBy1BasicType<double>(',', &values)) {
+    return false;
+  }
+
+  // std::cout << "try to parse )\n";
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  if (values.size() != 4) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(4) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
+
+  value->r = values[0];
+  value->g = values[1];
+  value->b = values[2];
+  value->a = values[3];
+
+  return true;
 }
 
 bool USDAParser::Impl::ReadBasicType(value::point3d *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+  // std::cout << "got (\n";
 
-    if (!Expect('(')) {
-      return false;
-    }
-    // std::cout << "got (\n";
+  std::vector<double> values;
+  if (!SepBy1BasicType<double>(',', &values)) {
+    return false;
+  }
 
-    std::vector<double> values;
-    if (!SepBy1BasicType<double>(',', &values)) {
-      return false;
-    }
+  // std::cout << "try to parse )\n";
 
-    // std::cout << "try to parse )\n";
+  if (!Expect(')')) {
+    return false;
+  }
 
-    if (!Expect(')')) {
-      return false;
-    }
+  if (values.size() != 3) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(3) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
 
-    if (values.size() != 3) {
-      std::string msg = "The number of tuple elements must be " +
-                        std::to_string(3) + ", but got " +
-                        std::to_string(values.size()) + "\n";
-      PUSH_ERROR(msg);
-      return false;
-    }
+  value->x = values[0];
+  value->y = values[1];
+  value->z = values[2];
 
-    value->x = values[0];
-    value->y = values[1];
-    value->z = values[2];
-
-    return true;
+  return true;
 }
 
 bool USDAParser::Impl::ReadBasicType(value::normal3d *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+  // std::cout << "got (\n";
 
-    if (!Expect('(')) {
-      return false;
-    }
-    // std::cout << "got (\n";
+  std::vector<double> values;
+  if (!SepBy1BasicType<double>(',', &values)) {
+    return false;
+  }
 
-    std::vector<double> values;
-    if (!SepBy1BasicType<double>(',', &values)) {
-      return false;
-    }
+  // std::cout << "try to parse )\n";
 
-    // std::cout << "try to parse )\n";
+  if (!Expect(')')) {
+    return false;
+  }
 
-    if (!Expect(')')) {
-      return false;
-    }
+  if (values.size() != 3) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(3) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
 
-    if (values.size() != 3) {
-      std::string msg = "The number of tuple elements must be " +
-                        std::to_string(3) + ", but got " +
-                        std::to_string(values.size()) + "\n";
-      PUSH_ERROR(msg);
-      return false;
-    }
+  value->x = values[0];
+  value->y = values[1];
+  value->z = values[2];
 
-    value->x = values[0];
-    value->y = values[1];
-    value->z = values[2];
-
-    return true;
+  return true;
 }
 
 bool USDAParser::Impl::ReadBasicType(value::texcoord2f *value) {
+  if (!Expect('(')) {
+    return false;
+  }
 
-    if (!Expect('(')) {
-      return false;
-    }
+  std::vector<float> values;
+  if (!SepBy1BasicType<float>(',', &values)) {
+    return false;
+  }
 
-    std::vector<float> values;
-    if (!SepBy1BasicType<float>(',', &values)) {
-      return false;
-    }
+  if (!Expect(')')) {
+    return false;
+  }
 
-    if (!Expect(')')) {
-      return false;
-    }
+  if (values.size() != 2) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(2) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
 
-    if (values.size() != 2) {
-      std::string msg = "The number of tuple elements must be " +
-                        std::to_string(2) + ", but got " +
-                        std::to_string(values.size()) + "\n";
-      PUSH_ERROR(msg);
-      return false;
-    }
+  value->s = values[0];
+  value->t = values[1];
 
-    value->s = values[0];
-    value->t = values[1];
-
-    return true;
+  return true;
 }
 
-bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::texcoord2f> *value) {
+bool USDAParser::Impl::ReadBasicType(
+    nonstd::optional<value::texcoord2f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -8541,6 +8224,66 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::normal3d> *value) {
   return false;
 }
 
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::color3f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color3f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::color4f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color4f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::color3d> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color3d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<value::color4d> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::color4d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -8559,7 +8302,8 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
 //
 // -- impl ReadTimeSampleData
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float2> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(
+    nonstd::optional<value::float2> *out_value) {
   nonstd::optional<std::array<float, 2>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8570,7 +8314,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float2> *out_v
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float3> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(
+    nonstd::optional<value::float3> *out_value) {
   nonstd::optional<std::array<float, 3>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8581,7 +8326,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float3> *out_v
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::float4> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(
+    nonstd::optional<value::float4> *out_value) {
   nonstd::optional<std::array<float, 4>> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8614,7 +8360,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<double> *out_value) {
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double2> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(
+    nonstd::optional<value::double2> *out_value) {
   nonstd::optional<value::double2> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8625,7 +8372,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double2> *out_
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double3> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(
+    nonstd::optional<value::double3> *out_value) {
   nonstd::optional<value::double3> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8636,7 +8384,8 @@ bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double3> *out_
   return true;
 }
 
-bool USDAParser::Impl::ReadTimeSampleData(nonstd::optional<value::double4> *out_value) {
+bool USDAParser::Impl::ReadTimeSampleData(
+    nonstd::optional<value::double4> *out_value) {
   nonstd::optional<value::double4> value;
   if (!ParseBasicTypeTuple(&value)) {
     return false;
@@ -8923,8 +8672,8 @@ std::string USDAParser::GetDefaultPrimName() const {
 }
 
 std::string USDAParser::GetError() { return _impl->GetError(); }
-
-}  // namespace usda
+std::string USDAParser::GetWarning() { return _impl->GetWarning(); }
 
 }  // namespace tinyusdz
 
+}  // namespace tinyusdz
