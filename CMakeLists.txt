@@ -169,8 +169,9 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/string_id/error.cpp
     ${PROJECT_SOURCE_DIR}/src/external/string_id/generator.cpp
     ${PROJECT_SOURCE_DIR}/src/external/string_id/database.cpp
-    ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
-    ${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c)
+    #${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
+    #${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
+    )
 
 # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
 set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
@@ -386,8 +387,10 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  #target_include_directories(${TINYUSDZ_LIB_TARGET}
+  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
   target_include_directories(${TINYUSDZ_LIB_TARGET}
-                             PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
+                             PRIVATE ${PROJECT_SOURCE_DIR}/src/external/fast_float/include)
 
   target_include_directories(
     ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)

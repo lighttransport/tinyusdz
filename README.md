@@ -274,3 +274,4 @@ TinyUSDZ is licensed under MIT license.
 * tinyxml2: zlib license. https://github.com/leethomason/tinyxml2
 * string_id: zlib license. https://github.com/foonathan/string_id
 * cityhash: MIT license. https://github.com/google/cityhash
+* fast_float: Apache 2.0/MIT dual license. https://github.com/fastfloat/fast_float
