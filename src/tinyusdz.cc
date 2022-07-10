@@ -889,9 +889,13 @@ void GeomMesh::Initialize(const GPrim &gprim)
   name = gprim.name;
   parent_id = gprim.parent_id;
 
+  props = gprim.props;
+
+#if 0
   for (auto &prop_item : gprim.props) {
     std::string attr_name = std::get<0>(prop_item);
     const Property &prop = std::get<1>(prop_item);
+
     if (prop.is_rel) {
       //LOG_INFO("TODO: Rel property:" + attr_name);
       continue;
@@ -931,10 +935,11 @@ void GeomMesh::Initialize(const GPrim &gprim)
       //}
     } else {
       // Generic PrimAtrr
-      attribs[attr_name] = attr;
+      props[attr_name] = attr;
     }
 
   }
+#endif
 
   doubleSided = gprim.doubleSided;
   orientation = gprim.orientation;

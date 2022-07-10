@@ -451,7 +451,7 @@ std::string to_string(const GeomPoints &points, const uint32_t indent) {
   ss << Indent(indent) << "{\n";
 
   // members
-  //ss << Indent(indent) << "  point3[] points = " << points.points << "\n";
+  ss << Indent(indent) << "  point3[] points = " << points.points << "\n";
 
   ss << print_predefined(points, indent);
 
@@ -576,6 +576,43 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent) {
   ss << Indent(indent) << "  uniform token axis = " << axis << "\n";
 
   ss << print_predefined(geom, indent);
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string to_string(const SkelRoot &root, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def SkelRoot \"" << root.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // TODO
+  // Skeleton id
+  //ss << Indent(indent) << "skelroot.skeleton_id << "\n"
+
+  ss << Indent(indent) << "[TODO]\n";
+
+  ss << Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string to_string(const Skeleton &skel, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Skeleton \"" << skel.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  // args
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // TODO
+  ss << Indent(indent) << "[TODO]\n";
 
   ss << Indent(indent) << "}\n";
 

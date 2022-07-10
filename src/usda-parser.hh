@@ -66,6 +66,11 @@ class USDAParser {
   ///
   std::string GetError();
 
+  ///
+  /// Get warning message(warnings in `Parse`)
+  ///
+  std::string GetWarning();
+
   /// 
   /// Get as scene
   ///
