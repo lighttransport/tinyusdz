@@ -24,11 +24,13 @@
 #endif
 
 // external
-#include "ryu/ryu.h"
-#include "ryu/ryu_parse.h"
+//#include "ryu/ryu.h"
+//#include "ryu/ryu_parse.h"
 
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
+
+#include "fast_float/fast_float.h"
 
 // Workaround: Compilation fails when using C++17 std::variant for Variable class.
 // so use nonstd::variant on C++17
@@ -699,6 +701,7 @@ inline bool is_digit(char x) {
   return (static_cast<unsigned int>((x) - '0') < static_cast<unsigned int>(10));
 }
 
+#if 0 // use `fast_float`
 // Tries to parse a floating point number located at s.
 //
 // s_end should be a location in the string where reading should absolutely
@@ -855,8 +858,10 @@ assemble:
 fail:
   return false;
 }
+#endif
 
 static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
+#if 0
   // Pase with Ryu.
   float value;
   Status stat = s2f_n(s.data(), int(s.size()), &value);
@@ -873,9 +878,21 @@ static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
   }
 
   return nonstd::make_unexpected("Unexpected error in ParseFloat");
+#else
+  // Parse with fast_float
+  float result;
+  auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
+  if (ans.ec != std::errc()) {
+    // Current `fast_float` implementation does not report detailed parsing err.
+    return nonstd::make_unexpected("Parse failed.");
+  } 
+
+  return result;
+#endif
 }
 
 static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
+#if 0
   // Pase with Ryu.
   double value;
   Status stat = s2d_n(s.data(), int(s.size()), &value);
@@ -896,6 +913,17 @@ static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
   }
 
   return nonstd::make_unexpected("Failed to parse floating-point value.");
+#else
+  // Parse with fast_float
+  double result;
+  auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
+  if (ans.ec != std::errc()) {
+    // Current `fast_float` implementation does not report detailed parsing err.
+    return nonstd::make_unexpected("Parse failed.");
+  } 
+
+  return result;
+#endif
 }
 
 #if 0
@@ -1932,7 +1960,7 @@ class USDAParser::Impl {
     }
 
     if (!IsRegisteredPrimAttrType(type_name)) {
-      PushError("Unknown or unsupported primtive attribute type `" +
+      PUSH_ERROR("Unknown or unsupported primtive attribute type `" +
                  type_name + "`\n");
       return false;
     }
@@ -2003,7 +2031,7 @@ class USDAParser::Impl {
       std::cout << "string = " << value << "\n";
 
     } else {
-      PushError("Unimplemented or unsupported type: " + type_name + "\n");
+      PUSH_ERROR("Unimplemented or unsupported type: " + type_name + "\n");
       return false;
     }
 
@@ -2093,7 +2121,7 @@ class USDAParser::Impl {
     }
 
     if (!IsRegisteredPrimAttrType(type_name)) {
-      PushError("Unknown or unsupported type `" + type_name + "`\n");
+      PUSH_ERROR("Unknown or unsupported type `" + type_name + "`\n");
       return false;
     }
 
@@ -2167,11 +2195,13 @@ class USDAParser::Impl {
     auto loc = CurrLoc();
     bool ok = ReadIdentifier(&tok);
 
-    SeekTo(loc);
-
     if (!ok) {
+      // revert
+      SeekTo(loc);
       return false;
     }
+
+    // cosume `custom` token.
 
     return (tok == "custom");
   }
@@ -2285,7 +2315,7 @@ class USDAParser::Impl {
     }
 
     if (!IsRegisteredPrimAttrType(type_name)) {
-      PushError("Unknown or unsupported primtive attribute type `" +
+      PUSH_ERROR("Unknown or unsupported primtive attribute type `" +
                  type_name + "`\n");
       return false;
     }
@@ -6512,6 +6542,8 @@ class USDAParser::Impl {
 
     _registered_prim_attr_types.insert("dictionary");
 
+    //_registered_prim_attr_types.insert("custom");
+
     // TODO: array type
   }
 
@@ -6580,6 +6612,7 @@ class USDAParser::Impl {
     _node_types.insert("Material");
     _node_types.insert("Shader");
     _node_types.insert("SphereLight");
+    _node_types.insert("DomeLight");
     _node_types.insert("Camera");
   }
 
