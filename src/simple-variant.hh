@@ -252,40 +252,10 @@ struct variant {
     // variant_helper_static<alternative<i>>::copy(&value, &data);
   }
 
-  // template <uint8_t i>
-  // void set(alternative<i>& value) {
-  //   helper_t::destroy(variant_id, &data);
-  //   variant_id = i;
-  //   variant_helper_static<alternative<i>>::copy(&value, &data);
-  // }
-
-  // template <uint8_t i>
-  // void set(alternative<i>&& value) {
-  //   helper_t::destroy(variant_id, &data);
-  //   variant_id = i;
-  //   variant_helper_static<alternative<i>>::move(&value, &data);
-  // }
-
-  // template<uint8_t i>
-  // alternative<i>& get()
-  //{
-  //	if (variant_id == i) {
-  //		return *reinterpret_cast<alternative<i>*>(&data);
-  //	} else {
-  //     // Replace std::bad_cast with something else if the standard library is
-  //     not available
-  //		throw std::bad_cast();
-  //	}
-  // }
-
-  // template <uint8_t i>
-  // alternative<i>* get_if() {
-  //   if (variant_id == i) {
-  //     return reinterpret_cast<alternative<i>*>(&data);
-  //   } else {
-  //     return nullptr;
-  //   }
-  // }
+  template<typename T>
+  variant(const T &v) {
+    set<T>(v);
+  }
 
   template <typename T, typename... Args,
             typename =
@@ -298,6 +268,18 @@ struct variant {
 
     // Undefined behavior,.
     return *reinterpret_cast<T*>(nulldata());
+  }
+
+  template <typename T, typename... Args,
+            typename =
+                typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
+  T* get_if() {
+    // It is a dynamic_cast-like behaviour
+    if (variant_id == value::TypeTrait<T>::type_id) {
+      return reinterpret_cast<T*>(&data);
+    }
+
+    return nullptr;
   }
 
   ~variant() { helper_t::destroy(variant_id, &data); }
