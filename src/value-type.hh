@@ -133,15 +133,24 @@ class asset_path
   std::string resolved_path_;
 };
 
+//
+// Type ID for TypeTrait<T>::type_id.
+//
+// These type IDs are internally used and can be changed arbitrary.
+//
+// These ID assignment won't affect Crate binary serialization.
+// (See `crate-format.hh` for Type ID used in Crate binary)
+// 
 // TODO(syoyo): Support 3D and 4D?
-constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 10; // 1024
-constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 11; // 2048
-//constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 12;
-//constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 13;
+constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 20; // 1024
+constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21; // 2048
+//constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 22;
+//constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 23;
 
-// TODO(syoyo): Use compile-time string hash?
 enum TypeId {
   TYPE_ID_INVALID,  // = 0
+  TYPE_ID_VOID,
+  TYPE_ID_MONOSTATE,
 
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
@@ -255,10 +264,28 @@ enum TypeId {
   TYPE_ID_CRATE_UNREGISTERED_VALUE,
   TYPE_ID_CRATE_LIST_OP_UNREGISTERED_VALUE,
 
-  // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
-  TYPE_ID_USER_BEGIN = 512,
+  // Types for usdLux
+  TYPE_ID_LUX_BEGIN = 1 << 10,
+  TYPE_ID_LUX_SPHERE,
+  TYPE_ID_LUX_DOME,
+  TYPE_ID_LUX_CYLINDER,
+  TYPE_ID_LUX_DISK,
+  TYPE_ID_LUX_RECT,
 
-  TYPE_ID_ALL = (TYPE_ID_1D_ARRAY_BIT - 1)  // terminator. 
+  // Types for usdShader
+  TYPE_ID_SHADER_BEGIN = 1 << 11,
+  TYPE_ID_SHADER_PREVIEWSURFACE, 
+  TYPE_ID_SHADER_UVTEXTURE, 
+  TYPE_ID_PRIMVAR_READER_FLOAT2, 
+  TYPE_ID_PRIMVAR_READER_FLOAT3, 
+
+  // Ttpes for usdVol
+  TYPE_ID_VOL_BEGIN = 3072,
+
+  // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
+  TYPE_ID_USER_BEGIN = 65536,
+
+  TYPE_ID_ALL = (TYPE_ID_2D_ARRAY_BIT - 1)  // terminator. 
 };
 
 struct timecode
@@ -684,6 +711,7 @@ DEFINE_TYPE_TRAIT(asset_path, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 // 
 
 #undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
 
 // 1D Array
 template <typename T>

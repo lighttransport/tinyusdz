@@ -97,14 +97,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma clang diagnostic pop
 #endif
 
-#if defined(TINYUSDZ_PRODUCTION_BUILD)
+#if !defined(TINYUSDZ_PRODUCTION_BUILD)
 #define TINYUSDZ_LOCAL_DEBUG_PRINT
 #endif
 
 #if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
 #define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
 #else
-#define DCOUT(x) do { (void)(x); } while(false)
+#define DCOUT(x)
 #endif
 
 namespace tinyusdz {
@@ -748,6 +748,7 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
     return false;
   }
 
+  DCOUT("TODO");
   // TODO
 #if 0
   if (auto p = nonstd::get_if<std::vector<Vec3f>>(&st.buffer)) {
@@ -774,33 +775,32 @@ value::matrix4d GetTransform(XformOp xform)
   Identity(&m);
 
   if (xform.op == XformOp::OpType::TRANSFORM) {
-    m = nonstd::get<value::matrix4d>(xform.value);
+    if (auto v = xform.value.get<value::matrix4d>()) {
+      m = v.value();
+    }
   } else if (xform.op == XformOp::OpType::TRANSLATE) {
-    if (xform.precision == XformOp::PRECISION_FLOAT) {
-      auto s = nonstd::get<value::float3>(xform.value);
-      m.m[0][0] = double(s[0]);
-      m.m[1][1] = double(s[1]);
-      m.m[2][2] = double(s[2]);
-    } else {
-      auto s = nonstd::get<value::double3>(xform.value);
-      m.m[0][0] = s[0];
-      m.m[1][1] = s[1];
-      m.m[2][2] = s[2];
-    }
+      if (auto sf = xform.value.get<value::float3>()) {
+        m.m[3][0] = double(sf.value()[0]);
+        m.m[3][1] = double(sf.value()[1]);
+        m.m[3][2] = double(sf.value()[2]);
+      } else if (auto sd = xform.value.get<value::double3>()) {
+        m.m[3][0] = sd.value()[0];
+        m.m[3][1] = sd.value()[1];
+        m.m[3][2] = sd.value()[2];
+      }
   } else if (xform.op == XformOp::OpType::SCALE) {
-    if (xform.precision == XformOp::PRECISION_FLOAT) {
-      auto s = nonstd::get<value::float3>(xform.value);
-      m.m[0][0] = double(s[0]);
-      m.m[1][1] = double(s[1]);
-      m.m[2][2] = double(s[2]);
-    } else {
-      auto s = nonstd::get<value::double3>(xform.value);
-      m.m[0][0] = s[0];
-      m.m[1][1] = s[1];
-      m.m[2][2] = s[2];
-    }
+      if (auto sf = xform.value.get<value::float3>()) {
+        m.m[0][0] = double(sf.value()[0]);
+        m.m[1][1] = double(sf.value()[1]);
+        m.m[2][2] = double(sf.value()[2]);
+      } else if (auto sd = xform.value.get<value::double3>()) {
+        m.m[0][0] = sd.value()[0];
+        m.m[1][1] = sd.value()[1];
+        m.m[2][2] = sd.value()[2];
+      }
+  } else {
+    DCOUT("TODO: xform.op = " << XformOp::GetOpTypeName(xform.op));
   }
-  // TODO: rotation, orient
 
   return m;
 }
@@ -814,27 +814,26 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
     for (const auto &x : xformOps) {
       value::matrix4d m;
       Identity(&m);
+      (void)x;
       if (x.op == XformOp::TRANSLATE) {
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          value::float3 tx = nonstd::get<value::float3>(x.value);
-          m.m[3][0] = double(tx[0]);
-          m.m[3][1] = double(tx[1]);
-          m.m[3][2] = double(tx[2]);
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          auto tx = nonstd::get<value::double3>(x.value);
-          m.m[3][0] = tx[0];
-          m.m[3][1] = tx[1];
-          m.m[3][2] = tx[2];
+        if (auto txf = x.value.get<value::float3>()) {
+          m.m[3][0] = double(txf.value()[0]);
+          m.m[3][1] = double(txf.value()[1]);
+          m.m[3][2] = double(txf.value()[2]);
+        } else if (auto txd = x.value.get<value::double3>()) {
+          m.m[3][0] = txd.value()[0];
+          m.m[3][1] = txd.value()[1];
+          m.m[3][2] = txd.value()[2];
         } else {
           return false;
         }
       // FIXME: Validate ROTATE_X, _Y, _Z implementation
       } else if (x.op == XformOp::ROTATE_X) {
         double theta;
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          theta = double(nonstd::get<float>(x.value));
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          theta = nonstd::get<double>(x.value);
+        if (auto rf = x.value.get<float>()) {
+          theta = double(rf.value());
+        } else if (auto rd = x.value.get<double>()) {
+          theta = rd.value();
         } else {
           return false;
         }
@@ -845,10 +844,10 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
         m.m[2][2] = std::cos(theta);
       } else if (x.op == XformOp::ROTATE_Y) {
         double theta;
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          theta = double(nonstd::get<float>(x.value));
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          theta = nonstd::get<double>(x.value);
+        if (auto f = x.value.get<float>()) {
+          theta = double(f.value());
+        } else if (auto d = x.value.get<double>()) {
+          theta = d.value(); 
         } else {
           return false;
         }
@@ -859,10 +858,10 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
         m.m[2][2] = std::cos(theta);
       } else if (x.op == XformOp::ROTATE_Z) {
         double theta;
-        if (x.precision == XformOp::PRECISION_FLOAT) {
-          theta = double(nonstd::get<float>(x.value));
-        } else if (x.precision == XformOp::PRECISION_DOUBLE) {
-          theta = nonstd::get<double>(x.value);
+        if (auto f = x.value.get<float>()) {
+          theta = double(f.value());
+        } else if (auto d = x.value.get<double>()) {
+          theta = d.value(); 
         } else {
           return false;
         }
@@ -873,6 +872,7 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
         m.m[1][1] = std::cos(theta);
       } else {
         // TODO
+        DCOUT("TODO");
         return false;
       }
 
