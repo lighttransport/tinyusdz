@@ -710,11 +710,22 @@ class PrimVariable {
   // representation of Object.
 };
 
+// Meta for Stage and GPrim
+struct GPrimMeta
+{
+  nonstd::optional<Interpolation> interpolation;  // 'interpolation'
+  nonstd::optional<std::map<std::string, PrimVariable>> customData; // `customData`
+
+  std::map<std::string, PrimVariable> meta; // other meta values
+};
+
 struct AttrMeta
 {
   // frequently used item
-  Interpolation interpolation{Interpolation::Invalid};  // 'interpolation'
-  uint32_t elementSize{1}; // 'elementSize'
+  // nullopt = not specified in USD scene
+  nonstd::optional<Interpolation> interpolation;  // 'interpolation'
+  nonstd::optional<uint32_t> elementSize; // usdSkel 'elementSize'
+  nonstd::optional<std::map<std::string, PrimVariable>> customData; // `customData`
   
   std::map<std::string, PrimVariable> meta; // other meta values
 };

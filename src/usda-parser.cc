@@ -65,6 +65,7 @@
 #include "usda-parser.hh"
 #include "value-pprint.hh"
 #include "value-type.hh"
+#include "simple-variant.hh"
 
 // s = std::string
 #define PUSH_ERROR_AND_RETURN(s)                                   \
@@ -1547,16 +1548,7 @@ class USDAParser::Impl {
             return false;
           }
 
-          // PrimVariable::Object d;
-          // d.obj_value = dict;
-
-          PrimVariable var;
-          var.name = token;
-          var.obj_value = dict;
-
-          assert(var.valid());
-
-          out_meta->meta["customData"] = var;
+          out_meta->customData = dict;
 
         } else {
           // ???
