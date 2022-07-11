@@ -3860,7 +3860,7 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
   }
 
   attr->variability = variability;
-  attr->interpolation = interpolation;
+  attr->meta.interpolation = interpolation;
 
   //
   // Decode value(stored in "default" field)

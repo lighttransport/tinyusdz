@@ -569,6 +569,156 @@ struct Rel {
   std::string path;
 };
 
+class PrimVariable {
+ public:
+  std::string type;  // Explicit name of type
+  std::string name;
+  bool custom{false};
+
+  // using Array = std::vector<Variable>;
+  using Object = std::map<std::string, PrimVariable>;
+
+  value::Value value;
+  // Array arr_value;
+  Object obj_value;
+  value::TimeSamples timeSamples;
+
+  PrimVariable &operator=(const PrimVariable &rhs) {
+    type = rhs.type;
+    name = rhs.name;
+    custom = rhs.custom;
+    value = rhs.value;
+    // arr_value = rhs.arr_value;
+    obj_value = rhs.obj_value;
+
+    return *this;
+  }
+
+  PrimVariable(const PrimVariable &rhs) {
+    type = rhs.type;
+    name = rhs.name;
+    custom = rhs.custom;
+    value = rhs.value;
+    obj_value = rhs.obj_value;
+  }
+
+  static std::string type_name(const PrimVariable &v) {
+    if (!v.type.empty()) {
+      return v.type;
+    }
+
+    // infer type from value content
+    if (v.IsObject()) {
+      return "dict";
+    } else if (v.IsTimeSamples()) {
+      std::string ts_type = "TODO: TimeSample typee";
+      // FIXME
+#if 0
+      auto ts_struct = v.as_timesamples();
+
+      for (const TimeSampleType &item : ts_struct->values) {
+        auto tname = value::type_name(item);
+        if (tname != "none") {
+          return tname;
+        }
+      }
+#endif
+
+      // ??? TimeSamples data contains all `None` values
+      return ts_type;
+
+    } else if (v.IsEmpty()) {
+      return "none";
+    } else {
+      return v.value.type_name();
+    }
+  }
+
+  // template <typename T>
+  // bool is() const {
+  //   return value.index() == ValueType::index_of<T>();
+  // }
+
+  // TODO
+  bool IsEmpty() const { return false; }
+  bool IsValue() const { return false; }
+  // bool IsArray() const {
+  // }
+
+  // bool IsArray() const {
+  //  auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
+  //
+  //  return p ? true: false;
+  //}
+
+  bool IsObject() const { return obj_value.size(); }
+
+  // TODO
+  bool IsTimeSamples() const { return false; }
+
+  // const Array *as_array() const {
+  //   const auto p =
+  //       nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
+  //   return p->get_pointer();
+  // }
+
+  // const value::any_value *as_value() const {
+  //   const auto p = nonstd::get_if<value::any_value>(&value);
+  //   return p;
+  // }
+
+  // const Object *as_object() const {
+  //   const auto p =
+  //       nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
+  //   return p->get_pointer();
+  // }
+
+  // const TimeSamples *as_timesamples() const {
+  //   const auto p = nonstd::get_if<TimeSamples>(&value);
+  //   return p;
+  // }
+
+  // For Value
+#if 0
+  template <typename T>
+  const nonstd::optional<T> cast() const {
+    printf("cast\n");
+    if (IsValue()) {
+      std::cout << "type_name = " << Variable::type_name(*this) << "\n";
+      const T *p = nonstd::get_if<T>(&value);
+      printf("p = %p\n", static_cast<const void *>(p));
+      if (p) {
+        return *p;
+      } else {
+        return nonstd::nullopt;
+      }
+    }
+    return nonstd::nullopt;
+  }
+#endif
+
+  bool valid() const { return !IsEmpty(); }
+
+  PrimVariable() = default;
+  // Variable(std::string ty, std::string n) : type(ty), name(n) {}
+  // Variable(std::string ty) : type(ty) {}
+
+  // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
+  //friend std::ostream &operator<<(std::ostream &os, const PrimVariable &var);
+
+  // friend std::string str_object(const Object &obj, int indent = 0); // string
+  // representation of Object.
+};
+
+struct AttrMeta
+{
+  // frequently used item
+  Interpolation interpolation{Interpolation::Invalid};  // 'interpolation'
+  uint32_t elementSize{1}; // 'elementSize'
+  
+  std::map<std::string, PrimVariable> meta; // other meta values
+};
+
 
 // PrimAttrib is a struct to hold attribute of a property(e.g. primvar)
 struct PrimAttrib {
@@ -579,13 +729,15 @@ struct PrimAttrib {
   ListEditQual list_edit{ListEditQual::ResetToExplicit};
 
   Variability variability;
-  Interpolation interpolation{Interpolation::Invalid};
+  //Interpolation interpolation{Interpolation::Invalid};
+  //uint32_t elementSize{1}; // `elementSize` meta
+  //std::map<std::string, value::Value> meta; // Other meta variables.
+  AttrMeta meta;
 
   //
   // Qualifiers
   //
   bool uniform{false}; // `uniform`
-  //bool custom{false}; // `custom`
 
   primvar::PrimVar var;
 };
