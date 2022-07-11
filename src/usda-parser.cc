@@ -18,6 +18,8 @@
 #endif
 #include <vector>
 
+//
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -28,6 +30,7 @@
 //#include "ryu/ryu_parse.h"
 
 #include "fast_float/fast_float.h"
+#include "nonstd/variant.hpp"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
@@ -36,9 +39,13 @@
 //#define variant_CONFIG_SELECT_VARIANT variant_VARIANT_NONSTD
 //#include "nonstd/variant.hpp"
 
+//
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
+
+//
 
 // Tentative
 #ifdef __clang__
@@ -299,157 +306,6 @@ class VariableDef {
   }
 };
 
-class Variable {
- public:
-  std::string type;  // Explicit name of type
-  std::string name;
-  bool custom{false};
-
-  // using Array = std::vector<Variable>;
-  using Object = std::map<std::string, Variable>;
-
-  value::Value value;
-  // Array arr_value;
-  Object obj_value;
-  value::TimeSamples timeSamples;
-
-  Variable &operator=(const Variable &rhs) {
-    type = rhs.type;
-    name = rhs.name;
-    custom = rhs.custom;
-    value = rhs.value;
-    // arr_value = rhs.arr_value;
-    obj_value = rhs.obj_value;
-
-    return *this;
-  }
-
-  Variable(const Variable &rhs) {
-    type = rhs.type;
-    name = rhs.name;
-    custom = rhs.custom;
-    value = rhs.value;
-    obj_value = rhs.obj_value;
-  }
-
-  static std::string type_name(const Variable &v) {
-    if (!v.type.empty()) {
-      return v.type;
-    }
-
-    // infer type from value content
-    if (v.IsObject()) {
-      return "dict";
-    } else if (v.IsTimeSamples()) {
-      std::string ts_type = "TODO: TimeSample typee";
-      // FIXME
-#if 0
-      auto ts_struct = v.as_timesamples();
-
-      for (const TimeSampleType &item : ts_struct->values) {
-        auto tname = value::type_name(item);
-        if (tname != "none") {
-          return tname;
-        }
-      }
-#endif
-
-      // ??? TimeSamples data contains all `None` values
-      return ts_type;
-
-    } else if (v.IsEmpty()) {
-      return "none";
-    } else {
-      return v.value.type_name();
-    }
-  }
-
-#if 0
-  // scalar type
-  Value value;
-
-  // TimeSampled values
-  TimeSamples timeSamples;
-
-  Array array;
-  Object object;
-#endif
-
-  // template <typename T>
-  // bool is() const {
-  //   return value.index() == ValueType::index_of<T>();
-  // }
-
-  // TODO
-  bool IsEmpty() const { return false; }
-  bool IsValue() const { return false; }
-  // bool IsArray() const {
-  // }
-
-  // bool IsArray() const {
-  //  auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
-  //
-  //  return p ? true: false;
-  //}
-
-  bool IsObject() const { return obj_value.size(); }
-
-  // TODO
-  bool IsTimeSamples() const { return false; }
-
-  // const Array *as_array() const {
-  //   const auto p =
-  //       nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
-  //   return p->get_pointer();
-  // }
-
-  // const value::any_value *as_value() const {
-  //   const auto p = nonstd::get_if<value::any_value>(&value);
-  //   return p;
-  // }
-
-  // const Object *as_object() const {
-  //   const auto p =
-  //       nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
-  //   return p->get_pointer();
-  // }
-
-  // const TimeSamples *as_timesamples() const {
-  //   const auto p = nonstd::get_if<TimeSamples>(&value);
-  //   return p;
-  // }
-
-  // For Value
-#if 0
-  template <typename T>
-  const nonstd::optional<T> cast() const {
-    printf("cast\n");
-    if (IsValue()) {
-      std::cout << "type_name = " << Variable::type_name(*this) << "\n";
-      const T *p = nonstd::get_if<T>(&value);
-      printf("p = %p\n", static_cast<const void *>(p));
-      if (p) {
-        return *p;
-      } else {
-        return nonstd::nullopt;
-      }
-    }
-    return nonstd::nullopt;
-  }
-#endif
-
-  bool valid() const { return !IsEmpty(); }
-
-  Variable() = default;
-  // Variable(std::string ty, std::string n) : type(ty), name(n) {}
-  // Variable(std::string ty) : type(ty) {}
-
-  // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
-  friend std::ostream &operator<<(std::ostream &os, const Variable &var);
-
-  // friend std::string str_object(const Object &obj, int indent = 0); // string
-  // representation of Object.
-};
 
 namespace {
 
@@ -559,7 +415,8 @@ std::string str_object(const Variable::Object &obj, int indent) {
 
 }  // namespace
 
-#if 1
+#if 0
+
 std::ostream &operator<<(std::ostream &os, const Variable &var) {
   os << "TODO: Variable";
 
@@ -613,11 +470,6 @@ std::ostream &operator<<(std::ostream &os, const Variable &var) {
   }
 #endif
 
-  return os;
-}
-#else
-std::ostream &operator<<(std::ostream &os, const Variable &var) {
-  // TODO
   return os;
 }
 #endif
@@ -948,6 +800,7 @@ class USDAParser::Impl {
   //
   bool ReadBasicType(nonstd::optional<std::string> *value);
   bool ReadBasicType(nonstd::optional<int> *value);
+  bool ReadBasicType(nonstd::optional<uint32_t> *value);
   bool ReadBasicType(nonstd::optional<float> *value);
   bool ReadBasicType(nonstd::optional<value::float2> *value);
   bool ReadBasicType(nonstd::optional<value::float3> *value);
@@ -976,6 +829,7 @@ class USDAParser::Impl {
 
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(int *value);
+  bool ReadBasicType(uint32_t *value);
   bool ReadBasicType(float *value);
   bool ReadBasicType(value::float2 *value);
   bool ReadBasicType(value::float3 *value);
@@ -1327,7 +1181,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool ParseDefArg(std::tuple<ListEditQual, Variable> *out) {
+  bool ParseDefArg(std::tuple<ListEditQual, PrimVariable> *out) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
@@ -1376,7 +1230,7 @@ class USDAParser::Impl {
 
     auto vardef = (*pvardef);
 
-    Variable var;
+    PrimVariable var;
     var.name = varname;
 
     if (vardef.type == "path") {
@@ -1398,10 +1252,10 @@ class USDAParser::Impl {
       }
 
       // std::vector<Path> paths;
-      // Variable::Array arr;
+      // PrimVariable::Array arr;
       // for (const auto &v : value) {
       //   std::cout << "  " << v << "\n";
-      //   Variable _var;
+      //   PrimVariable _var;
       //   _var.value = v;
       //   arr.values.push_back(_var);
       // }
@@ -1460,7 +1314,7 @@ class USDAParser::Impl {
   }
 
   bool ParseDefArgs(
-      std::map<std::string, std::tuple<ListEditQual, Variable>> *args) {
+      std::map<std::string, std::tuple<ListEditQual, PrimVariable>> *args) {
     // '(' args ')'
     // args = list of argument, separated by newline.
 
@@ -1509,7 +1363,7 @@ class USDAParser::Impl {
 
       Rewind(1);
 
-      std::tuple<ListEditQual, Variable> arg;
+      std::tuple<ListEditQual, PrimVariable> arg;
       if (!ParseDefArg(&arg)) {
         return false;
       }
@@ -1524,7 +1378,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool ParseDict(std::map<std::string, Variable> *out_dict) {
+  bool ParseDict(std::map<std::string, PrimVariable> *out_dict) {
     // '{' (type name '=' value)+ '}'
     if (!Expect('{')) {
       return false;
@@ -1548,7 +1402,7 @@ class USDAParser::Impl {
         }
 
         std::string key;
-        Variable var;
+        PrimVariable var;
         if (!ParseDictElement(&key, &var)) {
           PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
         }
@@ -1600,10 +1454,10 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool ParseAttrMeta(std::map<std::string, Variable> *out_meta) {
+  bool ParseAttrMeta(AttrMeta *out_meta) {
     // '(' metas ')'
     //
-    // currently we only support 'interpolation' and 'cutomData'
+    // currently we only support 'interpolation', 'elementSize' and 'cutomData'
 
     if (!SkipWhitespace()) {
       return false;
@@ -1678,41 +1532,31 @@ class USDAParser::Impl {
             return false;
           }
 
-          Variable var;
-          var.name = token;
-          var.value = value;
-
-          assert(var.valid());
-
-          (*out_meta)["interpolation"] = var;
+          out_meta->interpolation = InterpolationFromString(value);
         } else if (token == "elementSize") {
-          int value;
+          uint32_t value;
           if (!ReadBasicType(&value)) {
             PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
           }
 
-          Variable var;
-          var.name = token;
-          var.value = value;
-
-          (*out_meta)["elementSize"] = var;
+          out_meta->elementSize = value;
         } else if (token == "customData") {
-          std::map<std::string, Variable> dict;
+          std::map<std::string, PrimVariable> dict;
 
           if (!ParseDict(&dict)) {
             return false;
           }
 
-          // Variable::Object d;
+          // PrimVariable::Object d;
           // d.obj_value = dict;
 
-          Variable var;
+          PrimVariable var;
           var.name = token;
           var.obj_value = dict;
 
           assert(var.valid());
 
-          (*out_meta)["customData"] = var;
+          out_meta->meta["customData"] = var;
 
         } else {
           // ???
@@ -1948,7 +1792,7 @@ class USDAParser::Impl {
     return true;
   }
 
-  bool ParseDictElement(std::string *out_key, Variable *out_var) {
+  bool ParseDictElement(std::string *out_key, PrimVariable *out_var) {
     (void)out_key;
     (void)out_var;
 
@@ -2030,7 +1874,7 @@ class USDAParser::Impl {
     // Supports limited types for customData/Dictionary.
     // TODO: array_qual
     //
-    Variable var;
+    PrimVariable var;
     if (type_name == value::kBool) {
       bool val;
       if (!ReadBasicType(&val)) {
@@ -2064,7 +1908,7 @@ class USDAParser::Impl {
         var.value = tok;
       }
     } else if (type_name == "dictionary") {
-      std::map<std::string, Variable> dict;
+      std::map<std::string, PrimVariable> dict;
 
       if (!ParseDict(&dict)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
@@ -2157,26 +2001,27 @@ class USDAParser::Impl {
     }
 
     // optional: interpolation parameter
-    std::map<std::string, Variable> meta;
+    AttrMeta meta;
     if (!ParseAttrMeta(&meta)) {
       PushError("Failed to parse PrimAttrib meta.");
       return false;
     }
+    attr.meta = meta;
 
-    if (meta.count("interpolation")) {
-      const Variable &var = meta.at("interpolation");
-      auto p = var.value.get_value<value::token>();
-      if (p) {
-        attr.interpolation = tinyusdz::InterpolationFromString(p.value().str());
-      }
-    }
+    //if (meta.count("interpolation")) {
+    //  const PrimVariable &var = meta.at("interpolation");
+    //  auto p = var.value.get_value<value::token>();
+    //  if (p) {
+    //    attr.interpolation = tinyusdz::InterpolationFromString(p.value().str());
+    //  }
+    //}
 
     (*out_attr) = std::move(attr);
 
     return true;
   }
 
-  // bool ParsePrimAttr(std::map<std::string, Variable> *props) {
+  // bool ParsePrimAttr(std::map<std::string, PrimVariable> *props) {
   bool ParsePrimAttr(std::map<std::string, Property> *props) {
     // prim_attr : (custom?) uniform type (array_qual?) name '=' value
     //           | (custom?) type (array_qual?) name '=' value interpolation?
@@ -2316,7 +2161,7 @@ class USDAParser::Impl {
           return false;
         }
 
-        Variable var;
+        PrimVariable var;
         var.timeSampledValue = values;
         std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
         (*props)[primattr_name] = var;
@@ -2327,7 +2172,7 @@ class USDAParser::Impl {
           return false;
         }
 
-        Variable var;
+        PrimVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
 
@@ -2337,7 +2182,7 @@ class USDAParser::Impl {
           return false;
         }
 
-        Variable var;
+        PrimVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
       } else if (type_name == "double3") {
@@ -2346,7 +2191,7 @@ class USDAParser::Impl {
           return false;
         }
 
-        Variable var;
+        PrimVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
       } else if (type_name == "matrix4d") {
@@ -2355,7 +2200,7 @@ class USDAParser::Impl {
           return false;
         }
 
-        Variable var;
+        PrimVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
 
@@ -4235,8 +4080,8 @@ class USDAParser::Impl {
   }
 
   bool ParseMetaValue(const std::string &vartype, const std::string &varname,
-                      Variable *outvar) {
-    Variable var;
+                      PrimVariable *outvar) {
+    PrimVariable var;
 
     // TODO: Refactor.
     if (vartype == "string") {
@@ -4278,9 +4123,9 @@ class USDAParser::Impl {
       }
 
 
-      // Variable::Array arr;
+      // PrimVariable::Array arr;
       // for (size_t i = 0; i < values.size(); i++) {
-      //   Variable v;
+      //   PrimVariable v;
       //   v.value = values[i];
       //   arr.values.push_back(v);
       // }
@@ -4407,7 +4252,7 @@ class USDAParser::Impl {
     SkipWhitespace();
 
     VariableDef &vardef = _builtin_metas.at(varname);
-    Variable var;
+    PrimVariable var;
     if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
       PushError("Failed to parse meta value.\n");
       return false;
@@ -4739,7 +4584,7 @@ class USDAParser::Impl {
       return false;
     }
 
-    std::map<std::string, std::tuple<ListEditQual, Variable>> args;
+    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> args;
     if (!ParseDefArgs(&args)) {
       return false;
     }
@@ -4850,7 +4695,7 @@ class USDAParser::Impl {
       return false;
     }
 
-    std::map<std::string, std::tuple<ListEditQual, Variable>> args;
+    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> args;
     if (!ParseDefArgs(&args)) {
       return false;
     }
@@ -4959,7 +4804,7 @@ class USDAParser::Impl {
     }
 
     // optional args
-    std::map<std::string, std::tuple<ListEditQual, Variable>> args;
+    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> args;
     {
       // look ahead
       char c;
@@ -5170,7 +5015,7 @@ class USDAParser::Impl {
             PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname); \
           } \
           node.name = node_name; \
-          __scene.emplace_back(node); 
+          __scene.emplace_back(node);
 
         if (0) {
         RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
@@ -6871,10 +6716,10 @@ bool USDAParser::Impl::MaybeNone() {
 
 bool USDAParser::Impl::ReadBasicType(value::token *value) {
 
-  std::string str;  
+  std::string str;
   if (ReadStringLiteral(&str)) {
     (*value) = value::token(str);
-  } 
+  }
 
   return false;
 }
@@ -7139,6 +6984,89 @@ bool USDAParser::Impl::ReadBasicType(int *value) {
   }
 
   (*value) = int_value;
+
+  return true;
+}
+
+bool USDAParser::Impl::ReadBasicType(uint32_t *value) {
+  std::stringstream ss;
+
+  // head character
+  bool has_sign = false;
+  bool negative = false;
+  {
+    char sc;
+    if (!_sr->read1(&sc)) {
+      return false;
+    }
+    _line_col++;
+
+    // sign or [0-9]
+    if (sc == '+') {
+      negative = false;
+      has_sign = true;
+    } else if (sc == '-') {
+      negative = true;
+      has_sign = true;
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else {
+      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+                "'.\n");
+      return false;
+    }
+
+    ss << sc;
+  }
+
+  if (negative) {
+    PushError("Unsigned value expected but got '-' sign.");
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if ((c >= '0') && (c <= '9')) {
+      ss << c;
+    } else {
+      _sr->seek_from_current(-1);
+      break;
+    }
+  }
+
+  if (has_sign && (ss.str().size() == 1)) {
+    // sign only
+    PushError("Integer value expected but got sign character only.\n");
+    return false;
+  }
+
+  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+    PushError("Zero padded integer value is not allowed.\n");
+    return false;
+  }
+
+  // std::cout << "ReadInt token: " << ss.str() << "\n";
+
+  // TODO(syoyo): Use ryu parse.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+  try {
+    (*value) = std::stoull(ss.str());
+  } catch (const std::invalid_argument &e) {
+    (void)e;
+    PushError("Not an 64bit unsigned integer literal.\n");
+    return false;
+  } catch (const std::out_of_range &e) {
+    (void)e;
+    PushError("64bit unsigned integer value out of range.\n");
+    return false;
+  }
+#else
+  (*value) = uint32_t(std::stoul(ss.str()));
+#endif
 
   return true;
 }
@@ -7759,6 +7687,21 @@ bool USDAParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
   }
 
   int v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool USDAParser::Impl::ReadBasicType(nonstd::optional<uint32_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  uint32_t v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
