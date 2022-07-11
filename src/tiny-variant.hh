@@ -280,7 +280,7 @@ struct variant {
   template <typename T, typename... Args,
             typename =
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
-  const nonstd::optional<T>& get() {
+  const nonstd::optional<T> get() {
     // It is a dynamic_cast-like behaviour
     if (variant_id == value::TypeTrait<T>::type_id) {
       return *reinterpret_cast<T*>(&data);
@@ -292,7 +292,7 @@ struct variant {
   template <typename T, typename... Args,
             typename =
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
-  const nonstd::optional<T>& get() const {
+  const nonstd::optional<T> get() const {
     // It is a dynamic_cast-like behaviour
     if (variant_id == value::TypeTrait<T>::type_id) {
       return *reinterpret_cast<const T*>(&data);
@@ -318,9 +318,11 @@ struct variant {
 
 struct monostate {};
 
+namespace value {
+
 #define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
   template <>                                                    \
-  struct value::TypeTrait<__dty> {                                      \
+  struct TypeTrait<__dty> {                                      \
     using value_type = __dty;                                    \
     using value_underlying_type = __dty;                         \
     static constexpr uint32_t ndim = 0; /* array dim */          \
@@ -335,6 +337,8 @@ struct monostate {};
 DEFINE_TYPE_TRAIT(monostate, "monostate", TYPE_ID_ALL, 1);
 
 #undef DEFINE_TYPE_TRAIT
+
+} // namespace value
 
 #ifdef __clang__
 #pragma clang diagnostic pop
