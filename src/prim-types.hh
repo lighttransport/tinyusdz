@@ -21,7 +21,7 @@
 #endif
 
 #include "nonstd/optional.hpp"
-#include "nonstd/variant.hpp"
+//#include "nonstd/variant.hpp"
 #include "nonstd/expected.hpp"
 
 #define any_CONFIG_NO_EXCEPTIONS (1)
@@ -32,6 +32,7 @@
 #endif
 
 #include "primvar.hh"
+#include "simple-variant.hh"
 
 namespace tinyusdz {
 
@@ -726,7 +727,7 @@ struct AttrMeta
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize; // usdSkel 'elementSize'
   nonstd::optional<std::map<std::string, PrimVariable>> customData; // `customData`
-  
+
   std::map<std::string, PrimVariable> meta; // other meta values
 };
 
@@ -798,11 +799,11 @@ struct PrimvarReader {
 using PrimvarReader_float2 = PrimvarReader<value::float2>;
 using PrimvarReader_float3 = PrimvarReader<value::float3>;
 
-using PrimvarReaderType = nonstd::variant<PrimvarReader_float2, PrimvarReader_float3>;
+using PrimvarReaderType = tinyusdz::variant<PrimvarReader_float2, PrimvarReader_float3>;
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`
-using XformOpValueType = nonstd::variant<float, value::float3, value::quatf, double, value::double3, value::quatd, value::matrix4d>;
+using XformOpValueType = tinyusdz::variant<float, value::float3, value::quatf, double, value::double3, value::quatd, value::matrix4d>;
 
 struct XformOp
 {
@@ -1035,7 +1036,7 @@ struct Xform {
 
 struct UVCoords {
 
-  using UVCoordType = nonstd::variant<std::vector<value::float2>, std::vector<value::float3>>;
+  using UVCoordType = tinyusdz::variant<std::vector<value::float2>, std::vector<value::float3>>;
 
   std::string name;
   UVCoordType buffer;
@@ -1742,7 +1743,7 @@ struct Shader {
   std::string info_id; // Shader type.
 
   // Currently we only support PreviewSurface, UVTexture and PrimvarReader_float2
-  nonstd::variant<nonstd::monostate, PreviewSurface, UVTexture, PrimvarReader_float2> value;
+  tinyusdz::variant<tinyusdz::monostate, PreviewSurface, UVTexture, PrimvarReader_float2> value;
 };
 
 
