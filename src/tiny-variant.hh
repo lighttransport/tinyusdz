@@ -334,7 +334,7 @@ namespace value {
     static std::string underlying_type_name() { return __name; } \
   }
 
-DEFINE_TYPE_TRAIT(monostate, "monostate", TYPE_ID_ALL, 1);
+DEFINE_TYPE_TRAIT(monostate, "monostate", TYPE_ID_MONOSTATE, 1);
 
 #undef DEFINE_TYPE_TRAIT
 
