@@ -12,38 +12,7 @@ namespace usda {
 namespace {
 
 inline std::string GetTypeName(XformOpValueType const &v) {
-  if (auto pval = nonstd::get_if<float>(&v)) {
-    (void)pval;
-    return "float";
-  }
-
-  if (auto pval = nonstd::get_if<double>(&v)) {
-    (void)pval;
-    return "double";
-  }
-
-  if (auto pval = nonstd::get_if<value::float3>(&v)) {
-    (void)pval;
-    return "float3";
-  }
-  if (auto pval = nonstd::get_if<value::double3>(&v)) {
-    (void)pval;
-    return "double3";
-  }
-  if (auto pval = nonstd::get_if<value::matrix4d>(&v)) {
-    (void)pval;
-    return "matrix4d";
-  }
-  if (auto pval = nonstd::get_if<value::quatf>(&v)) {
-    (void)pval;
-    return "quatf";
-  }
-  if (auto pval = nonstd::get_if<value::quatd>(&v)) {
-    (void)pval;
-    return "quatd";
-  }
-
-  return "TypeName(XformOpValueType) = ???";
+  return value::GetTypeName(v.id());
 }
 
 class Writer {

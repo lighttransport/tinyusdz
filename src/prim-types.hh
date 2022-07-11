@@ -21,7 +21,6 @@
 #endif
 
 #include "nonstd/optional.hpp"
-//#include "nonstd/variant.hpp"
 #include "nonstd/expected.hpp"
 
 #define any_CONFIG_NO_EXCEPTIONS (1)
@@ -32,7 +31,7 @@
 #endif
 
 #include "primvar.hh"
-#include "simple-variant.hh"
+#include "tiny-variant.hh"
 
 namespace tinyusdz {
 
@@ -646,38 +645,10 @@ class PrimVariable {
   // bool IsArray() const {
   // }
 
-  // bool IsArray() const {
-  //  auto p = nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
-  //
-  //  return p ? true: false;
-  //}
-
   bool IsObject() const { return obj_value.size(); }
 
   // TODO
   bool IsTimeSamples() const { return false; }
-
-  // const Array *as_array() const {
-  //   const auto p =
-  //       nonstd::get_if<mapbox::util::recursive_wrapper<Array>>(&value);
-  //   return p->get_pointer();
-  // }
-
-  // const value::any_value *as_value() const {
-  //   const auto p = nonstd::get_if<value::any_value>(&value);
-  //   return p;
-  // }
-
-  // const Object *as_object() const {
-  //   const auto p =
-  //       nonstd::get_if<mapbox::util::recursive_wrapper<Object>>(&value);
-  //   return p->get_pointer();
-  // }
-
-  // const TimeSamples *as_timesamples() const {
-  //   const auto p = nonstd::get_if<TimeSamples>(&value);
-  //   return p;
-  // }
 
   // For Value
 #if 0
@@ -807,15 +778,12 @@ using XformOpValueType = tinyusdz::variant<float, value::float3, value::quatf, d
 
 struct XformOp
 {
-  enum PrecisionType {
-    PRECISION_DOUBLE,
-    PRECISION_FLOAT
-    // PRECISION_HALF // TODO
-  };
-
   enum OpType {
+    // Matrix
+    TRANSFORM,
+   
     // 3D
-    TRANSFORM, TRANSLATE, SCALE,
+    TRANSLATE, SCALE,
 
     // 1D
     ROTATE_X, ROTATE_Y, ROTATE_Z,
@@ -860,7 +828,6 @@ struct XformOp
   }
 
   OpType op;
-  PrecisionType precision;
   std::string suffix;
   XformOpValueType value; // When you look up the value, select basic type based on `precision`
 };
@@ -1939,6 +1906,11 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector", TYPE_ID_TOKEN_VECTOR
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
+// Shader
+DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface", TYPE_ID_SHADER_PREVIEWSURFACE, 1);
+DEFINE_TYPE_TRAIT(UVTexture, "UVTexture", TYPE_ID_SHADER_UVTEXTURE, 1);
+DEFINE_TYPE_TRAIT(PrimvarReader_float2, "PrimvarReader_float2", TYPE_ID_PRIMVAR_READER_FLOAT2, 1);
+DEFINE_TYPE_TRAIT(PrimvarReader_float3, "PrimvarReader_float3", TYPE_ID_PRIMVAR_READER_FLOAT3, 1);
 
 #undef DEFINE_TYPE_TRAIT
 
