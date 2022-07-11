@@ -30,7 +30,7 @@
 //#include "ryu/ryu_parse.h"
 
 #include "fast_float/fast_float.h"
-#include "nonstd/variant.hpp"
+//#include "nonstd/variant.hpp"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
@@ -65,7 +65,6 @@
 #include "usda-parser.hh"
 #include "value-pprint.hh"
 #include "value-type.hh"
-#include "simple-variant.hh"
 
 // s = std::string
 #define PUSH_ERROR_AND_RETURN(s)                                   \
@@ -5025,7 +5024,7 @@ class USDAParser::Impl {
         RECONSTRUCT_NODE("Scope", ReconstructScope, Scope, scene_.scopes)
 
         RECONSTRUCT_NODE("SphereLight", ReconstructLuxSphereLight, LuxSphereLight, scene_.lux_sphere_lights)
-        RECONSTRUCT_NODE("SphereLight", ReconstructLuxDomeLight, LuxDomeLight, scene_.lux_dome_lights)
+        RECONSTRUCT_NODE("DomeLight", ReconstructLuxDomeLight, LuxDomeLight, scene_.lux_dome_lights)
 
         RECONSTRUCT_NODE("SkelRoot", ReconstructSkelRoot, SkelRoot, scene_.skel_roots)
         RECONSTRUCT_NODE("Skeleton", ReconstructSkeleton, Skeleton, scene_.skeletons)

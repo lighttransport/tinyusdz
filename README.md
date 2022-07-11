@@ -267,7 +267,6 @@ TinyUSDZ is licensed under MIT license.
 * any-lite: BSL 1.0 license. https://github.com/martinmoene/any-lite
 * string-view-lite: BSL 1.0 license. https://github.com/martinmoene/string-view-lite
 * mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
-* mapbox/recursive_wrapper: BSL 1.0 license. https://github.com/mapbox/variant
 * par_shapes.h generate parametric surfaces and other simple shapes: MIT license https://github.com/prideout/par
 * staticstruct: MIT license. https://github.com/syoyo/staticstruct
 * MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
