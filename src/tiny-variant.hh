@@ -2,7 +2,8 @@
 // https://gist.github.com/calebh/fd00632d9c616d4b0c14e7c2865f3085
 //
 // Modification by Syoyo Fujita.
-// - Use TypeTrait
+// - Use tinyusdz::value::TypeTrait for type_id
+// - Disable exception
 // - Implement set and get, get_if
 //
 
@@ -32,12 +33,15 @@ For more information, please refer to <http://unlicense.org/>
 #include <iostream>
 #include <string>
 
-#include "value-type.hh"
+#include "value-type.hh" // import TypeTrait
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
+
+#include "nonstd/optional.hpp" // for optional<T>& get()
+
 
 namespace tinyusdz {
 
@@ -212,6 +216,7 @@ struct variant {
 
   variant() : variant_id(invalid_type()) {}
 
+
   variant(const variant<Ts...>& from) : variant_id(from.variant_id) {
     helper_t::copy(from.variant_id, &from.data, &data);
   }
@@ -220,7 +225,7 @@ struct variant {
     helper_t::move(from.variant_id, &from.data, &data);
   }
 
-  variant<Ts...>& operator=(variant<Ts...>& rhs) {
+  variant<Ts...>& operator=(const variant<Ts...>& rhs) {
     helper_t::destroy(variant_id, &data);
     variant_id = rhs.variant_id;
     helper_t::copy(rhs.variant_id, &rhs.data, &data);
@@ -239,7 +244,7 @@ struct variant {
     return variant_id == value::TypeTrait<T>::type_id;
   }
 
-  uint32_t id() { return variant_id; }
+  uint32_t id() const { return variant_id; }
 
   // template<typename T, typename... Args>
   template <typename T, typename... Args,
@@ -257,6 +262,7 @@ struct variant {
     set<T>(v);
   }
 
+#if 0
   template <typename T, typename... Args,
             typename =
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
@@ -266,8 +272,33 @@ struct variant {
       return *reinterpret_cast<T*>(&data);
     }
 
-    // Undefined behavior,.
+    // Will raise null-pointer dereference error.
     return *reinterpret_cast<T*>(nulldata());
+  }
+#endif
+
+  template <typename T, typename... Args,
+            typename =
+                typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
+  const nonstd::optional<T>& get() {
+    // It is a dynamic_cast-like behaviour
+    if (variant_id == value::TypeTrait<T>::type_id) {
+      return *reinterpret_cast<T*>(&data);
+    }
+
+    return nonstd::nullopt;
+  }
+
+  template <typename T, typename... Args,
+            typename =
+                typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
+  const nonstd::optional<T>& get() const {
+    // It is a dynamic_cast-like behaviour
+    if (variant_id == value::TypeTrait<T>::type_id) {
+      return *reinterpret_cast<const T*>(&data);
+    }
+
+    return nonstd::nullopt;
   }
 
   template <typename T, typename... Args,
@@ -286,6 +317,24 @@ struct variant {
 };
 
 struct monostate {};
+
+#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
+  template <>                                                    \
+  struct value::TypeTrait<__dty> {                                      \
+    using value_type = __dty;                                    \
+    using value_underlying_type = __dty;                         \
+    static constexpr uint32_t ndim = 0; /* array dim */          \
+    static constexpr uint32_t ncomp =                            \
+        __nc; /* the number of components(e.g. float3 => 3) */   \
+    static constexpr uint32_t type_id = __tyid;                  \
+    static constexpr uint32_t underlying_type_id = __tyid;       \
+    static std::string type_name() { return __name; }            \
+    static std::string underlying_type_name() { return __name; } \
+  }
+
+DEFINE_TYPE_TRAIT(monostate, "monostate", TYPE_ID_ALL, 1);
+
+#undef DEFINE_TYPE_TRAIT
 
 #ifdef __clang__
 #pragma clang diagnostic pop
