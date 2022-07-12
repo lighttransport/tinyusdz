@@ -556,6 +556,8 @@ struct Rel {
   std::string path;
 };
 
+// Variable class for GPrim Metadataum.
+// TODO: Rename to MetaVariable
 class PrimVariable {
  public:
   std::string type;  // Explicit name of type
@@ -733,8 +735,6 @@ struct Property {
   bool IsCustom() { return is_custom; }
 };
 
-// UsdPrimvarReader_float2.
-
 // Currently for UV texture coordinate
 template <typename T>
 struct PrimvarReader {
@@ -789,34 +789,46 @@ struct XformOp {
   };
 
   static std::string GetOpTypeName(OpType op) {
-    if (op == TRANSFORM) {
-      return "xformOp:transform";
-    } else if (op == TRANSLATE) {
-      return "xformOp:translate";
-    } else if (op == SCALE) {
-      return "xformOp:scale";
-    } else if (op == ROTATE_X) {
-      return "xformOp:rotateX";
-    } else if (op == ROTATE_Y) {
-      return "xformOp:rotateY";
-    } else if (op == ROTATE_Z) {
-      return "xformOp:rotateZ";
-    } else if (op == ROTATE_XYZ) {
-      return "xformOp:rotateXYZ";
-    } else if (op == ROTATE_XZY) {
-      return "xformOp:rotateXZY";
-    } else if (op == ROTATE_YXZ) {
-      return "xformOp:rotateYXZ";
-    } else if (op == ROTATE_YZX) {
-      return "xformOp:rotateYZX";
-    } else if (op == ROTATE_ZXY) {
-      return "xformOp:rotateZXY";
-    } else if (op == ROTATE_ZYX) {
-      return "xformOp:rotateZYX";
-    } else if (op == ORIENT) {
-      return "xformOp:orient";
-    } else {
-      return "xformOp::???";
+    switch (op) {
+      case TRANSFORM: {
+        return "xformOp:transform";
+      }
+      case TRANSLATE: {
+        return "xformOp:translate";
+      }
+      case SCALE: {
+        return "xformOp:scale";
+      }
+      case ROTATE_X: {
+        return "xformOp:rotateX";
+      }
+      case ROTATE_Y: {
+        return "xformOp:rotateY";
+      }
+      case ROTATE_Z: {
+        return "xformOp:rotateZ";
+      }
+      case ROTATE_XYZ: {
+        return "xformOp:rotateXYZ";
+      }
+      case ROTATE_XZY: {
+        return "xformOp:rotateXZY";
+      }
+      case ROTATE_YXZ: {
+        return "xformOp:rotateYXZ";
+      }
+      case ROTATE_YZX: {
+        return "xformOp:rotateYZX";
+      }
+      case ROTATE_ZXY: {
+        return "xformOp:rotateZXY";
+      }
+      case ROTATE_ZYX: {
+        return "xformOp:rotateZYX";
+      }
+      case ORIENT: {
+        return "xformOp:orient";
+      }
     }
   }
 
