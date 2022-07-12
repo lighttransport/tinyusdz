@@ -621,8 +621,7 @@ struct TypeTrait;
     }                                                                         \
   }
 
-// Invalid type
-DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_ALL, 1);
+DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
