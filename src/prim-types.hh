@@ -1,27 +1,25 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
-#include <cstring>
-#include <algorithm>
-#include <cmath>
-#include <map>
-#include <limits>
-#include <memory>
-
-#include <iostream>
-
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "nonstd/optional.hpp"
 #include "nonstd/expected.hpp"
+#include "nonstd/optional.hpp"
 
 #define any_CONFIG_NO_EXCEPTIONS (1)
 #include "nonstd/any.hpp"
@@ -87,7 +85,6 @@ class ListOp {
   void SetDeletedItems(const std::vector<T> &v) { deleted_items = v; }
 
   void SetOrderedItems(const std::vector<T> &v) { ordered_items = v; }
-
 
  private:
   bool is_explicit{false};
@@ -181,29 +178,24 @@ enum class SubdivisionScheme {
 
 // Attribute interpolation
 enum class Interpolation {
-  Constant, // "constant"
-  Uniform, // "uniform"
-  Varying, // "varying"
-  Vertex, // "vertex"
-  FaceVarying, // "faceVarying"
+  Constant,     // "constant"
+  Uniform,      // "uniform"
+  Varying,      // "varying"
+  Vertex,       // "vertex"
+  FaceVarying,  // "faceVarying"
   Invalid
 };
 
 enum class ListEditQual {
-  ResetToExplicit,// "unqualified"(no qualifier)
-  Append, // "append"
-  Add, // "add"
-  Delete, // "delete"
-  Prepend, // "prepend"
+  ResetToExplicit,  // "unqualified"(no qualifier)
+  Append,           // "append"
+  Add,              // "add"
+  Delete,           // "delete"
+  Prepend,          // "prepend"
   Invalid
 };
 
-enum class Axis {
-  X,
-  Y,
-  Z,
-  Invalid
-};
+enum class Axis { X, Y, Z, Invalid };
 
 // For PrimSpec
 enum class Specifier {
@@ -311,9 +303,7 @@ class Path {
     this->valid = rhs.valid;
   }
 
-  std::string GetLocalPart() const {
-    return local_part;
-  }
+  std::string GetLocalPart() const { return local_part; }
 
   Path AppendProperty(const std::string &elem) {
     Path p = (*this);
@@ -451,14 +441,13 @@ struct Reference {
   value::dict custom_data;
 };
 
-
 //
 // Colum-major order(e.g. employed in OpenGL).
 // For example, 12th([3][0]), 13th([3][1]), 14th([3][2]) element corresponds to
 // the translation.
 //
-//template <typename T, size_t N>
-//struct Matrix {
+// template <typename T, size_t N>
+// struct Matrix {
 //  T m[N][N];
 //  constexpr static uint32_t n = N;
 //};
@@ -503,19 +492,18 @@ MTy Mult(MTy &m, MTy &n) {
   return ret;
 }
 
-//typedef uint16_t float16;
+// typedef uint16_t float16;
 float half_to_float(value::half h);
 value::half float_to_half_full(float f);
 
-
 struct Extent {
   value::float3 lower{{std::numeric_limits<float>::infinity(),
-               std::numeric_limits<float>::infinity(),
-               std::numeric_limits<float>::infinity()}};
+                       std::numeric_limits<float>::infinity(),
+                       std::numeric_limits<float>::infinity()}};
 
   value::float3 upper{{-std::numeric_limits<float>::infinity(),
-               -std::numeric_limits<float>::infinity(),
-               -std::numeric_limits<float>::infinity()}};
+                       -std::numeric_limits<float>::infinity(),
+                       -std::numeric_limits<float>::infinity()}};
 
   Extent() = default;
 
@@ -526,8 +514,9 @@ struct Extent {
     if (lower[1] > upper[1]) return false;
     if (lower[2] > upper[2]) return false;
 
-    return std::isfinite(lower[0]) && std::isfinite(lower[1]) && std::isfinite(lower[2])
-           && std::isfinite(upper[0]) && std::isfinite(upper[1]) && std::isfinite(upper[2]);
+    return std::isfinite(lower[0]) && std::isfinite(lower[1]) &&
+           std::isfinite(lower[2]) && std::isfinite(upper[0]) &&
+           std::isfinite(upper[1]) && std::isfinite(upper[2]);
   }
 
   std::array<std::array<float, 3>, 2> to_array() const {
@@ -540,10 +529,8 @@ struct Extent {
     ret[1][2] = upper[2];
 
     return ret;
-
   }
 };
-
 
 struct ConnectionPath {
   bool is_input{false};  // true: Input connection. false: Output connection.
@@ -555,13 +542,13 @@ struct ConnectionPath {
                       // `Scene.shaders`)
 };
 
-struct Connection
-{
+struct Connection {
   int64_t src_index{-1};
   int64_t dest_index{-1};
 };
 
-using connection_id_map = std::unordered_map<std::pair<std::string, std::string>, Connection>;
+using connection_id_map =
+    std::unordered_map<std::pair<std::string, std::string>, Connection>;
 
 // Relation
 struct Rel {
@@ -676,32 +663,31 @@ class PrimVariable {
   // Variable(std::string ty) : type(ty) {}
 
   // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
-  //friend std::ostream &operator<<(std::ostream &os, const PrimVariable &var);
+  // friend std::ostream &operator<<(std::ostream &os, const PrimVariable &var);
 
   // friend std::string str_object(const Object &obj, int indent = 0); // string
   // representation of Object.
 };
 
 // Meta for Stage and GPrim
-struct GPrimMeta
-{
+struct GPrimMeta {
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
-  nonstd::optional<std::map<std::string, PrimVariable>> customData; // `customData`
+  nonstd::optional<std::map<std::string, PrimVariable>>
+      customData;  // `customData`
 
-  std::map<std::string, PrimVariable> meta; // other meta values
+  std::map<std::string, PrimVariable> meta;  // other meta values
 };
 
-struct AttrMeta
-{
+struct AttrMeta {
   // frequently used item
   // nullopt = not specified in USD scene
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
-  nonstd::optional<uint32_t> elementSize; // usdSkel 'elementSize'
-  nonstd::optional<std::map<std::string, PrimVariable>> customData; // `customData`
+  nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
+  nonstd::optional<std::map<std::string, PrimVariable>>
+      customData;  // `customData`
 
-  std::map<std::string, PrimVariable> meta; // other meta values
+  std::map<std::string, PrimVariable> meta;  // other meta values
 };
-
 
 // PrimAttrib is a struct to hold attribute of a property(e.g. primvar)
 struct PrimAttrib {
@@ -712,29 +698,27 @@ struct PrimAttrib {
   ListEditQual list_edit{ListEditQual::ResetToExplicit};
 
   Variability variability;
-  //Interpolation interpolation{Interpolation::Invalid};
-  //uint32_t elementSize{1}; // `elementSize` meta
-  //std::map<std::string, value::Value> meta; // Other meta variables.
+  // Interpolation interpolation{Interpolation::Invalid};
+  // uint32_t elementSize{1}; // `elementSize` meta
+  // std::map<std::string, value::Value> meta; // Other meta variables.
   AttrMeta meta;
 
   //
   // Qualifiers
   //
-  bool uniform{false}; // `uniform`
+  bool uniform{false};  // `uniform`
 
   primvar::PrimVar var;
 };
 
 // Attribute or Relation. And has this property is custom or not
 // (Need to lookup schema if the property is custom or not for Crate data)
-struct Property
-{
+struct Property {
   PrimAttrib attrib;
   Rel rel;
 
-  bool is_rel{false}; // true = Attribute
+  bool is_rel{false};  // true = Attribute
   bool is_custom{false};
-
 
   Property() = default;
 
@@ -742,54 +726,63 @@ struct Property
     is_rel = false;
   }
 
-  Property(const Rel &r, bool c) : rel(r), is_custom(c) {
-    is_rel = true;
-  }
+  Property(const Rel &r, bool c) : rel(r), is_custom(c) { is_rel = true; }
 
-  bool IsRel() {
-    return is_rel;
-  }
+  bool IsRel() { return is_rel; }
 
-  bool IsCustom() {
-    return is_custom;
-  }
+  bool IsCustom() { return is_custom; }
 };
 
 // UsdPrimvarReader_float2.
 
 // Currently for UV texture coordinate
-template<typename T>
+template <typename T>
 struct PrimvarReader {
-  //const char *output_type = TypeTrait<T>::type_name;
+  // const char *output_type = TypeTrait<T>::type_name;
   T fallback_value{};  // fallback value
 
   ConnectionPath
       varname;  // Name of the primvar to be fetched from the geometry.
 };
 
+using PrimvarReader_float = PrimvarReader<float>;
 using PrimvarReader_float2 = PrimvarReader<value::float2>;
 using PrimvarReader_float3 = PrimvarReader<value::float3>;
+using PrimvarReader_float4 = PrimvarReader<value::float4>;
+using PrimvarReader_int = PrimvarReader<int>;
 
-using PrimvarReaderType = tinyusdz::variant<PrimvarReader_float2, PrimvarReader_float3>;
+using PrimvarReaderType =
+    tinyusdz::variant<PrimvarReader_float, PrimvarReader_float2,
+                      PrimvarReader_float3, PrimvarReader_float4,
+                      PrimvarReader_int>;
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`
-using XformOpValueType = tinyusdz::variant<float, value::float3, value::quatf, double, value::double3, value::quatd, value::matrix4d>;
+using XformOpValueType =
+    tinyusdz::variant<float, value::float3, value::quatf, double,
+                      value::double3, value::quatd, value::matrix4d>;
 
-struct XformOp
-{
+struct XformOp {
   enum OpType {
     // Matrix
     TRANSFORM,
-   
+
     // 3D
-    TRANSLATE, SCALE,
+    TRANSLATE,
+    SCALE,
 
     // 1D
-    ROTATE_X, ROTATE_Y, ROTATE_Z,
+    ROTATE_X,
+    ROTATE_Y,
+    ROTATE_Z,
 
     // 3D
-    ROTATE_XYZ, ROTATE_XZY, ROTATE_YXZ, ROTATE_YZX, ROTATE_ZXY, ROTATE_ZYX,
+    ROTATE_XYZ,
+    ROTATE_XZY,
+    ROTATE_YXZ,
+    ROTATE_YZX,
+    ROTATE_ZXY,
+    ROTATE_ZYX,
 
     // 4D
     ORIENT
@@ -829,17 +822,16 @@ struct XformOp
 
   OpType op;
   std::string suffix;
-  XformOpValueType value; // When you look up the value, select basic type based on `precision`
+  XformOpValueType value;  // When you look up the value, select basic type
+                           // based on `precision`
 };
 
-
-template<typename T>
+template <typename T>
 inline T lerp(const T a, const T b, const double t) {
   return (1.0 - t) * a + t * b;
 }
 
-
-template<typename T>
+template <typename T>
 struct TimeSamples {
   std::vector<double> times;
   std::vector<T> values;
@@ -854,8 +846,11 @@ struct TimeSamples {
     // Linear-interpolation.
     // TODO: Support other interpolation method for example cubic.
     auto it = std::lower_bound(times.begin(), times.end(), t);
-    size_t idx0 = size_t(std::max(int64_t(0), std::min(int64_t(times.size() - 1), int64_t(std::distance(times.begin(), it - 1)))));
-    size_t idx1 = size_t(std::max(int64_t(0), std::min(int64_t(times.size() - 1), int64_t(idx0) + 1)));
+    size_t idx0 = size_t(std::max(
+        int64_t(0), std::min(int64_t(times.size() - 1),
+                             int64_t(std::distance(times.begin(), it - 1)))));
+    size_t idx1 = size_t(std::max(
+        int64_t(0), std::min(int64_t(times.size() - 1), int64_t(idx0) + 1)));
 
     double tl = times[idx0];
     double tu = times[idx1];
@@ -896,19 +891,14 @@ struct TimeSamples {
 //
 // for Animatable type.
 
-template<typename T>
-struct Animatable
-{
+template <typename T>
+struct Animatable {
   T value;
   TimeSamples<T> timeSamples;
 
-  bool IsTimeSampled() const {
-    return timeSamples.Valid();
-  }
+  bool IsTimeSampled() const { return timeSamples.Valid(); }
 
-  T Get() const {
-    return value;
-  }
+  T Get() const { return value; }
 
   T Get(double t) {
     if (IsTimeSampled()) {
@@ -920,11 +910,10 @@ struct Animatable
 
   Animatable() {}
   Animatable(T v) : value(v) {}
-
 };
 
-//template<typename T>
-//using Animatable = nonstd::variant<T, TimeSampled<T>>;
+// template<typename T>
+// using Animatable = nonstd::variant<T, TimeSampled<T>>;
 
 // Frequently used types
 using AnimatableFloat = Animatable<float>;
@@ -938,7 +927,6 @@ using AnimatableFloatArray = Animatable<std::vector<float>>;
 // Generic "class" Node
 // Mostly identical to GPrim
 struct Klass {
-
   std::string name;
   int64_t parent_id{-1};  // Index to parent node
 
@@ -947,10 +935,9 @@ struct Klass {
   std::map<std::string, Property> props;
 };
 
-struct MaterialBindingAPI
-{
-  std::string materialBinding; // rel material:binding
-  std::string materialBindingCorrection; // rel material:binding:correction
+struct MaterialBindingAPI {
+  std::string materialBinding;            // rel material:binding
+  std::string materialBindingCorrection;  // rel material:binding:correction
 
   // TODO: allPurpose, preview, ...
 };
@@ -960,7 +947,6 @@ struct MaterialBindingAPI
 //
 
 struct Xform {
-
   std::string name;
   int64_t parent_id{-1};  // Index to xform node
 
@@ -970,8 +956,7 @@ struct Xform {
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
-  Xform() {
-  }
+  Xform() {}
 
   ///
   /// Evaluate XformOps
@@ -995,15 +980,13 @@ struct Xform {
     return _matrix;
   }
 
-
   mutable bool _dirty{true};
-  mutable value::matrix4d _matrix; // Resulting matrix of evaluated XformOps.
-
+  mutable value::matrix4d _matrix;  // Resulting matrix of evaluated XformOps.
 };
 
 struct UVCoords {
-
-  using UVCoordType = tinyusdz::variant<std::vector<value::float2>, std::vector<value::float3>>;
+  using UVCoordType =
+      tinyusdz::variant<std::vector<value::float2>, std::vector<value::float3>>;
 
   std::string name;
   UVCoordType buffer;
@@ -1039,7 +1022,6 @@ struct GeomCamera {
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
   std::map<std::string, PrimAttrib> attribs;
-
 };
 
 struct GeomBoundable {
@@ -1073,15 +1055,17 @@ struct GeomCone {
   AnimatableDouble radius{1.0};
   Axis axis{Axis::Z};
 
-  AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
+  AnimatableExtent extent{
+      Extent({-1.0, -1.0, -1.0},
+             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
   Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1102,15 +1086,17 @@ struct GeomCapsule {
   AnimatableDouble radius{0.5};
   Axis axis{Axis::Z};
 
-  AnimatableExtent extent{Extent({-0.5, -0.5, -1.0}, {0.5, 0.5, 1.0})};  // bounding extent(in local coord?).
+  AnimatableExtent extent{
+      Extent({-0.5, -0.5, -1.0},
+             {0.5, 0.5, 1.0})};  // bounding extent(in local coord?).
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
   Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1118,7 +1104,6 @@ struct GeomCapsule {
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
   std::map<std::string, PrimAttrib> attribs;
 };
-
 
 struct GeomCylinder {
   std::string name;
@@ -1131,15 +1116,17 @@ struct GeomCylinder {
   AnimatableDouble height{2.0};
   AnimatableDouble radius{1.0};
   Axis axis{Axis::Z};
-  AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
+  AnimatableExtent extent{
+      Extent({-1.0, -1.0, -1.0},
+             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
   Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1157,15 +1144,17 @@ struct GeomCube {
   // Properties
   //
   AnimatableDouble size{2.0};
-  AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
+  AnimatableExtent extent{
+      Extent({-1.0, -1.0, -1.0},
+             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
   Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1187,15 +1176,17 @@ struct GeomSphere {
   //
   // Properties
   //
-  AnimatableExtent extent{Extent({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
+  AnimatableExtent extent{
+      Extent({-1.0, -1.0, -1.0},
+             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   // Gprim
   bool doubleSided{false};
   Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1241,8 +1232,8 @@ struct GeomBasisCurves {
   // Gprim
   bool doubleSided{false};
   Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1265,7 +1256,7 @@ struct GeomPoints {
   std::vector<value::float3> points;   // float3
   std::vector<value::float3> normals;  // normal3f
   std::vector<float> widths;
-  std::vector<int64_t> ids;          // per-point ids
+  std::vector<int64_t> ids;                  // per-point ids
   std::vector<value::float3> velocities;     // vector3f
   std::vector<value::float3> accelerations;  // vector3f
 
@@ -1279,8 +1270,8 @@ struct GeomPoints {
   // Gprim
   bool doubleSided{false};
   Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
@@ -1288,8 +1279,7 @@ struct GeomPoints {
   std::map<std::string, PrimAttrib> attribs;
 };
 
-struct LuxSphereLight
-{
+struct LuxSphereLight {
   std::string name;
 
   int64_t parent_id{-1};  // Index to xform node
@@ -1314,11 +1304,9 @@ struct LuxSphereLight
   // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
   // parameter)
   std::map<std::string, PrimAttrib> attribs;
-
 };
 
-struct LuxDomeLight
-{
+struct LuxDomeLight {
   std::string name;
   int64_t parent_id{-1};  // Index to xform node
 
@@ -1341,7 +1329,6 @@ struct LuxDomeLight
   // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
   // parameter)
   std::map<std::string, PrimAttrib> attribs;
-
 };
 
 // BlendShapes
@@ -1356,7 +1343,6 @@ struct BlendShape {
 
 // Skeleton
 struct Skeleton {
-
   std::string name;
 
   std::vector<value::matrix4d>
@@ -1366,8 +1352,8 @@ struct Skeleton {
   std::vector<std::string> jointNames;
   std::vector<std::string> joints;
 
-  std::vector<value::matrix4d> restTransforms;  // rest-pose transforms of each joint
-                                         // in local coordinate.
+  std::vector<value::matrix4d> restTransforms;  // rest-pose transforms of each
+                                                // joint in local coordinate.
 
   Purpose purpose{Purpose::Default};
   AnimatableVisibility visibility{Visibility::Inherited};
@@ -1389,24 +1375,24 @@ struct SkelRoot {
   // std::vector<std::string> xformOpOrder;
   // ref proxyPrim
 
-  int64_t skeleton_id{-1}; // index to scene.skeletons
-  //Skeleton skeleton;
+  int64_t skeleton_id{-1};  // index to scene.skeletons
+  // Skeleton skeleton;
 };
-
 
 struct SkelAnimation {
   std::vector<std::string> blendShapes;
   std::vector<float> blendShapeWeights;
   std::vector<std::string> joints;
   std::vector<value::quatf> rotations;  // Joint-local unit quaternion rotations
-  std::vector<value::float3> scales;  // Joint-local scaling. pxr USD schema uses half3,
-                              // but we use float3 for convenience.
+  std::vector<value::float3>
+      scales;  // Joint-local scaling. pxr USD schema uses half3,
+               // but we use float3 for convenience.
   std::vector<value::float3> translations;  // Joint-local translation.
 };
 
 // W.I.P.
 struct SkelBindingAPI {
-  value::matrix4d geomBindTransform;            // primvars:skel:geomBindTransform
+  value::matrix4d geomBindTransform;     // primvars:skel:geomBindTransform
   std::vector<int> jointIndices;         // primvars:skel:jointIndices
   std::vector<float> jointWeights;       // primvars:skel:jointWeights
   std::vector<std::string> blendShapes;  // optional?
@@ -1425,7 +1411,7 @@ struct GPrim {
 
   int64_t parent_id{-1};  // Index to parent node
 
-  std::string prim_type; // Primitive type(if specified by `def`)
+  std::string prim_type;  // Primitive type(if specified by `def`)
 
   // Gprim
   AnimatableExtent extent;  // bounding extent(in local coord?).
@@ -1433,8 +1419,8 @@ struct GPrim {
   Orientation orientation{Orientation::RightHanded};
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
-  AnimatableVec3fArray displayColor; // primvars:displayColor
-  AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  AnimatableVec3fArray displayColor;    // primvars:displayColor
+  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
   MaterialBindingAPI materialBinding;
 
@@ -1442,7 +1428,7 @@ struct GPrim {
 
   std::map<std::string, value::Value> args;
 
-  bool _valid{true}; // default behavior is valid(allow empty GPrim)
+  bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
   bool active{true};
 
@@ -1452,15 +1438,12 @@ struct GPrim {
 
 // GeomSubset
 struct GeomSubset {
-  enum class ElementType {
-    Face,
-    Invalid
-  };
+  enum class ElementType { Face, Invalid };
 
   enum class FamilyType {
-    Partition,  // 'partition'
-    NonOverlapping, // 'nonOverlapping'
-    Unrestricted, // 'unrestricted'
+    Partition,       // 'partition'
+    NonOverlapping,  // 'nonOverlapping'
+    Unrestricted,    // 'unrestricted'
     Invalid
   };
 
@@ -1468,22 +1451,20 @@ struct GeomSubset {
 
   int64_t parent_id{-1};  // Index to parent node
 
-  ElementType elementType{ElementType::Face}; // must be face
+  ElementType elementType{ElementType::Face};  // must be face
 
   std::vector<int32_t> faces;
 
   std::map<std::string, PrimAttrib> attribs;
-
 };
 
 // Polygon mesh geometry
 struct GeomMesh : GPrim {
-
   //
   // Predefined attribs.
   //
   std::vector<value::point3f> points;  // point3f
-  PrimAttrib normals;         // normal3f[]
+  PrimAttrib normals;                  // normal3f[]
 
   //
   // Utility functions
@@ -1517,18 +1498,18 @@ struct GeomMesh : GPrim {
   //
   // Properties
   //
-  //AnimatableExtent extent;  // bounding extent(in local coord?).
+  // AnimatableExtent extent;  // bounding extent(in local coord?).
   std::string facevaryingLinearInterpolation = "cornerPlus1";
-  //AnimatableVisibility visibility{Visibility::Inherited};
-  //Purpose purpose{Purpose::Default};
+  // AnimatableVisibility visibility{Visibility::Inherited};
+  // Purpose purpose{Purpose::Default};
 
   // Gprim
-  //bool doubleSided{false};
-  //Orientation orientation{Orientation::RightHanded};
-  //AnimatableVec3fArray displayColor; // primvars:displayColor
-  //AnimatableFloatArray displayOpacity; // primvars:displaOpacity
+  // bool doubleSided{false};
+  // Orientation orientation{Orientation::RightHanded};
+  // AnimatableVec3fArray displayColor; // primvars:displayColor
+  // AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
-  //MaterialBindingAPI materialBinding;
+  // MaterialBindingAPI materialBinding;
 
   //
   // SubD attribs.
@@ -1547,8 +1528,9 @@ struct GeomMesh : GPrim {
   // GeomSubset
   //
   // uniform token `subsetFamily:materialBind:familyType`
-  GeomSubset::FamilyType materialBindFamilyType{GeomSubset::FamilyType::Partition};
-  std::vector<int32_t> geom_subset_children; // indices in Scene::geom_subsets
+  GeomSubset::FamilyType materialBindFamilyType{
+      GeomSubset::FamilyType::Partition};
+  std::vector<int32_t> geom_subset_children;  // indices in Scene::geom_subsets
 
   ///
   /// Validate GeomSubset data attached to this GeomMesh.
@@ -1556,7 +1538,7 @@ struct GeomMesh : GPrim {
   nonstd::expected<bool, std::string> ValidateGeomSubset();
 
   // List of Primitive attributes(primvars)
-  //std::map<std::string, PrimAttrib> attribs;
+  // std::map<std::string, PrimAttrib> attribs;
 };
 
 //
@@ -1567,8 +1549,10 @@ struct Material {
 
   int64_t parent_id{-1};
 
-  std::string outputs_surface; // Intermediate variable. Path of `outputs:surface.connect`
-  std::string outputs_volume; // Intermediate variable. Path of `outputs:volume.connect`
+  std::string outputs_surface;  // Intermediate variable. Path of
+                                // `outputs:surface.connect`
+  std::string outputs_volume;   // Intermediate variable. Path of
+                                // `outputs:volume.connect`
 
   // Id will be filled after resolving paths
   int64_t surface_shader_id{-1};  // Index to `Scene::shaders`
@@ -1576,10 +1560,8 @@ struct Material {
   // int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
 };
 
-
 // TODO
 struct NodeGraph {
-
   std::string name;
 
   int64_t parent_id{-1};
@@ -1655,8 +1637,8 @@ struct UVTexture {
   // item = pair<type, name> : example: <"float3", "outputs:rgb">
   std::map<std::string, std::pair<std::string, std::string>> outputs;
 
-  PrimvarReaderType st;  // texture coordinate(`inputs:st`). We assume there is a
-                         // connection to this.
+  PrimvarReaderType st;  // texture coordinate(`inputs:st`). We assume there is
+                         // a connection to this.
 
   // TODO: orientation?
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
@@ -1672,7 +1654,7 @@ struct PreviewSurface {
   //
   // Infos
   //
-  std::string info_id; // `uniform token`
+  std::string info_id;  // `uniform token`
 
   //
   // Inputs
@@ -1712,28 +1694,27 @@ struct PreviewSurface {
 struct Shader {
   std::string name;
 
-  std::string info_id; // Shader type.
+  std::string info_id;  // Shader type.
 
-  // Currently we only support PreviewSurface, UVTexture and PrimvarReader_float2
-  tinyusdz::variant<tinyusdz::monostate, PreviewSurface, UVTexture, PrimvarReader_float2> value;
+  // Currently we only support PreviewSurface, UVTexture and
+  // PrimvarReader_float2
+  tinyusdz::variant<tinyusdz::monostate, PreviewSurface, UVTexture,
+                    PrimvarReader_float2>
+      value;
 };
-
 
 // USDZ Schemas for AR
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
 
 // UsdPhysics
-struct Preliminary_PhysicsGravitationalForce
-{
+struct Preliminary_PhysicsGravitationalForce {
   // physics::gravitatioalForce::acceleration
-  value::double3 acceleration{{0.0, -9.81, 0.0}}; // [m/s^2]
-
+  value::double3 acceleration{{0.0, -9.81, 0.0}};  // [m/s^2]
 };
 
-struct Preliminary_PhysicsMaterialAPI
-{
+struct Preliminary_PhysicsMaterialAPI {
   // preliminary:physics:material:restitution
-  double restitution; // [0.0, 1.0]
+  double restitution;  // [0.0, 1.0]
 
   // preliminary:physics:material:friction:static
   double friction_static;
@@ -1742,8 +1723,7 @@ struct Preliminary_PhysicsMaterialAPI
   double friction_dynamic;
 };
 
-struct Preliminary_PhysicsRigidBodyAPI
-{
+struct Preliminary_PhysicsRigidBodyAPI {
   // preliminary:physics:rigidBody:mass
   double mass{1.0};
 
@@ -1751,19 +1731,16 @@ struct Preliminary_PhysicsRigidBodyAPI
   bool initiallyActive{true};
 };
 
-struct Preliminary_PhysicsColliderAPI
-{
+struct Preliminary_PhysicsColliderAPI {
   // preliminary::physics::collider::convexShape
   Path convexShape;
-
 };
 
-struct Preliminary_InfiniteColliderPlane
-{
+struct Preliminary_InfiniteColliderPlane {
   value::double3 position{{0.0, 0.0, 0.0}};
   value::double3 normal{{0.0, 0.0, 0.0}};
 
-  Extent extent; // [-FLT_MAX, FLT_MAX]
+  Extent extent;  // [-FLT_MAX, FLT_MAX]
 
   Preliminary_InfiniteColliderPlane() {
     extent.lower[0] = -(std::numeric_limits<float>::max)();
@@ -1773,63 +1750,57 @@ struct Preliminary_InfiniteColliderPlane
     extent.upper[1] = (std::numeric_limits<float>::max)();
     extent.upper[2] = (std::numeric_limits<float>::max)();
   }
-
 };
 
 // UsdInteractive
-struct Preliminary_AnchoringAPI
-{
+struct Preliminary_AnchoringAPI {
   // preliminary:anchoring:type
-  std::string type; // "plane", "image", "face", "none";
+  std::string type;  // "plane", "image", "face", "none";
 
-  std::string alignment; // "horizontal", "vertical", "any";
+  std::string alignment;  // "horizontal", "vertical", "any";
 
   Path referenceImage;
-
 };
 
-struct Preliminary_ReferenceImage
-{
-  int64_t image_id{-1}; // asset image
+struct Preliminary_ReferenceImage {
+  int64_t image_id{-1};  // asset image
 
   double physicalWidth{0.0};
 };
 
-struct Preliminary_Behavior
-{
+struct Preliminary_Behavior {
   Path triggers;
   Path actions;
   bool exclusive{false};
 };
 
-struct Preliminary_Trigger
-{
+struct Preliminary_Trigger {
   // uniform token info:id
-  std::string info; // Store decoded string from token id
+  std::string info;  // Store decoded string from token id
 };
 
-struct Preliminary_Action
-{
+struct Preliminary_Action {
   // uniform token info:id
   std::string info;  // Store decoded string from token id
 
-  std::string multiplePerformOperation{"ignore"}; // ["ignore", "allow", "stop"]
+  std::string multiplePerformOperation{
+      "ignore"};  // ["ignore", "allow", "stop"]
 };
 
-struct Preliminary_Text
-{
+struct Preliminary_Text {
   std::string content;
-  std::vector<std::string> font; // An array of font names
+  std::vector<std::string> font;  // An array of font names
 
   float pointSize{144.0f};
   float width;
   float height;
   float depth{0.0f};
 
-  std::string wrapMode{"flowing"}; // ["singleLine", "hardBreaks", "flowing"]
-  std::string horizontalAlignmment{"center"}; // ["left", "center", "right", "justified"]
-  std::string verticalAlignmment{"middle"}; // ["top", "middle", "lowerMiddle", "baseline", "bottom"]
-
+  std::string wrapMode{"flowing"};  // ["singleLine", "hardBreaks", "flowing"]
+  std::string horizontalAlignmment{
+      "center"};  // ["left", "center", "right", "justified"]
+  std::string verticalAlignmment{
+      "middle"};  // ["top", "middle", "lowerMiddle", "baseline", "bottom"]
 };
 
 // Simple volume class.
@@ -1838,22 +1809,20 @@ struct Preliminary_Text
 struct OpenVDBAsset {
   std::string fieldDataType{"float"};
   std::string fieldName{"density"};
-  std::string filePath; // asset
+  std::string filePath;  // asset
 };
 
 // MagicaVoxel Vox
 struct VoxAsset {
   std::string fieldDataType{"float"};
   std::string fieldName{"density"};
-  std::string filePath; // asset
+  std::string filePath;  // asset
 };
 
 struct Volume {
   OpenVDBAsset vdb;
   VoxAsset vox;
 };
-
-
 
 // `Scope` is uncommon in graphics community, its something like `Group`.
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
@@ -1895,10 +1864,13 @@ DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
 DEFINE_TYPE_TRAIT(Payload, "payload", TYPE_ID_PAYLOAD, 1);
 DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);
 
-DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN, 1);
-DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING, 1);
+DEFINE_TYPE_TRAIT(ListOp<value::token>, "ListOpToken", TYPE_ID_LIST_OP_TOKEN,
+                  1);
+DEFINE_TYPE_TRAIT(ListOp<std::string>, "ListOpString", TYPE_ID_LIST_OP_STRING,
+                  1);
 DEFINE_TYPE_TRAIT(ListOp<Path>, "ListOpPath", TYPE_ID_LIST_OP_PATH, 1);
-DEFINE_TYPE_TRAIT(ListOp<Reference>, "ListOpReference", TYPE_ID_LIST_OP_REFERENCE, 1);
+DEFINE_TYPE_TRAIT(ListOp<Reference>, "ListOpReference",
+                  TYPE_ID_LIST_OP_REFERENCE, 1);
 DEFINE_TYPE_TRAIT(ListOp<int32_t>, "ListOpInt", TYPE_ID_LIST_OP_INT, 1);
 DEFINE_TYPE_TRAIT(ListOp<uint32_t>, "ListOpUInt", TYPE_ID_LIST_OP_UINT, 1);
 DEFINE_TYPE_TRAIT(ListOp<int64_t>, "ListOpInt64", TYPE_ID_LIST_OP_INT64, 1);
@@ -1907,21 +1879,29 @@ DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
 // TODO(syoyo): Define as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
-DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector", TYPE_ID_TOKEN_VECTOR, 1);
+DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
+                  TYPE_ID_TOKEN_VECTOR, 1);
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 // Shader
-DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface", TYPE_ID_SHADER_PREVIEWSURFACE, 1);
-DEFINE_TYPE_TRAIT(UVTexture, "UVTexture", TYPE_ID_SHADER_UVTEXTURE, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float2, "PrimvarReader_float2", TYPE_ID_PRIMVAR_READER_FLOAT2, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float3, "PrimvarReader_float3", TYPE_ID_PRIMVAR_READER_FLOAT3, 1);
+DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface",
+                  TYPE_ID_IMAGING_PREVIEWSURFACE, 1);
+DEFINE_TYPE_TRAIT(UVTexture, "UVTexture", TYPE_ID_IMAGING_UVTEXTURE, 1);
+DEFINE_TYPE_TRAIT(PrimvarReader_float, "PrimvarReader_float",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT, 1);
+DEFINE_TYPE_TRAIT(PrimvarReader_float2, "PrimvarReader_float2",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT2, 1);
+DEFINE_TYPE_TRAIT(PrimvarReader_float3, "PrimvarReader_float3",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3, 1);
+DEFINE_TYPE_TRAIT(PrimvarReader_float4, "PrimvarReader_float4",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4, 1);
+DEFINE_TYPE_TRAIT(PrimvarReader_int, "PrimvarReader_int",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
 
 #undef DEFINE_TYPE_TRAIT
 
-} // namespace value
-
-
+}  // namespace value
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
 
@@ -1954,7 +1934,5 @@ DEFINE_TYPE_TRAIT(PrimvarReader_float3, "PrimvarReader_float3", TYPE_ID_PRIMVAR_
 ((      GfMultiInterval,     MultiInterval))
 
 */
-
-
 
 }  // namespace tinyusdz
