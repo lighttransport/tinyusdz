@@ -1,6 +1,7 @@
 #include <string>
+#include <iostream>
 
-#include "simple-variant.hh"
+#include "tiny-variant.hh"
 
 int main(int argc, char **argv) {
 
@@ -17,10 +18,14 @@ int main(int argc, char **argv) {
 
   a.set<float>(1.3f);
 
-  std::cout << "a val = " << a.get<float>() << "\n";
+  std::cout << "a val = " << a.cast<float>() << "\n";
   
   if (auto v = b.get_if<float>()) {
     std::cout << "b val = " << (*v) << "\n";
+  }
+
+  if (auto v = b.get<float>()) {
+    std::cout << "b val = " << v.value() << "\n";
   }
 
   return 0;
