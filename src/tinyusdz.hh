@@ -417,6 +417,15 @@ struct Node {
   std::vector<Node> children;  // child nodes
 };
 
+struct NodeIndex {
+  std::string name;
+
+  // TypeTrait<T>::type_id
+  value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
+
+  ssize_t index; // array index to `Scene::xforms`, `Scene::geom_cameras`, ...
+};
+
 struct Scene {
   std::string name;       // Scene name
   int64_t default_root_node{-1};  // index to default root node
@@ -442,8 +451,8 @@ struct Scene {
   // TODO(syoyo): Use std::variant(C++17) like static polymorphism?
   //
   std::vector<GPrim> gprims; // Generic node
-                             
-  // Predefined class in usdGeom, usdLux, usdSkel, ...                             
+
+  // Predefined class in usdGeom, usdLux, usdSkel, ...
   std::vector<Xform> xforms;
   std::vector<GeomCamera> geom_cameras;
   std::vector<LuxSphereLight> lux_sphere_lights;
@@ -467,6 +476,8 @@ struct Scene {
 
   StringAndIdMap geom_meshes_map;  // Path <-> array index map
   StringAndIdMap materials_map;    // Path <-> array index map
+
+  std::vector<NodeIndex> node_indices;
 
 };
 

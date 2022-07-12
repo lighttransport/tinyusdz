@@ -26,6 +26,14 @@
 
 // clang and gcc
 #if defined(__EXCEPTIONS) || defined(__cpp_exceptions)
+
+#ifdef nsel_CONFIG_NO_EXCEPTIONS
+#undef nsel_CONFIG_NO_EXCEPTIONS
+#endif
+#ifdef nssv_CONFIG_NO_EXCEPTIONS
+#undef nssv_CONFIG_NO_EXCEPTIONS
+#endif
+
 #define nsel_CONFIG_NO_EXCEPTIONS 0
 #define nssv_CONFIG_NO_EXCEPTIONS 0
 #else
@@ -140,7 +148,7 @@ class asset_path
 //
 // These ID assignment won't affect Crate binary serialization.
 // (See `crate-format.hh` for Type ID used in Crate binary)
-// 
+//
 // TODO(syoyo): Support 3D and 4D?
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 20; // 1024
 constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21; // 2048
@@ -274,18 +282,26 @@ enum TypeId {
 
   // Types for usdShader
   TYPE_ID_SHADER_BEGIN = 1 << 11,
-  TYPE_ID_SHADER_PREVIEWSURFACE, 
-  TYPE_ID_SHADER_UVTEXTURE, 
-  TYPE_ID_PRIMVAR_READER_FLOAT2, 
-  TYPE_ID_PRIMVAR_READER_FLOAT3, 
+
+  // Types for usdImaging
+  // See <pxrUSD>/pxr/usdImaging/usdImaging/tokens.h
+  TYPE_ID_IMAGING_BEGIN = (1 << 11) + (1 << 10),
+  TYPE_ID_IMAGING_PREVIEWSURFACE,
+  TYPE_ID_IMAGING_UVTEXTURE,
+  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT,
+  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT2,
+  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3,
+  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4,
+  TYPE_ID_IMAGING_PRIMVAR_READER_INT,
+  TYPE_ID_IMAGING_TRANSFORM_2D,
 
   // Ttpes for usdVol
-  TYPE_ID_VOL_BEGIN = 3072,
+  TYPE_ID_VOL_BEGIN = 1 << 12,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 65536,
 
-  TYPE_ID_ALL = (TYPE_ID_2D_ARRAY_BIT - 1)  // terminator. 
+  TYPE_ID_ALL = (TYPE_ID_2D_ARRAY_BIT - 1)  // terminator.
 };
 
 struct timecode
@@ -707,7 +723,7 @@ DEFINE_TYPE_TRAIT(asset_path, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in `prim-types.hh` and `crate-format.hh`(Data types used in Crate data)
-// 
+//
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
