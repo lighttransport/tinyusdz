@@ -1578,7 +1578,12 @@ struct Material {
 
 
 // TODO
-//  - NodeGraph
+struct NodeGraph {
+
+  std::string name;
+
+  int64_t parent_id{-1};
+};
 
 // result = (texture_id == -1) ? use color : lookup texture
 struct Color3OrTexture {

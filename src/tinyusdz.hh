@@ -458,6 +458,7 @@ struct Scene {
   std::vector<GeomCapsule> geom_capsules;
   std::vector<GeomSubset> geom_subsets;
   std::vector<Material> materials;
+  std::vector<NodeGraph> node_graphs;
   std::vector<Shader> shaders;  // TODO(syoyo): Support othre shaders
   std::vector<Scope> scopes; // TODO(syoyo): We may not need this?
   std::vector<Volume> volumes;
