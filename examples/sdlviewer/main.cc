@@ -613,13 +613,15 @@ void ShaderParamWindow(const tinyusdz::Scene& scene) {
     }
 
     if (ImGui::TreeNode(item.name.c_str())) {
-      if (nonstd::get_if<tinyusdz::PreviewSurface>(&item.value)) {
+      if (item.value.is<tinyusdz::PreviewSurface>()) {
         ImGui::Text("type:id UsdPreviewSurface");
 
-      } else if (nonstd::get_if<tinyusdz::UVTexture>(&item.value)) {
+      } else if (item.value.is<tinyusdz::UVTexture>()) {
         ImGui::Text("type:id UVTexture");
-      } else if (nonstd::get_if<tinyusdz::PrimvarReader_float2>(&item.value)) {
+      } else if (item.value.is<tinyusdz::PrimvarReader_float2>()) {
         ImGui::Text("type:id PrimvarReader_float2");
+      } else if (item.value.is<tinyusdz::PrimvarReader_float3>()) {
+        ImGui::Text("type:id PrimvarReader_float3");
       } else {
         ImGui::Text("Unsupported Shader type");
       }
@@ -731,26 +733,7 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  SDL_Window* window = SDL_CreateWindow(
-      "Simple USDZ viewer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-      1600, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-  if (!window) {
-    std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
-                 "probably X11 Display is not setup correctly. Check your "
-                 "DISPLAY environment.\n";
-    exit(-1);
-  }
-
-  SDL_Renderer* renderer = SDL_CreateRenderer(
-      window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
-
-  if (!renderer) {
-    std::cerr << "Failed to create SDL2 renderer. If you are running on "
-                 "Linux, "
-                 "probably X11 Display is not setup correctly. Check your "
-                 "DISPLAY environment.\n";
-    exit(-1);
-  }
+  std::cout << "SDL2 init OK\n";
 
 #ifdef _WIN32
   std::string filename = "../../models/suzanne.usdc";
@@ -789,6 +772,32 @@ int main(int argc, char** argv) {
       exit(-1);
     }
   }
+
+  SDL_Window* window = SDL_CreateWindow(
+      "Simple USDZ viewer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+      1600, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+  if (!window) {
+    std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
+                 "probably X11 Display is not setup correctly. Check your "
+                 "DISPLAY environment.\n";
+    exit(-1);
+  }
+
+  std::cout << "SDL2 Window creation OK\n";
+
+  SDL_Renderer* renderer = SDL_CreateRenderer(
+      window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
+
+  if (!renderer) {
+    std::cerr << "Failed to create SDL2 renderer. If you are running on "
+                 "Linux, "
+                 "probably X11 Display is not setup correctly. Check your "
+                 "DISPLAY environment.\n";
+    exit(-1);
+  }
+
+  std::cout << "SDL2 Renderer creation OK\n";
+
 
   GUIContext& gui_ctx = g_gui_ctx;
   gui_ctx.renderer = renderer;

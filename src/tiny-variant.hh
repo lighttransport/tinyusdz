@@ -241,7 +241,7 @@ struct variant {
   }
 
   template <typename T>
-  bool is() {
+  bool is() const {
     return variant_id == value::TypeTrait<T>::type_id;
   }
 

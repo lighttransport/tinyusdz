@@ -5019,6 +5019,7 @@ class USDAParser::Impl {
         RECONSTRUCT_NODE("BasisCurves", ReconstructBasisCurves, GeomBasisCurves, scene_.geom_basis_curves)
         RECONSTRUCT_NODE("Camera", ReconstructGeomCamera, GeomCamera, scene_.geom_cameras)
         RECONSTRUCT_NODE("Shader", ReconstructShader, Shader, scene_.shaders)
+        RECONSTRUCT_NODE("NodeGraph", ReconstructNodeGraph, NodeGraph, scene_.node_graphs)
         RECONSTRUCT_NODE("Material", ReconstructMaterial, Material, scene_.materials)
 
         RECONSTRUCT_NODE("Scope", ReconstructScope, Scope, scene_.scopes)
@@ -5109,6 +5110,11 @@ class USDAParser::Impl {
       const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
       Shader *shader);
+
+  bool ReconstructNodeGraph(
+      const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, Reference>> &references,
+      NodeGraph *graph);
 
   bool ReconstructMaterial(
       const std::map<std::string, Property> &properties,
@@ -5403,6 +5409,7 @@ class USDAParser::Impl {
     _node_types.insert("Mesh");
     _node_types.insert("Scope");
     _node_types.insert("Material");
+    _node_types.insert("NodeGraph");
     _node_types.insert("Shader");
     _node_types.insert("SphereLight");
     _node_types.insert("DomeLight");
@@ -6638,6 +6645,20 @@ bool USDAParser::Impl::ReconstructShader(
       //std::cout << "TODO: " << prop.first << "\n";
     }
   }
+
+  return true;
+}
+
+bool USDAParser::Impl::ReconstructNodeGraph(
+    const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references,
+    NodeGraph *graph) {
+
+  (void)properties;
+  (void)references;
+  (void)graph;
+
+  PUSH_WARN("TODO: reconstruct NodeGrah.");
 
   return true;
 }
