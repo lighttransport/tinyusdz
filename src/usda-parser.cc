@@ -5496,10 +5496,41 @@ bool USDAParser::Impl::ReconstructGPrim(
   return true;
 }
 
+static nonstd::expected<bool, std::string> CheckAllowedTypeOfXformOp(const PrimAttrib &attr, const std::vector<value::TypeId> &allowed_type_ids)
+{
+  for (size_t i = 0; i < allowed_type_ids.size(); i++) {
+    if (attr.var.type_id() == allowed_type_ids[i]) {
+      return true;
+    }
+  }
+
+  std::stringstream ss;
+
+  ss << "Allowed type for \"" << attr.name << "\"";
+  if (allowed_type_ids.size() > 1) {
+    ss << " are ";
+  } else {
+    ss << " is ";
+  }
+
+  for (size_t i = 0; i < allowed_type_ids.size(); i++) {
+    ss << value::GetTypeName(allowed_type_ids[i]);
+    if (i < (allowed_type_ids.size() - 1)) {
+      ss << ", ";
+    } else if (i == (allowed_type_ids.size() - 1)) {
+      ss << " or ";
+    }
+  }
+  ss << ", but got " << value::GetTypeName(attr.var.type_id());
+
+  return nonstd::make_unexpected(ss.str());
+}
+
 bool USDAParser::Impl::ReconstructXform(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, Reference>> &references, Xform *xform) {
   (void)xform;
+
 
   // ret = (basename, suffix, isTimeSampled?)
   auto Split =
@@ -5517,7 +5548,7 @@ bool USDAParser::Impl::ReconstructXform(
 
     }
 
-    // TODO: Support multiple namespace?
+    // TODO: Support multiple namespace(e.g. xformOp:translate:pivot)
     std::string suffix;
     if (s.find_last_of(':') != std::string::npos) {
       suffix = s.substr(s.find_last_of(':') + 1);
@@ -5538,6 +5569,19 @@ bool USDAParser::Impl::ReconstructXform(
     if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
     }
   }
+
+  for (const auto &prop : properties) {
+    if (startsWith(prop.first, "xformOp:translate")) {
+      // TODO: Implement
+      //using allowedTys = tinyusdz::variant<value::float3, value::double3>;
+      std::vector<value::TypeId> ids;
+      auto ret = CheckAllowedTypeOfXformOp(prop.second.attrib, ids);
+      if (!ret) {
+      
+      }
+    }
+  }
+
 
 
   // Lookup xform values from `xformOpOrder`
@@ -5602,6 +5646,8 @@ bool USDAParser::Impl::ReconstructXform(
     //std::cout << "no xformOpOrder\n";
   }
 
+  // For xformO
+  // TinyUSDZ does no accept arbitrary types for variables with `xformOp` su
 #if 0
     for (const auto &prop : properties) {
 
