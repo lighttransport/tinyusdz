@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2022 - Present, Syoyo Fujita.
 #include "value-pprint.hh"
 #include "prim-types.hh"
 
@@ -218,8 +220,11 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
-  (void)m;
-  ofs << "[TODO] dict type[/TODO]";
+  ofs << "{\n";
+  for (const auto &item : m) {
+    ofs << item.first << " = " << item.second << "\n";
+  }
+  ofs << "}";
 
   return ofs;
 }
@@ -229,7 +234,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
 namespace tinyusdz {
 namespace value {
 
-inline std::ostream &operator<<(std::ostream &os, const any_value &v) {
+std::ostream &operator<<(std::ostream &os, const any_value &v) {
     // Simple brute-force way..
     // TODO: Use std::function or some template technique?
 
@@ -326,12 +331,6 @@ inline std::ostream &operator<<(std::ostream &os, const any_value &v) {
 
     return os;
   }
-
-//std::ostream &operator<<(std::ostream &os, const Value &v) {
-//  os << v.get_raw();  // delegate to operator<<(os, any_value)
-//  return os;
-//}
-
 
 
 } // namespace value
