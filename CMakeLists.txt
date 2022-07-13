@@ -51,9 +51,11 @@ option(TINYUSDZ_PRODUCTION_BUILD
        "Build for production release(e.g. disables debug print, do not include full filepath in error messages)" OFF)
 
 # -- modules --
-# USDC(Crate binary) parser is mandatory, so no `TINYUSDZ_WITH_USDC_PARSER`
 option(TINYUSDZ_WITH_MODULE_USDA_PARSER "Build with USDA parser feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
+
+# USDC(Crate binary) parser is mandatory in most situation, so this option is primarily for developer build.
+option(TINYUSDZ_WITH_MODULE_USDC_PARSER "Build with USDC parser feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 # -------------
 
@@ -147,7 +149,10 @@ endif()
 
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
@@ -162,20 +167,6 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc)
 
-if (TINYUSDZ_WITH_MODULE_USDA_PARSER)
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
-      )
-endif()
-
-if (TINYUSDZ_WITH_MODULE_USDA_WRITER)
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
-      )
-endif()
-
-if (TINYUSDZ_WITH_MODULE_USDC_WRITER)
-  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
-      )
-endif()
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
@@ -409,19 +400,25 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
   endif()
 
-  if (TINYUSDZ_WITH_MODULE_USDA_PARSER)
+  # default = enable module, so invert definition
+  if (NOT TINYUSDZ_WITH_MODULE_USDA_PARSER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_MODULE_USDA_PARSER")
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_PARSER")
   endif()
 
-  if (TINYUSDZ_WITH_MODULE_USDA_WRITER)
+  if (NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_MODULE_USDA_WRITER")
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
   endif()
 
-  if (TINYUSDZ_WITH_MODULE_USDC_WRITER)
+  if (NOT TINYUSDZ_WITH_MODULE_USDC_PARSER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_WITH_MODULE_USDC_WRITER")
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_PARSER")
+  endif()
+
+  if (NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
   endif()
 
 

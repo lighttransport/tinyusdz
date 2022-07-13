@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Copyright 2022 - Present, Syoyo Fujita.
 #include "usd-to-json.hh"
 
 #include "tinyusdz.hh"

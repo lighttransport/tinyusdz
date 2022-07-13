@@ -9,6 +9,11 @@
 // - [ ] Set `custom` in property by looking up schema.
 // - [ ] And more...
 //
+
+#include "usdc-parser.hh"
+
+#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_PARSER)
+
 #include <unordered_map>
 #include <unordered_set>
 
@@ -27,7 +32,6 @@
 #include "path-util.hh"
 #include "pprinter.hh"
 #include "stream-reader.hh"
-#include "usdc-parser.hh"
 #include "value-pprint.hh"
 
 //
@@ -5814,3 +5818,61 @@ Path Parser::GetPath(crate::Index index) { return impl_->GetPath(index); }
 
 }  // namespace usdc
 }  // namespace tinyusdz
+
+
+#else
+
+namespace tinyusdz {
+namespace usdc {
+
+//
+// -- Interface --
+//
+Parser::Parser(StreamReader *sr, int num_threads) {
+  (void)sr;
+  (void)num_threads;
+}
+
+Parser::~Parser() {
+}
+
+bool Parser::ReadTOC() { return false; }
+
+bool Parser::ReadBootStrap() { return false; }
+
+bool Parser::ReadTokens() { return false; }
+
+bool Parser::ReadStrings() { return false; }
+
+bool Parser::ReadFields() { return false; }
+
+bool Parser::ReadFieldSets() { return false; }
+
+bool Parser::ReadPaths() { return false; }
+
+bool Parser::ReadSpecs() { return false; }
+
+bool Parser::BuildLiveFieldSets() { return false; }
+
+bool Parser::ReconstructScene(Scene *scene) {
+  (void)scene;
+  return false;
+}
+
+std::string Parser::GetError() { 
+  return "USDC parser feature is disabled in this build.\n";
+}
+
+std::string Parser::GetWarning() { return ""; }
+
+size_t Parser::NumPaths() { return 0; }
+
+Path Parser::GetPath(crate::Index index) {
+  (void)index;
+  return Path();
+}
+
+}  // namespace usdc
+}  // namespace tinyusdz
+
+#endif

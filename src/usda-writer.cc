@@ -1,10 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2022 - Present, Syoyo Fujita.
+//
+// USDA(Ascii) writer
+//
+
 #include "usda-writer.hh"
-#include "pprinter.hh"
-#include "value-pprint.hh"
+
+#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_WRITER)
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
+
+#include "pprinter.hh"
+#include "value-pprint.hh"
 
 namespace tinyusdz {
 namespace usda {
@@ -186,3 +195,27 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
 
 } // namespace usda
 }  // namespace tinyusdz
+
+#else
+
+namespace tinyusdz {
+namespace usda {
+
+bool SaveAsUSDA(const std::string &filename, const Scene &scene, std::string *warn, std::string *err) {
+  (void)filename;
+  (void)scene;
+  (void)warn;
+
+  if (err) {
+    (*err) = "USDA Writer feature is disabled in this build.\n";
+  }
+  return false;
+}
+
+
+
+} // namespace usda
+}  // namespace tinyusdz
+#endif
+
+

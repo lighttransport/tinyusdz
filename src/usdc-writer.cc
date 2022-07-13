@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present Syoyo Fujita.
 //
+#if 0
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -12,9 +13,13 @@
 
 #include <windows.h>  // include API for expanding a file path
 #endif
+#endif
 
 
 #include "usdc-writer.hh"
+
+#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
+
 #include "crate-format.hh"
 #include "io-util.hh"
 #include "lz4-compression.hh"
@@ -579,3 +584,39 @@ bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
 
 } // namespace usdc
 }  // namespace tinyusdz
+
+#else
+
+namespace tinyusdz {
+namespace usdc {
+
+bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
+                      std::string *warn, std::string *err) {
+  (void)filename;
+  (void)scene;
+  (void)warn;
+
+  if (err) {
+    (*err) = "USDC writer feature is disabled in this build.\n";
+  }
+
+  return false;
+}
+
+bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
+                        std::string *warn, std::string *err) {
+  (void)scene;
+  (void)output;
+  (void)warn;
+
+  if (err) {
+    (*err) = "USDC writer feature is disabled in this build.\n";
+  }
+
+  return false;
+}
+
+} // namespace usdc
+}  // namespace tinyusdz
+
+#endif

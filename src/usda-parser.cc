@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2021 - Present, Syoyo Fujita.
+
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -18,6 +19,11 @@
 #endif
 #include <vector>
 
+#include "usda-parser.hh"
+
+//
+#if !defined(TINYUSDZ_DISABLE_MODULE_USDA_WRITER)
+
 //
 
 #ifdef __clang__
@@ -30,14 +36,8 @@
 //#include "ryu/ryu_parse.h"
 
 #include "fast_float/fast_float.h"
-//#include "nonstd/variant.hpp"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
-
-// Workaround: Compilation fails when using C++17 std::variant for Variable
-// class. so use nonstd::variant on C++17
-//#define variant_CONFIG_SELECT_VARIANT variant_VARIANT_NONSTD
-//#include "nonstd/variant.hpp"
 
 //
 
@@ -62,7 +62,6 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "usdObj.hh"
-#include "usda-parser.hh"
 #include "value-pprint.hh"
 #include "value-type.hh"
 
@@ -8143,6 +8142,39 @@ std::string USDAParser::GetDefaultPrimName() const {
 std::string USDAParser::GetError() { return _impl->GetError(); }
 std::string USDAParser::GetWarning() { return _impl->GetWarning(); }
 
+}  // namespace usda
 }  // namespace tinyusdz
 
+
+#else
+
+namespace tinyusdz {
+namespace usda {
+
+USDAParser::USDAParser(StreamReader *sr) { (void)sr; }
+
+USDAParser::~USDAParser() { }
+
+bool USDAParser::CheckHeader() { return false; }
+
+bool USDAParser::Parse(LoadState state) { (void)state; return false; }
+
+void USDAParser::SetBaseDir(const std::string &dir) {
+  (void)dir;
+}
+
+std::vector<GPrim> USDAParser::GetGPrims() {
+  return {};
+}
+
+std::string USDAParser::GetDefaultPrimName() const {
+  return std::string{};
+}
+
+std::string USDAParser::GetError() { return "USDA parser feature is disabled in this build.\n"; }
+std::string USDAParser::GetWarning() { return std::string{}; }
+
+}  // namespace usda
 }  // namespace tinyusdz
+
+#endif
