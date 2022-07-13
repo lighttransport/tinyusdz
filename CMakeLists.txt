@@ -50,6 +50,14 @@ option(TINYUSDZ_USE_SYSTEM_ZLIB
 option(TINYUSDZ_PRODUCTION_BUILD
        "Build for production release(e.g. disables debug print, do not include full filepath in error messages)" OFF)
 
+# -- modules --
+# USDC(Crate binary) parser is mandatory, so no `TINYUSDZ_WITH_USDC_PARSER`
+option(TINYUSDZ_WITH_MODULE_USDA_PARSER "Build with USDA parser feature" ON)
+option(TINYUSDZ_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
+option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
+# -------------
+
+
 # -- TIFF --
 option(TINYUSDZ_WITH_TIFF "Build with TIFF texture support" OFF)
 # ----------
@@ -58,9 +66,13 @@ option(TINYUSDZ_WITH_TIFF "Build with TIFF texture support" OFF)
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 # ---------
 
-# -- optional --
-option(TINYUSDZ_WITH_USDA_PARSER "Build with USDA parser program" ON)
+# -- optional tool --
+option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ON)
 # --------------
+
+# -- For developers --
+option(TINYUSDZ_COMPILE_TIME_TRACE "Add -ftime-trace to profile compilation time(clang only)" OFF)
+# ---
 
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -136,9 +148,6 @@ endif()
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
@@ -149,8 +158,24 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     # usdMtlX has less dependency(tinyxml2), so add it to core component
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
+    ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc)
+
+if (TINYUSDZ_WITH_MODULE_USDA_PARSER)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
+      )
+endif()
+
+if (TINYUSDZ_WITH_MODULE_USDA_WRITER)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
+      )
+endif()
+
+if (TINYUSDZ_WITH_MODULE_USDC_WRITER)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
+      )
+endif()
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
@@ -182,7 +207,6 @@ if(TINYUSDZ_WITH_JSON)
 endif()
 
 if(TINYUSDZ_WITH_USDOBJ)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usdObj.cc)
   list(APPEND TINYUSDZ_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
 endif()
@@ -344,7 +368,7 @@ endif(TINYUSDZ_WITH_OPENSUBDIV)
 
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
-    list(APPEND ${TINYUSDZ_EXT_LIBRARIES} ZLIB::ZLIB)
+    list(APPEND TINYUSDZ_EXT_LIBRARIES ZLIB::ZLIB)
   endif()
 endif()
 
@@ -384,6 +408,22 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
   endif()
+
+  if (TINYUSDZ_WITH_MODULE_USDA_PARSER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MODULE_USDA_PARSER")
+  endif()
+
+  if (TINYUSDZ_WITH_MODULE_USDA_WRITER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MODULE_USDA_WRITER")
+  endif()
+
+  if (TINYUSDZ_WITH_MODULE_USDC_WRITER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MODULE_USDC_WRITER")
+  endif()
+
 
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -452,11 +492,17 @@ endforeach()
 
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+
+  set(TUSDZ_COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function")
+
+  if (TINYUSDZ_COMPILE_TIME_TRACE)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
+  endif ()
+
   set_source_files_properties(
     ${TINYUSDZ_SOURCES}
     PROPERTIES
-      COMPILE_FLAGS
-      "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+      COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS}
   )
 endif()
 
@@ -484,7 +530,7 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
 endif()
 
-if(TINYUSDZ_WITH_USDA_PARSER)
+if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_PARSER)
   add_executable(usda_parser
                  ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
   add_sanitizers(usda_parser)
@@ -506,7 +552,9 @@ endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_usdz_dump)
-  add_subdirectory(examples/save_usda)
+  if (TINYUSDZ_WITH_MODULE_USDA_WRITER)
+    add_subdirectory(examples/save_usda)
+  endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
 if(TINYUSDZ_BUILD_TESTS)
@@ -537,7 +585,7 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # USDA parser tester
   #
-  if(TINYUSDZ_WITH_USDA_PARSER)
+  if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_PARSER)
     add_test(
       NAME usda-parser-unit-test
       COMMAND python ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app

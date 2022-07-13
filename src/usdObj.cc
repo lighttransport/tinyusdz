@@ -41,6 +41,8 @@ namespace {
 bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::string *err)
 {
 #if !defined(TINYUSDZ_USE_USDOBJ)
+  (void)filepath;
+  (void)prim;
   if (err) {
     (*err) = "usdObj is disabled in this build.\n";
   }
@@ -65,6 +67,8 @@ bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
 {
 #if !defined(TINYUSDZ_USE_USDOBJ)
+  (void)str;
+  (void)prim;
   if (err) {
     (*err) = "usdObj is disabled in this build.\n";
   }
