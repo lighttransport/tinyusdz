@@ -3,6 +3,7 @@
 #include "value-type.hh"
 #include "value-pprint.hh"
 
+
 namespace tinyusdz {
 namespace value {
 
@@ -88,202 +89,6 @@ bool is_double4(const Value &v) {
 
   return false;
 }
-
-#if 0
-std::ostream &operator<<(std::ostream &os, const matrix2d &v) {
-  os << "(";
-  os << "(" << v.m[0][0] << ", " << v.m[0][1] << "), ";
-  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ")";
-  os << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const matrix3d &v) {
-  os << "(";
-  os << "(" << v.m[0][0] << ", " << v.m[0][1] << ", " << v.m[0][2] << "), ";
-  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ", " << v.m[1][2] << ")";
-  os << "(" << v.m[2][0] << ", " << v.m[2][1] << ", " << v.m[2][2] << ")";
-  os << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const matrix4d &v) {
-  os << "(";
-  os << "(" << v.m[0][0] << ", " << v.m[0][1] << ", " << v.m[0][2] << ", "
-     << v.m[0][3] << "), ";
-  os << "(" << v.m[1][0] << ", " << v.m[1][1] << ", " << v.m[1][2] << ", "
-     << v.m[1][3] << ")";
-  os << "(" << v.m[2][0] << ", " << v.m[2][1] << ", " << v.m[2][2] << ", "
-     << v.m[2][3] << ")";
-  os << "(" << v.m[3][0] << ", " << v.m[3][1] << ", " << v.m[3][2] << ", "
-     << v.m[3][3] << ")";
-  os << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const int2 &v) {
-  os << "(" << v[0] << ", " << v[1] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const int3 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const int4 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const uint2 &v) {
-  os << "(" << v[0] << ", " << v[1] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const uint3 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const uint4 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const half2 &v) {
-  os << "(" << v[0] << ", " << v[1] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const half3 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const half4 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const float2 &v) {
-  os << "(" << v[0] << ", " << v[1] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const float3 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const float4 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const double2 &v) {
-  os << "(" << v[0] << ", " << v[1] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const double3 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const double4 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const vector3h &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const vector3f &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const vector3d &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const normal3h &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const normal3f &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const normal3d &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const point3h &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const point3f &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const point3d &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const color3f &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const color3d &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const color4f &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const color4d &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const quath &v) {
-  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
-     << v.imag[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const quatf &v) {
-  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
-     << v.imag[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const quatd &v) {
-  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
-     << v.imag[2] << ")";
-  return os;
-}
-
-std::ostream &operator<<(std::ostream &os, const texcoord2f &v) {
-  os << "(" << v.s << ", " << v.t << ")";
-  return os;
-}
-#endif
 
 bool Reconstructor::reconstruct(AttribMap &amap) {
   err_.clear();
@@ -421,14 +226,30 @@ std::string GetTypeName(uint32_t tyid) {
     // initialize
     m[TYPE_ID_BOOL] = TypeTrait<bool>::type_name();
     m[TYPE_ID_UCHAR] = TypeTrait<uint8_t>::type_name();
+    m[TYPE_ID_HALF] = TypeTrait<value::half>::type_name();
     m[TYPE_ID_INT32] = TypeTrait<int32_t>::type_name();
     m[TYPE_ID_UINT32] = TypeTrait<uint32_t>::type_name();
+
+    m[TYPE_ID_VECTOR3H] = TypeTrait<vector3h>::type_name();
+    m[TYPE_ID_VECTOR3F] = TypeTrait<vector3f>::type_name();
+    m[TYPE_ID_VECTOR3D] = TypeTrait<vector3d>::type_name();
+
     m[TYPE_ID_POINT3H] = TypeTrait<point3h>::type_name();
     m[TYPE_ID_POINT3F] = TypeTrait<point3f>::type_name();
     m[TYPE_ID_POINT3D] = TypeTrait<point3d>::type_name();
+
     m[TYPE_ID_NORMAL3H] = TypeTrait<normal3h>::type_name();
     m[TYPE_ID_NORMAL3F] = TypeTrait<normal3f>::type_name();
     m[TYPE_ID_NORMAL3D] = TypeTrait<normal3d>::type_name();
+
+    m[TYPE_ID_COLOR3F] = TypeTrait<color3f>::type_name();
+    m[TYPE_ID_COLOR3D] = TypeTrait<color3d>::type_name();
+    m[TYPE_ID_COLOR4F] = TypeTrait<color4f>::type_name();
+    m[TYPE_ID_COLOR4D] = TypeTrait<color4d>::type_name();
+
+    m[TYPE_ID_HALF2] = TypeTrait<value::half2>::type_name();
+    m[TYPE_ID_HALF3] = TypeTrait<value::half3>::type_name();
+    m[TYPE_ID_HALF4] = TypeTrait<value::half4>::type_name();
 
     m[TYPE_ID_DICT] = TypeTrait<dict>::type_name();
 
@@ -458,6 +279,8 @@ std::string GetTypeName(uint32_t tyid) {
         TypeTrait<std::vector<vector3f>>::type_name();
     m[TYPE_ID_VECTOR3D | TYPE_ID_1D_ARRAY_BIT] =
         TypeTrait<std::vector<vector3d>>::type_name();
+
+    // TODO: ...
   }
 
   if (!m.count(tyid)) {

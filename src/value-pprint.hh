@@ -83,7 +83,7 @@ namespace tinyusdz {
 namespace value {
 
 //std::ostream &operator<<(std::ostream &os, const tinyusdz::value::Value &v);
-//std::ostream &operator<<(std::ostream &os, const tinyusdz::value::any_value &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::any_value &v);
 
 } // namespace primvar
 } // namespace tinyusdz

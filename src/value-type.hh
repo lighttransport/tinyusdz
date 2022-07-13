@@ -1147,6 +1147,8 @@ struct AttribMap {
 } // namespace value
 } // namespace tinyusdz
 
+#if 1
+/// Need to define in header file.
 namespace staticstruct {
 
 using namespace tinyusdz::value;
@@ -1566,6 +1568,7 @@ struct Converter<color4d> {
 };
 
 }  // namespace staticstruct
+#endif
 
 namespace tinyusdz {
 namespace value {
