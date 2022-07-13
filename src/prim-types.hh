@@ -21,9 +21,6 @@
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
-#define any_CONFIG_NO_EXCEPTIONS (1)
-#include "nonstd/any.hpp"
-
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
