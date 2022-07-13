@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present Syoyo Fujita.
 //
-#if 0
+
+
+#include "usdc-writer.hh"
+
+#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
+
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -13,12 +18,6 @@
 
 #include <windows.h>  // include API for expanding a file path
 #endif
-#endif
-
-
-#include "usdc-writer.hh"
-
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
 
 #include "crate-format.hh"
 #include "io-util.hh"
