@@ -5,8 +5,8 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/tinyxml2/tinyxml2.h"
-#include "external/jsonhpp/nlohmann/json.hpp"
+//#include "external/tinyxml2/tinyxml2.h"
+//#include "external/jsonhpp/nlohmann/json.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
