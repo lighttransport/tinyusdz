@@ -423,7 +423,9 @@ struct NodeIndex {
   // TypeTrait<T>::type_id
   value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
 
-  ssize_t index; // array index to `Scene::xforms`, `Scene::geom_cameras`, ...
+  int64_t
+      index{-1};  // array index to `Scene::xforms`, `Scene::geom_cameras`, ...
+                  // -1 = invlid(or not set)
 };
 
 struct Scene {
