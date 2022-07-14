@@ -130,14 +130,15 @@ struct TableOfContents {
   std::vector<Section> sections;
 };
 
-struct Field {
-  // FIXME(syoyo): Do we need 4 bytes padding as done in pxrUSD?
-  // uint32_t padding_;
+//struct Field {
+//  // FIXME(syoyo): Do we need 4 bytes padding as done in pxrUSD?
+//  // uint32_t padding_;
+//
+//  crate::TokenIndex token_index;
+//  crate::ValueRep value_rep;
+//};
 
-  crate::TokenIndex token_index;
-  crate::ValueRep value_rep;
-};
-
+#if 0
 // For unordered_map
 
 // https://stackoverflow.com/questions/8513911/how-to-create-a-good-hash-combine-with-64-bit-output-inspired-by-boosthash-co
@@ -213,13 +214,14 @@ struct FieldSetHasher {
     return seed;
   }
 };
+#endif
 
 class Packer {
  public:
   crate::TokenIndex AddToken(const Token &token);
   crate::StringIndex AddString(const std::string &str);
   crate::PathIndex AddPath(const Path &path);
-  crate::FieldIndex AddField(const Field &field);
+  crate::FieldIndex AddField(const crate::Field &field);
   crate::FieldSetIndex AddFieldSet(
       const std::vector<crate::FieldIndex> &field_indices);
 
@@ -229,18 +231,18 @@ class Packer {
   std::unordered_map<Token, crate::TokenIndex, TokenHasher, TokenKeyEqual>
       token_to_index_map;
   std::unordered_map<std::string, crate::StringIndex> string_to_index_map;
-  std::unordered_map<Path, crate::PathIndex, PathHasher, PathKeyEqual>
+  std::unordered_map<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual>
       path_to_index_map;
-  std::unordered_map<Field, crate::FieldIndex, FieldHasher, FieldKeyEqual>
+  std::unordered_map<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual>
       field_to_index_map;
   std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex,
-                     FieldSetHasher>
+                     crate::FieldSetHasher>
       fieldset_to_index_map;
 
   std::vector<Token> tokens_;
   std::vector<std::string> strings_;
   std::vector<Path> paths_;
-  std::vector<Field> fields_;
+  std::vector<crate::Field> fields_;
   std::vector<crate::FieldIndex>
       fieldsets_;  // flattened 1D array of FieldSets. Each span is terminated
                    // by Index()(= ~0)
@@ -282,7 +284,7 @@ crate::PathIndex Packer::AddPath(const Path &path) {
   return path_to_index_map[path];
 }
 
-crate::FieldIndex Packer::AddField(const Field &field) {
+crate::FieldIndex Packer::AddField(const crate::Field &field) {
   if (field_to_index_map.count(field)) {
     return field_to_index_map[field];
   }
