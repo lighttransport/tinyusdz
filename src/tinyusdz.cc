@@ -268,7 +268,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   StreamReader sr(addr, length, swap_endian);
 
-  usdc::Reader reader(&sr, options.num_threads);
+  usdc::USDCReader reader(&sr, options.num_threads);
 
   if (!reader.ReadUSDC()) {
     if (warn) {

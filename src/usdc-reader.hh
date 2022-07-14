@@ -14,26 +14,25 @@ namespace usdc {
 ///
 /// USDC(Crate) reader
 ///
-class Reader {
+class USDCReader {
  public:
-  Reader(StreamReader *sr, int num_threads = -1) ;
-  ~Reader();
+  USDCReader(StreamReader *sr, int num_threads = -1);
+  ~USDCReader();
 
   bool ReadUSDC();
 
+  bool ReconstructScene(Scene *scene);
+
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const;
-
-  bool ReconstructScene(Scene *scene);
 
   std::string GetError();
   std::string GetWarning();
 
  private:
   class Impl;
-  Impl *impl_;
-
+  Impl *impl_{};
 };
 
-} // namespace usdc
-} // namespace tinyusdz
+}  // namespace usdc
+}  // namespace tinyusdz
