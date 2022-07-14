@@ -54,8 +54,8 @@ option(TINYUSDZ_PRODUCTION_BUILD
 option(TINYUSDZ_WITH_MODULE_USDA_PARSER "Build with USDA parser feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
 
-# USDC(Crate binary) parser is mandatory in most situation, so this option is primarily for developer build.
-option(TINYUSDZ_WITH_MODULE_USDC_PARSER "Build with USDC parser feature" ON)
+# USDC(Crate binary) reader is mandatory in most situation, so this option is primarily for developer build.
+option(TINYUSDZ_WITH_MODULE_USDC_READER "Build with USDC reader feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 # -------------
 
@@ -150,9 +150,10 @@ endif()
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
