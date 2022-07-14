@@ -19,7 +19,10 @@
 
 /// \brief Whether or not the database should thread safe.
 /// \detail This is \c true by default, change it via CMake option \c FOONATHAN_STRING_ID_MULTITHREADED.
+#ifdef __wasi__
+#else
 #define FOONATHAN_STRING_ID_MULTITHREADED 1
+#endif
 
 //=== compatibility ===//
 #define FOONATHAN_IMPL_HAS_NOEXCEPT 0

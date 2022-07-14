@@ -22,6 +22,8 @@ list(
   ../../src/primvar.cc
   ../../src/usda-parser.cc
   ../../src/usda-writer.cc
+  ../../src/usdc-parser.cc
+  ../../src/usdc-writer.cc
   ../../src/image-loader.cc
   ../../src/usdObj.cc
 )
@@ -41,5 +43,7 @@ set(TINYUSDZ_DEP_SOURCES
 add_executable(${PROJECT_NAME} ${MAIN_SOURCE} ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE ../../src/external/ryu)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../src/external/fast_float/include)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../src/)
 
 #set_target_properties(${PROJECT_NAME} PROPERTIES CXX_EXCEPTIONS OFF)
