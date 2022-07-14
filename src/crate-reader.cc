@@ -7,20 +7,12 @@
 
 #include "crate-reader.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_PARSER)
-
 #ifdef __wasi__
 #else
 #include <thread>
 #endif
 
-#include <unordered_map>
 #include <unordered_set>
-
-
-#include "prim-types.hh"
-#include "tinyusdz.hh"
-#include "value-type.hh"
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
@@ -28,8 +20,11 @@
 #include "lz4-compression.hh"
 #include "path-util.hh"
 #include "pprinter.hh"
+#include "prim-types.hh"
 #include "stream-reader.hh"
+#include "tinyusdz.hh"
 #include "value-pprint.hh"
+#include "value-type.hh"
 
 //
 #ifdef __clang__
@@ -47,22 +42,22 @@
 
 #ifdef TINYUSDZ_PRODUCTION_BUILD
 // Do not include full filepath for privacy.
-#define PUSH_ERROR(s)                                               \
-  {                                                                 \
-    std::ostringstream ss;                                          \
+#define PUSH_ERROR(s)                                                \
+  {                                                                  \
+    std::ostringstream ss;                                           \
     ss << "[crate-reader] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    _err += ss.str() + "\n";                                        \
-  }                                                                 \
+    ss << s;                                                         \
+    _err += ss.str() + "\n";                                         \
+  }                                                                  \
   while (0)
 
-#define PUSH_WARN(s)                                                \
-  {                                                                 \
-    std::ostringstream ss;                                          \
+#define PUSH_WARN(s)                                                 \
+  {                                                                  \
+    std::ostringstream ss;                                           \
     ss << "[crate-reader] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    _warn += ss.str() + "\n";                                       \
-  }                                                                 \
+    ss << s;                                                         \
+    _warn += ss.str() + "\n";                                        \
+  }                                                                  \
   while (0)
 #else
 #define PUSH_ERROR(s)                                              \
@@ -104,6 +99,8 @@ namespace crate {
 constexpr char kTypeName[] = "typeName";
 constexpr char kToken[] = "Token";
 constexpr char kDefault[] = "default";
+
+namespace {
 
 template <class Int>
 static inline bool ReadCompressedInts(const StreamReader *sr, Int *out,
@@ -151,405 +148,98 @@ static inline bool ReadIndices(const StreamReader *sr,
   return true;
 }
 
-namespace {
+} // namespace 
 
-///
-/// Intermediate Node data structure.
-/// This does not contain leaf node inormation.
-///
-class Node {
- public:
-  // -2 = initialize as invalid node
-  Node() : _parent(-2) {}
-
-  Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
-
-  int64_t GetParent() const { return _parent; }
-
-  const std::vector<size_t> &GetChildren() const { return _children; }
-
-  ///
-  /// child_name is used when reconstructing scene graph.
-  ///
-  void AddChildren(const std::string &child_name, size_t node_index) {
-    assert(_primChildren.count(child_name) == 0);
-    _primChildren.emplace(child_name);
-    _children.push_back(node_index);
+//
+// --
+//
+CrateReader::CrateReader(StreamReader *sr, int num_threads) : _sr(sr) {
+  if (num_threads == -1) {
+    num_threads = std::max(1, int(std::thread::hardware_concurrency()));
+    PUSH_WARN("# of thread to use: " << std::to_string(num_threads));
   }
-
-  ///
-  /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
-  /// this node is `bora`)
-  ///
-  // std::string GetFullPath() const { return _path.full_path_name(); }
-
-  ///
-  /// Get local path
-  ///
-  std::string GetLocalPath() const { return _path.full_path_name(); }
-
-  const Path &GetPath() const { return _path; }
-
-  //crate::CrateDataType GetNodeDataType() const { return _node_type; }
-
-  const std::unordered_set<std::string> &GetPrimChildren() const {
-    return _primChildren;
-  }
-
-  void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
-
-  const value::dict &GetAssetInfo() const { return _assetInfo; }
-
- private:
-  int64_t
-      _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
-  std::vector<size_t> _children;                  // index to child nodes.
-  std::unordered_set<std::string> _primChildren;  // List of name of child nodes
-
-  Path _path;  // local path
-  value::dict _assetInfo;
-
-  //value::TypeId _node_type;
-  //NodeType _node_type;
-};
-
-} // namespace
-
-class Reader::Impl {
- public:
-  Impl(StreamReader *sr, int num_threads) : _sr(sr) {
-    if (num_threads == -1) {
-      num_threads = std::max(1, int(std::thread::hardware_concurrency()));
-      PUSH_WARN("# of thread to use: " << std::to_string(num_threads));
-    }
 
 #if defined(__wasi__)
-    PUSH_WARN("Threading is disabled for WASI build.");
-    num_threads = 1;
+  PUSH_WARN("Threading is disabled for WASI build.");
+  num_threads = 1;
 #endif
 
-    // Limit to 1024 threads.
-    _num_threads = std::min(1024, num_threads);
-  }
+  // Limit to 1024 threads.
+  _num_threads = std::min(1024, num_threads);
+}
 
-  bool ReadBootStrap();
-  bool ReadTOC();
+CrateReader::~CrateReader() {}
 
-  // Read known sections
-  bool ReadPaths();
-  bool ReadTokens();
-  bool ReadStrings();
-  bool ReadFields();
-  bool ReadFieldSets();
-  bool ReadSpecs();
+std::string CrateReader::GetError() { return _err; }
 
-  ///
-  /// Read TOC section
-  ///
-  bool ReadSection(crate::Section *s);
+std::string CrateReader::GetWarning() { return _warn; }
 
-  const value::token GetToken(crate::Index token_index);
-  const value::token GetToken(crate::Index token_index) const;
-  const value::token GetStringToken(crate::Index string_index);
-
-  ///
-  ///
-  ///
-
-
-  bool HasField(const std::string &key) const {
-    // Simple linear search
-    for (const auto &field : _fields) {
-      const value::token field_name = GetToken(field.token_index);
-      if (field_name.str().compare(key) == 0) {
+bool CrateReader::HasField(const std::string &key) const {
+  // Simple linear search
+  for (const auto &field : _fields) {
+    if (auto fv = GetToken(field.token_index)) {
+      if (fv.value().str().compare(key) == 0) {
         return true;
       }
     }
-    return false;
   }
+  return false;
+}
 
-  bool GetField(crate::Index index, crate::Field &&field) const {
-    if (index.value <= _fields.size()) {
-      field = _fields[index.value];
-      return true;
-    } else {
-      return false;
-    }
+nonstd::optional<crate::Field> CrateReader::GetField(crate::Index index) const {
+  if (index.value <= _fields.size()) {
+    return _fields[index.value];
+  } else {
+    return nonstd::nullopt;
   }
+}
 
-  std::string GetFieldString(crate::Index index) {
-    if (index.value <= _fields.size()) {
-      // ok
-    } else {
-      return "#INVALID field index#";
-    }
-
-    const crate::Field &f = _fields[index.value];
-
-    std::string s =
-        GetToken(f.token_index).str() + ":" + f.value_rep.GetStringRepr();
-
-    return s;
-  }
-
-  Path GetPath(crate::Index index) {
-    if (index.value <= _paths.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index?");
-      return Path();
-    }
-
-    const Path &p = _paths[index.value];
-
-    return p;
-  }
-
-  std::string GetPathString(crate::Index index) {
-    if (index.value <= _paths.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index");
-      return "#INVALID path index#";
-    }
-
-    const Path &p = _paths[index.value];
-
-    return p.full_path_name();
-  }
-
-  std::string GetSpecString(crate::Index index) {
-    if (index.value <= _specs.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index");
-      return "#INVALID spec index#";
-    }
-
-    const crate::Spec &spec = _specs[index.value];
-
-    std::string path_str = GetPathString(spec.path_index);
-    std::string specty_str = to_string(spec.spec_type);
-
-    return "[Spec] path: " + path_str +
-           ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
-           ", spec_type: " + specty_str;
-  }
-
-  ///
-  /// Methods for reconstructing `Scene` object
-  ///
-
-  // In-memory storage for a single "spec" -- prim, property, etc.
-  typedef std::pair<std::string, crate::CrateValue> FieldValuePair;
-  typedef std::vector<FieldValuePair> FieldValuePairVector;
-
-  ///
-  /// Find if a field with (`name`, `tyname`) exists in FieldValuePairVector.
-  ///
-  bool HasFieldValuePair(const FieldValuePairVector &fvs,
-                         const std::string &name, const std::string &tyname) {
-    for (const auto &fv : fvs) {
-      if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  ///
-  /// Find if a field with `name`(type can be arbitrary) exists in
-  /// FieldValuePairVector.
-  ///
-  bool HasFieldValuePair(const FieldValuePairVector &fvs,
-                         const std::string &name) {
-    for (const auto &fv : fvs) {
-      if (fv.first == name) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
-      const FieldValuePairVector &fvs, const std::string &name,
-      const std::string &tyname) {
-    for (const auto &fv : fvs) {
-      if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
-        return fv;
-      }
-    }
-
-    return nonstd::make_unexpected("FieldValuePair not found with name: `" +
-                                   name + "` and specified type: `" + tyname +
-                                   "`");
-  }
-
-  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
-      const FieldValuePairVector &fvs, const std::string &name) {
-    for (const auto &fv : fvs) {
-      if (fv.first == name) {
-        return fv;
-      }
-    }
-
-    return nonstd::make_unexpected("FieldValuePair not found with name: `" +
-                                   name + "`");
-  }
-
-  // `_live_fieldsets` contains unpacked value keyed by fieldset index.
-  // Used for reconstructing Scene object
-  // TODO(syoyo): Use unordered_map(need hash function)
-  std::map<crate::Index, FieldValuePairVector>
-      _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
-
-  bool BuildLiveFieldSets();
-
-  ///
-  /// Parse node's attribute from FieldValuePairVector.
-  ///
-  bool ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
-                      const std::string &prop_name);
-
-  ///
-  /// --------------------------------------------------
-  ///
-
-  std::string GetError() { return _err; }
-
-  std::string GetWarning() { return _warn; }
-
-  // Approximated memory usage in [mb]
-  size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
-
-  //
-  // APIs valid after successfull Parse()
-  //
-
-  size_t NumPaths() const { return _paths.size(); }
-
- private:
-  bool ReadCompressedPaths(const uint64_t ref_num_paths);
-
-  const StreamReader *_sr = nullptr;
-  std::string _err;
-  std::string _warn;
-
-  int _num_threads{1};
-
-  // Tracks the memory used(In advisorily manner since counting memory usage is
-  // done by manually, so not all memory consumption could be tracked)
-  size_t memory_used{0};  // in bytes.
-
-  // Header(bootstrap)
-  uint8_t _version[3] = {0, 0, 0};
-
-  crate::TableOfContents _toc;
-
-  int64_t _toc_offset{0};
-
-  // index to _toc.sections
-  int64_t _tokens_index{-1};
-  int64_t _paths_index{-1};
-  int64_t _strings_index{-1};
-  int64_t _fields_index{-1};
-  int64_t _fieldsets_index{-1};
-  int64_t _specs_index{-1};
-
-  std::vector<value::token> _tokens;
-  std::vector<crate::Index> _string_indices;
-  std::vector<crate::Field> _fields;
-  std::vector<crate::Index> _fieldset_indices;
-  std::vector<crate::Spec> _specs;
-  std::vector<Path> _paths;
-
-  std::vector<Node> _nodes;  // [0] = root node
-
-  bool BuildDecompressedPathsImpl(
-      std::vector<uint32_t> const &pathIndexes,
-      std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
-
-  bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
-
-  bool UnpackInlinedValueRep(const crate::ValueRep &rep,
-                             crate::CrateValue *value);
-
-  //
-  // Construct node hierarchy.
-  //
-  bool BuildNodeHierarchy(std::vector<uint32_t> const &pathIndexes,
-                          std::vector<int32_t> const &elementTokenIndexes,
-                          std::vector<int32_t> const &jumps, size_t curIndex,
-                          int64_t parentNodeIndex);
-
-  //
-  // Reader util functions
-  //
-  bool ReadIndex(crate::Index *i);
-
-  // bool ReadToken(std::string *s);
-  bool ReadString(std::string *s);
-
-  bool ReadValueRep(crate::ValueRep *rep);
-
-  bool ReadPathArray(std::vector<Path> *d);
-  bool ReadStringArray(std::vector<std::string> *d);
-
-  // Dictionary
-  bool ReadDictionary(crate::CrateValue::Dictionary *d);
-
-  bool ReadTimeSamples(value::TimeSamples *d);
-
-  // integral array
-  template <typename T>
-  bool ReadIntArray(bool is_compressed, std::vector<T> *d);
-
-  bool ReadHalfArray(bool is_compressed, std::vector<value::half> *d);
-  bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
-  bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
-
-  bool ReadPathListOp(ListOp<Path> *d);
-  bool ReadTokenListOp(ListOp<value::token> *d);
-  //bool ReadReferenceListOp(ListOp<Referene> *d);
-};
-
-//
-// -- Impl
-//
-
-const value::token Reader::Impl::GetToken(crate::Index token_index) {
+const nonstd::optional<value::token> CrateReader::GetToken(
+    crate::Index token_index) const {
   if (token_index.value <= _tokens.size()) {
     return _tokens[token_index.value];
   } else {
-    PUSH_ERROR("Token index out of range: " + std::to_string(token_index.value));
+    return nonstd::nullopt;
+  }
+}
+
+// Get string token from string index.
+const nonstd::optional<value::token> CrateReader::GetStringToken(
+    crate::Index string_index) const {
+  if (string_index.value <= _string_indices.size()) {
+    crate::Index s_idx = _string_indices[string_index.value];
+    return GetToken(s_idx);
+  } else {
+    PUSH_ERROR("String index out of range: " +
+               std::to_string(string_index.value));
     return value::token();
   }
 }
 
-  const value::token Reader::Impl::GetToken(crate::Index token_index) const {
-    if (token_index.value <= _tokens.size()) {
-      return _tokens[token_index.value];
-    } else {
-      return value::token();
-    }
+nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
+  if (index.value <= _paths.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
   }
 
-  // Get string token from string index.
-  const value::token Reader::Impl::GetStringToken(crate::Index string_index) {
-    if (string_index.value <= _string_indices.size()) {
-      crate::Index s_idx = _string_indices[string_index.value];
-      return GetToken(s_idx);
-    } else {
-      PUSH_ERROR("String index out of range: " + std::to_string(string_index.value));
-      return value::token();
-    }
+  return _paths[index.value];
+}
+
+nonstd::optional<std::string> CrateReader::GetPathString(
+    crate::Index index) const {
+  if (index.value <= _paths.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
   }
 
+  const Path &p = _paths[index.value];
 
-bool Reader::Impl::ReadIndex(crate::Index *i) {
+  return p.full_path_name();
+}
+
+bool CrateReader::ReadIndex(crate::Index *i) {
   // string is serialized as StringIndex
   uint32_t value;
   if (!_sr->read4(&value)) {
@@ -560,22 +250,48 @@ bool Reader::Impl::ReadIndex(crate::Index *i) {
   return true;
 }
 
-bool Reader::Impl::ReadString(std::string *s) {
+bool CrateReader::ReadString(std::string *s) {
   // string is serialized as StringIndex
   crate::Index string_index;
   if (!ReadIndex(&string_index)) {
-    _err += "Failed to read Index for string data.\n";
+    PUSH_ERROR("Failed to read Index for string data.");
     return false;
   }
 
-  (*s) = GetStringToken(string_index).str();
+  if (auto tok = GetStringToken(string_index)) {
+    (*s) = tok.value().str();
+    return true;
+  }
 
-  return true;
+  PUSH_ERROR("Invalid StringIndex.");
+  return false;
 }
 
-bool Reader::Impl::ReadValueRep(crate::ValueRep *rep) {
+nonstd::optional<std::string> CrateReader::GetSpecString(
+    crate::Index index) const {
+  if (index.value <= _specs.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
+  }
+
+  const crate::Spec &spec = _specs[index.value];
+
+  if (auto pathv = GetPathString(spec.path_index)) {
+    std::string path_str = pathv.value();
+    std::string specty_str = to_string(spec.spec_type);
+
+    return "[Spec] path: " + path_str +
+           ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
+           ", spec_type: " + specty_str;
+  }
+
+  return nonstd::nullopt;
+}
+
+bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
   if (!_sr->read8(reinterpret_cast<uint64_t *>(rep))) {
-    _err += "Failed to read ValueRep.\n";
+    PUSH_ERROR("Failed to read ValueRep.");
     return false;
   }
 
@@ -585,7 +301,7 @@ bool Reader::Impl::ReadValueRep(crate::ValueRep *rep) {
 }
 
 template <typename T>
-bool Reader::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
+bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -656,8 +372,8 @@ bool Reader::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   }
 }
 
-bool Reader::Impl::ReadHalfArray(bool is_compressed,
-                                 std::vector<value::half> *d) {
+bool CrateReader::ReadHalfArray(bool is_compressed,
+                                std::vector<value::half> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -780,7 +496,7 @@ bool Reader::Impl::ReadHalfArray(bool is_compressed,
   return true;
 }
 
-bool Reader::Impl::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
+bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -899,7 +615,7 @@ bool Reader::Impl::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   return true;
 }
 
-bool Reader::Impl::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
+bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -1018,7 +734,7 @@ bool Reader::Impl::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   return true;
 }
 
-bool Reader::Impl::ReadTimeSamples(value::TimeSamples *d) {
+bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   (void)d;
 
   // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
@@ -1112,12 +828,12 @@ bool Reader::Impl::ReadTimeSamples(value::TimeSamples *d) {
   return true;
 }
 
-bool Reader::Impl::ReadStringArray(std::vector<std::string> *d) {
+bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<std::string> &result) -> bool {
     uint64_t n;
     if (!_sr->read8(&n)) {
-      _err += "Failed to read # of elements in ListOp.\n";
+      PUSH_ERROR("Failed to read # of elements.");
       return false;
     }
 
@@ -1126,14 +842,18 @@ bool Reader::Impl::ReadStringArray(std::vector<std::string> *d) {
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
-      _err += "Failed to read STRING_VECTOR data.\n";
+      PUSH_ERROR("Failed to read STRING_VECTOR data.");
       return false;
     }
 
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetStringToken(ivalue[i]).str();
+      if (auto v = GetStringToken(ivalue[i])) {
+        result[i] = v.value().str();
+      } else {
+        PUSH_ERROR("Invalid StringIndex.");
+      }
     }
 
     return true;
@@ -1141,7 +861,6 @@ bool Reader::Impl::ReadStringArray(std::vector<std::string> *d) {
 
   std::vector<std::string> items;
   if (!ReadFn(items)) {
-    _err += "Failed to read String vector.\n";
     return false;
   }
 
@@ -1150,7 +869,7 @@ bool Reader::Impl::ReadStringArray(std::vector<std::string> *d) {
   return true;
 }
 
-bool Reader::Impl::ReadPathArray(std::vector<Path> *d) {
+bool CrateReader::ReadPathArray(std::vector<Path> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
     uint64_t n;
@@ -1171,7 +890,12 @@ bool Reader::Impl::ReadPathArray(std::vector<Path> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetPath(ivalue[i]);
+      if (auto pv = GetPath(ivalue[i])) {
+        result[i] = pv.value();
+      } else {
+        PUSH_ERROR("Invalid Index for Path.");
+        return false;
+      }
     }
 
     return true;
@@ -1188,7 +912,7 @@ bool Reader::Impl::ReadPathArray(std::vector<Path> *d) {
   return true;
 }
 
-bool Reader::Impl::ReadTokenListOp(ListOp<value::token> *d) {
+bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
@@ -1220,7 +944,11 @@ bool Reader::Impl::ReadTokenListOp(ListOp<value::token> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetToken(ivalue[i]);
+      if (auto v = GetToken(ivalue[i])) {
+        result[i] = v.value();
+      } else {
+        return false;
+      }
     }
 
     return true;
@@ -1289,11 +1017,11 @@ bool Reader::Impl::ReadTokenListOp(ListOp<value::token> *d) {
   return true;
 }
 
-bool Reader::Impl::ReadPathListOp(ListOp<Path> *d) {
+bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
-    _err += "Failed to read ListOpHeader\n";
+    PUSH_ERROR("Failed to read ListOpHeader.");
     return false;
   }
 
@@ -1305,7 +1033,7 @@ bool Reader::Impl::ReadPathListOp(ListOp<Path> *d) {
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
     uint64_t n;
     if (!_sr->read8(&n)) {
-      _err += "Failed to read # of elements in ListOp.\n";
+      PUSH_ERROR("Failed to read # of elements in ListOp.");
       return false;
     }
 
@@ -1314,14 +1042,19 @@ bool Reader::Impl::ReadPathListOp(ListOp<Path> *d) {
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
-      _err += "Failed to read ListOp data.\n";
+      PUSH_ERROR("Failed to read ListOp data..");
       return false;
     }
 
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetPath(ivalue[i]);
+      if (auto pv = GetPath(ivalue[i])) {
+        result[i] = pv.value();
+      } else {
+        PUSH_ERROR("Invalid Index for Path.");
+        return false;
+      }
     }
 
     return true;
@@ -1390,7 +1123,7 @@ bool Reader::Impl::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
-bool Reader::Impl::ReadDictionary(crate::CrateValue::Dictionary *d) {
+bool CrateReader::ReadDictionary(crate::CrateValue::Dictionary *d) {
   crate::CrateValue::Dictionary dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
@@ -1455,8 +1188,8 @@ bool Reader::Impl::ReadDictionary(crate::CrateValue::Dictionary *d) {
   return true;
 }
 
-bool Reader::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
-                                         crate::CrateValue *value) {
+bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
+                                        crate::CrateValue *value) {
   if (!rep.IsInlined()) {
     PUSH_ERROR("ValueRep must be inlined value representation.");
     return false;
@@ -1497,28 +1230,44 @@ bool Reader::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
       // AssetPath = std::string(storage format is TokenIndex).
-      std::string str = GetToken(crate::Index(d)).str();
+      if (auto v = GetToken(crate::Index(d))) {
+        std::string str = v.value().str();
 
-      value::asset_path assetp(str);
-      value->Set(assetp);
-      return true;
+        value::asset_path assetp(str);
+        value->Set(assetp);
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for AssetPath.");
+        return false;
+      }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-      value::token tok = GetToken(crate::Index(d));
+      if (auto v = GetToken(crate::Index(d))) {
+        value::token tok = v.value();
 
-      DCOUT("value.token = " << tok);
+        DCOUT("value.token = " << tok);
 
-      value->Set(tok);
+        value->Set(tok);
 
-      return true;
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for Token.");
+        return false;
+      }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
-      std::string str = GetStringToken(crate::Index(d)).str();
-      DCOUT("value.string = " << str);
+      if (auto v = GetStringToken(crate::Index(d))) {
+        std::string str = v.value().str();
 
-      value->Set(str);
+        DCOUT("value.string = " << str);
 
-      return true;
+        value->Set(str);
+
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for StringToken.");
+        return false;
+      }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER: {
       if (d >= static_cast<int>(Specifier::Invalid)) {
@@ -1853,7 +1602,7 @@ bool Reader::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
 #if 0
 template<T>
-Reader::Impl::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out) {
+CrateReader::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out) {
   uint64_t n;
   if (!_sr->read8(&n)) {
     PUSH_ERROR("Failed to read the number of array elements.");
@@ -1872,8 +1621,8 @@ Reader::Impl::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out
 }
 #endif
 
-bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
-                                  crate::CrateValue *value) {
+bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
+                                 crate::CrateValue *value) {
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
   }
@@ -1885,11 +1634,11 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
   const auto dty = tyRet.value();
 
-#define TODO_IMPLEMENT(__dty)                                     \
-  { \
-  PUSH_ERROR("TODO: '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
-             "' data is not yet implemented.");                               \
-  return false;                                                             \
+#define TODO_IMPLEMENT(__dty)                                            \
+  {                                                                      \
+    PUSH_ERROR("TODO: '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+               "' data is not yet implemented.");                        \
+    return false;                                                        \
   }
 
 #define COMPRESS_UNSUPPORTED_CHECK(__dty)                                     \
@@ -1900,19 +1649,18 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
   }
 
 #define NON_ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
-  if (!rep.IsArray()) {                                                       \
+  if (!rep.IsArray()) {                                                      \
     PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
                "' data is not yet supported.");                              \
     return false;                                                            \
   }
 
-#define ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
-  if (rep.IsArray()) {                                                       \
+#define ARRAY_UNSUPPORTED_CHECK(__dty)                                      \
+  if (rep.IsArray()) {                                                      \
     PUSH_ERROR("Array of '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
-               "' data type is not yet supported.");                              \
-    return false;                                                            \
+               "' data type is not yet supported.");                        \
+    return false;                                                           \
   }
-
 
   // payload is the offset to data.
   uint64_t offset = rep.GetPayload();
@@ -1928,7 +1676,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
@@ -1939,7 +1686,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
@@ -1962,9 +1708,12 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::asset_path> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
-                         << ")");
-          apaths[i] = value::asset_path(GetToken(v[i]).str());
+          if (auto tokv = GetToken(v[i])) {
+            DCOUT("Token[" << i << "] = " << tokv.value());
+            apaths[i] = value::asset_path(tokv.value().str());
+          } else {
+            return false;
+          }
         }
 
         value->Set(apaths);
@@ -1974,7 +1723,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
@@ -1996,17 +1744,18 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::token> tokens(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
-                         << ")");
-          tokens[i] = GetToken(v[i]);
+          if (auto tokv = GetToken(v[i])) {
+            DCOUT("Token[" << i << "] = " << tokv.value());
+            tokens[i] = tokv.value();
+          } else {
+            return false;
+          }
         }
 
         value->Set(tokens);
         return true;
       } else {
-
         return false;
-
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
@@ -2030,7 +1779,11 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<std::string> stringArray(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          stringArray[i] = GetStringToken(v[i]).str();
+          if (auto stok = GetStringToken(v[i])) {
+            stringArray[i] = stok.value().str();
+          } else {
+            return false;
+          }
         }
 
         DCOUT("stringArray = " << stringArray);
@@ -2045,9 +1798,9 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY:
-    {
-      PUSH_ERROR("TODO: Specifier/Permission/Variability. isArray " << rep.IsArray() << ", isCompressed " << rep.IsCompressed());
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY: {
+      PUSH_ERROR("TODO: Specifier/Permission/Variability. isArray "
+                 << rep.IsArray() << ", isCompressed " << rep.IsCompressed());
       return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
@@ -2076,7 +1829,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         return false;
       }
-
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
@@ -2100,7 +1852,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         return false;
       }
-
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
       if (rep.IsArray()) {
@@ -2136,7 +1887,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
-
       if (rep.IsArray()) {
         std::vector<uint64_t> v;
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -2170,7 +1920,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
-
       if (rep.IsArray()) {
         std::vector<value::half> v;
         if (!ReadHalfArray(rep.IsCompressed(), &v)) {
@@ -2182,13 +1931,11 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       } else {
-
         PUSH_ERROR("Non-inlined, non-array Half value is invalid.");
         return false;
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
-
       if (rep.IsArray()) {
         std::vector<float> v;
         if (!ReadFloatArray(rep.IsCompressed(), &v)) {
@@ -2357,7 +2104,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::quatd> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quatd), size_t(n) * sizeof(value::quatd),
+        if (!_sr->read(size_t(n) * sizeof(value::quatd),
+                       size_t(n) * sizeof(value::quatd),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
           return false;
@@ -2384,7 +2132,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF: {
-
       if (rep.IsArray()) {
         uint64_t n;
         if (!_sr->read8(&n)) {
@@ -2393,7 +2140,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::quatf> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quatf), size_t(n) * sizeof(value::quatf),
+        if (!_sr->read(size_t(n) * sizeof(value::quatf),
+                       size_t(n) * sizeof(value::quatf),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
           return false;
@@ -2428,7 +2176,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::quath> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quath), size_t(n) * sizeof(value::quath),
+        if (!_sr->read(size_t(n) * sizeof(value::quath),
+                       size_t(n) * sizeof(value::quath),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quath array.");
           return false;
@@ -2465,7 +2214,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::double2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double2), size_t(n) * sizeof(value::double2),
+        if (!_sr->read(size_t(n) * sizeof(value::double2),
+                       size_t(n) * sizeof(value::double2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double2 array.");
           return false;
@@ -2501,7 +2251,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::float2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float2), size_t(n) * sizeof(value::float2),
+        if (!_sr->read(size_t(n) * sizeof(value::float2),
+                       size_t(n) * sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float2 array.");
           return false;
@@ -2537,7 +2288,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::half2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half2), size_t(n) * sizeof(value::half2),
+        if (!_sr->read(size_t(n) * sizeof(value::half2),
+                       size_t(n) * sizeof(value::half2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half2 array.");
           return false;
@@ -2572,7 +2324,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::int2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int2), size_t(n) * sizeof(value::int2),
+        if (!_sr->read(size_t(n) * sizeof(value::int2),
+                       size_t(n) * sizeof(value::int2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int2 array.");
           return false;
@@ -2607,7 +2360,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::double3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double3), size_t(n) * sizeof(value::double3),
+        if (!_sr->read(size_t(n) * sizeof(value::double3),
+                       size_t(n) * sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double3 array.");
           return false;
@@ -2642,7 +2396,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::float3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float3), size_t(n) * sizeof(value::float3),
+        if (!_sr->read(size_t(n) * sizeof(value::float3),
+                       size_t(n) * sizeof(value::float3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float3 array.");
           return false;
@@ -2678,7 +2433,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::half3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half3), size_t(n) * sizeof(value::half3),
+        if (!_sr->read(size_t(n) * sizeof(value::half3),
+                       size_t(n) * sizeof(value::half3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half3 array.");
           return false;
@@ -2713,7 +2469,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::int3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int3), size_t(n) * sizeof(value::int3),
+        if (!_sr->read(size_t(n) * sizeof(value::int3),
+                       size_t(n) * sizeof(value::int3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int3 array.");
           return false;
@@ -2748,7 +2505,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::double4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double4), size_t(n) * sizeof(value::double4),
+        if (!_sr->read(size_t(n) * sizeof(value::double4),
+                       size_t(n) * sizeof(value::double4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double4 array.");
           return false;
@@ -2783,7 +2541,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::float4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float4), size_t(n) * sizeof(value::float4),
+        if (!_sr->read(size_t(n) * sizeof(value::float4),
+                       size_t(n) * sizeof(value::float4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float4 array.");
           return false;
@@ -2818,7 +2577,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::half4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half4), size_t(n) * sizeof(value::half4),
+        if (!_sr->read(size_t(n) * sizeof(value::half4),
+                       size_t(n) * sizeof(value::half4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half4 array.");
           return false;
@@ -2853,7 +2613,8 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::int4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int4), size_t(n) * sizeof(value::int4),
+        if (!_sr->read(size_t(n) * sizeof(value::int4),
+                       size_t(n) * sizeof(value::int4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int4 array.");
           return false;
@@ -2937,7 +2698,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       // std::vector<Index>
       uint64_t n;
@@ -2958,7 +2718,11 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
       std::vector<value::token> tokens(indices.size());
       for (size_t i = 0; i < indices.size(); i++) {
-        tokens[i] = GetToken(indices[i]);
+        if (auto tokv = GetToken(indices[i])) {
+          tokens[i] = tokv.value();
+        } else {
+          return false;
+        }
       }
 
       DCOUT("TokenVector = " << tokens);
@@ -2968,7 +2732,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       value::TimeSamples ts;
@@ -2982,7 +2745,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR: {
-
       std::vector<double> v;
       if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
         _err += "Failed to read DoubleVector value\n";
@@ -2996,7 +2758,6 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       std::vector<std::string> v;
@@ -3042,7 +2803,7 @@ bool Reader::Impl::UnpackValueRep(const crate::ValueRep &rep,
   return false;
 }
 
-bool Reader::Impl::BuildDecompressedPathsImpl(
+bool CrateReader::BuildDecompressedPathsImpl(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath) {
@@ -3108,7 +2869,7 @@ bool Reader::Impl::BuildDecompressedPathsImpl(
 }
 
 // TODO(syoyo): Refactor
-bool Reader::Impl::BuildNodeHierarchy(
+bool CrateReader::BuildNodeHierarchy(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex,
@@ -3174,7 +2935,7 @@ bool Reader::Impl::BuildNodeHierarchy(
   return true;
 }
 
-bool Reader::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
+bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
   std::vector<uint32_t> pathIndexes;
   std::vector<int32_t> elementTokenIndexes;
   std::vector<int32_t> jumps;
@@ -3319,7 +3080,7 @@ bool Reader::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
   return true;
 }
 
-bool Reader::Impl::ReadSection(crate::Section *s) {
+bool CrateReader::ReadSection(crate::Section *s) {
   size_t name_len = crate::kSectionNameMaxLength + 1;
 
   if (name_len !=
@@ -3341,7 +3102,7 @@ bool Reader::Impl::ReadSection(crate::Section *s) {
   return true;
 }
 
-bool Reader::Impl::ReadTokens() {
+bool CrateReader::ReadTokens() {
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `TOKENS` section.\n";
     return false;
@@ -3457,7 +3218,7 @@ bool Reader::Impl::ReadTokens() {
   return true;
 }
 
-bool Reader::Impl::ReadStrings() {
+bool CrateReader::ReadStrings() {
   if ((_strings_index < 0) ||
       (_strings_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `STRINGS` section.\n";
@@ -3483,7 +3244,7 @@ bool Reader::Impl::ReadStrings() {
   return true;
 }
 
-bool Reader::Impl::ReadFields() {
+bool CrateReader::ReadFields() {
   if ((_fields_index < 0) || (_fields_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDS` section.\n";
     return false;
@@ -3587,14 +3348,16 @@ bool Reader::Impl::ReadFields() {
 
   DCOUT("num_fields = " << num_fields);
   for (size_t i = 0; i < num_fields; i++) {
-    DCOUT("field[" << i << "] name = " << GetToken(_fields[i].token_index)
-                   << ", value = " << _fields[i].value_rep.GetStringRepr());
+    if (auto tokv = GetToken(_fields[i].token_index)) {
+      DCOUT("field[" << i << "] name = " << tokv.value()
+                     << ", value = " << _fields[i].value_rep.GetStringRepr());
+    }
   }
 
   return true;
 }
 
-bool Reader::Impl::ReadFieldSets() {
+bool CrateReader::ReadFieldSets() {
   if ((_fieldsets_index < 0) ||
       (_fieldsets_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDSETS` section.\n";
@@ -3668,7 +3431,7 @@ bool Reader::Impl::ReadFieldSets() {
   return true;
 }
 
-bool Reader::Impl::BuildLiveFieldSets() {
+bool CrateReader::BuildLiveFieldSets() {
   for (auto fsBegin = _fieldset_indices.begin(),
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
        fsBegin != _fieldset_indices.end();
@@ -3690,11 +3453,16 @@ bool Reader::Impl::BuildLiveFieldSets() {
 
       DCOUT("fieldIndex = " << (fsBegin->value));
       auto const &field = _fields[fsBegin->value];
-      pairs[i].first = GetToken(field.token_index).str();
-      if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
-        PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
-                   << field.value_rep.GetStringRepr());
-        return false;
+      if (auto tokv = GetToken(field.token_index)) {
+        pairs[i].first = tokv.value().str();
+
+        if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
+          PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
+                     << field.value_rep.GetStringRepr());
+          return false;
+        }
+      } else {
+        PUSH_ERROR("Invalid token index.");
       }
     }
   }
@@ -3718,7 +3486,7 @@ bool Reader::Impl::BuildLiveFieldSets() {
   return true;
 }
 
-bool Reader::Impl::ReadSpecs() {
+bool CrateReader::ReadSpecs() {
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `SPECS` section.");
     return false;
@@ -3856,15 +3624,16 @@ bool Reader::Impl::ReadSpecs() {
                   << ", fieldset_index = " << _specs[i].fieldset_index.value
                   << ", spec_type = "
                   << tinyusdz::to_string(_specs[i].spec_type));
-    DCOUT("spec[" << i << "] string_repr = "
-                  << GetSpecString(crate::Index(uint32_t(i))));
+    if (auto specstr = GetSpecString(crate::Index(uint32_t(i)))) {
+      DCOUT("spec[" << i << "] string_repr = " << specstr.value());
+    }
   }
 #endif
 
   return true;
 }
 
-bool Reader::Impl::ReadPaths() {
+bool CrateReader::ReadPaths() {
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `PATHS` section.");
     return false;
@@ -3906,7 +3675,7 @@ bool Reader::Impl::ReadPaths() {
   return true;
 }
 
-bool Reader::Impl::ReadBootStrap() {
+bool CrateReader::ReadBootStrap() {
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
@@ -3959,7 +3728,7 @@ bool Reader::Impl::ReadBootStrap() {
   return true;
 }
 
-bool Reader::Impl::ReadTOC() {
+bool CrateReader::ReadTOC() {
   if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
     PUSH_ERROR("Invalid toc offset.");
     return false;
@@ -4015,9 +3784,67 @@ bool Reader::Impl::ReadTOC() {
   return true;
 }
 
-bool Reader::Impl::ParseAttribute(const FieldValuePairVector &fvs,
-                                  PrimAttrib *attr,
-                                  const std::string &prop_name) {
+///
+/// Find if a field with (`name`, `tyname`) exists in FieldValuePairVector.
+///
+bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
+                                    const std::string &name,
+                                    const std::string &tyname) {
+  for (const auto &fv : fvs) {
+    if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+///
+/// Find if a field with `name`(type can be arbitrary) exists in
+/// FieldValuePairVector.
+///
+bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
+                                    const std::string &name) {
+  for (const auto &fv : fvs) {
+    if (fv.first == name) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+nonstd::expected<CrateReader::FieldValuePair, std::string>
+CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
+                               const std::string &name,
+                               const std::string &tyname) {
+  for (const auto &fv : fvs) {
+    if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
+      return fv;
+    }
+  }
+
+  return nonstd::make_unexpected("FieldValuePair not found with name: `" +
+                                 name + "` and specified type: `" + tyname +
+                                 "`");
+}
+
+nonstd::expected<CrateReader::FieldValuePair, std::string>
+CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
+                               const std::string &name) {
+  for (const auto &fv : fvs) {
+    if (fv.first == name) {
+      return fv;
+    }
+  }
+
+  return nonstd::make_unexpected("FieldValuePair not found with name: `" +
+                                 name + "`");
+}
+
+bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
+                                 PrimAttrib *attr,
+                                 const std::string &prop_name) {
   bool success = false;
 
   DCOUT("fvs.size = " << fvs.size());
@@ -4129,26 +3956,26 @@ bool Reader::Impl::ParseAttribute(const FieldValuePairVector &fvs,
 
       DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
 
-#define PROC_SCALAR(__tyname, __ty)                   \
-  }                                                   \
-  else if (fv.second.GetTypeName() == __tyname) {     \
-    auto ret = fv.second.get_value<__ty>();           \
-    if (!ret) {                                       \
+#define PROC_SCALAR(__tyname, __ty)                             \
+  }                                                             \
+  else if (fv.second.GetTypeName() == __tyname) {               \
+    auto ret = fv.second.get_value<__ty>();                     \
+    if (!ret) {                                                 \
       PUSH_ERROR("Failed to decode " << __tyname << " value."); \
-      return false;                                   \
-    }                                                 \
-    attr->var.set_scalar(ret.value());                \
+      return false;                                             \
+    }                                                           \
+    attr->var.set_scalar(ret.value());                          \
     success = true;
 
-#define PROC_ARRAY(__tyname, __ty)                       \
-  }                                                      \
-  else if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) {        \
-    auto ret = fv.second.get_value<std::vector<__ty>>(); \
-    if (!ret) {                                          \
-      PUSH_ERROR("Failed to decode " << __tyname << "[] value.");  \
-      return false;                                      \
-    }                                                    \
-    attr->var.set_scalar(ret.value());                   \
+#define PROC_ARRAY(__tyname, __ty)                                  \
+  }                                                                 \
+  else if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) { \
+    auto ret = fv.second.get_value<std::vector<__ty>>();            \
+    if (!ret) {                                                     \
+      PUSH_ERROR("Failed to decode " << __tyname << "[] value.");   \
+      return false;                                                 \
+    }                                                               \
+    attr->var.set_scalar(ret.value());                              \
     success = true;
 
       if (0) {  // dummy
@@ -4197,16 +4024,15 @@ bool Reader::Impl::ParseAttribute(const FieldValuePairVector &fvs,
         PROC_ARRAY(value::kNormal3f, value::normal3f)
         PROC_ARRAY(value::kNormal3d, value::normal3d)
 
-        //PROC_ARRAY("Vec2fArray", value::float2)
-        //PROC_ARRAY("Vec3fArray", value::float3)
-        //PROC_ARRAY("Vec4fArray", value::float4)
-        //PROC_ARRAY("IntArray", int)
-        //PROC_ARRAY(kTokenArray, value::token)
+        // PROC_ARRAY("Vec2fArray", value::float2)
+        // PROC_ARRAY("Vec3fArray", value::float3)
+        // PROC_ARRAY("Vec4fArray", value::float4)
+        // PROC_ARRAY("IntArray", int)
+        // PROC_ARRAY(kTokenArray, value::token)
 
       } else {
         PUSH_ERROR("TODO: " + fv.second.GetTypeName());
       }
-
     }
   }
 
@@ -4219,121 +4045,5 @@ bool Reader::Impl::ParseAttribute(const FieldValuePairVector &fvs,
 }
 
 
-//
-// -- Interface --
-//
-Reader::Reader(StreamReader *sr, int num_threads) {
-  _impl = new Reader::Impl(sr, num_threads);
-}
-
-Reader::~Reader() {
-  delete _impl;
-  _impl = nullptr;
-}
-
-bool Reader::ReadTOC() { return _impl->ReadTOC(); }
-
-bool Reader::ReadBootStrap() { return _impl->ReadBootStrap(); }
-
-bool Reader::ReadTokens() { return _impl->ReadTokens(); }
-
-bool Reader::ReadStrings() { return _impl->ReadStrings(); }
-
-bool Reader::ReadFields() { return _impl->ReadFields(); }
-
-bool Reader::ReadFieldSets() { return _impl->ReadFieldSets(); }
-
-bool Reader::ReadPaths() { return _impl->ReadPaths(); }
-
-bool Reader::ReadSpecs() { return _impl->ReadSpecs(); }
-
-bool Reader::BuildLiveFieldSets() { return _impl->BuildLiveFieldSets(); }
-
-//bool Reader::ReconstructScene(Scene *scene) {
-//  return _impl->ReconstructScene(scene);
-//}
-
-std::string Reader::GetError() { return _impl->GetError(); }
-
-std::string Reader::GetWarning() { return _impl->GetWarning(); }
-
-size_t Reader::NumPaths() { return _impl->NumPaths(); }
-
-Path Reader::GetPath(crate::Index index) { return _impl->GetPath(index); }
-
-const value::token Reader::GetToken(crate::Index token_index) {
-  return _impl->GetToken(token_index);
-}
-
-const value::token Reader::GetToken(crate::Index token_index) const {
-  return _impl->GetToken(token_index);
-}
-
-}  // namespace usdc
+}  // namespace crate
 }  // namespace tinyusdz
-
-
-#else
-
-namespace tinyusdz {
-namespace usdc {
-
-//
-// -- Interface --
-//
-Reader::Reader(StreamReader *sr, int num_threads) {
-  (void)sr;
-  (void)num_threads;
-}
-
-Reader::~Reader() {
-}
-
-bool Reader::ReadTOC() { return false; }
-
-bool Reader::ReadBootStrap() { return false; }
-
-bool Reader::ReadTokens() { return false; }
-
-bool Reader::ReadStrings() { return false; }
-
-bool Reader::ReadFields() { return false; }
-
-bool Reader::ReadFieldSets() { return false; }
-
-bool Reader::ReadPaths() { return false; }
-
-bool Reader::ReadSpecs() { return false; }
-
-bool Reader::BuildLiveFieldSets() { return false; }
-
-//bool Reader::ReconstructScene(Scene *scene) {
-//  (void)scene;
-//  return false;
-//}
-
-std::string Reader::GetError() {
-  return "USDC parser feature is disabled in this build.\n";
-}
-
-std::string Reader::GetWarning() { return ""; }
-
-size_t Reader::NumPaths() { return 0; }
-
-Path Reader::GetPath(crate::Index index) {
-  (void)index;
-  return Path();
-}
-
-const value::token GetToken(crate::Index token_index) {
-  return value::token();
-}
-
-const value::token GetToken(crate::Index token_index) const {
-  return value::token();
-}
-
-}  // namespace usdc
-}  // namespace tinyusdz
-
-#endif

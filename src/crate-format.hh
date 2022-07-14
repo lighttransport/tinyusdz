@@ -34,6 +34,7 @@ constexpr size_t kSectionNameMaxLength = 15;
 constexpr char kTokenVector[] = "TokenVector";
 constexpr char kStringVector[] = "StringVector";
 
+
 // -- from USD ----------------------------------------------------------------
 
 //
@@ -156,7 +157,7 @@ struct PathIndex : Index { using Index::Index; };
 
 
 struct Field {
-  Index token_index;
+  TokenIndex token_index;
   ValueRep value_rep;
 };
 
@@ -174,6 +175,82 @@ struct Section {
   Section(char const *name, int64_t start, int64_t size);
   char name[kSectionNameMaxLength + 1];
   int64_t start, size;  // byte offset to section info and its data size
+};
+
+// For unordered_map
+
+// https://stackoverflow.com/questions/8513911/how-to-create-a-good-hash-combine-with-64-bit-output-inspired-by-boosthash-co
+// From CityHash code.
+template <class T>
+inline void hash_combine(std::size_t &seed, const T &v) {
+#ifdef __wasi__  // 32bit platform
+  // Use boost version.
+  std::hash<T> hasher;
+  seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+#else
+  std::hash<T> hasher;
+  const uint64_t kMul = 0x9ddfea08eb382d69ULL;
+  std::size_t a = (hasher(v) ^ seed) * kMul;
+  a ^= (a >> 47);
+  std::size_t b = (seed ^ a) * kMul;
+  b ^= (b >> 47);
+  seed = b * kMul;
+#endif
+}
+
+struct PathHasher {
+  size_t operator()(const Path &path) const {
+    size_t seed = std::hash<std::string>()(path.GetPrimPart());
+    hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
+    hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
+    hash_combine(seed, std::hash<bool>()(path.IsValid()));
+
+    return seed;
+  }
+};
+
+struct PathKeyEqual {
+  bool operator()(const Path &lhs, const Path &rhs) const {
+    bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
+    ret &= lhs.GetPropPart() == rhs.GetPropPart();
+    ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
+    ret &= lhs.IsValid() == rhs.IsValid();
+
+    return ret;
+  }
+};
+
+struct FieldHasher {
+  size_t operator()(const Field &field) const {
+    size_t seed = std::hash<uint32_t>()(field.token_index.value);
+    hash_combine(seed, std::hash<uint64_t>()(field.value_rep.GetData()));
+
+    return seed;
+  }
+};
+
+struct FieldKeyEqual {
+  bool operator()(const Field &lhs, const Field &rhs) const {
+    bool ret = lhs.token_index == rhs.token_index;
+    ret &= lhs.value_rep == rhs.value_rep;
+
+    return ret;
+  }
+};
+
+struct FieldSetHasher {
+  size_t operator()(const std::vector<crate::FieldIndex> &fieldset) const {
+    if (fieldset.empty()) {
+      return 0;
+    }
+
+    size_t seed = std::hash<uint32_t>()(fieldset[0].value);
+    for (size_t i = 1; i < fieldset.size(); i++) {
+      hash_combine(seed, std::hash<uint32_t>()(fieldset[i].value));
+    }
+
+    return seed;
+  }
 };
 
 //
