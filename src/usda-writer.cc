@@ -85,6 +85,7 @@ class Writer {
     return true;
   }
 
+#if 0
   bool WriteNode(std::ostream &ofs, const Node &node, uint32_t level) {
     if (node.type == NODE_TYPE_XFORM) {
       if ((node.index < 0) || (size_t(node.index) >= _scene.xforms.size())) {
@@ -124,6 +125,7 @@ class Writer {
 
     return true;
   }
+#endif
 
   const Scene &_scene;
 
@@ -142,6 +144,8 @@ class Writer {
 
 bool SaveAsUSDA(const std::string &filename, const Scene &scene,
                 std::string *warn, std::string *err) {
+
+  (void)warn;
 
   std::stringstream ss;
 
@@ -162,6 +166,7 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
   // TODO
   Writer writer(scene);
 
+#if 0 // TODO
   std::cout << "# of nodes: " << scene.nodes.size() << "\n";
 
   for (const auto &root : scene.nodes) {
@@ -177,6 +182,7 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
       return false;
     }
   }
+#endif
 
   std::ofstream ofs(filename);
   if (!ofs) {

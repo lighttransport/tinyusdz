@@ -51,7 +51,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "usda-parser.hh"
-#include "usdc-parser.hh"
+#include "usdc-reader.hh"
 
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
 
@@ -217,7 +217,7 @@ class Node {
 
   const Path &GetPath() const { return _path; }
 
-  NodeType GetNodeType() const { return _node_type; }
+  //NodeType GetNodeType() const { return _node_type; }
 
   const std::unordered_set<std::string> &GetPrimChildren() const {
     return _primChildren;
@@ -238,7 +238,8 @@ class Node {
   Path _path;  // local path
   value::dict _assetInfo;
 
-  NodeType _node_type;
+  //NodeType _node_type;
+
 };
 
 }  // namespace
@@ -267,19 +268,20 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   StreamReader sr(addr, length, swap_endian);
 
-  usdc::Parser parser(&sr, options.num_threads);
+  usdc::Reader reader(&sr, options.num_threads);
 
-  if (!parser.ReadBootStrap()) {
+  if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = parser.GetWarning();
+      (*warn) = reader.GetWarning();
     }
 
     if (err) {
-      (*err) = parser.GetError();
+      (*err) = reader.GetError();
     }
     return false;
   }
 
+#if 0
   if (!parser.ReadTOC()) {
     if (warn) {
       (*warn) = parser.GetWarning();
@@ -373,6 +375,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
       (*err) = parser.GetError();
     }
   }
+#endif
 
   //DCOUT("num_paths: " << std::to_string(parser.NumPaths()));
 
@@ -386,26 +389,26 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   // Create `Scene` object
   // std::cout << "reconstruct scene:\n";
   {
-    if (!parser.ReconstructScene(scene)) {
+    if (!reader.ReconstructScene(scene)) {
       if (warn) {
-        (*warn) = parser.GetWarning();
+        (*warn) = reader.GetWarning();
       }
 
       if (err) {
-        (*err) = parser.GetError();
+        (*err) = reader.GetError();
       }
       return false;
     }
   }
 
   if (warn) {
-    (*warn) = parser.GetWarning();
+    (*warn) = reader.GetWarning();
   }
 
   // TODO(syoyo): Return false?
   if (err) {
-    std::cout << "err msg = " << parser.GetError() << "\n";
-    (*err) = parser.GetError();
+    std::cout << "err msg = " << reader.GetError() << "\n";
+    (*err) = reader.GetError();
   }
 
   return true;
@@ -847,7 +850,7 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
         if (auto f = x.value.get<float>()) {
           theta = double(f.value());
         } else if (auto d = x.value.get<double>()) {
-          theta = d.value(); 
+          theta = d.value();
         } else {
           return false;
         }
@@ -861,7 +864,7 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
         if (auto f = x.value.get<float>()) {
           theta = double(f.value());
         } else if (auto d = x.value.get<double>()) {
-          theta = d.value(); 
+          theta = d.value();
         } else {
           return false;
         }
@@ -975,9 +978,9 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
 
 }
 
-static_assert(sizeof(crate::Index) == 4, "");
-static_assert(sizeof(crate::Field) == 16, "");
-static_assert(sizeof(crate::Spec) == 12, "");
+//static_assert(sizeof(crate::Index) == 4, "");
+//static_assert(sizeof(crate::Field) == 16, "");
+//static_assert(sizeof(crate::Spec) == 12, "");
 //static_assert(sizeof(Vec4h) == 8, "");
 //static_assert(sizeof(Vec2f) == 8, "");
 //static_assert(sizeof(Vec3f) == 12, "");
