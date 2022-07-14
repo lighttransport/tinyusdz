@@ -2,7 +2,6 @@
 // Copyright 2022 - Present Syoyo Fujita.
 //
 
-
 #include "usdc-writer.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
@@ -19,47 +18,55 @@
 #include <windows.h>  // include API for expanding a file path
 #endif
 
+#include <fstream>
+#include <iostream>
+#include <sstream>
+
 #include "crate-format.hh"
 #include "io-util.hh"
 #include "lz4-compression.hh"
 #include "token-type.hh"
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
-
 #ifdef TINYUSDZ_PRODUCTION_BUILD
 // Do not include full filepath for privacy.
-#define PUSH_ERROR(s) { \
-  std::ostringstream ss; \
-  ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  err_ += ss.str() + "\n"; \
-} while (0)
+#define PUSH_ERROR(s)                                               \
+  {                                                                 \
+    std::ostringstream ss;                                          \
+    ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
+    ss << s;                                                        \
+    err_ += ss.str() + "\n";                                        \
+  }                                                                 \
+  while (0)
 
 #if 0
-#define PUSH_WARN(s) { \
-  std::ostringstream ss; \
-  ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  warn_ += ss.str() + "\n"; \
-} while (0)
+#define PUSH_WARN(s)                                                \
+  {                                                                 \
+    std::ostringstream ss;                                          \
+    ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
+    ss << s;                                                        \
+    warn_ += ss.str() + "\n";                                       \
+  }                                                                 \
+  while (0)
 #endif
 #else
-#define PUSH_ERROR(s) { \
-  std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  err_ += ss.str() + "\n"; \
-} while (0)
+#define PUSH_ERROR(s)                                              \
+  {                                                                \
+    std::ostringstream ss;                                         \
+    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+    ss << s;                                                       \
+    err_ += ss.str() + "\n";                                       \
+  }                                                                \
+  while (0)
 
 #if 0
-#define PUSH_WARN(s) { \
-  std::ostringstream ss; \
-  ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  ss << s; \
-  warn_ += ss.str() + "\n"; \
-} while (0)
+#define PUSH_WARN(s)                                               \
+  {                                                                \
+    std::ostringstream ss;                                         \
+    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+    ss << s;                                                       \
+    warn_ += ss.str() + "\n";                                      \
+  }                                                                \
+  while (0)
 #endif
 #endif
 
@@ -68,9 +75,16 @@
 #endif
 
 #if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
+#define DCOUT(x)                                               \
+  do {                                                         \
+    std::cout << __FILE__ << ":" << __func__ << ":"            \
+              << std::to_string(__LINE__) << " " << x << "\n"; \
+  } while (false)
 #else
-#define DCOUT(x) do { (void)(x); } while(false)
+#define DCOUT(x) \
+  do {           \
+    (void)(x);   \
+  } while (false)
 #endif
 
 namespace tinyusdz {
@@ -100,7 +114,6 @@ std::string WcharToUTF8(const std::wstring &wstr) {
 }
 #endif
 
-
 struct Section {
   Section() { memset(this, 0, sizeof(*this)); }
   Section(char const *name, int64_t start, int64_t size);
@@ -129,15 +142,21 @@ struct Field {
 
 // https://stackoverflow.com/questions/8513911/how-to-create-a-good-hash-combine-with-64-bit-output-inspired-by-boosthash-co
 // From CityHash code.
-template <class T> inline void hash_combine(std::size_t& seed, const T& v)
-{
-    std::hash<T> hasher;
-    const std::size_t kMul = 0x9ddfea08eb382d69ULL;
-    std::size_t a = (hasher(v) ^ seed) * kMul;
-    a ^= (a >> 47);
-    std::size_t b = (seed ^ a) * kMul;
-    b ^= (b >> 47);
-    seed = b * kMul;
+template <class T>
+inline void hash_combine(std::size_t &seed, const T &v) {
+#ifdef __wasi__  // 32bit platform
+  // Use boost version.
+  std::hash<T> hasher;
+  seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+#else
+  std::hash<T> hasher;
+  const uint64_t kMul = 0x9ddfea08eb382d69ULL;
+  std::size_t a = (hasher(v) ^ seed) * kMul;
+  a ^= (a >> 47);
+  std::size_t b = (seed ^ a) * kMul;
+  b ^= (b >> 47);
+  seed = b * kMul;
+#endif
 }
 
 struct PathHasher {
@@ -197,32 +216,34 @@ struct FieldSetHasher {
 
 class Packer {
  public:
-
   crate::TokenIndex AddToken(const Token &token);
   crate::StringIndex AddString(const std::string &str);
   crate::PathIndex AddPath(const Path &path);
   crate::FieldIndex AddField(const Field &field);
-  crate::FieldSetIndex AddFieldSet(const std::vector<crate::FieldIndex> &field_indices);
+  crate::FieldSetIndex AddFieldSet(
+      const std::vector<crate::FieldIndex> &field_indices);
 
-   
-  const std::vector<Token> &GetTokens() const {
-    return tokens_;
-  }
+  const std::vector<Token> &GetTokens() const { return tokens_; }
 
  private:
-
-  std::unordered_map<Token, crate::TokenIndex, TokenHasher, TokenKeyEqual> token_to_index_map;
+  std::unordered_map<Token, crate::TokenIndex, TokenHasher, TokenKeyEqual>
+      token_to_index_map;
   std::unordered_map<std::string, crate::StringIndex> string_to_index_map;
-  std::unordered_map<Path, crate::PathIndex, PathHasher, PathKeyEqual> path_to_index_map;
-  std::unordered_map<Field, crate::FieldIndex, FieldHasher, FieldKeyEqual> field_to_index_map;
-  std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex, FieldSetHasher> fieldset_to_index_map;
+  std::unordered_map<Path, crate::PathIndex, PathHasher, PathKeyEqual>
+      path_to_index_map;
+  std::unordered_map<Field, crate::FieldIndex, FieldHasher, FieldKeyEqual>
+      field_to_index_map;
+  std::unordered_map<std::vector<crate::FieldIndex>, crate::FieldSetIndex,
+                     FieldSetHasher>
+      fieldset_to_index_map;
 
   std::vector<Token> tokens_;
   std::vector<std::string> strings_;
   std::vector<Path> paths_;
   std::vector<Field> fields_;
-  std::vector<crate::FieldIndex> fieldsets_; // flattened 1D array of FieldSets. Each span is terminated by Index()(= ~0)
-
+  std::vector<crate::FieldIndex>
+      fieldsets_;  // flattened 1D array of FieldSets. Each span is terminated
+                   // by Index()(= ~0)
 };
 
 crate::TokenIndex Packer::AddToken(const Token &token) {
@@ -273,16 +294,18 @@ crate::FieldIndex Packer::AddField(const Field &field) {
   return field_to_index_map[field];
 }
 
-crate::FieldSetIndex Packer::AddFieldSet(const std::vector<crate::FieldIndex> &fieldset) {
+crate::FieldSetIndex Packer::AddFieldSet(
+    const std::vector<crate::FieldIndex> &fieldset) {
   if (fieldset_to_index_map.count(fieldset)) {
     return fieldset_to_index_map[fieldset];
   }
 
   // index = size of umap = star index of FieldSet span.
-  fieldset_to_index_map[fieldset] = crate::FieldSetIndex(uint32_t(fieldsets_.size()));
+  fieldset_to_index_map[fieldset] =
+      crate::FieldSetIndex(uint32_t(fieldsets_.size()));
 
   fieldsets_.insert(fieldsets_.end(), fieldset.begin(), fieldset.end());
-  fieldsets_.push_back(crate::FieldIndex()); // terminator(~0)
+  fieldsets_.push_back(crate::FieldIndex());  // terminator(~0)
 
   return fieldset_to_index_map[fieldset];
 }
@@ -306,8 +329,7 @@ class Writer {
     magic[6] = 'D';
     magic[7] = 'C';
 
-
-    uint8_t version[8]; // Only first 3 bytes are used.
+    uint8_t version[8];  // Only first 3 bytes are used.
     version[0] = 0;
     version[1] = 8;
     version[2] = 0;
@@ -335,11 +357,10 @@ class Writer {
     auto tokens = packer_.GetTokens();
 
     for (size_t i = 0; i < tokens.size(); i++) {
-    
       oss << tokens[i].str();
- 
+
       if (i != (tokens.size() - 1)) {
-        oss.put('\0'); // separator
+        oss.put('\0');  // separator
       }
     }
     // Last string does not terminated with `\0'
@@ -355,9 +376,8 @@ class Writer {
     buf.resize(LZ4Compression::GetCompressedBufferSize(input_bytes));
 
     std::string err;
-    size_t n = LZ4Compression::CompressToBuffer(oss.str().data(), 
-      buf.data(),
-      input_bytes, &err);
+    size_t n = LZ4Compression::CompressToBuffer(oss.str().data(), buf.data(),
+                                                input_bytes, &err);
 
     (void)n;
 
@@ -369,25 +389,15 @@ class Writer {
     return true;
   }
 
-  bool WriteStrings() {
-    return false;
-  }
+  bool WriteStrings() { return false; }
 
-  bool WriteFields() {
-    return false;
-  }
+  bool WriteFields() { return false; }
 
-  bool WriteFieldSets() {
-    return false;
-  }
+  bool WriteFieldSets() { return false; }
 
-  bool WritePaths() {
-    return false;
-  }
+  bool WritePaths() { return false; }
 
-  bool WriteSpecs() {
-    return false;
-  }
+  bool WriteSpecs() { return false; }
 
   bool WriteTOC() {
     uint64_t num_sections = toc_.sections.size();
@@ -402,12 +412,10 @@ class Writer {
     // # of sections
     oss_.write(reinterpret_cast<const char *>(&num_sections), 8);
 
-
     return true;
   }
 
   bool Write() {
-
     //
     //  - TOC
     //  - Tokens
@@ -448,12 +456,13 @@ class Writer {
       return false;
     }
 
-    // TODO(syoyo): Add feature to support writing unknown section(custom user data)
-    //if (!WriteUnknownSections()) {
+    // TODO(syoyo): Add feature to support writing unknown section(custom user
+    // data)
+    // if (!WriteUnknownSections()) {
     //  PUSH_ERROR("Failed to write custom sections.");
     //  return false;
     //}
-    
+
     if (!WriteTOC()) {
       PUSH_ERROR("Failed to write TOC.");
       return false;
@@ -468,8 +477,6 @@ class Writer {
 
     return true;
   }
-
-
 
   // Get serialized USDC binary data
   bool GetOutput(std::vector<uint8_t> *output) {
@@ -502,7 +509,7 @@ class Writer {
 }  // namespace
 
 bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
-                std::string *warn, std::string *err) {
+                      std::string *warn, std::string *err) {
 #ifdef __ANDROID__
   (void)filename;
   (void)scene;
@@ -552,7 +559,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
   }
 #endif
 
-  size_t n = fwrite(output.data(), /* size */1, /* count */output.size(), fp);
+  size_t n = fwrite(output.data(), /* size */ 1, /* count */ output.size(), fp);
   if (n < output.size()) {
     // TODO: Retry writing data when n < output.size()
 
@@ -567,7 +574,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
 }
 
 bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
-                std::string *warn, std::string *err) {
+                        std::string *warn, std::string *err) {
   (void)warn;
   (void)output;
 
@@ -581,7 +588,7 @@ bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
   return false;
 }
 
-} // namespace usdc
+}  // namespace usdc
 }  // namespace tinyusdz
 
 #else
@@ -615,7 +622,7 @@ bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
   return false;
 }
 
-} // namespace usdc
+}  // namespace usdc
 }  // namespace tinyusdz
 
 #endif
