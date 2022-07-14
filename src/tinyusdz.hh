@@ -386,6 +386,7 @@ struct StringAndIdMap {
 };
 
 
+#if 0
 enum NodeType {
   NODE_TYPE_NULL = 0,
   NODE_TYPE_XFORM,
@@ -398,22 +399,19 @@ enum NodeType {
   NODE_TYPE_CUSTOM  // Uer defined custom node
 
 };
+#endif
 
 struct Node {
   std::string name;
 
-  NodeType type{NODE_TYPE_NULL};
+  value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
 
   //
-  // index to a scene object.
-  // For example, Lookup `xforms[node_idx]` When node type is XFORM
+  // index to a `Scene::node_indices`
   //
   int64_t index{-1};
 
-  // Metadata
-  value::dict assetInfo;
-
-  //int64_t parent;                 // parent node index. Example: `nodes[parent]`
+  int64_t parent{-1};          // parent node index
   std::vector<Node> children;  // child nodes
 };
 
@@ -434,7 +432,7 @@ struct Scene {
 
   // Node hierarchies
   // Scene can have multiple nodes.
-  std::vector<Node> nodes;
+  //std::vector<Node> nodes;
 
   // Scene global setting
   std::string upAxis = "Y";
@@ -478,6 +476,9 @@ struct Scene {
 
   StringAndIdMap geom_meshes_map;  // Path <-> array index map
   StringAndIdMap materials_map;    // Path <-> array index map
+
+  // Scene node graph
+  std::vector<Node> nodes;
 
   std::vector<NodeIndex> node_indices;
 

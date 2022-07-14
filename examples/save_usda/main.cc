@@ -1,4 +1,5 @@
 #include "usda-writer.hh"
+#include "value-type.hh"
 
 #include <iostream>
 
@@ -26,9 +27,9 @@ void DummyScene(tinyusdz::Scene *scene)
   tinyusdz::GeomMesh mesh;
   mesh.name = "quad";
 
-  tinyusdz::Node mesh_node;
-  mesh_node.type = tinyusdz::NODE_TYPE_GEOM_MESH;
-  mesh_node.index = 0; // geom_meshes[0]
+  tinyusdz::NodeIndex mesh_node_id;
+  mesh_node_id.type_id = tinyusdz::value::TYPE_ID_GEOM_MESH;
+  mesh_node_id.index = 0; // geom_meshes[0]
 
   mesh.points.push_back({0.0f, 0.0f, 0.0f});
 
@@ -50,15 +51,29 @@ void DummyScene(tinyusdz::Scene *scene)
   mesh.faceVertexIndices.push_back(2);
   mesh.faceVertexIndices.push_back(3);
 
-  tinyusdz::Node node;
-  node.type = tinyusdz::NODE_TYPE_XFORM;
-  node.index = 0; // nodes[0]
-  node.children.push_back(mesh_node);
+  tinyusdz::NodeIndex xform_node_id;
+  xform_node_id.type_id = tinyusdz::value::TYPE_ID_GEOM_XFORM;
+  xform_node_id.index = 0; // nodes[0]
 
-  scene->xforms.emplace_back(xform);
-  scene->geom_meshes.emplace_back(mesh);
-  scene->nodes.emplace_back(node);
 
+  scene->xforms.push_back(std::move(xform));
+  scene->geom_meshes.push_back(std::move(mesh));
+
+  // node graph
+  tinyusdz::Node mesh_node;
+  tinyusdz::Node xform_node;
+
+  xform_node.index = scene->node_indices.size();
+  scene->node_indices.emplace_back(xform_node_id);
+
+  mesh_node.index = scene->node_indices.size();
+  scene->node_indices.emplace_back(mesh_node_id);
+
+  mesh_node.parent = 0; // xform_node_id[0]
+  xform_node.children.push_back(mesh_node);
+
+  scene->nodes.push_back(xform_node);
+  scene->nodes.push_back(mesh_node);
 }
 
 int main(int argc, char **argv)
