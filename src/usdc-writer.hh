@@ -17,7 +17,7 @@ namespace usdc {
 ///
 /// @return true upon success.
 ///
-bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
+bool SaveAsUSDCToFile(const std::string &filename, const HighLevelScene &scene,
                       std::string *warn, std::string *err);
 
 ///
@@ -30,7 +30,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
 ///
 /// @return true upon success.
 ///
-bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
+bool SaveAsUSDCToMemory(const HighLevelScene &scene, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err);
 
 }  // namespace usdc

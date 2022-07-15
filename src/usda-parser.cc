@@ -780,7 +780,7 @@ static bool ParseTupleThreaded(
 
 class USDAParser::Impl {
  private:
-  Scene scene_;
+  HighLevelScene scene_;
 
  public:
   struct ParseState {
@@ -4991,12 +4991,13 @@ class USDAParser::Impl {
           return false;
         }
         gprim.name = node_name;
-        scene_.gprims.emplace_back(gprim);
+        scene_.root_nodes.emplace_back(gprim);
 
 
       } else {
 
         // Reconstruct concrete C++ object
+#if 0
 
 #define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
         } else if (prim_type == __tyname) { \
@@ -5031,6 +5032,8 @@ class USDAParser::Impl {
         } else {
           PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
         }
+#endif
+        PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
       }
     } else {
       // Store properties to GPrim.
@@ -5162,7 +5165,7 @@ class USDAParser::Impl {
 
   bool CheckHeader() { return ParseMagicHeader(); }
 
-  void ImportScene(tinyusdz::Scene &scene) { _scene = scene; }
+  void ImportScene(tinyusdz::HighLevelScene &scene) { _scene = scene; }
 
   bool HasPath(const std::string &path) {
     // TODO
@@ -5439,7 +5442,7 @@ class USDAParser::Impl {
 
   std::string _base_dir;  // Used for importing another USD file
 
-  nonstd::optional<tinyusdz::Scene> _scene;  // Imported scene.
+  nonstd::optional<tinyusdz::HighLevelScene> _scene;  // Imported scene.
 
   // "class" defs
   std::map<std::string, Klass> _klasses;

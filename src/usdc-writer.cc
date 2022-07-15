@@ -314,9 +314,9 @@ crate::FieldSetIndex Packer::AddFieldSet(
 
 class Writer {
  public:
-  Writer(const Scene &scene) : scene_(scene) {}
+  Writer(const HighLevelScene &scene) : scene_(scene) {}
 
-  const Scene &scene_;
+  const HighLevelScene &scene_;
 
   const std::string &Error() const { return err_; }
 
@@ -510,7 +510,7 @@ class Writer {
 
 }  // namespace
 
-bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
+bool SaveAsUSDCToFile(const std::string &filename, const HighLevelScene &scene,
                       std::string *warn, std::string *err) {
 #ifdef __ANDROID__
   (void)filename;
@@ -575,7 +575,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
 #endif
 }
 
-bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
+bool SaveAsUSDCToMemory(const HighLevelScene &scene, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err) {
   (void)warn;
   (void)output;

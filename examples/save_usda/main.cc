@@ -6,7 +6,7 @@
 //
 // create dummy scene.
 //
-void DummyScene(tinyusdz::Scene *scene)
+void DummyScene(tinyusdz::HighLevelScene *scene)
 {
   //
   // tinyusdz currently does not provide scene graph API yet, so edit parameters directly.
@@ -56,6 +56,7 @@ void DummyScene(tinyusdz::Scene *scene)
   xform_node_id.index = 0; // nodes[0]
 
 
+#if 0
   scene->xforms.push_back(xform);
   scene->geom_meshes.push_back(std::move(mesh));
 
@@ -90,11 +91,12 @@ void DummyScene(tinyusdz::Scene *scene)
 
   scene->nodes.push_back(xform_node);
   scene->nodes.push_back(mesh_node);
+#endif
 }
 
 int main(int argc, char **argv)
 {
-  tinyusdz::Scene scene; // empty scene
+  tinyusdz::HighLevelScene scene; // empty scene
 
   DummyScene(&scene);
 
