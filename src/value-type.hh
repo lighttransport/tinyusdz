@@ -49,7 +49,7 @@
 #endif
 
 #include "token-type.hh"
-#include "external/staticstruct.hh"
+//#include "external/staticstruct.hh"
 
 namespace tinyusdz {
 namespace value {
@@ -771,6 +771,8 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   }
 };
 
+// Lookup TypeTrait<T>::type_name from TypeTrait<T>::type_id
+nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
 std::string GetTypeName(uint32_t tyid);
 
 struct base_value {
@@ -905,7 +907,14 @@ struct any_value {
 
 struct TimeSamples {
   std::vector<double> times;
-  std::vector<any_value> values;
+  std::vector<any_value> values; // Could contain 'None'
+
+  bool Valid() {
+    if (times.size() > 0) {
+      return true;
+    }
+    return false;
+  }
 };
 
 // simple linear interpolator
@@ -930,6 +939,16 @@ struct LinearInterpolator
 };
 
 // Explicitly typed version of `TimeSamples`
+//
+// `None` value and `deleted` items are omitted in this data struct.
+// e.g.
+//
+// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
+//
+// in .usd(or `TimeSamples` class), are stored as
+//
+// radius = { 0: 1.0, 2: 3.0 }
+//
 template<typename T>
 struct AnimatableValue
 {
@@ -1157,7 +1176,7 @@ struct AttribMap {
 } // namespace value
 } // namespace tinyusdz
 
-#if 1
+#if 0 // TODO: Remove
 /// Need to define in header file.
 namespace staticstruct {
 
@@ -1583,6 +1602,7 @@ struct Converter<color4d> {
 namespace tinyusdz {
 namespace value {
 
+#if 0 // TODO: Remove
 //
 // Concrete struct reconstruction from AttribMap
 //
@@ -1606,6 +1626,7 @@ class Reconstructor {
   staticstruct::ObjectHandler h;
   std::string err_;
 };
+#endif
 
 static_assert(sizeof(quath) == 8, "sizeof(quath) must be 8");
 static_assert(sizeof(quatf) == 16, "sizeof(quatf) must be 16");
