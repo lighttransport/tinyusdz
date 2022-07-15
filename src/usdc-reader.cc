@@ -206,7 +206,7 @@ class USDCReader::Impl {
                                    Scene *scene);
 #endif
 
-  bool ReconstructScene(Scene *scene);
+  bool ReconstructHighLevelScene(HighLevelScene *scene);
 
   ///
   /// --------------------------------------------------
@@ -1716,7 +1716,7 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
 }
 #endif
 
-bool USDCReader::Impl::ReconstructScene(Scene *scene) {
+bool USDCReader::Impl::ReconstructHighLevelScene(HighLevelScene *scene) {
   (void)scene;
 
 #if 0 // TODO
@@ -1844,9 +1844,9 @@ USDCReader::~USDCReader() {
   impl_ = nullptr;
 }
 
-bool USDCReader::ReconstructScene(Scene *scene) {
-  DCOUT("Reconstruct Scene.");
-  return impl_->ReconstructScene(scene);
+bool USDCReader::ReconstructHighLevelScene(HighLevelScene *scene) {
+  DCOUT("Reconstruct HighLevelScene.");
+  return impl_->ReconstructHighLevelScene(scene);
 }
 
 std::string USDCReader::GetError() { return impl_->GetError(); }

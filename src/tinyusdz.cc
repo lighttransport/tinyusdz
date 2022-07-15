@@ -244,7 +244,7 @@ class Node {
 
 }  // namespace
 
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, HighLevelScene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   if (scene == nullptr) {
@@ -386,10 +386,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   std::cout << "dbg: 1\n";
 
-  // Create `Scene` object
+  // Create `HighLevelScene` object
   // std::cout << "reconstruct scene:\n";
   {
-    if (!reader.ReconstructScene(scene)) {
+    if (!reader.ReconstructHighLevelScene(scene)) {
       if (warn) {
         (*warn) = reader.GetWarning();
       }
@@ -414,7 +414,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
   return true;
 }
 
-bool LoadUSDCFromFile(const std::string &_filename, Scene *scene,
+bool LoadUSDCFromFile(const std::string &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
@@ -458,7 +458,7 @@ static std::string str_tolower(std::string s) {
 
 }  // namespace
 
-bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
+bool LoadUSDZFromFile(const std::string &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   // <filename, byte_begin, byte_end>
@@ -650,7 +650,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
 }
 
 #ifdef _WIN32
-bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
+bool LoadUSDZFromFile(const std::wstring &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   std::string filename = io::WcharToUTF8(_filename);
@@ -658,7 +658,7 @@ bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
 }
 #endif
 
-bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Scene *scene,
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, HighLevelScene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   (void)warn;
@@ -703,7 +703,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
   return false;
 }
 
-bool LoadUSDAFromFile(const std::string &_filename, Scene *scene,
+bool LoadUSDAFromFile(const std::string &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
 

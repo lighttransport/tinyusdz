@@ -273,8 +273,8 @@ enum TypeId {
   TYPE_ID_CRATE_UNREGISTERED_VALUE,
   TYPE_ID_CRATE_LIST_OP_UNREGISTERED_VALUE,
 
-  // Types for usdGeom
-  TYPE_ID_GEOM_BEGIN = (1 << 10),
+  // Types for GPrim and usdGeom
+  TYPE_ID_GPRIM = (1 << 10),
   TYPE_ID_GEOM_XFORM,
   TYPE_ID_GEOM_MESH,
   TYPE_ID_GEOM_BASIS_CURVE,
@@ -1055,6 +1055,9 @@ class Value {
 
   template <class T>
   Value(const T &v) : v_(v) {}
+
+  //template <class T>
+  //Value(T &&v) : v_(v) {}
 
   std::string type_name() const { return v_.type_name(); }
   std::string underlying_type_name() const { return v_.underlying_type_name(); }
