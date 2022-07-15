@@ -56,10 +56,26 @@ void DummyScene(tinyusdz::Scene *scene)
   xform_node_id.index = 0; // nodes[0]
 
 
-  scene->xforms.push_back(std::move(xform));
+  scene->xforms.push_back(xform);
   scene->geom_meshes.push_back(std::move(mesh));
 
-  // node graph
+  {
+    // Node graph 
+    auto xform_node = tinyusdz::PrimNode();
+    xform_node.data = xform;
+
+    auto geom_node = tinyusdz::PrimNode();
+    geom_node.data = mesh;
+
+    xform_node.children.push_back(geom_node);
+
+    scene->prim_nodes.push_back(std::move(xform_node));
+
+  }
+
+
+
+  // Index-based node graph
   tinyusdz::Node mesh_node;
   tinyusdz::Node xform_node;
 
