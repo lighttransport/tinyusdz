@@ -74,7 +74,7 @@ class USDAParser {
   /// 
   /// Get as scene
   ///
-  const Scene& GetScene() const;
+  const HighLevelScene& GetHighLevelScene() const;
   
  private:
   class Impl;

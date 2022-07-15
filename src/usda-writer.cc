@@ -26,7 +26,7 @@ inline std::string GetTypeName(XformOpValueType const &v) {
 
 class Writer {
  public:
-  Writer(const Scene &scene) : _scene(scene) {}
+  Writer(const HighLevelScene &scene) : _scene(scene) {}
 
   std::string Indent(size_t level) {
     std::stringstream ss;
@@ -127,7 +127,7 @@ class Writer {
   }
 #endif
 
-  const Scene &_scene;
+  const HighLevelScene &_scene;
 
   const std::string &Error() const { return _err; }
   const std::string &Warn() const { return _warn; }
@@ -142,7 +142,7 @@ class Writer {
 
 }  // namespace
 
-bool SaveAsUSDA(const std::string &filename, const Scene &scene,
+bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene,
                 std::string *warn, std::string *err) {
 
   (void)warn;
@@ -207,7 +207,7 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
 namespace tinyusdz {
 namespace usda {
 
-bool SaveAsUSDA(const std::string &filename, const Scene &scene, std::string *warn, std::string *err) {
+bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene, std::string *warn, std::string *err) {
   (void)filename;
   (void)scene;
   (void)warn;
