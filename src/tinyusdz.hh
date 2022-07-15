@@ -415,6 +415,15 @@ struct Node {
   std::vector<Node> children;  // child nodes
 };
 
+struct PrimNode {
+  std::string name;
+
+  value::Value data; // GPrim, Xform, ...
+
+  int64_t parent{-1};          // parent node index
+  std::vector<PrimNode> children;  // child nodes
+};
+
 struct NodeIndex {
   std::string name;
 
@@ -478,9 +487,21 @@ struct Scene {
   StringAndIdMap materials_map;    // Path <-> array index map
 
   // Scene node graph
+  std::vector<PrimNode> prim_nodes;
+
+  // Scene node graph(index-based)
   std::vector<Node> nodes;
 
   std::vector<NodeIndex> node_indices;
+
+};
+
+// Similar to UsdStage. Mostly equals to `Scene`
+class Stage {
+
+ public:
+  // Root node graph
+  std::vector<Node> nodes;
 
 };
 

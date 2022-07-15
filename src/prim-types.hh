@@ -1926,6 +1926,8 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 // Geom
+DEFINE_TYPE_TRAIT(Xform, "Xform",
+                  TYPE_ID_GEOM_XFORM, 1);
 DEFINE_TYPE_TRAIT(GeomMesh, "GeomMesh",
                   TYPE_ID_GEOM_MESH, 1);
 
