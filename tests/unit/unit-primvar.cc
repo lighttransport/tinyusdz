@@ -12,6 +12,7 @@
 using namespace tinyusdz::value;
 using namespace tinyusdz::primvar;
 
+#if 0 // TODO:  move to type-reconstruction-test?
 struct Mesh {
   std::vector<vector3f> vertices;
   std::vector<int32_t> indices;
@@ -48,6 +49,7 @@ static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
 
   return false;
 }
+#endif
 
 void primvar_test(void) {
 
@@ -73,6 +75,7 @@ void primvar_test(void) {
     std::cout << "c = " << c << "\n";
   }
 
+#if 0
   {
     Mesh mesh;
     std::vector<vector3f> p = {{0.0f, 1.0f, 2.0f}, {3.0f, 4.0f, 5.0f}};
@@ -89,5 +92,6 @@ void primvar_test(void) {
   {
     TEST_CHECK(ReconstructAttribTest0());
   }
+#endif
 
 }
