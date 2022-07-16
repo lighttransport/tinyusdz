@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2021 - Present, Syoyo Fujita.
+//
+// USDA reader
+// TODO:
+//   - [ ] Use common base code for Reconstruct**** with USDC reader
 
 #include <algorithm>
 #include <atomic>
@@ -32,6 +36,7 @@
 #endif
 
 // external
+
 //#include "ryu/ryu.h"
 //#include "ryu/ryu_parse.h"
 
@@ -71,16 +76,16 @@
     std::ostringstream ss;                                         \
     ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
     ss << s;                                                       \
-    _err += ss.str();                                           \
+    _err += ss.str();                                              \
     return false;                                                  \
   } while (0)
 
-#define PUSH_WARN(s)                                   \
+#define PUSH_WARN(s)                                               \
   do {                                                             \
     std::ostringstream ss;                                         \
     ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
     ss << s;                                                       \
-    _err += ss.str();                                           \
+    _err += ss.str();                                              \
     return false;                                                  \
   } while (0)
 
@@ -102,7 +107,6 @@ namespace tinyusdz {
 
 namespace usda {
 
-
 class VariableDef {
  public:
   std::string type;
@@ -121,7 +125,6 @@ class VariableDef {
     return *this;
   }
 };
-
 
 namespace {
 
@@ -172,9 +175,7 @@ ReferenceList GetReferences(
 }
 #endif
 
-
 }  // namespace
-
 
 inline bool hasConnect(const std::string &str) {
   return endsWith(str, ".connect");
@@ -193,10 +194,7 @@ class USDAReader::Impl {
   HighLevelScene scene_;
 
  public:
-
-  Impl(StreamReader *sr) {
-    _parser.SetStream(sr);
-  }
+  Impl(StreamReader *sr) { _parser.SetStream(sr); }
 
   // Return the flag if the .usda is read from `references`
   bool IsReferenced() { return _referenced; }
@@ -231,7 +229,6 @@ class USDAReader::Impl {
       _path_stack.pop();
     }
   }
-
 
 #if 0
     if (prim_type.empty()) {
@@ -347,13 +344,14 @@ class USDAReader::Impl {
 #if 0
 
 #define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
-        } else if (prim_type == __tyname) { \
-          __dty node; \
-          if (!__reconstruct_fn(props, references, &node)) { \
-            PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname); \
-          } \
-          node.name = node_name; \
-          __scene.emplace_back(node);
+  }                                                                  \
+  else if (prim_type == __tyname) {                                  \
+    __dty node;                                                      \
+    if (!__reconstruct_fn(props, references, &node)) {               \
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname);   \
+    }                                                                \
+    node.name = node_name;                                           \
+    __scene.emplace_back(node);
 
         if (0) {
         RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
@@ -595,23 +593,17 @@ class USDAReader::Impl {
 #else
     PUSH_ERROR_AND_RETURN("TODO:");
 #endif
-
   }
 
   std::vector<GPrim> GetGPrims() { return _gprims; }
 
   std::string GetDefaultPrimName() const { return _defaultPrim; }
 
-  std::string GetError() {
-    return _err;
-  }
+  std::string GetError() { return _err; }
 
-  std::string GetWarning() {
-    return _warn;
-  }
+  std::string GetWarning() { return _warn; }
 
  private:
-
   void RegisterNodeTypes() {
     _node_types.insert("Xform");
     _node_types.insert("Sphere");
@@ -640,7 +632,8 @@ class USDAReader::Impl {
 
   std::string _base_dir;  // Used for importing another USD file
 
-  nonstd::optional<tinyusdz::HighLevelScene> _imported_scene;  // Imported scene.
+  nonstd::optional<tinyusdz::HighLevelScene>
+      _imported_scene;  // Imported scene.
 
   // "class" defs
   std::map<std::string, Klass> _klasses;
@@ -701,8 +694,9 @@ bool USDAReader::Impl::ReconstructGPrim(
   return true;
 }
 
-static nonstd::expected<bool, std::string> CheckAllowedTypeOfXformOp(const PrimAttrib &attr, const std::vector<value::TypeId> &allowed_type_ids)
-{
+static nonstd::expected<bool, std::string> CheckAllowedTypeOfXformOp(
+    const PrimAttrib &attr,
+    const std::vector<value::TypeId> &allowed_type_ids) {
   for (size_t i = 0; i < allowed_type_ids.size(); i++) {
     if (attr.var.type_id() == allowed_type_ids[i]) {
       return true;
@@ -736,7 +730,6 @@ bool USDAReader::Impl::ReconstructXform(
     std::vector<std::pair<ListEditQual, Reference>> &references, Xform *xform) {
   (void)xform;
 
-
   // ret = (basename, suffix, isTimeSampled?)
   auto Split =
       [](const std::string &str) -> std::tuple<std::string, std::string, bool> {
@@ -750,7 +743,6 @@ bool USDAReader::Impl::ReconstructXform(
       isTimeSampled = true;
       // rtrim
       s = s.substr(0, s.size() - tsSuffix.size());
-
     }
 
     // TODO: Support multiple namespace(e.g. xformOp:translate:pivot)
@@ -778,20 +770,16 @@ bool USDAReader::Impl::ReconstructXform(
   for (const auto &prop : properties) {
     if (startsWith(prop.first, "xformOp:translate")) {
       // TODO: Implement
-      //using allowedTys = tinyusdz::variant<value::float3, value::double3>;
+      // using allowedTys = tinyusdz::variant<value::float3, value::double3>;
       std::vector<value::TypeId> ids;
       auto ret = CheckAllowedTypeOfXformOp(prop.second.attrib, ids);
       if (!ret) {
-
       }
     }
   }
 
-
-
   // Lookup xform values from `xformOpOrder`
   if (properties.count("xformOpOrder")) {
-
     // array of string
     auto prop = properties.at("xformOpOrder");
     if (prop.is_rel) {
@@ -848,7 +836,7 @@ bool USDAReader::Impl::ReconstructXform(
     }
 
   } else {
-    //std::cout << "no xformOpOrder\n";
+    // std::cout << "no xformOpOrder\n";
   }
 
   // For xformO
@@ -923,7 +911,6 @@ bool USDAReader::Impl::ReconstructGeomSphere(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-
     DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
@@ -1032,7 +1019,6 @@ bool USDAReader::Impl::ReconstructGeomCone(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-
     DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
@@ -1264,7 +1250,6 @@ bool USDAReader::Impl::ReconstructGeomCapsule(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-
     DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
@@ -1586,7 +1571,6 @@ bool USDAReader::Impl::ReconstructGeomMesh(
   //
 
   for (const auto &ref : references) {
-
     DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
@@ -1765,7 +1749,7 @@ bool USDAReader::Impl::ReconstructGeomCamera(
     if (prop.first == "focalLength") {
       // TODO
     } else {
-      //std::cout << "TODO: " << prop.first << "\n";
+      // std::cout << "TODO: " << prop.first << "\n";
     }
   }
 
@@ -1781,7 +1765,7 @@ bool USDAReader::Impl::ReconstructLuxSphereLight(
     if (prop.first == "radius") {
       // TODO
     } else {
-      //std::cout << "TODO: " << prop.first << "\n";
+      // std::cout << "TODO: " << prop.first << "\n";
     }
   }
 
@@ -1884,8 +1868,7 @@ bool USDAReader::Impl::ReconstructShader(
           PrimvarReader_float2 preader;
           if (!ReconstructPrimvarReader_float2(properties, references,
                                                &preader)) {
-            PUSH_WARN(
-                "TODO: reconstruct PrimvarReader_float2.");
+            PUSH_WARN("TODO: reconstruct PrimvarReader_float2.");
           }
           shader->value = preader;
         } else {
@@ -1893,7 +1876,7 @@ bool USDAReader::Impl::ReconstructShader(
         }
       }
     } else {
-      //std::cout << "TODO: " << prop.first << "\n";
+      // std::cout << "TODO: " << prop.first << "\n";
     }
   }
 
@@ -1904,7 +1887,6 @@ bool USDAReader::Impl::ReconstructNodeGraph(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, Reference>> &references,
     NodeGraph *graph) {
-
   (void)properties;
   (void)references;
   (void)graph;
@@ -1992,9 +1974,8 @@ std::string USDAReader::GetDefaultPrimName() const {
 std::string USDAReader::GetError() { return _impl->GetError(); }
 std::string USDAReader::GetWarning() { return _impl->GetWarning(); }
 
-}  // namespace usda
 }  // namespace tinyusdz
-
+}  // namespace tinyusdz
 
 #else
 
@@ -2003,25 +1984,24 @@ namespace usda {
 
 USDAReader::USDAReader(StreamReader *sr) { (void)sr; }
 
-USDAReader::~USDAReader() { }
+USDAReader::~USDAReader() {}
 
 bool USDAReader::CheckHeader() { return false; }
 
-bool USDAReader::Parse(LoadState state) { (void)state; return false; }
-
-void USDAReader::SetBaseDir(const std::string &dir) {
-  (void)dir;
+bool USDAReader::Parse(LoadState state) {
+  (void)state;
+  return false;
 }
 
-std::vector<GPrim> USDAReader::GetGPrims() {
-  return {};
-}
+void USDAReader::SetBaseDir(const std::string &dir) { (void)dir; }
 
-std::string USDAReader::GetDefaultPrimName() const {
-  return std::string{};
-}
+std::vector<GPrim> USDAReader::GetGPrims() { return {}; }
 
-std::string USDAReader::GetError() { return "USDA parser feature is disabled in this build.\n"; }
+std::string USDAReader::GetDefaultPrimName() const { return std::string{}; }
+
+std::string USDAReader::GetError() {
+  return "USDA parser feature is disabled in this build.\n";
+}
 std::string USDAReader::GetWarning() { return std::string{}; }
 
 }  // namespace usda
