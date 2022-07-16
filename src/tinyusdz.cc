@@ -50,7 +50,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "tinyusdz.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
-#include "usda-parser.hh"
+#include "usda-reader.hh"
 #include "usdc-reader.hh"
 
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
@@ -678,19 +678,19 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
   }
 
   tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
-  tinyusdz::usda::USDAParser parser(&sr);
+  tinyusdz::usda::USDAReader reader(&sr);
 
-  parser.SetBaseDir(base_dir);
+  reader.SetBaseDir(base_dir);
 
   (void)options;
 
   {
-    bool ret = parser.Parse();
+    bool ret = reader.Read();
 
     if (!ret) {
       if (err) {
         (*err) += "Failed to parse USDA\n";
-        (*err) += parser.GetError();
+        (*err) += reader.GetError();
       }
 
       return false;
