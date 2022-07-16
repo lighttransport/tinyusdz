@@ -2,7 +2,7 @@
 #include <fstream>
 
 #include "stream-reader.hh"
-#include "usda-parser.hh"
+#include "usda-reader.hh"
 #include "io-util.hh"
 
 
@@ -24,17 +24,17 @@ int main(int argc, char **argv) {
   }
 
   tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::usda::USDAParser parser(&sr);
+  tinyusdz::usda::USDAReader reader(&sr);
 
   std::cout << "Basedir = " << base_dir << "\n";
-  parser.SetBaseDir(base_dir);
+  reader.SetBaseDir(base_dir);
 
   {
-    bool ret = parser.Parse();
+    bool ret = reader.Read();
 
     if (!ret) {
       std::cerr << "Failed to parse .usda: \n";
-      std::cerr << parser.GetError() << "\n";
+      std::cerr << reader.GetError() << "\n";
       return -1;
     } else {
       std::cout << "ok\n";
