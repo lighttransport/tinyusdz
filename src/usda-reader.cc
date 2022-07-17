@@ -103,6 +103,18 @@
 #define DCOUT(x)
 #endif
 
+//
+// Implementation in ascii-parser.cc
+//
+namespace tinyusdz {
+namespace ascii {
+
+//extern template bool AsciiParser::ReadBasicType(float*);
+//extern template bool AsciiParser::ReadBasicType(float*);
+
+}
+}
+
 namespace tinyusdz {
 
 namespace usda {
@@ -1936,6 +1948,7 @@ bool USDAReader::Impl::ReconstructPrimvarReader_float2(
 //
 // --
 //
+
 
 bool IsUSDA(const std::string &filename, size_t max_filesize) {
   // TODO: Read only first N bytes
