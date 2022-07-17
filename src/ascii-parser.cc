@@ -38,6 +38,7 @@
 //#include "ryu/ryu.h"
 //#include "ryu/ryu_parse.h"
 
+#include "external/jsteemann/atoi.h"
 #include "fast_float/fast_float.h"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
@@ -69,23 +70,26 @@
 #include "value-type.hh"
 
 // s = std::string
-#define PUSH_ERROR_AND_RETURN(s)                                   \
-  do {                                                             \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    PushError(ss.str());                                           \
-    return false;                                                  \
+#define PUSH_ERROR_AND_RETURN(s)                                     \
+  do {                                                               \
+    std::ostringstream ss_e;                                         \
+    ss_e << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+    ss_e << s;                                                       \
+    PushError(ss_e.str());                                           \
+    return false;                                                    \
   } while (0)
 
-#define PUSH_WARN(s)                                               \
-  do {                                                             \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    PushWarn(ss.str());                                            \
+#if 1
+#define PUSH_WARN(s)                                                 \
+  do {                                                               \
+    std::ostringstream ss_w;                                         \
+    ss_w << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
+    ss_w << s;                                                       \
+    PushWarn(ss_w.str());                                            \
   } while (0)
+#endif
 
+#if 0
 #define SLOG_INFO                                                         \
   do {                                                                    \
     std::cout << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
@@ -126,7 +130,6 @@
     std::cerr << s;                                                      \
   } while (0)
 
-#if 0
 #define LOG_FATAL(s)                                               \
   do {                                                             \
     std::ostringstream ss;                                         \
@@ -243,51 +246,6 @@ class VariableDef {
 namespace {
 
 using ReferenceList = std::vector<std::pair<ListEditQual, Reference>>;
-
-#if 0
-// Extract array of References from Variable.
-ReferenceList GetReferences(
-    const std::tuple<ListEditQual, value::any_value> &_var) {
-  ReferenceList result;
-
-  ListEditQual qual = std::get<0>(_var);
-
-  auto var = std::get<1>(_var);
-
-  SLOG_INFO << "GetReferences. var.name = " << var.name << "\n";
-
-  if (var.IsArray()) {
-    LOG_INFO("IsArray");
-    auto parr = var.as_array();
-    if (parr) {
-      LOG_INFO("parr");
-      for (const auto &v : parr->values) {
-        LOG_INFO("Maybe Value");
-        if (v.IsValue()) {
-          LOG_INFO("Maybe Reference");
-          if (auto pref = nonstd::get_if<Reference>(v.as_value())) {
-            LOG_INFO("Got it");
-            result.push_back({qual, *pref});
-          }
-        }
-      }
-    }
-  } else if (var.IsValue()) {
-    LOG_INFO("IsValue");
-    if (auto pv = var.as_value()) {
-      LOG_INFO("Maybe Reference");
-      if (auto pas = nonstd::get_if<Reference>(pv)) {
-        LOG_INFO("Got it");
-        result.push_back({qual, *pas});
-      }
-    }
-  } else {
-    LOG_INFO("Unknown var type: " + Variable::type_name(var));
-  }
-
-  return result;
-}
-#endif
 
 // https://www.techiedelight.com/trim-string-cpp-remove-leading-trailing-spaces/
 std::string TrimString(const std::string &str) {
@@ -615,131 +573,35 @@ static bool ParseTupleThreaded(
 }
 #endif
 
+#if 0
 class AsciiParser::Impl {
- private:
-  HighLevelScene scene_;
 
- public:
-  struct ParseState {
-    int64_t loc{-1};  // byte location in StreamReder
-  };
+  std::string GetCurrentPath() {
+    if (_path_stack.empty()) {
+      return "/";
+    }
 
-  Impl() : _sr(nullptr) {}
-
-  Impl(tinyusdz::StreamReader *sr) : _sr(sr) {
-    RegisterBuiltinMeta();
-    RegisterNodeTypes();
-    RegisterNodeArgs();
-    RegisterPrimAttrTypes();
+    return _path_stack.top();
   }
 
-  //
-  // -- ReadBasicType --
-  //
-  bool ReadBasicType(nonstd::optional<std::string> *value);
-  bool ReadBasicType(nonstd::optional<int> *value);
-  bool ReadBasicType(nonstd::optional<uint32_t> *value);
-  bool ReadBasicType(nonstd::optional<float> *value);
-  bool ReadBasicType(nonstd::optional<value::float2> *value);
-  bool ReadBasicType(nonstd::optional<value::float3> *value);
-  bool ReadBasicType(nonstd::optional<value::float4> *value);
-  bool ReadBasicType(nonstd::optional<double> *value);
-  bool ReadBasicType(nonstd::optional<value::double2> *value);
-  bool ReadBasicType(nonstd::optional<value::double3> *value);
-  bool ReadBasicType(nonstd::optional<value::double4> *value);
-  bool ReadBasicType(nonstd::optional<bool> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix4f> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
-  bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
-  bool ReadBasicType(nonstd::optional<value::point3f> *value);
-  bool ReadBasicType(nonstd::optional<value::point3d> *value);
-  bool ReadBasicType(nonstd::optional<value::normal3f> *value);
-  bool ReadBasicType(nonstd::optional<value::normal3d> *value);
-  bool ReadBasicType(nonstd::optional<value::texcoord2f> *value);
+  bool PathStackDepth() { return _path_stack.size(); }
 
-  bool ReadBasicType(nonstd::optional<value::color3f> *value);
-  bool ReadBasicType(nonstd::optional<value::color4f> *value);
-  bool ReadBasicType(nonstd::optional<value::color3d> *value);
-  bool ReadBasicType(nonstd::optional<value::color4d> *value);
+  void PushPath(const std::string &p) { _path_stack.push(p); }
 
-  bool ReadBasicType(nonstd::optional<value::token> *value);
-
-  bool ReadBasicType(std::string *value);
-  bool ReadBasicType(int *value);
-  bool ReadBasicType(uint32_t *value);
-  bool ReadBasicType(float *value);
-  bool ReadBasicType(value::float2 *value);
-  bool ReadBasicType(value::float3 *value);
-  bool ReadBasicType(value::float4 *value);
-  bool ReadBasicType(double *value);
-  bool ReadBasicType(value::double2 *value);
-  bool ReadBasicType(value::double3 *value);
-  bool ReadBasicType(value::double4 *value);
-  bool ReadBasicType(bool *value);
-  bool ReadBasicType(uint64_t *value);
-  bool ReadBasicType(value::matrix4f *value);
-  bool ReadBasicType(value::matrix2d *value);
-  bool ReadBasicType(value::matrix3d *value);
-  bool ReadBasicType(value::matrix4d *value);
-  bool ReadBasicType(value::point3f *value);
-  bool ReadBasicType(value::point3d *value);
-  bool ReadBasicType(value::normal3f *value);
-  bool ReadBasicType(value::normal3d *value);
-  bool ReadBasicType(value::texcoord2f *value);
-
-  bool ReadBasicType(value::color3f *value);
-  bool ReadBasicType(value::color3d *value);
-  bool ReadBasicType(value::color4f *value);
-  bool ReadBasicType(value::color4d *value);
-
-  bool ReadBasicType(value::token *value);
-
-  // TimeSample data
-  bool ReadTimeSampleData(nonstd::optional<value::float2> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::float3> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::float4> *value);
-  bool ReadTimeSampleData(nonstd::optional<float> *value);
-  bool ReadTimeSampleData(nonstd::optional<double> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::double2> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::double3> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::double4> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::matrix4f> *value);
-  bool ReadTimeSampleData(nonstd::optional<value::matrix4d> *value);
-
-  // Array version
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float2>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float3>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::float4>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<float>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<double>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double2>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double3>> *value);
-  bool ReadTimeSampleData(nonstd::optional<std::vector<value::double4>> *value);
-  bool ReadTimeSampleData(
-      nonstd::optional<std::vector<value::matrix4f>> *value);
-  bool ReadTimeSampleData(
-      nonstd::optional<std::vector<value::matrix4d>> *value);
-
-  bool MaybeNone();
-
-  // Return the flag if the .usda is read from `references`
-  bool IsReferenced() { return _referenced; }
-
-  // Return the flag if the .usda is read from `subLayers`
-  bool IsSubLayered() { return _sub_layered; }
-
-  // Return the flag if the .usda is read from `payload`
-  bool IsPayloaded() { return _payloaded; }
-
-  // Return true if the .udsa is read in the top layer(stage)
-  bool IsToplevel() {
-    return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
+  void PopPath() {
+    if (!_path_stack.empty()) {
+      _path_stack.pop();
+    }
   }
+#endif
 
-  void SetBaseDir(const std::string &str) { _base_dir = str; }
+void AsciiParser::SetBaseDir(const std::string &str) { _base_dir = str; }
 
-  void SetStream(StreamReader *sr) { _sr = sr; }
+void AsciiParser::SetStream(StreamReader *sr) { _sr = sr; }
+
+#if 0
+AsciiParser::
+
 
   std::string GetCurrentPath() {
     if (_path_stack.empty()) {
@@ -759,267 +621,6 @@ class AsciiParser::Impl {
     }
   }
 
-  template <typename T>
-  bool MaybeNonFinite(T *out) {
-    auto loc = CurrLoc();
-
-    // "-inf", "inf" or "nan"
-    std::vector<char> buf(4);
-    if (!CharN(3, &buf)) {
-      return false;
-    }
-    SeekTo(loc);
-
-    if ((buf[0] == 'i') && (buf[1] == 'n') && (buf[2] == 'f')) {
-      (*out) = std::numeric_limits<T>::infinity();
-      return true;
-    }
-
-    if ((buf[0] == 'n') && (buf[1] == 'a') && (buf[2] == 'n')) {
-      (*out) = std::numeric_limits<T>::quiet_NaN();
-      return true;
-    }
-
-    bool ok = CharN(4, &buf);
-    SeekTo(loc);
-
-    if (ok) {
-      if ((buf[0] == '-') && (buf[1] == 'i') && (buf[2] == 'n') &&
-          (buf[3] == 'f')) {
-        (*out) = -std::numeric_limits<T>::infinity();
-        return true;
-      }
-
-      // NOTE: support "-nan"?
-    }
-
-    return false;
-  }
-
-  bool LexFloat(std::string *result, std::string *err) {
-    // FLOATVAL : ('+' or '-')? FLOAT
-    // FLOAT
-    //     :   ('0'..'9')+ '.' ('0'..'9')* EXPONENT?
-    //     |   '.' ('0'..'9')+ EXPONENT?
-    //     |   ('0'..'9')+ EXPONENT
-    //     ;
-    // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
-
-    std::stringstream ss;
-
-    bool has_sign{false};
-    bool leading_decimal_dots{false};
-    {
-      char sc;
-      if (!_sr->read1(&sc)) {
-        return false;
-      }
-      _line_col++;
-
-      ss << sc;
-
-      // sign, '.' or [0-9]
-      if ((sc == '+') || (sc == '-')) {
-        has_sign = true;
-
-        char c;
-        if (!_sr->read1(&c)) {
-          return false;
-        }
-
-        if (c == '.') {
-          // ok. something like `+.7`, `-.53`
-          leading_decimal_dots = true;
-          _line_col++;
-          ss << c;
-
-        } else {
-          // unwind and continue
-          _sr->seek_from_current(-1);
-        }
-
-      } else if ((sc >= '0') && (sc <= '9')) {
-        // ok
-      } else if (sc == '.') {
-        // ok
-        leading_decimal_dots = true;
-      } else {
-        (*err) = "Sign or `.` or 0-9 expected.\n";
-        return false;
-      }
-    }
-
-    (void)has_sign;
-
-    // 1. Read the integer part
-    char curr;
-    if (!leading_decimal_dots) {
-      // std::cout << "1 read int part: ss = " << ss.str() << "\n";
-
-      while (!_sr->eof()) {
-        if (!_sr->read1(&curr)) {
-          return false;
-        }
-
-        // std::cout << "1 curr = " << curr << "\n";
-        if ((curr >= '0') && (curr <= '9')) {
-          // continue
-          ss << curr;
-        } else {
-          _sr->seek_from_current(-1);
-          break;
-        }
-      }
-    }
-
-    if (_sr->eof()) {
-      (*result) = ss.str();
-      return true;
-    }
-
-    if (!_sr->read1(&curr)) {
-      return false;
-    }
-
-    // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
-    // "\n";
-
-    // 2. Read the decimal part
-    if (curr == '.') {
-      ss << curr;
-
-      while (!_sr->eof()) {
-        if (!_sr->read1(&curr)) {
-          return false;
-        }
-
-        if ((curr >= '0') && (curr <= '9')) {
-          ss << curr;
-        } else {
-          break;
-        }
-      }
-
-    } else if ((curr == 'e') || (curr == 'E')) {
-      // go to 3.
-    } else {
-      // end
-      (*result) = ss.str();
-      _sr->seek_from_current(-1);
-      return true;
-    }
-
-    if (_sr->eof()) {
-      (*result) = ss.str();
-      return true;
-    }
-
-    // 3. Read the exponent part
-    bool has_exp_sign{false};
-    if ((curr == 'e') || (curr == 'E')) {
-      ss << curr;
-
-      if (!_sr->read1(&curr)) {
-        return false;
-      }
-
-      if ((curr == '+') || (curr == '-')) {
-        // exp sign
-        ss << curr;
-        has_exp_sign = true;
-
-      } else if ((curr >= '0') && (curr <= '9')) {
-        // ok
-        ss << curr;
-      } else {
-        // Empty E is not allowed.
-        (*err) = "Empty E is not allowed. curr = " + ss.str() + "\n";
-        return false;
-      }
-
-      while (!_sr->eof()) {
-        if (!_sr->read1(&curr)) {
-          return false;
-        }
-
-        if ((curr >= '0') && (curr <= '9')) {
-          // ok
-          ss << curr;
-
-        } else if ((curr == '+') || (curr == '-')) {
-          if (has_exp_sign) {
-            // No multiple sign characters
-            (*err) = "No multiple exponential sign characters.\n";
-            return false;
-          }
-
-          ss << curr;
-          has_exp_sign = true;
-        } else {
-          // end
-          _sr->seek_from_current(-1);
-          break;
-        }
-      }
-    } else {
-      _sr->seek_from_current(-1);
-    }
-
-    (*result) = ss.str();
-    return true;
-  }
-
-  bool ReadToken(std::string *result) {
-    std::stringstream ss;
-
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if (std::isspace(int(c))) {
-        _sr->seek_from_current(-1);
-        break;
-      }
-
-      ss << c;
-      _line_col++;
-    }
-
-    (*result) = ss.str();
-
-    return true;
-  }
-
-  bool ParsePurpose(Purpose *result) {
-    if (!result) {
-      return false;
-    }
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::string token;
-    if (!ReadToken(&token)) {
-      return false;
-    }
-
-    if (token == "\"default\"") {
-      (*result) = Purpose::Default;
-    } else if (token == "\"render\"") {
-      (*result) = Purpose::Render;
-    } else if (token == "\"proxy\"") {
-      (*result) = Purpose::Proxy;
-    } else if (token == "\"guide\"") {
-      (*result) = Purpose::Guide;
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid purpose token name: " + token + "\n");
-    }
-
-    return true;
-  }
 
   bool ParseDefArg(std::tuple<ListEditQual, PrimVariable> *out) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -1042,7 +643,7 @@ class AsciiParser::Impl {
       return false;
     }
 
-    std::cout << "varname = `" << varname << "`\n";
+    //std::cout << "varname = `" << varname << "`\n";
 
     if (!IsNodeArg(varname)) {
       PUSH_ERROR_AND_RETURN("Unsupported or invalid/empty variable name `" +
@@ -1180,13 +781,13 @@ class AsciiParser::Impl {
     }
 
     if (!SkipCommentAndWhitespaceAndNewline()) {
-      std::cout << "skip comment/whitespace/nl failed\n";
+      //std::cout << "skip comment/whitespace/nl failed\n";
       return false;
     }
 
     while (!Eof()) {
       if (!SkipCommentAndWhitespaceAndNewline()) {
-        std::cout << "2: skip comment/whitespace/nl failed\n";
+        //std::cout << "2: skip comment/whitespace/nl failed\n";
         return false;
       }
 
@@ -1218,81 +819,6 @@ class AsciiParser::Impl {
     return true;
   }
 
-  bool ParseDict(std::map<std::string, PrimVariable> *out_dict) {
-    // '{' (type name '=' value)+ '}'
-    if (!Expect('{')) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    while (!_sr->eof()) {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (c == '}') {
-        break;
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-
-        std::string key;
-        PrimVariable var;
-        if (!ParseDictElement(&key, &var)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-
-        assert(var.valid());
-
-        (*out_dict)[key] = var;
-      }
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    return true;
-  }
-
-  bool MaybeListEditQual(tinyusdz::ListEditQual *qual) {
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    std::string tok;
-
-    auto loc = CurrLoc();
-    if (!ReadToken(&tok)) {
-      return false;
-    }
-
-    if (tok == "prepend") {
-      (*qual) = tinyusdz::ListEditQual::Prepend;
-    } else if (tok == "append") {
-      (*qual) = tinyusdz::ListEditQual::Append;
-    } else if (tok == "add") {
-      (*qual) = tinyusdz::ListEditQual::Add;
-    } else if (tok == "delete") {
-      (*qual) = tinyusdz::ListEditQual::Delete;
-    } else {
-      // unqualified
-      // rewind
-      SeekTo(loc);
-      (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
-    }
-
-    return true;
-  }
 
   bool ParseAttrMeta(AttrMeta *out_meta) {
     // '(' metas ')'
@@ -1451,116 +977,6 @@ class AsciiParser::Impl {
     return false;
   }
 
-  bool ParseMetaAttr() {
-    // meta_attr : uniform type (array_qual?) name '=' value
-    //           | type (array_qual?) name '=' value
-    //           ;
-
-    bool uniform_qual{false};
-    std::string type_name;
-
-    if (!ReadIdentifier(&type_name)) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (type_name == "uniform") {
-      uniform_qual = true;
-
-      // next token should be type
-      if (!ReadIdentifier(&type_name)) {
-        PUSH_ERROR_AND_RETURN(
-            "`type` identifier expected but got non-identifier");
-      }
-
-      // `type_name` is then overwritten.
-    }
-
-    if (!IsRegisteredPrimAttrType(type_name)) {
-      PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
-                            type_name + "`\n");
-    }
-
-    // Has array qualifier? `[]`
-    bool array_qual = false;
-    {
-      char c0, c1;
-      if (!Char1(&c0)) {
-        return false;
-      }
-
-      if (c0 == '[') {
-        if (!Char1(&c1)) {
-          return false;
-        }
-
-        if (c1 == ']') {
-          array_qual = true;
-        } else {
-          // Invalid syntax
-          PushError("Invalid syntax found.\n");
-          return false;
-        }
-
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-      }
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    std::string primattr_name;
-    if (!ReadPrimAttrIdentifier(&primattr_name)) {
-      PushError("Failed to parse primAttr identifier.\n");
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (!Expect('=')) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    //
-    // TODO(syoyo): Refactror and implement value parser dispatcher.
-    // Currently only `string` is provided
-    //
-    if (type_name == "string") {
-      if (array_qual) {
-        std::vector<std::string> value;
-        if (!ParseBasicTypeArray(&value)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse string array.");
-        }
-      } else {
-        std::string value;
-        if (!ReadStringLiteral(&value)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse string literal.");
-        }
-      }
-
-    } else {
-      PUSH_ERROR_AND_RETURN("Unimplemented or unsupported type: " + type_name +
-                            "\n");
-    }
-
-    (void)uniform_qual;
-
-    return true;
-  }
-
   template <typename T>
   bool ParseTimeSamples(
       std::vector<std::pair<uint64_t, nonstd::optional<T>>> *out_samples) {
@@ -1624,157 +1040,6 @@ class AsciiParser::Impl {
     return true;
   }
 
-  bool ParseDictElement(std::string *out_key, PrimVariable *out_var) {
-    (void)out_key;
-    (void)out_var;
-
-    // dict_element: type (array_qual?) name '=' value
-    //           ;
-
-    std::string type_name;
-
-    if (!ReadIdentifier(&type_name)) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (!IsRegisteredPrimAttrType(type_name)) {
-      PUSH_ERROR_AND_RETURN("Unknown or unsupported type `" + type_name +
-                            "`\n");
-    }
-
-    // Has array qualifier? `[]`
-    bool array_qual = false;
-    {
-      char c0, c1;
-      if (!Char1(&c0)) {
-        return false;
-      }
-
-      if (c0 == '[') {
-        if (!Char1(&c1)) {
-          return false;
-        }
-
-        if (c1 == ']') {
-          array_qual = true;
-        } else {
-          // Invalid syntax
-          PushError("Invalid syntax found.\n");
-          return false;
-        }
-
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-      }
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    std::string key_name;
-    if (!ReadIdentifier(&key_name)) {
-      // string literal is also supported. e.g. "0"
-      if (ReadStringLiteral(&key_name)) {
-        // ok
-      } else {
-        PushError("Failed to parse dictionary key identifier.\n");
-        return false;
-      }
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (!Expect('=')) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    //
-    // Supports limited types for customData/Dictionary.
-    // TODO: array_qual
-    //
-    PrimVariable var;
-    if (type_name == value::kBool) {
-      bool val;
-      if (!ReadBasicType(&val)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
-      }
-      var.value = val;
-    } else if (type_name == "float") {
-      float val;
-      if (!ReadBasicType(&val)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float`");
-      }
-      var.value = val;
-    } else if (type_name == "string") {
-      std::string str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
-      }
-      var.value = str;
-    } else if (type_name == "token") {
-      if (array_qual) {
-        std::vector<value::token> toks;
-        if (!ParseBasicTypeArray(&toks)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
-        }
-        var.value = toks;
-      } else {
-        value::token tok;
-        if (!ReadBasicType(&tok)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `token`");
-        }
-        var.value = tok;
-      }
-    } else if (type_name == "dictionary") {
-      std::map<std::string, PrimVariable> dict;
-
-      if (!ParseDict(&dict)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
-    }
-
-    (*out_key) = key_name;
-    (*out_var) = var;
-
-    return true;
-  }
-
-  bool MaybeCustom() {
-    std::string tok;
-
-    auto loc = CurrLoc();
-    bool ok = ReadIdentifier(&tok);
-
-    if (!ok) {
-      // revert
-      SeekTo(loc);
-      return false;
-    }
-
-    if (tok == "custom") {
-      // cosume `custom` token.
-      return true;
-    }
-
-    // revert
-    SeekTo(loc);
-    return false;
-  }
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
@@ -2264,392 +1529,7 @@ class AsciiParser::Impl {
     return true;
   }
 
-  ///
-  /// Parses 1 or more occurences of asset references, separated by
-  /// `sep`
-  /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
-  ///
-  bool SepBy1Reference(const char sep, std::vector<Reference> *result) {
-    result->clear();
 
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    {
-      Reference ref;
-      bool triple_deliminated{false};
-
-      if (!ParseReference(&ref, &triple_deliminated)) {
-        PushError("Failed to parse Reference.\n");
-        return false;
-      }
-
-      (void)triple_deliminated;
-
-      result->push_back(ref);
-    }
-
-    while (!_sr->eof()) {
-      // sep
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if (c != sep) {
-        // end
-        _sr->seek_from_current(-1);  // unwind single char
-        break;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      Reference ref;
-      bool triple_deliminated{false};
-      if (!ParseReference(&ref, &triple_deliminated)) {
-        break;
-      }
-
-      (void)triple_deliminated;
-      result->push_back(ref);
-    }
-
-    if (result->empty()) {
-      PushError("Empty array.\n");
-      return false;
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parses 1 or more occurences of value with basic type 'T', separated by
-  /// `sep`
-  ///
-  template <typename T>
-  bool SepBy1BasicType(const char sep,
-                       std::vector<nonstd::optional<T>> *result) {
-    result->clear();
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    {
-      nonstd::optional<T> value;
-      if (!ReadBasicType(&value)) {
-        PushError("Not starting with the value of requested type.\n");
-        return false;
-      }
-
-      result->push_back(value);
-    }
-
-    while (!_sr->eof()) {
-      // sep
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if (c != sep) {
-        // end
-        _sr->seek_from_current(-1);  // unwind single char
-        break;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      nonstd::optional<T> value;
-      if (!ReadBasicType(&value)) {
-        break;
-      }
-
-      result->push_back(value);
-    }
-
-    if (result->empty()) {
-      PushError("Empty array.\n");
-      return false;
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parses 1 or more occurences of value with basic type 'T', separated by
-  /// `sep`
-  ///
-  template <typename T>
-  bool SepBy1BasicType(const char sep, std::vector<T> *result) {
-    result->clear();
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    {
-      T value;
-      if (!ReadBasicType(&value)) {
-        PushError("Not starting with the value of requested type.\n");
-        return false;
-      }
-
-      result->push_back(value);
-    }
-
-    while (!_sr->eof()) {
-      // sep
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if (c != sep) {
-        // end
-        _sr->seek_from_current(-1);  // unwind single char
-        break;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      T value;
-      if (!ReadBasicType(&value)) {
-        break;
-      }
-
-      result->push_back(value);
-    }
-
-    if (result->empty()) {
-      PushError("Empty array.\n");
-      return false;
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parses 1 or more occurences of value with tuple type 'T', separated by
-  /// `sep`
-  ///
-  template <typename T, size_t N>
-  bool SepBy1TupleType(
-      const char sep, std::vector<nonstd::optional<std::array<T, N>>> *result) {
-    result->clear();
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (MaybeNone()) {
-      result->push_back(nonstd::nullopt);
-    } else {
-      std::array<T, N> value;
-      if (!ParseBasicTypeTuple<T, N>(&value)) {
-        PushError("Not starting with the tuple value of requested type.\n");
-        return false;
-      }
-
-      result->push_back(value);
-    }
-
-    while (!_sr->eof()) {
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if (c != sep) {
-        // end
-        _sr->seek_from_current(-1);  // unwind single char
-        break;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      if (MaybeNone()) {
-        result->push_back(nonstd::nullopt);
-      } else {
-        std::array<T, N> value;
-        if (!ParseBasicTypeTuple<T, N>(&value)) {
-          break;
-        }
-        result->push_back(value);
-      }
-    }
-
-    if (result->empty()) {
-      PushError("Empty array.\n");
-      return false;
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parses 1 or more occurences of value with tuple type 'T', separated by
-  /// `sep`
-  ///
-  template <typename T, size_t N>
-  bool SepBy1TupleType(const char sep, std::vector<std::array<T, N>> *result) {
-    result->clear();
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    {
-      std::array<T, N> value;
-      if (!ParseBasicTypeTuple<T, N>(&value)) {
-        PushError("Not starting with the tuple value of requested type.\n");
-        return false;
-      }
-
-      result->push_back(value);
-    }
-
-    while (!_sr->eof()) {
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if (c != sep) {
-        // end
-        _sr->seek_from_current(-1);  // unwind single char
-        break;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-
-      std::array<T, N> value;
-      if (!ParseBasicTypeTuple<T, N>(&value)) {
-        break;
-      }
-
-      result->push_back(value);
-    }
-
-    if (result->empty()) {
-      PushError("Empty array.\n");
-      return false;
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parse '[', Sep1By(','), ']'
-  ///
-  template <typename T>
-  bool ParseBasicTypeArray(std::vector<nonstd::optional<T>> *result) {
-    if (!Expect('[')) {
-      return false;
-    }
-
-    if (!SepBy1BasicType<T>(',', result)) {
-      return false;
-    }
-
-    if (!Expect(']')) {
-      return false;
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parse '[', Sep1By(','), ']'
-  ///
-  template <typename T>
-  bool ParseBasicTypeArray(std::vector<T> *result) {
-    if (!Expect('[')) {
-      return false;
-    }
-
-    if (!SepBy1BasicType<T>(',', result)) {
-      return false;
-    }
-
-    if (!Expect(']')) {
-      return false;
-    }
-    return true;
-  }
-
-  ///
-  /// Parse array of asset references
-  /// Allow non-list version
-  ///
-  bool ParseReferenceArray(std::vector<Reference> *result) {
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    char c;
-    if (!Char1(&c)) {
-      return false;
-    }
-
-    if (c != '[') {
-      Rewind(1);
-
-      DCOUT("Guess non-list version");
-      // Guess non-list version
-      Reference ref;
-      bool triple_deliminated{false};
-      if (!ParseReference(&ref, &triple_deliminated)) {
-        return false;
-      }
-
-      (void)triple_deliminated;
-      result->clear();
-      result->push_back(ref);
-
-    } else {
-      if (!SepBy1Reference(',', result)) {
-        return false;
-      }
-
-      if (!Expect(']')) {
-        return false;
-      }
-    }
-
-    return true;
-  }
 
   ///
   /// Parses 1 or more occurences of paths, separated by
@@ -2744,81 +1624,7 @@ class AsciiParser::Impl {
     return true;
   }
 
-  ///
-  /// Parse '(', Sep1By(','), ')'
-  ///
-  template <typename T, size_t N>
-  bool ParseBasicTypeTuple(std::array<T, N> *result) {
-    if (!Expect('(')) {
-      return false;
-    }
-
-    std::vector<T> values;
-    if (!SepBy1BasicType<T>(',', &values)) {
-      return false;
-    }
-
-    if (!Expect(')')) {
-      return false;
-    }
-
-    if (values.size() != N) {
-      std::string msg = "The number of tuple elements must be " +
-                        std::to_string(N) + ", but got " +
-                        std::to_string(values.size()) + "\n";
-      PushError(msg);
-      return false;
-    }
-
-    for (size_t i = 0; i < N; i++) {
-      (*result)[i] = values[i];
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parse '(', Sep1By(','), ')'
-  /// Can have `None`
-  ///
-  template <typename T, size_t N>
-  bool ParseBasicTypeTuple(nonstd::optional<std::array<T, N>> *result) {
-    if (MaybeNone()) {
-      (*result) = nonstd::nullopt;
-      return true;
-    }
-
-    if (!Expect('(')) {
-      return false;
-    }
-
-    std::vector<T> values;
-    if (!SepBy1BasicType<T>(',', &values)) {
-      return false;
-    }
-
-    if (!Expect(')')) {
-      return false;
-    }
-
-    if (values.size() != N) {
-      std::string msg = "The number of tuple elements must be " +
-                        std::to_string(N) + ", but got " +
-                        std::to_string(values.size()) + "\n";
-      PushError(msg);
-      return false;
-    }
-
-    std::array<T, N> ret;
-    for (size_t i = 0; i < N; i++) {
-      ret[i] = values[i];
-    }
-
-    (*result) = ret;
-
-    return true;
-  }
-
+#if 0
   ///
   /// Parse matrix4f (e.g. ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0,
   /// 1))
@@ -2890,12 +1696,14 @@ class AsciiParser::Impl {
 
     return true;
   }
+#endif
 
   ///
   /// Parses 1 or more occurences of matrix4d, separated by
   /// `sep`
   ///
-  bool SepBy1Matrix4d(const char sep, std::vector<value::matrix4d> *result) {
+  template<>
+  bool SepBy1BasicType(const char sep, std::vector<value::matrix4d> *result) {
     result->clear();
 
     if (!SkipWhitespaceAndNewline()) {
@@ -3209,1151 +2017,7 @@ class AsciiParser::Impl {
     return true;
   }
 
-  ///
-  /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
-  /// None, (2, 3, 4), ...] )
-  ///
-  template <typename T, size_t N>
-  bool ParseTupleArray(
-      std::vector<nonstd::optional<std::array<T, N>>> *result) {
-    if (!Expect('[')) {
-      return false;
-    }
 
-    if (!SepBy1TupleType<T, N>(',', result)) {
-      return false;
-    }
-
-    if (!Expect(']')) {
-      return false;
-    }
-
-    return true;
-  }
-
-  ///
-  /// Parse the array of tuple(e.g. `float3`: [(0, 1, 2), (2, 3, 4), ...] )
-  ///
-  template <typename T, size_t N>
-  bool ParseTupleArray(std::vector<std::array<T, N>> *result) {
-    (void)result;
-
-    if (!Expect('[')) {
-      return false;
-    }
-
-    if (!SepBy1TupleType<T, N>(',', result)) {
-      return false;
-    }
-
-    if (!Expect(']')) {
-      return false;
-    }
-
-    return true;
-  }
-
-  bool ReadStringLiteral(std::string *literal) {
-    std::stringstream ss;
-
-    char c0;
-    if (!_sr->read1(&c0)) {
-      return false;
-    }
-
-    if (c0 != '"') {
-      ErrorDiagnositc diag;
-      diag.err = "String literal expected but it does not start with '\"'\n";
-      diag.line_col = _line_col;
-      diag.line_row = _line_row;
-
-      err_stack.push(diag);
-      return false;
-    }
-
-    // ss << "\"";
-
-    bool end_with_quotation{false};
-
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '"') {
-        end_with_quotation = true;
-        break;
-      }
-
-      ss << c;
-    }
-
-    if (!end_with_quotation) {
-      ErrorDiagnositc diag;
-      diag.err = "String literal expected but it does not end with '\"'\n";
-      diag.line_col = _line_col;
-      diag.line_row = _line_row;
-
-      err_stack.push(diag);
-      return false;
-    }
-
-    (*literal) = ss.str();
-
-    _line_col += int(literal->size() + 2);  // +2 for quotation chars
-
-    return true;
-  }
-
-  bool ReadPrimAttrIdentifier(std::string *token) {
-    // Example: xformOp:transform
-
-    std::stringstream ss;
-
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '_') {
-        // ok
-      } else if (c == ':') {  // namespace
-        // ':' must lie in the middle of string literal
-        if (ss.str().size() == 0) {
-          PushError("PrimAttr name must not starts with `:`\n");
-          return false;
-        }
-      } else if (c == '.') {  // delimiter for `connect`
-        // '.' must lie in the middle of string literal
-        if (ss.str().size() == 0) {
-          PushError("PrimAttr name must not starts with `.`\n");
-          return false;
-        }
-      } else if (!std::isalpha(int(c))) {
-        _sr->seek_from_current(-1);
-        break;
-      }
-
-      _line_col++;
-
-      ss << c;
-    }
-
-    // ':' must lie in the middle of string literal
-    if (ss.str().back() == ':') {
-      PushError("PrimAttr name must not ends with `:`\n");
-      return false;
-    }
-
-    // '.' must lie in the middle of string literal
-    if (ss.str().back() == '.') {
-      PushError("PrimAttr name must not ends with `.`\n");
-      return false;
-    }
-
-    // Currently we only support '.connect'
-    std::string tok = ss.str();
-
-    if (contains(tok, '.')) {
-      if (endsWith(tok, ".connect")) {
-        PushError(
-            "Must ends with `.connect` when a name contains punctuation `.`");
-        return false;
-      }
-    }
-
-    (*token) = ss.str();
-    // std::cout << "primAttr identifier = " << (*token) << "\n";
-    return true;
-  }
-
-  bool ReadIdentifier(std::string *token) {
-    // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
-    std::stringstream ss;
-
-    // The first character.
-    {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '_') {
-        // ok
-      } else if (!std::isalpha(int(c))) {
-        _sr->seek_from_current(-1);
-        return false;
-      }
-      _line_col++;
-
-      ss << c;
-    }
-
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '_') {
-        // ok
-      } else if (!std::isalnum(int(c))) {
-        _sr->seek_from_current(-1);
-        break;
-      }
-
-      _line_col++;
-
-      ss << c;
-    }
-
-    (*token) = ss.str();
-    return true;
-  }
-
-  bool ReadPathIdentifier(std::string *path_identifier) {
-    // path_identifier = `<` string `>`
-    std::stringstream ss;
-
-    if (!Expect('<')) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    // Must start with '/'
-    if (!Expect('/')) {
-      PushError("Path identifier must start with '/'");
-      return false;
-    }
-
-    ss << '/';
-
-    // read until '>'
-    bool ok = false;
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '>') {
-        // end
-        ok = true;
-        _line_col++;
-        break;
-      }
-
-      // TODO: Check if character is valid for path identifier
-      ss << c;
-    }
-
-    if (!ok) {
-      return false;
-    }
-
-    (*path_identifier) = TrimString(ss.str());
-    // std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
-
-    return true;
-  }
-
-  bool SkipUntilNewline() {
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '\n') {
-        break;
-      } else if (c == '\r') {
-        // CRLF?
-        if (_sr->tell() < (_sr->size() - 1)) {
-          char d;
-          if (!_sr->read1(&d)) {
-            // this should not happen.
-            return false;
-          }
-
-          if (d == '\n') {
-            break;
-          }
-
-          // unwind 1 char
-          if (!_sr->seek_from_current(-1)) {
-            // this should not happen.
-            return false;
-          }
-
-          break;
-        }
-
-      } else {
-        // continue
-      }
-    }
-
-    _line_row++;
-    _line_col = 0;
-    return true;
-  }
-
-  bool SkipWhitespace() {
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-      _line_col++;
-
-      if ((c == ' ') || (c == '\t') || (c == '\f')) {
-        // continue
-      } else {
-        break;
-      }
-    }
-
-    // unwind 1 char
-    if (!_sr->seek_from_current(-1)) {
-      return false;
-    }
-    _line_col--;
-
-    return true;
-  }
-
-  bool SkipWhitespaceAndNewline() {
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      // printf("sws c = %c\n", c);
-
-      if ((c == ' ') || (c == '\t') || (c == '\f')) {
-        _line_col++;
-        // continue
-      } else if (c == '\n') {
-        _line_col = 0;
-        _line_row++;
-        // continue
-      } else if (c == '\r') {
-        // CRLF?
-        if (_sr->tell() < (_sr->size() - 1)) {
-          char d;
-          if (!_sr->read1(&d)) {
-            // this should not happen.
-            return false;
-          }
-
-          if (d == '\n') {
-            // CRLF
-          } else {
-            // unwind 1 char
-            if (!_sr->seek_from_current(-1)) {
-              // this should not happen.
-              return false;
-            }
-          }
-        }
-        _line_col = 0;
-        _line_row++;
-        // continue
-      } else {
-        // end loop
-        if (!_sr->seek_from_current(-1)) {
-          return false;
-        }
-        break;
-      }
-    }
-
-    return true;
-  }
-
-  bool SkipCommentAndWhitespaceAndNewline() {
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      // printf("sws c = %c\n", c);
-
-      if (c == '#') {
-        if (!SkipUntilNewline()) {
-          return false;
-        }
-      } else if ((c == ' ') || (c == '\t') || (c == '\f')) {
-        _line_col++;
-        // continue
-      } else if (c == '\n') {
-        _line_col = 0;
-        _line_row++;
-        // continue
-      } else if (c == '\r') {
-        // CRLF?
-        if (_sr->tell() < (_sr->size() - 1)) {
-          char d;
-          if (!_sr->read1(&d)) {
-            // this should not happen.
-            return false;
-          }
-
-          if (d == '\n') {
-            // CRLF
-          } else {
-            // unwind 1 char
-            if (!_sr->seek_from_current(-1)) {
-              // this should not happen.
-              return false;
-            }
-          }
-        }
-        _line_col = 0;
-        _line_row++;
-        // continue
-      } else {
-        // std::cout << "unwind\n";
-        // end loop
-        if (!_sr->seek_from_current(-1)) {
-          return false;
-        }
-        break;
-      }
-    }
-
-    return true;
-  }
-
-  bool Expect(char expect_c) {
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    char c;
-    if (!_sr->read1(&c)) {
-      // this should not happen.
-      return false;
-    }
-
-    bool ret = (c == expect_c);
-
-    if (!ret) {
-      std::string msg = "Expected `" + std::string(&expect_c, 1) +
-                        "` but got `" + std::string(&c, 1) + "`\n";
-      PushError(msg);
-
-      // unwind
-      _sr->seek_from_current(-1);
-    } else {
-      _line_col++;
-    }
-
-    return ret;
-  }
-
-  // Parse magic
-  // #usda FLOAT
-  bool ParseMagicHeader() {
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (_sr->eof()) {
-      return false;
-    }
-
-    {
-      char magic[6];
-      if (!_sr->read(6, 6, reinterpret_cast<uint8_t *>(magic))) {
-        // eol
-        return false;
-      }
-
-      if ((magic[0] == '#') && (magic[1] == 'u') && (magic[2] == 's') &&
-          (magic[3] == 'd') && (magic[4] == 'a') && (magic[5] == ' ')) {
-        // ok
-      } else {
-        ErrorDiagnositc diag;
-        diag.line_row = _line_row;
-        diag.line_col = _line_col;
-        diag.err =
-            "Magic header must start with `#usda `(at least single whitespace "
-            "after 'a') but got `" +
-            std::string(magic, 6) + "`\n";
-        err_stack.push(diag);
-
-        return false;
-      }
-    }
-
-    if (!SkipWhitespace()) {
-      // eof
-      return false;
-    }
-
-    // current we only accept "1.0"
-    {
-      char ver[3];
-      if (!_sr->read(3, 3, reinterpret_cast<uint8_t *>(ver))) {
-        return false;
-      }
-
-      if ((ver[0] == '1') && (ver[1] == '.') && (ver[2] == '0')) {
-        // ok
-        _version = 1.0f;
-      } else {
-        ErrorDiagnositc diag;
-        diag.line_row = _line_row;
-        diag.line_col = _line_col;
-        diag.err =
-            "Version must be `1.0` but got `" + std::string(ver, 3) + "`\n";
-        err_stack.push(diag);
-
-        return false;
-      }
-    }
-
-    SkipUntilNewline();
-
-    return true;
-  }
-
-  bool ParseCustomMetaValue() {
-    // type identifier '=' value
-
-    return ParseMetaAttr();
-  }
-
-  // TODO: Return Path
-  bool ParseReference(Reference *out, bool *triple_deliminated) {
-    // @...@
-    // or @@@...@@@ (Triple '@'-deliminated asset references)
-    // And optionally followed by prim path.
-    // Example:
-    //   @bora@
-    //   @@@bora@@@
-    //   @bora@</dora>
-
-    // TODO: Correctly support escape characters
-
-    // look ahead.
-    std::vector<char> buf;
-    uint64_t curr = _sr->tell();
-    bool maybe_triple{false};
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (CharN(3, &buf)) {
-      if (buf[0] == '@' && buf[1] == '@' && buf[2] == '@') {
-        maybe_triple = true;
-      }
-    }
-
-    bool valid{false};
-
-    if (!maybe_triple) {
-      // std::cout << "maybe single-'@' asset reference\n";
-
-      SeekTo(curr);
-      char s;
-      if (!Char1(&s)) {
-        return false;
-      }
-
-      if (s != '@') {
-        std::string sstr{s};
-        PUSH_ERROR_AND_RETURN("Reference must start with '@', but got '" +
-                              sstr + "'");
-      }
-
-      std::string tok;
-
-      // Read until '@'
-      bool found_delimiter = false;
-      while (!_sr->eof()) {
-        char c;
-
-        if (!Char1(&c)) {
-          return false;
-        }
-
-        if (c == '@') {
-          found_delimiter = true;
-          break;
-        }
-
-        tok += c;
-      }
-
-      if (found_delimiter) {
-        out->asset_path = tok;
-        (*triple_deliminated) = false;
-
-        valid = true;
-      }
-
-    } else {
-      bool found_delimiter{false};
-      int at_cnt{0};
-      std::string tok;
-
-      // Read until '@@@' appears
-      while (!_sr->eof()) {
-        char c;
-
-        if (!Char1(&c)) {
-          return false;
-        }
-
-        if (c == '@') {
-          at_cnt++;
-        } else {
-          at_cnt--;
-          if (at_cnt < 0) {
-            at_cnt = 0;
-          }
-        }
-
-        tok += c;
-
-        if (at_cnt == 3) {
-          // Got it. '@@@'
-          found_delimiter = true;
-          break;
-        }
-      }
-
-      if (found_delimiter) {
-        out->asset_path = tok;
-        (*triple_deliminated) = true;
-
-        valid = true;
-      }
-    }
-
-    if (!valid) {
-      return false;
-    }
-
-    // Parse optional prim_path
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (c == '<') {
-        if (!Rewind(1)) {
-          return false;
-        }
-
-        std::string path;
-        if (!ReadPathIdentifier(&path)) {
-          return false;
-        }
-
-        out->prim_path = path;
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  bool ParseMetaValue(const std::string &vartype, const std::string &varname,
-                      PrimVariable *outvar) {
-    PrimVariable var;
-
-    // TODO: Refactor.
-    if (vartype == "string") {
-      std::string value;
-      if (!ReadStringLiteral(&value)) {
-        std::string msg = "String literal expected for `" + varname + "`.\n";
-        PushError(msg);
-        return false;
-      }
-      var.value = value;
-    } else if (vartype == "ref[]") {
-      std::vector<Reference> values;
-      if (!ParseReferenceArray(&values)) {
-        std::string msg =
-            "Array of Reference expected for `" + varname + "`.\n";
-        PushError(msg);
-        return false;
-      }
-
-      var.value = values;
-
-    } else if (vartype == "int[]") {
-      std::vector<int> values;
-      if (!ParseBasicTypeArray<int>(&values)) {
-        // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; PushError(msg);
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        DCOUT("int[" << i << "] = " << values[i]);
-      }
-
-      var.value = values;
-    } else if (vartype == "float[]") {
-      std::vector<float> values;
-      if (!ParseBasicTypeArray<float>(&values)) {
-        return false;
-      }
-
-      // PrimVariable::Array arr;
-      // for (size_t i = 0; i < values.size(); i++) {
-      //   PrimVariable v;
-      //   v.value = values[i];
-      //   arr.values.push_back(v);
-      // }
-
-      var.value = values;
-    } else if (vartype == "float3[]") {
-      std::vector<std::array<float, 3>> values;
-      if (!ParseTupleArray<float, 3>(&values)) {
-        return false;
-      }
-
-      var.value = values;
-    } else if (vartype == "float") {
-      std::string fval;
-      std::string ferr;
-      if (!LexFloat(&fval, &ferr)) {
-        std::string msg =
-            "Floating point literal expected for `" + varname + "`.\n";
-        if (!ferr.empty()) {
-          msg += ferr;
-        }
-        PushError(msg);
-        return false;
-      }
-      auto ret = ParseFloat(fval);
-      if (!ret) {
-        std::string msg =
-            "Failed to parse floating point literal for `" + varname + "`.\n";
-        if (!ferr.empty()) {
-          msg += ret.error();
-        }
-        PushError(msg);
-        return false;
-      }
-
-      var.value = ret.value();
-
-    } else if (vartype == "int3") {
-      std::array<int, 3> values;
-      if (!ParseBasicTypeTuple<int, 3>(&values)) {
-        // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; PushError(msg);
-        return false;
-      }
-
-      var.value = values;
-    } else if (vartype == "object") {
-      if (!Expect('{')) {
-        PushError("'{' expected.\n");
-        return false;
-      }
-
-      while (!_sr->eof()) {
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-
-        char c;
-        if (!Char1(&c)) {
-          return false;
-        }
-
-        if (c == '}') {
-          break;
-        } else {
-          if (!Rewind(1)) {
-            return false;
-          }
-
-          if (!ParseCustomMetaValue()) {
-            PushError("Failed to parse meta definition.\n");
-            return false;
-          }
-        }
-      }
-
-      PUSH_WARN("TODO: Implement object type(customData)");
-    } else {
-      PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
-    }
-
-    (*outvar) = var;
-
-    return true;
-  }
-
-  // metadata_opt := string_literal '\n'
-  //              |  var '=' value '\n'
-  //
-  bool ParseWorldMetaOpt() {
-    {
-      uint64_t loc = _sr->tell();
-
-      std::string note;
-      if (!ReadStringLiteral(&note)) {
-        // revert
-        if (!SeekTo(loc)) {
-          return false;
-        }
-      } else {
-        // Got note.
-
-        return true;
-      }
-    }
-
-    std::string varname;
-    if (!ReadIdentifier(&varname)) {
-      return false;
-    }
-
-    if (!IsBuiltinMeta(varname)) {
-      std::string msg =
-          "'" + varname + "' is not a builtin Metadata variable.\n";
-      PushError(msg);
-      return false;
-    }
-
-    if (!Expect('=')) {
-      PushError("'=' expected in Metadata line.\n");
-      return false;
-    }
-    SkipWhitespace();
-
-    VariableDef &vardef = _builtin_metas.at(varname);
-    PrimVariable var;
-    if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
-      PushError("Failed to parse meta value.\n");
-      return false;
-    }
-
-    //
-    // Materialize builtin variables
-    //
-#if 0  // TODO
-    if (varname == "defaultPrim") {
-      if (auto pv = var.as_value()) {
-        if (auto p = nonstd::get_if<std::string>(pv)) {
-          _defaultPrim = *p;
-        }
-      }
-    }
-#endif
-
-    std::vector<std::string> sublayers;
-#if 0  // TODO
-    if (varname == "subLayers") {
-      if (var.IsArray()) {
-        auto parr = var.as_array();
-
-        if (parr) {
-          auto arr = parr->values;
-          for (size_t i = 0; i < arr.size(); i++) {
-            if (arr[i].IsValue()) {
-              auto pv = arr[i].as_value();
-              if (auto p = nonstd::get_if<std::string>(pv)) {
-                sublayers.push_back(*p);
-              }
-            }
-          }
-        }
-      }
-    }
-#endif
-
-    // Load subLayers
-    if (sublayers.size()) {
-      // Create another USDA parser.
-
-      for (size_t i = 0; i < sublayers.size(); i++) {
-        std::string filepath = io::JoinPath(_base_dir, sublayers[i]);
-
-        std::vector<uint8_t> data;
-        std::string err;
-        if (!io::ReadWholeFile(&data, &err, filepath, /* max_filesize */ 0)) {
-          PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
-        }
-
-        tinyusdz::StreamReader sr(data.data(), data.size(),
-                                  /* swap endian */ false);
-        tinyusdz::ascii::AsciiParser parser(&sr);
-
-        std::string base_dir = io::GetBaseDir(filepath);
-
-        parser.SetBaseDir(base_dir);
-
-        {
-          bool ret = parser.Parse(tinyusdz::ascii::LOAD_STATE_SUBLAYER);
-
-          if (!ret) {
-            PUSH_WARN("Failed to parse .usda: " << parser.GetError());
-          }
-        }
-      }
-
-      // TODO: Merge/Import subLayer.
-    }
-
-#if 0
-    if (var.type == "string") {
-      std::string value;
-      std::cout << "read string literal\n";
-      if (!ReadStringLiteral(&value)) {
-        std::string msg = "String literal expected for `" + var.name + "`.\n";
-        PushError(msg);
-        return false;
-      }
-    } else if (var.type == "int[]") {
-      std::vector<int> values;
-      if (!ParseBasicTypeArray<int>(&values)) {
-        // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; PushError(msg);
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "int[" << i << "] = " << values[i] << "\n";
-      }
-    } else if (var.type == "float[]") {
-      std::vector<float> values;
-      if (!ParseBasicTypeArray<float>(&values)) {
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "float[" << i << "] = " << values[i] << "\n";
-      }
-    } else if (var.type == "float3[]") {
-      std::vector<std::array<float, 3>> values;
-      if (!ParseTupleArray<float, 3>(&values)) {
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "float[" << i << "] = " << values[i][0] << ", "
-                  << values[i][1] << ", " << values[i][2] << "\n";
-      }
-    } else if (var.type == "float") {
-      std::string fval;
-      std::string ferr;
-      if (!LexFloat(&fval, &ferr)) {
-        std::string msg =
-            "Floating point literal expected for `" + var.name + "`.\n";
-        if (!ferr.empty()) {
-          msg += ferr;
-        }
-        PushError(msg);
-        return false;
-      }
-      std::cout << "float : " << fval << "\n";
-      float value;
-      if (!ParseFloat(fval, &value, &ferr)) {
-        std::string msg =
-            "Failed to parse floating point literal for `" + var.name + "`.\n";
-        if (!ferr.empty()) {
-          msg += ferr;
-        }
-        PushError(msg);
-        return false;
-      }
-      std::cout << "parsed float : " << value << "\n";
-
-    } else if (var.type == "int3") {
-      std::array<int, 3> values;
-      if (!ParseBasicTypeTuple<int, 3>(&values)) {
-        // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; PushError(msg);
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "int[" << i << "] = " << values[i] << "\n";
-      }
-    } else if (var.type == "object") {
-      // TODO: support nested parameter.
-    }
-#endif
-
-    return true;
-  }
-
-  // Parse World meta
-  // meta = ( metadata_opt )
-  //      | empty
-  //      ;
-  bool ParseWorldMeta() {
-    if (!Expect('(')) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    while (!_sr->eof()) {
-      if (Expect(')')) {
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-
-        // end
-        return true;
-
-      } else {
-        if (!SkipWhitespace()) {
-          // eof
-          return false;
-        }
-
-        if (!ParseWorldMetaOpt()) {
-          // parse error
-          return false;
-        }
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  // `#` style comment
-  bool ParseSharpComment() {
-    char c;
-    if (!_sr->read1(&c)) {
-      // eol
-      return false;
-    }
-
-    if (c != '#') {
-      return false;
-    }
-
-    return true;
-  }
-
-  bool Eof() { return _sr->eof(); }
-
-  // Fetch 1 char. Do not change input stream position.
-  bool LookChar1(char *c) {
-    if (!_sr->read1(c)) {
-      return false;
-    }
-
-    Rewind(1);
-
-    return true;
-  }
-
-  // Fetch N chars. Do not change input stream position.
-  bool LookCharN(size_t n, std::vector<char> *nc) {
-    std::vector<char> buf(n);
-
-    auto loc = CurrLoc();
-
-    bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
-    if (ok) {
-      (*nc) = buf;
-    }
-
-    SeekTo(loc);
-
-    return ok;
-  }
-
-  bool Char1(char *c) { return _sr->read1(c); }
-
-  bool CharN(size_t n, std::vector<char> *nc) {
-    std::vector<char> buf(n);
-
-    bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
-    if (ok) {
-      (*nc) = buf;
-    }
-
-    return ok;
-  }
-
-  bool Rewind(size_t offset) {
-    if (!_sr->seek_from_current(-int64_t(offset))) {
-      return false;
-    }
-
-    return true;
-  }
-
-  uint64_t CurrLoc() { return _sr->tell(); }
-
-  bool SeekTo(size_t pos) {
-    if (!_sr->seek_set(pos)) {
-      return false;
-    }
-
-    return true;
-  }
-
-  bool Push() {
-    // Stack size must be less than the number of input bytes.
-    assert(parse_stack.size() < _sr->size());
-
-    uint64_t loc = _sr->tell();
-
-    ParseState state;
-    state.loc = int64_t(loc);
-    parse_stack.push(state);
-
-    return true;
-  }
-
-  bool Pop(ParseState *state) {
-    if (parse_stack.empty()) {
-      return false;
-    }
-
-    (*state) = parse_stack.top();
-
-    parse_stack.pop();
-
-    return true;
-  }
 
   ///
   /// Parse `class` block.
@@ -5144,8 +2808,8 @@ class AsciiParser::Impl {
 
   void PushError(const std::string &msg) {
     ErrorDiagnositc diag;
-    diag.line_row = _line_row;
-    diag.line_col = _line_col;
+    diag.line_row = _curr_cursor.row;
+    diag.line_col = _curr_cursor.col;
     diag.err = msg;
     err_stack.push(diag);
   }
@@ -5159,8 +2823,8 @@ class AsciiParser::Impl {
 
   void PushWarn(const std::string &msg) {
     ErrorDiagnositc diag;
-    diag.line_row = _line_row;
-    diag.line_col = _line_col;
+    diag.line_row = _curr_cursor.row;
+    diag.line_col = _curr_cursor.col;
     diag.err = msg;
     warn_stack.push(diag);
   }
@@ -5249,8 +2913,8 @@ class AsciiParser::Impl {
   std::stack<ErrorDiagnositc> warn_stack;
   std::stack<ParseState> parse_stack;
 
-  int _line_row{0};
-  int _line_col{0};
+  int _curr_cursor.row{0};
+  int _curr_cursor.col{0};
 
   float _version{1.0f};
 
@@ -6551,55 +4215,10 @@ bool AsciiParser::Impl::ReconstructPrimvarReader_float2(
   return false;
 }
 
-// 'None'
-bool AsciiParser::Impl::MaybeNone() {
-  std::vector<char> buf;
-
-  auto loc = CurrLoc();
-
-  if (!CharN(4, &buf)) {
-    SeekTo(loc);
-    return false;
-  }
-
-  if ((buf[0] == 'N') && (buf[1] == 'o') && (buf[2] == 'n') &&
-      (buf[3] == 'e')) {
-    // got it
-    return true;
-  }
-
-  SeekTo(loc);
-
-  return false;
-}
 
 //
 // -- impl ReadBasicType
 //
-
-bool AsciiParser::Impl::ReadBasicType(value::token *value) {
-  std::string str;
-  if (ReadStringLiteral(&str)) {
-    (*value) = value::token(str);
-  }
-
-  return false;
-}
-
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::token> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  value::token v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
 
 bool AsciiParser::Impl::ReadBasicType(value::matrix4f *value) {
   if (value) {
@@ -6697,353 +4316,6 @@ bool AsciiParser::Impl::ReadBasicType(
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(std::string *value) {
-  return ReadStringLiteral(value);
-}
-
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<std::string> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  std::string v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-bool AsciiParser::Impl::ReadBasicType(bool *value) {
-  // 'true', 'false', '0' or '1'
-  {
-    std::string tok;
-
-    auto loc = CurrLoc();
-    bool ok = ReadIdentifier(&tok);
-
-    if (ok) {
-      if (tok == "true") {
-        (*value) = true;
-        return true;
-      } else if (tok == "false") {
-        (*value) = false;
-        return true;
-      }
-    }
-
-    // revert
-    SeekTo(loc);
-  }
-
-  char sc;
-  if (!_sr->read1(&sc)) {
-    return false;
-  }
-  _line_col++;
-
-  // sign or [0-9]
-  if (sc == '0') {
-    (*value) = false;
-    return true;
-  } else if (sc == '1') {
-    (*value) = true;
-    return true;
-  } else {
-    PushError("'0' or '1' expected.\n");
-    return false;
-  }
-}
-
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<bool> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  bool v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-bool AsciiParser::Impl::ReadBasicType(int *value) {
-  std::stringstream ss;
-
-  // head character
-  bool has_sign = false;
-  // bool negative = false;
-  {
-    char sc;
-    if (!_sr->read1(&sc)) {
-      return false;
-    }
-    _line_col++;
-
-    // sign or [0-9]
-    if (sc == '+') {
-      // negative = false;
-      has_sign = true;
-    } else if (sc == '-') {
-      // negative = true;
-      has_sign = true;
-    } else if ((sc >= '0') && (sc <= '9')) {
-      // ok
-    } else {
-      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
-                "'.\n");
-      return false;
-    }
-
-    ss << sc;
-  }
-
-  while (!_sr->eof()) {
-    char c;
-    if (!_sr->read1(&c)) {
-      return false;
-    }
-
-    if ((c >= '0') && (c <= '9')) {
-      ss << c;
-    } else {
-      _sr->seek_from_current(-1);
-      break;
-    }
-  }
-
-  if (has_sign && (ss.str().size() == 1)) {
-    // sign only
-    PushError("Integer value expected but got sign character only.\n");
-    return false;
-  }
-
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
-    PushError("Zero padded integer value is not allowed.\n");
-    return false;
-  }
-
-  // std::cout << "ReadInt token: " << ss.str() << "\n";
-
-  int int_value;
-  int err = parseInt(ss.str(), &int_value);
-  if (err != 0) {
-    if (err == -1) {
-      PushError("Invalid integer input: `" + ss.str() + "`\n");
-      return false;
-    } else if (err == -2) {
-      PushError("Integer overflows: `" + ss.str() + "`\n");
-      return false;
-    } else if (err == -3) {
-      PushError("Integer underflows: `" + ss.str() + "`\n");
-      return false;
-    } else {
-      PushError("Unknown parseInt error.\n");
-      return false;
-    }
-  }
-
-  (*value) = int_value;
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(uint32_t *value) {
-  std::stringstream ss;
-
-  // head character
-  bool has_sign = false;
-  bool negative = false;
-  {
-    char sc;
-    if (!_sr->read1(&sc)) {
-      return false;
-    }
-    _line_col++;
-
-    // sign or [0-9]
-    if (sc == '+') {
-      negative = false;
-      has_sign = true;
-    } else if (sc == '-') {
-      negative = true;
-      has_sign = true;
-    } else if ((sc >= '0') && (sc <= '9')) {
-      // ok
-    } else {
-      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
-                "'.\n");
-      return false;
-    }
-
-    ss << sc;
-  }
-
-  if (negative) {
-    PushError("Unsigned value expected but got '-' sign.");
-    return false;
-  }
-
-  while (!_sr->eof()) {
-    char c;
-    if (!_sr->read1(&c)) {
-      return false;
-    }
-
-    if ((c >= '0') && (c <= '9')) {
-      ss << c;
-    } else {
-      _sr->seek_from_current(-1);
-      break;
-    }
-  }
-
-  if (has_sign && (ss.str().size() == 1)) {
-    // sign only
-    PushError("Integer value expected but got sign character only.\n");
-    return false;
-  }
-
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
-    PushError("Zero padded integer value is not allowed.\n");
-    return false;
-  }
-
-  // std::cout << "ReadInt token: " << ss.str() << "\n";
-
-  // TODO(syoyo): Use ryu parse.
-#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
-  try {
-    (*value) = std::stoull(ss.str());
-  } catch (const std::invalid_argument &e) {
-    (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
-    return false;
-  } catch (const std::out_of_range &e) {
-    (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
-    return false;
-  }
-#else
-  (*value) = uint32_t(std::stoul(ss.str()));
-#endif
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(uint64_t *value) {
-  std::stringstream ss;
-
-  // head character
-  bool has_sign = false;
-  bool negative = false;
-  {
-    char sc;
-    if (!_sr->read1(&sc)) {
-      return false;
-    }
-    _line_col++;
-
-    // sign or [0-9]
-    if (sc == '+') {
-      negative = false;
-      has_sign = true;
-    } else if (sc == '-') {
-      negative = true;
-      has_sign = true;
-    } else if ((sc >= '0') && (sc <= '9')) {
-      // ok
-    } else {
-      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
-                "'.\n");
-      return false;
-    }
-
-    ss << sc;
-  }
-
-  if (negative) {
-    PushError("Unsigned value expected but got '-' sign.");
-    return false;
-  }
-
-  while (!_sr->eof()) {
-    char c;
-    if (!_sr->read1(&c)) {
-      return false;
-    }
-
-    if ((c >= '0') && (c <= '9')) {
-      ss << c;
-    } else {
-      _sr->seek_from_current(-1);
-      break;
-    }
-  }
-
-  if (has_sign && (ss.str().size() == 1)) {
-    // sign only
-    PushError("Integer value expected but got sign character only.\n");
-    return false;
-  }
-
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
-    PushError("Zero padded integer value is not allowed.\n");
-    return false;
-  }
-
-  // std::cout << "ReadInt token: " << ss.str() << "\n";
-
-  // TODO(syoyo): Use ryu parse.
-#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
-  try {
-    (*value) = std::stoull(ss.str());
-  } catch (const std::invalid_argument &e) {
-    (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
-    return false;
-  } catch (const std::out_of_range &e) {
-    (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
-    return false;
-  }
-#else
-  (*value) = std::stoull(ss.str());
-#endif
-
-  // std::cout << "read int ok\n";
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::float2 *value) {
-  return ParseBasicTypeTuple(value);
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::float3 *value) {
-  return ParseBasicTypeTuple(value);
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::float4 *value) {
-  return ParseBasicTypeTuple(value);
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::double2 *value) {
-  return ParseBasicTypeTuple(value);
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::double3 *value) {
-  return ParseBasicTypeTuple(value);
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::double4 *value) {
-  return ParseBasicTypeTuple(value);
-}
 
 bool AsciiParser::Impl::ReadBasicType(value::point3f *value) {
   if (!Expect('(')) {
@@ -7260,19 +4532,1097 @@ bool AsciiParser::Impl::ReadBasicType(value::point3d *value) {
 
   return true;
 }
+#endif
 
-bool AsciiParser::Impl::ReadBasicType(value::normal3d *value) {
+//
+// -- sss
+//
+
+
+///
+/// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
+/// None, (2, 3, 4), ...] )
+///
+template <typename T, size_t N>
+bool AsciiParser::ParseTupleArray(
+    std::vector<nonstd::optional<std::array<T, N>>> *result) {
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SepBy1TupleType<T, N>(',', result)) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
+  }
+
+  return true;
+}
+
+///
+/// Parse the array of tuple(e.g. `float3`: [(0, 1, 2), (2, 3, 4), ...] )
+///
+template <typename T, size_t N>
+bool AsciiParser::ParseTupleArray(std::vector<std::array<T, N>> *result) {
+  (void)result;
+
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SepBy1TupleType<T, N>(',', result)) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
+  }
+
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(std::string *value) {
+  return ReadStringLiteral(value);
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<std::string> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  std::string v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(bool *value) {
+  // 'true', 'false', '0' or '1'
+  {
+    std::string tok;
+
+    auto loc = CurrLoc();
+    bool ok = ReadIdentifier(&tok);
+
+    if (ok) {
+      if (tok == "true") {
+        (*value) = true;
+        return true;
+      } else if (tok == "false") {
+        (*value) = false;
+        return true;
+      }
+    }
+
+    // revert
+    SeekTo(loc);
+  }
+
+  char sc;
+  if (!_sr->read1(&sc)) {
+    return false;
+  }
+  _curr_cursor.col++;
+
+  // sign or [0-9]
+  if (sc == '0') {
+    (*value) = false;
+    return true;
+  } else if (sc == '1') {
+    (*value) = true;
+    return true;
+  } else {
+    PushError("'0' or '1' expected.\n");
+    return false;
+  }
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<bool> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  bool v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(int *value) {
+  std::stringstream ss;
+
+  // head character
+  bool has_sign = false;
+  // bool negative = false;
+  {
+    char sc;
+    if (!_sr->read1(&sc)) {
+      return false;
+    }
+    _curr_cursor.col++;
+
+    // sign or [0-9]
+    if (sc == '+') {
+      // negative = false;
+      has_sign = true;
+    } else if (sc == '-') {
+      // negative = true;
+      has_sign = true;
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else {
+      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+                "'.\n");
+      return false;
+    }
+
+    ss << sc;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if ((c >= '0') && (c <= '9')) {
+      ss << c;
+    } else {
+      _sr->seek_from_current(-1);
+      break;
+    }
+  }
+
+  if (has_sign && (ss.str().size() == 1)) {
+    // sign only
+    PushError("Integer value expected but got sign character only.\n");
+    return false;
+  }
+
+  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+    PushError("Zero padded integer value is not allowed.\n");
+    return false;
+  }
+
+  // std::cout << "ReadInt token: " << ss.str() << "\n";
+
+  int int_value;
+  int err = parseInt(ss.str(), &int_value);
+  if (err != 0) {
+    if (err == -1) {
+      PushError("Invalid integer input: `" + ss.str() + "`\n");
+      return false;
+    } else if (err == -2) {
+      PushError("Integer overflows: `" + ss.str() + "`\n");
+      return false;
+    } else if (err == -3) {
+      PushError("Integer underflows: `" + ss.str() + "`\n");
+      return false;
+    } else {
+      PushError("Unknown parseInt error.\n");
+      return false;
+    }
+  }
+
+  (*value) = int_value;
+
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(uint32_t *value) {
+  std::stringstream ss;
+
+  // head character
+  bool has_sign = false;
+  bool negative = false;
+  {
+    char sc;
+    if (!_sr->read1(&sc)) {
+      return false;
+    }
+    _curr_cursor.col++;
+
+    // sign or [0-9]
+    if (sc == '+') {
+      negative = false;
+      has_sign = true;
+    } else if (sc == '-') {
+      negative = true;
+      has_sign = true;
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else {
+      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+                "'.\n");
+      return false;
+    }
+
+    ss << sc;
+  }
+
+  if (negative) {
+    PushError("Unsigned value expected but got '-' sign.");
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if ((c >= '0') && (c <= '9')) {
+      ss << c;
+    } else {
+      _sr->seek_from_current(-1);
+      break;
+    }
+  }
+
+  if (has_sign && (ss.str().size() == 1)) {
+    // sign only
+    PushError("Integer value expected but got sign character only.\n");
+    return false;
+  }
+
+  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+    PushError("Zero padded integer value is not allowed.\n");
+    return false;
+  }
+
+  // std::cout << "ReadInt token: " << ss.str() << "\n";
+
+  // TODO(syoyo): Use ryu parse.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+  try {
+    (*value) = std::stoull(ss.str());
+  } catch (const std::invalid_argument &e) {
+    (void)e;
+    PushError("Not an 64bit unsigned integer literal.\n");
+    return false;
+  } catch (const std::out_of_range &e) {
+    (void)e;
+    PushError("64bit unsigned integer value out of range.\n");
+    return false;
+  }
+#else
+  (*value) = uint32_t(std::stoul(ss.str()));
+#endif
+
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(uint64_t *value) {
+  std::stringstream ss;
+
+  // head character
+  bool has_sign = false;
+  bool negative = false;
+  {
+    char sc;
+    if (!_sr->read1(&sc)) {
+      return false;
+    }
+    _curr_cursor.col++;
+
+    // sign or [0-9]
+    if (sc == '+') {
+      negative = false;
+      has_sign = true;
+    } else if (sc == '-') {
+      negative = true;
+      has_sign = true;
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else {
+      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+                "'.\n");
+      return false;
+    }
+
+    ss << sc;
+  }
+
+  if (negative) {
+    PushError("Unsigned value expected but got '-' sign.");
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if ((c >= '0') && (c <= '9')) {
+      ss << c;
+    } else {
+      _sr->seek_from_current(-1);
+      break;
+    }
+  }
+
+  if (has_sign && (ss.str().size() == 1)) {
+    // sign only
+    PushError("Integer value expected but got sign character only.\n");
+    return false;
+  }
+
+  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+    PushError("Zero padded integer value is not allowed.\n");
+    return false;
+  }
+
+  // std::cout << "ReadInt token: " << ss.str() << "\n";
+
+  // TODO(syoyo): Use ryu parse.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+  try {
+    (*value) = std::stoull(ss.str());
+  } catch (const std::invalid_argument &e) {
+    (void)e;
+    PushError("Not an 64bit unsigned integer literal.\n");
+    return false;
+  } catch (const std::out_of_range &e) {
+    (void)e;
+    PushError("64bit unsigned integer value out of range.\n");
+    return false;
+  }
+#else
+  (*value) = std::stoull(ss.str());
+#endif
+
+  // std::cout << "read int ok\n";
+
+  return true;
+}
+
+#if 0
+template<>
+bool AsciiParser::ReadBasicType(value::token *value) {
+  std::string str;
+  if (ReadStringLiteral(&str)) {
+    (*value) = value::token(str);
+  }
+
+  return false;
+}
+
+template<>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::token> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::token v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+#endif
+
+template <>
+bool AsciiParser::ReadBasicType(value::float2 *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::float3 *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::point3f *value) {
+  value::float3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = v[0];
+    value->y = v[1];
+    value->z = v[2];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::normal3f *value) {
+  value::float3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = v[0];
+    value->y = v[1];
+    value->z = v[2];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::float4 *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::double2 *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::double3 *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::point3d *value) {
+  value::double3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = v[0];
+    value->y = v[1];
+    value->z = v[2];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::color3f *value) {
+  value::float3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->r = v[0];
+    value->g = v[1];
+    value->b = v[2];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::color3d *value) {
+  value::double3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->r = v[0];
+    value->g = v[1];
+    value->b = v[2];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::color4f *value) {
+  value::float3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->r = v[0];
+    value->g = v[1];
+    value->b = v[2];
+    value->a = v[3];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::color4d *value) {
+  value::double4 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->r = v[0];
+    value->g = v[1];
+    value->b = v[2];
+    value->a = v[3];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::normal3d *value) {
+  value::double3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = v[0];
+    value->y = v[1];
+    value->z = v[2];
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::double4 *value) {
+  return ParseBasicTypeTuple(value);
+}
+
+///
+/// Parses 1 or more occurences of value with basic type 'T', separated by
+/// `sep`
+///
+template <typename T>
+bool AsciiParser::SepBy1BasicType(const char sep,
+                                  std::vector<nonstd::optional<T>> *result) {
+  result->clear();
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  {
+    nonstd::optional<T> value;
+    if (!ReadBasicType(&value)) {
+      PushError("Not starting with the value of requested type.\n");
+      return false;
+    }
+
+    result->push_back(value);
+  }
+
+  while (!_sr->eof()) {
+    // sep
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if (c != sep) {
+      // end
+      _sr->seek_from_current(-1);  // unwind single char
+      break;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    nonstd::optional<T> value;
+    if (!ReadBasicType(&value)) {
+      break;
+    }
+
+    result->push_back(value);
+  }
+
+  if (result->empty()) {
+    PushError("Empty array.\n");
+    return false;
+  }
+
+  return true;
+}
+
+///
+/// Parses 1 or more occurences of value with basic type 'T', separated by
+/// `sep`
+///
+template <typename T>
+bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
+  result->clear();
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  {
+    T value;
+    if (!ReadBasicType(&value)) {
+      PushError("Not starting with the value of requested type.\n");
+      return false;
+    }
+
+    result->push_back(value);
+  }
+
+  while (!_sr->eof()) {
+    // sep
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if (c != sep) {
+      // end
+      _sr->seek_from_current(-1);  // unwind single char
+      break;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    T value;
+    if (!ReadBasicType(&value)) {
+      break;
+    }
+
+    result->push_back(value);
+  }
+
+  if (result->empty()) {
+    PushError("Empty array.\n");
+    return false;
+  }
+
+  return true;
+}
+
+///
+/// Parses 1 or more occurences of value with tuple type 'T', separated by
+/// `sep`
+///
+template <typename T, size_t N>
+bool AsciiParser::SepBy1TupleType(
+    const char sep, std::vector<nonstd::optional<std::array<T, N>>> *result) {
+  result->clear();
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (MaybeNone()) {
+    result->push_back(nonstd::nullopt);
+  } else {
+    std::array<T, N> value;
+    if (!ParseBasicTypeTuple<T, N>(&value)) {
+      PushError("Not starting with the tuple value of requested type.\n");
+      return false;
+    }
+
+    result->push_back(value);
+  }
+
+  while (!_sr->eof()) {
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if (c != sep) {
+      // end
+      _sr->seek_from_current(-1);  // unwind single char
+      break;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (MaybeNone()) {
+      result->push_back(nonstd::nullopt);
+    } else {
+      std::array<T, N> value;
+      if (!ParseBasicTypeTuple<T, N>(&value)) {
+        break;
+      }
+      result->push_back(value);
+    }
+  }
+
+  if (result->empty()) {
+    PushError("Empty array.\n");
+    return false;
+  }
+
+  return true;
+}
+
+///
+/// Parses 1 or more occurences of value with tuple type 'T', separated by
+/// `sep`
+///
+template <typename T, size_t N>
+bool AsciiParser::SepBy1TupleType(const char sep,
+                                  std::vector<std::array<T, N>> *result) {
+  result->clear();
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  {
+    std::array<T, N> value;
+    if (!ParseBasicTypeTuple<T, N>(&value)) {
+      PushError("Not starting with the tuple value of requested type.\n");
+      return false;
+    }
+
+    result->push_back(value);
+  }
+
+  while (!_sr->eof()) {
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if (c != sep) {
+      // end
+      _sr->seek_from_current(-1);  // unwind single char
+      break;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    std::array<T, N> value;
+    if (!ParseBasicTypeTuple<T, N>(&value)) {
+      break;
+    }
+
+    result->push_back(value);
+  }
+
+  if (result->empty()) {
+    PushError("Empty array.\n");
+    return false;
+  }
+
+  return true;
+}
+
+///
+/// Parse '[', Sep1By(','), ']'
+///
+template <typename T>
+bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<T>> *result) {
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SepBy1BasicType<T>(',', result)) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
+  }
+
+  return true;
+}
+
+///
+/// Parse '[', Sep1By(','), ']'
+///
+template <typename T>
+bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SepBy1BasicType<T>(',', result)) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
+  }
+  return true;
+}
+
+///
+/// Parses 1 or more occurences of asset references, separated by
+/// `sep`
+/// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
+///
+template <>
+bool AsciiParser::SepBy1BasicType(const char sep,
+                                  std::vector<Reference> *result) {
+  result->clear();
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  {
+    Reference ref;
+    bool triple_deliminated{false};
+
+    if (!ParseReference(&ref, &triple_deliminated)) {
+      PushError("Failed to parse Reference.\n");
+      return false;
+    }
+
+    (void)triple_deliminated;
+
+    result->push_back(ref);
+  }
+
+  while (!_sr->eof()) {
+    // sep
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!_sr->read1(&c)) {
+      return false;
+    }
+
+    if (c != sep) {
+      // end
+      _sr->seek_from_current(-1);  // unwind single char
+      break;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    Reference ref;
+    bool triple_deliminated{false};
+    if (!ParseReference(&ref, &triple_deliminated)) {
+      break;
+    }
+
+    (void)triple_deliminated;
+    result->push_back(ref);
+  }
+
+  if (result->empty()) {
+    PushError("Empty array.\n");
+    return false;
+  }
+
+  return true;
+}
+
+#if 0
+  bool AsciiParser::ReadToken(std::string *result) {
+    std::stringstream ss;
+
+    while (!_sr->eof()) {
+      char c;
+      if (!_sr->read1(&c)) {
+        return false;
+      }
+
+      if (std::isspace(int(c))) {
+        _sr->seek_from_current(-1);
+        break;
+      }
+
+      ss << c;
+      _curr_cursor.col++;
+    }
+
+    (*result) = ss.str();
+
+    return true;
+  }
+#endif
+
+bool AsciiParser::ParsePurpose(Purpose *result) {
+  if (!result) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::string token;
+  if (!ReadBasicType(&token)) {
+    return false;
+  }
+
+  if (token == "\"default\"") {
+    (*result) = Purpose::Default;
+  } else if (token == "\"render\"") {
+    (*result) = Purpose::Render;
+  } else if (token == "\"proxy\"") {
+    (*result) = Purpose::Proxy;
+  } else if (token == "\"guide\"") {
+    (*result) = Purpose::Guide;
+  } else {
+    PUSH_ERROR_AND_RETURN("Invalid purpose token name: " + token + "\n");
+  }
+
+  return true;
+}
+
+template <typename T, size_t N>
+bool AsciiParser::ParseBasicTypeTuple(std::array<T, N> *result) {
   if (!Expect('(')) {
     return false;
   }
-  // std::cout << "got (\n";
+
+  std::vector<T> values;
+  if (!SepBy1BasicType<T>(',', &values)) {
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  if (values.size() != N) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(N) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PushError(msg);
+    return false;
+  }
+
+  for (size_t i = 0; i < N; i++) {
+    (*result)[i] = values[i];
+  }
+
+  return true;
+}
+
+template <typename T, size_t N>
+bool AsciiParser::ParseBasicTypeTuple(
+    nonstd::optional<std::array<T, N>> *result) {
+  if (MaybeNone()) {
+    (*result) = nonstd::nullopt;
+    return true;
+  }
+
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<T> values;
+  if (!SepBy1BasicType<T>(',', &values)) {
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  if (values.size() != N) {
+    PUSH_ERROR_AND_RETURN("The number of tuple elements must be " +
+                          std::to_string(N) + ", but got " +
+                          std::to_string(values.size()));
+  }
+
+  std::array<T, N> ret;
+  for (size_t i = 0; i < N; i++) {
+    ret[i] = values[i];
+  }
+
+  (*result) = ret;
+
+  return true;
+}
+
+///
+/// Parse array of asset references
+/// Allow non-list version
+///
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  char c;
+  if (!Char1(&c)) {
+    return false;
+  }
+
+  if (c != '[') {
+    Rewind(1);
+
+    DCOUT("Guess non-list version");
+    // Guess non-list version
+    Reference ref;
+    bool triple_deliminated{false};
+    if (!ParseReference(&ref, &triple_deliminated)) {
+      return false;
+    }
+
+    (void)triple_deliminated;
+    result->clear();
+    result->push_back(ref);
+
+  } else {
+    if (!SepBy1BasicType(',', result)) {
+      return false;
+    }
+
+    if (!Expect(']')) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <typename T>
+bool AsciiParser::MaybeNonFinite(T *out) {
+  auto loc = CurrLoc();
+
+  // "-inf", "inf" or "nan"
+  std::vector<char> buf(4);
+  if (!CharN(3, &buf)) {
+    return false;
+  }
+  SeekTo(loc);
+
+  if ((buf[0] == 'i') && (buf[1] == 'n') && (buf[2] == 'f')) {
+    (*out) = std::numeric_limits<T>::infinity();
+    return true;
+  }
+
+  if ((buf[0] == 'n') && (buf[1] == 'a') && (buf[2] == 'n')) {
+    (*out) = std::numeric_limits<T>::quiet_NaN();
+    return true;
+  }
+
+  bool ok = CharN(4, &buf);
+  SeekTo(loc);
+
+  if (ok) {
+    if ((buf[0] == '-') && (buf[1] == 'i') && (buf[2] == 'n') &&
+        (buf[3] == 'f')) {
+      (*out) = -std::numeric_limits<T>::infinity();
+      return true;
+    }
+
+    // NOTE: support "-nan"?
+  }
+
+  return false;
+}
+
+#if 0
+template<>
+bool AsciiParser::ReadBasicType(value::normal3d *value) {
+  if (!Expect('(')) {
+    return false;
+  }
 
   std::vector<double> values;
   if (!SepBy1BasicType<double>(',', &values)) {
     return false;
   }
-
-  // std::cout << "try to parse )\n";
 
   if (!Expect(')')) {
     return false;
@@ -7291,8 +5641,10 @@ bool AsciiParser::Impl::ReadBasicType(value::normal3d *value) {
 
   return true;
 }
+#endif
 
-bool AsciiParser::Impl::ReadBasicType(value::texcoord2f *value) {
+template <>
+bool AsciiParser::ReadBasicType(value::texcoord2f *value) {
   if (!Expect('(')) {
     return false;
   }
@@ -7319,8 +5671,8 @@ bool AsciiParser::Impl::ReadBasicType(value::texcoord2f *value) {
   return true;
 }
 
-bool AsciiParser::Impl::ReadBasicType(
-    nonstd::optional<value::texcoord2f> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::texcoord2f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7335,7 +5687,8 @@ bool AsciiParser::Impl::ReadBasicType(
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::float2> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::float2> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7350,7 +5703,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::float2> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::float3> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::float3> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7365,7 +5719,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::float3> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::float4> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::float4> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7380,7 +5735,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::float4> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::double2> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::double2> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7395,7 +5751,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::double2> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::double3> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::double3> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7410,7 +5767,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::double3> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::double4> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::double4> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7425,7 +5783,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::double4> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::point3f> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::point3f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7440,7 +5799,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::point3f> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::point3d> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::point3d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7455,8 +5815,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::point3d> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(
-    nonstd::optional<value::normal3f> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::normal3f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7471,8 +5831,8 @@ bool AsciiParser::Impl::ReadBasicType(
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(
-    nonstd::optional<value::normal3d> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::normal3d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7487,7 +5847,8 @@ bool AsciiParser::Impl::ReadBasicType(
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color3f> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color3f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7502,7 +5863,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color3f> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color4f> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color4f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7517,7 +5879,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color4f> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color3d> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color3d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7532,7 +5895,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color3d> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color4d> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::color4d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7547,7 +5911,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<value::color4d> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<int> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7562,7 +5927,8 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<int> *value) {
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<uint32_t> *value) {
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<uint32_t> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -7576,6 +5942,1793 @@ bool AsciiParser::Impl::ReadBasicType(nonstd::optional<uint32_t> *value) {
 
   return false;
 }
+
+template <>
+bool AsciiParser::ReadBasicType(float *value) {
+  // -inf, inf, nan
+  {
+    float v;
+    if (MaybeNonFinite(&v)) {
+      (*value) = v;
+      return true;
+    }
+  }
+
+  std::string value_str;
+  if (!LexFloat(&value_str)) {
+    PUSH_ERROR_AND_RETURN("Failed to lex floating value literal.");
+  }
+
+  auto flt = ParseFloat(value_str);
+  if (flt) {
+    (*value) = flt.value();
+  } else {
+    PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
+  }
+
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<float> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  float v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(double *value) {
+  // -inf, inf, nan
+  {
+    double v;
+    if (MaybeNonFinite(&v)) {
+      (*value) = v;
+      return true;
+    }
+  }
+
+  std::string value_str;
+  if (!LexFloat(&value_str)) {
+    PUSH_ERROR_AND_RETURN("Failed to lex floating value literal.");
+  }
+
+  auto flt = ParseDouble(value_str);
+  if (!flt) {
+    PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
+  } else {
+    (*value) = flt.value();
+  }
+
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<double> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  double v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// -- end basic
+
+  bool AsciiParser::ParseDictElement(std::string *out_key, PrimVariable *out_var) {
+    (void)out_key;
+    (void)out_var;
+
+    // dict_element: type (array_qual?) name '=' value
+    //           ;
+
+    std::string type_name;
+
+    if (!ReadIdentifier(&type_name)) {
+      return false;
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    if (!IsRegisteredPrimAttrType(type_name)) {
+      PUSH_ERROR_AND_RETURN("Unknown or unsupported type `" + type_name +
+                            "`\n");
+    }
+
+    // Has array qualifier? `[]`
+    bool array_qual = false;
+    {
+      char c0, c1;
+      if (!Char1(&c0)) {
+        return false;
+      }
+
+      if (c0 == '[') {
+        if (!Char1(&c1)) {
+          return false;
+        }
+
+        if (c1 == ']') {
+          array_qual = true;
+        } else {
+          // Invalid syntax
+          PushError("Invalid syntax found.\n");
+          return false;
+        }
+
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
+      }
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    std::string key_name;
+    if (!ReadIdentifier(&key_name)) {
+      // string literal is also supported. e.g. "0"
+      if (ReadStringLiteral(&key_name)) {
+        // ok
+      } else {
+        PushError("Failed to parse dictionary key identifier.\n");
+        return false;
+      }
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    if (!Expect('=')) {
+      return false;
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    //
+    // Supports limited types for customData/Dictionary.
+    // TODO: array_qual
+    //
+    PrimVariable var;
+    if (type_name == value::kBool) {
+      bool val;
+      if (!ReadBasicType(&val)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
+      }
+      var.value = val;
+    } else if (type_name == "float") {
+      float val;
+      if (!ReadBasicType(&val)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float`");
+      }
+      var.value = val;
+    } else if (type_name == "string") {
+      std::string str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+      }
+      var.value = str;
+    } else if (type_name == "token") {
+      if (array_qual) {
+        std::vector<std::string> strs;
+        if (!ParseBasicTypeArray(&strs)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
+        }
+        std::vector<value::token> toks;
+        for (auto item : strs) {
+          toks.push_back(value::token(item));
+        }
+        var.value = toks;
+      } else {
+        std::string str;
+        if (!ReadBasicType(&str)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `token`");
+        }
+        value::token tok(str);
+        var.value = tok;
+      }
+    } else if (type_name == "dictionary") {
+      std::map<std::string, PrimVariable> dict;
+
+      if (!ParseDict(&dict)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
+    }
+
+    (*out_key) = key_name;
+    (*out_var) = var;
+
+    return true;
+  }
+
+  bool AsciiParser::MaybeCustom() {
+    std::string tok;
+
+    auto loc = CurrLoc();
+    bool ok = ReadIdentifier(&tok);
+
+    if (!ok) {
+      // revert
+      SeekTo(loc);
+      return false;
+    }
+
+    if (tok == "custom") {
+      // cosume `custom` token.
+      return true;
+    }
+
+    // revert
+    SeekTo(loc);
+    return false;
+  }
+
+  bool AsciiParser::ParseDict(std::map<std::string, PrimVariable> *out_dict) {
+    // '{' (type name '=' value)+ '}'
+    if (!Expect('{')) {
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    while (!_sr->eof()) {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '}') {
+        break;
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
+
+        std::string key;
+        PrimVariable var;
+        if (!ParseDictElement(&key, &var)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
+        }
+
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+
+        assert(var.valid());
+
+        (*out_dict)[key] = var;
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    return true;
+  }
+
+// 'None'
+bool AsciiParser::MaybeNone() {
+  std::vector<char> buf;
+
+  auto loc = CurrLoc();
+
+  if (!CharN(4, &buf)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if ((buf[0] == 'N') && (buf[1] == 'o') && (buf[2] == 'n') &&
+      (buf[3] == 'e')) {
+    // got it
+    return true;
+  }
+
+  SeekTo(loc);
+
+  return false;
+}
+
+  bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    std::string tok;
+
+    auto loc = CurrLoc();
+    if (!ReadBasicType(&tok)) {
+      return false;
+    }
+
+    if (tok == "prepend") {
+      (*qual) = tinyusdz::ListEditQual::Prepend;
+    } else if (tok == "append") {
+      (*qual) = tinyusdz::ListEditQual::Append;
+    } else if (tok == "add") {
+      (*qual) = tinyusdz::ListEditQual::Add;
+    } else if (tok == "delete") {
+      (*qual) = tinyusdz::ListEditQual::Delete;
+    } else {
+      // unqualified
+      // rewind
+      SeekTo(loc);
+      (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
+    }
+
+    return true;
+  }
+
+
+bool AsciiParser::IsRegisteredPrimAttrType(const std::string &ty) {
+  return _registered_prim_attr_types.count(ty);
+}
+
+bool AsciiParser::ParseAttributeMeta() {
+  // meta_attr : uniform type (array_qual?) name '=' value
+  //           | type (array_qual?) name '=' value
+  //           ;
+
+  bool uniform_qual{false};
+  std::string type_name;
+
+  if (!ReadIdentifier(&type_name)) {
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  if (type_name == "uniform") {
+    uniform_qual = true;
+
+    // next token should be type
+    if (!ReadIdentifier(&type_name)) {
+      PUSH_ERROR_AND_RETURN(
+          "`type` identifier expected but got non-identifier");
+    }
+
+    // `type_name` is then overwritten.
+  }
+
+  if (!IsRegisteredPrimAttrType(type_name)) {
+    PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
+                          type_name + "`\n");
+  }
+
+  // Has array qualifier? `[]`
+  bool array_qual = false;
+  {
+    char c0, c1;
+    if (!Char1(&c0)) {
+      return false;
+    }
+
+    if (c0 == '[') {
+      if (!Char1(&c1)) {
+        return false;
+      }
+
+      if (c1 == ']') {
+        array_qual = true;
+      } else {
+        // Invalid syntax
+        PushError("Invalid syntax found.\n");
+        return false;
+      }
+
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+    }
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  std::string primattr_name;
+  if (!ReadPrimAttrIdentifier(&primattr_name)) {
+    PushError("Failed to parse primAttr identifier.\n");
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  if (!Expect('=')) {
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  //
+  // TODO(syoyo): Refactror and implement value parser dispatcher.
+  // Currently only `string` is provided
+  //
+  if (type_name == "string") {
+    if (array_qual) {
+      std::vector<std::string> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse string array.");
+      }
+    } else {
+      std::string value;
+      if (!ReadStringLiteral(&value)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse string literal.");
+      }
+    }
+
+  } else {
+    PUSH_ERROR_AND_RETURN("Unimplemented or unsupported type: " + type_name +
+                          "\n");
+  }
+
+  (void)uniform_qual;
+
+  return true;
+}
+
+bool AsciiParser::ReadStringLiteral(std::string *literal) {
+  std::stringstream ss;
+
+  char c0;
+  if (!_sr->read1(&c0)) {
+    return false;
+  }
+
+  if (c0 != '"') {
+    PUSH_ERROR_AND_RETURN(
+        "String literal expected but it does not start with '\"'");
+  }
+
+  bool end_with_quotation{false};
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '"') {
+      end_with_quotation = true;
+      break;
+    }
+
+    ss << c;
+  }
+
+  if (!end_with_quotation) {
+    PUSH_ERROR_AND_RETURN(
+        "String literal expected but it does not end with '\"'");
+  }
+
+  (*literal) = ss.str();
+
+  _curr_cursor.col += int(literal->size() + 2);  // +2 for quotation chars
+
+  return true;
+}
+
+bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
+  // Example: xformOp:transform
+
+  std::stringstream ss;
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '_') {
+      // ok
+    } else if (c == ':') {  // namespace
+      // ':' must lie in the middle of string literal
+      if (ss.str().size() == 0) {
+        PushError("PrimAttr name must not starts with `:`\n");
+        return false;
+      }
+    } else if (c == '.') {  // delimiter for `connect`
+      // '.' must lie in the middle of string literal
+      if (ss.str().size() == 0) {
+        PushError("PrimAttr name must not starts with `.`\n");
+        return false;
+      }
+    } else if (!std::isalpha(int(c))) {
+      _sr->seek_from_current(-1);
+      break;
+    }
+
+    _curr_cursor.col++;
+
+    ss << c;
+  }
+
+  // ':' must lie in the middle of string literal
+  if (ss.str().back() == ':') {
+    PushError("PrimAttr name must not ends with `:`\n");
+    return false;
+  }
+
+  // '.' must lie in the middle of string literal
+  if (ss.str().back() == '.') {
+    PushError("PrimAttr name must not ends with `.`\n");
+    return false;
+  }
+
+  // Currently we only support '.connect'
+  std::string tok = ss.str();
+
+  if (contains(tok, '.')) {
+    if (endsWith(tok, ".connect")) {
+      PushError(
+          "Must ends with `.connect` when a name contains punctuation `.`");
+      return false;
+    }
+  }
+
+  (*token) = ss.str();
+  // std::cout << "primAttr identifier = " << (*token) << "\n";
+  return true;
+}
+
+bool AsciiParser::ReadIdentifier(std::string *token) {
+  // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
+  std::stringstream ss;
+
+  // The first character.
+  {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '_') {
+      // ok
+    } else if (!std::isalpha(int(c))) {
+      _sr->seek_from_current(-1);
+      return false;
+    }
+    _curr_cursor.col++;
+
+    ss << c;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '_') {
+      // ok
+    } else if (!std::isalnum(int(c))) {
+      _sr->seek_from_current(-1);
+      break;
+    }
+
+    _curr_cursor.col++;
+
+    ss << c;
+  }
+
+  (*token) = ss.str();
+  return true;
+}
+
+bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
+  // path_identifier = `<` string `>`
+  std::stringstream ss;
+
+  if (!Expect('<')) {
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  // Must start with '/'
+  if (!Expect('/')) {
+    PushError("Path identifier must start with '/'");
+    return false;
+  }
+
+  ss << '/';
+
+  // read until '>'
+  bool ok = false;
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '>') {
+      // end
+      ok = true;
+      _curr_cursor.col++;
+      break;
+    }
+
+    // TODO: Check if character is valid for path identifier
+    ss << c;
+  }
+
+  if (!ok) {
+    return false;
+  }
+
+  (*path_identifier) = TrimString(ss.str());
+  // std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
+
+  return true;
+}
+
+bool AsciiParser::SkipUntilNewline() {
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '\n') {
+      break;
+    } else if (c == '\r') {
+      // CRLF?
+      if (_sr->tell() < (_sr->size() - 1)) {
+        char d;
+        if (!_sr->read1(&d)) {
+          // this should not happen.
+          return false;
+        }
+
+        if (d == '\n') {
+          break;
+        }
+
+        // unwind 1 char
+        if (!_sr->seek_from_current(-1)) {
+          // this should not happen.
+          return false;
+        }
+
+        break;
+      }
+
+    } else {
+      // continue
+    }
+  }
+
+  _curr_cursor.row++;
+  _curr_cursor.col = 0;
+  return true;
+}
+
+// metadata_opt := string_literal '\n'
+//              |  var '=' value '\n'
+//
+bool AsciiParser::ParseStageMetaOpt() {
+  {
+    uint64_t loc = _sr->tell();
+
+    std::string note;
+    if (!ReadStringLiteral(&note)) {
+      // revert
+      if (!SeekTo(loc)) {
+        return false;
+      }
+    } else {
+      // Got note.
+
+      return true;
+    }
+  }
+
+  std::string varname;
+  if (!ReadIdentifier(&varname)) {
+    return false;
+  }
+
+  if (!IsStageMeta(varname)) {
+    std::string msg = "'" + varname + "' is not a builtin Metadata variable.\n";
+    PushError(msg);
+    return false;
+  }
+
+  if (!Expect('=')) {
+    PushError("'=' expected in Metadata line.\n");
+    return false;
+  }
+  SkipWhitespace();
+
+  VariableDef &vardef = _stage_metas.at(varname);
+  PrimVariable var;
+  if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
+    PushError("Failed to parse meta value.\n");
+    return false;
+  }
+
+  //
+  // Materialize builtin variables
+  //
+#if 0  // TODO
+    if (varname == "defaultPrim") {
+      if (auto pv = var.as_value()) {
+        if (auto p = nonstd::get_if<std::string>(pv)) {
+          _defaultPrim = *p;
+        }
+      }
+    }
+#endif
+
+  std::vector<std::string> sublayers;
+#if 0  // TODO
+    if (varname == "subLayers") {
+      if (var.IsArray()) {
+        auto parr = var.as_array();
+
+        if (parr) {
+          auto arr = parr->values;
+          for (size_t i = 0; i < arr.size(); i++) {
+            if (arr[i].IsValue()) {
+              auto pv = arr[i].as_value();
+              if (auto p = nonstd::get_if<std::string>(pv)) {
+                sublayers.push_back(*p);
+              }
+            }
+          }
+        }
+      }
+    }
+#endif
+
+  // Load subLayers
+  if (sublayers.size()) {
+    // Create another USDA parser.
+
+    for (size_t i = 0; i < sublayers.size(); i++) {
+      std::string filepath = io::JoinPath(_base_dir, sublayers[i]);
+
+      std::vector<uint8_t> data;
+      std::string err;
+      if (!io::ReadWholeFile(&data, &err, filepath, /* max_filesize */ 0)) {
+        PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
+      }
+
+      tinyusdz::StreamReader sr(data.data(), data.size(),
+                                /* swap endian */ false);
+      tinyusdz::ascii::AsciiParser parser(&sr);
+
+      std::string base_dir = io::GetBaseDir(filepath);
+
+      parser.SetBaseDir(base_dir);
+
+      {
+        bool ret = parser.Parse(tinyusdz::ascii::LOAD_STATE_SUBLAYER);
+
+        if (!ret) {
+          PUSH_WARN("Failed to parse .usda: " << parser.GetError());
+        }
+      }
+    }
+
+    // TODO: Merge/Import subLayer.
+  }
+
+#if 0
+    if (var.type == "string") {
+      std::string value;
+      std::cout << "read string literal\n";
+      if (!ReadStringLiteral(&value)) {
+        std::string msg = "String literal expected for `" + var.name + "`.\n";
+        PushError(msg);
+        return false;
+      }
+    } else if (var.type == "int[]") {
+      std::vector<int> values;
+      if (!ParseBasicTypeArray<int>(&values)) {
+        // std::string msg = "Array of int values expected for `" + var.name +
+        // "`.\n"; PushError(msg);
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "int[" << i << "] = " << values[i] << "\n";
+      }
+    } else if (var.type == "float[]") {
+      std::vector<float> values;
+      if (!ParseBasicTypeArray<float>(&values)) {
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "float[" << i << "] = " << values[i] << "\n";
+      }
+    } else if (var.type == "float3[]") {
+      std::vector<std::array<float, 3>> values;
+      if (!ParseTupleArray<float, 3>(&values)) {
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "float[" << i << "] = " << values[i][0] << ", "
+                  << values[i][1] << ", " << values[i][2] << "\n";
+      }
+    } else if (var.type == "float") {
+      std::string fval;
+      std::string ferr;
+      if (!LexFloat(&fval, &ferr)) {
+        std::string msg =
+            "Floating point literal expected for `" + var.name + "`.\n";
+        if (!ferr.empty()) {
+          msg += ferr;
+        }
+        PushError(msg);
+        return false;
+      }
+      std::cout << "float : " << fval << "\n";
+      float value;
+      if (!ParseFloat(fval, &value, &ferr)) {
+        std::string msg =
+            "Failed to parse floating point literal for `" + var.name + "`.\n";
+        if (!ferr.empty()) {
+          msg += ferr;
+        }
+        PushError(msg);
+        return false;
+      }
+      std::cout << "parsed float : " << value << "\n";
+
+    } else if (var.type == "int3") {
+      std::array<int, 3> values;
+      if (!ParseBasicTypeTuple<int, 3>(&values)) {
+        // std::string msg = "Array of int values expected for `" + var.name +
+        // "`.\n"; PushError(msg);
+        return false;
+      }
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::cout << "int[" << i << "] = " << values[i] << "\n";
+      }
+    } else if (var.type == "object") {
+      // TODO: support nested parameter.
+    }
+#endif
+
+  return true;
+}
+
+// Parse Stage meta
+// meta = ( metadata_opt )
+//      | empty
+//      ;
+bool AsciiParser::ParseStageMeta() {
+  if (!Expect('(')) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    if (Expect(')')) {
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      // end
+      return true;
+
+    } else {
+      if (!SkipWhitespace()) {
+        // eof
+        return false;
+      }
+
+      if (!ParseStageMetaOpt()) {
+        // parse error
+        return false;
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// `#` style comment
+bool AsciiParser::ParseSharpComment() {
+  char c;
+  if (!_sr->read1(&c)) {
+    // eol
+    return false;
+  }
+
+  if (c != '#') {
+    return false;
+  }
+
+  return true;
+}
+
+// Fetch 1 char. Do not change input stream position.
+bool AsciiParser::LookChar1(char *c) {
+  if (!_sr->read1(c)) {
+    return false;
+  }
+
+  Rewind(1);
+
+  return true;
+}
+
+// Fetch N chars. Do not change input stream position.
+bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
+  std::vector<char> buf(n);
+
+  auto loc = CurrLoc();
+
+  bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
+  if (ok) {
+    (*nc) = buf;
+  }
+
+  SeekTo(loc);
+
+  return ok;
+}
+
+bool AsciiParser::Char1(char *c) { return _sr->read1(c); }
+
+bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
+  std::vector<char> buf(n);
+
+  bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
+  if (ok) {
+    (*nc) = buf;
+  }
+
+  return ok;
+}
+
+bool AsciiParser::Rewind(size_t offset) {
+  if (!_sr->seek_from_current(-int64_t(offset))) {
+    return false;
+  }
+
+  return true;
+}
+
+uint64_t AsciiParser::CurrLoc() { return _sr->tell(); }
+
+bool AsciiParser::SeekTo(size_t pos) {
+  if (!_sr->seek_set(pos)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool AsciiParser::PushParserState() {
+  // Stack size must be less than the number of input bytes.
+  assert(parse_stack.size() < _sr->size());
+
+  uint64_t loc = _sr->tell();
+
+  ParseState state;
+  state.loc = int64_t(loc);
+  parse_stack.push(state);
+
+  return true;
+}
+
+bool AsciiParser::PopParserState(ParseState *state) {
+  if (parse_stack.empty()) {
+    return false;
+  }
+
+  (*state) = parse_stack.top();
+
+  parse_stack.pop();
+
+  return true;
+}
+
+bool AsciiParser::SkipWhitespace() {
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+    _curr_cursor.col++;
+
+    if ((c == ' ') || (c == '\t') || (c == '\f')) {
+      // continue
+    } else {
+      break;
+    }
+  }
+
+  // unwind 1 char
+  if (!_sr->seek_from_current(-1)) {
+    return false;
+  }
+  _curr_cursor.col--;
+
+  return true;
+}
+
+bool AsciiParser::SkipWhitespaceAndNewline() {
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    // printf("sws c = %c\n", c);
+
+    if ((c == ' ') || (c == '\t') || (c == '\f')) {
+      _curr_cursor.col++;
+      // continue
+    } else if (c == '\n') {
+      _curr_cursor.col = 0;
+      _curr_cursor.row++;
+      // continue
+    } else if (c == '\r') {
+      // CRLF?
+      if (_sr->tell() < (_sr->size() - 1)) {
+        char d;
+        if (!_sr->read1(&d)) {
+          // this should not happen.
+          return false;
+        }
+
+        if (d == '\n') {
+          // CRLF
+        } else {
+          // unwind 1 char
+          if (!_sr->seek_from_current(-1)) {
+            // this should not happen.
+            return false;
+          }
+        }
+      }
+      _curr_cursor.col = 0;
+      _curr_cursor.row++;
+      // continue
+    } else {
+      // end loop
+      if (!_sr->seek_from_current(-1)) {
+        return false;
+      }
+      break;
+    }
+  }
+
+  return true;
+}
+
+bool AsciiParser::SkipCommentAndWhitespaceAndNewline() {
+  while (!_sr->eof()) {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    // printf("sws c = %c\n", c);
+
+    if (c == '#') {
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+    } else if ((c == ' ') || (c == '\t') || (c == '\f')) {
+      _curr_cursor.col++;
+      // continue
+    } else if (c == '\n') {
+      _curr_cursor.col = 0;
+      _curr_cursor.row++;
+      // continue
+    } else if (c == '\r') {
+      // CRLF?
+      if (_sr->tell() < (_sr->size() - 1)) {
+        char d;
+        if (!_sr->read1(&d)) {
+          // this should not happen.
+          return false;
+        }
+
+        if (d == '\n') {
+          // CRLF
+        } else {
+          // unwind 1 char
+          if (!_sr->seek_from_current(-1)) {
+            // this should not happen.
+            return false;
+          }
+        }
+      }
+      _curr_cursor.col = 0;
+      _curr_cursor.row++;
+      // continue
+    } else {
+      // std::cout << "unwind\n";
+      // end loop
+      if (!_sr->seek_from_current(-1)) {
+        return false;
+      }
+      break;
+    }
+  }
+
+  return true;
+}
+
+bool AsciiParser::Expect(char expect_c) {
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  char c;
+  if (!_sr->read1(&c)) {
+    // this should not happen.
+    return false;
+  }
+
+  bool ret = (c == expect_c);
+
+  if (!ret) {
+    std::string msg = "Expected `" + std::string(&expect_c, 1) + "` but got `" +
+                      std::string(&c, 1) + "`\n";
+    PushError(msg);
+
+    // unwind
+    _sr->seek_from_current(-1);
+  } else {
+    _curr_cursor.col++;
+  }
+
+  return ret;
+}
+
+// Parse magic
+// #usda FLOAT
+bool AsciiParser::ParseMagicHeader() {
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  if (_sr->eof()) {
+    return false;
+  }
+
+  {
+    char magic[6];
+    if (!_sr->read(6, 6, reinterpret_cast<uint8_t *>(magic))) {
+      // eol
+      return false;
+    }
+
+    if ((magic[0] == '#') && (magic[1] == 'u') && (magic[2] == 's') &&
+        (magic[3] == 'd') && (magic[4] == 'a') && (magic[5] == ' ')) {
+      // ok
+    } else {
+      PUSH_ERROR_AND_RETURN(
+          "Magic header must start with `#usda `(at least single whitespace "
+          "after 'a') but got `" +
+          std::string(magic, 6));
+
+      return false;
+    }
+  }
+
+  if (!SkipWhitespace()) {
+    // eof
+    return false;
+  }
+
+  // current we only accept "1.0"
+  {
+    char ver[3];
+    if (!_sr->read(3, 3, reinterpret_cast<uint8_t *>(ver))) {
+      return false;
+    }
+
+    if ((ver[0] == '1') && (ver[1] == '.') && (ver[2] == '0')) {
+      // ok
+      _version = 1.0f;
+    } else {
+      PUSH_ERROR_AND_RETURN("Version must be `1.0` but got `" +
+                            std::string(ver, 3) + "`");
+    }
+  }
+
+  SkipUntilNewline();
+
+  return true;
+}
+
+bool AsciiParser::ParseCustomMetaValue() {
+  // type identifier '=' value
+
+  return ParseAttributeMeta();
+}
+
+// TODO: Return Path
+bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
+  // @...@
+  // or @@@...@@@ (Triple '@'-deliminated asset references)
+  // And optionally followed by prim path.
+  // Example:
+  //   @bora@
+  //   @@@bora@@@
+  //   @bora@</dora>
+
+  // TODO: Correctly support escape characters
+
+  // look ahead.
+  std::vector<char> buf;
+  uint64_t curr = _sr->tell();
+  bool maybe_triple{false};
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (CharN(3, &buf)) {
+    if (buf[0] == '@' && buf[1] == '@' && buf[2] == '@') {
+      maybe_triple = true;
+    }
+  }
+
+  bool valid{false};
+
+  if (!maybe_triple) {
+    // std::cout << "maybe single-'@' asset reference\n";
+
+    SeekTo(curr);
+    char s;
+    if (!Char1(&s)) {
+      return false;
+    }
+
+    if (s != '@') {
+      std::string sstr{s};
+      PUSH_ERROR_AND_RETURN("Reference must start with '@', but got '" + sstr +
+                            "'");
+    }
+
+    std::string tok;
+
+    // Read until '@'
+    bool found_delimiter = false;
+    while (!_sr->eof()) {
+      char c;
+
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '@') {
+        found_delimiter = true;
+        break;
+      }
+
+      tok += c;
+    }
+
+    if (found_delimiter) {
+      out->asset_path = tok;
+      (*triple_deliminated) = false;
+
+      valid = true;
+    }
+
+  } else {
+    bool found_delimiter{false};
+    int at_cnt{0};
+    std::string tok;
+
+    // Read until '@@@' appears
+    while (!_sr->eof()) {
+      char c;
+
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '@') {
+        at_cnt++;
+      } else {
+        at_cnt--;
+        if (at_cnt < 0) {
+          at_cnt = 0;
+        }
+      }
+
+      tok += c;
+
+      if (at_cnt == 3) {
+        // Got it. '@@@'
+        found_delimiter = true;
+        break;
+      }
+    }
+
+    if (found_delimiter) {
+      out->asset_path = tok;
+      (*triple_deliminated) = true;
+
+      valid = true;
+    }
+  }
+
+  if (!valid) {
+    return false;
+  }
+
+  // Parse optional prim_path
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == '<') {
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      std::string path;
+      if (!ReadPathIdentifier(&path)) {
+        return false;
+      }
+
+      out->prim_path = path;
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseMetaValue(const std::string &vartype,
+                                 const std::string &varname,
+                                 PrimVariable *outvar) {
+  PrimVariable var;
+
+  // TODO: Refactor.
+  if (vartype == "string") {
+    std::string value;
+    if (!ReadStringLiteral(&value)) {
+      std::string msg = "String literal expected for `" + varname + "`.\n";
+      PushError(msg);
+      return false;
+    }
+    var.value = value;
+  } else if (vartype == "ref[]") {
+    std::vector<Reference> values;
+    if (!ParseBasicTypeArray(&values)) {
+      PUSH_ERROR_AND_RETURN("Array of Reference expected for `" + varname +
+                            "`.");
+    }
+
+    var.value = values;
+
+  } else if (vartype == "int[]") {
+    std::vector<int> values;
+    if (!ParseBasicTypeArray<int>(&values)) {
+      // std::string msg = "Array of int values expected for `" + var.name +
+      // "`.\n"; PushError(msg);
+      return false;
+    }
+
+    for (size_t i = 0; i < values.size(); i++) {
+      DCOUT("int[" << i << "] = " << values[i]);
+    }
+
+    var.value = values;
+  } else if (vartype == "float[]") {
+    std::vector<float> values;
+    if (!ParseBasicTypeArray<float>(&values)) {
+      return false;
+    }
+
+    // PrimVariable::Array arr;
+    // for (size_t i = 0; i < values.size(); i++) {
+    //   PrimVariable v;
+    //   v.value = values[i];
+    //   arr.values.push_back(v);
+    // }
+
+    var.value = values;
+  } else if (vartype == "float3[]") {
+    std::vector<std::array<float, 3>> values;
+    if (!ParseTupleArray<float, 3>(&values)) {
+      return false;
+    }
+
+    var.value = values;
+  } else if (vartype == "float") {
+    std::string fval;
+    std::string ferr;
+    if (!LexFloat(&fval)) {
+      PUSH_ERROR_AND_RETURN("Floating point literal expected for `" + varname +
+                            "`.");
+    }
+    auto ret = ParseFloat(fval);
+    if (!ret) {
+      PUSH_ERROR_AND_RETURN("Failed to parse floating point literal for `" +
+                            varname + "`.");
+    }
+
+    var.value = ret.value();
+
+  } else if (vartype == "int3") {
+    std::array<int, 3> values;
+    if (!ParseBasicTypeTuple<int, 3>(&values)) {
+      // std::string msg = "Array of int values expected for `" + var.name +
+      // "`.\n"; PushError(msg);
+      return false;
+    }
+
+    var.value = values;
+  } else if (vartype == "object") {
+    if (!Expect('{')) {
+      PushError("'{' expected.\n");
+      return false;
+    }
+
+    while (!_sr->eof()) {
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '}') {
+        break;
+      } else {
+        if (!Rewind(1)) {
+          return false;
+        }
+
+        if (!ParseCustomMetaValue()) {
+          PushError("Failed to parse meta definition.\n");
+          return false;
+        }
+      }
+    }
+
+    PUSH_WARN("TODO: Implement object type(customData)");
+  } else {
+    PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
+  }
+
+  (*outvar) = var;
+
+  return true;
+}
+
+bool AsciiParser::LexFloat(std::string *result) {
+  // FLOATVAL : ('+' or '-')? FLOAT
+  // FLOAT
+  //     :   ('0'..'9')+ '.' ('0'..'9')* EXPONENT?
+  //     |   '.' ('0'..'9')+ EXPONENT?
+  //     |   ('0'..'9')+ EXPONENT
+  //     ;
+  // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
+
+  std::stringstream ss;
+
+  bool has_sign{false};
+  bool leading_decimal_dots{false};
+  {
+    char sc;
+    if (!_sr->read1(&sc)) {
+      return false;
+    }
+    _curr_cursor.col++;
+
+    ss << sc;
+
+    // sign, '.' or [0-9]
+    if ((sc == '+') || (sc == '-')) {
+      has_sign = true;
+
+      char c;
+      if (!_sr->read1(&c)) {
+        return false;
+      }
+
+      if (c == '.') {
+        // ok. something like `+.7`, `-.53`
+        leading_decimal_dots = true;
+        _curr_cursor.col++;
+        ss << c;
+
+      } else {
+        // unwind and continue
+        _sr->seek_from_current(-1);
+      }
+
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else if (sc == '.') {
+      // ok
+      leading_decimal_dots = true;
+    } else {
+      PUSH_ERROR_AND_RETURN("Sign or `.` or 0-9 expected.");
+    }
+  }
+
+  (void)has_sign;
+
+  // 1. Read the integer part
+  char curr;
+  if (!leading_decimal_dots) {
+    // std::cout << "1 read int part: ss = " << ss.str() << "\n";
+
+    while (!_sr->eof()) {
+      if (!_sr->read1(&curr)) {
+        return false;
+      }
+
+      // std::cout << "1 curr = " << curr << "\n";
+      if ((curr >= '0') && (curr <= '9')) {
+        // continue
+        ss << curr;
+      } else {
+        _sr->seek_from_current(-1);
+        break;
+      }
+    }
+  }
+
+  if (_sr->eof()) {
+    (*result) = ss.str();
+    return true;
+  }
+
+  if (!_sr->read1(&curr)) {
+    return false;
+  }
+
+  // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
+  // "\n";
+
+  // 2. Read the decimal part
+  if (curr == '.') {
+    ss << curr;
+
+    while (!_sr->eof()) {
+      if (!_sr->read1(&curr)) {
+        return false;
+      }
+
+      if ((curr >= '0') && (curr <= '9')) {
+        ss << curr;
+      } else {
+        break;
+      }
+    }
+
+  } else if ((curr == 'e') || (curr == 'E')) {
+    // go to 3.
+  } else {
+    // end
+    (*result) = ss.str();
+    _sr->seek_from_current(-1);
+    return true;
+  }
+
+  if (_sr->eof()) {
+    (*result) = ss.str();
+    return true;
+  }
+
+  // 3. Read the exponent part
+  bool has_exp_sign{false};
+  if ((curr == 'e') || (curr == 'E')) {
+    ss << curr;
+
+    if (!_sr->read1(&curr)) {
+      return false;
+    }
+
+    if ((curr == '+') || (curr == '-')) {
+      // exp sign
+      ss << curr;
+      has_exp_sign = true;
+
+    } else if ((curr >= '0') && (curr <= '9')) {
+      // ok
+      ss << curr;
+    } else {
+      // Empty E is not allowed.
+      PUSH_ERROR_AND_RETURN("Empty `E' is not allowed.");
+    }
+
+    while (!_sr->eof()) {
+      if (!_sr->read1(&curr)) {
+        return false;
+      }
+
+      if ((curr >= '0') && (curr <= '9')) {
+        // ok
+        ss << curr;
+
+      } else if ((curr == '+') || (curr == '-')) {
+        if (has_exp_sign) {
+          // No multiple sign characters
+          PUSH_ERROR_AND_RETURN("No multiple exponential sign characters.");
+          return false;
+        }
+
+        ss << curr;
+        has_exp_sign = true;
+      } else {
+        // end
+        _sr->seek_from_current(-1);
+        break;
+      }
+    }
+  } else {
+    _sr->seek_from_current(-1);
+  }
+
+  (*result) = ss.str();
+  return true;
+}
+
+bool IsUSDA(const std::string &filename, size_t max_filesize) {
+  // TODO: Read only first N bytes
+  std::vector<uint8_t> data;
+  std::string err;
+
+  if (!io::ReadWholeFile(&data, &err, filename, max_filesize)) {
+    return false;
+  }
+
+  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  tinyusdz::ascii::AsciiParser parser(&sr);
+
+  return parser.CheckHeader();
+}
+
+#if 0
+///
+/// -- AsciiParser
+///
+AsciiParser::AsciiParser() { _impl = new Impl(); }
+AsciiParser::AsciiParser(StreamReader *sr) { _impl = new Impl(sr); }
+
+AsciiParser::~AsciiParser() { delete _impl; }
+
+bool AsciiParser::CheckHeader() { return _impl->CheckHeader(); }
+
+bool AsciiParser::Parse(LoadState state) { return _impl->Parse(state); }
+
+void AsciiParser::SetBaseDir(const std::string &dir) {
+  return _impl->SetBaseDir(dir);
+}
+
+void AsciiParser::SetStream(StreamReader *sr) { _impl->SetStream(sr); }
+
+#if 0
+std::vector<GPrim> AsciiParser::GetGPrims() { return _impl->GetGPrims(); }
+
+std::string AsciiParser::GetDefaultPrimName() const {
+  return _impl->GetDefaultPrimName();
+}
+#endif
+
+std::string AsciiParser::GetError() { return _impl->GetError(); }
+std::string AsciiParser::GetWarning() { return _impl->GetWarning(); }
+#endif
+
+}  // namespace ascii
+}  // namespace tinyusdz
+
+#else
+
+#if 0
+namespace tinyusdz {
+namespace usda {
+
+AsciiParser::AsciiParser() {}
+AsciiParser::AsciiParser(StreamReader *sr) { (void)sr; }
+
+AsciiParser::~AsciiParser() {}
+
+bool AsciiParser::CheckHeader() { return false; }
+
+bool AsciiParser::Parse(LoadState state) {
+  (void)state;
+  return false;
+}
+
+void AsciiParser::SetBaseDir(const std::string &dir) { (void)dir; }
+
+void AsciiParser::SetStream(const StreamReader *sr) { (void)sr; }
+
+#if 0
+std::vector<GPrim> AsciiParser::GetGPrims() {
+  return {};
+}
+
+std::string AsciiParser::GetDefaultPrimName() const {
+  return std::string{};
+}
+#endif
+
+std::string AsciiParser::GetError() {
+  return "USDA parser feature is disabled in this build.\n";
+}
+std::string AsciiParser::GetWarning() { return std::string{}; }
+
+}  // namespace ascii
+}  // namespace tinyusdz
+#endif
+
+#if 0
+
+
 
 //
 // -- impl ReadTimeSampleData
@@ -7807,197 +7960,51 @@ bool AsciiParser::Impl::ReadTimeSampleData(
 
   return true;
 }
-
-bool AsciiParser::Impl::ReadBasicType(float *value) {
-  // -inf, inf, nan
-  {
-    float v;
-    if (MaybeNonFinite(&v)) {
-      (*value) = v;
-      return true;
-    }
-  }
-
-  std::string value_str;
-  std::string err;
-  if (!LexFloat(&value_str, &err)) {
-    std::string msg = "Failed to parse float value literal.\n";
-    if (err.size()) {
-      msg += err;
-    }
-    PushError(msg);
-
-    return false;
-  }
-
-  auto flt = ParseFloat(value_str);
-  if (flt) {
-    (*value) = flt.value();
-  } else {
-    std::string msg = "Failed to parse float value literal.\n";
-    if (err.size()) {
-      msg += flt.error() + "\n";
-    }
-    PushError(msg);
-    return false;
-  }
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<float> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  float v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-bool AsciiParser::Impl::ReadBasicType(double *value) {
-  // -inf, inf, nan
-  {
-    double v;
-    if (MaybeNonFinite(&v)) {
-      (*value) = v;
-      return true;
-    }
-  }
-
-  std::string value_str;
-  std::string err;
-  if (!LexFloat(&value_str, &err)) {
-    std::string msg = "Failed to parse float value literal.\n";
-    if (err.size()) {
-      msg += err;
-    }
-    PushError(msg);
-
-    return false;
-  }
-
-  auto flt = ParseDouble(value_str);
-  if (!flt) {
-    std::string msg = "Failed to parse float value literal.\n";
-    msg += flt.error();
-    PushError(msg);
-    return false;
-  } else {
-    (*value) = flt.value();
-  }
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(nonstd::optional<double> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  double v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-//
-// --
-//
-
-bool IsUSDA(const std::string &filename, size_t max_filesize) {
-  // TODO: Read only first N bytes
-  std::vector<uint8_t> data;
-  std::string err;
-
-  if (!io::ReadWholeFile(&data, &err, filename, max_filesize)) {
-    return false;
-  }
-
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
-
-  return parser.CheckHeader();
-}
-
-///
-/// -- AsciiParser
-///
-AsciiParser::AsciiParser() { _impl = new Impl(); }
-AsciiParser::AsciiParser(StreamReader *sr) { _impl = new Impl(sr); }
-
-AsciiParser::~AsciiParser() { delete _impl; }
-
-bool AsciiParser::CheckHeader() { return _impl->CheckHeader(); }
-
-bool AsciiParser::Parse(LoadState state) { return _impl->Parse(state); }
-
-void AsciiParser::SetBaseDir(const std::string &dir) {
-  return _impl->SetBaseDir(dir);
-}
-
-void AsciiParser::SetStream(StreamReader *sr) { _impl->SetStream(sr); }
-
-#if 0
-std::vector<GPrim> AsciiParser::GetGPrims() { return _impl->GetGPrims(); }
-
-std::string AsciiParser::GetDefaultPrimName() const {
-  return _impl->GetDefaultPrimName();
-}
 #endif
 
-std::string AsciiParser::GetError() { return _impl->GetError(); }
-std::string AsciiParser::GetWarning() { return _impl->GetWarning(); }
-
-}  // namespace tinyusdz
-}  // namespace tinyusdz
-
-#else
-
-namespace tinyusdz {
-namespace usda {
-
-AsciiParser::AsciiParser() {}
-AsciiParser::AsciiParser(StreamReader *sr) { (void)sr; }
-
-AsciiParser::~AsciiParser() {}
-
-bool AsciiParser::CheckHeader() { return false; }
-
-bool AsciiParser::Parse(LoadState state) {
-  (void)state;
-  return false;
-}
-
-void AsciiParser::SetBaseDir(const std::string &dir) { (void)dir; }
-
-void AsciiParser::SetStream(const StreamReader *sr) { (void)sr; }
-
 #if 0
-std::vector<GPrim> AsciiParser::GetGPrims() {
-  return {};
-}
+// Extract array of References from Variable.
+ReferenceList GetReferences(
+    const std::tuple<ListEditQual, value::any_value> &_var) {
+  ReferenceList result;
 
-std::string AsciiParser::GetDefaultPrimName() const {
-  return std::string{};
+  ListEditQual qual = std::get<0>(_var);
+
+  auto var = std::get<1>(_var);
+
+  SLOG_INFO << "GetReferences. var.name = " << var.name << "\n";
+
+  if (var.IsArray()) {
+    LOG_INFO("IsArray");
+    auto parr = var.as_array();
+    if (parr) {
+      LOG_INFO("parr");
+      for (const auto &v : parr->values) {
+        LOG_INFO("Maybe Value");
+        if (v.IsValue()) {
+          LOG_INFO("Maybe Reference");
+          if (auto pref = nonstd::get_if<Reference>(v.as_value())) {
+            LOG_INFO("Got it");
+            result.push_back({qual, *pref});
+          }
+        }
+      }
+    }
+  } else if (var.IsValue()) {
+    LOG_INFO("IsValue");
+    if (auto pv = var.as_value()) {
+      LOG_INFO("Maybe Reference");
+      if (auto pas = nonstd::get_if<Reference>(pv)) {
+        LOG_INFO("Got it");
+        result.push_back({qual, *pas});
+      }
+    }
+  } else {
+    LOG_INFO("Unknown var type: " + Variable::type_name(var));
+  }
+
+  return result;
 }
 #endif
-
-std::string AsciiParser::GetError() {
-  return "USDA parser feature is disabled in this build.\n";
-}
-std::string AsciiParser::GetWarning() { return std::string{}; }
-
-}  // namespace ascii
-}  // namespace tinyusdz
 
 #endif
