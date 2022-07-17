@@ -7,8 +7,8 @@
 
 #include <stack>
 
-#include "tinyusdz.hh"
 #include "stream-reader.hh"
+#include "tinyusdz.hh"
 
 namespace tinyusdz {
 
@@ -21,7 +21,6 @@ enum LoadState {
   LOAD_STATE_PAYLOAD,    // .usda is read by `payload`
 };
 
-
 ///
 /// Test if input file is USDA ascii format.
 ///
@@ -33,18 +32,15 @@ class AsciiParser {
     int64_t loc{-1};  // byte location in StreamReder
   };
 
-
-
   struct Cursor {
     int row{0};
     int col{0};
   };
 
- struct ErrorDiagnositc {
+  struct ErrorDiagnositc {
     std::string err;
     Cursor cursor;
   };
-
 
   void PushError(const std::string &msg) {
     ErrorDiagnositc diag;
@@ -54,31 +50,30 @@ class AsciiParser {
     err_stack.push(diag);
   }
 
-    // This function is used to cancel recent parsing error.
-    void PopError() {
-      if (!err_stack.empty()) {
-        err_stack.pop();
-      }
+  // This function is used to cancel recent parsing error.
+  void PopError() {
+    if (!err_stack.empty()) {
+      err_stack.pop();
     }
+  }
 
-    void PushWarn(const std::string &msg) {
-      ErrorDiagnositc diag;
-      diag.cursor.row = _curr_cursor.row;
-      diag.cursor.col = _curr_cursor.col;
-      diag.err = msg;
-      warn_stack.push(diag);
+  void PushWarn(const std::string &msg) {
+    ErrorDiagnositc diag;
+    diag.cursor.row = _curr_cursor.row;
+    diag.cursor.col = _curr_cursor.col;
+    diag.err = msg;
+    warn_stack.push(diag);
+  }
+
+  // This function is used to cancel recent parsing warning.
+  void PopWarn() {
+    if (!warn_stack.empty()) {
+      warn_stack.pop();
     }
+  }
 
-    // This function is used to cancel recent parsing warning.
-    void PopWarn() {
-      if (!warn_stack.empty()) {
-        warn_stack.pop();
-      }
-    }
-
-    bool IsStageMeta(const std::string &name);
-    bool IsPrimMeta(const std::string &name);
-
+  bool IsStageMeta(const std::string &name);
+  bool IsPrimMeta(const std::string &name);
 
   class VariableDef {
    public:
@@ -87,7 +82,8 @@ class AsciiParser {
 
     VariableDef() = default;
 
-    VariableDef(const std::string &t, const std::string &n) : type(t), name(n) {}
+    VariableDef(const std::string &t, const std::string &n)
+        : type(t), name(n) {}
 
     VariableDef(const VariableDef &rhs) = default;
 
@@ -99,7 +95,6 @@ class AsciiParser {
     }
   };
 
-
   AsciiParser();
   AsciiParser(tinyusdz::StreamReader *sr);
 
@@ -107,7 +102,6 @@ class AsciiParser {
   AsciiParser(AsciiParser &&rhs) = delete;
 
   ~AsciiParser();
-
 
   ///
   /// Base filesystem directory to search asset files.
@@ -135,11 +129,14 @@ class AsciiParser {
   ///
   /// Return true but `value` is set to nullopt for `None`(Attribute Blocked)
   ///
-  template<typename T>
+  template <typename T>
   bool ReadBasicType(nonstd::optional<T> *value);
 
-  template<typename T>
+  template <typename T>
   bool ReadBasicType(T *value);
+
+  template<typename T>
+  bool ParseMatrix(T *result);
 
   ///
   /// Parse '(', Sep1By(','), ')'
@@ -162,8 +159,7 @@ class AsciiParser {
   /// None, (2, 3, 4), ...] )
   ///
   template <typename T, size_t N>
-  bool ParseTupleArray(
-      std::vector<nonstd::optional<std::array<T, N>>> *result);
+  bool ParseTupleArray(std::vector<nonstd::optional<std::array<T, N>>> *result);
 
   template <typename T>
   bool SepBy1BasicType(const char sep, std::vector<T> *result);
@@ -193,8 +189,8 @@ class AsciiParser {
   /// `sep`. Allows 'None'
   ///
   template <typename T, size_t N>
-  bool SepBy1TupleType(
-      const char sep, std::vector<nonstd::optional<std::array<T, N>>> *result);
+  bool SepBy1TupleType(const char sep,
+                       std::vector<nonstd::optional<std::array<T, N>>> *result);
 
   ///
   /// Parses 1 or more occurences of tuple values with type 'T', separated by
@@ -251,19 +247,8 @@ class AsciiParser {
     return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
   }
 
-
   bool MaybeNone();
   bool MaybeCustom();
-
-  bool PathStackDepth() { return _path_stack.size(); }
-
-  void PushPath(const std::string &p) { _path_stack.push(p); }
-
-  void PopPath() {
-    if (!_path_stack.empty()) {
-      _path_stack.pop();
-    }
-  }
 
   template <typename T>
   bool MaybeNonFinite(T *out);
@@ -272,10 +257,11 @@ class AsciiParser {
 
   bool Expect(char expect_c);
 
-  bool ReadStringLiteral(std::string *literal); // identifier wrapped with '"'
+  bool ReadStringLiteral(std::string *literal);  // identifier wrapped with '"'
   bool ReadPrimAttrIdentifier(std::string *token);
-  bool ReadIdentifier(std::string *token); // no '"'
-  bool ReadPathIdentifier(std::string *path_identifier); // '<' + identifier + '>'
+  bool ReadIdentifier(std::string *token);  // no '"'
+  bool ReadPathIdentifier(
+      std::string *path_identifier);  // '<' + identifier + '>'
 
   /// Parse magic
   /// #usda FLOAT
@@ -286,13 +272,18 @@ class AsciiParser {
   bool SkipCommentAndWhitespaceAndNewline();
   bool SkipUntilNewline();
 
-  bool ParseAttributeMeta();
+  // bool ParseAttributeMeta();
+  bool ParseAttrMeta(AttrMeta *out_meta);
+
+  bool ParsePrimMetas(
+      std::map<std::string, std::tuple<ListEditQual, PrimVariable>> *args);
 
   bool ParseMetaValue(const std::string &vartype, const std::string &varname,
                       PrimVariable *outvar);
-  bool ParseStageMetaOpt();
 
-  bool ParseStageMeta();
+  bool ParseStageMetaOpt();
+  // Parsed Stage metadatum is stored in this instance.
+  bool ParseStageMetas();
 
   bool ParseCustomMetaValue();
 
@@ -305,6 +296,10 @@ class AsciiParser {
   bool IsRegisteredPrimAttrType(const std::string &ty);
 
   bool Eof() { return _sr->eof(); }
+
+  bool ParseRel(Rel *result);
+  bool ParseProperty(std::map<std::string, Property> *props);
+
 
   //
   // Look***() : Fetch chars but do not change input stream position.
@@ -320,12 +315,33 @@ class AsciiParser {
   uint64_t CurrLoc();
   bool SeekTo(size_t pos);
 
-
   bool PushParserState();
   bool PopParserState(ParseState *state);
 
-
  private:
+  nonstd::optional<std::tuple<ListEditQual, PrimVariable>> ParsePrimMeta();
+  bool ParsePrimAttr(std::map<std::string, Property> *props);
+
+  template <typename T>
+  bool ParseBasicPrimAttr(bool array_qual,
+                                       const std::string &primattr_name,
+                                       PrimAttrib *out_attr);
+
+  bool ParseClassBlock();
+  bool ParseOverBlock();
+  bool ParseDefBlock(uint32_t nestlevel = 0);
+
+  bool ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out);
+  nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
+
+  std::string GetCurrentPath();
+  bool PathStackDepth() { return _path_stack.size(); }
+  void PushPath(const std::string &p) { _path_stack.push(p); }
+  void PopPath() {
+    if (!_path_stack.empty()) {
+      _path_stack.pop();
+    }
+  }
 
   const tinyusdz::StreamReader *_sr = nullptr;
 
@@ -360,7 +376,6 @@ class AsciiParser {
   std::stack<ErrorDiagnositc> warn_stack;
   std::stack<ParseState> parse_stack;
 
-
   float _version{1.0f};
 
   // load flags
@@ -370,11 +385,10 @@ class AsciiParser {
 
   std::string _base_dir;
 
-  //class Impl;
-  //Impl *_impl;
-
+  // class Impl;
+  // Impl *_impl;
 };
 
-} // namespace ascii
+}  // namespace ascii
 
-} // namespace tinyusdz
+}  // namespace tinyusdz

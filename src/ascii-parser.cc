@@ -41,7 +41,7 @@
 #include "external/jsteemann/atoi.h"
 #include "fast_float/fast_float.h"
 #include "nonstd/expected.hpp"
-#include "nonstd/optional.hpp"
+//#include "nonstd/optional.hpp"
 
 //
 
@@ -157,6 +157,42 @@ namespace tinyusdz {
 
 namespace ascii {
 
+struct PathIdentifier : std::string {
+  // using str = std::string;
+};
+
+static void RegisterStageMetas(
+    std::map<std::string, AsciiParser::VariableDef> &metas) {
+  metas.clear();
+  metas["doc"] = AsciiParser::VariableDef("string", "doc");
+  metas["metersPerUnit"] = AsciiParser::VariableDef("float", "metersPerUnit");
+  metas["defaultPrim"] = AsciiParser::VariableDef("string", "defaultPrim");
+  metas["upAxis"] = AsciiParser::VariableDef("string", "upAxis");
+  metas["timeCodesPerSecond"] =
+      AsciiParser::VariableDef("float", "timeCodesPerSecond");
+  metas["customLayerData"] =
+      AsciiParser::VariableDef("object", "customLayerData");
+  metas["subLayers"] = AsciiParser::VariableDef("ref[]", "subLayers");
+}
+
+static void RegisterPrimMetas(
+    std::map<std::string, AsciiParser::VariableDef> &metas) {
+  metas.clear();
+  metas["kind"] = AsciiParser::VariableDef("string", "kind");
+  metas["references"] = AsciiParser::VariableDef("ref[]", "references");
+  metas["inherits"] = AsciiParser::VariableDef("path", "inherits");
+  metas["assetInfo"] = AsciiParser::VariableDef("dictionary", "assetInfo");
+  metas["customData"] = AsciiParser::VariableDef("dictionary", "customData");
+  metas["variants"] = AsciiParser::VariableDef("dictionary", "variants");
+  metas["variantSets"] = AsciiParser::VariableDef("string", "variantSets");
+  metas["payload"] = AsciiParser::VariableDef("ref[]", "payload");
+  metas["specializes"] = AsciiParser::VariableDef("path[]", "specializes");
+  metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
+
+  // ListOp
+  metas["apiSchemas"] = AsciiParser::VariableDef("string[]", "apiSchemas");
+}
+
 namespace {
 
 // parseInt
@@ -222,25 +258,6 @@ struct ErrorDiagnositc {
   std::string err;
   int line_row = -1;
   int line_col = -1;
-};
-
-class VariableDef {
- public:
-  std::string type;
-  std::string name;
-
-  VariableDef() = default;
-
-  VariableDef(const std::string &t, const std::string &n) : type(t), name(n) {}
-
-  VariableDef(const VariableDef &rhs) = default;
-
-  VariableDef &operator=(const VariableDef &rhs) {
-    type = rhs.type;
-    name = rhs.name;
-
-    return *this;
-  }
 };
 
 namespace {
@@ -603,331 +620,6 @@ void AsciiParser::SetStream(StreamReader *sr) { _sr = sr; }
 AsciiParser::
 
 
-  std::string GetCurrentPath() {
-    if (_path_stack.empty()) {
-      return "/";
-    }
-
-    return _path_stack.top();
-  }
-
-  bool PathStackDepth() { return _path_stack.size(); }
-
-  void PushPath(const std::string &p) { _path_stack.push(p); }
-
-  void PopPath() {
-    if (!_path_stack.empty()) {
-      _path_stack.pop();
-    }
-  }
-
-
-  bool ParseDefArg(std::tuple<ListEditQual, PrimVariable> *out) {
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
-    if (!MaybeListEditQual(&qual)) {
-      return false;
-    }
-
-    std::cout << "list-edit qual: " << tinyusdz::to_string(qual) << "\n";
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::string varname;
-    if (!ReadToken(&varname)) {
-      return false;
-    }
-
-    //std::cout << "varname = `" << varname << "`\n";
-
-    if (!IsNodeArg(varname)) {
-      PUSH_ERROR_AND_RETURN("Unsupported or invalid/empty variable name `" +
-                            varname);
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!Expect('=')) {
-      PushError("`=` expected.");
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    auto pvardef = GetNodeArg(varname);
-    if (!pvardef) {
-      // This should not happen though;
-      return false;
-    }
-
-    auto vardef = (*pvardef);
-
-    PrimVariable var;
-    var.name = varname;
-
-    if (vardef.type == "path") {
-      std::string value;
-      if (!ReadPathIdentifier(&value)) {
-        PushError("Failed to parse path identifier");
-        return false;
-      }
-
-      var.value = value;
-
-    } else if (vardef.type == "path[]") {
-      std::vector<std::string> value;
-      if (!ParsePathIdentifierArray(&value)) {
-        PushError("Failed to parse array of path identifier");
-
-        std::cout << __LINE__ << " ParsePathIdentifierArray failed\n";
-        return false;
-      }
-
-      // std::vector<Path> paths;
-      // PrimVariable::Array arr;
-      // for (const auto &v : value) {
-      //   std::cout << "  " << v << "\n";
-      //   PrimVariable _var;
-      //   _var.value = v;
-      //   arr.values.push_back(_var);
-      // }
-
-      // var.value = arr;
-      PUSH_ERROR_AND_RETURN("TODO: Implement");
-
-    } else if (vardef.type == "ref[]") {
-      std::vector<Reference> value;
-      if (!ParseReferenceArray(&value)) {
-        PushError("Failed to parse array of assert reference");
-
-        return false;
-      }
-
-      var.value = value;
-
-    } else if (vardef.type == "string") {
-      std::string value;
-      if (!ReadStringLiteral(&value)) {
-        std::cout << __LINE__ << " ReadStringLiteral failed\n";
-        return false;
-      }
-
-      std::cout << "vardef.type: " << vardef.type << ", name = " << varname
-                << "\n";
-      var.value = value;
-    } else if (vardef.type == "string[]") {
-      std::vector<std::string> value;
-      if (!ParseBasicTypeArray(&value)) {
-        PUSH_ERROR_AND_RETURN("ReadStringArray failed.");
-        return false;
-      }
-
-      DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
-      var.value = value;
-
-    } else if (vardef.type == value::kBool) {
-      bool value;
-      if (!ReadBasicType(&value)) {
-        PUSH_ERROR_AND_RETURN("ReadBool failed.");
-      }
-
-      DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
-      var.value = value;
-
-    } else {
-      PUSH_ERROR_AND_RETURN("TODO: varname " + varname + ", type " +
-                            vardef.type);
-    }
-
-    std::get<0>(*out) = qual;
-    std::get<1>(*out) = var;
-
-    return true;
-  }
-
-  bool ParseDefArgs(
-      std::map<std::string, std::tuple<ListEditQual, PrimVariable>> *args) {
-    // '(' args ')'
-    // args = list of argument, separated by newline.
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    // The first character.
-    {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '(') {
-        std::cout << "def args start\n";
-        // ok
-      } else {
-        _sr->seek_from_current(-1);
-        return false;
-      }
-    }
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      //std::cout << "skip comment/whitespace/nl failed\n";
-      return false;
-    }
-
-    while (!Eof()) {
-      if (!SkipCommentAndWhitespaceAndNewline()) {
-        //std::cout << "2: skip comment/whitespace/nl failed\n";
-        return false;
-      }
-
-      char s;
-      if (!Char1(&s)) {
-        return false;
-      }
-
-      if (s == ')') {
-        std::cout << "def args end\n";
-        // End
-        break;
-      }
-
-      Rewind(1);
-
-      std::tuple<ListEditQual, PrimVariable> arg;
-      if (!ParseDefArg(&arg)) {
-        return false;
-      }
-
-      SLOG_INFO << "arg: list-edit qual = "
-                << tinyusdz::to_string(std::get<0>(arg))
-                << ", name = " << std::get<1>(arg).name;
-
-      (*args)[std::get<1>(arg).name] = arg;
-    }
-
-    return true;
-  }
-
-
-  bool ParseAttrMeta(AttrMeta *out_meta) {
-    // '(' metas ')'
-    //
-    // currently we only support 'interpolation', 'elementSize' and 'cutomData'
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    // The first character.
-    {
-      char c;
-      if (!_sr->read1(&c)) {
-        // this should not happen.
-        return false;
-      }
-
-      if (c == '(') {
-        // ok
-      } else {
-        _sr->seek_from_current(-1);
-
-        // Still ok. No meta
-        return true;
-      }
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    while (!_sr->eof()) {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (c == ')') {
-        // end meta
-        break;
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-
-        std::string token;
-        if (!ReadToken(&token)) {
-          return false;
-        }
-
-        if ((token != "interpolation") && (token != "customData") &&
-            (token != "elementSize")) {
-          PushError(
-              "Currently only `interpolation`, `elementSize` or `customData` "
-              "is supported but "
-              "got: " +
-              token);
-          return false;
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-
-        if (!Expect('=')) {
-          return false;
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-
-        if (token == "interpolation") {
-          std::string value;
-          if (!ReadStringLiteral(&value)) {
-            return false;
-          }
-
-          out_meta->interpolation = InterpolationFromString(value);
-        } else if (token == "elementSize") {
-          uint32_t value;
-          if (!ReadBasicType(&value)) {
-            PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
-          }
-
-          out_meta->elementSize = value;
-        } else if (token == "customData") {
-          std::map<std::string, PrimVariable> dict;
-
-          if (!ParseDict(&dict)) {
-            return false;
-          }
-
-          out_meta->customData = dict;
-
-        } else {
-          // ???
-          return false;
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
 
   bool ParsePrimOptional() {
     // TODO: Implement
@@ -1041,494 +733,8 @@ AsciiParser::
   }
 
 
-  template <typename T>
-  bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
-                          PrimAttrib *out_attr) {
-    PrimAttrib attr;
-
-    if (array_qual) {
-      if (value::TypeTrait<T>::type_name() == "bool") {
-        PushError("Array of bool type is not supported.");
-        return false;
-      } else {
-        std::vector<T> value;
-        if (!ParseBasicTypeArray(&value)) {
-          PushError("Failed to parse " +
-                    std::string(value::TypeTrait<T>::type_name()) +
-                    " array.\n");
-          return false;
-        }
-
-        LOG_INFO(
-            "Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
-            ", sz = " + std::to_string(value.size()));
-        attr.var.set_scalar(value);
-      }
-
-    } else if (hasConnect(primattr_name)) {
-      std::string value;  // TODO: Path
-      if (!ReadPathIdentifier(&value)) {
-        PushError("Failed to parse path identifier for `token`.\n");
-        return false;
-      }
-
-      attr.var.set_scalar(value);  // TODO: set as `Path` type
-    } else {
-      nonstd::optional<T> value;
-      if (!ReadBasicType(&value)) {
-        PushError("Failed to parse " +
-                  std::string(value::TypeTrait<T>::type_name()) + " .\n");
-        return false;
-      }
-
-      if (value) {
-        LOG_DEBUG("ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name()
-                                         << " = " << (*value));
-
-        // TODO: TimeSampled
-        value::TimeSamples ts;
-        ts.values.push_back(*value);
-        attr.var.var = ts;
-
-      } else {
-        // std::cout << "ParseBasicPrimAttr: " <<
-        // value::TypeTrait<T>::type_name()
-        //           << " = None\n";
-      }
-    }
-
-    // optional: interpolation parameter
-    AttrMeta meta;
-    if (!ParseAttrMeta(&meta)) {
-      PushError("Failed to parse PrimAttrib meta.");
-      return false;
-    }
-    attr.meta = meta;
-
-    // if (meta.count("interpolation")) {
-    //   const PrimVariable &var = meta.at("interpolation");
-    //   auto p = var.value.get_value<value::token>();
-    //   if (p) {
-    //     attr.interpolation =
-    //     tinyusdz::InterpolationFromString(p.value().str());
-    //   }
-    // }
-
-    (*out_attr) = std::move(attr);
-
-    return true;
-  }
-
-  // bool ParsePrimAttr(std::map<std::string, PrimVariable> *props) {
-  bool ParsePrimAttr(std::map<std::string, Property> *props) {
-    // prim_attr : (custom?) uniform type (array_qual?) name '=' value
-    //           | (custom?) type (array_qual?) name '=' value interpolation?
-    //           | (custom?) uniform type (array_qual?) name interpolation?
-    //           ;
-
-    bool custom_qual = MaybeCustom();
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    bool uniform_qual{false};
-    std::string type_name;
-
-    if (!ReadIdentifier(&type_name)) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (type_name == "uniform") {
-      uniform_qual = true;
-
-      // next token should be type
-      if (!ReadIdentifier(&type_name)) {
-        PushError("`type` identifier expected but got non-identifier\n");
-        return false;
-      }
-
-      // `type_name` is then overwritten.
-    }
-
-    if (!IsRegisteredPrimAttrType(type_name)) {
-      PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
-                            type_name + "`\n");
-    }
-
-    // Has array qualifier? `[]`
-    bool array_qual = false;
-    {
-      char c0, c1;
-      if (!Char1(&c0)) {
-        return false;
-      }
-
-      if (c0 == '[') {
-        if (!Char1(&c1)) {
-          return false;
-        }
-
-        if (c1 == ']') {
-          array_qual = true;
-        } else {
-          // Invalid syntax
-          PushError("Invalid syntax found.\n");
-          return false;
-        }
-
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-      }
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    std::string primattr_name;
-    if (!ReadPrimAttrIdentifier(&primattr_name)) {
-      PushError("Failed to parse primAttr identifier.\n");
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    // output node?
-    if (type_name == "token" && hasOutputs(primattr_name) &&
-        !hasConnect(primattr_name)) {
-      // ok
-      return true;
-    }
-
-    bool isTimeSample = endsWith(primattr_name, ".timeSamples");
-
-    bool define_only = false;
-    {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (c != '=') {
-        // Define only(e.g. output variable)
-        define_only = true;
-      }
-    }
-
-    if (define_only) {
-      // TODO:
-
-      // attr.custom = custom_qual;
-      // attr.uniform = uniform_qual;
-      // attr.name = primattr_name;
-
-      // LOG_INFO("primattr_name = " + primattr_name);
-
-      //// FIXME
-      //{
-      //  (*props)[primattr_name].rel = rel;
-      //  (*props)[primattr_name].is_rel = true;
-      //}
-
-      return true;
-    }
-
-    // Continue to parse argument
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    //
-    // TODO(syoyo): Refactror and implement value parser dispatcher.
-    //
-    if (isTimeSample) {
-#if 0  // TODO
-      if (type_name == "float") {
-        TimeSampledDataFloat values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
-
-        PrimVariable var;
-        var.timeSampledValue = values;
-        std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
-        (*props)[primattr_name] = var;
-
-      } else if (type_name == "double") {
-        TimeSampledDataDouble values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
-
-        PrimVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
-
-      } else if (type_name == "float3") {
-        TimeSampledDataFloat3 values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
-
-        PrimVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
-      } else if (type_name == "double3") {
-        TimeSampledDataDouble3 values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
-
-        PrimVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
-      } else if (type_name == "matrix4d") {
-        TimeSampledDatavalue::matrix4d values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
-
-        PrimVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
-
-      } else {
-        PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
-        return false;
-      }
-#endif
-
-      PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " +
-                type_name);
-      return false;
-
-    } else {
-      PrimAttrib attr;
-      Rel rel;
-
-      bool is_rel = false;
-
-      if (type_name == "bool") {
-        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
-          return false;
-        }
-      } else if (type_name == "float") {
-        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
-          return false;
-        }
-      } else if (type_name == "int") {
-        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
-          return false;
-        }
-      } else if (type_name == "double") {
-        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
-          return false;
-        }
-      } else if (type_name == "string") {
-        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
-                                             &attr)) {
-          return false;
-        }
-      } else if (type_name == "token") {
-        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
-                                             &attr)) {
-          return false;
-        }
-      } else if (type_name == "float2") {
-        if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
-                                               &attr)) {
-          return false;
-        }
-      } else if (type_name == "float3") {
-        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               &attr)) {
-          return false;
-        }
-      } else if (type_name == "float4") {
-        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               &attr)) {
-          return false;
-        }
-      } else if (type_name == "double2") {
-        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "double3") {
-        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "double4") {
-        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "point3f") {
-        LOG_INFO("point3f, array_qual = " + std::to_string(array_qual));
-        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                &attr)) {
-          LOG_INFO("Failed to parse point3f data.");
-          return false;
-        }
-      } else if (type_name == "color3f") {
-        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "color4f") {
-        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "point3d") {
-        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "normal3f") {
-        LOG_INFO("normal3f, array_qual = " + std::to_string(array_qual));
-        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 &attr)) {
-          LOG_INFO("Failed to parse normal3f data.");
-          return false;
-        }
-        LOG_INFO("Got it");
-      } else if (type_name == "normal3d") {
-        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 &attr)) {
-          return false;
-        }
-      } else if (type_name == "color3d") {
-        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "color4d") {
-        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                &attr)) {
-          return false;
-        }
-      } else if (type_name == "matrix2d") {
-        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 &attr)) {
-          return false;
-        }
-      } else if (type_name == "matrix3d") {
-        if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
-                                                 &attr)) {
-          return false;
-        }
-      } else if (type_name == "matrix4d") {
-        if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
-                                                 &attr)) {
-          return false;
-        }
-
-      } else if (type_name == "rel") {
-        if (!ParseRel(&rel)) {
-          PushError("Failed to parse value with type `rel`.\n");
-          return false;
-        }
-
-        is_rel = true;
-      } else if (type_name == "texCoord2f") {
-        if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
-                                                   &attr)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse texCoord2f data.");
-        }
-
-      } else if (type_name == "asset") {
-        Reference asset_ref;
-        bool triple_deliminated{false};
-        if (!ParseReference(&asset_ref, &triple_deliminated)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
-        }
-
-        value::asset_path assetp(asset_ref.asset_path);
-        attr.var.set_scalar(assetp);
-
-      } else {
-        PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
-      }
-
-      attr.uniform = uniform_qual;
-      attr.name = primattr_name;
-
-      LOG_INFO("primattr_name = " + primattr_name);
-
-      (*props)[primattr_name].is_custom = custom_qual;
-
-      if (is_rel) {
-        (*props)[primattr_name].rel = rel;
-        (*props)[primattr_name].is_rel = true;
-
-      } else {
-        (*props)[primattr_name].attrib = attr;
-      }
-
-      return true;
-    }
-  }
-
-  bool ParseProperty(std::map<std::string, Property> *props) {
-    // property : primm_attr
-    //          | 'rel' name '=' path
-    //          ;
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    // rel?
-    {
-      size_t loc = CurrLoc();
-      std::string tok;
-
-      if (!ReadIdentifier(&tok)) {
-        return false;
-      }
-
-      if (tok == "rel") {
-        PUSH_ERROR_AND_RETURN("TODO: Parse rel");
-      } else {
-        SeekTo(loc);
-      }
-    }
-
-    // attribute
-    return ParsePrimAttr(props);
-  }
 
   /// == DORA ==
-
-  ///
-  /// Parse rel string
-  ///
-  bool ParseRel(Rel *result) {
-    std::string value;
-    if (!ReadPathIdentifier(&value)) {
-      return false;
-    }
-
-    result->path = value;
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    return true;
-  }
-
 
 
   ///
@@ -2019,522 +1225,6 @@ AsciiParser::
 
 
 
-  ///
-  /// Parse `class` block.
-  ///
-  bool ParseClassBlock() {
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    {
-      std::string tok;
-      if (!ReadToken(&tok)) {
-        return false;
-      }
-
-      if (tok != "class") {
-        PushError("`class` is expected.");
-        return false;
-      }
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::string target;
-
-    if (!ReadToken(&target)) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> args;
-    if (!ParseDefArgs(&args)) {
-      return false;
-    }
-
-    if (!Expect('{')) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::string path = GetCurrentPath() + "/" + target;
-
-    PushPath(path);
-
-    // TODO: Support nested 'class'?
-
-    // expect = '}'
-    //        | def_block
-    //        | prim_attr+
-    std::map<std::string, Property> props;
-    while (!_sr->eof()) {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (c == '}') {
-        // end block
-        break;
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-
-        std::string tok;
-        if (!ReadToken(&tok)) {
-          return false;
-        }
-
-        if (!Rewind(tok.size())) {
-          return false;
-        }
-
-        if (tok == "def") {
-          // recusive call
-          if (!ParseDefBlock()) {
-            return false;
-          }
-        } else {
-          // Assume PrimAttr
-          if (!ParsePrimAttr(&props)) {
-            return false;
-          }
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-      }
-    }
-
-    Klass klass;
-    for (const auto &prop : props) {
-      // TODO: list-edit qual
-      klass.props[prop.first] = prop.second;
-    }
-
-    // TODO: Check key existance.
-    _klasses[path] = klass;
-
-    PopPath();
-
-    return true;
-  }
-
-  ///
-  /// Parse `over` block.
-  ///
-  bool ParseOverBlock() {
-    std::string tok;
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!ReadToken(&tok)) {
-      return false;
-    }
-
-    if (tok != "over") {
-      PushError("`over` is expected.");
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::string target;
-
-    if (!ReadToken(&target)) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> args;
-    if (!ParseDefArgs(&args)) {
-      return false;
-    }
-
-    std::string path = GetCurrentPath() + "/" + target;
-    PushPath(path);
-
-    if (!Expect('{')) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    // TODO: Parse block content
-
-    if (!Expect('}')) {
-      return false;
-    }
-
-    PopPath();
-
-    return true;
-  }
-
-  ///
-  /// Parse `def` block.
-  ///
-  /// def = `def` prim_type? token optional_arg? { ... }
-  ///
-  /// optional_arg = '(' args ')'
-  ///
-  /// TODO: Support `def` without type(i.e. actual definition is defined in
-  /// another USD file or referenced USD)
-  ///
-  bool ParseDefBlock(uint32_t nestlevel = 0) {
-    std::string def;
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!ReadToken(&def)) {
-      return false;
-    }
-
-    if (def != "def") {
-      PushError("`def` is expected.");
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    // look ahead
-    bool has_primtype = false;
-    {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (!Rewind(1)) {
-        return false;
-      }
-
-      if (c == '"') {
-        // token
-        has_primtype = false;
-      } else {
-        has_primtype = true;
-      }
-    }
-
-    std::string prim_type;
-
-    if (has_primtype) {
-      if (!ReadToken(&prim_type)) {
-        return false;
-      }
-
-      if (!_node_types.count(prim_type)) {
-        std::string msg =
-            "`" + prim_type +
-            "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
-        PushError(msg);
-        return false;
-      }
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::string node_name;
-    if (!ReadBasicType(&node_name)) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    // optional args
-    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> args;
-    {
-      // look ahead
-      char c;
-      if (!LookChar1(&c)) {
-        return false;
-      }
-
-      if (c == '(') {
-        // arg
-
-        if (!ParseDefArgs(&args)) {
-          return false;
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-      }
-    }
-
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    if (!Expect('{')) {
-      return false;
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    std::vector<std::pair<ListEditQual, Reference>> references;
-    LOG_INFO("`references.count` = " +
-             std::to_string(args.count("references")));
-
-    if (args.count("references")) {
-      // TODO
-      // references = GetReferences(args["references"]);
-      // LOG_INFO("`references.size` = " + std::to_string(references.size()));
-    }
-
-    std::map<std::string, Property> props;
-
-    std::string path = GetCurrentPath() + "/" + node_name;
-    PushPath(path);
-
-    // expect = '}'
-    //        | def_block
-    //        | prim_attr+
-    while (!_sr->eof()) {
-      char c;
-      if (!Char1(&c)) {
-        return false;
-      }
-
-      if (c == '}') {
-        // end block
-        break;
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-
-        std::string tok;
-        if (!ReadToken(&tok)) {
-          return false;
-        }
-
-        if (!Rewind(tok.size())) {
-          return false;
-        }
-
-        if (tok == "def") {
-          // recusive call
-          if (!ParseDefBlock(nestlevel + 1)) {
-            return false;
-          }
-        } else {
-          // Assume PrimAttr
-          if (!ParsePrimAttr(&props)) {
-            return false;
-          }
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-      }
-    }
-
-    if (prim_type.empty()) {
-      if (IsToplevel()) {
-        if (references.size()) {
-          // Infer prim type from referenced asset.
-
-          if (references.size() > 1) {
-            LOG_ERROR("TODO: multiple references\n");
-          }
-
-          auto it = references.begin();
-          const Reference &ref = it->second;
-          std::string filepath = ref.asset_path;
-
-          // usdOBJ?
-          if (endsWith(filepath, ".obj")) {
-            prim_type = "geom_mesh";
-          } else {
-            if (!io::IsAbsPath(filepath)) {
-              filepath = io::JoinPath(_base_dir, ref.asset_path);
-            }
-
-            if (_reference_cache.count(filepath)) {
-              LOG_ERROR("TODO: Use cached info");
-            }
-
-            LOG_INFO("Reading references: " + filepath);
-
-            std::vector<uint8_t> data;
-            std::string err;
-            if (!io::ReadWholeFile(&data, &err, filepath,
-                                   /* max_filesize */ 0)) {
-              PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
-            }
-
-            tinyusdz::StreamReader sr(data.data(), data.size(),
-                                      /* swap endian */ false);
-            tinyusdz::ascii::AsciiParser parser(&sr);
-
-            std::string base_dir = io::GetBaseDir(filepath);
-
-            parser.SetBaseDir(base_dir);
-
-            {
-              bool ret = parser.Parse(tinyusdz::ascii::LOAD_STATE_REFERENCE);
-
-              if (!ret) {
-                PUSH_WARN("Failed to parse .usda: " << parser.GetError());
-              } else {
-                DCOUT("`references` load ok.");
-              }
-            }
-
-#if 0  // TODO
-            std::string defaultPrim = parser.GetDefaultPrimName();
-
-            LOG_INFO("defaultPrim: " + parser.GetDefaultPrimName());
-
-            const std::vector<GPrim> &root_nodes = parser.GetGPrims();
-            if (root_nodes.empty()) {
-              LOG_WARN("USD file does not contain any Prim node.");
-            } else {
-              size_t default_idx =
-                  0;  // Use the first element when corresponding defaultPrim
-                      // node is not found.
-
-              auto node_it = std::find_if(root_nodes.begin(), root_nodes.end(),
-                                          [defaultPrim](const GPrim &a) {
-                                            return !defaultPrim.empty() &&
-                                                   (a.name == defaultPrim);
-                                          });
-
-              if (node_it != root_nodes.end()) {
-                default_idx =
-                    size_t(std::distance(root_nodes.begin(), node_it));
-              }
-
-              LOG_INFO("defaultPrim node: " + root_nodes[default_idx].name);
-              for (size_t i = 0; i < root_nodes.size(); i++) {
-                LOG_INFO("root nodes: " + root_nodes[i].name);
-              }
-
-              // Store result to cache
-              _reference_cache[filepath] = {default_idx, root_nodes};
-
-              prim_type = root_nodes[default_idx].prim_type;
-              LOG_INFO("Infered prim type: " + prim_type);
-            }
-#else
-            PUSH_WARN("TODO: References");
-#endif
-          }
-        }
-      } else {
-        // Unknown or unresolved node type
-        LOG_ERROR("TODO: unresolved node type\n");
-      }
-    }
-
-    if (IsToplevel()) {
-      if (prim_type.empty()) {
-        // Reconstuct Generic Prim.
-
-        GPrim gprim;
-        if (!ReconstructGPrim(props, references, &gprim)) {
-          PushError("Failed to reconstruct GPrim.");
-          return false;
-        }
-        gprim.name = node_name;
-        scene_.root_nodes.emplace_back(gprim);
-
-      } else {
-        // Reconstruct concrete C++ object
-#if 0
-
-#define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
-  }                                                                  \
-  else if (prim_type == __tyname) {                                  \
-    __dty node;                                                      \
-    if (!__reconstruct_fn(props, references, &node)) {               \
-      PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname);   \
-    }                                                                \
-    node.name = node_name;                                           \
-    __scene.emplace_back(node);
-
-        if (0) {
-        RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
-        RECONSTRUCT_NODE("Mesh", ReconstructGeomMesh, GeomMesh, scene_.geom_meshes)
-        RECONSTRUCT_NODE("Sphere", ReconstructGeomSphere, GeomSphere, scene_.geom_spheres)
-        RECONSTRUCT_NODE("Cone", ReconstructGeomCone, GeomCone, scene_.geom_cones)
-        RECONSTRUCT_NODE("Cube", ReconstructGeomCube, GeomCube, scene_.geom_cubes)
-        RECONSTRUCT_NODE("Capsule", ReconstructGeomCapsule, GeomCapsule, scene_.geom_capsules)
-        RECONSTRUCT_NODE("Cylinder", ReconstructGeomCylinder, GeomCylinder, scene_.geom_cylinders)
-        RECONSTRUCT_NODE("BasisCurves", ReconstructBasisCurves, GeomBasisCurves, scene_.geom_basis_curves)
-        RECONSTRUCT_NODE("Camera", ReconstructGeomCamera, GeomCamera, scene_.geom_cameras)
-        RECONSTRUCT_NODE("Shader", ReconstructShader, Shader, scene_.shaders)
-        RECONSTRUCT_NODE("NodeGraph", ReconstructNodeGraph, NodeGraph, scene_.node_graphs)
-        RECONSTRUCT_NODE("Material", ReconstructMaterial, Material, scene_.materials)
-
-        RECONSTRUCT_NODE("Scope", ReconstructScope, Scope, scene_.scopes)
-
-        RECONSTRUCT_NODE("SphereLight", ReconstructLuxSphereLight, LuxSphereLight, scene_.lux_sphere_lights)
-        RECONSTRUCT_NODE("DomeLight", ReconstructLuxDomeLight, LuxDomeLight, scene_.lux_dome_lights)
-
-        RECONSTRUCT_NODE("SkelRoot", ReconstructSkelRoot, SkelRoot, scene_.skel_roots)
-        RECONSTRUCT_NODE("Skeleton", ReconstructSkeleton, Skeleton, scene_.skeletons)
-        } else {
-          PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
-        }
-#endif
-        PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
-      }
-    } else {
-      // Store properties to GPrim.
-      // TODO: Use Class?
-      GPrim gprim;
-      if (!ReconstructGPrim(props, references, &gprim)) {
-        PushError("Failed to reconstruct GPrim.");
-        return false;
-      }
-      gprim.name = node_name;
-      gprim.prim_type = prim_type;
-
-      if (PathStackDepth() == 1) {
-        // root node
-        _gprims.push_back(gprim);
-      }
-    }
-
-    PopPath();
-
-    return true;
-  }
 
   bool ReconstructGPrim(
       const std::map<std::string, Property> &properties,
@@ -2652,79 +1342,6 @@ AsciiParser::
     return false;
   }
 
-  ///
-  /// Parser entry point
-  ///
-  bool Parse(LoadState state = LOAD_STATE_TOPLEVEL) {
-    _sub_layered = (state == LOAD_STATE_SUBLAYER);
-    _referenced = (state == LOAD_STATE_REFERENCE);
-    _payloaded = (state == LOAD_STATE_PAYLOAD);
-
-    bool header_ok = ParseMagicHeader();
-    if (!header_ok) {
-      PushError("Failed to parse USDA magic header.\n");
-      return false;
-    }
-
-    // global meta.
-    bool has_meta = ParseWorldMeta();
-    if (has_meta) {
-      // TODO: Process meta info
-    } else {
-      // no meta info accepted.
-    }
-
-    // parse blocks
-    while (!_sr->eof()) {
-      if (!SkipCommentAndWhitespaceAndNewline()) {
-        return false;
-      }
-
-      if (_sr->eof()) {
-        // Whitespaces in the end of line.
-        break;
-      }
-
-      // Look ahead token
-      auto curr_loc = _sr->tell();
-
-      std::string tok;
-      if (!ReadToken(&tok)) {
-        PushError("Token expected.\n");
-        return false;
-      }
-
-      // Rewind
-      if (!SeekTo(curr_loc)) {
-        return false;
-      }
-
-      if (tok == "def") {
-        bool block_ok = ParseDefBlock();
-        if (!block_ok) {
-          PushError("Failed to parse `def` block.\n");
-          return false;
-        }
-      } else if (tok == "over") {
-        bool block_ok = ParseOverBlock();
-        if (!block_ok) {
-          PushError("Failed to parse `over` block.\n");
-          return false;
-        }
-      } else if (tok == "class") {
-        bool block_ok = ParseClassBlock();
-        if (!block_ok) {
-          PushError("Failed to parse `class` block.\n");
-          return false;
-        }
-      } else {
-        PushError("Unknown token '" + tok + "'");
-        return false;
-      }
-    }
-
-    return true;
-  }
 
   std::vector<GPrim> GetGPrims() { return _gprims; }
 
@@ -2837,47 +1454,24 @@ AsciiParser::
   }
 
   bool IsBuiltinMeta(const std::string &name) {
-    return _builtin_metas.count(name) ? true : false;
+    return _stage_metas.count(name) ? true : false;
   }
 
   bool IsNodeArg(const std::string &name) {
     return _node_args.count(name) ? true : false;
   }
 
-  void RegisterNodeArgs() {
-    _node_args["kind"] = VariableDef("string", "kind");
-    _node_args["references"] = VariableDef("ref[]", "references");
-    _node_args["inherits"] = VariableDef("path", "inherits");
-    _node_args["assetInfo"] = VariableDef("dictionary", "assetInfo");
-    _node_args["customData"] = VariableDef("dictionary", "customData");
-    _node_args["variants"] = VariableDef("dictionary", "variants");
-    _node_args["variantSets"] = VariableDef("string", "variantSets");
-    _node_args["payload"] = VariableDef("ref[]", "payload");
-    _node_args["specializes"] = VariableDef("path[]", "specializes");
-    _node_args["active"] = VariableDef(value::kBool, "active");
 
-    // ListOp
-    _node_args["apiSchemas"] = VariableDef("string[]", "apiSchemas");
-  }
-
-  nonstd::optional<VariableDef> GetNodeArg(const std::string &arg) {
-    if (_node_args.count(arg)) {
-      return _node_args.at(arg);
-    }
-
-    return nonstd::nullopt;
-  }
-
-  void RegisterBuiltinMeta() {
-    _builtin_metas["doc"] = VariableDef("string", "doc");
-    _builtin_metas["metersPerUnit"] = VariableDef("float", "metersPerUnit");
-    _builtin_metas["defaultPrim"] = VariableDef("string", "defaultPrim");
-    _builtin_metas["upAxis"] = VariableDef("string", "upAxis");
-    _builtin_metas["timeCodesPerSecond"] =
+  void RegisterStageMetas() {
+    _stage_metas["doc"] = VariableDef("string", "doc");
+    _stage_metas["metersPerUnit"] = VariableDef("float", "metersPerUnit");
+    _stage_metas["defaultPrim"] = VariableDef("string", "defaultPrim");
+    _stage_metas["upAxis"] = VariableDef("string", "upAxis");
+    _stage_metas["timeCodesPerSecond"] =
         VariableDef("float", "timeCodesPerSecond");
-    _builtin_metas["customLayerData"] =
+    _stage_metas["customLayerData"] =
         VariableDef("object", "customLayerData");
-    _builtin_metas["subLayers"] = VariableDef("ref[]", "subLayers");
+    _stage_metas["subLayers"] = VariableDef("ref[]", "subLayers");
   }
 
   void RegisterNodeTypes() {
@@ -2904,7 +1498,7 @@ AsciiParser::
 
   const tinyusdz::StreamReader *_sr = nullptr;
 
-  std::map<std::string, VariableDef> _builtin_metas;
+  std::map<std::string, VariableDef> _stage_metas;
   std::set<std::string> _node_types;
   std::set<std::string> _registered_prim_attr_types;
   std::map<std::string, VariableDef> _node_args;
@@ -3193,7 +1787,7 @@ bool AsciiParser::Impl::ReconstructGeomSphere(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
+    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
@@ -3205,7 +1799,7 @@ bool AsciiParser::Impl::ReconstructGeomSphere(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3216,7 +1810,7 @@ bool AsciiParser::Impl::ReconstructGeomSphere(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
+                SDCOUT << "prepend reference radius = " << (*p) << "\n";
                 sphere->radius = *p;
               }
             }
@@ -3268,7 +1862,7 @@ bool AsciiParser::Impl::ReconstructGeomSphere(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3278,7 +1872,7 @@ bool AsciiParser::Impl::ReconstructGeomSphere(
           // if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
           //   if (prop.first == "radius") {
           //     if (auto p = value::as_basic<double>(&attr->var)) {
-          //       SLOG_INFO << "append reference radius = " << (*p) << "\n";
+          //       SDCOUT << "append reference radius = " << (*p) << "\n";
           //       sphere->radius = *p;
           //     }
           //   }
@@ -3301,7 +1895,7 @@ bool AsciiParser::Impl::ReconstructGeomCone(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
+    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
@@ -3313,7 +1907,7 @@ bool AsciiParser::Impl::ReconstructGeomCone(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3324,12 +1918,12 @@ bool AsciiParser::Impl::ReconstructGeomCone(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
+                SDCOUT << "prepend reference radius = " << (*p) << "\n";
                 cone->radius = *p;
               }
             } else if (prop.first == "height") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference height = " << (*p) << "\n";
+                SDCOUT << "prepend reference height = " << (*p) << "\n";
                 cone->height = *p;
               }
             }
@@ -3388,7 +1982,7 @@ bool AsciiParser::Impl::ReconstructGeomCone(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3397,12 +1991,12 @@ bool AsciiParser::Impl::ReconstructGeomCone(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "radius") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference radius = " << (*p) << "\n";
+                SDCOUT << "append reference radius = " << (*p) << "\n";
                 cone->radius = *p;
               }
             } else if (prop.first == "height") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference height = " << (*p) << "\n";
+                SDCOUT << "append reference height = " << (*p) << "\n";
                 cone->height = *p;
               }
             }
@@ -3428,7 +2022,7 @@ bool AsciiParser::Impl::ReconstructGeomCube(
   //
   for (const auto &ref : references) {
 
-    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
+    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
@@ -3440,7 +2034,7 @@ bool AsciiParser::Impl::ReconstructGeomCube(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3449,7 +2043,7 @@ bool AsciiParser::Impl::ReconstructGeomCube(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "size") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference size = " << (*p) << "\n";
+                SDCOUT << "prepend reference size = " << (*p) << "\n";
                 cube->size = *p;
               }
             }
@@ -3501,7 +2095,7 @@ bool AsciiParser::Impl::ReconstructGeomCube(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3510,7 +2104,7 @@ bool AsciiParser::Impl::ReconstructGeomCube(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "size") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference size = " << (*p) << "\n";
+                SDCOUT << "append reference size = " << (*p) << "\n";
                 cube->size = *p;
               }
             }
@@ -3532,7 +2126,7 @@ bool AsciiParser::Impl::ReconstructGeomCapsule(
   // Resolve prepend references
   //
   for (const auto &ref : references) {
-    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
+    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
@@ -3544,7 +2138,7 @@ bool AsciiParser::Impl::ReconstructGeomCapsule(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3557,17 +2151,17 @@ bool AsciiParser::Impl::ReconstructGeomCapsule(
 #if 0
             if (prop.first == "height") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference height = " << (*p) << "\n";
+                SDCOUT << "prepend reference height = " << (*p) << "\n";
                 capsule->height = *p;
               }
             } else if (prop.first == "radius") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
+                SDCOUT << "prepend reference radius = " << (*p) << "\n";
                 capsule->radius = *p;
               }
             } else if (prop.first == "axis") {
               if (auto p = value::as_basic<Token>(&attr->var)) {
-                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                SDCOUT << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   capsule->axis = Axis::X;
                 } else if (p->value == "y") {
@@ -3645,7 +2239,7 @@ bool AsciiParser::Impl::ReconstructGeomCapsule(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3654,17 +2248,17 @@ bool AsciiParser::Impl::ReconstructGeomCapsule(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "height") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference height = " << (*p) << "\n";
+                SDCOUT << "append reference height = " << (*p) << "\n";
                 capsule->height = *p;
               }
             } else if (prop.first == "radius") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference radius = " << (*p) << "\n";
+                SDCOUT << "append reference radius = " << (*p) << "\n";
                 capsule->radius = *p;
               }
             } else if (prop.first == "axis") {
               if (auto p = value::as_basic<Token>(&attr->var)) {
-                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                SDCOUT << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   capsule->axis = Axis::X;
                 } else if (p->value == "y") {
@@ -3696,7 +2290,7 @@ bool AsciiParser::Impl::ReconstructGeomCylinder(
   //
   for (const auto &ref : references) {
 
-    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
+    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
@@ -3708,7 +2302,7 @@ bool AsciiParser::Impl::ReconstructGeomCylinder(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3717,17 +2311,17 @@ bool AsciiParser::Impl::ReconstructGeomCylinder(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "height") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference height = " << (*p) << "\n";
+                SDCOUT << "prepend reference height = " << (*p) << "\n";
                 cylinder->height = *p;
               }
             } else if (prop.first == "radius") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "prepend reference radius = " << (*p) << "\n";
+                SDCOUT << "prepend reference radius = " << (*p) << "\n";
                 cylinder->radius = *p;
               }
             } else if (prop.first == "axis") {
               if (auto p = value::as_basic<Token>(&attr->var)) {
-                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                SDCOUT << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   cylinder->axis = Axis::X;
                 } else if (p->value == "y") {
@@ -3803,7 +2397,7 @@ bool AsciiParser::Impl::ReconstructGeomCylinder(
       }
 
       if (_reference_cache.count(filepath)) {
-        LOG_INFO("Got a cache: filepath = " + filepath);
+        DCOUT("Got a cache: filepath = " + filepath);
 
         const auto root_nodes = _reference_cache.at(filepath);
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
@@ -3812,17 +2406,17 @@ bool AsciiParser::Impl::ReconstructGeomCylinder(
           if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
             if (prop.first == "height") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference height = " << (*p) << "\n";
+                SDCOUT << "append reference height = " << (*p) << "\n";
                 cylinder->height = *p;
               }
             } else if (prop.first == "radius") {
               if (auto p = value::as_basic<double>(&attr->var)) {
-                SLOG_INFO << "append reference radius = " << (*p) << "\n";
+                SDCOUT << "append reference radius = " << (*p) << "\n";
                 cylinder->radius = *p;
               }
             } else if (prop.first == "axis") {
               if (auto p = value::as_basic<Token>(&attr->var)) {
-                SLOG_INFO << "prepend reference axis = " << p->value << "\n";
+                SDCOUT << "prepend reference axis = " << p->value << "\n";
                 if (p->value == "x") {
                   cylinder->axis = Axis::X;
                 } else if (p->value == "y") {
@@ -3853,7 +2447,7 @@ bool AsciiParser::Impl::ReconstructGeomMesh(
   //
 
   for (const auto &ref : references) {
-    LOG_INFO("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
+    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
 
     if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
         (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
@@ -3874,26 +2468,26 @@ bool AsciiParser::Impl::ReconstructGeomMesh(
           }
         }
 
-        LOG_INFO("Reading .obj file: " + filepath);
+        DCOUT("Reading .obj file: " + filepath);
 
         if (!usdObj::ReadObjFromFile(filepath, &gprim, &err)) {
           PUSH_ERROR_AND_RETURN("Failed to read .obj(usdObj). err = " + err);
         }
-        LOG_INFO("Loaded .obj file: " + filepath);
+        DCOUT("Loaded .obj file: " + filepath);
 
         mesh->visibility = gprim.visibility;
         mesh->doubleSided = gprim.doubleSided;
         mesh->orientation = gprim.orientation;
 
         if (gprim.props.count("points")) {
-          LOG_INFO("points");
+          DCOUT("points");
           const Property &prop = gprim.props.at("points");
           if (prop.is_rel) {
             PUSH_WARN("TODO: points Rel\n");
           } else {
             const PrimAttrib &attr = prop.attrib;
             // PrimVar
-            LOG_INFO("points.type:" + attr.var.type_name());
+            DCOUT("points.type:" + attr.var.type_name());
             if (attr.var.is_scalar()) {
               auto p = attr.var.get_value<std::vector<value::point3f>>();
               if (p) {
@@ -3903,7 +2497,7 @@ bool AsciiParser::Impl::ReconstructGeomMesh(
                                       attr.var.type_name());
               }
               // if (auto p = value::as_vector<value::float3>(&pattr->var)) {
-              //   LOG_INFO("points. sz = " + std::to_string(p->size()));
+              //   DCOUT("points. sz = " + std::to_string(p->size()));
               //   mesh->points = (*p);
               // }
             } else {
@@ -3913,7 +2507,7 @@ bool AsciiParser::Impl::ReconstructGeomMesh(
         }
 
       } else {
-        LOG_INFO("Not a .obj file");
+        DCOUT("Not a .obj file");
       }
     }
   }
@@ -3944,7 +2538,7 @@ bool AsciiParser::Impl::ReconstructGeomMesh(
               "got " +
               attr.var.type_name());
         } else {
-          LOG_INFO("subdivisionScheme = " + (*p));
+          DCOUT("subdivisionScheme = " + (*p));
           if (p->compare("none") == 0) {
             mesh->subdivisionScheme = SubdivisionScheme::None;
           } else if (p->compare("catmullClark") == 0) {
@@ -4220,39 +2814,120 @@ bool AsciiParser::Impl::ReconstructPrimvarReader_float2(
 // -- impl ReadBasicType
 //
 
-bool AsciiParser::Impl::ReadBasicType(value::matrix4f *value) {
+
+#endif // uncommented
+
+//
+// -- Parse
+//
+
+template<>
+  bool AsciiParser::ParseMatrix(value::matrix2d *result) {
+    // Assume column major(OpenGL style).
+
+    if (!Expect('(')) {
+      return false;
+    }
+
+    std::vector<std::array<double, 2>> content;
+    if (!SepBy1TupleType<double, 2>(',', &content)) {
+      return false;
+    }
+
+    if (content.size() != 2) {
+      PushError("# of rows in matrix2d must be 2, but got " +
+                std::to_string(content.size()) + "\n");
+      return false;
+    }
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    for (size_t i = 0; i < 2; i++) {
+      result->m[i][0] = content[i][0];
+      result->m[i][1] = content[i][1];
+    }
+
+    return true;
+  }
+
+template<>
+  bool AsciiParser::ParseMatrix(value::matrix3d *result) {
+    // Assume column major(OpenGL style).
+
+    if (!Expect('(')) {
+      return false;
+    }
+
+    std::vector<std::array<double, 3>> content;
+    if (!SepBy1TupleType<double, 3>(',', &content)) {
+      return false;
+    }
+
+    if (content.size() != 3) {
+      PushError("# of rows in matrix3d must be 3, but got " +
+                std::to_string(content.size()) + "\n");
+      return false;
+    }
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    for (size_t i = 0; i < 3; i++) {
+      result->m[i][0] = content[i][0];
+      result->m[i][1] = content[i][1];
+      result->m[i][2] = content[i][2];
+    }
+
+    return true;
+  }
+
+template<>
+  bool AsciiParser::ParseMatrix(value::matrix4d *result) {
+    // Assume column major(OpenGL style).
+
+    if (!Expect('(')) {
+      return false;
+    }
+
+    std::vector<std::array<double, 4>> content;
+    if (!SepBy1TupleType<double, 4>(',', &content)) {
+      return false;
+    }
+
+    if (content.size() != 4) {
+      PushError("# of rows in matrix4d must be 4, but got " +
+                std::to_string(content.size()) + "\n");
+      return false;
+    }
+
+    if (!Expect(')')) {
+      return false;
+    }
+
+    for (size_t i = 0; i < 4; i++) {
+      result->m[i][0] = content[i][0];
+      result->m[i][1] = content[i][1];
+      result->m[i][2] = content[i][2];
+      result->m[i][3] = content[i][3];
+    }
+
+    return true;
+  }
+
+template<>
+bool AsciiParser::ReadBasicType(value::matrix2d *value) {
   if (value) {
-    return ParseMatrix4f(value->m);
+    return ParseMatrix(value);
   } else {
     return false;
   }
 }
 
-bool AsciiParser::Impl::ReadBasicType(
-    nonstd::optional<value::matrix4f> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  value::matrix4f v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::matrix2d *value) {
-  if (value) {
-    return ParseMatrix2d(value->m);
-  } else {
-    return false;
-  }
-}
-
-bool AsciiParser::Impl::ReadBasicType(
+template<>
+bool AsciiParser::ReadBasicType(
     nonstd::optional<value::matrix2d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -4268,15 +2943,17 @@ bool AsciiParser::Impl::ReadBasicType(
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(value::matrix3d *value) {
+template<>
+bool AsciiParser::ReadBasicType(value::matrix3d *value) {
   if (value) {
-    return ParseMatrix3d(value->m);
+    return ParseMatrix(value);
   } else {
     return false;
   }
 }
 
-bool AsciiParser::Impl::ReadBasicType(
+template<>
+bool AsciiParser::ReadBasicType(
     nonstd::optional<value::matrix3d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -4292,15 +2969,17 @@ bool AsciiParser::Impl::ReadBasicType(
   return false;
 }
 
-bool AsciiParser::Impl::ReadBasicType(value::matrix4d *value) {
+template<>
+bool AsciiParser::ReadBasicType(value::matrix4d *value) {
   if (value) {
-    return ParseMatrix4d(value->m);
+    return ParseMatrix(value);
   } else {
     return false;
   }
 }
 
-bool AsciiParser::Impl::ReadBasicType(
+template<>
+bool AsciiParser::ReadBasicType(
     nonstd::optional<value::matrix4d> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -4317,227 +2996,33 @@ bool AsciiParser::Impl::ReadBasicType(
 }
 
 
-bool AsciiParser::Impl::ReadBasicType(value::point3f *value) {
-  if (!Expect('(')) {
+#if 0
+template<>
+bool AsciiParser::ReadBasicType(value::matrix4f *value) {
+  if (value) {
+    return ParseMatrix(value);
+  } else {
     return false;
   }
-  // std::cout << "got (\n";
-
-  std::vector<float> values;
-  if (!SepBy1BasicType<float>(',', &values)) {
-    return false;
-  }
-
-  // std::cout << "try to parse )\n";
-
-  if (!Expect(')')) {
-    return false;
-  }
-
-  if (values.size() != 3) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(3) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PUSH_ERROR_AND_RETURN(msg);
-  }
-
-  value->x = values[0];
-  value->y = values[1];
-  value->z = values[2];
-
-  return true;
 }
 
-bool AsciiParser::Impl::ReadBasicType(value::normal3f *value) {
-  if (!Expect('(')) {
-    return false;
-  }
-  // std::cout << "got (\n";
-
-  std::vector<float> values;
-  if (!SepBy1BasicType<float>(',', &values)) {
-    return false;
+template<>
+bool AsciiParser::ReadBasicType(
+    nonstd::optional<value::matrix4f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
   }
 
-  // std::cout << "try to parse )\n";
-
-  if (!Expect(')')) {
-    return false;
+  value::matrix4f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
   }
 
-  if (values.size() != 3) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(3) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PUSH_ERROR_AND_RETURN(msg);
-  }
-
-  value->x = values[0];
-  value->y = values[1];
-  value->z = values[2];
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::color3f *value) {
-  if (!Expect('(')) {
-    return false;
-  }
-  // std::cout << "got (\n";
-
-  std::vector<float> values;
-  if (!SepBy1BasicType<float>(',', &values)) {
-    return false;
-  }
-
-  // std::cout << "try to parse )\n";
-
-  if (!Expect(')')) {
-    return false;
-  }
-
-  if (values.size() != 3) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(3) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PUSH_ERROR_AND_RETURN(msg);
-  }
-
-  value->r = values[0];
-  value->g = values[1];
-  value->b = values[2];
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::color3d *value) {
-  if (!Expect('(')) {
-    return false;
-  }
-  // std::cout << "got (\n";
-
-  std::vector<double> values;
-  if (!SepBy1BasicType<double>(',', &values)) {
-    return false;
-  }
-
-  // std::cout << "try to parse )\n";
-
-  if (!Expect(')')) {
-    return false;
-  }
-
-  if (values.size() != 3) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(3) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PUSH_ERROR_AND_RETURN(msg);
-  }
-
-  value->r = values[0];
-  value->g = values[1];
-  value->b = values[2];
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::color4f *value) {
-  if (!Expect('(')) {
-    return false;
-  }
-
-  std::vector<float> values;
-  if (!SepBy1BasicType<float>(',', &values)) {
-    return false;
-  }
-
-  if (!Expect(')')) {
-    return false;
-  }
-
-  if (values.size() != 4) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(4) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PUSH_ERROR_AND_RETURN(msg);
-  }
-
-  value->r = values[0];
-  value->g = values[1];
-  value->b = values[2];
-  value->a = values[3];
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::color4d *value) {
-  if (!Expect('(')) {
-    return false;
-  }
-  // std::cout << "got (\n";
-
-  std::vector<double> values;
-  if (!SepBy1BasicType<double>(',', &values)) {
-    return false;
-  }
-
-  // std::cout << "try to parse )\n";
-
-  if (!Expect(')')) {
-    return false;
-  }
-
-  if (values.size() != 4) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(4) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PUSH_ERROR_AND_RETURN(msg);
-  }
-
-  value->r = values[0];
-  value->g = values[1];
-  value->b = values[2];
-  value->a = values[3];
-
-  return true;
-}
-
-bool AsciiParser::Impl::ReadBasicType(value::point3d *value) {
-  if (!Expect('(')) {
-    return false;
-  }
-  // std::cout << "got (\n";
-
-  std::vector<double> values;
-  if (!SepBy1BasicType<double>(',', &values)) {
-    return false;
-  }
-
-  // std::cout << "try to parse )\n";
-
-  if (!Expect(')')) {
-    return false;
-  }
-
-  if (values.size() != 3) {
-    std::string msg = "The number of tuple elements must be " +
-                      std::to_string(3) + ", but got " +
-                      std::to_string(values.size()) + "\n";
-    PUSH_ERROR_AND_RETURN(msg);
-  }
-
-  value->x = values[0];
-  value->y = values[1];
-  value->z = values[2];
-
-  return true;
+  return false;
 }
 #endif
-
-//
-// -- sss
-//
-
 
 ///
 /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
@@ -4586,6 +3071,11 @@ bool AsciiParser::ParseTupleArray(std::vector<std::array<T, N>> *result) {
 template <>
 bool AsciiParser::ReadBasicType(std::string *value) {
   return ReadStringLiteral(value);
+}
+
+template <>
+bool AsciiParser::ReadBasicType(PathIdentifier *value) {
+  return ReadPathIdentifier(value);
 }
 
 template <>
@@ -5411,31 +3901,6 @@ bool AsciiParser::SepBy1BasicType(const char sep,
   return true;
 }
 
-#if 0
-  bool AsciiParser::ReadToken(std::string *result) {
-    std::stringstream ss;
-
-    while (!_sr->eof()) {
-      char c;
-      if (!_sr->read1(&c)) {
-        return false;
-      }
-
-      if (std::isspace(int(c))) {
-        _sr->seek_from_current(-1);
-        break;
-      }
-
-      ss << c;
-      _curr_cursor.col++;
-    }
-
-    (*result) = ss.str();
-
-    return true;
-  }
-#endif
-
 bool AsciiParser::ParsePurpose(Purpose *result) {
   if (!result) {
     return false;
@@ -6029,208 +4494,208 @@ bool AsciiParser::ReadBasicType(nonstd::optional<double> *value) {
 
 // -- end basic
 
-  bool AsciiParser::ParseDictElement(std::string *out_key, PrimVariable *out_var) {
-    (void)out_key;
-    (void)out_var;
+bool AsciiParser::ParseDictElement(std::string *out_key,
+                                   PrimVariable *out_var) {
+  (void)out_key;
+  (void)out_var;
 
-    // dict_element: type (array_qual?) name '=' value
-    //           ;
+  // dict_element: type (array_qual?) name '=' value
+  //           ;
 
-    std::string type_name;
+  std::string type_name;
 
-    if (!ReadIdentifier(&type_name)) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (!IsRegisteredPrimAttrType(type_name)) {
-      PUSH_ERROR_AND_RETURN("Unknown or unsupported type `" + type_name +
-                            "`\n");
-    }
-
-    // Has array qualifier? `[]`
-    bool array_qual = false;
-    {
-      char c0, c1;
-      if (!Char1(&c0)) {
-        return false;
-      }
-
-      if (c0 == '[') {
-        if (!Char1(&c1)) {
-          return false;
-        }
-
-        if (c1 == ']') {
-          array_qual = true;
-        } else {
-          // Invalid syntax
-          PushError("Invalid syntax found.\n");
-          return false;
-        }
-
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-      }
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    std::string key_name;
-    if (!ReadIdentifier(&key_name)) {
-      // string literal is also supported. e.g. "0"
-      if (ReadStringLiteral(&key_name)) {
-        // ok
-      } else {
-        PushError("Failed to parse dictionary key identifier.\n");
-        return false;
-      }
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    if (!Expect('=')) {
-      return false;
-    }
-
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    //
-    // Supports limited types for customData/Dictionary.
-    // TODO: array_qual
-    //
-    PrimVariable var;
-    if (type_name == value::kBool) {
-      bool val;
-      if (!ReadBasicType(&val)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
-      }
-      var.value = val;
-    } else if (type_name == "float") {
-      float val;
-      if (!ReadBasicType(&val)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float`");
-      }
-      var.value = val;
-    } else if (type_name == "string") {
-      std::string str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
-      }
-      var.value = str;
-    } else if (type_name == "token") {
-      if (array_qual) {
-        std::vector<std::string> strs;
-        if (!ParseBasicTypeArray(&strs)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
-        }
-        std::vector<value::token> toks;
-        for (auto item : strs) {
-          toks.push_back(value::token(item));
-        }
-        var.value = toks;
-      } else {
-        std::string str;
-        if (!ReadBasicType(&str)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `token`");
-        }
-        value::token tok(str);
-        var.value = tok;
-      }
-    } else if (type_name == "dictionary") {
-      std::map<std::string, PrimVariable> dict;
-
-      if (!ParseDict(&dict)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
-    }
-
-    (*out_key) = key_name;
-    (*out_var) = var;
-
-    return true;
+  if (!ReadIdentifier(&type_name)) {
+    return false;
   }
 
-  bool AsciiParser::MaybeCustom() {
-    std::string tok;
+  if (!SkipWhitespace()) {
+    return false;
+  }
 
-    auto loc = CurrLoc();
-    bool ok = ReadIdentifier(&tok);
+  if (!IsRegisteredPrimAttrType(type_name)) {
+    PUSH_ERROR_AND_RETURN("Unknown or unsupported type `" + type_name + "`\n");
+  }
 
-    if (!ok) {
-      // revert
-      SeekTo(loc);
+  // Has array qualifier? `[]`
+  bool array_qual = false;
+  {
+    char c0, c1;
+    if (!Char1(&c0)) {
       return false;
     }
 
-    if (tok == "custom") {
-      // cosume `custom` token.
-      return true;
-    }
+    if (c0 == '[') {
+      if (!Char1(&c1)) {
+        return false;
+      }
 
+      if (c1 == ']') {
+        array_qual = true;
+      } else {
+        // Invalid syntax
+        PushError("Invalid syntax found.\n");
+        return false;
+      }
+
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+    }
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  std::string key_name;
+  if (!ReadIdentifier(&key_name)) {
+    // string literal is also supported. e.g. "0"
+    if (ReadStringLiteral(&key_name)) {
+      // ok
+    } else {
+      PushError("Failed to parse dictionary key identifier.\n");
+      return false;
+    }
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  if (!Expect('=')) {
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  //
+  // Supports limited types for customData/Dictionary.
+  // TODO: array_qual
+  //
+  PrimVariable var;
+  if (type_name == value::kBool) {
+    bool val;
+    if (!ReadBasicType(&val)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
+    }
+    var.value = val;
+  } else if (type_name == "float") {
+    float val;
+    if (!ReadBasicType(&val)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `float`");
+    }
+    var.value = val;
+  } else if (type_name == "string") {
+    std::string str;
+    if (!ReadBasicType(&str)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+    }
+    var.value = str;
+  } else if (type_name == "token") {
+    if (array_qual) {
+      std::vector<std::string> strs;
+      if (!ParseBasicTypeArray(&strs)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
+      }
+      std::vector<value::token> toks;
+      for (auto item : strs) {
+        toks.push_back(value::token(item));
+      }
+      var.value = toks;
+    } else {
+      std::string str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `token`");
+      }
+      value::token tok(str);
+      var.value = tok;
+    }
+  } else if (type_name == "dictionary") {
+    std::map<std::string, PrimVariable> dict;
+
+    if (!ParseDict(&dict)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+    }
+  } else {
+    PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
+  }
+
+  (*out_key) = key_name;
+  (*out_var) = var;
+
+  return true;
+}
+
+bool AsciiParser::MaybeCustom() {
+  std::string tok;
+
+  auto loc = CurrLoc();
+  bool ok = ReadIdentifier(&tok);
+
+  if (!ok) {
     // revert
     SeekTo(loc);
     return false;
   }
 
-  bool AsciiParser::ParseDict(std::map<std::string, PrimVariable> *out_dict) {
-    // '{' (type name '=' value)+ '}'
-    if (!Expect('{')) {
+  if (tok == "custom") {
+    // cosume `custom` token.
+    return true;
+  }
+
+  // revert
+  SeekTo(loc);
+  return false;
+}
+
+bool AsciiParser::ParseDict(std::map<std::string, PrimVariable> *out_dict) {
+  // '{' (type name '=' value)+ '}'
+  if (!Expect('{')) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!Char1(&c)) {
       return false;
     }
 
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
-
-    while (!_sr->eof()) {
-      char c;
-      if (!Char1(&c)) {
+    if (c == '}') {
+      break;
+    } else {
+      if (!Rewind(1)) {
         return false;
       }
 
-      if (c == '}') {
-        break;
-      } else {
-        if (!Rewind(1)) {
-          return false;
-        }
-
-        std::string key;
-        PrimVariable var;
-        if (!ParseDictElement(&key, &var)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
-        }
-
-        if (!SkipWhitespaceAndNewline()) {
-          return false;
-        }
-
-        assert(var.valid());
-
-        (*out_dict)[key] = var;
+      std::string key;
+      PrimVariable var;
+      if (!ParseDictElement(&key, &var)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
       }
-    }
 
-    if (!SkipWhitespaceAndNewline()) {
-      return false;
-    }
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
 
-    return true;
+      assert(var.valid());
+
+      (*out_dict)[key] = var;
+    }
   }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  return true;
+}
 
 // 'None'
 bool AsciiParser::MaybeNone() {
@@ -6254,41 +4719,41 @@ bool AsciiParser::MaybeNone() {
   return false;
 }
 
-  bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
-    if (!SkipWhitespace()) {
-      return false;
-    }
-
-    std::string tok;
-
-    auto loc = CurrLoc();
-    if (!ReadBasicType(&tok)) {
-      return false;
-    }
-
-    if (tok == "prepend") {
-      (*qual) = tinyusdz::ListEditQual::Prepend;
-    } else if (tok == "append") {
-      (*qual) = tinyusdz::ListEditQual::Append;
-    } else if (tok == "add") {
-      (*qual) = tinyusdz::ListEditQual::Add;
-    } else if (tok == "delete") {
-      (*qual) = tinyusdz::ListEditQual::Delete;
-    } else {
-      // unqualified
-      // rewind
-      SeekTo(loc);
-      (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
-    }
-
-    return true;
+bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
+  if (!SkipWhitespace()) {
+    return false;
   }
 
+  std::string tok;
+
+  auto loc = CurrLoc();
+  if (!ReadBasicType(&tok)) {
+    return false;
+  }
+
+  if (tok == "prepend") {
+    (*qual) = tinyusdz::ListEditQual::Prepend;
+  } else if (tok == "append") {
+    (*qual) = tinyusdz::ListEditQual::Append;
+  } else if (tok == "add") {
+    (*qual) = tinyusdz::ListEditQual::Add;
+  } else if (tok == "delete") {
+    (*qual) = tinyusdz::ListEditQual::Delete;
+  } else {
+    // unqualified
+    // rewind
+    SeekTo(loc);
+    (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
+  }
+
+  return true;
+}
 
 bool AsciiParser::IsRegisteredPrimAttrType(const std::string &ty) {
   return _registered_prim_attr_types.count(ty);
 }
 
+#if 0
 bool AsciiParser::ParseAttributeMeta() {
   // meta_attr : uniform type (array_qual?) name '=' value
   //           | type (array_qual?) name '=' value
@@ -6398,6 +4863,7 @@ bool AsciiParser::ParseAttributeMeta() {
 
   return true;
 }
+#endif
 
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
   std::stringstream ss;
@@ -6841,7 +5307,7 @@ bool AsciiParser::ParseStageMetaOpt() {
 // meta = ( metadata_opt )
 //      | empty
 //      ;
-bool AsciiParser::ParseStageMeta() {
+bool AsciiParser::ParseStageMetas() {
   if (!Expect('(')) {
     return false;
   }
@@ -6878,6 +5344,46 @@ bool AsciiParser::ParseStageMeta() {
 
   return true;
 }
+
+#if 0
+bool AsciiParser::ParseStageMetas() {
+  if (!Expect('(')) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    if (Expect(')')) {
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      // end
+      return true;
+
+    } else {
+      if (!SkipWhitespace()) {
+        // eof
+        return false;
+      }
+
+      if (!ParseStageMetaOpt()) {
+        // parse error
+        return false;
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+#endif
 
 // `#` style comment
 bool AsciiParser::ParseSharpComment() {
@@ -7196,7 +5702,8 @@ bool AsciiParser::ParseMagicHeader() {
 bool AsciiParser::ParseCustomMetaValue() {
   // type identifier '=' value
 
-  return ParseAttributeMeta();
+  // return ParseAttributeMeta();
+  PUSH_ERROR_AND_RETURN("TODO");
 }
 
 // TODO: Return Path
@@ -7636,6 +6143,367 @@ bool AsciiParser::LexFloat(std::string *result) {
   return true;
 }
 
+nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
+    const std::string &name) {
+  if (_stage_metas.count(name)) {
+    return _stage_metas.at(name);
+  }
+
+  return nonstd::nullopt;
+}
+
+bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out) {
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
+  if (!MaybeListEditQual(&qual)) {
+    return false;
+  }
+
+  std::cout << "list-edit qual: " << tinyusdz::to_string(qual) << "\n";
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::string varname;
+  if (!ReadBasicType(&varname)) {
+    return false;
+  }
+
+  // std::cout << "varname = `" << varname << "`\n";
+
+  if (!IsStageMeta(varname)) {
+    PUSH_ERROR_AND_RETURN("Unsupported or invalid/empty variable name `" +
+                          varname + "` for Stage metadatum");
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (!Expect('=')) {
+    PushError("`=` expected.");
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  auto pvardef = GetStageMetaDefinition(varname);
+  if (!pvardef) {
+    // This should not happen though;
+    return false;
+  }
+
+  auto vardef = (*pvardef);
+
+  PrimVariable var;
+  var.name = varname;
+
+  if (vardef.type == "path") {
+    std::string value;
+    if (!ReadPathIdentifier(&value)) {
+      PushError("Failed to parse path identifier");
+      return false;
+    }
+
+    var.value = value;
+
+  } else if (vardef.type == "path[]") {
+    std::vector<PathIdentifier> value;
+    if (!ParseBasicTypeArray(&value)) {
+      PushError("Failed to parse array of path identifier");
+
+      std::cout << __LINE__ << " ParsePathIdentifierArray failed\n";
+      return false;
+    }
+
+    // std::vector<Path> paths;
+    // PrimVariable::Array arr;
+    // for (const auto &v : value) {
+    //   std::cout << "  " << v << "\n";
+    //   PrimVariable _var;
+    //   _var.value = v;
+    //   arr.values.push_back(_var);
+    // }
+
+    // var.value = arr;
+    PUSH_ERROR_AND_RETURN("TODO: Implement");
+
+  } else if (vardef.type == "ref[]") {
+    std::vector<Reference> value;
+    if (!ParseBasicTypeArray(&value)) {
+      PushError("Failed to parse array of assert reference");
+
+      return false;
+    }
+
+    var.value = value;
+
+  } else if (vardef.type == "string") {
+    std::string value;
+    if (!ReadStringLiteral(&value)) {
+      std::cout << __LINE__ << " ReadStringLiteral failed\n";
+      return false;
+    }
+
+    std::cout << "vardef.type: " << vardef.type << ", name = " << varname
+              << "\n";
+    var.value = value;
+  } else if (vardef.type == "string[]") {
+    std::vector<std::string> value;
+    if (!ParseBasicTypeArray(&value)) {
+      PUSH_ERROR_AND_RETURN("ReadStringArray failed.");
+      return false;
+    }
+
+    DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
+    var.value = value;
+
+  } else if (vardef.type == value::kBool) {
+    bool value;
+    if (!ReadBasicType(&value)) {
+      PUSH_ERROR_AND_RETURN("ReadBool failed.");
+    }
+
+    DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
+    var.value = value;
+
+  } else {
+    PUSH_ERROR_AND_RETURN("TODO: varname " + varname + ", type " + vardef.type);
+  }
+
+  std::get<0>(*out) = qual;
+  std::get<1>(*out) = var;
+
+  return true;
+}
+
+
+nonstd::optional<std::tuple<ListEditQual, PrimVariable>> AsciiParser::ParsePrimMeta()
+{
+
+#if 0
+  uint64_t loc = _sr->tell();
+  std::string note;
+    if (!ReadStringLiteral(&note)) {
+      // revert
+      if (!SeekTo(loc)) {
+        return nonstd::nullopt;
+      }
+    } else {
+      // Got note.
+
+      return true;
+    }
+  }
+#endif
+
+  std::string varname;
+  if (!ReadIdentifier(&varname)) {
+    return nonstd::nullopt;
+  }
+
+  if (!IsStageMeta(varname)) {
+    std::string msg = "'" + varname + "' is not a builtin Metadata variable.\n";
+    PushError(msg);
+    return nonstd::nullopt;
+  }
+
+  if (!Expect('=')) {
+    PushError("'=' expected in Metadata line.\n");
+    return nonstd::nullopt;
+  }
+  SkipWhitespace();
+
+  VariableDef &vardef = _prim_metas.at(varname);
+  PrimVariable var;
+  if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
+    PushError("Failed to parse meta value.\n");
+    return nonstd::nullopt;
+  }
+
+  // TODO
+  return nonstd::nullopt;
+}
+
+bool AsciiParser::ParsePrimMetas(
+    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> *args) {
+  // '(' args ')'
+  // args = list of argument, separated by newline.
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  // The first character.
+  {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '(') {
+      DCOUT("def args start");
+      // ok
+    } else {
+      _sr->seek_from_current(-1);
+      return false;
+    }
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    // std::cout << "skip comment/whitespace/nl failed\n";
+    return false;
+  }
+
+  while (!Eof()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      // std::cout << "2: skip comment/whitespace/nl failed\n";
+      return false;
+    }
+
+    char s;
+    if (!Char1(&s)) {
+      return false;
+    }
+
+    if (s == ')') {
+      std::cout << "def args end\n";
+      // End
+      break;
+    }
+
+    Rewind(1);
+
+    // ty = std::tuple<ListEditQual, PrimVariable>;
+    if (auto m = ParsePrimMeta()) {
+      DCOUT("arg: list-edit qual = " << tinyusdz::to_string(std::get<0>(arg))
+                                     << ", name = " << std::get<1>(arg).name);
+
+      (*args)[std::get<1>(m.value()).name] = m.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("Failed to parse Meta value.");
+    }
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
+  // '(' metas ')'
+  //
+  // currently we only support 'interpolation', 'elementSize' and 'cutomData'
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  // The first character.
+  {
+    char c;
+    if (!_sr->read1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '(') {
+      // ok
+    } else {
+      _sr->seek_from_current(-1);
+
+      // Still ok. No meta
+      return true;
+    }
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  while (!_sr->eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == ')') {
+      // end meta
+      break;
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      std::string token;
+      if (!ReadBasicType(&token)) {
+        return false;
+      }
+
+      if ((token != "interpolation") && (token != "customData") &&
+          (token != "elementSize")) {
+        PushError(
+            "Currently only `interpolation`, `elementSize` or `customData` "
+            "is supported but "
+            "got: " +
+            token);
+        return false;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      if (!Expect('=')) {
+        return false;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      if (token == "interpolation") {
+        std::string value;
+        if (!ReadStringLiteral(&value)) {
+          return false;
+        }
+
+        out_meta->interpolation = InterpolationFromString(value);
+      } else if (token == "elementSize") {
+        uint32_t value;
+        if (!ReadBasicType(&value)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
+        }
+
+        out_meta->elementSize = value;
+      } else if (token == "customData") {
+        std::map<std::string, PrimVariable> dict;
+
+        if (!ParseDict(&dict)) {
+          return false;
+        }
+
+        out_meta->customData = dict;
+
+      } else {
+        // ???
+        return false;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 bool IsUSDA(const std::string &filename, size_t max_filesize) {
   // TODO: Read only first N bytes
   std::vector<uint8_t> data;
@@ -7649,6 +6517,1113 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
   tinyusdz::ascii::AsciiParser parser(&sr);
 
   return parser.CheckHeader();
+}
+
+//
+// -- Impl
+//
+
+///
+/// Parse rel string
+///
+bool AsciiParser::ParseRel(Rel *result) {
+  PathIdentifier value;
+  if (!ReadBasicType(&value)) {
+    return false;
+  }
+
+  result->path = value;
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  return true;
+}
+
+template <typename T>
+bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
+                                     const std::string &primattr_name,
+                                     PrimAttrib *out_attr) {
+  PrimAttrib attr;
+
+  if (array_qual) {
+    if (value::TypeTrait<T>::type_name() == "bool") {
+      PushError("Array of bool type is not supported.");
+      return false;
+    } else {
+      std::vector<T> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PushError("Failed to parse " +
+                  std::string(value::TypeTrait<T>::type_name()) + " array.\n");
+        return false;
+      }
+
+      DCOUT("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
+               ", sz = " + std::to_string(value.size()));
+      attr.var.set_scalar(value);
+    }
+
+  } else if (hasConnect(primattr_name)) {
+    std::string value;  // TODO: Path
+    if (!ReadPathIdentifier(&value)) {
+      PushError("Failed to parse path identifier for `token`.\n");
+      return false;
+    }
+
+    attr.var.set_scalar(value);  // TODO: set as `Path` type
+  } else {
+    nonstd::optional<T> value;
+    if (!ReadBasicType(&value)) {
+      PushError("Failed to parse " +
+                std::string(value::TypeTrait<T>::type_name()) + " .\n");
+      return false;
+    }
+
+    if (value) {
+      DCOUT("ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name()
+                                       << " = " << (*value));
+
+      // TODO: TimeSampled
+      value::TimeSamples ts;
+      ts.values.push_back(*value);
+      attr.var.var = ts;
+
+    } else {
+      // std::cout << "ParseBasicPrimAttr: " <<
+      // value::TypeTrait<T>::type_name()
+      //           << " = None\n";
+    }
+  }
+
+  // optional: interpolation parameter
+  AttrMeta meta;
+  if (!ParseAttrMeta(&meta)) {
+    PushError("Failed to parse PrimAttrib meta.");
+    return false;
+  }
+  attr.meta = meta;
+
+  // if (meta.count("interpolation")) {
+  //   const PrimVariable &var = meta.at("interpolation");
+  //   auto p = var.value.get_value<value::token>();
+  //   if (p) {
+  //     attr.interpolation =
+  //     tinyusdz::InterpolationFromString(p.value().str());
+  //   }
+  // }
+
+  (*out_attr) = std::move(attr);
+
+  return true;
+}
+
+// bool ParsePrimAttr(std::map<std::string, PrimVariable> *props) {
+bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
+  // prim_attr : (custom?) uniform type (array_qual?) name '=' value
+  //           | (custom?) type (array_qual?) name '=' value interpolation?
+  //           | (custom?) uniform type (array_qual?) name interpolation?
+  //           ;
+
+  bool custom_qual = MaybeCustom();
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  bool uniform_qual{false};
+  std::string type_name;
+
+  if (!ReadIdentifier(&type_name)) {
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  if (type_name == "uniform") {
+    uniform_qual = true;
+
+    // next token should be type
+    if (!ReadIdentifier(&type_name)) {
+      PushError("`type` identifier expected but got non-identifier\n");
+      return false;
+    }
+
+    // `type_name` is then overwritten.
+  }
+
+  if (!IsRegisteredPrimAttrType(type_name)) {
+    PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
+                          type_name + "`\n");
+  }
+
+  // Has array qualifier? `[]`
+  bool array_qual = false;
+  {
+    char c0, c1;
+    if (!Char1(&c0)) {
+      return false;
+    }
+
+    if (c0 == '[') {
+      if (!Char1(&c1)) {
+        return false;
+      }
+
+      if (c1 == ']') {
+        array_qual = true;
+      } else {
+        // Invalid syntax
+        PushError("Invalid syntax found.\n");
+        return false;
+      }
+
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+    }
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  std::string primattr_name;
+  if (!ReadPrimAttrIdentifier(&primattr_name)) {
+    PushError("Failed to parse primAttr identifier.\n");
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  // output node?
+  if (type_name == "token" && hasOutputs(primattr_name) &&
+      !hasConnect(primattr_name)) {
+    // ok
+    return true;
+  }
+
+  bool isTimeSample = endsWith(primattr_name, ".timeSamples");
+
+  bool define_only = false;
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c != '=') {
+      // Define only(e.g. output variable)
+      define_only = true;
+    }
+  }
+
+  if (define_only) {
+    // TODO:
+
+    // attr.custom = custom_qual;
+    // attr.uniform = uniform_qual;
+    // attr.name = primattr_name;
+
+    // DCOUT("primattr_name = " + primattr_name);
+
+    //// FIXME
+    //{
+    //  (*props)[primattr_name].rel = rel;
+    //  (*props)[primattr_name].is_rel = true;
+    //}
+
+    return true;
+  }
+
+  // Continue to parse argument
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  //
+  // TODO(syoyo): Refactror and implement value parser dispatcher.
+  //
+  if (isTimeSample) {
+#if 0  // TODO
+      if (type_name == "float") {
+        TimeSampledDataFloat values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        PrimVariable var;
+        var.timeSampledValue = values;
+        std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
+        (*props)[primattr_name] = var;
+
+      } else if (type_name == "double") {
+        TimeSampledDataDouble values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        PrimVariable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+
+      } else if (type_name == "float3") {
+        TimeSampledDataFloat3 values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        PrimVariable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+      } else if (type_name == "double3") {
+        TimeSampledDataDouble3 values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        PrimVariable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+      } else if (type_name == "matrix4d") {
+        TimeSampledDatavalue::matrix4d values;
+        if (!ParseTimeSamples(&values)) {
+          return false;
+        }
+
+        PrimVariable var;
+        var.timeSampledValue = values;
+        (*props)[primattr_name] = var;
+
+      } else {
+        PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
+        return false;
+      }
+#endif
+
+    PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " +
+              type_name);
+    return false;
+
+  } else {
+    PrimAttrib attr;
+    Rel rel;
+
+    bool is_rel = false;
+
+    if (type_name == "bool") {
+      if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == "float") {
+      if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == "int") {
+      if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == "double") {
+      if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == "string") {
+      if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == "token") {
+      if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == "float2") {
+      if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
+                                             &attr)) {
+        return false;
+      }
+    } else if (type_name == "float3") {
+      if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
+                                             &attr)) {
+        return false;
+      }
+    } else if (type_name == "float4") {
+      if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
+                                             &attr)) {
+        return false;
+      }
+    } else if (type_name == "double2") {
+      if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "double3") {
+      if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "double4") {
+      if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "point3f") {
+      DCOUT("point3f, array_qual = " + std::to_string(array_qual));
+      if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
+                                              &attr)) {
+        DCOUT("Failed to parse point3f data.");
+        return false;
+      }
+    } else if (type_name == "color3f") {
+      if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "color4f") {
+      if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "point3d") {
+      if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "normal3f") {
+      DCOUT("normal3f, array_qual = " + std::to_string(array_qual));
+      if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
+                                               &attr)) {
+        DCOUT("Failed to parse normal3f data.");
+        return false;
+      }
+      DCOUT("Got it");
+    } else if (type_name == "normal3d") {
+      if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
+                                               &attr)) {
+        return false;
+      }
+    } else if (type_name == "color3d") {
+      if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "color4d") {
+      if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
+                                              &attr)) {
+        return false;
+      }
+    } else if (type_name == "matrix2d") {
+      if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
+                                               &attr)) {
+        return false;
+      }
+    } else if (type_name == "matrix3d") {
+      if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
+                                               &attr)) {
+        return false;
+      }
+    } else if (type_name == "matrix4d") {
+      if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
+                                               &attr)) {
+        return false;
+      }
+
+    } else if (type_name == "rel") {
+      if (!ParseRel(&rel)) {
+        PushError("Failed to parse value with type `rel`.\n");
+        return false;
+      }
+
+      is_rel = true;
+    } else if (type_name == "texCoord2f") {
+      if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
+                                                 &attr)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse texCoord2f data.");
+      }
+
+    } else if (type_name == "asset") {
+      Reference asset_ref;
+      bool triple_deliminated{false};
+      if (!ParseReference(&asset_ref, &triple_deliminated)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
+      }
+
+      value::asset_path assetp(asset_ref.asset_path);
+      attr.var.set_scalar(assetp);
+
+    } else {
+      PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
+    }
+
+    attr.uniform = uniform_qual;
+    attr.name = primattr_name;
+
+    DCOUT("primattr_name = " + primattr_name);
+
+    (*props)[primattr_name].is_custom = custom_qual;
+
+    if (is_rel) {
+      (*props)[primattr_name].rel = rel;
+      (*props)[primattr_name].is_rel = true;
+
+    } else {
+      (*props)[primattr_name].attrib = attr;
+    }
+
+    return true;
+  }
+}
+
+bool AsciiParser::ParseProperty(std::map<std::string, Property> *props) {
+  // property : primm_attr
+  //          | 'rel' name '=' path
+  //          ;
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  // rel?
+  {
+    size_t loc = CurrLoc();
+    std::string tok;
+
+    if (!ReadIdentifier(&tok)) {
+      return false;
+    }
+
+    if (tok == "rel") {
+      PUSH_ERROR_AND_RETURN("TODO: Parse rel");
+    } else {
+      SeekTo(loc);
+    }
+  }
+
+  // attribute
+  return ParsePrimAttr(props);
+}
+
+std::string AsciiParser::GetCurrentPath() {
+  if (_path_stack.empty()) {
+    return "/";
+  }
+
+  return _path_stack.top();
+}
+
+AsciiParser::AsciiParser() {}
+AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) {}
+AsciiParser::~AsciiParser() {}
+
+bool AsciiParser::CheckHeader() { return ParseMagicHeader(); }
+
+bool AsciiParser::IsStageMeta(const std::string &name) {
+  return _stage_metas.count(name) ? true : false;
+}
+
+///
+/// Parse `class` block.
+///
+bool AsciiParser::ParseClassBlock() {
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  {
+    std::string tok;
+    if (!ReadBasicType(&tok)) {
+      return false;
+    }
+
+    if (tok != "class") {
+      PushError("`class` is expected.");
+      return false;
+    }
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::string target;
+
+  if (!ReadBasicType(&target)) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::map<std::string, std::tuple<ListEditQual, PrimVariable>> metas;
+  if (!ParsePrimMetas(&metas)) {
+    return false;
+  }
+
+  if (!Expect('{')) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::string path = GetCurrentPath() + "/" + target;
+
+  PushPath(path);
+
+  // TODO: Support nested 'class'?
+
+  // expect = '}'
+  //        | def_block
+  //        | prim_attr+
+  std::map<std::string, Property> props;
+  while (!_sr->eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == '}') {
+      // end block
+      break;
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      std::string tok;
+      if (!ReadBasicType(&tok)) {
+        return false;
+      }
+
+      if (!Rewind(tok.size())) {
+        return false;
+      }
+
+      if (tok == "def") {
+        // recusive call
+        if (!ParseDefBlock()) {
+          return false;
+        }
+      } else {
+        // Assume PrimAttr
+        if (!ParsePrimAttr(&props)) {
+          return false;
+        }
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+    }
+  }
+
+  Klass klass;
+  for (const auto &prop : props) {
+    // TODO: list-edit qual
+    klass.props[prop.first] = prop.second;
+  }
+
+  // TODO: Check key existance.
+  _klasses[path] = klass;
+
+  PopPath();
+
+  return true;
+}
+
+///
+/// Parse `over` block.
+///
+bool AsciiParser::ParseOverBlock() {
+  std::string tok;
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (!ReadBasicType(&tok)) {
+    return false;
+  }
+
+  if (tok != "over") {
+    PushError("`over` is expected.");
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::string target;
+
+  if (!ReadBasicType(&target)) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::map<std::string, std::tuple<ListEditQual, PrimVariable>> metas;
+  if (!ParsePrimMetas(&metas)) {
+    return false;
+  }
+
+  std::string path = GetCurrentPath() + "/" + target;
+  PushPath(path);
+
+  if (!Expect('{')) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  // TODO: Parse block content
+
+  if (!Expect('}')) {
+    return false;
+  }
+
+  PopPath();
+
+  return true;
+}
+
+///
+/// Parse `def` block.
+///
+/// def = `def` prim_type? token optional_arg? { ... }
+///
+/// optional_arg = '(' args ')'
+///
+/// TODO: Support `def` without type(i.e. actual definition is defined in
+/// another USD file or referenced USD)
+///
+bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
+  std::string def;
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (!ReadBasicType(&def)) {
+    return false;
+  }
+
+  if (def != "def") {
+    PushError("`def` is expected.");
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  // look ahead
+  bool has_primtype = false;
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (!Rewind(1)) {
+      return false;
+    }
+
+    if (c == '"') {
+      // token
+      has_primtype = false;
+    } else {
+      has_primtype = true;
+    }
+  }
+
+  std::string prim_type;
+
+  if (has_primtype) {
+    if (!ReadBasicType(&prim_type)) {
+      return false;
+    }
+
+    if (!_node_types.count(prim_type)) {
+      std::string msg =
+          "`" + prim_type +
+          "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
+      PushError(msg);
+      return false;
+    }
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::string node_name;
+  if (!ReadBasicType(&node_name)) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::map<std::string, std::tuple<ListEditQual, PrimVariable>> metas;
+  {
+    // look ahead
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == '(') {
+      // meta
+
+      if (!ParsePrimMetas(&metas)) {
+        return false;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+    }
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (!Expect('{')) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  std::vector<std::pair<ListEditQual, Reference>> references;
+  DCOUT("`references.count` = " + std::to_string(metas.count("references")));
+
+  if (metas.count("references")) {
+    // TODO
+    // references = GetReferences(args["references"]);
+    // DCOUT("`references.size` = " + std::to_string(references.size()));
+  }
+
+  std::map<std::string, Property> props;
+
+  std::string path = GetCurrentPath() + "/" + node_name;
+  PushPath(path);
+
+  // expect = '}'
+  //        | def_block
+  //        | prim_attr+
+  while (!_sr->eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == '}') {
+      // end block
+      break;
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      std::string tok;
+      if (!ReadBasicType(&tok)) {
+        return false;
+      }
+
+      if (!Rewind(tok.size())) {
+        return false;
+      }
+
+      if (tok == "def") {
+        // recusive call
+        if (!ParseDefBlock(nestlevel + 1)) {
+          return false;
+        }
+      } else {
+        // Assume PrimAttr
+        if (!ParsePrimAttr(&props)) {
+          return false;
+        }
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+    }
+  }
+
+#if 0 // TODO
+  if (prim_type.empty()) {
+    if (IsToplevel()) {
+      if (references.size()) {
+        // Infer prim type from referenced asset.
+
+        if (references.size() > 1) {
+          PUSH_ERROR_AND_RETURN("TODO: multiple references\n");
+        }
+
+        auto it = references.begin();
+        const Reference &ref = it->second;
+        std::string filepath = ref.asset_path;
+
+        // usdOBJ?
+        if (endsWith(filepath, ".obj")) {
+          prim_type = "geom_mesh";
+        } else {
+          if (!io::IsAbsPath(filepath)) {
+            filepath = io::JoinPath(_base_dir, ref.asset_path);
+          }
+
+          if (_reference_cache.count(filepath)) {
+            LOG_ERROR("TODO: Use cached info");
+          }
+
+          DCOUT("Reading references: " + filepath);
+
+          std::vector<uint8_t> data;
+          std::string err;
+          if (!io::ReadWholeFile(&data, &err, filepath,
+                                 /* max_filesize */ 0)) {
+            PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
+          }
+
+          tinyusdz::StreamReader sr(data.data(), data.size(),
+                                    /* swap endian */ false);
+#if 0  // TODO
+            tinyusdz::ascii::AsciiParser parser(&sr);
+
+            std::string base_dir = io::GetBaseDir(filepath);
+
+            parser.SetBaseDir(base_dir);
+
+            {
+              bool ret = parser.Parse(tinyusdz::ascii::LOAD_STATE_REFERENCE);
+
+              if (!ret) {
+                PUSH_WARN("Failed to parse .usda: " << parser.GetError());
+              } else {
+                DCOUT("`references` load ok.");
+              }
+            }
+#else
+          USDAReader reader(sr);
+#endif
+
+#if 0  // TODO
+            std::string defaultPrim = parser.GetDefaultPrimName();
+
+            DCOUT("defaultPrim: " + parser.GetDefaultPrimName());
+
+            const std::vector<GPrim> &root_nodes = parser.GetGPrims();
+            if (root_nodes.empty()) {
+              LOG_WARN("USD file does not contain any Prim node.");
+            } else {
+              size_t default_idx =
+                  0;  // Use the first element when corresponding defaultPrim
+                      // node is not found.
+
+              auto node_it = std::find_if(root_nodes.begin(), root_nodes.end(),
+                                          [defaultPrim](const GPrim &a) {
+                                            return !defaultPrim.empty() &&
+                                                   (a.name == defaultPrim);
+                                          });
+
+              if (node_it != root_nodes.end()) {
+                default_idx =
+                    size_t(std::distance(root_nodes.begin(), node_it));
+              }
+
+              DCOUT("defaultPrim node: " + root_nodes[default_idx].name);
+              for (size_t i = 0; i < root_nodes.size(); i++) {
+                DCOUT("root nodes: " + root_nodes[i].name);
+              }
+
+              // Store result to cache
+              _reference_cache[filepath] = {default_idx, root_nodes};
+
+              prim_type = root_nodes[default_idx].prim_type;
+              DCOUT("Infered prim type: " + prim_type);
+            }
+#else
+          PUSH_WARN("TODO: References");
+#endif
+        }
+      }
+    } else {
+      // Unknown or unresolved node type
+      LOG_ERROR("TODO: unresolved node type\n");
+    }
+  }
+#endif
+
+#if 0 // TODO
+  if (IsToplevel()) {
+    if (prim_type.empty()) {
+      // Reconstuct Generic Prim.
+
+      GPrim gprim;
+      if (!ReconstructGPrim(props, references, &gprim)) {
+        PushError("Failed to reconstruct GPrim.");
+        return false;
+      }
+      gprim.name = node_name;
+      scene_.root_nodes.emplace_back(gprim);
+
+    } else {
+      // Reconstruct concrete C++ object
+#if 0
+
+#define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
+  }                                                                  \
+  else if (prim_type == __tyname) {                                  \
+    __dty node;                                                      \
+    if (!__reconstruct_fn(props, references, &node)) {               \
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname);   \
+    }                                                                \
+    node.name = node_name;                                           \
+    __scene.emplace_back(node);
+
+        if (0) {
+        RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
+        RECONSTRUCT_NODE("Mesh", ReconstructGeomMesh, GeomMesh, scene_.geom_meshes)
+        RECONSTRUCT_NODE("Sphere", ReconstructGeomSphere, GeomSphere, scene_.geom_spheres)
+        RECONSTRUCT_NODE("Cone", ReconstructGeomCone, GeomCone, scene_.geom_cones)
+        RECONSTRUCT_NODE("Cube", ReconstructGeomCube, GeomCube, scene_.geom_cubes)
+        RECONSTRUCT_NODE("Capsule", ReconstructGeomCapsule, GeomCapsule, scene_.geom_capsules)
+        RECONSTRUCT_NODE("Cylinder", ReconstructGeomCylinder, GeomCylinder, scene_.geom_cylinders)
+        RECONSTRUCT_NODE("BasisCurves", ReconstructBasisCurves, GeomBasisCurves, scene_.geom_basis_curves)
+        RECONSTRUCT_NODE("Camera", ReconstructGeomCamera, GeomCamera, scene_.geom_cameras)
+        RECONSTRUCT_NODE("Shader", ReconstructShader, Shader, scene_.shaders)
+        RECONSTRUCT_NODE("NodeGraph", ReconstructNodeGraph, NodeGraph, scene_.node_graphs)
+        RECONSTRUCT_NODE("Material", ReconstructMaterial, Material, scene_.materials)
+
+        RECONSTRUCT_NODE("Scope", ReconstructScope, Scope, scene_.scopes)
+
+        RECONSTRUCT_NODE("SphereLight", ReconstructLuxSphereLight, LuxSphereLight, scene_.lux_sphere_lights)
+        RECONSTRUCT_NODE("DomeLight", ReconstructLuxDomeLight, LuxDomeLight, scene_.lux_dome_lights)
+
+        RECONSTRUCT_NODE("SkelRoot", ReconstructSkelRoot, SkelRoot, scene_.skel_roots)
+        RECONSTRUCT_NODE("Skeleton", ReconstructSkeleton, Skeleton, scene_.skeletons)
+        } else {
+          PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
+        }
+#endif
+      PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
+    }
+  } else {
+    // Store properties to GPrim.
+    // TODO: Use Class?
+    GPrim gprim;
+    if (!ReconstructGPrim(props, references, &gprim)) {
+      PushError("Failed to reconstruct GPrim.");
+      return false;
+    }
+    gprim.name = node_name;
+    gprim.prim_type = prim_type;
+
+    if (PathStackDepth() == 1) {
+      // root node
+      _gprims.push_back(gprim);
+    }
+  }
+#endif
+
+  PopPath();
+
+  return true;
+}
+
+///
+/// Parser entry point
+/// TODO: Refactor
+///
+bool AsciiParser::Parse(LoadState state) {
+
+  RegisterStageMetas(_stage_metas);
+  RegisterPrimMetas(_prim_metas);
+
+  _sub_layered = (state == LOAD_STATE_SUBLAYER);
+  _referenced = (state == LOAD_STATE_REFERENCE);
+  _payloaded = (state == LOAD_STATE_PAYLOAD);
+
+  bool header_ok = ParseMagicHeader();
+  if (!header_ok) {
+    PushError("Failed to parse USDA magic header.\n");
+    return false;
+  }
+
+  // stage meta.
+  bool has_meta = ParseStageMetas();
+  if (has_meta) {
+    // TODO: Process meta info
+  } else {
+    // no meta info accepted.
+  }
+
+  // parse blocks
+  while (!_sr->eof()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (_sr->eof()) {
+      // Whitespaces in the end of line.
+      break;
+    }
+
+    // Look ahead token
+    auto curr_loc = _sr->tell();
+
+    std::string tok;
+    if (!ReadBasicType(&tok)) {
+      PushError("Token expected.\n");
+      return false;
+    }
+
+    // Rewind
+    if (!SeekTo(curr_loc)) {
+      return false;
+    }
+
+    if (tok == "def") {
+      bool block_ok = ParseDefBlock();
+      if (!block_ok) {
+        PushError("Failed to parse `def` block.\n");
+        return false;
+      }
+    } else if (tok == "over") {
+      bool block_ok = ParseOverBlock();
+      if (!block_ok) {
+        PushError("Failed to parse `over` block.\n");
+        return false;
+      }
+    } else if (tok == "class") {
+      bool block_ok = ParseClassBlock();
+      if (!block_ok) {
+        PushError("Failed to parse `class` block.\n");
+        return false;
+      }
+    } else {
+      PushError("Unknown token '" + tok + "'");
+      return false;
+    }
+  }
+
+  return true;
 }
 
 #if 0
@@ -7685,7 +7660,7 @@ std::string AsciiParser::GetWarning() { return _impl->GetWarning(); }
 }  // namespace ascii
 }  // namespace tinyusdz
 
-#else
+#else // TINYUSDZ_DISABLE_MODULE_USDA_READER
 
 #if 0
 namespace tinyusdz {
@@ -7972,39 +7947,39 @@ ReferenceList GetReferences(
 
   auto var = std::get<1>(_var);
 
-  SLOG_INFO << "GetReferences. var.name = " << var.name << "\n";
+  SDCOUT << "GetReferences. var.name = " << var.name << "\n";
 
   if (var.IsArray()) {
-    LOG_INFO("IsArray");
+    DCOUT("IsArray");
     auto parr = var.as_array();
     if (parr) {
-      LOG_INFO("parr");
+      DCOUT("parr");
       for (const auto &v : parr->values) {
-        LOG_INFO("Maybe Value");
+        DCOUT("Maybe Value");
         if (v.IsValue()) {
-          LOG_INFO("Maybe Reference");
+          DCOUT("Maybe Reference");
           if (auto pref = nonstd::get_if<Reference>(v.as_value())) {
-            LOG_INFO("Got it");
+            DCOUT("Got it");
             result.push_back({qual, *pref});
           }
         }
       }
     }
   } else if (var.IsValue()) {
-    LOG_INFO("IsValue");
+    DCOUT("IsValue");
     if (auto pv = var.as_value()) {
-      LOG_INFO("Maybe Reference");
+      DCOUT("Maybe Reference");
       if (auto pas = nonstd::get_if<Reference>(pv)) {
-        LOG_INFO("Got it");
+        DCOUT("Got it");
         result.push_back({qual, *pas});
       }
     }
   } else {
-    LOG_INFO("Unknown var type: " + Variable::type_name(var));
+    DCOUT("Unknown var type: " + Variable::type_name(var));
   }
 
   return result;
 }
 #endif
 
-#endif
+#endif // TINYUSDZ_DISABLE_MODULE_USDA_READER
