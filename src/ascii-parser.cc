@@ -1347,41 +1347,6 @@ AsciiParser::
 
   std::string GetDefaultPrimName() const { return _defaultPrim; }
 
-  std::string GetError() {
-    if (err_stack.empty()) {
-      return std::string();
-    }
-
-    std::stringstream ss;
-    while (!err_stack.empty()) {
-      ErrorDiagnositc diag = err_stack.top();
-
-      ss << "Near line " << diag.line_row << ", col " << diag.line_col << ": ";
-      ss << diag.err << "\n";
-
-      err_stack.pop();
-    }
-
-    return ss.str();
-  }
-
-  std::string GetWarning() {
-    if (warn_stack.empty()) {
-      return std::string();
-    }
-
-    std::stringstream ss;
-    while (!warn_stack.empty()) {
-      ErrorDiagnositc diag = warn_stack.top();
-
-      ss << "Near line " << diag.line_row << ", col " << diag.line_col << ": ";
-      ss << diag.err << "\n";
-
-      warn_stack.pop();
-    }
-
-    return ss.str();
-  }
 
  private:
   bool IsRegisteredPrimAttrType(const std::string &ty) {
@@ -2815,7 +2780,43 @@ bool AsciiParser::Impl::ReconstructPrimvarReader_float2(
 //
 
 
-#endif // uncommented
+#endif // end uncommented
+
+  std::string AsciiParser::GetError() {
+    if (err_stack.empty()) {
+      return std::string();
+    }
+
+    std::stringstream ss;
+    while (!err_stack.empty()) {
+      ErrorDiagnositc diag = err_stack.top();
+
+      ss << "Near line " << diag.cursor.row << ", col " << diag.cursor.col << ": ";
+      ss << diag.err << "\n";
+
+      err_stack.pop();
+    }
+
+    return ss.str();
+  }
+
+  std::string AsciiParser::GetWarning() {
+    if (warn_stack.empty()) {
+      return std::string();
+    }
+
+    std::stringstream ss;
+    while (!warn_stack.empty()) {
+      ErrorDiagnositc diag = warn_stack.top();
+
+      ss << "Near line " << diag.cursor.row << ", col " << diag.cursor.col << ": ";
+      ss << diag.err << "\n";
+
+      warn_stack.pop();
+    }
+
+    return ss.str();
+  }
 
 //
 // -- Parse
@@ -7920,6 +7921,7 @@ bool AsciiParser::Impl::ReadTimeSampleData(
   return true;
 }
 
+
 bool AsciiParser::Impl::ReadTimeSampleData(
     nonstd::optional<value::matrix4d> *out_value) {
   if (MaybeNone()) {
@@ -7933,8 +7935,11 @@ bool AsciiParser::Impl::ReadTimeSampleData(
 
   (*out_value) = value;
 
+
   return true;
 }
+
+
 #endif
 
 #if 0
