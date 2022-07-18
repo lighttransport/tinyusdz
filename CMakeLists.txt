@@ -183,6 +183,7 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
     ${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
     ${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/formatxx/source/format.cc
     ${PROJECT_SOURCE_DIR}/src/external/string_id/string_id.cpp
     ${PROJECT_SOURCE_DIR}/src/external/string_id/error.cpp
     ${PROJECT_SOURCE_DIR}/src/external/string_id/generator.cpp
@@ -430,6 +431,8 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src/external/fast_float/include)
+  target_include_directories(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE ${PROJECT_SOURCE_DIR}/src/external/formatxx/include)
 
   target_include_directories(
     ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
@@ -503,6 +506,15 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     PROPERTIES
       COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS}
   )
+
+  set(FORMATXX_COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function -Wno-format-nonliteral -Wno-sign-conversion -Wno-shorten-64-to-32 -Wno-double-promotion")
+
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/external/formatxx/source/format.cc
+    PROPERTIES
+      COMPILE_FLAGS ${FORMATXX_COMPILE_FLAGS}
+  )
+
 endif()
 
 if(TINYUSDZ_WITH_C_API)
