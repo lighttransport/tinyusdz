@@ -3299,7 +3299,6 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
   // std::cout << "ReadInt token: " << ss.str() << "\n";
 
-  // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
     (*value) = std::stoull(ss.str());
@@ -3312,11 +3311,29 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     PushError("64bit unsigned integer value out of range.\n");
     return false;
   }
+  return true;
 #else
-  (*value) = uint32_t(std::stoul(ss.str()));
+  // use jsteemann/atoi  
+  int retcode;
+  auto result = jsteemann::atoi<uint32_t>(ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
+  if (retcode == jsteemann::SUCCESS) {
+    (*value) = result;
+    return true;
+  } else if (retcode == jsteemann::INVALID_INPUT) {
+    PushError("Not an 32bit unsigned integer literal.\n");
+    return false;
+  } else if (retcode == jsteemann::INVALID_NEGATIVE_SIGN) {
+    PushError("Negative sign `-` specified for uint32 integer.\n");
+    return false;
+  } else if (retcode == jsteemann::OVERFLOW) {
+    PushError("Integer value overflows.\n");
+    return false;
+  }
+
+  PushError("Invalid integer literal\n");
+  return false;
 #endif
 
-  return true;
 }
 
 template <>
@@ -3396,13 +3413,32 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     PushError("64bit unsigned integer value out of range.\n");
     return false;
   }
+
+  return true;
 #else
-  (*value) = std::stoull(ss.str());
+  // use jsteemann/atoi  
+  int retcode;
+  auto result = jsteemann::atoi<uint64_t>(ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
+  if (retcode == jsteemann::SUCCESS) {
+    (*value) = result;
+    return true;
+  } else if (retcode == jsteemann::INVALID_INPUT) {
+    PushError("Not an 32bit unsigned integer literal.\n");
+    return false;
+  } else if (retcode == jsteemann::INVALID_NEGATIVE_SIGN) {
+    PushError("Negative sign `-` specified for uint32 integer.\n");
+    return false;
+  } else if (retcode == jsteemann::OVERFLOW) {
+    PushError("Integer value overflows.\n");
+    return false;
+  }
+
+  PushError("Invalid integer literal\n");
+  return false;
 #endif
 
   // std::cout << "read int ok\n";
 
-  return true;
 }
 
 #if 0
