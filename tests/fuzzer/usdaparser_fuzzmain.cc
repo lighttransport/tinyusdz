@@ -1,7 +1,7 @@
 #include <cstdint>
 
 #include "tinyusdz.hh"
-#include "usda-parser.hh"
+#include "usda-reader.hh"
 
 static void parse_usda(const uint8_t *data, size_t size)
 {
@@ -18,9 +18,9 @@ static void parse_usda(const uint8_t *data, size_t size)
 
   tinyusdz::StreamReader sr(buf.data(), total_size, /* endianswap */false);
 
-  tinyusdz::usda::USDAParser parser(&sr);
+  tinyusdz::usda::USDAReader reader(&sr);
   
-  bool ret = parser.Parse(); 
+  bool ret = reader.Read(); 
   (void)ret;
 
   return;
