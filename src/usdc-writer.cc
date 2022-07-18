@@ -6,7 +6,7 @@
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__MINGW32__)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif

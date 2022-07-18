@@ -1,17 +1,10 @@
-#include "pprinter.hh"
+
 #include <ctime>
+
+//
+#include "pprinter.hh"
 #include "value-pprint.hh"
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "formatxx/format.h"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
 
 namespace tinyusdz {
 
@@ -766,17 +759,5 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path) {
   return ss.str();
 }
 
+
 } // tinyusdz
-
-// formatxx test
-struct Foo { int value; float b; };
-
-void format_value(formatxx::writer& out, Foo const& foo, formatxx::format_options const& opts) {
-	format_to(out, "Foo({}, {}})", foo.value, foo.b);
-}
-
-void test_formatxx() {
-  std::cout << formatxx::format_as<std::string>("testing {0}", Foo{123, 3.2f});
-}
-
-
