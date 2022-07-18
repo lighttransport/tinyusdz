@@ -57,7 +57,7 @@ inline uint8_t ftouc(float f) {
 bool SetupScene(GUIContext &ctx) {
 
     __android_log_print(ANDROID_LOG_INFO, "tinyusdz", "SetupScene");
-    if (ctx.scene.geom_meshes.empty()) {
+    if (ctx.scene.root_nodes.empty()) {
         __android_log_print(ANDROID_LOG_ERROR, "tinyusdz", "No GeomMesh");
         // No GeomMesh in the scene
         return false;
@@ -65,11 +65,13 @@ bool SetupScene(GUIContext &ctx) {
 
     // Convert USD geom_mesh to renderable mesh.
     ctx.render_scene.draw_meshes.clear();
+#if 0 // TODO
     __android_log_print(ANDROID_LOG_INFO, "tinyusdz", "# of geom_meshes %d", (int)ctx.scene.geom_meshes.size());
     for (size_t i = 0; i < ctx.scene.geom_meshes.size(); i++) {
         example::DrawGeomMesh draw_mesh(&ctx.scene.geom_meshes[i]);
         ctx.render_scene.draw_meshes.push_back(draw_mesh);
     }
+#endif
 
     // Setup render mesh
     if (!ctx.render_scene.Setup()) {
