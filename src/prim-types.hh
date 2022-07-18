@@ -927,7 +927,8 @@ template <typename T>
 struct Animatable {
   T value; // scalar
 
-  std::set<TypedTimeSamples<T>> ranges;
+  // TODO: sort by timeframe
+  std::vector<TypedTimeSamples<T>> ranges;
 
   bool IsTimeSampled() const {
     if (ranges.size()) {
