@@ -1,8 +1,3 @@
-#include "primvar.hh"
-#include "pprinter.hh"
-#include "value-type.hh"
-#include "value-pprint.hh"
-
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -14,6 +9,14 @@
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
+
+//
+
+#include "primvar.hh"
+#include "pprinter.hh"
+#include "value-type.hh"
+#include "value-pprint.hh"
+
 
 
 namespace tinyusdz {

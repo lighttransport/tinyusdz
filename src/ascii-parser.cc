@@ -3325,7 +3325,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   } else if (retcode == jsteemann::INVALID_NEGATIVE_SIGN) {
     PushError("Negative sign `-` specified for uint32 integer.\n");
     return false;
-  } else if (retcode == jsteemann::OVERFLOW) {
+  } else if (retcode == jsteemann::VALUE_OVERFLOW) {
     PushError("Integer value overflows.\n");
     return false;
   }
@@ -3428,7 +3428,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   } else if (retcode == jsteemann::INVALID_NEGATIVE_SIGN) {
     PushError("Negative sign `-` specified for uint32 integer.\n");
     return false;
-  } else if (retcode == jsteemann::OVERFLOW) {
+  } else if (retcode == jsteemann::VALUE_OVERFLOW) {
     PushError("Integer value overflows.\n");
     return false;
   }
