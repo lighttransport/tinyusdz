@@ -25,8 +25,8 @@ enum ErrCode : int {
   SUCCESS,
   INVALID_INPUT = -1,
   INVALID_NEGATIVE_SIGN = -2,
-  OVERFLOW = -3,
-  UNDERFLOW= -4
+  VALUE_OVERFLOW = -3,
+  VALUE_UNDERFLOW= -4
 };
 //
 // errcode
