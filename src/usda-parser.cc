@@ -4999,15 +4999,15 @@ class USDAParser::Impl {
         // Reconstruct concrete C++ object
 
 #define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
-        } else if (prim_type == __tyname) { \
+        if (prim_type == __tyname) { \
           __dty node; \
           if (!__reconstruct_fn(props, references, &node)) { \
             PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname); \
           } \
           node.name = node_name; \
-          __scene.emplace_back(node);
+          __scene.emplace_back(node); \
+        } else
 
-        if (0) {
         RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
         RECONSTRUCT_NODE("Mesh", ReconstructGeomMesh, GeomMesh, scene_.geom_meshes)
         RECONSTRUCT_NODE("Sphere", ReconstructGeomSphere, GeomSphere, scene_.geom_spheres)
@@ -5028,7 +5028,7 @@ class USDAParser::Impl {
 
         RECONSTRUCT_NODE("SkelRoot", ReconstructSkelRoot, SkelRoot, scene_.skel_roots)
         RECONSTRUCT_NODE("Skeleton", ReconstructSkeleton, Skeleton, scene_.skeletons)
-        } else {
+        {
           PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
         }
       }
