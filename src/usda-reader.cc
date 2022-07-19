@@ -70,6 +70,14 @@
 #include "value-pprint.hh"
 #include "value-type.hh"
 
+#define PUSH_PARSER_ERROR_AND_RETURN()                            \
+  do {                                                             \
+    std::ostringstream ss;                                         \
+    ss << _parser.GetError();                                       \
+    _err += ss.str();                                              \
+    return false;                                                  \
+  } while (0)
+
 // s = std::string
 #define PUSH_ERROR_AND_RETURN(s)                                   \
   do {                                                             \
@@ -89,7 +97,7 @@
     return false;                                                  \
   } while (0)
 
-#if defined(TINYUSDZ_PRODUCTION_BUILD)
+#if !defined(TINYUSDZ_PRODUCTION_BUILD)
 #define TINYUSDZ_LOCAL_DEBUG_PRINT
 #endif
 
@@ -532,79 +540,78 @@ class USDAReader::Impl {
 
   ///
   /// Reader entry point
+  /// TODO: Use callback function(visitor) so that Reconstruct**** function is invoked
+  /// in the Parser context.
   ///
   bool Read(LoadState state = LOAD_STATE_TOPLEVEL) {
-    _sub_layered = (state == LOAD_STATE_SUBLAYER);
-    _referenced = (state == LOAD_STATE_REFERENCE);
-    _payloaded = (state == LOAD_STATE_PAYLOAD);
+    //_sub_layered = (state == LOAD_STATE_SUBLAYER);
+    //_referenced = (state == LOAD_STATE_REFERENCE);
+    //_payloaded = (state == LOAD_STATE_PAYLOAD);
 
-#if 0
-    bool header_ok = ParseMagicHeader();
-    if (!header_ok) {
-      PushError("Failed to parse USDA magic header.\n");
+    if (!_parser.ParseMagicHeader()) {
+      PUSH_PARSER_ERROR_AND_RETURN();
       return false;
     }
 
-    // global meta.
-    bool has_meta = ParseWorldMeta();
-    if (has_meta) {
-      // TODO: Process meta info
-    } else {
-      // no meta info accepted.
+    DCOUT("Done parsing Magic header");
+
+    // Stage meta.
+    if (!_parser.ParseStageMetas()) {
+      PUSH_PARSER_ERROR_AND_RETURN();
+      return false;
     }
 
+    DCOUT("Done parsing Stage metas");
+
     // parse blocks
-    while (!_sr->eof()) {
-      if (!SkipCommentAndWhitespaceAndNewline()) {
-        return false;
+    while (!_parser.Eof()) {
+      if (!_parser.SkipCommentAndWhitespaceAndNewline()) {
+        PUSH_PARSER_ERROR_AND_RETURN();
       }
 
-      if (_sr->eof()) {
+      if (_parser.Eof()) {
         // Whitespaces in the end of line.
         break;
       }
 
       // Look ahead token
-      auto curr_loc = _sr->tell();
+      auto curr_loc = _parser.CurrLoc();
+      DCOUT("loc = " << curr_loc);
 
       std::string tok;
-      if (!ReadToken(&tok)) {
-        PushError("Token expected.\n");
-        return false;
+      if (!_parser.ReadIdentifier(&tok)) {
+        PUSH_PARSER_ERROR_AND_RETURN();
       }
+      DCOUT("tok = " << tok);
 
       // Rewind
-      if (!SeekTo(curr_loc)) {
-        return false;
+      if (!_parser.SeekTo(curr_loc)) {
+        PUSH_PARSER_ERROR_AND_RETURN();
       }
 
       if (tok == "def") {
-        bool block_ok = ParseDefBlock();
+        DCOUT("`def` block");
+        bool block_ok = _parser.ParseDefBlock();
         if (!block_ok) {
-          PushError("Failed to parse `def` block.\n");
-          return false;
+          PUSH_PARSER_ERROR_AND_RETURN(); 
         }
       } else if (tok == "over") {
-        bool block_ok = ParseOverBlock();
+        DCOUT("`over` block");
+        bool block_ok = _parser.ParseOverBlock();
         if (!block_ok) {
-          PushError("Failed to parse `over` block.\n");
-          return false;
+          PUSH_PARSER_ERROR_AND_RETURN(); 
         }
       } else if (tok == "class") {
-        bool block_ok = ParseClassBlock();
+        DCOUT("`class` block");
+        bool block_ok = _parser.ParseClassBlock();
         if (!block_ok) {
-          PushError("Failed to parse `class` block.\n");
-          return false;
+          PUSH_PARSER_ERROR_AND_RETURN(); 
         }
       } else {
-        PushError("Unknown token '" + tok + "'");
-        return false;
+        PUSH_ERROR_AND_RETURN("Unknown identifier '" + tok + "' for Prim block statement.");
       }
     }
     return true;
-#else
-    PUSH_ERROR_AND_RETURN("TODO:");
-#endif
   }
 
   std::vector<GPrim> GetGPrims() { return _gprims; }
