@@ -1,6 +1,10 @@
-#include "pprinter.hh"
+
 #include <ctime>
+
+//
+#include "pprinter.hh"
 #include "value-pprint.hh"
+
 
 namespace tinyusdz {
 
@@ -56,8 +60,9 @@ std::string prefix(const Animatable<T> &v) {
   return "";
 }
 
+#if 0 // TODO
 template<typename T>
-std::string print_timesampled(const TimeSamples<T> &v, const uint32_t indent) {
+std::string print_timesampled(const TypedTimeSamples<T> &v, const uint32_t indent) {
   std::stringstream ss;
 
   ss << "{\n";
@@ -72,11 +77,28 @@ std::string print_timesampled(const TimeSamples<T> &v, const uint32_t indent) {
 }
 
 template<typename T>
+std::string print_timesampled(const TypedTimeSamples<T> &v, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << "{\n";
+
+  for (size_t i = 0; i < v.times.size(); i++) {
+    ss << Indent(indent+2) << v.times[i] << " : " << to_string(v.values[i]) << ",\n";
+  }
+
+  ss << Indent(indent+1) << "}";
+
+  return ss.str();
+}
+#endif
+
+template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent) {
   if (v.IsTimeSampled()) {
-    return print_timesampled(v.timeSamples, indent);
+    // TODO: print all ranges
+    return "TODO"; //print_timesampled(v.ranges.[0], indent);
   } else {
-    return to_string(v.value);
+    return Indent(indent) + to_string(v.value);
   }
 }
 
@@ -736,5 +758,6 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path) {
   ss << "]";
   return ss.str();
 }
+
 
 } // tinyusdz

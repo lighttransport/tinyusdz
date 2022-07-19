@@ -9,6 +9,11 @@
 //   A proposal to add a utility class to represent expected monad
 //   by Vicente J. Botet Escriba and Pierre Talbot. http:://wg21.link/p0323
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 #ifndef NONSTD_EXPECTED_LITE_HPP
 #define NONSTD_EXPECTED_LITE_HPP
 
@@ -2515,3 +2520,7 @@ nsel_RESTORE_WARNINGS()
 #endif // nsel_USES_STD_EXPECTED
 
 #endif // NONSTD_EXPECTED_LITE_HPP
+       
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif

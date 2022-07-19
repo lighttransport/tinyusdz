@@ -46,6 +46,8 @@ namespace pxr {
 
 //namespace Sdf {
 
+using TfToken = tinyusdz::value::token;
+
 struct SdfLayer;
 
 // pxr USD uses special pointer class(shared_ptr + alpha) for Handle, but we simply use shared_ptr.
@@ -69,7 +71,7 @@ struct UsdPrim
   //UsdPrim(tinyusdz::GPrim *prim) : _prim(prim) {}
 
   bool IsValid() const {
-    if (!_prim) {
+    if (_prim.type_id() == tinyusdz::value::TypeId::TYPE_ID_INVALID) {
       return false;
     }
 
@@ -83,13 +85,47 @@ struct UsdPrim
   }
 
   // TODO: Use raw pointer?
-  std::unique_ptr<tinyusdz::GPrim> *_prim{nullptr};
+  tinyusdz::value::Value _prim;
 };
 
 struct SdfPath
 {
   std::string path;
 };
+
+class UsdPrimRange
+{
+ public:
+  class iterator;
+
+  iterator begin() const;
+
+  bool empty() const;
+
+};
+
+enum class Usd_PrimFlags {
+    Usd_PrimActiveFlag,
+    Usd_PrimLoadedFlag,
+    Usd_PrimModelFlag,
+    Usd_PrimGroupFlag,
+    Usd_PrimAbstractFlag,
+    Usd_PrimDefinedFlag,
+    Usd_PrimHasDefiningSpecifierFlag,
+    Usd_PrimInstanceFlag,
+
+    Usd_PrimHasPayloadFlag,
+    Usd_PrimClipsFlag,
+    Usd_PrimDeadFlag,
+    Usd_PrimPrototypeFlag,
+    Usd_PrimInstanceProxyFlag,
+    Usd_PrimPseudoRootFlag,
+
+    Usd_PrimAllFlag
+};
+
+
+class Usd_PrimFlagsPredicate;
 
 struct UsdStage
 {
@@ -111,9 +147,15 @@ struct UsdStage
   USD_API bool Export(const std::string &filename, bool addSourceFileComments=true) const;
   USD_API bool ExportToString(std::string *result, bool addSourceFileComments=true) const;
 
+  USD_API UsdPrim DefinePrim(const SdfPath &path, const TfToken &typeName = TfToken());
+  USD_API UsdPrim OverridePrim(const SdfPath &path);
+
   // returns invalid(empty) prim if corresponding path does not exit in the stage.
   USD_API UsdPrim GetPrimAtPath(const SdfPath &path);
 
+  USD_API UsdPrimRange Traverse();
+  USD_API UsdPrimRange Traverse(const Usd_PrimFlagsPredicate &predicate);
+  USD_API UsdPrimRange TraverseAll();
 
 };
 

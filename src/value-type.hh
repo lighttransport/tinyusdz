@@ -49,7 +49,7 @@
 #endif
 
 #include "token-type.hh"
-#include "external/staticstruct.hh"
+//#include "external/staticstruct.hh"
 
 namespace tinyusdz {
 namespace value {
@@ -157,6 +157,7 @@ constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21; // 2048
 
 enum TypeId {
   TYPE_ID_INVALID,  // = 0
+  TYPE_ID_NULL,
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
 
@@ -272,8 +273,18 @@ enum TypeId {
   TYPE_ID_CRATE_UNREGISTERED_VALUE,
   TYPE_ID_CRATE_LIST_OP_UNREGISTERED_VALUE,
 
+  // Types for GPrim and usdGeom
+  TYPE_ID_GPRIM = (1 << 10),
+  TYPE_ID_GEOM_XFORM,
+  TYPE_ID_GEOM_MESH,
+  TYPE_ID_GEOM_BASIS_CURVE,
+  TYPE_ID_GEOM_SPHERE,
+  TYPE_ID_GEOM_CUBE,
+  TYPE_ID_GEOM_CYLINDER,
+  TYPE_ID_GEOM_CONE,
+
   // Types for usdLux
-  TYPE_ID_LUX_BEGIN = 1 << 10,
+  TYPE_ID_LUX_BEGIN = (1 << 10) + (1 << 9),
   TYPE_ID_LUX_SPHERE,
   TYPE_ID_LUX_DOME,
   TYPE_ID_LUX_CYLINDER,
@@ -637,6 +648,7 @@ struct TypeTrait;
     }                                                                         \
   }
 
+DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
@@ -761,6 +773,8 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   }
 };
 
+// Lookup TypeTrait<T>::type_name from TypeTrait<T>::type_id
+nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
 std::string GetTypeName(uint32_t tyid);
 
 struct base_value {
@@ -895,7 +909,14 @@ struct any_value {
 
 struct TimeSamples {
   std::vector<double> times;
-  std::vector<any_value> values;
+  std::vector<any_value> values; // Could contain 'None'
+
+  bool Valid() {
+    if (times.size() > 0) {
+      return true;
+    }
+    return false;
+  }
 };
 
 // simple linear interpolator
@@ -920,6 +941,16 @@ struct LinearInterpolator
 };
 
 // Explicitly typed version of `TimeSamples`
+//
+// `None` value and `deleted` items are omitted in this data struct.
+// e.g.
+//
+// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
+//
+// in .usd(or `TimeSamples` class), are stored as
+//
+// radius = { 0: 1.0, 2: 3.0 }
+//
 template<typename T>
 struct AnimatableValue
 {
@@ -1024,6 +1055,9 @@ class Value {
 
   template <class T>
   Value(const T &v) : v_(v) {}
+
+  //template <class T>
+  //Value(T &&v) : v_(v) {}
 
   std::string type_name() const { return v_.type_name(); }
   std::string underlying_type_name() const { return v_.underlying_type_name(); }
@@ -1147,455 +1181,8 @@ struct AttribMap {
 } // namespace value
 } // namespace tinyusdz
 
-#if 1
-/// Need to define in header file.
-namespace staticstruct {
-
-using namespace tinyusdz::value;
-
-// -- For Reconstructor
-
-template <>
-struct Converter<half> {
-  typedef uint16_t shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            half &value) {
-    value.value = shadow;
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const half &value, shadow_type &shadow) {
-    shadow = value.value;
-  }
-};
-
-template <>
-struct Converter<quath> {
-  typedef std::array<uint16_t, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            quath &value) {
-    memcpy(&value.real, &shadow[0], sizeof(uint16_t) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const quath &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.real, sizeof(uint16_t) * 4);
-  }
-};
-
-template <>
-struct Converter<quatf> {
-  typedef std::array<float, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            quatf &value) {
-    memcpy(&value.real, &shadow[0], sizeof(float) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const quatf &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.real, sizeof(float) * 4);
-  }
-};
-
-template <>
-struct Converter<quatd> {
-  typedef std::array<double, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            quatd &value) {
-    memcpy(&value.real, &shadow[0], sizeof(double) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const quatd &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.real, sizeof(double) * 4);
-  }
-};
-
-template <>
-struct Converter<matrix2f> {
-  typedef std::array<float, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix2f &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(float) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix2f &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(float) * 4);
-  }
-};
-
-template <>
-struct Converter<matrix3f> {
-  typedef std::array<float, 9> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix3f &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(float) * 9);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix3f &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(float) * 9);
-  }
-};
-
-template <>
-struct Converter<matrix4f> {
-  typedef std::array<float, 16> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix4f &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(float) * 16);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix4f &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(float) * 16);
-  }
-};
-
-template <>
-struct Converter<matrix2d> {
-  typedef std::array<double, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix2d &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 4);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix2d &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 4);
-  }
-};
-
-template <>
-struct Converter<matrix3d> {
-  typedef std::array<double, 9> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix3d &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 9);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix3d &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 9);
-  }
-};
-
-template <>
-struct Converter<matrix4d> {
-  typedef std::array<double, 16> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            matrix4d &value) {
-    memcpy(&value.m[0][0], &shadow[0], sizeof(double) * 16);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const matrix4d &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value.m[0][0], sizeof(double) * 16);
-  }
-};
-
-template <>
-struct Converter<vector3h> {
-  typedef std::array<uint16_t, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            vector3h &value) {
-    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const vector3h &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
-  }
-};
-
-template <>
-struct Converter<vector3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            vector3f &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const vector3f &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<vector3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            vector3d &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const vector3d &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<normal3h> {
-  typedef std::array<uint16_t, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            normal3h &value) {
-    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const normal3h &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
-  }
-};
-
-template <>
-struct Converter<normal3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            normal3f &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const normal3f &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<normal3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            normal3d &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const normal3d &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<point3h> {
-  typedef std::array<uint16_t, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            point3h &value) {
-    memcpy(&value, &shadow[0], sizeof(uint16_t) * 3);
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const point3h &value, shadow_type &shadow) {
-    memcpy(&shadow[0], &value, sizeof(uint16_t) * 3);
-  }
-};
-
-template <>
-struct Converter<point3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            point3f &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const point3f &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<point3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            point3d &value) {
-    value.x = shadow[0];
-    value.y = shadow[1];
-    value.z = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const point3d &value, shadow_type &shadow) {
-    shadow[0] = value.x;
-    shadow[1] = value.y;
-    shadow[2] = value.z;
-  }
-};
-
-template <>
-struct Converter<color3f> {
-  typedef std::array<float, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color3f &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color3f &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-  }
-};
-
-template <>
-struct Converter<color3d> {
-  typedef std::array<double, 3> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color3d &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color3d &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-  }
-};
-
-template <>
-struct Converter<color4f> {
-  typedef std::array<float, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color4f &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-    value.a = shadow[3];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color4f &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-    shadow[3] = value.a;
-  }
-};
-
-template <>
-struct Converter<color4d> {
-  typedef std::array<double, 4> shadow_type;
-
-  static std::unique_ptr<Error> from_shadow(const shadow_type &shadow,
-                                            color4d &value) {
-    value.r = shadow[0];
-    value.g = shadow[1];
-    value.b = shadow[2];
-    value.a = shadow[2];
-
-    return nullptr;  // success
-  }
-
-  static void to_shadow(const color4d &value, shadow_type &shadow) {
-    shadow[0] = value.r;
-    shadow[1] = value.g;
-    shadow[2] = value.b;
-    shadow[3] = value.a;
-  }
-};
-
-}  // namespace staticstruct
-#endif
-
 namespace tinyusdz {
 namespace value {
-
-//
-// Concrete struct reconstruction from AttribMap
-//
-class Reconstructor {
- public:
-  Reconstructor() = default;
-
-  template <class T>
-  Reconstructor &property(std::string name, T *pointer,
-                     uint32_t flags = staticstruct::Flags::Default) {
-    h.add_property(name, pointer, flags, TypeTrait<T>::type_id);
-
-    return *this;
-  }
-
-  bool reconstruct(AttribMap &amap);
-
-  std::string get_error() const { return err_; }
-
- private:
-  staticstruct::ObjectHandler h;
-  std::string err_;
-};
 
 static_assert(sizeof(quath) == 8, "sizeof(quath) must be 8");
 static_assert(sizeof(quatf) == 16, "sizeof(quatf) must be 16");
