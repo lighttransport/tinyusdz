@@ -319,6 +319,74 @@ class AsciiParser {
   bool PopParserState(ParseState *state);
 
  private:
+
+  template<typename T>
+  bool ParseTimeSampleData(nonstd::optional<T> *out_value);
+
+  template <typename T>
+  bool ParseTimeSamples(
+      std::vector<std::pair<uint64_t, nonstd::optional<T>>> *out_samples) {
+    // timeSamples = '{' (int : T), + '}'
+
+    if (!Expect('{')) {
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    while (!Eof()) {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '}') {
+        break;
+      }
+
+      Rewind(1);
+
+      uint64_t timeVal;
+      if (!ReadBasicType(&timeVal)) {
+        PushError("Parse time value failed.");
+        return false;
+      }
+
+      if (!SkipWhitespace()) {
+        return false;
+      }
+
+      if (!Expect(':')) {
+        return false;
+      }
+
+      if (!SkipWhitespace()) {
+        return false;
+      }
+
+      nonstd::optional<T> value;
+      if (!ParseTimeSampleData(&value)) {
+        return false;
+      }
+
+      // It looks the last item also requires ','
+      if (!Expect(',')) {
+        return false;
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      out_samples->push_back({timeVal, value});
+    }
+
+    return true;
+  }
+
+
   nonstd::optional<std::tuple<ListEditQual, PrimVariable>> ParsePrimMeta();
   bool ParsePrimAttr(std::map<std::string, Property> *props);
 
