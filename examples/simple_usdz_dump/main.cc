@@ -30,6 +30,7 @@ std::string indent(const int val) {
   return ss.str();
 }
 
+#if 0
 static std::string PrintNodeType(tinyusdz::NodeType ty)
 {
   if (ty == tinyusdz::NODE_TYPE_XFORM) {
@@ -48,12 +49,13 @@ static std::string PrintNodeType(tinyusdz::NodeType ty)
     return "node:???";
   }
 }
+#endif
 
-static void DumpNode(const tinyusdz::Node &node, int level) {
-  for (const auto &child : node.children) {
-    //child.GetNodeType();
-  }
-}
+//static void DumpNode(const tinyusdz::Node &node, int level) {
+//  for (const auto &child : node.children) {
+//    //child.GetNodeType();
+//  }
+//}
 
 static void DumpGeomMesh(const tinyusdz::GeomMesh &mesh, int level) {
   std::cout << to_string(mesh, level);
@@ -67,7 +69,7 @@ static void DumpGeomPoints(const tinyusdz::GeomPoints &pts, int level) {
   std::cout << to_string(pts, level);
 }
 
-static void DumpScene(const tinyusdz::Scene &scene)
+static void DumpScene(const tinyusdz::HighLevelScene &scene)
 {
 
   std::cout << "Scene.name: " << scene.name << "\n";
@@ -76,7 +78,8 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "Scene.defaultPrim: " << scene.defaultPrim << "\n";
   std::cout << "Scene.default_root_node: " << scene.default_root_node << "\n";
 
-  std::cout << "# of nodes: " << scene.nodes.size() << "\n";
+#if 0
+  std::cout << "# of nodes: " << scene.node_indices.size() << "\n";
   std::cout << "# of xforms: " << scene.xforms.size() << "\n";
   std::cout << "# of geom_meshes: " << scene.geom_meshes.size() << "\n";
   std::cout << "# of geom_basis_curves: " << scene.geom_basis_curves.size() << "\n";
@@ -85,9 +88,9 @@ static void DumpScene(const tinyusdz::Scene &scene)
   std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
   std::cout << "# of scopes: " << scene.scopes.size() << "\n";
 
-  if (scene.default_root_node > -1) {
-    DumpNode(scene.nodes[size_t(scene.default_root_node)], 0);
-  }
+  //if (scene.default_root_node > -1) {
+  //  DumpNode(scene.nodes[size_t(scene.default_root_node)], 0);
+  //}
 
   std::cout << "== Meshes ===\n";
   for (size_t i = 0; i < scene.geom_meshes.size(); i++) {
@@ -103,6 +106,7 @@ static void DumpScene(const tinyusdz::Scene &scene)
   for (size_t i = 0; i < scene.geom_points.size(); i++) {
     DumpGeomPoints(scene.geom_points[i], 0);
   }
+#endif
 }
 
 int main(int argc, char **argv) {
@@ -117,7 +121,7 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  tinyusdz::Scene scene;
+  tinyusdz::HighLevelScene scene;
 
   if (ext.compare("usdz") == 0) {
     std::cout << "usdz\n";

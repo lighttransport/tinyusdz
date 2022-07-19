@@ -5,9 +5,11 @@ option(TINYUSDZ_USE_USDOBJ "Build with built-in .obj support" On)
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/../../../../../src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/prim-types.cc
-    ${PROJECT_SOURCE_DIR}/../../../../../src/usda-parser.cc
-    ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-parser.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/usda-reader.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/usdc-writer.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/crate-reader.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/io-util.cc
@@ -54,6 +56,7 @@ target_include_directories(
   hello-tinyusdz
   PRIVATE ${PROJECT_SOURCE_DIR}/../../../../../src/
           ${PROJECT_SOURCE_DIR}/../../../../../src/external/ryu
+          ${PROJECT_SOURCE_DIR}/../../../../../src/external/fast_float/include
           # nanort, nanosg, etc
           ${PROJECT_SOURCE_DIR}/../../../../../examples/common/
           # sdlviewer example

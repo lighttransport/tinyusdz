@@ -9,9 +9,11 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -850,6 +852,7 @@ struct XformOp {
                            // based on `precision`
 };
 
+#if 0
 template <typename T>
 inline T lerp(const T a, const T b, const double t) {
   return (1.0 - t) * a + t * b;
@@ -902,26 +905,55 @@ struct TimeSamples {
     return !times.empty() && (times.size() == values.size());
   }
 };
+#endif
 
-// For run-time data structure(e.g. for GeomMesh)
-// `None` value and `deleted` items are omitted in this data struct.
+// Animatable = run-time data structure(e.g. for GeomMesh)
+// TimeSample data is splitted into multiple ranges when it contains `None`(Blocked)
+//
 // e.g.
 //
 // double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
 //
-// in .usd is stored as
+// in .usd, are splitted into two ranges:
 //
-// radius = { 0: 1.0, 2: 3.0 }
+// range[0, 1): 1.0
+// range[2, inf): 3.0
 //
 // for Animatable type.
 
 template <typename T>
+struct TypedTimeSamples
+{
+  std::vector<double> times;
+  std::vector<T> samples;
+
+  bool valid() const {
+    if (times.size() > 0) {
+      if (samples.size() == times.size()) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+};
+
+template <typename T>
 struct Animatable {
-  T value;
-  TimeSamples<T> timeSamples;
+  T value; // scalar
 
-  bool IsTimeSampled() const { return timeSamples.Valid(); }
+  // TODO: sort by timeframe
+  std::vector<TypedTimeSamples<T>> ranges;
 
+  bool IsTimeSampled() const {
+    if (ranges.size()) {
+      return ranges.begin()->valid();
+    }
+
+    return false;
+  }
+
+#if 0 // TODO
   T Get() const { return value; }
 
   T Get(double t) {
@@ -931,6 +963,7 @@ struct Animatable {
     }
     return value;
   }
+#endif
 
   Animatable() {}
   Animatable(T v) : value(v) {}
@@ -1907,6 +1940,15 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
                   TYPE_ID_TOKEN_VECTOR, 1);
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+DEFINE_TYPE_TRAIT(GPrim, "GPRIM",
+                  TYPE_ID_GPRIM, 1);
+
+// Geom
+DEFINE_TYPE_TRAIT(Xform, "Xform",
+                  TYPE_ID_GEOM_XFORM, 1);
+DEFINE_TYPE_TRAIT(GeomMesh, "GeomMesh",
+                  TYPE_ID_GEOM_MESH, 1);
 
 // Shader
 DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface",

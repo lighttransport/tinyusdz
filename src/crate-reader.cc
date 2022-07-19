@@ -1,29 +1,18 @@
 // SPDX-License-Identifier: MIT
-// Copyright 2020-Present Syoyo Fujita.
+// Copyright 2022-Present Syoyo Fujita.
 //
-// USDC(Crate) parser
+// Crate(binary format) reader
 //
-// TODO:
-//
-// - [ ] Refactor Reconstruct*** function
-// - [ ] Set `custom` in property by looking up schema.
-// - [ ] And more...
 //
 
-#include "usdc-parser.hh"
+#include "crate-reader.hh"
 
-#if !defined(TINYUSDZ_DISABLE_MODULE_USDC_PARSER)
-
-#include <unordered_map>
-#include <unordered_set>
-
-#include "prim-types.hh"
-#include "tinyusdz.hh"
-#include "value-type.hh"
-#if defined(__wasi__)
+#ifdef __wasi__
 #else
 #include <thread>
 #endif
+
+#include <unordered_set>
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
@@ -31,8 +20,11 @@
 #include "lz4-compression.hh"
 #include "path-util.hh"
 #include "pprinter.hh"
+#include "prim-types.hh"
 #include "stream-reader.hh"
+#include "tinyusdz.hh"
 #include "value-pprint.hh"
+#include "value-type.hh"
 
 //
 #ifdef __clang__
@@ -50,22 +42,22 @@
 
 #ifdef TINYUSDZ_PRODUCTION_BUILD
 // Do not include full filepath for privacy.
-#define PUSH_ERROR(s)                                               \
-  {                                                                 \
-    std::ostringstream ss;                                          \
-    ss << "[usdc-parser] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    _err += ss.str() + "\n";                                        \
-  }                                                                 \
+#define PUSH_ERROR(s)                                                \
+  {                                                                  \
+    std::ostringstream ss;                                           \
+    ss << "[crate-reader] " << __func__ << "():" << __LINE__ << " "; \
+    ss << s;                                                         \
+    _err += ss.str() + "\n";                                         \
+  }                                                                  \
   while (0)
 
-#define PUSH_WARN(s)                                                \
-  {                                                                 \
-    std::ostringstream ss;                                          \
-    ss << "[usdc-parser] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    _warn += ss.str() + "\n";                                       \
-  }                                                                 \
+#define PUSH_WARN(s)                                                 \
+  {                                                                  \
+    std::ostringstream ss;                                           \
+    ss << "[crate-reader] " << __func__ << "():" << __LINE__ << " "; \
+    ss << s;                                                         \
+    _warn += ss.str() + "\n";                                        \
+  }                                                                  \
   while (0)
 #else
 #define PUSH_ERROR(s)                                              \
@@ -102,11 +94,13 @@
 #endif
 
 namespace tinyusdz {
-namespace usdc {
+namespace crate {
 
 constexpr char kTypeName[] = "typeName";
 constexpr char kToken[] = "Token";
 constexpr char kDefault[] = "default";
+
+namespace {
 
 template <class Int>
 static inline bool ReadCompressedInts(const StreamReader *sr, Int *out,
@@ -154,457 +148,98 @@ static inline bool ReadIndices(const StreamReader *sr,
   return true;
 }
 
-///
-/// Intermediate Node data structure.
-/// This does not contain leaf node inormation.
-///
-class Node {
- public:
-  // -2 = initialize as invalid node
-  Node() : _parent(-2) {}
+} // namespace 
 
-  Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
-
-  int64_t GetParent() const { return _parent; }
-
-  const std::vector<size_t> &GetChildren() const { return _children; }
-
-  ///
-  /// child_name is used when reconstructing scene graph.
-  ///
-  void AddChildren(const std::string &child_name, size_t node_index) {
-    assert(_primChildren.count(child_name) == 0);
-    _primChildren.emplace(child_name);
-    _children.push_back(node_index);
+//
+// --
+//
+CrateReader::CrateReader(StreamReader *sr, int num_threads) : _sr(sr) {
+  if (num_threads == -1) {
+    num_threads = std::max(1, int(std::thread::hardware_concurrency()));
+    PUSH_WARN("# of thread to use: " << std::to_string(num_threads));
   }
 
-  ///
-  /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
-  /// this node is `bora`)
-  ///
-  // std::string GetFullPath() const { return _path.full_path_name(); }
-
-  ///
-  /// Get local path
-  ///
-  std::string GetLocalPath() const { return _path.full_path_name(); }
-
-  const Path &GetPath() const { return _path; }
-
-  NodeType GetNodeType() const { return _node_type; }
-
-  const std::unordered_set<std::string> &GetPrimChildren() const {
-    return _primChildren;
-  }
-
-  void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
-
-  const value::dict &GetAssetInfo() const { return _assetInfo; }
-
- private:
-  int64_t
-      _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
-  std::vector<size_t> _children;                  // index to child nodes.
-  std::unordered_set<std::string> _primChildren;  // List of name of child nodes
-
-  Path _path;  // local path
-  value::dict _assetInfo;
-
-  NodeType _node_type;
-};
-
-class Parser::Impl {
- public:
-  Impl(StreamReader *sr, int num_threads) : _sr(sr) {
-    if (num_threads == -1) {
 #if defined(__wasi__)
-      num_threads = 1;
-#else
-      num_threads = std::max(1, int(std::thread::hardware_concurrency()));
+  PUSH_WARN("Threading is disabled for WASI build.");
+  num_threads = 1;
 #endif
-    }
 
-    // Limit to 1024 threads.
-    _num_threads = std::min(1024, num_threads);
-  }
+  // Limit to 1024 threads.
+  _num_threads = std::min(1024, num_threads);
+}
 
-  bool ReadBootStrap();
-  bool ReadTOC();
+CrateReader::~CrateReader() {}
 
-  // Read known sections
-  bool ReadPaths();
-  bool ReadTokens();
-  bool ReadStrings();
-  bool ReadFields();
-  bool ReadFieldSets();
-  bool ReadSpecs();
+std::string CrateReader::GetError() { return _err; }
 
-  ///
-  /// Read TOC section
-  ///
-  bool ReadSection(crate::Section *s);
+std::string CrateReader::GetWarning() { return _warn; }
 
-  const value::token GetToken(crate::Index token_index) {
-    if (token_index.value <= _tokens.size()) {
-      return _tokens[token_index.value];
-    } else {
-      _err += "Token index out of range: " + std::to_string(token_index.value) +
-              "\n";
-      return value::token();
-    }
-  }
-
-  const value::token GetToken(crate::Index token_index) const {
-    if (token_index.value <= _tokens.size()) {
-      return _tokens[token_index.value];
-    } else {
-      return value::token();
-    }
-  }
-
-  // Get string token from string index.
-  const value::token GetStringToken(crate::Index string_index) {
-    if (string_index.value <= _string_indices.size()) {
-      crate::Index s_idx = _string_indices[string_index.value];
-      return GetToken(s_idx);
-    } else {
-      _err +=
-          "String index out of range: " + std::to_string(string_index.value) +
-          "\n";
-      return value::token();
-    }
-  }
-
-  bool HasField(const std::string &key) const {
-    // Simple linear search
-    for (const auto &field : _fields) {
-      const value::token field_name = GetToken(field.token_index);
-      if (field_name.str().compare(key) == 0) {
+bool CrateReader::HasField(const std::string &key) const {
+  // Simple linear search
+  for (const auto &field : _fields) {
+    if (auto fv = GetToken(field.token_index)) {
+      if (fv.value().str().compare(key) == 0) {
         return true;
       }
     }
-    return false;
+  }
+  return false;
+}
+
+nonstd::optional<crate::Field> CrateReader::GetField(crate::Index index) const {
+  if (index.value <= _fields.size()) {
+    return _fields[index.value];
+  } else {
+    return nonstd::nullopt;
+  }
+}
+
+const nonstd::optional<value::token> CrateReader::GetToken(
+    crate::Index token_index) const {
+  if (token_index.value <= _tokens.size()) {
+    return _tokens[token_index.value];
+  } else {
+    return nonstd::nullopt;
+  }
+}
+
+// Get string token from string index.
+const nonstd::optional<value::token> CrateReader::GetStringToken(
+    crate::Index string_index) const {
+  if (string_index.value <= _string_indices.size()) {
+    crate::Index s_idx = _string_indices[string_index.value];
+    return GetToken(s_idx);
+  } else {
+    PUSH_ERROR("String index out of range: " +
+               std::to_string(string_index.value));
+    return value::token();
+  }
+}
+
+nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
+  if (index.value <= _paths.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
   }
 
-  bool GetField(crate::Index index, crate::Field &&field) const {
-    if (index.value <= _fields.size()) {
-      field = _fields[index.value];
-      return true;
-    } else {
-      return false;
-    }
+  return _paths[index.value];
+}
+
+nonstd::optional<std::string> CrateReader::GetPathString(
+    crate::Index index) const {
+  if (index.value <= _paths.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
   }
 
-  std::string GetFieldString(crate::Index index) {
-    if (index.value <= _fields.size()) {
-      // ok
-    } else {
-      return "#INVALID field index#";
-    }
+  const Path &p = _paths[index.value];
 
-    const crate::Field &f = _fields[index.value];
+  return p.full_path_name();
+}
 
-    std::string s =
-        GetToken(f.token_index).str() + ":" + f.value_rep.GetStringRepr();
-
-    return s;
-  }
-
-  Path GetPath(crate::Index index) {
-    if (index.value <= _paths.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index?");
-      return Path();
-    }
-
-    const Path &p = _paths[index.value];
-
-    return p;
-  }
-
-  std::string GetPathString(crate::Index index) {
-    if (index.value <= _paths.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index");
-      return "#INVALID path index#";
-    }
-
-    const Path &p = _paths[index.value];
-
-    return p.full_path_name();
-  }
-
-  std::string GetSpecString(crate::Index index) {
-    if (index.value <= _specs.size()) {
-      // ok
-    } else {
-      PUSH_ERROR("Invalid path index");
-      return "#INVALID spec index#";
-    }
-
-    const crate::Spec &spec = _specs[index.value];
-
-    std::string path_str = GetPathString(spec.path_index);
-    std::string specty_str = to_string(spec.spec_type);
-
-    return "[Spec] path: " + path_str +
-           ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
-           ", spec_type: " + specty_str;
-  }
-
-  ///
-  /// Methods for reconstructing `Scene` object
-  ///
-
-  // In-memory storage for a single "spec" -- prim, property, etc.
-  typedef std::pair<std::string, crate::CrateValue> FieldValuePair;
-  typedef std::vector<FieldValuePair> FieldValuePairVector;
-
-  ///
-  /// Find if a field with (`name`, `tyname`) exists in FieldValuePairVector.
-  ///
-  bool HasFieldValuePair(const FieldValuePairVector &fvs,
-                         const std::string &name, const std::string &tyname) {
-    for (const auto &fv : fvs) {
-      if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  ///
-  /// Find if a field with `name`(type can be arbitrary) exists in
-  /// FieldValuePairVector.
-  ///
-  bool HasFieldValuePair(const FieldValuePairVector &fvs,
-                         const std::string &name) {
-    for (const auto &fv : fvs) {
-      if (fv.first == name) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
-      const FieldValuePairVector &fvs, const std::string &name,
-      const std::string &tyname) {
-    for (const auto &fv : fvs) {
-      if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
-        return fv;
-      }
-    }
-
-    return nonstd::make_unexpected("FieldValuePair not found with name: `" +
-                                   name + "` and specified type: `" + tyname +
-                                   "`");
-  }
-
-  nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
-      const FieldValuePairVector &fvs, const std::string &name) {
-    for (const auto &fv : fvs) {
-      if (fv.first == name) {
-        return fv;
-      }
-    }
-
-    return nonstd::make_unexpected("FieldValuePair not found with name: `" +
-                                   name + "`");
-  }
-
-  // `_live_fieldsets` contains unpacked value keyed by fieldset index.
-  // Used for reconstructing Scene object
-  // TODO(syoyo): Use unordered_map(need hash function)
-  std::map<crate::Index, FieldValuePairVector>
-      _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
-
-  bool BuildLiveFieldSets();
-
-  ///
-  /// Parse node's attribute from FieldValuePairVector.
-  ///
-  bool ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
-                      const std::string &prop_name);
-
-  bool ReconstructXform(const Node &node, const FieldValuePairVector &fields,
-                        const std::unordered_map<uint32_t, uint32_t>
-                            &path_index_to_spec_index_map,
-                        Xform *xform);
-
-  bool ReconstructGeomSubset(const Node &node,
-                             const FieldValuePairVector &fields,
-                             const std::unordered_map<uint32_t, uint32_t>
-                                 &path_index_to_spec_index_map,
-                             GeomSubset *mesh);
-
-  bool ReconstructGeomMesh(const Node &node, const FieldValuePairVector &fields,
-                           const std::unordered_map<uint32_t, uint32_t>
-                               &path_index_to_spec_index_map,
-                           GeomMesh *mesh);
-
-  bool ReconstructGeomBasisCurves(const Node &node,
-                                  const FieldValuePairVector &fields,
-                                  const std::unordered_map<uint32_t, uint32_t>
-                                      &path_index_to_spec_index_map,
-                                  GeomBasisCurves *curves);
-
-  bool ReconstructMaterial(const Node &node, const FieldValuePairVector &fields,
-                           const std::unordered_map<uint32_t, uint32_t>
-                               &path_index_to_spec_index_map,
-                           Material *material);
-
-  bool ReconstructShader(const Node &node, const FieldValuePairVector &fields,
-                         const std::unordered_map<uint32_t, uint32_t>
-                             &path_index_to_spec_index_map,
-                         Shader *shader);
-
-  bool ReconstructPreviewSurface(const Node &node,
-                                 const FieldValuePairVector &fields,
-                                 const std::unordered_map<uint32_t, uint32_t>
-                                     &path_index_to_spec_index_map,
-                                 PreviewSurface *surface);
-
-  bool ReconstructUVTexture(const Node &node,
-                            const FieldValuePairVector &fields,
-                            const std::unordered_map<uint32_t, uint32_t>
-                                &path_index_to_spec_index_map,
-                            UVTexture *uvtex);
-
-  bool ReconstructPrimvarReader_float2(
-      const Node &node, const FieldValuePairVector &fields,
-      const std::unordered_map<uint32_t, uint32_t>
-          &path_index_to_spec_index_map,
-      PrimvarReader_float2 *preader);
-
-  bool ReconstructSkelRoot(const Node &node, const FieldValuePairVector &fields,
-                           const std::unordered_map<uint32_t, uint32_t>
-                               &path_index_to_spec_index_map,
-                           SkelRoot *skelRoot);
-
-  bool ReconstructSkeleton(const Node &node, const FieldValuePairVector &fields,
-                           const std::unordered_map<uint32_t, uint32_t>
-                               &path_index_to_spec_index_map,
-                           Skeleton *skeleton);
-
-  bool ReconstructSceneRecursively(int parent_id, int level,
-                                   const std::unordered_map<uint32_t, uint32_t>
-                                       &path_index_to_spec_index_map,
-                                   Scene *scene);
-
-  bool ReconstructScene(Scene *scene);
-
-  ///
-  /// --------------------------------------------------
-  ///
-
-  std::string GetError() { return _err; }
-
-  std::string GetWarning() { return _warn; }
-
-  // Approximated memory usage in [mb]
-  size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
-
-  //
-  // APIs valid after successfull Parse()
-  //
-
-  size_t NumPaths() const { return _paths.size(); }
-
- private:
-  bool ReadCompressedPaths(const uint64_t ref_num_paths);
-
-  const StreamReader *_sr = nullptr;
-  std::string _err;
-  std::string _warn;
-
-  int _num_threads{1};
-
-  // Tracks the memory used(In advisorily manner since counting memory usage is
-  // done by manually, so not all memory consumption could be tracked)
-  size_t memory_used{0};  // in bytes.
-
-  // Header(bootstrap)
-  uint8_t _version[3] = {0, 0, 0};
-
-  crate::TableOfContents _toc;
-
-  int64_t _toc_offset{0};
-
-  // index to _toc.sections
-  int64_t _tokens_index{-1};
-  int64_t _paths_index{-1};
-  int64_t _strings_index{-1};
-  int64_t _fields_index{-1};
-  int64_t _fieldsets_index{-1};
-  int64_t _specs_index{-1};
-
-  std::vector<value::token> _tokens;
-  std::vector<crate::Index> _string_indices;
-  std::vector<crate::Field> _fields;
-  std::vector<crate::Index> _fieldset_indices;
-  std::vector<crate::Spec> _specs;
-  std::vector<Path> _paths;
-
-  std::vector<Node> _nodes;  // [0] = root node
-
-  bool BuildDecompressedPathsImpl(
-      std::vector<uint32_t> const &pathIndexes,
-      std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
-
-  bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
-
-  bool UnpackInlinedValueRep(const crate::ValueRep &rep,
-                             crate::CrateValue *value);
-
-  //
-  // Construct node hierarchy.
-  //
-  bool BuildNodeHierarchy(std::vector<uint32_t> const &pathIndexes,
-                          std::vector<int32_t> const &elementTokenIndexes,
-                          std::vector<int32_t> const &jumps, size_t curIndex,
-                          int64_t parentNodeIndex);
-
-  //
-  // Reader util functions
-  //
-  bool ReadIndex(crate::Index *i);
-
-  // bool ReadToken(std::string *s);
-  bool ReadString(std::string *s);
-
-  bool ReadValueRep(crate::ValueRep *rep);
-
-  bool ReadPathArray(std::vector<Path> *d);
-  bool ReadStringArray(std::vector<std::string> *d);
-
-  // Dictionary
-  bool ReadDictionary(crate::CrateValue::Dictionary *d);
-
-  bool ReadTimeSamples(value::TimeSamples *d);
-
-  // integral array
-  template <typename T>
-  bool ReadIntArray(bool is_compressed, std::vector<T> *d);
-
-  bool ReadHalfArray(bool is_compressed, std::vector<value::half> *d);
-  bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
-  bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
-
-  bool ReadPathListOp(ListOp<Path> *d);
-  bool ReadTokenListOp(ListOp<value::token> *d);
-  //bool ReadReferenceListOp(ListOp<Referene> *d);
-};
-
-//
-// -- Impl
-//
-bool Parser::Impl::ReadIndex(crate::Index *i) {
+bool CrateReader::ReadIndex(crate::Index *i) {
   // string is serialized as StringIndex
   uint32_t value;
   if (!_sr->read4(&value)) {
@@ -615,22 +250,48 @@ bool Parser::Impl::ReadIndex(crate::Index *i) {
   return true;
 }
 
-bool Parser::Impl::ReadString(std::string *s) {
+bool CrateReader::ReadString(std::string *s) {
   // string is serialized as StringIndex
   crate::Index string_index;
   if (!ReadIndex(&string_index)) {
-    _err += "Failed to read Index for string data.\n";
+    PUSH_ERROR("Failed to read Index for string data.");
     return false;
   }
 
-  (*s) = GetStringToken(string_index).str();
+  if (auto tok = GetStringToken(string_index)) {
+    (*s) = tok.value().str();
+    return true;
+  }
 
-  return true;
+  PUSH_ERROR("Invalid StringIndex.");
+  return false;
 }
 
-bool Parser::Impl::ReadValueRep(crate::ValueRep *rep) {
+nonstd::optional<std::string> CrateReader::GetSpecString(
+    crate::Index index) const {
+  if (index.value <= _specs.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
+  }
+
+  const crate::Spec &spec = _specs[index.value];
+
+  if (auto pathv = GetPathString(spec.path_index)) {
+    std::string path_str = pathv.value();
+    std::string specty_str = to_string(spec.spec_type);
+
+    return "[Spec] path: " + path_str +
+           ", fieldset id: " + std::to_string(spec.fieldset_index.value) +
+           ", spec_type: " + specty_str;
+  }
+
+  return nonstd::nullopt;
+}
+
+bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
   if (!_sr->read8(reinterpret_cast<uint64_t *>(rep))) {
-    _err += "Failed to read ValueRep.\n";
+    PUSH_ERROR("Failed to read ValueRep.");
     return false;
   }
 
@@ -640,7 +301,7 @@ bool Parser::Impl::ReadValueRep(crate::ValueRep *rep) {
 }
 
 template <typename T>
-bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
+bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -711,8 +372,8 @@ bool Parser::Impl::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   }
 }
 
-bool Parser::Impl::ReadHalfArray(bool is_compressed,
-                                 std::vector<value::half> *d) {
+bool CrateReader::ReadHalfArray(bool is_compressed,
+                                std::vector<value::half> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -835,7 +496,7 @@ bool Parser::Impl::ReadHalfArray(bool is_compressed,
   return true;
 }
 
-bool Parser::Impl::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
+bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -954,7 +615,7 @@ bool Parser::Impl::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
+bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   if (!is_compressed) {
     size_t length;
     // < ver 0.7.0  use 32bit
@@ -1073,7 +734,7 @@ bool Parser::Impl::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadTimeSamples(value::TimeSamples *d) {
+bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   (void)d;
 
   // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
@@ -1167,12 +828,12 @@ bool Parser::Impl::ReadTimeSamples(value::TimeSamples *d) {
   return true;
 }
 
-bool Parser::Impl::ReadStringArray(std::vector<std::string> *d) {
+bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<std::string> &result) -> bool {
     uint64_t n;
     if (!_sr->read8(&n)) {
-      _err += "Failed to read # of elements in ListOp.\n";
+      PUSH_ERROR("Failed to read # of elements.");
       return false;
     }
 
@@ -1181,14 +842,18 @@ bool Parser::Impl::ReadStringArray(std::vector<std::string> *d) {
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
-      _err += "Failed to read STRING_VECTOR data.\n";
+      PUSH_ERROR("Failed to read STRING_VECTOR data.");
       return false;
     }
 
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetStringToken(ivalue[i]).str();
+      if (auto v = GetStringToken(ivalue[i])) {
+        result[i] = v.value().str();
+      } else {
+        PUSH_ERROR("Invalid StringIndex.");
+      }
     }
 
     return true;
@@ -1196,7 +861,6 @@ bool Parser::Impl::ReadStringArray(std::vector<std::string> *d) {
 
   std::vector<std::string> items;
   if (!ReadFn(items)) {
-    _err += "Failed to read String vector.\n";
     return false;
   }
 
@@ -1205,7 +869,7 @@ bool Parser::Impl::ReadStringArray(std::vector<std::string> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadPathArray(std::vector<Path> *d) {
+bool CrateReader::ReadPathArray(std::vector<Path> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
     uint64_t n;
@@ -1226,7 +890,12 @@ bool Parser::Impl::ReadPathArray(std::vector<Path> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetPath(ivalue[i]);
+      if (auto pv = GetPath(ivalue[i])) {
+        result[i] = pv.value();
+      } else {
+        PUSH_ERROR("Invalid Index for Path.");
+        return false;
+      }
     }
 
     return true;
@@ -1243,7 +912,7 @@ bool Parser::Impl::ReadPathArray(std::vector<Path> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadTokenListOp(ListOp<value::token> *d) {
+bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
@@ -1275,7 +944,11 @@ bool Parser::Impl::ReadTokenListOp(ListOp<value::token> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetToken(ivalue[i]);
+      if (auto v = GetToken(ivalue[i])) {
+        result[i] = v.value();
+      } else {
+        return false;
+      }
     }
 
     return true;
@@ -1344,11 +1017,11 @@ bool Parser::Impl::ReadTokenListOp(ListOp<value::token> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
+bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
   ListOpHeader h;
   if (!_sr->read1(&h.bits)) {
-    _err += "Failed to read ListOpHeader\n";
+    PUSH_ERROR("Failed to read ListOpHeader.");
     return false;
   }
 
@@ -1360,7 +1033,7 @@ bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
     uint64_t n;
     if (!_sr->read8(&n)) {
-      _err += "Failed to read # of elements in ListOp.\n";
+      PUSH_ERROR("Failed to read # of elements in ListOp.");
       return false;
     }
 
@@ -1369,14 +1042,19 @@ bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
-      _err += "Failed to read ListOp data.\n";
+      PUSH_ERROR("Failed to read ListOp data..");
       return false;
     }
 
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      result[i] = GetPath(ivalue[i]);
+      if (auto pv = GetPath(ivalue[i])) {
+        result[i] = pv.value();
+      } else {
+        PUSH_ERROR("Invalid Index for Path.");
+        return false;
+      }
     }
 
     return true;
@@ -1445,7 +1123,7 @@ bool Parser::Impl::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
-bool Parser::Impl::ReadDictionary(crate::CrateValue::Dictionary *d) {
+bool CrateReader::ReadDictionary(crate::CrateValue::Dictionary *d) {
   crate::CrateValue::Dictionary dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
@@ -1510,8 +1188,8 @@ bool Parser::Impl::ReadDictionary(crate::CrateValue::Dictionary *d) {
   return true;
 }
 
-bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
-                                         crate::CrateValue *value) {
+bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
+                                        crate::CrateValue *value) {
   if (!rep.IsInlined()) {
     PUSH_ERROR("ValueRep must be inlined value representation.");
     return false;
@@ -1552,28 +1230,44 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
       // AssetPath = std::string(storage format is TokenIndex).
-      std::string str = GetToken(crate::Index(d)).str();
+      if (auto v = GetToken(crate::Index(d))) {
+        std::string str = v.value().str();
 
-      value::asset_path assetp(str);
-      value->Set(assetp);
-      return true;
+        value::asset_path assetp(str);
+        value->Set(assetp);
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for AssetPath.");
+        return false;
+      }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-      value::token tok = GetToken(crate::Index(d));
+      if (auto v = GetToken(crate::Index(d))) {
+        value::token tok = v.value();
 
-      DCOUT("value.token = " << tok);
+        DCOUT("value.token = " << tok);
 
-      value->Set(tok);
+        value->Set(tok);
 
-      return true;
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for Token.");
+        return false;
+      }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
-      std::string str = GetStringToken(crate::Index(d)).str();
-      DCOUT("value.string = " << str);
+      if (auto v = GetStringToken(crate::Index(d))) {
+        std::string str = v.value().str();
 
-      value->Set(str);
+        DCOUT("value.string = " << str);
 
-      return true;
+        value->Set(str);
+
+        return true;
+      } else {
+        PUSH_ERROR("Invalid Index for StringToken.");
+        return false;
+      }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER: {
       if (d >= static_cast<int>(Specifier::Invalid)) {
@@ -1908,7 +1602,7 @@ bool Parser::Impl::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
 #if 0
 template<T>
-Parser::Impl::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out) {
+CrateReader::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out) {
   uint64_t n;
   if (!_sr->read8(&n)) {
     PUSH_ERROR("Failed to read the number of array elements.");
@@ -1927,8 +1621,8 @@ Parser::Impl::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out
 }
 #endif
 
-bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
-                                  crate::CrateValue *value) {
+bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
+                                 crate::CrateValue *value) {
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
   }
@@ -1940,11 +1634,11 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
   const auto dty = tyRet.value();
 
-#define TODO_IMPLEMENT(__dty)                                     \
-  { \
-  PUSH_ERROR("TODO: '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
-             "' data is not yet implemented.");                               \
-  return false;                                                             \
+#define TODO_IMPLEMENT(__dty)                                            \
+  {                                                                      \
+    PUSH_ERROR("TODO: '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
+               "' data is not yet implemented.");                        \
+    return false;                                                        \
   }
 
 #define COMPRESS_UNSUPPORTED_CHECK(__dty)                                     \
@@ -1955,19 +1649,18 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
   }
 
 #define NON_ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
-  if (!rep.IsArray()) {                                                       \
+  if (!rep.IsArray()) {                                                      \
     PUSH_ERROR("Non array '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
                "' data is not yet supported.");                              \
     return false;                                                            \
   }
 
-#define ARRAY_UNSUPPORTED_CHECK(__dty)                                   \
-  if (rep.IsArray()) {                                                       \
+#define ARRAY_UNSUPPORTED_CHECK(__dty)                                      \
+  if (rep.IsArray()) {                                                      \
     PUSH_ERROR("Array of '" + crate::GetCrateDataTypeName(__dty.dtype_id) + \
-               "' data type is not yet supported.");                              \
-    return false;                                                            \
+               "' data type is not yet supported.");                        \
+    return false;                                                           \
   }
-
 
   // payload is the offset to data.
   uint64_t offset = rep.GetPayload();
@@ -1983,7 +1676,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
@@ -1994,7 +1686,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
@@ -2017,9 +1708,12 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::asset_path> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
-                         << ")");
-          apaths[i] = value::asset_path(GetToken(v[i]).str());
+          if (auto tokv = GetToken(v[i])) {
+            DCOUT("Token[" << i << "] = " << tokv.value());
+            apaths[i] = value::asset_path(tokv.value().str());
+          } else {
+            return false;
+          }
         }
 
         value->Set(apaths);
@@ -2029,7 +1723,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
@@ -2051,17 +1744,18 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::token> tokens(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          DCOUT("Token[" << i << "] = " << GetToken(v[i]) << " (" << v[i].value
-                         << ")");
-          tokens[i] = GetToken(v[i]);
+          if (auto tokv = GetToken(v[i])) {
+            DCOUT("Token[" << i << "] = " << tokv.value());
+            tokens[i] = tokv.value();
+          } else {
+            return false;
+          }
         }
 
         value->Set(tokens);
         return true;
       } else {
-
         return false;
-
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
@@ -2085,7 +1779,11 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<std::string> stringArray(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          stringArray[i] = GetStringToken(v[i]).str();
+          if (auto stok = GetStringToken(v[i])) {
+            stringArray[i] = stok.value().str();
+          } else {
+            return false;
+          }
         }
 
         DCOUT("stringArray = " << stringArray);
@@ -2100,9 +1798,9 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY:
-    {
-      PUSH_ERROR("TODO: Specifier/Permission/Variability. isArray " << rep.IsArray() << ", isCompressed " << rep.IsCompressed());
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY: {
+      PUSH_ERROR("TODO: Specifier/Permission/Variability. isArray "
+                 << rep.IsArray() << ", isCompressed " << rep.IsCompressed());
       return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR: {
@@ -2131,7 +1829,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         return false;
       }
-
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
@@ -2155,7 +1852,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         return false;
       }
-
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
       if (rep.IsArray()) {
@@ -2191,7 +1887,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64: {
-
       if (rep.IsArray()) {
         std::vector<uint64_t> v;
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -2225,7 +1920,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
-
       if (rep.IsArray()) {
         std::vector<value::half> v;
         if (!ReadHalfArray(rep.IsCompressed(), &v)) {
@@ -2237,13 +1931,11 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       } else {
-
         PUSH_ERROR("Non-inlined, non-array Half value is invalid.");
         return false;
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
-
       if (rep.IsArray()) {
         std::vector<float> v;
         if (!ReadFloatArray(rep.IsCompressed(), &v)) {
@@ -2412,7 +2104,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::quatd> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quatd), size_t(n) * sizeof(value::quatd),
+        if (!_sr->read(size_t(n) * sizeof(value::quatd),
+                       size_t(n) * sizeof(value::quatd),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
           return false;
@@ -2439,7 +2132,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF: {
-
       if (rep.IsArray()) {
         uint64_t n;
         if (!_sr->read8(&n)) {
@@ -2448,7 +2140,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::quatf> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quatf), size_t(n) * sizeof(value::quatf),
+        if (!_sr->read(size_t(n) * sizeof(value::quatf),
+                       size_t(n) * sizeof(value::quatf),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
           return false;
@@ -2483,7 +2176,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::quath> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quath), size_t(n) * sizeof(value::quath),
+        if (!_sr->read(size_t(n) * sizeof(value::quath),
+                       size_t(n) * sizeof(value::quath),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quath array.");
           return false;
@@ -2520,7 +2214,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::double2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double2), size_t(n) * sizeof(value::double2),
+        if (!_sr->read(size_t(n) * sizeof(value::double2),
+                       size_t(n) * sizeof(value::double2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double2 array.");
           return false;
@@ -2556,7 +2251,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::float2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float2), size_t(n) * sizeof(value::float2),
+        if (!_sr->read(size_t(n) * sizeof(value::float2),
+                       size_t(n) * sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float2 array.");
           return false;
@@ -2592,7 +2288,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::half2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half2), size_t(n) * sizeof(value::half2),
+        if (!_sr->read(size_t(n) * sizeof(value::half2),
+                       size_t(n) * sizeof(value::half2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half2 array.");
           return false;
@@ -2627,7 +2324,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::int2> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int2), size_t(n) * sizeof(value::int2),
+        if (!_sr->read(size_t(n) * sizeof(value::int2),
+                       size_t(n) * sizeof(value::int2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int2 array.");
           return false;
@@ -2662,7 +2360,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::double3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double3), size_t(n) * sizeof(value::double3),
+        if (!_sr->read(size_t(n) * sizeof(value::double3),
+                       size_t(n) * sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double3 array.");
           return false;
@@ -2697,7 +2396,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::float3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float3), size_t(n) * sizeof(value::float3),
+        if (!_sr->read(size_t(n) * sizeof(value::float3),
+                       size_t(n) * sizeof(value::float3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float3 array.");
           return false;
@@ -2733,7 +2433,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::half3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half3), size_t(n) * sizeof(value::half3),
+        if (!_sr->read(size_t(n) * sizeof(value::half3),
+                       size_t(n) * sizeof(value::half3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half3 array.");
           return false;
@@ -2768,7 +2469,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::int3> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int3), size_t(n) * sizeof(value::int3),
+        if (!_sr->read(size_t(n) * sizeof(value::int3),
+                       size_t(n) * sizeof(value::int3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int3 array.");
           return false;
@@ -2803,7 +2505,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::double4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double4), size_t(n) * sizeof(value::double4),
+        if (!_sr->read(size_t(n) * sizeof(value::double4),
+                       size_t(n) * sizeof(value::double4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double4 array.");
           return false;
@@ -2838,7 +2541,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::float4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float4), size_t(n) * sizeof(value::float4),
+        if (!_sr->read(size_t(n) * sizeof(value::float4),
+                       size_t(n) * sizeof(value::float4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float4 array.");
           return false;
@@ -2873,7 +2577,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::half4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half4), size_t(n) * sizeof(value::half4),
+        if (!_sr->read(size_t(n) * sizeof(value::half4),
+                       size_t(n) * sizeof(value::half4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half4 array.");
           return false;
@@ -2908,7 +2613,8 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         std::vector<value::int4> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int4), size_t(n) * sizeof(value::int4),
+        if (!_sr->read(size_t(n) * sizeof(value::int4),
+                       size_t(n) * sizeof(value::int4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int4 array.");
           return false;
@@ -2992,7 +2698,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
       // std::vector<Index>
       uint64_t n;
@@ -3013,7 +2718,11 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
 
       std::vector<value::token> tokens(indices.size());
       for (size_t i = 0; i < indices.size(); i++) {
-        tokens[i] = GetToken(indices[i]);
+        if (auto tokv = GetToken(indices[i])) {
+          tokens[i] = tokv.value();
+        } else {
+          return false;
+        }
       }
 
       DCOUT("TokenVector = " << tokens);
@@ -3023,7 +2732,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       value::TimeSamples ts;
@@ -3037,7 +2745,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR: {
-
       std::vector<double> v;
       if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
         _err += "Failed to read DoubleVector value\n";
@@ -3051,7 +2758,6 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR: {
-
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       std::vector<std::string> v;
@@ -3097,7 +2803,7 @@ bool Parser::Impl::UnpackValueRep(const crate::ValueRep &rep,
   return false;
 }
 
-bool Parser::Impl::BuildDecompressedPathsImpl(
+bool CrateReader::BuildDecompressedPathsImpl(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath) {
@@ -3163,7 +2869,7 @@ bool Parser::Impl::BuildDecompressedPathsImpl(
 }
 
 // TODO(syoyo): Refactor
-bool Parser::Impl::BuildNodeHierarchy(
+bool CrateReader::BuildNodeHierarchy(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps, size_t curIndex,
@@ -3229,7 +2935,7 @@ bool Parser::Impl::BuildNodeHierarchy(
   return true;
 }
 
-bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
+bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
   std::vector<uint32_t> pathIndexes;
   std::vector<int32_t> elementTokenIndexes;
   std::vector<int32_t> jumps;
@@ -3374,7 +3080,7 @@ bool Parser::Impl::ReadCompressedPaths(const uint64_t ref_num_paths) {
   return true;
 }
 
-bool Parser::Impl::ReadSection(crate::Section *s) {
+bool CrateReader::ReadSection(crate::Section *s) {
   size_t name_len = crate::kSectionNameMaxLength + 1;
 
   if (name_len !=
@@ -3396,7 +3102,7 @@ bool Parser::Impl::ReadSection(crate::Section *s) {
   return true;
 }
 
-bool Parser::Impl::ReadTokens() {
+bool CrateReader::ReadTokens() {
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `TOKENS` section.\n";
     return false;
@@ -3512,7 +3218,7 @@ bool Parser::Impl::ReadTokens() {
   return true;
 }
 
-bool Parser::Impl::ReadStrings() {
+bool CrateReader::ReadStrings() {
   if ((_strings_index < 0) ||
       (_strings_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `STRINGS` section.\n";
@@ -3538,7 +3244,7 @@ bool Parser::Impl::ReadStrings() {
   return true;
 }
 
-bool Parser::Impl::ReadFields() {
+bool CrateReader::ReadFields() {
   if ((_fields_index < 0) || (_fields_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDS` section.\n";
     return false;
@@ -3642,14 +3348,16 @@ bool Parser::Impl::ReadFields() {
 
   DCOUT("num_fields = " << num_fields);
   for (size_t i = 0; i < num_fields; i++) {
-    DCOUT("field[" << i << "] name = " << GetToken(_fields[i].token_index)
-                   << ", value = " << _fields[i].value_rep.GetStringRepr());
+    if (auto tokv = GetToken(_fields[i].token_index)) {
+      DCOUT("field[" << i << "] name = " << tokv.value()
+                     << ", value = " << _fields[i].value_rep.GetStringRepr());
+    }
   }
 
   return true;
 }
 
-bool Parser::Impl::ReadFieldSets() {
+bool CrateReader::ReadFieldSets() {
   if ((_fieldsets_index < 0) ||
       (_fieldsets_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDSETS` section.\n";
@@ -3723,7 +3431,7 @@ bool Parser::Impl::ReadFieldSets() {
   return true;
 }
 
-bool Parser::Impl::BuildLiveFieldSets() {
+bool CrateReader::BuildLiveFieldSets() {
   for (auto fsBegin = _fieldset_indices.begin(),
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
        fsBegin != _fieldset_indices.end();
@@ -3745,11 +3453,16 @@ bool Parser::Impl::BuildLiveFieldSets() {
 
       DCOUT("fieldIndex = " << (fsBegin->value));
       auto const &field = _fields[fsBegin->value];
-      pairs[i].first = GetToken(field.token_index).str();
-      if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
-        PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
-                   << field.value_rep.GetStringRepr());
-        return false;
+      if (auto tokv = GetToken(field.token_index)) {
+        pairs[i].first = tokv.value().str();
+
+        if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
+          PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
+                     << field.value_rep.GetStringRepr());
+          return false;
+        }
+      } else {
+        PUSH_ERROR("Invalid token index.");
       }
     }
   }
@@ -3773,1709 +3486,7 @@ bool Parser::Impl::BuildLiveFieldSets() {
   return true;
 }
 
-bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
-                                  PrimAttrib *attr,
-                                  const std::string &prop_name) {
-  bool success = false;
-
-  DCOUT("fvs.size = " << fvs.size());
-
-  bool has_connection{false};
-
-  Variability variability{Variability::Varying};
-  Interpolation interpolation{Interpolation::Invalid};
-
-  // Check if required field exists.
-  if (!HasFieldValuePair(fvs, kTypeName, kToken)) {
-    PUSH_ERROR(
-        "\"typeName\" field with `token` type must exist for Attribute data.");
-    return false;
-  }
-
-  if (!HasField(kDefault)) {
-    PUSH_ERROR("\"default\" field must exist for Attribute data.");
-    return false;
-  }
-
-  //
-  // Parse properties
-  //
-  for (const auto &fv : fvs) {
-    DCOUT("===  fvs.first " << fv.first
-                            << ", second: " << fv.second.GetTypeName());
-    if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
-      attr->type_name = fv.second.value<value::token>().str();
-      DCOUT("typeName: " << attr->type_name);
-    } else if (fv.first == "default") {
-      // Nothing to do at there. Process `default` in the later
-      continue;
-    } else if (fv.first == "targetPaths") {
-      // e.g. connection to Material.
-      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
-
-      DCOUT("ListOp<Path> = " << to_string(paths));
-      // Currently we only support single explicit path.
-      if ((paths.GetExplicitItems().size() == 1)) {
-        const Path &path = paths.GetExplicitItems()[0];
-        (void)path;
-
-        DCOUT("full path: " << path.full_path_name());
-        DCOUT("local path: " << path.local_path_name());
-
-        attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
-
-        has_connection = true;
-
-      } else {
-        return false;
-      }
-    } else if (fv.first == "connectionPaths") {
-      // e.g. connection to texture file.
-      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
-
-      DCOUT("ListOp<Path> = " << to_string(paths));
-
-      // Currently we only support single explicit path.
-      if ((paths.GetExplicitItems().size() == 1)) {
-        const Path &path = paths.GetExplicitItems()[0];
-        (void)path;
-
-        DCOUT("full path: " << path.full_path_name());
-        DCOUT("local path: " << path.local_path_name());
-
-        attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
-
-        has_connection = true;
-
-      } else {
-        return false;
-      }
-    } else if ((fv.first == "variablity") &&
-               (fv.second.GetTypeName() == "Variability")) {
-      variability = fv.second.value<Variability>();
-    } else if ((fv.first == "interpolation") &&
-               (fv.second.GetTypeName() == "Token")) {
-      interpolation =
-          InterpolationFromString(fv.second.value<value::token>().str());
-    } else {
-      DCOUT("TODO: name: " << fv.first
-                           << ", type: " << fv.second.GetTypeName());
-    }
-  }
-
-  attr->variability = variability;
-  attr->meta.interpolation = interpolation;
-
-  //
-  // Decode value(stored in "default" field)
-  //
-  const auto fvRet = GetFieldValuePair(fvs, kDefault);
-  if (!fvRet) {
-    // This code path should not happen. Just in case.
-    PUSH_ERROR("`default` field not found.");
-    return false;
-  }
-  const auto fv = fvRet.value();
-
-  auto add1DArraySuffix = [](const std::string &a) -> std::string {
-    return a + "[]";
-  };
-
-  {
-    if (fv.first == "default") {
-      attr->name = prop_name;
-
-      DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
-
-#define PROC_SCALAR(__tyname, __ty)                   \
-  if (fv.second.GetTypeName() == __tyname) {     \
-    auto ret = fv.second.get_value<__ty>();           \
-    if (!ret) {                                       \
-      PUSH_ERROR("Failed to decode " << __tyname << " value."); \
-      return false;                                   \
-    }                                                 \
-    attr->var.set_scalar(ret.value());                \
-    success = true; \
-  } else
-
-#define PROC_ARRAY(__tyname, __ty)                       \
-  if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) {        \
-    auto ret = fv.second.get_value<std::vector<__ty>>(); \
-    if (!ret) {                                          \
-      PUSH_ERROR("Failed to decode " << __tyname << "[] value.");  \
-      return false;                                      \
-    }                                                    \
-    attr->var.set_scalar(ret.value());                   \
-    success = true; \
-  } else
-
-        PROC_SCALAR(value::kFloat, float)
-        PROC_SCALAR(value::kBool, bool)
-        PROC_SCALAR(value::kInt, int)
-        PROC_SCALAR(value::kFloat2, value::float2)
-        PROC_SCALAR(value::kFloat3, value::float3)
-        PROC_SCALAR(value::kFloat4, value::float4)
-        PROC_SCALAR(value::kHalf2, value::half2)
-        PROC_SCALAR(value::kHalf3, value::half3)
-        PROC_SCALAR(value::kHalf4, value::half4)
-        PROC_SCALAR(value::kToken, value::token)
-        PROC_SCALAR(value::kAssetPath, value::asset_path)
-
-        PROC_SCALAR(value::kMatrix2d, value::matrix2d)
-        PROC_SCALAR(value::kMatrix3d, value::matrix3d)
-        PROC_SCALAR(value::kMatrix4d, value::matrix4d)
-
-        // It seems `token[]` is defined as `TokenVector` in CrateData.
-        // We tret it as scalar
-        PROC_SCALAR("TokenVector", std::vector<value::token>)
-
-        // TODO(syoyo): Use constexpr concat
-        PROC_ARRAY(value::kInt, int32_t)
-        PROC_ARRAY(value::kUInt, uint32_t)
-        PROC_ARRAY(value::kFloat, float)
-        PROC_ARRAY(value::kFloat2, value::float2)
-        PROC_ARRAY(value::kFloat3, value::float3)
-        PROC_ARRAY(value::kFloat4, value::float4)
-        PROC_ARRAY(value::kToken, value::token)
-
-        PROC_ARRAY(value::kMatrix2d, value::matrix2d)
-        PROC_ARRAY(value::kMatrix3d, value::matrix3d)
-        PROC_ARRAY(value::kMatrix4d, value::matrix4d)
-
-        PROC_ARRAY(value::kPoint3h, value::point3h)
-        PROC_ARRAY(value::kPoint3f, value::point3f)
-        PROC_ARRAY(value::kPoint3d, value::point3d)
-
-        PROC_ARRAY(value::kVector3h, value::vector3h)
-        PROC_ARRAY(value::kVector3f, value::vector3f)
-        PROC_ARRAY(value::kVector3d, value::vector3d)
-
-        PROC_ARRAY(value::kNormal3h, value::normal3h)
-        PROC_ARRAY(value::kNormal3f, value::normal3f)
-        PROC_ARRAY(value::kNormal3d, value::normal3d)
-
-        //PROC_ARRAY("Vec2fArray", value::float2)
-        //PROC_ARRAY("Vec3fArray", value::float3)
-        //PROC_ARRAY("Vec4fArray", value::float4)
-        //PROC_ARRAY("IntArray", int)
-        //PROC_ARRAY(kTokenArray, value::token)
-
-        {
-          PUSH_ERROR("TODO: " + fv.second.GetTypeName());
-        }
-      }
-  }
-
-  if (!success && has_connection) {
-    // Attribute has a connection(has a path and no `default` field)
-    success = true;
-  }
-
-  return success;
-}
-
-#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type) { \
-  if (__fv.first == __name) { \
-    if (__fv.second.GetTypeName() != __req_type) { \
-      PUSH_ERROR("`" << __name << "` attribute must be " << __req_type << " type, but got " << __fv.second.GetTypeName()); \
-      return false; \
-    } \
-  } \
-}
-
-bool Parser::Impl::ReconstructXform(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    Xform *xform) {
-  // TODO:
-  //  * [ ] !invert! suffix
-  //  * [ ] !resetXformStack! suffix
-  //  * [ ] maya:pivot support?
-
-  (void)xform;
-
-  DCOUT("Reconstruct Xform");
-
-  for (const auto &fv : fields) {
-    DCOUT("field = " << fv.first << ", type = " << fv.second.GetTypeName());
-
-    FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-  }
-
-  //
-  // NOTE: Currently we assume one deeper node has Xform's attribute
-  //
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
-      return false;
-    }
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      // Should we report an error?
-      continue;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.");
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("Xform: prop: " << prop_name << ", ret = " << ret);
-      if (ret) {
-        // TODO(syoyo): Implement
-        PUSH_ERROR("TODO: Implemen Xform prop: " + prop_name);
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructGeomBasisCurves(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    GeomBasisCurves *curves) {
-  bool has_position{false};
-
-  DCOUT("Reconstruct Xform");
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      auto ret = fv.second.get_value<std::vector<value::token>>();
-      if (!ret) {
-        PUSH_ERROR("Invalid `properties` data");
-        return false;
-      }
-
-      for (size_t i = 0; i < ret.value().size(); i++) {
-        if (ret.value()[i].str() == "points") {
-          has_position = true;
-        }
-      }
-    }
-  }
-
-  (void)has_position;
-
-  //
-  // NOTE: Currently we assume one deeper node has GeomMesh's attribute
-  //
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      // Should we report an error?
-#if 0
-      _err += "GeomBasisCurves: No specifier found for node id: " + std::to_string(child_index) +
-              "\n";
-      return false;
-#else
-      continue;
-#endif
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      _err += "Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")\n";
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-    std::cout << "Path prim part: " << path.GetPrimPart()
-              << ", prop part: " << path.GetPropPart()
-              << ", spec_index = " << spec_index << "\n";
-#endif
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-      std::cout << "prop: " << prop_name << ", ret = " << ret << "\n";
-#endif
-      if (ret) {
-        // TODO(syoyo): Support more prop names
-        if (prop_name == "points") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "got point\n";
-#endif
-          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-          //   curves->points = *p;
-          // }
-        } else if (prop_name == "extent") {
-          // vec3f[2]
-          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-          //  if (p->size() == 2) {
-          //    curves->extent.value.lower = (*p)[0];
-          //    curves->extent.value.upper = (*p)[1];
-          //  }
-          //}
-        } else if (prop_name == "normals") {
-          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-          //   curves->normals = (*p);
-          // }
-        } else if (prop_name == "widths") {
-          // if (auto p = primvar::as_vector<float>(&attr.var)) {
-          //   curves->widths = (*p);
-          // }
-        } else if (prop_name == "curveVertexCounts") {
-          // if (auto p = primvar::as_vector<int>(&attr.var)) {
-          //   curves->curveVertexCounts = (*p);
-          // }
-        } else if (prop_name == "type") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          // std::cout << "type:" << attr.stringVal << "\n";
-#endif
-          // if (auto p = primvar::as_basic<std::string>(&attr.var)) {
-          //   if (p->compare("cubic") == 0) {
-          //     curves->type = "cubic";
-          //   } else if (p->compare("linear") == 0) {
-          //     curves->type = "linear";
-          //   } else {
-          //     _err += "Unknown type: " + (*p) + "\n";
-          //     return false;
-          //   }
-          // }
-        } else if (prop_name == "basis") {
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          // std::cout << "basis:" << attr.stringVal << "\n";
-#endif
-#if 0
-          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
-            if (p->compare("bezier") == 0) {
-              curves->type = "bezier";
-            } else if (p->compare("catmullRom") == 0) {
-              curves->type = "catmullRom";
-            } else if (p->compare("bspline") == 0) {
-              curves->type = "bspline";
-            } else if (p->compare("hermite") == 0) {
-              _err += "`hermite` basis for BasisCurves is not supported in TinyUSDZ\n";
-              return false;
-            } else if (p->compare("power") == 0) {
-              _err += "`power` basis for BasisCurves is not supported in TinyUSDZ\n";
-              return false;
-            } else {
-              _err += "Unknown basis: " + (*p) + "\n";
-              return false;
-            }
-          }
-#endif
-        } else if (prop_name == "wrap") {
-#if 0
-          if (auto p = nonstd::get_if<std::string>(&attr.var)) {
-            if (p->compare("nonperiodic") == 0) {
-              curves->type = "nonperiodic";
-            } else if (p->compare("periodic") == 0) {
-              curves->type = "periodic";
-            } else if (p->compare("pinned") == 0) {
-              curves->type = "pinned";
-            } else {
-              _err += "Unknown wrap: " + (*p) + "\n";
-              return false;
-            }
-          }
-#endif
-        } else {
-          // Assume Primvar.
-          if (curves->attribs.count(prop_name)) {
-            _err += "Duplicated property name found: " + prop_name + "\n";
-            return false;
-          }
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "add [" << prop_name << "] to generic attrs\n";
-#endif
-
-          curves->attribs[prop_name] = std::move(attr);
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructGeomSubset(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    GeomSubset *geom_subset) {
-
-  DCOUT("Reconstruct Xform");
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      //   // if (fv.second.GetStringArray()[i] == "points") {
-      //   // }
-      // }
-    }
-  }
-
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
-                 ")");
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      // TODO: Should we report an error?
-      continue;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("prop: " << prop_name << ", ret = " << ret);
-
-      if (ret) {
-        // TODO(syoyo): Support more prop names
-        if (prop_name == "elementType") {
-          auto p = attr.var.get_value<tinyusdz::value::token>();
-          if (p) {
-            std::string str = p->str();
-            if (str == "face") {
-              geom_subset->elementType = GeomSubset::ElementType::Face;
-            } else {
-              PUSH_ERROR("`elementType` must be `face`, but got `" + str + "`");
-              return false;
-            }
-          } else {
-            PUSH_ERROR("`elementType` must be token type, but got " +
-                       value::GetTypeName(attr.var.type_id()));
-            return false;
-          }
-        } else if (prop_name == "faces") {
-          auto p = attr.var.get_value<std::vector<int>>();
-          if (p) {
-            geom_subset->faces = (*p);
-          }
-
-          DCOUT("faces.num = " << geom_subset->faces.size());
-
-        } else {
-          // Assume Primvar.
-          if (geom_subset->attribs.count(prop_name)) {
-            _err += "Duplicated property name found: " + prop_name + "\n";
-            return false;
-          }
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "add [" << prop_name << "] to generic attrs\n";
-#endif
-
-          geom_subset->attribs[prop_name] = std::move(attr);
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructGeomMesh(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    GeomMesh *mesh) {
-  bool has_position{false};
-
-  DCOUT("Reconstruct Xform");
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      const auto arr = fv.second.get_value<std::vector<value::token>>();
-      if (!arr) {
-        return false;
-      }
-      for (size_t i = 0; i < arr.value().size(); i++) {
-        if (arr.value()[i] == "points") {
-          has_position = true;
-        }
-      }
-    }
-  }
-
-  (void)has_position;
-
-  // Disable has_position check for a while, since Mesh may not have "points",
-  // but "position"
-
-  // if (!has_position) {
-  //  _err += "No `position` field exist for Mesh node: " + node.GetLocalPath()
-  //  +
-  //          ".\n";
-  //  return false;
-  //}
-
-  //
-  // NOTE: Currently we assume one deeper node has GeomMesh's attribute
-  //
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      // Should we report an error?
-      DCOUT("No speciefier assigned to this child node: " << child_index);
-      continue;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-                 " must exist in live fieldsets.");
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("prop: " << prop_name << ", ret = " << ret);
-
-      if (ret) {
-        // TODO(syoyo): Support more prop names
-        if (prop_name == "points") {
-          auto p = attr.var.get_value<std::vector<value::point3f>>();
-          if (p) {
-            mesh->points = (*p);
-          } else {
-            PUSH_ERROR("`points` must be point3[] type, but got " +
-                       value::GetTypeName(attr.var.type_id()));
-            return false;
-          }
-          // if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-          //   mesh->points = (*p);
-          // }
-        } else if (prop_name == "doubleSided") {
-          auto p = attr.var.get_value<bool>();
-          if (p) {
-            mesh->doubleSided = (*p);
-          }
-        } else if (prop_name == "extent") {
-          // vec3f[2]
-          auto p = attr.var.get_value<std::vector<value::float3>>();
-          if (p && p->size() == 2) {
-            mesh->extent.value.lower = (*p)[0];
-            mesh->extent.value.upper = (*p)[1];
-          }
-        } else if (prop_name == "normals") {
-          mesh->normals = attr;
-        } else if ((prop_name == "primvars:UVMap") &&
-                   (attr.type_name == "texCoord2f[]")) {
-          // Explicit UV coord attribute.
-          // TODO(syoyo): Write PrimVar parser
-
-          // Currently we only support vec2f for uv coords.
-          // if (auto p = primvar::as_vector<Vec2f>(&attr.var)) {
-          //  mesh->st.buffer = (*p);
-          //  mesh->st.variability = attr.variability;
-          //}
-        } else if (prop_name == "faceVertexCounts") {
-          auto p = attr.var.get_value<std::vector<int>>();
-          if (p) {
-            mesh->faceVertexCounts = (*p);
-          }
-          //}
-        } else if (prop_name == "faceVertexIndices") {
-          auto p = attr.var.get_value<std::vector<int>>();
-          if (p) {
-            mesh->faceVertexIndices = (*p);
-          }
-
-        } else if (prop_name == "holeIndices") {
-          // if (auto p = primvar::as_vector<int>(&attr.var)) {
-          //     mesh->holeIndices = (*p);
-          // }
-        } else if (prop_name == "cornerIndices") {
-          // if (auto p = primvar::as_vector<int>(&attr.var)) {
-          //     mesh->cornerIndices = (*p);
-          // }
-        } else if (prop_name == "cornerSharpnesses") {
-          // if (auto p = primvar::as_vector<float>(&attr.var)) {
-          //     mesh->cornerSharpnesses = (*p);
-          // }
-        } else if (prop_name == "creaseIndices") {
-          // if (auto p = primvar::as_vector<int>(&attr.var)) {
-          //     mesh->creaseIndices = (*p);
-          // }
-        } else if (prop_name == "creaseLengths") {
-          // if (auto p = primvar::as_vector<int>(&attr.var)) {
-          //   mesh->creaseLengths = (*p);
-          // }
-        } else if (prop_name == "creaseSharpnesses") {
-          // if (auto p = primvar::as_vector<float>(&attr.var)) {
-          //     mesh->creaseSharpnesses = (*p);
-          // }
-        } else if (prop_name == "subdivisionScheme") {
-          auto p = attr.var.get_value<value::token>();
-          // if (auto p = primvar::as_basic<std::string>(&attr.var)) {
-          //   if (p->compare("none") == 0) {
-          //     mesh->subdivisionScheme = SubdivisionScheme::None;
-          //   } else if (p->compare("catmullClark") == 0) {
-          //     mesh->subdivisionScheme = SubdivisionScheme::CatmullClark;
-          //   } else if (p->compare("bilinear") == 0) {
-          //     mesh->subdivisionScheme = SubdivisionScheme::Bilinear;
-          //   } else if (p->compare("loop") == 0) {
-          //     mesh->subdivisionScheme = SubdivisionScheme::Loop;
-          //   } else {
-          //     _err += "Unknown subdivision scheme: " + (*p) + "\n";
-          //     return false;
-          //   }
-          // }
-        } else if (prop_name.compare("material:binding") == 0) {
-          // rel
-          auto p =
-              attr.var.get_value<std::string>();  // rel, but treat as sting
-          if (p) {
-            mesh->materialBinding.materialBinding = (*p);
-          }
-        } else {
-          // Assume Primvar.
-          if (mesh->props.count(prop_name)) {
-            PUSH_ERROR("Duplicated property name found: " + prop_name);
-            return false;
-          }
-
-          DCOUT("add [" << prop_name << "] to generic attrs.");
-
-          // FIXME: Look-up schema to detect if the property is `custom` or not.
-          bool is_custom{false};
-
-          mesh->props.emplace(prop_name, Property(attr, is_custom));
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructMaterial(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    Material *material) {
-  (void)material;
-
-  DCOUT("Parse mateiral");
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      // }
-    }
-  }
-
-  //
-  // NOTE: Currently we assume one deeper node has Material's attribute
-  //
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
-                 ")");
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-#if 0
-      _err += "Material: No specifier found for node id: " + std::to_string(child_index) +
-              "\n";
-      return false;
-#else
-      continue;
-#endif
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-                 " must exist in live fieldsets.");
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    (void)child_fields;
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      if (ret) {
-        if (prop_name.compare("outputs:surface") == 0) {
-          auto p = attr.var.get_value<std::string>();
-          if (p) {
-            material->outputs_surface = (*p);
-          }
-        }
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-        std::cout << "prop: " << prop_name << "\n";
-#endif
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructShader(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    Shader *shader) {
-  (void)shader;
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      // }
-    }
-  }
-
-  //
-  // Find shader type.
-  //
-  std::string shader_type;
-
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
-                 ")");
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      PUSH_ERROR("No specifier found for node id: " +
-                 std::to_string(child_index));
-      return false;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-                 " must exist in live fieldsets.");
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("prop: " << prop_name << ", ret = " << ret);
-
-      if (ret) {
-        // Currently we only support predefined PBR attributes.
-
-        if (prop_name.compare("info:id") == 0) {
-          auto p = attr.var.get_value<value::token>();
-          if (p) {
-            shader_type = p.value().str();
-          }
-        }
-      }
-    }
-  }
-
-  if (shader_type.empty()) {
-    PUSH_ERROR("`info:id` is missing in Shader.");
-    return false;
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructPreviewSurface(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    PreviewSurface *shader) {
-  (void)shader;
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      // }
-    }
-  }
-
-  //
-  // NOTE: Currently we assume one deeper node has Shader's attribute
-  //
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      _err += "Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")\n";
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      PUSH_ERROR("No specifier found for node id: " +
-                 std::to_string(child_index));
-      return false;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-                 " must exist in live fieldsets.");
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("prop: " << prop_name << ", ret = " << ret);
-
-      if (ret) {
-        // Currently we only support predefined PBR attributes.
-
-        if (prop_name.compare("info:id") == 0) {
-          auto p = attr.var.get_value<std::string>();  // `token` type, but
-                                                       // treat it as string
-          if (p) {
-            if (p->compare("UsdPreviewSurface") != 0) {
-              PUSH_ERROR("`info:id` must be `UsdPreviewSurface`.");
-              return false;
-            }
-          }
-        } else if (prop_name.compare("outputs:surface") == 0) {
-          // Surface shader output available
-        } else if (prop_name.compare("outputs:displacement") == 0) {
-          // Displacement shader output available
-        } else if (prop_name.compare("inputs:roughness") == 0) {
-          // type: float
-          auto p = attr.var.get_value<float>();
-          if (p) {
-            shader->roughness.value = (*p);
-          }
-        } else if (prop_name.compare("inputs:specular") == 0) {
-          // type: float
-          auto p = attr.var.get_value<float>();
-          if (p) {
-            shader->specular.value = (*p);
-          }
-        } else if (prop_name.compare("inputs:ior") == 0) {
-          // type: float
-          auto p = attr.var.get_value<float>();
-          if (p) {
-            shader->ior.value = (*p);
-          }
-        } else if (prop_name.compare("inputs:opacity") == 0) {
-          // type: float
-          auto p = attr.var.get_value<float>();
-          if (p) {
-            shader->opacity.value = (*p);
-          }
-        } else if (prop_name.compare("inputs:clearcoat") == 0) {
-          // type: float
-          auto p = attr.var.get_value<float>();
-          if (p) {
-            shader->clearcoat.value = (*p);
-          }
-        } else if (prop_name.compare("inputs:clearcoatRoughness") == 0) {
-          // type: float
-          auto p = attr.var.get_value<float>();
-          if (p) {
-            shader->clearcoatRoughness.value = (*p);
-          }
-        } else if (prop_name.compare("inputs:metallic") == 0) {
-          // type: float
-          auto p = attr.var.get_value<float>();
-          if (p) {
-            shader->metallic.value = (*p);
-          }
-        } else if (prop_name.compare("inputs:metallic.connect") == 0) {
-          // Currently we assume texture is assigned to this attribute.
-          auto p = attr.var.get_value<std::string>();
-          if (p) {
-            shader->metallic.path = *p;
-          }
-        } else if (prop_name.compare("inputs:diffuseColor") == 0) {
-          auto p = attr.var.get_value<value::float3>();
-          if (p) {
-            shader->diffuseColor.color = (*p);
-
-            DCOUT("diffuseColor: " << shader->diffuseColor.color[0] << ", "
-                                   << shader->diffuseColor.color[1] << ", "
-                                   << shader->diffuseColor.color[2]);
-          }
-        } else if (prop_name.compare("inputs:diffuseColor.connect") == 0) {
-          // Currently we assume texture is assigned to this attribute.
-          auto p = attr.var.get_value<std::string>();
-          if (p) {
-            shader->diffuseColor.path = *p;
-          }
-        } else if (prop_name.compare("inputs:emissiveColor") == 0) {
-          // if (auto p = primvar::as_basic<value::float3>(&attr.var)) {
-          //  shader->emissiveColor.color = (*p);
-
-          //}
-        } else if (prop_name.compare("inputs:emissiveColor.connect") == 0) {
-          // Currently we assume texture is assigned to this attribute.
-          // if (auto p = primvar::as_basic<std::string>(&attr.var)) {
-          //  shader->emissiveColor.path = *p;
-          //}
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructSkelRoot(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    SkelRoot *skelRoot) {
-  DCOUT("Parse skelRoot");
-  (void)skelRoot;
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      // }
-    }
-  }
-
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
-                 ")");
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      PUSH_ERROR("No specifier found for node id: " +
-                 std::to_string(child_index));
-      return false;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ").");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("prop:" << prop_name << ", ret = " << ret);
-
-      if (ret) {
-        // Currently we only support predefined PBR attributes.
-
-        if (prop_name.compare("info:id") == 0) {
-          auto p = attr.var.get_value<std::string>();  // `token` type, but
-                                                       // treat it as string
-          if (p) {
-            // shader_type = (*p);
-          }
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructSkeleton(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    Skeleton *skeleton) {
-  DCOUT("Parse skeleton");
-  (void)skeleton;
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      // }
-    }
-  }
-
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
-                 ")");
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      PUSH_ERROR("No specifier found for node id: " +
-                 std::to_string(child_index));
-      return false;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-                 " must exist in live fieldsets.");
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("prop:" << prop_name << ", ret = " << ret);
-
-      if (ret) {
-        // Currently we only support predefined PBR attributes.
-
-        if (prop_name.compare("info:id") == 0) {
-          auto p = attr.var.get_value<std::string>();  // `token` type, but
-                                                       // treat it as string
-          if (p) {
-            // shader_type = (*p);
-          }
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructSceneRecursively(
-    int parent, int level,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    Scene *scene) {
-
-  DCOUT("ReconstructSceneRecursively: parent = " << std::to_string(parent) << ", level = " << std::to_string(level));
-
-  if ((parent < 0) || (parent >= int(_nodes.size()))) {
-    PUSH_ERROR("Invalid parent node id: " + std::to_string(parent) +
-               ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
-    return false;
-  }
-
-  const Node &node = _nodes[size_t(parent)];
-
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  auto IndentStr = [](int l) -> std::string {
-    std::string indent;
-    for (size_t i = 0; i < size_t(l); i++) {
-      indent += "  ";
-    }
-
-    return indent;
-  };
-  std::cout << IndentStr(level) << "lv[" << level << "] node_index[" << parent
-            << "] " << node.GetLocalPath() << " ==\n";
-  std::cout << IndentStr(level) << " childs = [";
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    std::cout << node.GetChildren()[i];
-    if (i != (node.GetChildren().size() - 1)) {
-      std::cout << ", ";
-    }
-  }
-  std::cout << "]\n";
-#endif
-
-  if (!path_index_to_spec_index_map.count(uint32_t(parent))) {
-    // No specifier assigned to this node.
-    DCOUT("No specifier assigned to this node: " << parent);
-    return true;  // would be OK.
-  }
-
-  uint32_t spec_index = path_index_to_spec_index_map.at(uint32_t(parent));
-  if (spec_index >= _specs.size()) {
-    PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-               ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
-    return false;
-  }
-
-  const crate::Spec &spec = _specs[spec_index];
-
-  DCOUT(Indent(uint32_t(level)) << "  specTy = " << to_string(spec.spec_type));
-  DCOUT(Indent(uint32_t(level))
-        << "  fieldSetIndex = " << spec.fieldset_index.value);
-
-  if (!_live_fieldsets.count(spec.fieldset_index)) {
-    PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-               " must exist in live fieldsets.");
-    return false;
-  }
-
-  const FieldValuePairVector &fields = _live_fieldsets.at(spec.fieldset_index);
-
-  // root only attributes.
-  if (parent == 0) {
-    for (const auto &fv : fields) {
-      if (fv.first == "upAxis") {
-        auto vt = fv.second.get_value<value::token>();
-        if (!vt) {
-          PUSH_ERROR("`upAxis` must be `token` type.");
-          return false;
-        }
-
-        std::string v = vt.value().str();
-        if ((v != "Y") && (v != "Z") && (v != "X")) {
-          PUSH_ERROR("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v + "'");
-          return false;
-        }
-        DCOUT("upAxis = " << v);
-        scene->upAxis = std::move(v);
-
-      } else if (fv.first == "metersPerUnit") {
-        if (auto vf = fv.second.get_value<float>()) {
-          scene->metersPerUnit = double(vf.value());
-        } else if (auto vd = fv.second.get_value<double>()) {
-          scene->metersPerUnit = vd.value();
-        } else {
-          PUSH_ERROR(
-              "`metersPerUnit` value must be double or float type, but got '" +
-              fv.second.GetTypeName() + "'");
-          return false;
-        }
-        DCOUT("metersPerUnit = " << scene->metersPerUnit);
-      } else if (fv.first == "timeCodesPerSecond") {
-        if (auto vf = fv.second.get_value<float>()) {
-          scene->timeCodesPerSecond = double(vf.value());
-        } else if (auto vd = fv.second.get_value<double>()) {
-          scene->timeCodesPerSecond = vd.value();
-        } else {
-          PUSH_ERROR(
-              "`timeCodesPerSecond` value must be double or float "
-              "type, but got '" +
-              fv.second.GetTypeName() + "'");
-          return false;
-        }
-        DCOUT("timeCodesPerSecond = " << scene->timeCodesPerSecond);
-      } else if ((fv.first == "defaultPrim")) {
-        auto v = fv.second.get_value<value::token>();
-        if (!v) {
-          PUSH_ERROR("`defaultPrim` must be `token` type.");
-          return false;
-        }
-
-        scene->defaultPrim = v.value().str();
-        DCOUT("defaultPrim = " << scene->defaultPrim);
-      } else if (fv.first == "customLayerData") {
-        if (auto v = fv.second.get_value<crate::CrateValue::Dictionary>()) {
-          auto dict = v.value();
-          (void)dict;
-          PUSH_WARN("TODO: Store customLayerData.");
-          // scene->customLayerData = fv.second.GetDictionary();
-        } else {
-          PUSH_ERROR("customLayerData must be `dict` type.");
-          return false;
-        }
-      } else if (fv.first == "primChildren") {
-        auto v = fv.second.get_value<std::vector<value::token>>();
-        if (!v) {
-          PUSH_ERROR("Type must be TokenArray for `primChildren`, but got " +
-                     fv.second.GetTypeName() + "\n");
-          return false;
-        }
-
-        // convert to string.
-        std::vector<std::string> children;
-        for (const auto &item : v.value()) {
-          children.push_back(item.str());
-        }
-        scene->primChildren = children;
-        DCOUT("primChildren = " << children);
-      } else if (fv.first == "documentation") {  // 'doc'
-
-        auto v = fv.second.get_value<std::string>();
-        if (!v) {
-          PUSH_ERROR("Type must be String for `documentation`, but got " +
-                     fv.second.GetTypeName() + "\n");
-          return false;
-        }
-        scene->doc = v.value();
-        DCOUT("doc = " << v.value());
-      } else {
-        PUSH_WARN("TODO: " + fv.first + "\n");
-        //_err += "TODO: " + fv.first + "\n";
-        return false;
-        // TODO(syoyo):
-      }
-    }
-  }
-
-  std::string node_type;
-  crate::CrateValue::Dictionary assetInfo;
-
-  auto GetTypeName = [](const FieldValuePairVector &fvs) -> nonstd::optional<std::string> {
-    for (const auto &fv : fvs) {
-      DCOUT(" fv.first = " << fv.first << ", type = " << fv.second.GetTypeName());
-      if (fv.first == "typeName") {
-        auto v = fv.second.get_value<value::token>();
-        if (v) {
-          return v.value().str();
-        }
-      }
-    }
-
-    return nonstd::nullopt;
-  };
-
-  DCOUT("---");
-
-  if (auto v = GetTypeName(fields)) {
-    node_type = v.value();
-  }
-
-  DCOUT("===");
-
-#if 0  // TODO: Refactor)
-  for (const auto &fv : fields) {
-    DCOUT(IndentStr(level) << "  \"" << fv.first
-                           << "\" : ty = " << fv.second.GetTypeName());
-
-    if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
-      DCOUT(IndentStr(level)
-            << "    specifier = " << to_string(fv.second.GetSpecifier()));
-    } else if ((fv.first == "primChildren") &&
-               (fv.second.GetTypeName() == "TokenArray")) {
-      // Check if TokenArray contains known child nodes
-      const auto &tokens = fv.second.GetStringArray();
-
-      // bool valid = true;
-      for (const auto &token : tokens) {
-        if (!node.GetPrimChildren().count(token)) {
-          _err += "primChild '" + token + "' not found in node '" +
-                  node.GetPath().full_path_name() + "'\n";
-          // valid = false;
-          break;
-        }
-      }
-    } else if (fv.second.GetTypeName() == "TokenArray") {
-      assert(fv.second.IsArray());
-      const auto &strs = fv.second.GetStringArray();
-      for (const auto &str : strs) {
-        (void)str;
-        DCOUT(IndentStr(level + 2) << str);
-      }
-    } else if ((fv.first == "customLayerData") &&
-               (fv.second.GetTypeName() == "Dictionary")) {
-      const auto &dict = fv.second.GetDictionary();
-
-      for (const auto &item : dict) {
-        if (item.second.GetTypeName() == "String") {
-          scene->customLayerData[item.first] = item.second.GetString();
-        } else if (item.second.GetTypeName() == "IntArray") {
-          const auto arr = item.second.GetIntArray();
-          scene->customLayerData[item.first] = arr;
-        } else {
-          PUSH_WARN("TODO(customLayerData): name " + item.first + ", type " +
-                    item.second.GetTypeName());
-        }
-      }
-
-    } else if (fv.second.GetTypeName() == "TokenListOp") {
-      PUSH_WARN("TODO: name " + fv.first + ", type TokenListOp.");
-    } else if (fv.second.GetTypeName() == "Vec3fArray") {
-      PUSH_WARN("TODO: name: " + fv.first +
-                ", type: " + fv.second.GetTypeName());
-
-    } else if ((fv.first == "assetInfo") &&
-               (fv.second.GetTypeName() == "Dictionary")) {
-      node_type = "assetInfo";
-      assetInfo = fv.second.GetDictionary();
-
-    } else {
-      PUSH_WARN("TODO: name: " + fv.first +
-                ", type: " + fv.second.GetTypeName());
-      // return false;
-    }
-  }
-#endif
-
-  DCOUT("node_type = " << node_type);
-
-
-  if (node_type == "Xform") {
-    Xform xform;
-    if (!ReconstructXform(node, fields, path_index_to_spec_index_map, &xform)) {
-      _err += "Failed to reconstruct Xform.\n";
-      return false;
-    }
-    scene->xforms.push_back(xform);
-  } else if (node_type == "BasisCurves") {
-    GeomBasisCurves curves;
-    if (!ReconstructGeomBasisCurves(node, fields, path_index_to_spec_index_map,
-                                    &curves)) {
-      _err += "Failed to reconstruct GeomBasisCurves.\n";
-      return false;
-    }
-    curves.name = node.GetLocalPath();  // FIXME
-    scene->geom_basis_curves.push_back(curves);
-  } else if (node_type == "GeomSubset") {
-    GeomSubset geom_subset;
-    // TODO(syoyo): Pass Parent 'Geom' node.
-    if (!ReconstructGeomSubset(node, fields, path_index_to_spec_index_map,
-                               &geom_subset)) {
-      _err += "Failed to reconstruct GeomSubset.\n";
-      return false;
-    }
-    geom_subset.name = node.GetLocalPath();  // FIXME
-    // TODO(syoyo): add GeomSubset to parent `Mesh`.
-    _err += "TODO: Add GeomSubset to Mesh.\n";
-    return false;
-
-  } else if (node_type == "Mesh") {
-    GeomMesh mesh;
-    if (!ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
-                             &mesh)) {
-      PUSH_ERROR("Failed to reconstruct GeomMesh.");
-      return false;
-    }
-    mesh.name = node.GetLocalPath();  // FIXME
-    scene->geom_meshes.push_back(mesh);
-  } else if (node_type == "Material") {
-    Material material;
-    if (!ReconstructMaterial(node, fields, path_index_to_spec_index_map,
-                             &material)) {
-      PUSH_ERROR("Failed to reconstruct Material.");
-      return false;
-    }
-    material.name = node.GetLocalPath();  // FIXME
-    scene->materials.push_back(material);
-  } else if (node_type == "Shader") {
-    Shader shader;
-    if (!ReconstructShader(node, fields, path_index_to_spec_index_map,
-                           &shader)) {
-      PUSH_ERROR("Failed to reconstruct PreviewSurface(Shader).");
-      return false;
-    }
-
-    shader.name = node.GetLocalPath();  // FIXME
-
-    scene->shaders.push_back(shader);
-  } else if (node_type == "Scope") {
-    std::cout << "TODO: Scope\n";
-  } else if (node_type == "assetInfo") {
-    PUSH_WARN("TODO: Reconstruct dictionary value of `assetInfo`");
-    //_nodes[size_t(parent)].SetAssetInfo(assetInfo);
-  } else if (node_type == "Skeleton") {
-    Skeleton skeleton;
-    if (!ReconstructSkeleton(node, fields, path_index_to_spec_index_map,
-                             &skeleton)) {
-      PUSH_ERROR("Failed to reconstruct Skeleton.");
-      return false;
-    }
-
-    skeleton.name = node.GetLocalPath();  // FIXME
-
-    scene->skeletons.push_back(skeleton);
-
-  } else if (node_type == "SkelRoot") {
-    SkelRoot skelRoot;
-    if (!ReconstructSkelRoot(node, fields, path_index_to_spec_index_map,
-                             &skelRoot)) {
-      PUSH_ERROR("Failed to reconstruct SkelRoot.");
-      return false;
-    }
-
-    skelRoot.name = node.GetLocalPath();  // FIXME
-
-    scene->skel_roots.push_back(skelRoot);
-  } else {
-    if (!node_type.empty()) {
-      DCOUT("TODO or we can ignore this node: node_type: " << node_type);
-    }
-  }
-
-  DCOUT("Children.size = " << node.GetChildren().size());
-
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    if (!ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
-                                     path_index_to_spec_index_map, scene)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReconstructScene(Scene *scene) {
-  if (_nodes.empty()) {
-    PUSH_WARN("Empty scene.");
-    return true;
-  }
-
-  std::unordered_map<uint32_t, uint32_t>
-      path_index_to_spec_index_map;  // path_index -> spec_index
-
-  {
-    for (size_t i = 0; i < _specs.size(); i++) {
-      if (_specs[i].path_index.value == ~0u) {
-        continue;
-      }
-
-      // path_index should be unique.
-      assert(path_index_to_spec_index_map.count(_specs[i].path_index.value) ==
-             0);
-      path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
-    }
-  }
-
-  int root_node_id = 0;
-
-  bool ret = ReconstructSceneRecursively(root_node_id, /* level */ 0,
-                                         path_index_to_spec_index_map, scene);
-
-  if (!ret) {
-    _err += "Failed to reconstruct scene.\n";
-    return false;
-  }
-
-  return true;
-}
-
-bool Parser::Impl::ReadSpecs() {
+bool CrateReader::ReadSpecs() {
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `SPECS` section.");
     return false;
@@ -5613,15 +3624,16 @@ bool Parser::Impl::ReadSpecs() {
                   << ", fieldset_index = " << _specs[i].fieldset_index.value
                   << ", spec_type = "
                   << tinyusdz::to_string(_specs[i].spec_type));
-    DCOUT("spec[" << i << "] string_repr = "
-                  << GetSpecString(crate::Index(uint32_t(i))));
+    if (auto specstr = GetSpecString(crate::Index(uint32_t(i)))) {
+      DCOUT("spec[" << i << "] string_repr = " << specstr.value());
+    }
   }
 #endif
 
   return true;
 }
 
-bool Parser::Impl::ReadPaths() {
+bool CrateReader::ReadPaths() {
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `PATHS` section.");
     return false;
@@ -5663,7 +3675,7 @@ bool Parser::Impl::ReadPaths() {
   return true;
 }
 
-bool Parser::Impl::ReadBootStrap() {
+bool CrateReader::ReadBootStrap() {
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
@@ -5716,7 +3728,7 @@ bool Parser::Impl::ReadBootStrap() {
   return true;
 }
 
-bool Parser::Impl::ReadTOC() {
+bool CrateReader::ReadTOC() {
   if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
     PUSH_ERROR("Invalid toc offset.");
     return false;
@@ -5772,105 +3784,266 @@ bool Parser::Impl::ReadTOC() {
   return true;
 }
 
-//
-// -- Interface --
-//
-Parser::Parser(StreamReader *sr, int num_threads) {
-  impl_ = new Parser::Impl(sr, num_threads);
-}
+///
+/// Find if a field with (`name`, `tyname`) exists in FieldValuePairVector.
+///
+bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
+                                    const std::string &name,
+                                    const std::string &tyname) {
+  for (const auto &fv : fvs) {
+    if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
+      return true;
+    }
+  }
 
-Parser::~Parser() {
-  delete impl_;
-  impl_ = nullptr;
-}
-
-bool Parser::ReadTOC() { return impl_->ReadTOC(); }
-
-bool Parser::ReadBootStrap() { return impl_->ReadBootStrap(); }
-
-bool Parser::ReadTokens() { return impl_->ReadTokens(); }
-
-bool Parser::ReadStrings() { return impl_->ReadStrings(); }
-
-bool Parser::ReadFields() { return impl_->ReadFields(); }
-
-bool Parser::ReadFieldSets() { return impl_->ReadFieldSets(); }
-
-bool Parser::ReadPaths() { return impl_->ReadPaths(); }
-
-bool Parser::ReadSpecs() { return impl_->ReadSpecs(); }
-
-bool Parser::BuildLiveFieldSets() { return impl_->BuildLiveFieldSets(); }
-
-bool Parser::ReconstructScene(Scene *scene) {
-  return impl_->ReconstructScene(scene);
-}
-
-std::string Parser::GetError() { return impl_->GetError(); }
-
-std::string Parser::GetWarning() { return impl_->GetWarning(); }
-
-size_t Parser::NumPaths() { return impl_->NumPaths(); }
-
-Path Parser::GetPath(crate::Index index) { return impl_->GetPath(index); }
-
-}  // namespace usdc
-}  // namespace tinyusdz
-
-
-#else
-
-namespace tinyusdz {
-namespace usdc {
-
-//
-// -- Interface --
-//
-Parser::Parser(StreamReader *sr, int num_threads) {
-  (void)sr;
-  (void)num_threads;
-}
-
-Parser::~Parser() {
-}
-
-bool Parser::ReadTOC() { return false; }
-
-bool Parser::ReadBootStrap() { return false; }
-
-bool Parser::ReadTokens() { return false; }
-
-bool Parser::ReadStrings() { return false; }
-
-bool Parser::ReadFields() { return false; }
-
-bool Parser::ReadFieldSets() { return false; }
-
-bool Parser::ReadPaths() { return false; }
-
-bool Parser::ReadSpecs() { return false; }
-
-bool Parser::BuildLiveFieldSets() { return false; }
-
-bool Parser::ReconstructScene(Scene *scene) {
-  (void)scene;
   return false;
 }
 
-std::string Parser::GetError() { 
-  return "USDC parser feature is disabled in this build.\n";
+///
+/// Find if a field with `name`(type can be arbitrary) exists in
+/// FieldValuePairVector.
+///
+bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
+                                    const std::string &name) {
+  for (const auto &fv : fvs) {
+    if (fv.first == name) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
-std::string Parser::GetWarning() { return ""; }
+nonstd::expected<CrateReader::FieldValuePair, std::string>
+CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
+                               const std::string &name,
+                               const std::string &tyname) {
+  for (const auto &fv : fvs) {
+    if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
+      return fv;
+    }
+  }
 
-size_t Parser::NumPaths() { return 0; }
-
-Path Parser::GetPath(crate::Index index) {
-  (void)index;
-  return Path();
+  return nonstd::make_unexpected("FieldValuePair not found with name: `" +
+                                 name + "` and specified type: `" + tyname +
+                                 "`");
 }
 
-}  // namespace usdc
+nonstd::expected<CrateReader::FieldValuePair, std::string>
+CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
+                               const std::string &name) {
+  for (const auto &fv : fvs) {
+    if (fv.first == name) {
+      return fv;
+    }
+  }
+
+  return nonstd::make_unexpected("FieldValuePair not found with name: `" +
+                                 name + "`");
+}
+
+bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
+                                 PrimAttrib *attr,
+                                 const std::string &prop_name) {
+  bool success = false;
+
+  DCOUT("fvs.size = " << fvs.size());
+
+  bool has_connection{false};
+
+  Variability variability{Variability::Varying};
+  Interpolation interpolation{Interpolation::Invalid};
+
+  // Check if required field exists.
+  if (!HasFieldValuePair(fvs, kTypeName, kToken)) {
+    PUSH_ERROR(
+        "\"typeName\" field with `token` type must exist for Attribute data.");
+    return false;
+  }
+
+  if (!HasField(kDefault)) {
+    PUSH_ERROR("\"default\" field must exist for Attribute data.");
+    return false;
+  }
+
+  //
+  // Parse properties
+  //
+  for (const auto &fv : fvs) {
+    DCOUT("===  fvs.first " << fv.first
+                            << ", second: " << fv.second.GetTypeName());
+    if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
+      attr->type_name = fv.second.value<value::token>().str();
+      DCOUT("typeName: " << attr->type_name);
+    } else if (fv.first == "default") {
+      // Nothing to do at there. Process `default` in the later
+      continue;
+    } else if (fv.first == "targetPaths") {
+      // e.g. connection to Material.
+      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
+
+      DCOUT("ListOp<Path> = " << to_string(paths));
+      // Currently we only support single explicit path.
+      if ((paths.GetExplicitItems().size() == 1)) {
+        const Path &path = paths.GetExplicitItems()[0];
+        (void)path;
+
+        DCOUT("full path: " << path.full_path_name());
+        DCOUT("local path: " << path.local_path_name());
+
+        attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
+
+        has_connection = true;
+
+      } else {
+        return false;
+      }
+    } else if (fv.first == "connectionPaths") {
+      // e.g. connection to texture file.
+      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
+
+      DCOUT("ListOp<Path> = " << to_string(paths));
+
+      // Currently we only support single explicit path.
+      if ((paths.GetExplicitItems().size() == 1)) {
+        const Path &path = paths.GetExplicitItems()[0];
+        (void)path;
+
+        DCOUT("full path: " << path.full_path_name());
+        DCOUT("local path: " << path.local_path_name());
+
+        attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
+
+        has_connection = true;
+
+      } else {
+        return false;
+      }
+    } else if ((fv.first == "variablity") &&
+               (fv.second.GetTypeName() == "Variability")) {
+      variability = fv.second.value<Variability>();
+    } else if ((fv.first == "interpolation") &&
+               (fv.second.GetTypeName() == "Token")) {
+      interpolation =
+          InterpolationFromString(fv.second.value<value::token>().str());
+    } else {
+      DCOUT("TODO: name: " << fv.first
+                           << ", type: " << fv.second.GetTypeName());
+    }
+  }
+
+  attr->variability = variability;
+  attr->meta.interpolation = interpolation;
+
+  //
+  // Decode value(stored in "default" field)
+  //
+  const auto fvRet = GetFieldValuePair(fvs, kDefault);
+  if (!fvRet) {
+    // This code path should not happen. Just in case.
+    PUSH_ERROR("`default` field not found.");
+    return false;
+  }
+  const auto fv = fvRet.value();
+
+  auto add1DArraySuffix = [](const std::string &a) -> std::string {
+    return a + "[]";
+  };
+
+  {
+    if (fv.first == "default") {
+      attr->name = prop_name;
+
+      DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
+
+#define PROC_SCALAR(__tyname, __ty)                             \
+  }                                                             \
+  else if (fv.second.GetTypeName() == __tyname) {               \
+    auto ret = fv.second.get_value<__ty>();                     \
+    if (!ret) {                                                 \
+      PUSH_ERROR("Failed to decode " << __tyname << " value."); \
+      return false;                                             \
+    }                                                           \
+    attr->var.set_scalar(ret.value());                          \
+    success = true;
+
+#define PROC_ARRAY(__tyname, __ty)                                  \
+  }                                                                 \
+  else if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) { \
+    auto ret = fv.second.get_value<std::vector<__ty>>();            \
+    if (!ret) {                                                     \
+      PUSH_ERROR("Failed to decode " << __tyname << "[] value.");   \
+      return false;                                                 \
+    }                                                               \
+    attr->var.set_scalar(ret.value());                              \
+    success = true;
+
+      if (0) {  // dummy
+        PROC_SCALAR(value::kFloat, float)
+        PROC_SCALAR(value::kBool, bool)
+        PROC_SCALAR(value::kInt, int)
+        PROC_SCALAR(value::kFloat2, value::float2)
+        PROC_SCALAR(value::kFloat3, value::float3)
+        PROC_SCALAR(value::kFloat4, value::float4)
+        PROC_SCALAR(value::kHalf2, value::half2)
+        PROC_SCALAR(value::kHalf3, value::half3)
+        PROC_SCALAR(value::kHalf4, value::half4)
+        PROC_SCALAR(value::kToken, value::token)
+        PROC_SCALAR(value::kAssetPath, value::asset_path)
+
+        PROC_SCALAR(value::kMatrix2d, value::matrix2d)
+        PROC_SCALAR(value::kMatrix3d, value::matrix3d)
+        PROC_SCALAR(value::kMatrix4d, value::matrix4d)
+
+        // It seems `token[]` is defined as `TokenVector` in CrateData.
+        // We tret it as scalar
+        PROC_SCALAR("TokenVector", std::vector<value::token>)
+
+        // TODO(syoyo): Use constexpr concat
+        PROC_ARRAY(value::kInt, int32_t)
+        PROC_ARRAY(value::kUInt, uint32_t)
+        PROC_ARRAY(value::kFloat, float)
+        PROC_ARRAY(value::kFloat2, value::float2)
+        PROC_ARRAY(value::kFloat3, value::float3)
+        PROC_ARRAY(value::kFloat4, value::float4)
+        PROC_ARRAY(value::kToken, value::token)
+
+        PROC_ARRAY(value::kMatrix2d, value::matrix2d)
+        PROC_ARRAY(value::kMatrix3d, value::matrix3d)
+        PROC_ARRAY(value::kMatrix4d, value::matrix4d)
+
+        PROC_ARRAY(value::kPoint3h, value::point3h)
+        PROC_ARRAY(value::kPoint3f, value::point3f)
+        PROC_ARRAY(value::kPoint3d, value::point3d)
+
+        PROC_ARRAY(value::kVector3h, value::vector3h)
+        PROC_ARRAY(value::kVector3f, value::vector3f)
+        PROC_ARRAY(value::kVector3d, value::vector3d)
+
+        PROC_ARRAY(value::kNormal3h, value::normal3h)
+        PROC_ARRAY(value::kNormal3f, value::normal3f)
+        PROC_ARRAY(value::kNormal3d, value::normal3d)
+
+        // PROC_ARRAY("Vec2fArray", value::float2)
+        // PROC_ARRAY("Vec3fArray", value::float3)
+        // PROC_ARRAY("Vec4fArray", value::float4)
+        // PROC_ARRAY("IntArray", int)
+        // PROC_ARRAY(kTokenArray, value::token)
+
+      } else {
+        PUSH_ERROR("TODO: " + fv.second.GetTypeName());
+      }
+    }
+  }
+
+  if (!success && has_connection) {
+    // Attribute has a connection(has a path and no `default` field)
+    success = true;
+  }
+
+  return success;
+}
+
+
+}  // namespace crate
 }  // namespace tinyusdz
-
-#endif

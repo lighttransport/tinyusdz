@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  tinyusdz::Scene scene;
+  tinyusdz::HighLevelScene scene;
 
   if (ext.compare("usdz") == 0) {
     bool ret = tinyusdz::LoadUSDZFromFile(filepath, &scene, &warn, &err);

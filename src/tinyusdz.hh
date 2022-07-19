@@ -63,7 +63,7 @@ constexpr int version_major = 0;
 constexpr int version_minor = 8;
 constexpr int version_micro = 0;
 
-
+#if 0
 //
 // Data structure for rendering pipeline.
 //
@@ -356,7 +356,7 @@ struct BufferData {
     return nonstd::nullopt;
   }
 };
-
+#endif
 
 value::matrix4d GetTransform(XformOp xform);
 
@@ -386,35 +386,63 @@ struct StringAndIdMap {
 };
 
 
-enum NodeType {
-  NODE_TYPE_NULL = 0,
-  NODE_TYPE_XFORM,
-  NODE_TYPE_SCOPE,
-  NODE_TYPE_SPHERE,
-  NODE_TYPE_GEOM_MESH,
-  NODE_TYPE_GEOM_BASISCURVES,
-  NODE_TYPE_MATERIAL,
-  NODE_TYPE_SHADER,
-  NODE_TYPE_CUSTOM  // Uer defined custom node
+//
+// For high-level scene graph.
+// Easy to use API, but may not be performant.
+// 
+class PrimNode {
+ public:
+  std::string name;
 
+  PrimNode(const value::Value &rhs) : data(rhs) {
+  }
+
+  PrimNode(value::Value &&rhs) : data(rhs) {
+  }
+
+  value::Value data; // GPrim, Xform, ...
+
+  //int64_t parent{-1};          // parent node index
+  std::vector<PrimNode> children;  // child nodes
 };
 
+//
+// For low-level scene graph representation, something like Vulkan.
+// Less abstraction, and scene graph is representated by indices.
+// 
 struct Node {
   std::string name;
 
-  NodeType type{NODE_TYPE_NULL};
+  value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
 
   //
-  // index to a scene object.
-  // For example, Lookup `xforms[node_idx]` When node type is XFORM
+  // index to a `Scene::node_indices`
   //
   int64_t index{-1};
 
-  // Metadata
-  value::dict assetInfo;
-
-  //int64_t parent;                 // parent node index. Example: `nodes[parent]`
+  int64_t parent{-1};          // parent node index
   std::vector<Node> children;  // child nodes
+};
+
+struct HighLevelScene {
+  std::string name;       // Scene name
+  int64_t default_root_node{-1};  // index to default root node
+
+  // Scene global setting
+  std::string upAxis = "Y";
+  std::string defaultPrim;           // prim node name
+  double metersPerUnit = 1.0;        // default [m]
+  double timeCodesPerSecond = 24.0;  // default 24 fps
+  std::string doc; // `documentation`
+  std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
+
+  // Currently `string` type value only.
+  //std::map<std::string, std::string> customLayerData; // TODO(syoyo): Support arbitrary value
+  value::dict customLayerData;
+
+  // Root nodes
+  std::vector<PrimNode> root_nodes;
+
 };
 
 struct NodeIndex {
@@ -428,13 +456,9 @@ struct NodeIndex {
                   // -1 = invlid(or not set)
 };
 
-struct Scene {
+struct LowLevelScene {
   std::string name;       // Scene name
   int64_t default_root_node{-1};  // index to default root node
-
-  // Node hierarchies
-  // Scene can have multiple nodes.
-  std::vector<Node> nodes;
 
   // Scene global setting
   std::string upAxis = "Y";
@@ -479,9 +503,23 @@ struct Scene {
   StringAndIdMap geom_meshes_map;  // Path <-> array index map
   StringAndIdMap materials_map;    // Path <-> array index map
 
+  // Scene node graph(index-based)
+  std::vector<Node> nodes;
+
   std::vector<NodeIndex> node_indices;
 
 };
+
+#if 0
+// Similar to UsdStage. Mostly equals to `Scene`
+class Stage {
+
+ public:
+  // Root node graph
+  std::vector<Node> nodes;
+
+};
+#endif
 
 struct USDLoadOptions {
   ///
@@ -524,14 +562,14 @@ struct USDLoadOptions {
 ///
 /// @return true upon success
 ///
-bool LoadUSDZFromFile(const std::string &filename, Scene *scene,
+bool LoadUSDZFromFile(const std::string &filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 
 
 #ifdef _WIN32
 // WideChar version
-bool LoadUSDZFromFile(const std::wstring &filename, Scene *scene,
+bool LoadUSDZFromFile(const std::wstring &filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 #endif
@@ -547,7 +585,7 @@ bool LoadUSDZFromFile(const std::wstring &filename, Scene *scene,
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
+bool LoadUSDCFromFile(const std::string &filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 
@@ -563,7 +601,7 @@ bool LoadUSDCFromFile(const std::string &filename, Scene *scene,
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, HighLevelScene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
 
@@ -578,7 +616,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 ///
 /// @return true upon success
 ///
-bool LoadUSDAFromFile(const std::string &filename, Scene *scene,
+bool LoadUSDAFromFile(const std::string &filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 
@@ -595,7 +633,7 @@ bool LoadUSDAFromFile(const std::string &filename, Scene *scene,
 ///
 /// @return true upon success
 ///
-bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Scene *scene,
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, HighLevelScene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
 

@@ -55,7 +55,7 @@ struct GUIContext {
   int render_height = 512;
 
   // scene reload
-  tinyusdz::Scene scene;
+  tinyusdz::HighLevelScene scene;
   std::atomic<bool> request_reload{false};
   std::string filename;
 

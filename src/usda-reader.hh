@@ -4,6 +4,8 @@
 #include "tinyusdz.hh"
 #include "stream-reader.hh"
 
+#include "ascii-parser.hh"
+
 namespace tinyusdz {
 
 namespace usda {
@@ -21,19 +23,19 @@ enum LoadState {
 ///
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
-class USDAParser {
+class USDAReader {
  public:
   struct ParseState {
     int64_t loc{-1};  // byte location in StreamReder
   };
 
-  USDAParser() = delete;
-  USDAParser(tinyusdz::StreamReader *sr);
+  USDAReader() = delete;
+  USDAReader(tinyusdz::StreamReader *sr);
 
-  USDAParser(const USDAParser &rhs) = delete;
-  USDAParser(USDAParser &&rhs) = delete;
+  USDAReader(const USDAReader &rhs) = delete;
+  USDAReader(USDAReader &&rhs) = delete;
 
-  ~USDAParser();
+  ~USDAReader();
 
 
   ///
@@ -47,9 +49,9 @@ class USDAParser {
   bool CheckHeader();
 
   ///
-  /// Parser entry point
+  /// Reader entry point
   ///
-  bool Parse(LoadState state = LOAD_STATE_TOPLEVEL);
+  bool Read(LoadState state = LOAD_STATE_TOPLEVEL);
 
   ///
   ///
@@ -74,7 +76,7 @@ class USDAParser {
   /// 
   /// Get as scene
   ///
-  const Scene& GetScene() const;
+  const HighLevelScene& GetHighLevelScene() const;
   
  private:
   class Impl;
