@@ -139,7 +139,7 @@
   } while (0)
 #endif
 
-#if defined(TINYUSDZ_PRODUCTION_BUILD)
+#if !defined(TINYUSDZ_PRODUCTION_BUILD)
 #define TINYUSDZ_LOCAL_DEBUG_PRINT
 #endif
 
@@ -165,13 +165,16 @@ static void RegisterStageMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+
+  // TODO: both support float and double?
   metas["metersPerUnit"] =
-      AsciiParser::VariableDef(value::kFloat, "metersPerUnit");
+      AsciiParser::VariableDef(value::kDouble, "metersPerUnit");
+  metas["timeCodesPerSecond"] =
+      AsciiParser::VariableDef(value::kDouble, "timeCodesPerSecond");
+
   metas["defaultPrim"] =
       AsciiParser::VariableDef(value::kString, "defaultPrim");
   metas["upAxis"] = AsciiParser::VariableDef(value::kString, "upAxis");
-  metas["timeCodesPerSecond"] =
-      AsciiParser::VariableDef(value::kFloat, "timeCodesPerSecond");
   metas["customLayerData"] =
       AsciiParser::VariableDef(value::kDictionary, "customLayerData");
 
@@ -255,6 +258,8 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
 
   // TODO: Add more types...
 }
+
+static RegisterPrimTypes(
 
 namespace {
 
@@ -2653,7 +2658,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   }
 
   if (!IsStageMeta(varname)) {
-    std::string msg = "'" + varname + "' is not a builtin Metadata variable.\n";
+    std::string msg = "'" + varname + "' is not a Stage Metadata variable.\n";
     PushError(msg);
     return false;
   }
@@ -2664,7 +2669,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   }
   SkipWhitespace();
 
-  VariableDef &vardef = _stage_metas.at(varname);
+  VariableDef &vardef = _supported_stage_metas.at(varname);
   PrimVariable var;
   if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
     PushError("Failed to parse meta value.\n");
@@ -2672,39 +2677,76 @@ bool AsciiParser::ParseStageMetaOpt() {
   }
 
   //
-  // Materialize builtin variables
+  // Process Stage meta variables
   //
-#if 0  // TODO
-    if (varname == "defaultPrim") {
-      if (auto pv = var.as_value()) {
-        if (auto p = nonstd::get_if<std::string>(pv)) {
-          _defaultPrim = *p;
-        }
-      }
+  if (varname == "defaultPrim" ) {
+    if (auto pv = var.value.get_value<std::string>()) {
+      DCOUT("defaultPrim = " << pv.value());
+      _stage_metas.defaultPrim = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`defaultPrim` isn't a string value.");
     }
-#endif
-
-  std::vector<std::string> sublayers;
-#if 0  // TODO
-    if (varname == "subLayers") {
-      if (var.IsArray()) {
-        auto parr = var.as_array();
-
-        if (parr) {
-          auto arr = parr->values;
-          for (size_t i = 0; i < arr.size(); i++) {
-            if (arr[i].IsValue()) {
-              auto pv = arr[i].as_value();
-              if (auto p = nonstd::get_if<std::string>(pv)) {
-                sublayers.push_back(*p);
-              }
-            }
-          }
-        }
+  } else if (varname == "subLayers") {
+    if (auto pv = var.value.get_value<std::vector<std::string>>()) {
+      DCOUT("subLayers = " << pv.value());
+      for (const auto &item : pv.value()) {
+          _stage_metas.subLayers.push_back(item);
       }
+    } else {
+      PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of string values.");
     }
-#endif
+  } else if (varname == "upAxis") {
+    if (auto pv = var.value.get_value<std::string>()) {
+      DCOUT("upAxis = " << pv.value());
+      const std::string s = pv.value();
+      if (s == "X") {
+        _stage_metas.upAxis = Axis::X;
+      } else if (s == "Y") {
+        _stage_metas.upAxis = Axis::Y;
+      } else if (s == "Z") {
+        _stage_metas.upAxis = Axis::Z;
+      } else {
+        PUSH_ERROR_AND_RETURN("Invalid `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got \"" + s + "\"(Note: Case sensitive)");
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("`upAxis` isn't a string value.");
+    }
+  } else if (varname == "doc") {
+    if (auto pv = var.value.get_value<std::string>()) {
+      DCOUT("doc = " << pv.value());
+      _stage_metas.doc = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`doc` isn't a string value.");
+    }
+  } else if (varname == "metersPerUnit") {
+    DCOUT("ty = " << var.value.type_name());
+    if (auto pv = var.value.get_value<float>()) {
+      DCOUT("metersPerUnit = " << pv.value());
+      _stage_metas.metersPerUnit = double(pv.value());
+    } else if (auto pvd = var.value.get_value<double>()) {
+      DCOUT("metersPerUnit = " << pvd.value());
+      _stage_metas.metersPerUnit = pvd.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`metersPerUnit` isn't a floating-point value.");
+    }
+  } else if (varname == "timeCodesPerSecond") {
+    DCOUT("ty = " << var.value.type_name());
+    if (auto pv = var.value.get_value<float>()) {
+      DCOUT("metersPerUnit = " << pv.value());
+      _stage_metas.timeCodesPerSecond = double(pv.value());
+    } else if (auto pvd = var.value.get_value<double>()) {
+      DCOUT("metersPerUnit = " << pvd.value());
+      _stage_metas.timeCodesPerSecond = pvd.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`timeCodesPerSecond` isn't a floating-point value.");
+    }
+  } else {
+    DCOUT("TODO: Stage meta: " << varname);
+    PUSH_WARN("TODO: Stage meta: " << varname);
+  }
 
+
+#if 0 // Load subLayers in usda-reader
   // Load subLayers
   if (sublayers.size()) {
     // Create another USDA parser.
@@ -2737,8 +2779,9 @@ bool AsciiParser::ParseStageMetaOpt() {
 
     // TODO: Merge/Import subLayer.
   }
+#endif
 
-#if 0
+#if 0 // TODO
     if (var.type == "string") {
       std::string value;
       std::cout << "read string literal\n";
@@ -2835,15 +2878,20 @@ bool AsciiParser::ParseStageMetas() {
   }
 
   while (!_sr->eof()) {
+    DCOUT("aaa");
     if (Expect(')')) {
+      DCOUT("aaa)");
       if (!SkipWhitespaceAndNewline()) {
         return false;
       }
+
+      DCOUT("aaa end");
 
       // end
       return true;
 
     } else {
+      DCOUT("aaa not");
       if (!SkipWhitespace()) {
         // eof
         return false;
@@ -2860,6 +2908,7 @@ bool AsciiParser::ParseStageMetas() {
     }
   }
 
+  DCOUT("ParseStageMetas end");
   return true;
 }
 
@@ -3549,7 +3598,7 @@ bool AsciiParser::ParseMetaValue(const std::string &vartype,
   PrimVariable var;
 
   // TODO: Refactor.
-  if (vartype == "string") {
+  if (vartype == value::kString) {
     std::string value;
     if (!ReadStringLiteral(&value)) {
       std::string msg = "String literal expected for `" + varname + "`.\n";
@@ -3585,13 +3634,6 @@ bool AsciiParser::ParseMetaValue(const std::string &vartype,
       return false;
     }
 
-    // PrimVariable::Array arr;
-    // for (size_t i = 0; i < values.size(); i++) {
-    //   PrimVariable v;
-    //   v.value = values[i];
-    //   arr.values.push_back(v);
-    // }
-
     var.value = values;
   } else if (vartype == "float3[]") {
     std::vector<std::array<float, 3>> values;
@@ -3600,7 +3642,21 @@ bool AsciiParser::ParseMetaValue(const std::string &vartype,
     }
 
     var.value = values;
-  } else if (vartype == "float") {
+  } else if (vartype == "double[]") {
+    std::vector<double> values;
+    if (!ParseBasicTypeArray<double>(&values)) {
+      return false;
+    }
+
+    var.value = values;
+  } else if (vartype == "double3[]") {
+    std::vector<value::double3> values;
+    if (!ParseTupleArray(&values)) {
+      return false;
+    }
+
+    var.value = values;
+  } else if (vartype == value::kFloat) {
     std::string fval;
     std::string ferr;
     if (!LexFloat(&fval)) {
@@ -3608,6 +3664,20 @@ bool AsciiParser::ParseMetaValue(const std::string &vartype,
                             "`.");
     }
     auto ret = ParseFloat(fval);
+    if (!ret) {
+      PUSH_ERROR_AND_RETURN("Failed to parse floating point literal for `" +
+                            varname + "`.");
+    }
+
+    var.value = ret.value();
+  } else if (vartype == value::kDouble) {
+    std::string fval;
+    std::string ferr;
+    if (!LexFloat(&fval)) {
+      PUSH_ERROR_AND_RETURN("Floating point literal expected for `" + varname +
+                            "`.");
+    }
+    auto ret = ParseDouble(fval);
     if (!ret) {
       PUSH_ERROR_AND_RETURN("Failed to parse floating point literal for `" +
                             varname + "`.");
@@ -3624,7 +3694,8 @@ bool AsciiParser::ParseMetaValue(const std::string &vartype,
     }
 
     var.value = values;
-  } else if (vartype == "object") {
+  } else if (vartype == value::kDictionary) {
+    DCOUT("dict type");
     if (!Expect('{')) {
       PushError("'{' expected.\n");
       return false;
@@ -3837,8 +3908,8 @@ bool AsciiParser::LexFloat(std::string *result) {
 
 nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
     const std::string &name) {
-  if (_stage_metas.count(name)) {
-    return _stage_metas.at(name);
+  if (_supported_stage_metas.count(name)) {
+    return _supported_stage_metas.at(name);
   }
 
   return nonstd::nullopt;
@@ -4010,7 +4081,7 @@ AsciiParser::ParsePrimMeta() {
   }
   SkipWhitespace();
 
-  VariableDef &vardef = _prim_metas.at(varname);
+  VariableDef &vardef = _supported_prim_metas.at(varname);
   PrimVariable var;
   if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
     PushError("Failed to parse meta value.\n");
@@ -4073,8 +4144,8 @@ bool AsciiParser::ParsePrimMetas(
 
     // ty = std::tuple<ListEditQual, PrimVariable>;
     if (auto m = ParsePrimMeta()) {
-      DCOUT("arg: list-edit qual = " << tinyusdz::to_string(std::get<0>(arg))
-                                     << ", name = " << std::get<1>(arg).name);
+      DCOUT("arg: list-edit qual = " << tinyusdz::to_string(std::get<0>(m.value()))
+                                     << ", name = " << std::get<1>(m.value()).name);
 
       (*args)[std::get<1>(m.value()).name] = m.value();
     } else {
@@ -4704,14 +4775,30 @@ std::string AsciiParser::GetCurrentPath() {
   return _path_stack.top();
 }
 
-AsciiParser::AsciiParser() {}
-AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) {}
+//
+// -- ctor, dtor
+//
+
+AsciiParser::AsciiParser() {
+  Setup();
+}
+
+AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) {
+  Setup();
+}
+
+void AsciiParser::Setup() {
+  RegisterStageMetas(_supported_stage_metas);
+  RegisterPrimMetas(_supported_prim_metas);
+  RegisterPrimAttrTypes(_registered_prim_attr_types);
+}
+
 AsciiParser::~AsciiParser() {}
 
 bool AsciiParser::CheckHeader() { return ParseMagicHeader(); }
 
 bool AsciiParser::IsStageMeta(const std::string &name) {
-  return _stage_metas.count(name) ? true : false;
+  return _supported_stage_metas.count(name) ? true : false;
 }
 
 ///
@@ -4724,7 +4811,7 @@ bool AsciiParser::ParseClassBlock() {
 
   {
     std::string tok;
-    if (!ReadBasicType(&tok)) {
+    if (!ReadIdentifier(&tok)) {
       return false;
     }
 
@@ -4836,7 +4923,7 @@ bool AsciiParser::ParseOverBlock() {
     return false;
   }
 
-  if (!ReadBasicType(&tok)) {
+  if (!ReadIdentifier(&tok)) {
     return false;
   }
 
@@ -4903,7 +4990,7 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
     return false;
   }
 
-  if (!ReadBasicType(&def)) {
+  if (!ReadIdentifier(&def)) {
     return false;
   }
 
@@ -4939,11 +5026,11 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
   std::string prim_type;
 
   if (has_primtype) {
-    if (!ReadBasicType(&prim_type)) {
+    if (!ReadIdentifier(&prim_type)) {
       return false;
     }
 
-    if (!_node_types.count(prim_type)) {
+    if (!_supported_node_types.count(prim_type)) {
       std::string msg =
           "`" + prim_type +
           "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
@@ -5242,9 +5329,6 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
 /// TODO: Refactor
 ///
 bool AsciiParser::Parse(LoadState state) {
-  RegisterStageMetas(_stage_metas);
-  RegisterPrimMetas(_prim_metas);
-  RegisterPrimAttrTypes(_registered_prim_attr_types);
 
   _sub_layered = (state == LOAD_STATE_SUBLAYER);
   _referenced = (state == LOAD_STATE_REFERENCE);

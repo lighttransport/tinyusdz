@@ -144,6 +144,18 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
 
 } // namespace
 
+std::string to_string(tinyusdz::Axis v) {
+  if (v == tinyusdz::Axis::X) {
+    return "\"X\"";
+  } else if (v == tinyusdz::Axis::Y) {
+    return "\"Y\"";
+  } else if (v == tinyusdz::Axis::Z) {
+    return "\"Z\"";
+  } else {
+    return "\"[[InvalidAxis]]\"";
+  }
+}
+
 std::string to_string(tinyusdz::Visibility v) {
   if (v == tinyusdz::Visibility::Inherited) {
     return "\"inherited\"";
