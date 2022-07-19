@@ -125,6 +125,12 @@ inline T atoi_negative(char const* p, char const* e, int& errcode) JSTEEMANN_NOE
 
   do {
     char c = *p;
+
+    if ((c == '\0') || (c == ' ') || (c == '\t') || (c == '\n') || (c == '\r')) {
+      errcode = 0;
+      return result;
+    }
+
     // we expect only '0' to '9'. everything else is unexpected
     if (ATOI_UNLIKELY(c < '0' || c > '9')) {
       errcode = -1;
@@ -167,6 +173,11 @@ inline T atoi_positive(char const* p, char const* e, int& errcode) JSTEEMANN_NOE
 
   do {
     char c = *p;
+
+    if ((c == '\0') || (c == ' ') || (c == '\t') || (c == '\n') || (c == '\r')) {
+      errcode = 0;
+      return result;
+    }
 
     // we expect only '0' to '9'. everything else is unexpected
     if (ATOI_UNLIKELY(c < '0' || c > '9')) {

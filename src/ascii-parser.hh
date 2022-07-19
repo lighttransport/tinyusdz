@@ -308,7 +308,8 @@ class AsciiParser {
   // `#` style comment
   bool ParseSharpComment();
 
-  bool IsRegisteredPrimAttrType(const std::string &ty);
+  bool IsSupportedPrimAttrType(const std::string &ty);
+  bool IsSupportedPrimType(const std::string &ty);
 
   bool Eof() { return _sr->eof(); }
 
@@ -461,8 +462,9 @@ class AsciiParser {
 
   Cursor _curr_cursor;
 
-  std::set<std::string> _supported_node_types;
-  std::set<std::string> _registered_prim_attr_types;
+  // Supported Prim types
+  std::set<std::string> _supported_prim_types;
+  std::set<std::string> _supported_prim_attr_types;
 
   // Supported metadataum for Stage
   std::map<std::string, VariableDef> _supported_stage_metas;

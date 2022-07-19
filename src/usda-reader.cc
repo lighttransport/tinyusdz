@@ -580,6 +580,7 @@ class USDAReader::Impl {
 
       std::string tok;
       if (!_parser.ReadIdentifier(&tok)) {
+        DCOUT("Failed to read identifier");
         PUSH_PARSER_ERROR_AND_RETURN();
       }
       DCOUT("tok = " << tok);
