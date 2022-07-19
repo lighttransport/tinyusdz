@@ -100,7 +100,8 @@ bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere,
   if (sphere.radius.IsTimeSampled()) {
     // TODO
   } else {
-    radius = sphere.radius.Get();
+    // TODO
+    //radius = sphere.radius.Get();
   }
 
   // scale by radius

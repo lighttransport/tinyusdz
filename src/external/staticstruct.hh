@@ -13,6 +13,13 @@
 
 #pragma once
 
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
+
 #include <cmath>
 #include <functional>
 #include <iostream>  // dbg

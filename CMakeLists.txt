@@ -51,11 +51,11 @@ option(TINYUSDZ_PRODUCTION_BUILD
        "Build for production release(e.g. disables debug print, do not include full filepath in error messages)" OFF)
 
 # -- modules --
-option(TINYUSDZ_WITH_MODULE_USDA_PARSER "Build with USDA parser feature" ON)
+option(TINYUSDZ_WITH_MODULE_USDA_READER "Build with USDA reader feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
 
-# USDC(Crate binary) parser is mandatory in most situation, so this option is primarily for developer build.
-option(TINYUSDZ_WITH_MODULE_USDC_PARSER "Build with USDC parser feature" ON)
+# USDC(Crate binary) reader is mandatory in most situation, so this option is primarily for developer build.
+option(TINYUSDZ_WITH_MODULE_USDC_READER "Build with USDC reader feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 # -------------
 
@@ -149,10 +149,12 @@ endif()
 
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
-    ${PROJECT_SOURCE_DIR}/src/usda-parser.cc
-    ${PROJECT_SOURCE_DIR}/src/usdc-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
@@ -401,9 +403,9 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   endif()
 
   # default = enable module, so invert definition
-  if (NOT TINYUSDZ_WITH_MODULE_USDA_PARSER)
+  if (NOT TINYUSDZ_WITH_MODULE_USDA_READER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_PARSER")
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
   endif()
 
   if (NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
@@ -411,9 +413,9 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
   endif()
 
-  if (NOT TINYUSDZ_WITH_MODULE_USDC_PARSER)
+  if (NOT TINYUSDZ_WITH_MODULE_USDC_READER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_PARSER")
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
   endif()
 
   if (NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
@@ -501,6 +503,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     PROPERTIES
       COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS}
   )
+
 endif()
 
 if(TINYUSDZ_WITH_C_API)
@@ -527,7 +530,7 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
 endif()
 
-if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_PARSER)
+if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
   add_executable(usda_parser
                  ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
   add_sanitizers(usda_parser)
@@ -582,7 +585,7 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # USDA parser tester
   #
-  if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_PARSER)
+  if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
     add_test(
       NAME usda-parser-unit-test
       COMMAND python ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app

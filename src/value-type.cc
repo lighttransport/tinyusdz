@@ -90,6 +90,7 @@ bool is_double4(const Value &v) {
   return false;
 }
 
+#if 0 // TODO: Remove
 bool Reconstructor::reconstruct(AttribMap &amap) {
   err_.clear();
 
@@ -209,8 +210,9 @@ bool Reconstructor::reconstruct(AttribMap &amap) {
 #undef CONVERT_TYPE_2D
 #undef CONVERT_TYPE_LIST
 }
+#endif
 
-std::string GetTypeName(uint32_t tyid) {
+nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
@@ -284,11 +286,22 @@ std::string GetTypeName(uint32_t tyid) {
   }
 
   if (!m.count(tyid)) {
-    return "(GetTypeName) [[Unknown or unsupported type_id: " +
-           std::to_string(tyid) + "]]";
+    return nonstd::nullopt;
   }
 
   return m.at(tyid);
+}
+
+std::string GetTypeName(uint32_t tyid) {
+
+  auto ret = TryGetTypeName(tyid);
+
+  if (!ret) {
+    return "(GetTypeName) [[Unknown or unimplemented/unsupported type_id: " +
+           std::to_string(tyid) + "]]";
+  }
+
+  return ret.value();
 }
 
 } // namespace value

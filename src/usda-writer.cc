@@ -26,7 +26,7 @@ inline std::string GetTypeName(XformOpValueType const &v) {
 
 class Writer {
  public:
-  Writer(const Scene &scene) : _scene(scene) {}
+  Writer(const HighLevelScene &scene) : _scene(scene) {}
 
   std::string Indent(size_t level) {
     std::stringstream ss;
@@ -85,6 +85,7 @@ class Writer {
     return true;
   }
 
+#if 0
   bool WriteNode(std::ostream &ofs, const Node &node, uint32_t level) {
     if (node.type == NODE_TYPE_XFORM) {
       if ((node.index < 0) || (size_t(node.index) >= _scene.xforms.size())) {
@@ -124,8 +125,9 @@ class Writer {
 
     return true;
   }
+#endif
 
-  const Scene &_scene;
+  const HighLevelScene &_scene;
 
   const std::string &Error() const { return _err; }
   const std::string &Warn() const { return _warn; }
@@ -140,8 +142,10 @@ class Writer {
 
 }  // namespace
 
-bool SaveAsUSDA(const std::string &filename, const Scene &scene,
+bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene,
                 std::string *warn, std::string *err) {
+
+  (void)warn;
 
   std::stringstream ss;
 
@@ -162,6 +166,7 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
   // TODO
   Writer writer(scene);
 
+#if 0 // TODO
   std::cout << "# of nodes: " << scene.nodes.size() << "\n";
 
   for (const auto &root : scene.nodes) {
@@ -177,6 +182,7 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
       return false;
     }
   }
+#endif
 
   std::ofstream ofs(filename);
   if (!ofs) {
@@ -201,7 +207,7 @@ bool SaveAsUSDA(const std::string &filename, const Scene &scene,
 namespace tinyusdz {
 namespace usda {
 
-bool SaveAsUSDA(const std::string &filename, const Scene &scene, std::string *warn, std::string *err) {
+bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene, std::string *warn, std::string *err) {
   (void)filename;
   (void)scene;
   (void)warn;

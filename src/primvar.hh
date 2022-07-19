@@ -39,8 +39,8 @@
 #pragma clang diagnostic pop
 #endif
 
-#include "token-type.hh"
-#include "external/staticstruct.hh"
+//#include "token-type.hh"
+//#include "external/staticstruct.hh"
 #include "value-type.hh"
 
 namespace tinyusdz {
@@ -88,7 +88,7 @@ struct PrimVar {
     } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
-      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      return *reinterpret_cast<const T *>(var.values[0].value());
     }
     return nonstd::nullopt;
   }

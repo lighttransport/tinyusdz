@@ -50,8 +50,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "tinyusdz.hh"
 #include "io-util.hh"
 #include "pprinter.hh"
-#include "usda-parser.hh"
-#include "usdc-parser.hh"
+#include "usda-reader.hh"
+#include "usdc-reader.hh"
 
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
 
@@ -217,7 +217,7 @@ class Node {
 
   const Path &GetPath() const { return _path; }
 
-  NodeType GetNodeType() const { return _node_type; }
+  //NodeType GetNodeType() const { return _node_type; }
 
   const std::unordered_set<std::string> &GetPrimChildren() const {
     return _primChildren;
@@ -238,12 +238,13 @@ class Node {
   Path _path;  // local path
   value::dict _assetInfo;
 
-  NodeType _node_type;
+  //NodeType _node_type;
+
 };
 
 }  // namespace
 
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, HighLevelScene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   if (scene == nullptr) {
@@ -267,19 +268,20 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   StreamReader sr(addr, length, swap_endian);
 
-  usdc::Parser parser(&sr, options.num_threads);
+  usdc::USDCReader reader(&sr, options.num_threads);
 
-  if (!parser.ReadBootStrap()) {
+  if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = parser.GetWarning();
+      (*warn) = reader.GetWarning();
     }
 
     if (err) {
-      (*err) = parser.GetError();
+      (*err) = reader.GetError();
     }
     return false;
   }
 
+#if 0
   if (!parser.ReadTOC()) {
     if (warn) {
       (*warn) = parser.GetWarning();
@@ -373,6 +375,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
       (*err) = parser.GetError();
     }
   }
+#endif
 
   //DCOUT("num_paths: " << std::to_string(parser.NumPaths()));
 
@@ -383,35 +386,35 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Scene *scene,
 
   std::cout << "dbg: 1\n";
 
-  // Create `Scene` object
+  // Create `HighLevelScene` object
   // std::cout << "reconstruct scene:\n";
   {
-    if (!parser.ReconstructScene(scene)) {
+    if (!reader.ReconstructHighLevelScene(scene)) {
       if (warn) {
-        (*warn) = parser.GetWarning();
+        (*warn) = reader.GetWarning();
       }
 
       if (err) {
-        (*err) = parser.GetError();
+        (*err) = reader.GetError();
       }
       return false;
     }
   }
 
   if (warn) {
-    (*warn) = parser.GetWarning();
+    (*warn) = reader.GetWarning();
   }
 
   // TODO(syoyo): Return false?
   if (err) {
-    std::cout << "err msg = " << parser.GetError() << "\n";
-    (*err) = parser.GetError();
+    std::cout << "err msg = " << reader.GetError() << "\n";
+    (*err) = reader.GetError();
   }
 
   return true;
 }
 
-bool LoadUSDCFromFile(const std::string &_filename, Scene *scene,
+bool LoadUSDCFromFile(const std::string &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
@@ -455,7 +458,7 @@ static std::string str_tolower(std::string s) {
 
 }  // namespace
 
-bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
+bool LoadUSDZFromFile(const std::string &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   // <filename, byte_begin, byte_end>
@@ -647,7 +650,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Scene *scene,
 }
 
 #ifdef _WIN32
-bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
+bool LoadUSDZFromFile(const std::wstring &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   std::string filename = io::WcharToUTF8(_filename);
@@ -655,7 +658,7 @@ bool LoadUSDZFromFile(const std::wstring &_filename, Scene *scene,
 }
 #endif
 
-bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Scene *scene,
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, HighLevelScene *scene,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   (void)warn;
@@ -675,19 +678,19 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
   }
 
   tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
-  tinyusdz::usda::USDAParser parser(&sr);
+  tinyusdz::usda::USDAReader reader(&sr);
 
-  parser.SetBaseDir(base_dir);
+  reader.SetBaseDir(base_dir);
 
   (void)options;
 
   {
-    bool ret = parser.Parse();
+    bool ret = reader.Read();
 
     if (!ret) {
       if (err) {
         (*err) += "Failed to parse USDA\n";
-        (*err) += parser.GetError();
+        (*err) += reader.GetError();
       }
 
       return false;
@@ -700,7 +703,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
   return false;
 }
 
-bool LoadUSDAFromFile(const std::string &_filename, Scene *scene,
+bool LoadUSDAFromFile(const std::string &_filename, HighLevelScene *scene,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
 
@@ -847,7 +850,7 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
         if (auto f = x.value.get<float>()) {
           theta = double(f.value());
         } else if (auto d = x.value.get<double>()) {
-          theta = d.value(); 
+          theta = d.value();
         } else {
           return false;
         }
@@ -861,7 +864,7 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
         if (auto f = x.value.get<float>()) {
           theta = double(f.value());
         } else if (auto d = x.value.get<double>()) {
-          theta = d.value(); 
+          theta = d.value();
         } else {
           return false;
         }
@@ -975,9 +978,9 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
 
 }
 
-static_assert(sizeof(crate::Index) == 4, "");
-static_assert(sizeof(crate::Field) == 16, "");
-static_assert(sizeof(crate::Spec) == 12, "");
+//static_assert(sizeof(crate::Index) == 4, "");
+//static_assert(sizeof(crate::Field) == 16, "");
+//static_assert(sizeof(crate::Spec) == 12, "");
 //static_assert(sizeof(Vec4h) == 8, "");
 //static_assert(sizeof(Vec2f) == 8, "");
 //static_assert(sizeof(Vec3f) == 12, "");
