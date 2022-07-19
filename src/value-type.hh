@@ -54,12 +54,14 @@
 namespace tinyusdz {
 namespace value {
 
-constexpr char kToken[] = "Token";
-constexpr char kString[] = "String";
+// Use `Value type token` for fundamental data types.
+// See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
+constexpr char kToken[] = "token";
+constexpr char kString[] = "string";
 constexpr char kPath[] = "Path";
-constexpr char kAssetPath[] = "AssetPath";
-constexpr char kDictionary[] = "Dictionary";
-constexpr char kTimeCode[] = "TimeCode";
+constexpr char kAssetPath[] = "asset"; // `asset` in USDA
+constexpr char kDictionary[] = "dictionary";
+constexpr char kTimeCode[] = "timecode";
 
 constexpr char kBool[] = "bool";
 constexpr char kUChar[] = "uchar";
@@ -118,13 +120,19 @@ constexpr char kColor4d[] = "color4d";
 
 constexpr char kFrame4d[] = "frame4d";
 
-constexpr char kTexCoord2h[] = "texcoord2h";
-constexpr char kTexCoord2f[] = "texcoord2f";
-constexpr char kTexCoord2d[] = "texcoord2d";
+constexpr char kTexCoord2h[] = "texCoord2h";
+constexpr char kTexCoord2f[] = "texCoord2f";
+constexpr char kTexCoord2d[] = "texCoord2d";
 
-constexpr char kTexCoord3h[] = "texcoord3h";
-constexpr char kTexCoord3f[] = "texcoord3f";
-constexpr char kTexCoord3d[] = "texcoord3d";
+constexpr char kTexCoord3h[] = "texCoord3h";
+constexpr char kTexCoord3f[] = "texCoord3f";
+constexpr char kTexCoord3d[] = "texCoord3d";
+
+constexpr char kRelationship[] = "rel";
+
+inline std::string Add1DArraySuffix(const std::string &c) {
+  return c + "[]";
+}
 
 using token = tinyusdz::Token;
 
