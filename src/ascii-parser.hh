@@ -27,6 +27,21 @@ enum LoadState {
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
+
+  struct StageMetas {
+    ///
+    /// Predefined Stage metas
+    ///
+    std::vector<std::string> subLayers;
+    std::string defaultPrim;
+    std::string doc;
+    nonstd::optional<Axis> upAxis; // not specified = nullopt
+    nonstd::optional<double> metersPerUnit;
+    nonstd::optional<double> timeCodesPerSecond;
+
+    value::dict _customData; // `customData`(non-predefined Stage metas).
+  };
+
  public:
   struct ParseState {
     int64_t loc{-1};  // byte location in StreamReder
@@ -318,7 +333,25 @@ class AsciiParser {
   bool PushParserState();
   bool PopParserState(ParseState *state);
 
+  //
+  // Valid after ParseStageMetas() --------------
+  //
+  StageMetas GetStageMetas() const {
+    return _stage_metas;
+  }
+
+  bool ParseClassBlock();
+  bool ParseOverBlock();
+  bool ParseDefBlock(uint32_t nestlevel = 0);
+
+  // --------------------------------------------
+
  private:
+
+  ///
+  /// Do common setups. Assume called in ctor.
+  ///
+  void Setup();
 
   template<typename T>
   bool ParseTimeSampleData(nonstd::optional<T> *out_value);
@@ -395,9 +428,6 @@ class AsciiParser {
                                        const std::string &primattr_name,
                                        PrimAttrib *out_attr);
 
-  bool ParseClassBlock();
-  bool ParseOverBlock();
-  bool ParseDefBlock(uint32_t nestlevel = 0);
 
   bool ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out);
   nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
@@ -431,14 +461,14 @@ class AsciiParser {
 
   Cursor _curr_cursor;
 
-  std::set<std::string> _node_types;
+  std::set<std::string> _supported_node_types;
   std::set<std::string> _registered_prim_attr_types;
 
   // Supported metadataum for Stage
-  std::map<std::string, VariableDef> _stage_metas;
+  std::map<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  std::map<std::string, VariableDef> _prim_metas;
+  std::map<std::string, VariableDef> _supported_prim_metas;
 
   std::stack<ErrorDiagnositc> err_stack;
   std::stack<ErrorDiagnositc> warn_stack;
@@ -452,6 +482,8 @@ class AsciiParser {
   bool _payloaded{false};
 
   std::string _base_dir;
+
+  StageMetas _stage_metas;
 
   // class Impl;
   // Impl *_impl;

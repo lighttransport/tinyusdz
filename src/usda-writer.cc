@@ -158,7 +158,7 @@ bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene,
     ss << "  doc = \"" << scene.doc << "\"\n";
   }
   ss << "  metersPerUnit = " << scene.metersPerUnit << "\n";
-  ss << "  upAxis = \"" << scene.upAxis << "\"\n";
+  ss << "  upAxis = \"" << to_string(scene.upAxis) << "\"\n";
   ss << "  timeCodesPerSecond = \"" << scene.timeCodesPerSecond << "\"\n";
   // TODO: write other header data.
   ss << ")\n";

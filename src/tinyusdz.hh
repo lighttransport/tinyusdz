@@ -429,7 +429,7 @@ struct HighLevelScene {
   int64_t default_root_node{-1};  // index to default root node
 
   // Scene global setting
-  std::string upAxis = "Y";
+  Axis upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
   std::string defaultPrim;           // prim node name
   double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
@@ -461,7 +461,7 @@ struct LowLevelScene {
   int64_t default_root_node{-1};  // index to default root node
 
   // Scene global setting
-  std::string upAxis = "Y";
+  Axis upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
   std::string defaultPrim;           // prim node name
   double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
@@ -539,6 +539,8 @@ struct USDLoadOptions {
   /// be loaded, Set this false.
   ///
   bool load_assets{true};
+
+  Axis upAxis{Axis::Y};
 };
 
 #if 0  // TODO
