@@ -786,47 +786,62 @@ struct XformOp {
   };
 
   static std::string GetOpTypeName(OpType op) {
+    std::string str = "[[InvalidXformOp]]";
     switch (op) {
       case TRANSFORM: {
-        return "xformOp:transform";
+        str = "xformOp:transform";
+        break;
       }
       case TRANSLATE: {
-        return "xformOp:translate";
+        str = "xformOp:translate";
+        break;
       }
       case SCALE: {
-        return "xformOp:scale";
+        str = "xformOp:scale";
+        break;
       }
       case ROTATE_X: {
-        return "xformOp:rotateX";
+        str = "xformOp:rotateX";
+        break;
       }
       case ROTATE_Y: {
-        return "xformOp:rotateY";
+        str = "xformOp:rotateY";
+        break;
       }
       case ROTATE_Z: {
-        return "xformOp:rotateZ";
+        str = "xformOp:rotateZ";
+        break;
       }
       case ROTATE_XYZ: {
-        return "xformOp:rotateXYZ";
+        str = "xformOp:rotateXYZ";
+        break;
       }
       case ROTATE_XZY: {
-        return "xformOp:rotateXZY";
+        str = "xformOp:rotateXZY";
+        break;
       }
       case ROTATE_YXZ: {
-        return "xformOp:rotateYXZ";
+        str = "xformOp:rotateYXZ";
+        break;
       }
       case ROTATE_YZX: {
-        return "xformOp:rotateYZX";
+        str = "xformOp:rotateYZX";
+        break;
       }
       case ROTATE_ZXY: {
-        return "xformOp:rotateZXY";
+        str = "xformOp:rotateZXY";
+        break;
       }
       case ROTATE_ZYX: {
-        return "xformOp:rotateZYX";
+        str = "xformOp:rotateZYX";
+        break;
       }
       case ORIENT: {
-        return "xformOp:orient";
+        str = "xformOp:orient";
+        break;
       }
     }
+    return str;
   }
 
   OpType op;

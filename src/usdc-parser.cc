@@ -3888,28 +3888,27 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
       DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
 
 #define PROC_SCALAR(__tyname, __ty)                   \
-  }                                                   \
-  else if (fv.second.GetTypeName() == __tyname) {     \
+  if (fv.second.GetTypeName() == __tyname) {     \
     auto ret = fv.second.get_value<__ty>();           \
     if (!ret) {                                       \
       PUSH_ERROR("Failed to decode " << __tyname << " value."); \
       return false;                                   \
     }                                                 \
     attr->var.set_scalar(ret.value());                \
-    success = true;
+    success = true; \
+  } else
 
 #define PROC_ARRAY(__tyname, __ty)                       \
-  }                                                      \
-  else if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) {        \
+  if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) {        \
     auto ret = fv.second.get_value<std::vector<__ty>>(); \
     if (!ret) {                                          \
       PUSH_ERROR("Failed to decode " << __tyname << "[] value.");  \
       return false;                                      \
     }                                                    \
     attr->var.set_scalar(ret.value());                   \
-    success = true;
+    success = true; \
+  } else
 
-      if (0) {  // dummy
         PROC_SCALAR(value::kFloat, float)
         PROC_SCALAR(value::kBool, bool)
         PROC_SCALAR(value::kInt, int)
@@ -3961,11 +3960,10 @@ bool Parser::Impl::ParseAttribute(const FieldValuePairVector &fvs,
         //PROC_ARRAY("IntArray", int)
         //PROC_ARRAY(kTokenArray, value::token)
 
-      } else {
-        PUSH_ERROR("TODO: " + fv.second.GetTypeName());
+        {
+          PUSH_ERROR("TODO: " + fv.second.GetTypeName());
+        }
       }
-
-    }
   }
 
   if (!success && has_connection) {
