@@ -8,37 +8,39 @@
 
 ## Status
 
-TinyUSDZ is currently work-in-progress. It does not compile and run.
-I'm now rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc. Initial working demo in 2022 Summer planned.
+TinyUSDZ is currently work-in-progress. It does not yet working.
+Mostly finished rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc.
+Initial working demo in 2022 Summer(August) planned after finishing implementing scene graph reconstruction.
 
-* [x] USDC data parse
-* [ ] USDA parser(W.I.P.)
-  * Initial USDA parser starting to work(see `src/usda-parser.cc`)
-  * Support Blender-exported USDA support in 2022 Fall planned.
+* [x] USDC(Crate) data parse
 * [ ] Reconstuct primitive and scene graph representaion(2022 Summer expected)
+  * [ ] Xform
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
   * [ ] GeomPoints(for particles)
-  * [ ] Xform
   * [ ] etc.
   * [ ] Built-in usdObj(wavefront .obj mesh support)
     * See [doc/usdObj.md](doc/usdObj.md) for details.
   * [ ] MagicaVoxel vox for Volume?
   * [ ] VDBVolume support through TinyVDBIO? https://github.com/syoyo/tinyvdbio
+* [ ] USDA parser(W.I.P.)
+  * Initial USDA parser starting to work(see `src/ascii-parser.cc` and `src/usda-reader.cc`)
+  * Support Blender-exported USDA support in 2022 Fall planned.
 * [ ] Composition
   * [ ] subLayers
   * [ ] references
   * [ ] payloads(delayed load)
-  * [ ] variants
+  * [ ] variants/variantSets
   * [ ] specializers
 * [ ] Write simple SDL viewer example(2022 Summer expected)
 * [ ] Character animation(usdSkel, blendshapes, animations) support(2022 Summer expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] Write iOS and Android example(2022 Fall expected)
-* [ ] Polygon triangulation using mapbox/earcut.hpp
-* [ ] USDZ(USDC) writer
+* [ ] USDZ(USDC, Crate) writer
+  * `src/crate-writer.cc`
 * [ ] USDA writer
 * [ ] USD <-> glTF converter
+* [ ] Polygon triangulation using mapbox/earcut.hpp
 
 ## Notice
 
