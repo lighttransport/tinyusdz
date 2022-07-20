@@ -168,6 +168,7 @@ enum TypeId {
   TYPE_ID_NULL,
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
+  TYPE_ID_BLOCK, // None as type
 
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
@@ -615,6 +616,10 @@ struct texcoord3d {
   double s, t, r;
 };
 
+// Attribute Block(None)
+struct Block {
+};
+
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
@@ -658,6 +663,7 @@ struct TypeTrait;
 
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
+DEFINE_TYPE_TRAIT(Block, "none", TYPE_ID_BLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
@@ -912,12 +918,13 @@ struct any_value {
     return *(reinterpret_cast<const std::vector<T> *>(p->value()));
   }
 
-  std::shared_ptr<base_value> p;
+  std::shared_ptr<base_value> p; // TODO: Use raw pointer?
 };
 
+// Handy, but not efficient for large time samples(e.g. 1000 or more)
 struct TimeSamples {
   std::vector<double> times;
-  std::vector<any_value> values; // Could contain 'None'
+  std::vector<any_value> values; // Could be an array of 'None' or Type T
 
   bool Valid() {
     if (times.size() > 0) {

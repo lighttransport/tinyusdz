@@ -247,8 +247,8 @@ class AsciiParser {
   template <typename T, size_t N>
   bool SepBy1TupleType(const char sep, std::vector<std::array<T, N>> *result);
 
-  bool ParseDictElement(std::string *out_key, PrimVariable *out_var);
-  bool ParseDict(std::map<std::string, PrimVariable> *out_dict);
+  bool ParseDictElement(std::string *out_key, MetaVariable *out_var);
+  bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
 
   bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
 
@@ -324,10 +324,10 @@ class AsciiParser {
   bool ParseAttrMeta(AttrMeta *out_meta);
 
   bool ParsePrimMetas(
-      std::map<std::string, std::tuple<ListEditQual, PrimVariable>> *args);
+      std::map<std::string, std::tuple<ListEditQual, MetaVariable>> *args);
 
   bool ParseMetaValue(const std::string &vartype, const std::string &varname,
-                      PrimVariable *outvar);
+                      MetaVariable *outvar);
 
   bool ParseStageMetaOpt();
   // Parsed Stage metadatum is stored in this instance.
@@ -387,26 +387,37 @@ class AsciiParser {
   ///
   void Setup();
 
+  //template<typename T>
+  //bool ParseTimeSampleData(nonstd::optional<T> *out_value);
+  
   template<typename T>
-  bool ParseTimeSampleData(nonstd::optional<T> *out_value);
+  using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
+
+  ///
+  /// Convert TimeSampleData<T> to TimeSamples(type-erased TimeSample Sdata struct)
+  ///
+  template<typename T>
+  value::TimeSamples ConvertToTimeSamples(
+      const TimeSampleData<T> &in);
 
   template <typename T>
-  bool ParseTimeSamples(
-      std::vector<std::pair<uint64_t, nonstd::optional<T>>> *out_samples) {
+  nonstd::optional<TimeSampleData<T>> TryParseTimeSamples() {
     // timeSamples = '{' (int : T), + '}'
 
+    TimeSampleData<T> data;
+
     if (!Expect('{')) {
-      return false;
+      return nonstd::nullopt;
     }
 
     if (!SkipWhitespaceAndNewline()) {
-      return false;
+      return nonstd::nullopt;
     }
 
     while (!Eof()) {
       char c;
       if (!Char1(&c)) {
-        return false;
+        return nonstd::nullopt;
       }
 
       if (c == '}') {
@@ -415,46 +426,47 @@ class AsciiParser {
 
       Rewind(1);
 
-      uint64_t timeVal;
+      double timeVal;
+      // -inf, inf and nan are handled.
       if (!ReadBasicType(&timeVal)) {
         PushError("Parse time value failed.");
-        return false;
+        return nonstd::nullopt;
       }
 
       if (!SkipWhitespace()) {
-        return false;
+        return nonstd::nullopt;
       }
 
       if (!Expect(':')) {
-        return false;
+        return nonstd::nullopt;
       }
 
       if (!SkipWhitespace()) {
-        return false;
+        return nonstd::nullopt;
       }
 
       nonstd::optional<T> value;
-      if (!ParseTimeSampleData(&value)) {
-        return false;
+      if (!ReadBasicType(&value)) {
+        return nonstd::nullopt;
       }
 
       // It looks the last item also requires ','
       if (!Expect(',')) {
-        return false;
+        return nonstd::nullopt;
       }
 
       if (!SkipWhitespaceAndNewline()) {
-        return false;
+        return nonstd::nullopt;
       }
 
-      out_samples->push_back({timeVal, value});
+      data.push_back({timeVal, value});
     }
 
-    return true;
+    return data;
   }
 
 
-  nonstd::optional<std::tuple<ListEditQual, PrimVariable>> ParsePrimMeta();
+  nonstd::optional<std::tuple<ListEditQual, MetaVariable>> ParsePrimMeta();
   bool ParsePrimAttr(std::map<std::string, Property> *props);
 
   template <typename T>
@@ -463,7 +475,7 @@ class AsciiParser {
                                        PrimAttrib *out_attr);
 
 
-  bool ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out);
+  bool ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out);
   nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
 
   std::string GetCurrentPath();
