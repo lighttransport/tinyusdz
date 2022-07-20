@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <math.h>
 #include "tinyusdz.hh"
 #include "stream-reader.hh"
 
@@ -10,12 +11,12 @@ namespace tinyusdz {
 
 namespace usda {
 
-enum LoadState {
-  LOAD_STATE_TOPLEVEL,   // toplevel .usda input
-  LOAD_STATE_SUBLAYER,   // .usda is read by 'subLayers'
-  LOAD_STATE_REFERENCE,  // .usda is read by `references`
-  LOAD_STATE_PAYLOAD,    // .usda is read by `payload`
-};
+//enum LoadState {
+//  LOAD_STATE_TOPLEVEL,   // toplevel .usda input
+//  LOAD_STATE_SUBLAYER,   // .usda is read by 'subLayers'
+//  LOAD_STATE_REFERENCE,  // .usda is read by `references`
+//  LOAD_STATE_PAYLOAD,    // .usda is read by `payload`
+//};
 
 
 ///
@@ -51,7 +52,7 @@ class USDAReader {
   ///
   /// Reader entry point
   ///
-  bool Read(LoadState state = LOAD_STATE_TOPLEVEL);
+  bool Read(ascii::LoadState state = ascii::LoadState::LOAD_STATE_TOPLEVEL);
 
   ///
   ///

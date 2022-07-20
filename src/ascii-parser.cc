@@ -1633,21 +1633,21 @@ bool AsciiParser::ParsePurpose(Purpose *result) {
     return false;
   }
 
-  std::string token;
-  if (!ReadStringLiteral(&token)) {
+  std::string str;
+  if (!ReadStringLiteral(&str)) {
     return false;
   }
 
-  if (token == "\"default\"") {
+  if (str == "\"default\"") {
     (*result) = Purpose::Default;
-  } else if (token == "\"render\"") {
+  } else if (str == "\"render\"") {
     (*result) = Purpose::Render;
-  } else if (token == "\"proxy\"") {
+  } else if (str == "\"proxy\"") {
     (*result) = Purpose::Proxy;
-  } else if (token == "\"guide\"") {
+  } else if (str == "\"guide\"") {
     (*result) = Purpose::Guide;
   } else {
-    PUSH_ERROR_AND_RETURN("Invalid purpose token name: " + token + "\n");
+    PUSH_ERROR_AND_RETURN("Invalid purpose value: " + str + "\n");
   }
 
   return true;
@@ -2935,7 +2935,7 @@ bool AsciiParser::ParseStageMetas() {
   while (!_sr->eof()) {
     char c;
     if (!LookChar1(&c)) {
-      return false;  
+      return false;
     }
 
     if (c == ')') {
@@ -4961,7 +4961,7 @@ bool AsciiParser::ParseClassBlock() {
         return false;
       }
 
-      std::string tok;
+      Identifier tok;
       if (!ReadBasicType(&tok)) {
         return false;
       }
@@ -5439,11 +5439,13 @@ bool AsciiParser::Parse(LoadState state) {
   }
 
   // stage meta.
-  bool has_meta = ParseStageMetas();
-  if (has_meta) {
-    // TODO: Process meta info
-  } else {
-    // no meta info accepted.
+  if (!ParseStageMetas()) {
+    PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
+  }
+
+  if (_stage_meta_process_fun) {
+    DCOUT("StageMeta callback.");
+    _stage_meta_process_fun(_stage_metas);
   }
 
   // parse blocks
@@ -5460,9 +5462,9 @@ bool AsciiParser::Parse(LoadState state) {
     // Look ahead token
     auto curr_loc = _sr->tell();
 
-    std::string tok;
+    Identifier tok;
     if (!ReadBasicType(&tok)) {
-      PushError("Token expected.\n");
+      PushError("Identifier expected.\n");
       return false;
     }
 
