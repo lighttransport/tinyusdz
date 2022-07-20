@@ -17,6 +17,7 @@
 #include <set>
 #include <sstream>
 #include <stack>
+#include "ascii-parser.hh"
 #if defined(__wasi__)
 #else
 #include <thread>
@@ -70,6 +71,7 @@
 #include "value-pprint.hh"
 #include "value-type.hh"
 
+#if 0
 #define PUSH_PARSER_ERROR_AND_RETURN()                            \
   do {                                                             \
     std::ostringstream ss;                                         \
@@ -77,6 +79,7 @@
     _err += ss.str();                                              \
     return false;                                                  \
   } while (0)
+#endif
 
 // s = std::string
 #define PUSH_ERROR_AND_RETURN(s)                                   \
@@ -424,10 +427,49 @@ class USDAReader::Impl {
   }
 #endif
 
-  bool ReconstructGPrim(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GPrim *gprim);
+  bool RegisterReconstructGPrimCallback() {
+
+    _parser.RegisterPrimConstructFunction("GPrim", [&](const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, Reference>> &references) {
+
+      // TODO: Implement
+      GPrim gprim;
+
+      //
+      // Resolve prepend references
+      //
+      for (const auto &ref : references) {
+        if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+        }
+      }
+
+      // Update props;
+      for (auto item : properties) {
+        if (item.second.is_rel) {
+          PUSH_WARN("TODO: rel");
+        } else {
+          gprim.props[item.first].attrib = item.second.attrib;
+        }
+      }
+
+      //
+      // Resolve append references
+      //
+      for (const auto &ref : references) {
+        if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+        }
+      }
+
+      return true;
+    });
+
+    return true;
+  }
+
+  //bool ReconstructGPrim(
+  //    const std::map<std::string, Property> &properties,
+  //    std::vector<std::pair<ListEditQual, Reference>> &references,
+  //    GPrim *sphere);
 
   bool ReconstructGeomSphere(
       const std::map<std::string, Property> &properties,
@@ -538,22 +580,50 @@ class USDAReader::Impl {
     return false;
   }
 
+
+  void StageMetaProcessor() {
+    _parser.RegisterStageMetaProcessFunction([&](const ascii::AsciiParser::StageMetas &metas) {
+
+      DCOUT("StageMeta CB:");
+      if (metas.upAxis) {
+        DCOUT("upAxis = " << to_string(metas.upAxis.value()));
+      }
+
+      // HACK
+      _upAxis = metas.upAxis;
+
+
+      return true; // ok
+    });
+
+  }
+
   ///
   /// Reader entry point
   /// TODO: Use callback function(visitor) so that Reconstruct**** function is invoked
   /// in the Parser context.
   ///
-  bool Read(LoadState state = LOAD_STATE_TOPLEVEL) {
+  bool Read(ascii::LoadState state = ascii::LoadState::LOAD_STATE_TOPLEVEL) {
+
+    ///
+    /// Setup callbacks.
+    ///
+    StageMetaProcessor();
+    RegisterReconstructGPrimCallback();
+
+    if (!_parser.Parse(state)) {
+      PUSH_ERROR_AND_RETURN("Parse failed.");
+    }
+
+    // HACK
+    if (_upAxis) {
+      DCOUT("upAxis = " << to_string(_upAxis.value()));
+    }
+
+#if 0
     //_sub_layered = (state == LOAD_STATE_SUBLAYER);
     //_referenced = (state == LOAD_STATE_REFERENCE);
     //_payloaded = (state == LOAD_STATE_PAYLOAD);
-
-    if (!_parser.ParseMagicHeader()) {
-      PUSH_PARSER_ERROR_AND_RETURN();
-      return false;
-    }
-
-    DCOUT("Done parsing Magic header");
 
     // Stage meta.
     if (!_parser.ParseStageMetas()) {
@@ -594,24 +664,25 @@ class USDAReader::Impl {
         DCOUT("`def` block");
         bool block_ok = _parser.ParseDefBlock();
         if (!block_ok) {
-          PUSH_PARSER_ERROR_AND_RETURN(); 
+          PUSH_PARSER_ERROR_AND_RETURN();
         }
       } else if (tok == "over") {
         DCOUT("`over` block");
         bool block_ok = _parser.ParseOverBlock();
         if (!block_ok) {
-          PUSH_PARSER_ERROR_AND_RETURN(); 
+          PUSH_PARSER_ERROR_AND_RETURN();
         }
       } else if (tok == "class") {
         DCOUT("`class` block");
         bool block_ok = _parser.ParseClassBlock();
         if (!block_ok) {
-          PUSH_PARSER_ERROR_AND_RETURN(); 
+          PUSH_PARSER_ERROR_AND_RETURN();
         }
       } else {
         PUSH_ERROR_AND_RETURN("Unknown identifier '" + tok + "' for Prim block statement.");
       }
     }
+#endif
     return true;
   }
 
@@ -680,39 +751,20 @@ class USDAReader::Impl {
 
   ascii::AsciiParser _parser;
 
+  // HACK
+  nonstd::optional<Axis> _upAxis;
+
 };  // namespace usda
 
 // == impl ==
+#if 0
 bool USDAReader::Impl::ReconstructGPrim(
     const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, Reference>> &references, GPrim *gprim) {
-  //
-  // Resolve prepend references
-  //
-  for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
-    }
-  }
-
-  // Update props;
-  for (auto item : properties) {
-    if (item.second.is_rel) {
-      PUSH_WARN("TODO: rel");
-    } else {
-      gprim->props[item.first].attrib = item.second.attrib;
-    }
-  }
-
-  //
-  // Resolve append references
-  //
-  for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
-    }
-  }
 
   return true;
 }
+#endif
 
 static nonstd::expected<bool, std::string> CheckAllowedTypeOfXformOp(
     const PrimAttrib &attr,
@@ -1980,7 +2032,7 @@ USDAReader::USDAReader(StreamReader *sr) { _impl = new Impl(sr); }
 
 USDAReader::~USDAReader() { delete _impl; }
 
-bool USDAReader::Read(LoadState state) { return _impl->Read(state); }
+bool USDAReader::Read(ascii::LoadState state) { return _impl->Read(state); }
 
 void USDAReader::SetBaseDir(const std::string &dir) {
   return _impl->SetBaseDir(dir);
@@ -2009,7 +2061,7 @@ USDAReader::~USDAReader() {}
 
 bool USDAReader::CheckHeader() { return false; }
 
-bool USDAReader::Parse(LoadState state) {
+bool USDAReader::Parse(ascii::AsciiParser::LoadState state) {
   (void)state;
   return false;
 }

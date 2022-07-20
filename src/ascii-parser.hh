@@ -5,7 +5,9 @@
 
 #pragma once
 
+#include <clocale>
 #include <stack>
+#include <functional>
 
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
@@ -26,7 +28,11 @@ enum LoadState {
 ///
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
+
+
 class AsciiParser {
+
+ public:
 
   struct StageMetas {
     ///
@@ -42,7 +48,6 @@ class AsciiParser {
     value::dict _customData; // `customData`(non-predefined Stage metas).
   };
 
- public:
   struct ParseState {
     int64_t loc{-1};  // byte location in StreamReder
   };
@@ -117,6 +122,34 @@ class AsciiParser {
   AsciiParser(AsciiParser &&rhs) = delete;
 
   ~AsciiParser();
+
+  ///
+  /// Stage Meta construction callback function
+  ///
+  using StageMetaProcessFunction = std::function<bool(const StageMetas& metas)>;
+  
+  ///
+  /// Register Stage metadatum processing callback function.
+  /// Called when after parsing Stage metadatum.
+  ///
+  void RegisterStageMetaProcessFunction(StageMetaProcessFunction fun) {
+    _stage_meta_process_fun = fun;
+  }
+
+  ///
+  /// Prim construction callback function
+  /// TODO: use std::function?
+  ///
+  using PrimConstructFunction = std::function<bool(const std::map<std::string, Property> &properties,
+    std::vector<std::pair<ListEditQual, Reference>> &references)>;
+
+  ///
+  /// Register Prim construction callback function.
+  /// Example: "Xform", ReconstrctXform
+  ///
+  void RegisterPrimConstructFunction(const std::string &prim_type, PrimConstructFunction fun) {
+    _prim_construct_fun_map[prim_type] = fun;
+  }
 
   ///
   /// Base filesystem directory to search asset files.
@@ -486,6 +519,12 @@ class AsciiParser {
   std::string _base_dir;
 
   StageMetas _stage_metas;
+  
+  //
+  // Callbacks
+  //
+  StageMetaProcessFunction _stage_meta_process_fun;
+  std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
 
   // class Impl;
   // Impl *_impl;
