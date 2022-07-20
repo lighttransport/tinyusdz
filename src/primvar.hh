@@ -47,7 +47,7 @@ namespace tinyusdz {
 namespace primvar {
 
 struct PrimVar {
-  // For scalar value, times.size() == 0, and values.size() == 1
+  // For scalar(default) value, times.size() == 0, and values.size() == 1
   value::TimeSamples var;
 
   bool is_scalar() const {
