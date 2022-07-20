@@ -57,15 +57,14 @@
 #endif
 
 #include "io-util.hh"
-#include "math-util.inc"
+//#include "math-util.inc"
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
 //#include "simple-type-reflection.hh"
-#include "primvar.hh"
+//#include "primvar.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
-#include "usdObj.hh"
 #include "value-pprint.hh"
 #include "value-type.hh"
 
@@ -2187,7 +2186,7 @@ bool AsciiParser::ReadBasicType(nonstd::optional<double> *value) {
 // -- end basic
 
 bool AsciiParser::ParseDictElement(std::string *out_key,
-                                   PrimVariable *out_var) {
+                                   MetaVariable *out_var) {
   (void)out_key;
   (void)out_var;
 
@@ -2267,7 +2266,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   // Supports limited types for customData/Dictionary.
   // TODO: array_qual
   //
-  PrimVariable var;
+  MetaVariable var;
   if (type_name == value::kBool) {
     bool val;
     if (!ReadBasicType(&val)) {
@@ -2306,7 +2305,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       var.value = tok;
     }
   } else if (type_name == "dictionary") {
-    std::map<std::string, PrimVariable> dict;
+    std::map<std::string, MetaVariable> dict;
 
     if (!ParseDict(&dict)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
@@ -2343,7 +2342,7 @@ bool AsciiParser::MaybeCustom() {
   return false;
 }
 
-bool AsciiParser::ParseDict(std::map<std::string, PrimVariable> *out_dict) {
+bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
   // '{' (type name '=' value)+ '}'
   if (!Expect('{')) {
     return false;
@@ -2367,7 +2366,7 @@ bool AsciiParser::ParseDict(std::map<std::string, PrimVariable> *out_dict) {
       }
 
       std::string key;
-      PrimVariable var;
+      MetaVariable var;
       if (!ParseDictElement(&key, &var)) {
         PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
       }
@@ -2725,7 +2724,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   }
 
   VariableDef &vardef = _supported_stage_metas.at(varname);
-  PrimVariable var;
+  MetaVariable var;
   if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
     PushError("Failed to parse meta value.\n");
     return false;
@@ -3234,8 +3233,31 @@ bool AsciiParser::Expect(char expect_c) {
 //
 // -- impl ParseTimeSampleData
 //
+
 template<>
-bool AsciiParser::ParseTimeSampleData(
+value::TimeSamples AsciiParser::ConvertToTimeSamples(
+  const TimeSampleData<float> &ts) {
+
+  value::TimeSamples dst;
+
+  for (const auto &item : ts) {
+
+    dst.times.push_back(std::get<0>(item));
+
+    if (item.second) {
+      dst.values.push_back(item.second.value());
+    } else {
+      // Blocked.
+      dst.values.push_back(value::Block());
+    }
+  }
+
+  return dst;
+}
+
+#if 0
+template<>
+bool AsciiParser::ParseTimeSamples(
     nonstd::optional<value::float2> *out_value) {
   nonstd::optional<std::array<float, 2>> value;
   if (!ParseBasicTypeTuple(&value)) {
@@ -3444,6 +3466,7 @@ bool AsciiParser::ParseTimeSampleData(
 
   return true;
 }
+#endif
 
 // Parse magic
 // #usda FLOAT
@@ -3656,8 +3679,8 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 
 bool AsciiParser::ParseMetaValue(const std::string &vartype,
                                  const std::string &varname,
-                                 PrimVariable *outvar) {
-  PrimVariable var;
+                                 MetaVariable *outvar) {
+  MetaVariable var;
 
   // TODO: Refactor.
   if (vartype == value::kBool) {
@@ -3995,7 +4018,7 @@ nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
   return nonstd::nullopt;
 }
 
-bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out) {
+bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out) {
   if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
@@ -4044,7 +4067,7 @@ bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out) {
 
   auto vardef = (*pvardef);
 
-  PrimVariable var;
+  MetaVariable var;
   var.name = varname;
 
   if (vardef.type == "path") {
@@ -4066,10 +4089,10 @@ bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out) {
     }
 
     // std::vector<Path> paths;
-    // PrimVariable::Array arr;
+    // MetaVariable::Array arr;
     // for (const auto &v : value) {
     //   std::cout << "  " << v << "\n";
-    //   PrimVariable _var;
+    //   MetaVariable _var;
     //   _var.value = v;
     //   arr.values.push_back(_var);
     // }
@@ -4126,7 +4149,7 @@ bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, PrimVariable> *out) {
   return true;
 }
 
-nonstd::optional<std::tuple<ListEditQual, PrimVariable>>
+nonstd::optional<std::tuple<ListEditQual, MetaVariable>>
 AsciiParser::ParsePrimMeta() {
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -4164,7 +4187,7 @@ AsciiParser::ParsePrimMeta() {
   SkipWhitespace();
 
   VariableDef &vardef = _supported_prim_metas.at(varname);
-  PrimVariable var;
+  MetaVariable var;
   if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
     PushError("Failed to parse Prim meta value.\n");
     return nonstd::nullopt;
@@ -4174,7 +4197,7 @@ AsciiParser::ParsePrimMeta() {
 }
 
 bool AsciiParser::ParsePrimMetas(
-    std::map<std::string, std::tuple<ListEditQual, PrimVariable>> *args) {
+    std::map<std::string, std::tuple<ListEditQual, MetaVariable>> *args) {
   // '(' args ')'
   // args = list of argument, separated by newline.
 
@@ -4230,7 +4253,7 @@ bool AsciiParser::ParsePrimMetas(
 
     DCOUT("Start PrimMeta parse.");
 
-    // ty = std::tuple<ListEditQual, PrimVariable>;
+    // ty = std::tuple<ListEditQual, MetaVariable>;
     if (auto m = ParsePrimMeta()) {
       DCOUT("arg: list-edit qual = " << tinyusdz::to_string(std::get<0>(m.value()))
                                      << ", name = " << std::get<1>(m.value()).name);
@@ -4331,7 +4354,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
         out_meta->elementSize = value;
       } else if (token == "customData") {
-        std::map<std::string, PrimVariable> dict;
+        std::map<std::string, MetaVariable> dict;
 
         if (!ParseDict(&dict)) {
           return false;
@@ -4452,7 +4475,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   attr.meta = meta;
 
   // if (meta.count("interpolation")) {
-  //   const PrimVariable &var = meta.at("interpolation");
+  //   const MetaVariable &var = meta.at("interpolation");
   //   auto p = var.value.get_value<value::token>();
   //   if (p) {
   //     attr.interpolation =
@@ -4465,7 +4488,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   return true;
 }
 
-// bool ParsePrimAttr(std::map<std::string, PrimVariable> *props) {
+// bool ParsePrimAttr(std::map<std::string, MetaVariable> *props) {
 bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   // prim_attr : (custom?) uniform type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
@@ -4596,25 +4619,28 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   // TODO(syoyo): Refactror and implement value parser dispatcher.
   //
   if (isTimeSample) {
-#if 0  // TODO
       if (type_name == "float") {
-        TimeSampledDataFloat values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
+        if (auto pv = TryParseTimeSamples<float>()) {
+          value::TimeSamples ts = ConvertToTimeSamples<float>(pv.value());
+
+          PUSH_ERROR_AND_RETURN("TODO");
         }
 
-        PrimVariable var;
-        var.timeSampledValue = values;
-        std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
-        (*props)[primattr_name] = var;
+        // TODO: Implement
+        
+        //Property prop;
+        //prop.attrib.timeSampledValue = values;
+        //std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
+        //(*props)[primattr_name] = var;
 
+#if 0  // TODO
       } else if (type_name == "double") {
         TimeSampledDataDouble values;
         if (!ParseTimeSamples(&values)) {
           return false;
         }
 
-        PrimVariable var;
+        MetaVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
 
@@ -4624,7 +4650,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
           return false;
         }
 
-        PrimVariable var;
+        MetaVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
       } else if (type_name == "double3") {
@@ -4633,7 +4659,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
           return false;
         }
 
-        PrimVariable var;
+        MetaVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
       } else if (type_name == "matrix4d") {
@@ -4642,13 +4668,17 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
           return false;
         }
 
-        PrimVariable var;
+        MetaVariable var;
         var.timeSampledValue = values;
         (*props)[primattr_name] = var;
 
       } else {
         PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
         return false;
+      }
+#else
+      } else {
+        PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + type_name);
       }
 #endif
 
@@ -4924,7 +4954,7 @@ bool AsciiParser::ParseClassBlock() {
     return false;
   }
 
-  std::map<std::string, std::tuple<ListEditQual, PrimVariable>> metas;
+  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> metas;
   if (!ParsePrimMetas(&metas)) {
     return false;
   }
@@ -5035,7 +5065,7 @@ bool AsciiParser::ParseOverBlock() {
     return false;
   }
 
-  std::map<std::string, std::tuple<ListEditQual, PrimVariable>> metas;
+  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> metas;
   if (!ParsePrimMetas(&metas)) {
     return false;
   }
@@ -5149,7 +5179,7 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
     return false;
   }
 
-  std::map<std::string, std::tuple<ListEditQual, PrimVariable>> metas;
+  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> metas;
   {
     // look ahead
     char c;

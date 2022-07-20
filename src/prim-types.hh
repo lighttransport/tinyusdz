@@ -555,23 +555,23 @@ struct Rel {
   std::string path;
 };
 
-// Variable class for GPrim Metadataum.
-// TODO: Rename to MetaVariable
-class PrimVariable {
+// Variable class for GPrim and Attribute Metadataum.
+// TODO: Rename to MetaVariable?
+class MetaVariable {
  public:
   std::string type;  // Explicit name of type
   std::string name;
   bool custom{false};
 
   // using Array = std::vector<Variable>;
-  using Object = std::map<std::string, PrimVariable>;
+  using Object = std::map<std::string, MetaVariable>;
 
   value::Value value;
   // Array arr_value;
   Object obj_value;
   value::TimeSamples timeSamples;
 
-  PrimVariable &operator=(const PrimVariable &rhs) {
+  MetaVariable &operator=(const MetaVariable &rhs) {
     type = rhs.type;
     name = rhs.name;
     custom = rhs.custom;
@@ -582,7 +582,7 @@ class PrimVariable {
     return *this;
   }
 
-  PrimVariable(const PrimVariable &rhs) {
+  MetaVariable(const MetaVariable &rhs) {
     type = rhs.type;
     name = rhs.name;
     custom = rhs.custom;
@@ -590,7 +590,7 @@ class PrimVariable {
     obj_value = rhs.obj_value;
   }
 
-  static std::string type_name(const PrimVariable &v) {
+  static std::string type_name(const MetaVariable &v) {
     if (!v.type.empty()) {
       return v.type;
     }
@@ -659,12 +659,12 @@ class PrimVariable {
 
   bool valid() const { return !IsEmpty(); }
 
-  PrimVariable() = default;
+  MetaVariable() = default;
   // Variable(std::string ty, std::string n) : type(ty), name(n) {}
   // Variable(std::string ty) : type(ty) {}
 
   // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
-  // friend std::ostream &operator<<(std::ostream &os, const PrimVariable &var);
+  // friend std::ostream &operator<<(std::ostream &os, const MetaVariable &var);
 
   // friend std::string str_object(const Object &obj, int indent = 0); // string
   // representation of Object.
@@ -673,10 +673,10 @@ class PrimVariable {
 // Meta for Stage and GPrim
 struct GPrimMeta {
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
-  nonstd::optional<std::map<std::string, PrimVariable>>
+  nonstd::optional<std::map<std::string, MetaVariable>>
       customData;  // `customData`
 
-  std::map<std::string, PrimVariable> meta;  // other meta values
+  std::map<std::string, MetaVariable> meta;  // other meta values
 };
 
 struct AttrMeta {
@@ -684,10 +684,10 @@ struct AttrMeta {
   // nullopt = not specified in USD scene
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
-  nonstd::optional<std::map<std::string, PrimVariable>>
+  nonstd::optional<std::map<std::string, MetaVariable>>
       customData;  // `customData`
 
-  std::map<std::string, PrimVariable> meta;  // other meta values
+  std::map<std::string, MetaVariable> meta;  // other meta values
 };
 
 // PrimAttrib is a struct to hold attribute of a property(e.g. primvar)
