@@ -126,7 +126,7 @@ inline T atoi_negative(char const* p, char const* e, int& errcode) JSTEEMANN_NOE
   do {
     char c = *p;
 
-    if ((c == '\0') || (c == ' ') || (c == '\t') || (c == '\n') || (c == '\r')) {
+    if ((c == '\0') || (c == ' ') || (c == '\t') || (c == '\n') || (c == '\r') || (c == '\v') || (c == '\f')) {
       errcode = 0;
       return result;
     }
@@ -174,7 +174,7 @@ inline T atoi_positive(char const* p, char const* e, int& errcode) JSTEEMANN_NOE
   do {
     char c = *p;
 
-    if ((c == '\0') || (c == ' ') || (c == '\t') || (c == '\n') || (c == '\r')) {
+    if ((c == '\0') || (c == ' ') || (c == '\t') || (c == '\n') || (c == '\r') || (c == '\v') || (c == '\f')) {
       errcode = 0;
       return result;
     }
