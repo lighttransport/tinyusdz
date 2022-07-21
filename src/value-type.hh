@@ -1,13 +1,15 @@
 /// Copyright 2021-present Syoyo Fujita.
 /// MIT license.
 ///
-/// Type-erasure technique for Value, a Value class which can represent USD's mandatory and frequently used types(e.g. `float3`, `token`, `asset`)
-/// and its array and compound-types(1D/2D array, dictionary).
-/// Neigher std::any nor std::variant is applicable for such usecases, so write our own.
+/// Type-erasure technique for Value, a Value class which can represent USD's
+/// mandatory and frequently used types(e.g. `float3`, `token`, `asset`) and its
+/// array and compound-types(1D/2D array, dictionary). Neigher std::any nor
+/// std::variant is applicable for such usecases, so write our own.
 ///
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <iostream>
@@ -15,7 +17,6 @@
 #include <memory>
 #include <type_traits>
 #include <vector>
-#include <cmath>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -49,7 +50,11 @@
 #endif
 
 #include "token-type.hh"
-//#include "external/staticstruct.hh"
+
+// forward decl
+namespace linb {
+class any;
+};
 
 namespace tinyusdz {
 namespace value {
@@ -59,7 +64,7 @@ namespace value {
 constexpr char kToken[] = "token";
 constexpr char kString[] = "string";
 constexpr char kPath[] = "Path";
-constexpr char kAssetPath[] = "asset"; // `asset` in USDA
+constexpr char kAssetPath[] = "asset";  // `asset` in USDA
 constexpr char kDictionary[] = "dictionary";
 constexpr char kTimeCode[] = "timecode";
 
@@ -87,12 +92,12 @@ constexpr char kMatrix2d[] = "matrix2d";
 constexpr char kMatrix3d[] = "matrix3d";
 constexpr char kMatrix4d[] = "matrix4d";
 
-constexpr char kFloat[]  = "float";
+constexpr char kFloat[] = "float";
 constexpr char kFloat2[] = "float2";
 constexpr char kFloat3[] = "float3";
 constexpr char kFloat4[] = "float4";
 
-constexpr char kDouble[]  = "double";
+constexpr char kDouble[] = "double";
 constexpr char kDouble2[] = "double2";
 constexpr char kDouble3[] = "double3";
 constexpr char kDouble4[] = "double4";
@@ -130,19 +135,17 @@ constexpr char kTexCoord3d[] = "texCoord3d";
 
 constexpr char kRelationship[] = "rel";
 
-inline std::string Add1DArraySuffix(const std::string &c) {
-  return c + "[]";
-}
+inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 
 using token = tinyusdz::Token;
 
 // SdfAssetPath
-class asset_path
-{
-  public:
-    asset_path() = default;
-    asset_path(const std::string &a) : asset_path_(a) {}
-    asset_path(const std::string &a, const std::string &r) : asset_path_(a), resolved_path_(r) {}
+class asset_path {
+ public:
+  asset_path() = default;
+  asset_path(const std::string &a) : asset_path_(a) {}
+  asset_path(const std::string &a, const std::string &r)
+      : asset_path_(a), resolved_path_(r) {}
 
  private:
   std::string asset_path_;
@@ -158,17 +161,17 @@ class asset_path
 // (See `crate-format.hh` for Type ID used in Crate binary)
 //
 // TODO(syoyo): Support 3D and 4D?
-constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 20; // 1024
-constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21; // 2048
-//constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 22;
-//constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 23;
+constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 20;  // 1024
+constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21;  // 2048
+// constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 22;
+// constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 23;
 
 enum TypeId {
   TYPE_ID_INVALID,  // = 0
   TYPE_ID_NULL,
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
-  TYPE_ID_BLOCK, // None as type
+  TYPE_ID_BLOCK,  // None as type
 
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
@@ -248,11 +251,11 @@ enum TypeId {
   TYPE_ID_PAYLOAD,
 
   TYPE_ID_TIMECODE,
-  //TYPE_ID_TIMESAMPLE,
+  // TYPE_ID_TIMESAMPLE,
 
   TYPE_ID_DICT,
 
-  //TYPE_ID_ASSET,
+  // TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
   // Types in prim-types.hh
@@ -324,8 +327,7 @@ enum TypeId {
   TYPE_ID_ALL = (TYPE_ID_2D_ARRAY_BIT - 1)  // terminator.
 };
 
-struct timecode
-{
+struct timecode {
   double value;
 };
 
@@ -617,16 +619,15 @@ struct texcoord3d {
 };
 
 // Attribute Block(None)
-struct Block {
-};
+struct Block {};
 
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
-struct any_value;
-
-using dict = std::map<std::string, any_value>;
+//struct any_value;
+//using dict = std::map<std::string, any_value>;
+using dict = std::map<std::string, linb::any>;
 
 template <class dtype>
 struct TypeTrait;
@@ -697,7 +698,6 @@ DEFINE_TYPE_TRAIT(double2, kDouble2, TYPE_ID_DOUBLE2, 2);
 DEFINE_TYPE_TRAIT(double3, kDouble3, TYPE_ID_DOUBLE3, 3);
 DEFINE_TYPE_TRAIT(double4, kDouble4, TYPE_ID_DOUBLE4, 4);
 
-
 DEFINE_TYPE_TRAIT(quath, kQuath, TYPE_ID_QUATH, 1);
 DEFINE_TYPE_TRAIT(quatf, kQuatf, TYPE_ID_QUATF, 1);
 DEFINE_TYPE_TRAIT(quatd, kQuatd, TYPE_ID_QUATD, 1);
@@ -748,7 +748,8 @@ DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 DEFINE_TYPE_TRAIT(asset_path, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
-// Other types(e.g. TYPE_ID_REFERENCE) are defined in `prim-types.hh` and `crate-format.hh`(Data types used in Crate data)
+// Other types(e.g. TYPE_ID_REFERENCE) are defined in `prim-types.hh` and
+// `crate-format.hh`(Data types used in Crate data)
 //
 
 #undef DEFINE_TYPE_TRAIT
@@ -791,6 +792,7 @@ struct TypeTrait<std::vector<std::vector<T>>> {
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
 std::string GetTypeName(uint32_t tyid);
 
+#if 0 // TODO: Remove
 struct base_value {
   virtual ~base_value();
   virtual const std::string type_name() const = 0;
@@ -918,20 +920,34 @@ struct any_value {
     return *(reinterpret_cast<const std::vector<T> *>(p->value()));
   }
 
-  std::shared_ptr<base_value> p; // TODO: Use raw pointer?
+  std::shared_ptr<base_value> p;  // TODO: Use raw pointer?
 };
+#endif
+
+}  // namespace value
+}  // namespace tinyusdz
+
+// TODO(syoyo): Replace any_value with linb::any
+// TODO(syoyo): Move TypeTrait<T> code to another header to simplify .inc
+// inclusion.
+#include "tiny-any.inc"
+
+namespace tinyusdz {
+namespace value {
 
 // Handy, but may not efficient for large time samples(e.g. 1M samples or more)
 //
-// For the runtime speed, adding 10M `double` samples to any_value takes roughly 3.1 ms on 
-// Threadripper 1950X, whereas simple vector<double> push_back only takes 390 us(roughly x8 times faster).
-// (Build benchmarks to see the numbers on your CPU)
+// For the runtime speed, with "-O2 -g" optimization, adding 10M `double`
+// samples to linb::any takes roughly 1.8 ms on Threadripper 1950X, whereas
+// simple vector<double> push_back takes 390 us(roughly x4 times faster). (Build
+// benchmarks to see the numbers on your CPU)
 //
-// We assume having large time samples is rare situlation, but will do some C++ code optimization if required.
+// We assume having large time samples is rare situlation, but will do some C++
+// code optimization if required.
 //
 struct TimeSamples {
   std::vector<double> times;
-  std::vector<any_value> values; // Could be an array of 'None' or Type T
+  std::vector<linb::any> values;  // Could be an array of 'None' or Type T
 
   bool Valid() {
     if (times.size() > 0) {
@@ -942,9 +958,8 @@ struct TimeSamples {
 };
 
 // simple linear interpolator
-template<typename T>
-struct LinearInterpolator
-{
+template <typename T>
+struct LinearInterpolator {
   static T interpolate(const T *values, const size_t n, const double _t) {
     if (n == 0) {
       return static_cast<T>(0);
@@ -955,8 +970,8 @@ struct LinearInterpolator
     // [0.0, 1.0]
     double t = std::fmin(0.0, std::fmax(_t, 1.0));
 
-    size_t idx0 = std::max(n-1, size_t(t * double(n)));
-    size_t idx1 = std::max(n-1, idx0+1);
+    size_t idx0 = std::max(n - 1, size_t(t * double(n)));
+    size_t idx1 = std::max(n - 1, idx0 + 1);
 
     return (1.0 - t) * values[idx0] + t * values[idx1];
   }
@@ -973,23 +988,21 @@ struct LinearInterpolator
 //
 // radius = { 0: 1.0, 2: 3.0 }
 //
-template<typename T>
-struct AnimatableValue
-{
-  std::vector<double> times; // Assume sorted
+template <typename T>
+struct AnimatableValue {
+  std::vector<double> times;  // Assume sorted
   std::vector<T> values;
 
-  bool is_scalar() const {
-    return (times.size() == 0) && (values.size() == 1);
-  }
+  bool is_scalar() const { return (times.size() == 0) && (values.size() == 1); }
 
   bool is_timesample() const {
     return (times.size() > 0) && (times.size() == values.size());
   }
 
-  template<class Interpolator>
+  template <class Interpolator>
   T Get(double time = 0.0) {
-    std::vector<double>::iterator it = std::lower_bound(times.begin(), times.end(), time);
+    std::vector<double>::iterator it =
+        std::lower_bound(times.begin(), times.end(), time);
 
     size_t idx0, idx1;
     if (it != times.end()) {
@@ -1010,6 +1023,7 @@ struct AnimatableValue
   }
 };
 
+#if 0  // Remove
 struct PrimVar {
   // For scalar value, times.size() == 0, and values.size() == 1
   TimeSamples var;
@@ -1048,11 +1062,13 @@ struct PrimVar {
     }
 
     if (TypeTrait<T>::type_id == var.values[0].type_id()) {
-      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      return std::move(linb::any_cast<const T *>(var.values[0]));
     } else if (TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
-      return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      return std::move(linb::any_cast<const T *>(var.values[0]));
     }
     return nonstd::nullopt;
   }
@@ -1066,9 +1082,11 @@ struct PrimVar {
   }
 
 };
+#endif
 
-// using Object = std::map<std::string, any_value>;
-
+///
+/// Generic Value class using any
+///
 class Value {
  public:
   // using Dict = std::map<std::string, Value>;
@@ -1078,8 +1096,8 @@ class Value {
   template <class T>
   Value(const T &v) : v_(v) {}
 
-  //template <class T>
-  //Value(T &&v) : v_(v) {}
+  // template <class T>
+  // Value(T &&v) : v_(v) {}
 
   std::string type_name() const { return v_.type_name(); }
   std::string underlying_type_name() const { return v_.underlying_type_name(); }
@@ -1091,7 +1109,8 @@ class Value {
   template <class T>
   const T *as() const {
     if (TypeTrait<T>::type_id == v_.type_id()) {
-      return reinterpret_cast<const T *>(v_.value());
+      //return reinterpret_cast<const T *>(v_.value());
+      return linb::any_cast<const T>(&v_);
     } else {
       return nullptr;
     }
@@ -1101,8 +1120,9 @@ class Value {
   // Undefined behavior(usually will triger segmentation fault) when
   // type-mismatch. (We don't throw exception)
   template <class T>
-  const T &value() const {
-    return (*reinterpret_cast<const T *>(v_.value()));
+  const T value() const {
+    //return (*reinterpret_cast<const T *>(v_.value()));
+    return linb::any_cast<const T>(v_);
   }
 
   // Type-safe way to get concrete value.
@@ -1124,24 +1144,23 @@ class Value {
     return (*this);
   }
 
-  bool is_array() const { return v_.ndim() > 0; }
-  int32_t ndim() const { return v_.ndim(); }
+  //bool is_array() const { return v_.ndim() > 0; }
+  //int32_t ndim() const { return v_.ndim(); }
 
-  uint32_t ncomp() const { return v_.ncomp(); }
+  //uint32_t ncomp() const { return v_.ncomp(); }
 
-  bool is_vector_type() const { return v_.ncomp() > 1; }
+  //bool is_vector_type() const { return v_.ncomp() > 1; }
 
-  //friend std::ostream &operator<<(std::ostream &os, const Value &v);
-  const any_value& get_raw() const {
-    return v_;
-  }
+  // friend std::ostream &operator<<(std::ostream &os, const Value &v);
+  //const any_value &get_raw() const { return v_; }
 
  private:
-  any_value v_;
+  //any_value v_;
+  linb::any v_;
 };
 
-bool is_float(const any_value &v);
-bool is_double(const any_value &v);
+//bool is_float(const any_value &v);
+//bool is_double(const any_value &v);
 
 // Frequently-used utility function
 bool is_float(const Value &v);
@@ -1153,7 +1172,7 @@ bool is_double2(const Value &v);
 bool is_double3(const Value &v);
 bool is_double4(const Value &v);
 
-
+#if 0 // TODO: Remove? since not used so frequently at the moment.
 //
 // typecast from type_id
 // It does not throw exception.
@@ -1185,7 +1204,9 @@ TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
 // TODO(syoyo): Implement more types...
 
 #undef TYPECAST_BASETYPE
+#endif
 
+#if 0
 //
 // Type checker
 //
@@ -1195,19 +1216,21 @@ struct is_type {
     return TypeTrait<T>::type_id == v.type_id();
   }
 };
+#endif
 
 struct AttribMap {
-  std::map<std::string, any_value> attribs;
+  std::map<std::string, Value> attribs;
 };
 
-} // namespace value
-} // namespace tinyusdz
+}  // namespace value
+}  // namespace tinyusdz
 
 namespace tinyusdz {
 namespace value {
 
 static_assert(sizeof(quath) == 8, "sizeof(quath) must be 8");
 static_assert(sizeof(quatf) == 16, "sizeof(quatf) must be 16");
+static_assert(sizeof(quatd) == 32, "sizeof(quatd) must be 32");
 static_assert(sizeof(half) == 2, "sizeof(half) must be 2");
 static_assert(sizeof(half2) == 4, "sizeof(half2) must be 4");
 static_assert(sizeof(half3) == 6, "sizeof(half3) must be 6");
@@ -1216,5 +1239,5 @@ static_assert(sizeof(float3) == 12, "sizeof(float3) must be 12");
 static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
 static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 
-} // namespace value
-} // namespace tinyusdz
+}  // namespace value
+}  // namespace tinyusdz

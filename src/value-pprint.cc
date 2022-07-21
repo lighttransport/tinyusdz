@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present, Syoyo Fujita.
+
+#include <sstream>
+
 #include "value-pprint.hh"
 #include "prim-types.hh"
 
@@ -222,7 +225,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
   ofs << "{\n";
   for (const auto &item : m) {
-    ofs << item.first << " = " << item.second << "\n";
+    ofs << item.first << " = " << tinyusdz::value::pprint_any(item.second) << "\n";
   }
   ofs << "}";
 
@@ -234,26 +237,30 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
 namespace tinyusdz {
 namespace value {
 
-std::ostream &operator<<(std::ostream &os, const any_value &v) {
+//std::ostream &operator<<(std::ostream &os, const any_value &v) {
+//std::ostream &operator<<(std::ostream &os, const linb::any &v) {
+std::string pprint_any(const linb::any &v) {
+
+  std::stringstream os;
+
     // Simple brute-force way..
     // TODO: Use std::function or some template technique?
 
 #define BASETYPE_CASE_EXPR(__ty)                      \
   case TypeTrait<__ty>::type_id: {                    \
-    os << *reinterpret_cast<const __ty *>(v.value()); \
+    os << linb::any_cast<const __ty>(v); \
     break;                                            \
   }
 
 #define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
   case TypeTrait<std::vector<__ty>>::type_id: {                    \
-    os << *reinterpret_cast<const std::vector<__ty> *>(v.value()); \
+    os << linb::any_cast<const std::vector<__ty>>(v); \
     break;                                                         \
   }
 
 #define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
   case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
-    os << *reinterpret_cast<const std::vector<std::vector<__ty>> *>( \
-        v.value());                                                  \
+    os << linb::any_cast<const std::vector<std::vector<__ty>>>(v);   \
     break;                                                           \
   }
 
@@ -329,7 +336,7 @@ std::ostream &operator<<(std::ostream &os, const any_value &v) {
 #undef ARRAY2DTYPE_CASE_EXPR
 #undef CASE_EXPR_LIST
 
-    return os;
+    return os.str();
   }
 
 

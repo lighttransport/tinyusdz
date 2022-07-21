@@ -438,8 +438,9 @@ class CrateValue {
   // Undefined behavior(usually will triger segmentation fault) when
   // type-mismatch. (We don't throw exception)
   template <class T>
-  const T &value() const {
-    return (*reinterpret_cast<const T *>(value_.value()));
+  const T value() const {
+    //return (*reinterpret_cast<const T *>(value_.value()));
+    return linb::any_cast<const T>(value_);
   }
 
   // Type-safe way to get concrete value.
@@ -456,7 +457,8 @@ class CrateValue {
   }
 
  private:
-  value::any_value value_;
+  // TODO: Use value::Value?
+  linb::any value_;
 };
 
 
