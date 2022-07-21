@@ -462,7 +462,7 @@ class AsciiParser {
       data.push_back({timeVal, value});
     }
 
-    return data;
+    return std::move(data);
   }
 
 
