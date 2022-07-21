@@ -5,7 +5,8 @@ set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # static lib is always built.
 set(BUILD_TARGET_C "c-tinyusd")
 set(BUILD_TARGET_PY "pytinyusd")
 set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
-set(TEST_TARGET "test_tinyusdz")
+set(TINYUSDZ_TEST_TARGET "test_tinyusdz")
+set(TINYUSDZ_BENCHMARK_TARGET "benchmark_tinyusdz")
 
 project(${TINYUSDZ_TARGET} C CXX)
 
@@ -14,6 +15,7 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(TINYUSDZ_WITH_C_API "Enable C API." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
+option(TINYUSDZ_BUILD_BENCHMARKS "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples area built in `examples` folder)"
        ON)
@@ -558,6 +560,40 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
+if(TINYUSDZ_BUILD_BENCHMARKS)
+
+  #
+  # Standalone benchmark exe.
+  #
+  set(TINYUSDZ_BENCH_SOURCES ${PROJECT_SOURCE_DIR}/benchmarks/benchmark-main.cc)
+
+  add_executable(${TINYUSDZ_BENCHMARK_TARGET} ${TINYUSDZ_BENCH_SOURCES})
+  add_sanitizers(${TINYUSDZ_BENCHMARK_TARGET})
+
+  target_include_directories(${TINYUSDZ_BENCHMARK_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                                    ${PROJECT_SOURCE_DIR}/bencharks)
+  target_link_libraries(${TINYUSDZ_BENCHMARK_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+
+  if(TINYUSDZ_WITH_OPENSUBDIV)
+    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+  endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+endif(TINYUSDZ_BUILD_BENCHMARKS)
+
+# [VisualStudio]
+if(WIN32)
+  # Set ${TINYUSDZ_TARGET_STATIC} as a startup project for VS IDE
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${TINYUSDZ_TARGET_STATIC})
+
+  # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
+  # directory to ${TINYUSDZ_TARGET_STATIC} git repo root.
+  if(CMAKE_VERSION VERSION_GREATER 3.8.0)
+    set_target_properties(
+      ${TINYUSDZ_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
+                                           "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+endif()
+
 if(TINYUSDZ_BUILD_TESTS)
 
   enable_testing()
@@ -567,15 +603,15 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   set(TINYUSDZ_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
 
-  add_executable(${TEST_TARGET} ${TINYUSDZ_TEST_SOURCES})
-  add_sanitizers(${TEST_TARGET})
+  add_executable(${TINYUSDZ_TEST_TARGET} ${TINYUSDZ_TEST_SOURCES})
+  add_sanitizers(${TINYUSDZ_TEST_TARGET})
 
-  target_include_directories(${TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
+  target_include_directories(${TINYUSDZ_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
                                                     ${PROJECT_SOURCE_DIR}/tests)
-  target_link_libraries(${TEST_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_link_libraries(${TINYUSDZ_TEST_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_compile_definitions(${TEST_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+    target_compile_definitions(${TINYUSDZ_TEST_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
   #
