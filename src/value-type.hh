@@ -921,7 +921,14 @@ struct any_value {
   std::shared_ptr<base_value> p; // TODO: Use raw pointer?
 };
 
-// Handy, but not efficient for large time samples(e.g. 1000 or more)
+// Handy, but may not efficient for large time samples(e.g. 1M samples or more)
+//
+// For the runtime speed, adding 10M `double` samples to any_value takes roughly 3.1 ms on 
+// Threadripper 1950X, whereas simple vector<double> push_back only takes 390 us(roughly x8 times faster).
+// (Build benchmarks to see the numbers on your CPU)
+//
+// We assume having large time samples is rare situlation, but will do some C++ code optimization if required.
+//
 struct TimeSamples {
   std::vector<double> times;
   std::vector<any_value> values; // Could be an array of 'None' or Type T

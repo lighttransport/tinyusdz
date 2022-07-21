@@ -276,3 +276,4 @@ TinyUSDZ is licensed under MIT license.
 * jsteeman/atoi: Apache 2.0 license. https://github.com/jsteemann/atoi
 * formatxx: unlicense. https://github.com/seanmiddleditch/formatxx
 * mapbox/variant: BSD-3 or BSL-1.0 license. https://github.com/mapbox/variant
+* ubench.h: Unlicense. https://github.com/sheredom/ubench.h
