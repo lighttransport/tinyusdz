@@ -7,9 +7,10 @@
 namespace tinyusdz {
 namespace value {
 
-base_value::~base_value() {}
+//base_value::~base_value() {}
 
 
+#if 0
 bool is_float(const any_value &v) {
   if (v.underlying_type_name() == "float") {
     return true;
@@ -89,6 +90,7 @@ bool is_double4(const Value &v) {
 
   return false;
 }
+#endif
 
 #if 0 // TODO: Remove
 bool Reconstructor::reconstruct(AttribMap &amap) {

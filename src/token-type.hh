@@ -11,6 +11,8 @@
 // so an application should not frequently construct Token class
 // among threads.
 //
+// TODO: Deprecate `Token` class? Seems there is no beneficial usecase in TinyUSDZ(`std::string` may suffice)
+//
 
 #include <iostream>
 #include <string>
