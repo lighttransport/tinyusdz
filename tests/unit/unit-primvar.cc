@@ -53,6 +53,7 @@ static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
 
 void primvar_test(void) {
 
+#if 0
   {
     any_value f = 1.2f;
     TEST_CHECK(is_float(f));
@@ -74,6 +75,7 @@ void primvar_test(void) {
     auto c = typecast<TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT>::to(f);
     std::cout << "c = " << c << "\n";
   }
+#endif
 
 #if 0
   {
