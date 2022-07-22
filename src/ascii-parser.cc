@@ -203,38 +203,30 @@ static void RegisterStageMetas(
   metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers");
 }
 
-#if 0
+// T = better-enums
 template<class T>
-class Checker
+class OneOf
 {
  public:
-  static bool check(const std::string &name) {
-    if (auto p = T::_from_string_nothrow(name.c_str())) {
+  nonstd::expected<bool, std::string> operator()(const std::string &name) {
+    // strip double quotation.
+    std::string identifier = unwrap(name);
+
+    if (auto p = T::_from_string_nothrow(identifier.c_str())) {
       return true;
     }
-    return false;
+
+    std::string err_msg = "Must be one of " + enum_join<T>(", ") + " but got \"" + name + "\"";
+
+    return nonstd::make_unexpected(err_msg);
   }
 };
-#endif
 
 static void RegisterPrimMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
-  auto s = enum_join<Kind>(", ");
-  DCOUT("Kind enums = " << s);
-
-#if 0
-  using handlerTy = std::map<std::string, std::function<bool(const std::string &)>>;
-
-  handlerTy handler;
-
-  handler["kind"] = [](const std::string &name) {
-    return Checker<Kind>::check(name);
-  };
-#endif
-
-  metas["kind"] = AsciiParser::VariableDef(value::kString, "kind");
+  metas["kind"] = AsciiParser::VariableDef(value::kString, "kind", OneOf<Kind>());
 
   // Composition arcs
   // Type can be array. i.e. path, path[]
@@ -2768,9 +2760,9 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
 
-  VariableDef &vardef = _supported_stage_metas.at(varname);
+  const VariableDef &vardef = _supported_stage_metas.at(varname);
   MetaVariable var;
-  if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
+  if (!ParseMetaValue(vardef, &var)) {
     PushError("Failed to parse meta value.\n");
     return false;
   }
@@ -3722,9 +3714,11 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   return true;
 }
 
-bool AsciiParser::ParseMetaValue(const std::string &vartype,
-                                 const std::string &varname,
+bool AsciiParser::ParseMetaValue(const VariableDef &def,
                                  MetaVariable *outvar) {
+  const std::string vartype = def.type;
+  const std::string varname = def.name;
+
   MetaVariable var;
 
   // TODO: Refactor.
@@ -3746,6 +3740,12 @@ bool AsciiParser::ParseMetaValue(const std::string &vartype,
       return false;
     }
     DCOUT("string = " << value);
+
+    auto ret = def.post_parse_handler(value);
+    if (!ret) {
+      DCOUT("error = " << ret.error());
+      PUSH_ERROR_AND_RETURN("Invalid string for `" + varname + "`. " + ret.error());
+    }
 
     var.value = value;
   } else if (vartype == "string[]") {
@@ -4232,9 +4232,9 @@ AsciiParser::ParsePrimMeta() {
   }
   SkipWhitespace();
 
-  VariableDef &vardef = _supported_prim_metas.at(varname);
+  const VariableDef &vardef = _supported_prim_metas.at(varname);
   MetaVariable var;
-  if (!ParseMetaValue(vardef.type, vardef.name, &var)) {
+  if (!ParseMetaValue(vardef, &var)) {
     PushError("Failed to parse Prim meta value.\n");
     return nonstd::nullopt;
   }
