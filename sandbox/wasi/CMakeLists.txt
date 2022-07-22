@@ -20,9 +20,13 @@ list(
   ../../src/prim-types.cc
   ../../src/pprinter.cc
   ../../src/primvar.cc
-  ../../src/usda-parser.cc
+  ../../src/crate-format.cc
+  ../../src/crate-reader.cc
+  ../../src/crate-writer.cc
+  ../../src/ascii-parser.cc
+  ../../src/usda-reader.cc
   ../../src/usda-writer.cc
-  ../../src/usdc-parser.cc
+  ../../src/usdc-reader.cc
   ../../src/usdc-writer.cc
   ../../src/image-loader.cc
   ../../src/usdObj.cc
@@ -35,8 +39,9 @@ set(TINYUSDZ_DEP_SOURCES
   ../../src/external/fpng.cpp
   ../../src/external/staticstruct.cc
   ../../src/external/tinyxml2/tinyxml2.cpp
-  ../../src/external/ryu/ryu/s2d.c
-  ../../src/external/ryu/ryu/s2f.c)
+  )
+  #../../src/external/ryu/ryu/s2d.c
+  #../../src/external/ryu/ryu/s2f.c)
 
 
 

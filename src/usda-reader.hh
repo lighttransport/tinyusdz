@@ -52,7 +52,7 @@ class USDAReader {
   ///
   /// Reader entry point
   ///
-  bool Read(ascii::LoadState state = ascii::LoadState::LOAD_STATE_TOPLEVEL);
+  bool Read(ascii::LoadState state = ascii::LoadState::TOPLEVEL);
 
   ///
   ///
@@ -74,11 +74,11 @@ class USDAReader {
   ///
   std::string GetWarning();
 
-  /// 
+  ///
   /// Get as scene
   ///
   const HighLevelScene& GetHighLevelScene() const;
-  
+
  private:
   class Impl;
   Impl *_impl;

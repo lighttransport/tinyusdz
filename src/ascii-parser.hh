@@ -12,16 +12,78 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
+#include "external/better-enums/enum.h"
+
+//
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+// external
+#include "nonstd/expected.hpp"
+
+//
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+
 namespace tinyusdz {
 
 namespace ascii {
 
-enum LoadState {
-  LOAD_STATE_TOPLEVEL,   // toplevel .usda input
-  LOAD_STATE_SUBLAYER,   // .usda is read by 'subLayers'
-  LOAD_STATE_REFERENCE,  // .usda is read by `references`
-  LOAD_STATE_PAYLOAD,    // .usda is read by `payload`
+// keywords
+constexpr auto kUniform = "uniform";
+constexpr auto kToken = "token";
+
+// Prim name
+constexpr auto kGPrim = "GPrim";
+constexpr auto kGeomMesh = "Mesh";
+constexpr auto kGeomSubset = "GeomSubset";
+constexpr auto kGeomCone = "Cone";
+constexpr auto kGeomCube = "Cube";
+constexpr auto kLuxSphereLight = "SphereLight";
+constexpr auto kLuxDomeLight = "DomeLight";
+constexpr auto kMaterial = "Mateiral";
+constexpr auto kShader = "Shader";
+
+// Frequently used attr/meta keywords
+constexpr auto kKind = "kind";
+constexpr auto kInterpolation = "interpolation";
+
+enum class LoadState {
+  TOPLEVEL,   // toplevel .usda input
+  SUBLAYER,   // .usda is read by 'subLayers'
+  REFERENCE,  // .usda is read by `references`
+  PAYLOAD,    // .usda is read by `payload`
 };
+
+// Prim Kind
+// https://graphics.pixar.com/usd/release/glossary.html#usdglossary-kind
+#if 0
+enum class Kind {
+  Model,  // "model"
+  Group,  // "group"
+  Assembly, // "assembly"
+  Component, // "component"
+  Subcomponent, // "subcomponent"
+};
+#else
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+BETTER_ENUM(Kind, int, model, group, assembly, component, subcomponent);
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+#endif
+
 
 ///
 /// Test if input file is USDA ascii format.
@@ -95,24 +157,37 @@ class AsciiParser {
   bool IsStageMeta(const std::string &name);
   bool IsPrimMeta(const std::string &name);
 
+  
   class VariableDef {
    public:
+    // Handler functor in parsing stage to check if input string valid or not
+    // e.g. input string is one of "common", "group", "assembly", "component" or "subcomponent" for "kind" metadata
+    using ParseHandler = std::function<nonstd::expected<bool, std::string>(const std::string &)>;
+
+    static nonstd::expected<bool, std::string> DefaultParseHandler(const std::string &) {
+      return true;
+    }
+
     std::string type;
     std::string name;
 
+    ParseHandler parse_handler;
+
     VariableDef() = default;
 
-    VariableDef(const std::string &t, const std::string &n)
-        : type(t), name(n) {}
+    VariableDef(const std::string &t, const std::string &n, ParseHandler ph = DefaultParseHandler)
+        : type(t), name(n), parse_handler(ph) {}
 
     VariableDef(const VariableDef &rhs) = default;
+    VariableDef &operator=(const VariableDef &rhs) = default;
 
-    VariableDef &operator=(const VariableDef &rhs) {
-      type = rhs.type;
-      name = rhs.name;
+    //VariableDef &operator=(const VariableDef &rhs) {
+    //  type = rhs.type;
+    //  name = rhs.name;
+    //  parse_handler = rhs.parse_handler;
 
-      return *this;
-    }
+    //  return *this;
+    //}
   };
 
   AsciiParser();
@@ -127,7 +202,7 @@ class AsciiParser {
   /// Stage Meta construction callback function
   ///
   using StageMetaProcessFunction = std::function<bool(const StageMetas& metas)>;
-  
+
   ///
   /// Register Stage metadatum processing callback function.
   /// Called when after parsing Stage metadatum.
@@ -169,7 +244,7 @@ class AsciiParser {
   ///
   /// Parser entry point
   ///
-  bool Parse(LoadState state = LOAD_STATE_TOPLEVEL);
+  bool Parse(LoadState state = LoadState::TOPLEVEL);
 
   // TODO: ParseBasicType?
   bool ParsePurpose(Purpose *result);
@@ -389,7 +464,7 @@ class AsciiParser {
 
   //template<typename T>
   //bool ParseTimeSampleData(nonstd::optional<T> *out_value);
-  
+
   template<typename T>
   using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
 
@@ -531,7 +606,7 @@ class AsciiParser {
   std::string _base_dir;
 
   StageMetas _stage_metas;
-  
+
   //
   // Callbacks
   //
