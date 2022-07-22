@@ -151,15 +151,15 @@ bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene,
 
   ss << "#usda 1.0\n";
   ss << "(\n";
-  if (scene.doc.empty()) {
+  if (scene.stage_metas.doc.empty()) {
     ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
        << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
   } else {
-    ss << "  doc = \"" << scene.doc << "\"\n";
+    ss << "  doc = \"" << scene.stage_metas.doc << "\"\n";
   }
-  ss << "  metersPerUnit = " << scene.metersPerUnit << "\n";
-  ss << "  upAxis = \"" << to_string(scene.upAxis) << "\"\n";
-  ss << "  timeCodesPerSecond = \"" << scene.timeCodesPerSecond << "\"\n";
+  ss << "  metersPerUnit = " << scene.stage_metas.metersPerUnit << "\n";
+  ss << "  upAxis = \"" << to_string(scene.stage_metas.upAxis) << "\"\n";
+  ss << "  timeCodesPerSecond = \"" << scene.stage_metas.timeCodesPerSecond << "\"\n";
   // TODO: write other header data.
   ss << ")\n";
 
