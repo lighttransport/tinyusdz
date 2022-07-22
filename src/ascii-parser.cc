@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "ascii-parser.hh"
+#include "str-util.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -156,6 +157,22 @@ namespace tinyusdz {
 
 namespace ascii {
 
+// T = better-enum class
+template<typename T>
+std::string enum_join(const std::string &sep)
+{
+  std::ostringstream ss;
+
+  // wrap with "
+  ss << wrap(T::_names()[0], "\"");
+
+  for (size_t i = 1; i < T::_size(); i++) {
+    ss << sep << wrap(T::_names()[i], "\"");
+  }
+
+  return ss.str();
+}
+
 struct Identifier : std::string {
   // using std::string;
 };
@@ -186,9 +203,37 @@ static void RegisterStageMetas(
   metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers");
 }
 
+#if 0
+template<class T>
+class Checker
+{
+ public:
+  static bool check(const std::string &name) {
+    if (auto p = T::_from_string_nothrow(name.c_str())) {
+      return true;
+    }
+    return false;
+  }
+};
+#endif
+
 static void RegisterPrimMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
+
+  auto s = enum_join<Kind>(", ");
+  DCOUT("Kind enums = " << s);
+
+#if 0
+  using handlerTy = std::map<std::string, std::function<bool(const std::string &)>>;
+
+  handlerTy handler;
+
+  handler["kind"] = [](const std::string &name) {
+    return Checker<Kind>::check(name);
+  };
+#endif
+
   metas["kind"] = AsciiParser::VariableDef(value::kString, "kind");
 
   // Composition arcs
@@ -3692,6 +3737,7 @@ bool AsciiParser::ParseMetaValue(const std::string &vartype,
 
     var.value = value;
   } else if (vartype == value::kString) {
+
     std::string value;
     DCOUT("parse meta = " << value);
     if (!ReadStringLiteral(&value)) {
@@ -4627,7 +4673,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         }
 
         // TODO: Implement
-        
+
         //Property prop;
         //prop.attrib.timeSampledValue = values;
         //std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
@@ -5458,9 +5504,9 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
 ///
 bool AsciiParser::Parse(LoadState state) {
 
-  _sub_layered = (state == LOAD_STATE_SUBLAYER);
-  _referenced = (state == LOAD_STATE_REFERENCE);
-  _payloaded = (state == LOAD_STATE_PAYLOAD);
+  _sub_layered = (state == LoadState::SUBLAYER);
+  _referenced = (state == LoadState::REFERENCE);
+  _payloaded = (state == LoadState::PAYLOAD);
 
   bool header_ok = ParseMagicHeader();
   if (!header_ok) {

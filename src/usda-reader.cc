@@ -466,6 +466,45 @@ class USDAReader::Impl {
     return true;
   }
 
+  bool RegisterReconstructGeomSubsetCallback() {
+
+    _parser.RegisterPrimConstructFunction("GeomSubset", [&](const std::map<std::string, Property> &properties,
+      std::vector<std::pair<ListEditQual, Reference>> &references) {
+
+      // TODO: Implement
+      GPrim gprim;
+
+      //
+      // Resolve prepend references
+      //
+      for (const auto &ref : references) {
+        if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+        }
+      }
+
+      // Update props;
+      for (auto item : properties) {
+        if (item.second.is_rel) {
+          PUSH_WARN("TODO: rel");
+        } else {
+          gprim.props[item.first].attrib = item.second.attrib;
+        }
+      }
+
+      //
+      // Resolve append references
+      //
+      for (const auto &ref : references) {
+        if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+        }
+      }
+
+      return true;
+    });
+
+    return true;
+  }
+
   //bool ReconstructGPrim(
   //    const std::map<std::string, Property> &properties,
   //    std::vector<std::pair<ListEditQual, Reference>> &references,
@@ -603,7 +642,7 @@ class USDAReader::Impl {
   /// TODO: Use callback function(visitor) so that Reconstruct**** function is invoked
   /// in the Parser context.
   ///
-  bool Read(ascii::LoadState state = ascii::LoadState::LOAD_STATE_TOPLEVEL) {
+  bool Read(ascii::LoadState state = ascii::LoadState::TOPLEVEL) {
 
     ///
     /// Setup callbacks.

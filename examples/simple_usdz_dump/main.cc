@@ -73,9 +73,9 @@ static void DumpScene(const tinyusdz::HighLevelScene &scene)
 {
 
   std::cout << "Scene.name: " << scene.name << "\n";
-  std::cout << "Scene.metersPerUnit: " << scene.metersPerUnit << "\n";
-  std::cout << "Scene.timeCodesPerSecond: " << scene.timeCodesPerSecond << "\n";
-  std::cout << "Scene.defaultPrim: " << scene.defaultPrim << "\n";
+  std::cout << "Scene.metersPerUnit: " << scene.stage_metas.metersPerUnit << "\n";
+  std::cout << "Scene.timeCodesPerSecond: " << scene.stage_metas.timeCodesPerSecond << "\n";
+  std::cout << "Scene.defaultPrim: " << scene.stage_metas.defaultPrim << "\n";
   std::cout << "Scene.default_root_node: " << scene.default_root_node << "\n";
 
 #if 0

@@ -424,21 +424,23 @@ struct Node {
   std::vector<Node> children;  // child nodes
 };
 
-struct HighLevelScene {
-  std::string name;       // Scene name
-  int64_t default_root_node{-1};  // index to default root node
-
+struct StageMetas {
   // Scene global setting
   Axis upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
   std::string defaultPrim;           // prim node name
   double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
   std::string doc; // `documentation`
-  std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
-
-  // Currently `string` type value only.
-  //std::map<std::string, std::string> customLayerData; // TODO(syoyo): Support arbitrary value
   value::dict customLayerData;
+};
+
+struct HighLevelScene {
+  std::string name;       // Scene name
+  int64_t default_root_node{-1};  // index to default root node
+
+  StageMetas stage_metas;
+
+  std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
 
   // Root nodes
   std::vector<PrimNode> root_nodes;
@@ -466,11 +468,10 @@ struct LowLevelScene {
   double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
   std::string doc; // `documentation`
+  value::dict customLayerData;
+
   std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
 
-  // Currently `string` type value only.
-  //std::map<std::string, std::string> customLayerData; // TODO(syoyo): Support arbitrary value
-  value::dict customLayerData;
 
   //
   // glTF-like scene objects
