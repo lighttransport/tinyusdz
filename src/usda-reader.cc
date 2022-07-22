@@ -651,7 +651,12 @@ class USDAReader::Impl {
     RegisterReconstructGPrimCallback();
 
     if (!_parser.Parse(state)) {
-      PUSH_ERROR_AND_RETURN("Parse failed.");
+      std::string warn = _parser.GetWarning();
+      if (!warn.empty()) {
+        PUSH_WARN("<parser> " + warn);
+      }
+
+      PUSH_ERROR_AND_RETURN("Parse failed:" + _parser.GetError());
     }
 
     // HACK

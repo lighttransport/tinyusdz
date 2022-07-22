@@ -22,4 +22,5 @@ Why built-in?
 
 * [ ] Preserve shape hierarchy
 * [ ] per-face material
+  * Decode to GeomSubset?
 * [ ] Loading Skin weight(tinyobjloader's extension)
