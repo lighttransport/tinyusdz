@@ -4195,6 +4195,31 @@ bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out) {
   return true;
 }
 
+#if 0
+nonstd::optional<AsciiParser::PrimMetas> AsciiParser::ReconstructPrimMetas(
+    std::map<std::string, std::tuple<ListEditQual, MetaVariable>> &args) {
+  PrimMetas metas;
+
+  {
+    auto it = args.find(kKind);
+    if (it != args.end()) {
+      if (auto s = std::get<1>(it->second).get_value<std::string>()) {
+      }
+
+      if (auto v = Kind::_from_string_nothrow() {
+        metas.kind = v.value();
+      } else {
+        return nonstd::nullopt;
+      }
+    }
+  }
+
+
+  return metas;
+
+}
+#endif
+
 nonstd::optional<std::tuple<ListEditQual, MetaVariable>>
 AsciiParser::ParsePrimMeta() {
 
@@ -5225,7 +5250,7 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
     return false;
   }
 
-  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> metas;
+  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> in_metas;
   {
     // look ahead
     char c;
@@ -5236,7 +5261,7 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
     if (c == '(') {
       // meta
 
-      if (!ParsePrimMetas(&metas)) {
+      if (!ParsePrimMetas(&in_metas)) {
         DCOUT("Parse Prim metas failed.");
         return false;
       }
@@ -5260,13 +5285,21 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
   }
 
   std::vector<std::pair<ListEditQual, Reference>> references;
-  DCOUT("`references.count` = " + std::to_string(metas.count("references")));
+  DCOUT("`references.count` = " + std::to_string(in_metas.count("references")));
 
-  if (metas.count("references")) {
+  if (in_metas.count("references")) {
     // TODO
     // references = GetReferences(args["references"]);
     // DCOUT("`references.size` = " + std::to_string(references.size()));
   }
+
+#if 0
+  if (auto v = ReconstructPrimMetas(in_metas)) {
+    DCOUT("TODO: ");
+  } else {
+    return false;
+  }
+#endif
 
   std::map<std::string, Property> props;
 
