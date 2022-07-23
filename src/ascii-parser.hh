@@ -97,7 +97,10 @@ class AsciiParser {
  public:
 
   struct PrimMetas {
+    // Frequently used prim metas
     nonstd::optional<Kind> kind;
+
+    value::dict customData; // `customData`
   };
 
   struct StageMetas {
@@ -111,7 +114,7 @@ class AsciiParser {
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
 
-    value::dict _customData; // `customData`(non-predefined Stage metas).
+    value::dict customData; // `customData`(non-predefined Stage metas).
   };
 
   struct ParseState {
@@ -161,7 +164,7 @@ class AsciiParser {
   bool IsStageMeta(const std::string &name);
   bool IsPrimMeta(const std::string &name);
 
-  
+
   class VariableDef {
    public:
     // Handler functor in post parsing stage.
@@ -214,6 +217,12 @@ class AsciiParser {
   void RegisterStageMetaProcessFunction(StageMetaProcessFunction fun) {
     _stage_meta_process_fun = fun;
   }
+
+  ///
+  /// Prim Meta construction callback function
+  ///
+  using PrimMetaProcessFunction = std::function<bool(const PrimMetas& metas)>;
+
 
   ///
   /// Prim construction callback function
@@ -401,6 +410,11 @@ class AsciiParser {
 
   // bool ParseAttributeMeta();
   bool ParseAttrMeta(AttrMeta *out_meta);
+
+#if 0
+  nonstd::optional<PrimMetas> ReconstructPrimMetas(
+      std::map<std::string, std::tuple<ListEditQual, MetaVariable>> &args);
+#endif
 
   bool ParsePrimMetas(
       std::map<std::string, std::tuple<ListEditQual, MetaVariable>> *args);
@@ -615,6 +629,7 @@ class AsciiParser {
   // Callbacks
   //
   StageMetaProcessFunction _stage_meta_process_fun;
+  PrimMetaProcessFunction _prim_meta_process_fun;
   std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
 
   // class Impl;

@@ -969,12 +969,38 @@ void GeomMesh::Initialize(const GPrim &gprim)
 };
 
 nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
+
+  std::stringstream ss;
+
   if (geom_subset_children.empty()) {
     return true;
   }
 
-  // TODO
-  return nonstd::make_unexpected("TODO: Implement GeomMesh::ValidateGeomSubset()");
+  auto CheckFaceIds = [](const size_t nfaces, const std::vector<uint32_t> ids) {
+    if (std::any_of(ids.begin(), ids.end(), [&nfaces](uint32_t id) { return id >= nfaces; })) {
+      return false;
+    }
+
+    return true;
+  };
+
+  size_t nfaces = faceVertexIndices.size();
+
+  // Currently we only check if face ids are valid.
+  for (size_t i = 0; i < geom_subset_children.size(); i++) {
+    int64_t node_idx = geom_subset_children[i];
+    (void)node_idx;
+    // TODO: geomsubset = get_geomsubset_node(node_idx)
+    GeomSubset geomsubset;
+
+    if (!CheckFaceIds(nfaces, geomsubset.faces)) {
+      ss << "Face index out-of-range.\n";
+      return nonstd::make_unexpected(ss.str());
+    }
+  }
+
+  return nonstd::make_unexpected("TODO: Implent GeomMesh::ValidateGeomSubset\n");
+  //return true;
 
 }
 

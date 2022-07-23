@@ -175,6 +175,15 @@ enum class SubdivisionScheme {
   Invalid
 };
 
+enum class Kind {
+  Model,
+  Group,
+  Assembly,
+  Component,
+  Subcomponent,
+  Invalid
+};
+
 // Attribute interpolation
 enum class Interpolation {
   Constant,     // "constant"
@@ -555,7 +564,7 @@ struct Rel {
   std::string path;
 };
 
-// Variable class for GPrim and Attribute Metadataum.
+// Variable class for Prim and Attribute Metadataum.
 // TODO: Rename to MetaVariable?
 class MetaVariable {
  public:
@@ -670,8 +679,9 @@ class MetaVariable {
   // representation of Object.
 };
 
-// Meta for Stage and GPrim
-struct GPrimMeta {
+// Metadata for Prim
+struct PrimMeta {
+  nonstd::optional<Kind> kind;  // 'kind'
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<std::map<std::string, MetaVariable>>
       customData;  // `customData`
@@ -679,6 +689,7 @@ struct GPrimMeta {
   std::map<std::string, MetaVariable> meta;  // other meta values
 };
 
+// Metadata for Attribute
 struct AttrMeta {
   // frequently used item
   // nullopt = not specified in USD scene
@@ -1510,7 +1521,7 @@ struct GeomSubset {
 
   ElementType elementType{ElementType::Face};  // must be face
 
-  std::vector<int32_t> faces;
+  std::vector<uint32_t> faces;
 
   std::map<std::string, PrimAttrib> attribs;
 };
