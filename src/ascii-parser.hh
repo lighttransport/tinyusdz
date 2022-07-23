@@ -96,6 +96,10 @@ class AsciiParser {
 
  public:
 
+  struct PrimMetas {
+    nonstd::optional<Kind> kind;
+  };
+
   struct StageMetas {
     ///
     /// Predefined Stage metas
