@@ -164,23 +164,23 @@ class AsciiParser {
   
   class VariableDef {
    public:
-    // Handler functor in parsing stage to check if input string valid or not
-    // e.g. input string is one of "common", "group", "assembly", "component" or "subcomponent" for "kind" metadata
-    using ParseHandler = std::function<nonstd::expected<bool, std::string>(const std::string &)>;
+    // Handler functor in post parsing stage.
+    // e.g. Check input string is a valid one: one of "common", "group", "assembly", "component" or "subcomponent" for "kind" metadata
+    using PostParseHandler = std::function<nonstd::expected<bool, std::string>(const std::string &)>;
 
-    static nonstd::expected<bool, std::string> DefaultParseHandler(const std::string &) {
+    static nonstd::expected<bool, std::string> DefaultPostParseHandler(const std::string &) {
       return true;
     }
 
     std::string type;
     std::string name;
 
-    ParseHandler parse_handler;
+    PostParseHandler post_parse_handler;
 
     VariableDef() = default;
 
-    VariableDef(const std::string &t, const std::string &n, ParseHandler ph = DefaultParseHandler)
-        : type(t), name(n), parse_handler(ph) {}
+    VariableDef(const std::string &t, const std::string &n, PostParseHandler ph = DefaultPostParseHandler)
+        : type(t), name(n), post_parse_handler(ph) {}
 
     VariableDef(const VariableDef &rhs) = default;
     VariableDef &operator=(const VariableDef &rhs) = default;
@@ -405,7 +405,7 @@ class AsciiParser {
   bool ParsePrimMetas(
       std::map<std::string, std::tuple<ListEditQual, MetaVariable>> *args);
 
-  bool ParseMetaValue(const std::string &vartype, const std::string &varname,
+  bool ParseMetaValue(const VariableDef &def,
                       MetaVariable *outvar);
 
   bool ParseStageMetaOpt();

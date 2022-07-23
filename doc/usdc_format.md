@@ -19,7 +19,7 @@ From pxr/usd/usd/crateFile.cpp
 // 0.7.0: Array sizes written as 64 bit ints.
 ```
 
-* 0.8.0(USD v20.11)
+* TinyUSDZ should support at least v0.8.0(USD v20.11).
   
 ## Compression
 
