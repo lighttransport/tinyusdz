@@ -848,6 +848,41 @@ class USDAReader::Impl {
   }
 
   ///
+  /// -- Iterators --
+  ///
+  class PrimIterator {
+   public:
+    //PrimIterator() : _idx(0) {}
+    PrimIterator(const std::vector<size_t> &indices,
+                 const std::vector<value::Value> &values, size_t idx = 0)
+        : _indices(indices), _values(values), _idx(idx) {}
+
+    value::Value &operator*() {
+      _values[_indices[_idx]];
+    }
+
+    PrimIterator &operator++() {
+      _idx++;
+      return *this;
+    }    
+    bool operator!=(const PrimIterator &rhs) {
+      return _idx != rhs._idx;
+    }
+
+   private:
+     size_t _idx{0};
+     const std::vector<size_t> &_indices;
+     const std::vector<value::Value> &_values;
+  };
+  friend class PrimIterator;
+
+  using const_prim_iterator = const PrimIterator;
+  const_prim_iterator PrinBegin(){return PrimIterator(_toplevel_prims, _prims); }
+  const_prim_iterator PrimEnd() {
+    return PrimIterator(_toplevel_prims, _prims, _toplevel_prims.size()); }
+
+
+  ///
   /// -- Members --
   ///
 
@@ -873,8 +908,8 @@ class USDAReader::Impl {
   std::map<std::string, std::pair<uint32_t, std::vector<GPrim>>>
       _reference_cache;
 
-  // toplevel "def" defs
-  // std::vector<GPrim> _gprims;
+  // toplevel prims
+  std::vector<size_t> _toplevel_prims; // index to _prims
 
   // Flattened array of prim nodes.
   std::vector<value::Value> _prims;
