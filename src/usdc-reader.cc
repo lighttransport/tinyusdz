@@ -10,6 +10,12 @@
 // - [ ] And more...
 //
 
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include "usdc-reader.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
@@ -118,12 +124,12 @@ class USDCReader::Impl {
 #if defined(__wasi__)
       num_threads = 1;
 #else
-      num_threads = std::max(1, int(std::thread::hardware_concurrency()));
+      num_threads = (std::max)(1, int(std::thread::hardware_concurrency()));
 #endif
     }
 
     // Limit to 1024 threads.
-    _num_threads = std::min(1024, num_threads);
+    _num_threads = (std::min)(1024, num_threads);
   }
 
   ~Impl() {
