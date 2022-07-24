@@ -984,16 +984,13 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     return true;
   };
 
-  size_t nfaces = faceVertexIndices.size();
+  size_t n = faceVertexIndices.size();
 
   // Currently we only check if face ids are valid.
   for (size_t i = 0; i < geom_subset_children.size(); i++) {
-    int64_t node_idx = geom_subset_children[i];
-    (void)node_idx;
-    // TODO: geomsubset = get_geomsubset_node(node_idx)
-    GeomSubset geomsubset;
+    const GeomSubset & subset = geom_subset_children[i];
 
-    if (!CheckFaceIds(nfaces, geomsubset.faces)) {
+    if (!CheckFaceIds(n, subset.indices)) {
       ss << "Face index out-of-range.\n";
       return nonstd::make_unexpected(ss.str());
     }

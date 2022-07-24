@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include "value-type.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -372,6 +373,42 @@ class Path {
 
       return p;
     }
+  }
+
+  Path GetParentPrim() const {
+
+    if (!valid) {
+      return Path();
+    }
+
+    if (IsRootPrim()) {
+      return *this;
+    }
+
+    size_t n = prim_part.find_last_of('/');
+    if (n == std::string::npos) {
+      // this should never happen though.
+      return Path();
+    }
+
+    if (n == 0) {
+      // return root
+      return Path("/");
+    }
+
+    return Path(prim_part.substr(0, n));
+  }
+
+  bool IsRootPrim() const {
+    if (!valid) {
+      return false;
+    }
+
+    if ((prim_part.size() == 1) && (prim_part[0] == '/')) {
+      return true;
+    }
+
+    return false;
   }
 
  private:
@@ -1506,13 +1543,12 @@ struct GPrim {
 
 // GeomSubset
 struct GeomSubset {
-  enum class ElementType { Face, Invalid };
+  enum class ElementType { Face };
 
   enum class FamilyType {
     Partition,       // 'partition'
     NonOverlapping,  // 'nonOverlapping'
-    Unrestricted,    // 'unrestricted'
-    Invalid
+    Unrestricted,    // 'unrestricted' (fallback)
   };
 
   std::string name;
@@ -1520,10 +1556,35 @@ struct GeomSubset {
   int64_t parent_id{-1};  // Index to parent node
 
   ElementType elementType{ElementType::Face};  // must be face
+  FamilyType familyType{FamilyType::Unrestricted};
 
-  std::vector<uint32_t> faces;
+  nonstd::expected<bool, std::string> SetElementType(const std::string &str) {
+    if (str == "face") {
+      elementType = ElementType::Face;
+      return true;
+    }
 
-  std::map<std::string, PrimAttrib> attribs;
+    return nonstd::make_unexpected("Only `face` is supported for `elementType`, but `" + str + "` specified");
+  }
+
+  nonstd::expected<bool, std::string> SetFamilyType(const std::string &str) {
+    if (str == "partition") {
+      familyType = FamilyType::Partition;
+      return true;
+    } else if (str == "nonOverlapping") {
+      familyType = FamilyType::NonOverlapping;
+      return true;
+    } else if (str == "unrestricted") {
+      familyType = FamilyType::Unrestricted;
+      return true;
+    }
+
+    return nonstd::make_unexpected("Invalid `familyType` specified: `" + str + "`.");
+  }
+
+  std::vector<uint32_t> indices;
+
+  std::map<std::string, PrimAttrib> attribs; // custom Attrs
 };
 
 // Polygon mesh geometry
@@ -1598,7 +1659,8 @@ struct GeomMesh : GPrim {
   // uniform token `subsetFamily:materialBind:familyType`
   GeomSubset::FamilyType materialBindFamilyType{
       GeomSubset::FamilyType::Partition};
-  std::vector<int32_t> geom_subset_children;  // indices in Scene::geom_subsets
+
+  std::vector<GeomSubset> geom_subset_children;
 
   ///
   /// Validate GeomSubset data attached to this GeomMesh.

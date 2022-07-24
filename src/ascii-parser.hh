@@ -228,7 +228,7 @@ class AsciiParser {
   /// Prim construction callback function
   /// TODO: use std::function?
   ///
-  using PrimConstructFunction = std::function<bool(const std::map<std::string, Property> &properties,
+  using PrimConstructFunction = std::function<bool(const Path &path, const std::map<std::string, Property> &properties,
     std::vector<std::pair<ListEditQual, Reference>> &references)>;
 
   ///
@@ -351,6 +351,11 @@ class AsciiParser {
   ///
   std::vector<GPrim> GetGPrims();
 #endif
+  class PrimIterator;
+  using const_iterator = PrimIterator;
+  const_iterator begin() const;
+  const_iterator end() const;
+  
 
   ///
   /// Get error message(when `Parse` failed)
