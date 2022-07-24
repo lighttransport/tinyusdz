@@ -5,6 +5,12 @@
 //
 //
 
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include "crate-reader.hh"
 
 #ifdef __wasi__
@@ -157,7 +163,7 @@ CrateReader::CrateReader(StreamReader *sr, int num_threads) : _sr(sr) {
   if (num_threads == -1) {
 #if defined(__wasi__)
 #else
-    num_threads = std::max(1, int(std::thread::hardware_concurrency()));
+    num_threads = (std::max)(1, int(std::thread::hardware_concurrency()));
     PUSH_WARN("# of thread to use: " << std::to_string(num_threads));
 #endif
   }
@@ -168,7 +174,7 @@ CrateReader::CrateReader(StreamReader *sr, int num_threads) : _sr(sr) {
 #endif
 
   // Limit to 1024 threads.
-  _num_threads = std::min(1024, num_threads);
+  _num_threads = (std::min)(1024, num_threads);
 }
 
 CrateReader::~CrateReader() {}

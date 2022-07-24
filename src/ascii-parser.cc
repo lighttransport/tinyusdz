@@ -4,6 +4,12 @@
 // TODO:
 //   - [ ] List-up TODOs :-)
 
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -360,11 +366,11 @@ int parseInt(const std::string &s, int *out_result) {
     }
 
     if (negative) {
-      if ((-result) < std::numeric_limits<int>::min()) {
+      if ((-result) < (std::numeric_limits<int>::min)()) {
         return -3;
       }
     } else {
-      if (result > std::numeric_limits<int>::max()) {
+      if (result > (std::numeric_limits<int>::max)()) {
         return -2;
       }
     }
