@@ -2963,9 +2963,9 @@ bool AsciiParser::ParseStageMetaOpt() {
 
 // Parse Stage meta
 // meta = ( metadata_opt )
-//      | empty
 //      ;
 bool AsciiParser::ParseStageMetas() {
+
   if (!Expect('(')) {
     return false;
   }
@@ -5044,9 +5044,15 @@ bool AsciiParser::ParseClassBlock() {
     return false;
   }
 
-  std::string path = GetCurrentPath() + "/" + target;
-
-  PushPath(path);
+  {
+    std::string path = GetCurrentPath();
+    if (path == "/") {
+      path += target;
+    } else {
+      path += "/" + target;
+    }
+    PushPath(path);
+  }
 
   // TODO: Support nested 'class'?
 
@@ -5102,7 +5108,7 @@ bool AsciiParser::ParseClassBlock() {
   }
 
   // TODO: Check key existance.
-  _klasses[path] = klass;
+  _klasses[GetCurrentPath()] = klass;
 
   PopPath();
 
@@ -5147,8 +5153,15 @@ bool AsciiParser::ParseOverBlock() {
     return false;
   }
 
-  std::string path = GetCurrentPath() + "/" + target;
-  PushPath(path);
+  {
+    std::string path = GetCurrentPath();
+    if (path == "/") {
+      path += target;
+    } else {
+      path += "/" + target;
+    }
+    PushPath(path);
+  }
 
   if (!Expect('{')) {
     return false;
@@ -5172,9 +5185,9 @@ bool AsciiParser::ParseOverBlock() {
 ///
 /// Parse `def` block.
 ///
-/// def = `def` prim_type? token optional_arg? { ... }
+/// def = `def` prim_type? token metas? { ... }
 ///
-/// optional_arg = '(' args ')'
+/// metas = '(' args ')'
 ///
 /// TODO: Support `def` without type(i.e. actual definition is defined in
 /// another USD file or referenced USD)
@@ -5309,8 +5322,15 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
 
   std::map<std::string, Property> props;
 
-  std::string path = GetCurrentPath() + "/" + prim_name;
-  PushPath(path);
+  {
+    std::string path = GetCurrentPath();
+    if (path == "/") {
+      path += prim_name;
+    } else {
+      path += "/" + prim_name;
+    }
+    PushPath(path);
+  }
 
   // expect = '}'
   //        | def_block
@@ -5356,8 +5376,10 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
     }
   }
 
-#if 0  // TODO
   if (prim_type.empty()) {
+    // No Prim type specified. Treat it as GPrim
+
+#if 0  // TODO
     if (IsToplevel()) {
       if (references.size()) {
         // Infer prim type from referenced asset.
@@ -5457,80 +5479,21 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
       // Unknown or unresolved node type
       LOG_ERROR("TODO: unresolved node type\n");
     }
-  }
 #endif
-
-#if 0  // TODO
-  if (IsToplevel()) {
-    if (prim_type.empty()) {
-      // Reconstuct Generic Prim.
-
-      GPrim gprim;
-      if (!ReconstructGPrim(props, references, &gprim)) {
-        PushError("Failed to reconstruct GPrim.");
-        return false;
-      }
-      gprim.name = node_name;
-      scene_.root_nodes.emplace_back(gprim);
-
-    } else {
-      // Reconstruct concrete C++ object
-#if 0
-
-#define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
-  }                                                                  \
-  else if (prim_type == __tyname) {                                  \
-    __dty node;                                                      \
-    if (!__reconstruct_fn(props, references, &node)) {               \
-      PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname);   \
-    }                                                                \
-    node.name = node_name;                                           \
-    __scene.emplace_back(node);
-
-        if (0) {
-        RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
-        RECONSTRUCT_NODE("Mesh", ReconstructGeomMesh, GeomMesh, scene_.geom_meshes)
-        RECONSTRUCT_NODE("Sphere", ReconstructGeomSphere, GeomSphere, scene_.geom_spheres)
-        RECONSTRUCT_NODE("Cone", ReconstructGeomCone, GeomCone, scene_.geom_cones)
-        RECONSTRUCT_NODE("Cube", ReconstructGeomCube, GeomCube, scene_.geom_cubes)
-        RECONSTRUCT_NODE("Capsule", ReconstructGeomCapsule, GeomCapsule, scene_.geom_capsules)
-        RECONSTRUCT_NODE("Cylinder", ReconstructGeomCylinder, GeomCylinder, scene_.geom_cylinders)
-        RECONSTRUCT_NODE("BasisCurves", ReconstructBasisCurves, GeomBasisCurves, scene_.geom_basis_curves)
-        RECONSTRUCT_NODE("Camera", ReconstructGeomCamera, GeomCamera, scene_.geom_cameras)
-        RECONSTRUCT_NODE("Shader", ReconstructShader, Shader, scene_.shaders)
-        RECONSTRUCT_NODE("NodeGraph", ReconstructNodeGraph, NodeGraph, scene_.node_graphs)
-        RECONSTRUCT_NODE("Material", ReconstructMaterial, Material, scene_.materials)
-
-        RECONSTRUCT_NODE("Scope", ReconstructScope, Scope, scene_.scopes)
-
-        RECONSTRUCT_NODE("SphereLight", ReconstructLuxSphereLight, LuxSphereLight, scene_.lux_sphere_lights)
-        RECONSTRUCT_NODE("DomeLight", ReconstructLuxDomeLight, LuxDomeLight, scene_.lux_dome_lights)
-
-        RECONSTRUCT_NODE("SkelRoot", ReconstructSkelRoot, SkelRoot, scene_.skel_roots)
-        RECONSTRUCT_NODE("Skeleton", ReconstructSkeleton, Skeleton, scene_.skeletons)
-        } else {
-          PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
-        }
-#endif
-      PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
-    }
   } else {
-    // Store properties to GPrim.
-    // TODO: Use Class?
-    GPrim gprim;
-    if (!ReconstructGPrim(props, references, &gprim)) {
-      PushError("Failed to reconstruct GPrim.");
-      return false;
-    }
-    gprim.name = node_name;
-    gprim.prim_type = prim_type;
 
-    if (PathStackDepth() == 1) {
-      // root node
-      _gprims.push_back(gprim);
+    if (_prim_construct_fun_map.count(prim_type)) {
+
+      auto construct_fun = _prim_construct_fun_map[prim_type];
+
+      Path path(GetCurrentPath());
+      if (!construct_fun(path, props, references)) {
+        // construction failed.
+        PUSH_ERROR_AND_RETURN("Constructing " + prim_type + " failed.");
+      }
+
     }
   }
-#endif
 
   PopPath();
 
@@ -5553,15 +5516,28 @@ bool AsciiParser::Parse(LoadState state) {
     return false;
   }
 
-  // stage meta.
-  if (!ParseStageMetas()) {
-    PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
+  SkipCommentAndWhitespaceAndNewline();
+
+  {
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == '(') {
+      // stage meta.
+      if (!ParseStageMetas()) {
+        PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
+      }
+    }
   }
 
   if (_stage_meta_process_fun) {
     DCOUT("StageMeta callback.");
     _stage_meta_process_fun(_stage_metas);
   }
+
+  PushPath("/");
 
   // parse blocks
   while (!_sr->eof()) {

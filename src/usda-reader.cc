@@ -98,7 +98,6 @@
     ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
     ss << s;                                                       \
     _err += ss.str();                                              \
-    return false;                                                  \
   } while (0)
 
 #if !defined(TINYUSDZ_PRODUCTION_BUILD)
@@ -254,7 +253,7 @@ class USDAReader::Impl {
     }
   }
 
-#if 0
+#if 0 // TODO: remove
     if (prim_type.empty()) {
       if (IsToplevel()) {
         if (references.size()) {
@@ -349,80 +348,6 @@ class USDAReader::Impl {
       }
     }
 
-    if (IsToplevel()) {
-      if (prim_type.empty()) {
-        // Reconstuct Generic Prim.
-
-        GPrim gprim;
-        if (!ReconstructGPrim(props, references, &gprim)) {
-          PushError("Failed to reconstruct GPrim.");
-          return false;
-        }
-        gprim.name = node_name;
-        scene_.root_nodes.emplace_back(gprim);
-
-
-      } else {
-
-        // Reconstruct concrete C++ object
-#if 0
-
-#define RECONSTRUCT_NODE(__tyname, __reconstruct_fn, __dty, __scene) \
-  }                                                                  \
-  else if (prim_type == __tyname) {                                  \
-    __dty node;                                                      \
-    if (!__reconstruct_fn(props, references, &node)) {               \
-      PUSH_ERROR_AND_RETURN("Failed to reconstruct " << __tyname);   \
-    }                                                                \
-    node.name = node_name;                                           \
-    __scene.emplace_back(node);
-
-        if (0) {
-        RECONSTRUCT_NODE("Xform", ReconstructXform, Xform, scene_.xforms)
-        RECONSTRUCT_NODE("Mesh", ReconstructGeomMesh, GeomMesh, scene_.geom_meshes)
-        RECONSTRUCT_NODE("Sphere", ReconstructGeomSphere, GeomSphere, scene_.geom_spheres)
-        RECONSTRUCT_NODE("Cone", ReconstructGeomCone, GeomCone, scene_.geom_cones)
-        RECONSTRUCT_NODE("Cube", ReconstructGeomCube, GeomCube, scene_.geom_cubes)
-        RECONSTRUCT_NODE("Capsule", ReconstructGeomCapsule, GeomCapsule, scene_.geom_capsules)
-        RECONSTRUCT_NODE("Cylinder", ReconstructGeomCylinder, GeomCylinder, scene_.geom_cylinders)
-        RECONSTRUCT_NODE("BasisCurves", ReconstructBasisCurves, GeomBasisCurves, scene_.geom_basis_curves)
-        RECONSTRUCT_NODE("Camera", ReconstructGeomCamera, GeomCamera, scene_.geom_cameras)
-        RECONSTRUCT_NODE("Shader", ReconstructShader, Shader, scene_.shaders)
-        RECONSTRUCT_NODE("NodeGraph", ReconstructNodeGraph, NodeGraph, scene_.node_graphs)
-        RECONSTRUCT_NODE("Material", ReconstructMaterial, Material, scene_.materials)
-
-        RECONSTRUCT_NODE("Scope", ReconstructScope, Scope, scene_.scopes)
-
-        RECONSTRUCT_NODE("SphereLight", ReconstructLuxSphereLight, LuxSphereLight, scene_.lux_sphere_lights)
-        RECONSTRUCT_NODE("DomeLight", ReconstructLuxDomeLight, LuxDomeLight, scene_.lux_dome_lights)
-
-        RECONSTRUCT_NODE("SkelRoot", ReconstructSkelRoot, SkelRoot, scene_.skel_roots)
-        RECONSTRUCT_NODE("Skeleton", ReconstructSkeleton, Skeleton, scene_.skeletons)
-        } else {
-          PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
-        }
-#endif
-        PUSH_ERROR_AND_RETURN(" TODO: " + prim_type);
-      }
-    } else {
-      // Store properties to GPrim.
-      // TODO: Use Class?
-      GPrim gprim;
-      if (!ReconstructGPrim(props, references, &gprim)) {
-        PushError("Failed to reconstruct GPrim.");
-        return false;
-      }
-      gprim.name = node_name;
-      gprim.prim_type = prim_type;
-
-      if (PathStackDepth() == 1) {
-        // root node
-        _gprims.push_back(gprim);
-      }
-
-    }
-
-    PopPath();
 
     return true;
   }
@@ -467,14 +392,135 @@ class USDAReader::Impl {
     return true;
   }
 
+  bool RegisterReconstructXformCallback() {
+    _parser.RegisterPrimConstructFunction(
+        "Xform",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+        
+          Xform xform;
+
+          DCOUT("Reconstruct Xform: Path.PrimPart = " << path.GetPrimPart());
+
+          if (!ReconstructXform(properties, references, &xform)) {
+            return false;
+          }
+
+          Path parent = path.GetParentPrim();
+          if (parent.IsRootPrim()) {
+            size_t idx = _prims.size();
+            _prims.push_back(xform);
+            _toplevel_prims.push_back(idx);
+          } else {
+            PUSH_WARN("TODO: Implement xform");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  bool RegisterReconstructGeomSphereCallback() {
+    _parser.RegisterPrimConstructFunction(
+        "Sphere",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomSphere sphere;
+
+          if (ReconstructGeomSphere(properties, references, &sphere)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomSphere");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  bool RegisterReconstructGeomCubeCallback() {
+    _parser.RegisterPrimConstructFunction(
+        "Cube",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomCube cube;
+
+          if (ReconstructGeomCube(properties, references, &cube)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomCube");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  bool RegisterReconstructGeomConeCallback() {
+    _parser.RegisterPrimConstructFunction(
+        "Cone",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomCone cone;
+
+          if (ReconstructGeomCone(properties, references, &cone)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomCone");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  bool RegisterReconstructGeomCylinderCallback() {
+    _parser.RegisterPrimConstructFunction(
+        "Cylinder",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomCylinder cylinder;
+
+          if (ReconstructGeomCylinder(properties, references, &cylinder)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomCylinder");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  bool RegisterReconstructGeomCapsuleCallback() {
+    _parser.RegisterPrimConstructFunction(
+        "Capsule",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomCapsule capsule;
+
+          if (ReconstructGeomCapsule(properties, references, &capsule)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomCapsule");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
   bool RegisterReconstructGeomMeshCallback() {
     _parser.RegisterPrimConstructFunction(
-        "GeomMesh",
+        "Mesh",
         [&](const Path &path, const std::map<std::string, Property> &properties,
             std::vector<std::pair<ListEditQual, Reference>> &references) {
           GeomMesh mesh;
 
           if (ReconstructGeomMesh(properties, references, &mesh)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomMesh");
           }
 
           return true;
@@ -736,7 +782,13 @@ class USDAReader::Impl {
     /// Setup callbacks.
     ///
     StageMetaProcessor();
+    RegisterReconstructXformCallback();
     RegisterReconstructGPrimCallback();
+    RegisterReconstructGeomCubeCallback();
+    RegisterReconstructGeomConeCallback();
+    RegisterReconstructGeomCylinderCallback();
+    RegisterReconstructGeomCapsuleCallback();
+    RegisterReconstructGeomSphereCallback();
     RegisterReconstructGeomMeshCallback();
     RegisterReconstructGeomSubsetCallback();
 
@@ -752,6 +804,16 @@ class USDAReader::Impl {
     // HACK
     if (_upAxis) {
       DCOUT("upAxis = " << to_string(_upAxis.value()));
+    }
+
+    DCOUT("# of toplevel prims = " << std::to_string(PrimSize()));
+
+    {
+      size_t i = 0;
+      for (auto it = PrimBegin(); it != PrimEnd(); ++it, i++) {
+        const auto &prim = (*it);
+        DCOUT("Prim[" << std::to_string(i) << "].type = " << prim.type_name());
+      }
     }
 
 #if 0
@@ -852,34 +914,39 @@ class USDAReader::Impl {
   ///
   class PrimIterator {
    public:
-    //PrimIterator() : _idx(0) {}
     PrimIterator(const std::vector<size_t> &indices,
                  const std::vector<value::Value> &values, size_t idx = 0)
         : _indices(indices), _values(values), _idx(idx) {}
 
-    value::Value &operator*() {
-      _values[_indices[_idx]];
+    const value::Value &operator*() const {
+      return _values[_indices[_idx]];
     }
 
     PrimIterator &operator++() {
       _idx++;
       return *this;
-    }    
+    }
     bool operator!=(const PrimIterator &rhs) {
       return _idx != rhs._idx;
     }
 
    private:
-     size_t _idx{0};
      const std::vector<size_t> &_indices;
      const std::vector<value::Value> &_values;
+     size_t _idx{0};
   };
   friend class PrimIterator;
 
+  // currently const only
   using const_prim_iterator = const PrimIterator;
-  const_prim_iterator PrinBegin(){return PrimIterator(_toplevel_prims, _prims); }
+
+  // Iterate over toplevel prims
+  const_prim_iterator PrimBegin(){return PrimIterator(_toplevel_prims, _prims); }
   const_prim_iterator PrimEnd() {
     return PrimIterator(_toplevel_prims, _prims, _toplevel_prims.size()); }
+  size_t PrimSize() {
+    return _toplevel_prims.size();
+  }
 
 
   ///
@@ -1015,6 +1082,7 @@ bool USDAReader::Impl::ReconstructXform(
   }
 
   for (const auto &prop : properties) {
+    DCOUT("prop.name = " << prop.first);
     if (startsWith(prop.first, "xformOp:translate")) {
       // TODO: Implement
       // using allowedTys = tinyusdz::variant<value::float3, value::double3>;
