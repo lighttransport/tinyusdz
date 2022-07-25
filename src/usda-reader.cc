@@ -253,7 +253,7 @@ class USDAReader::Impl {
     }
   }
 
-#if 0 // TODO: remove
+#if 0  // TODO: remove
     if (prim_type.empty()) {
       if (IsToplevel()) {
         if (references.size()) {
@@ -353,7 +353,18 @@ class USDAReader::Impl {
   }
 #endif
 
-  bool RegisterReconstructGPrimCallback() {
+  // T = Prim class(e.g. Xform)
+  template <typename T>
+  bool RegisterReconstructCallback();
+
+  template <typename T>
+  bool ReconstructPrim(
+      const std::map<std::string, Property> &properties,
+      const std::vector<std::pair<ListEditQual, Reference>> &references,
+      T *out);
+
+  template <>
+  bool RegisterReconstructCallback<GPrim>() {
     _parser.RegisterPrimConstructFunction(
         "GPrim",
         [&](const Path &path, const std::map<std::string, Property> &properties,
@@ -384,71 +395,6 @@ class USDAReader::Impl {
           for (const auto &ref : references) {
             if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
             }
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-  bool RegisterReconstructXformCallback() {
-    _parser.RegisterPrimConstructFunction(
-        "Xform",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-        
-          Xform xform;
-
-          DCOUT("Reconstruct Xform: Path.PrimPart = " << path.GetPrimPart());
-
-          if (!ReconstructXform(properties, references, &xform)) {
-            return false;
-          }
-
-          Path parent = path.GetParentPrim();
-          if (parent.IsRootPrim()) {
-            size_t idx = _prims.size();
-            _prims.push_back(xform);
-            _toplevel_prims.push_back(idx);
-          } else {
-            PUSH_WARN("TODO: Implement xform");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-  bool RegisterReconstructGeomSphereCallback() {
-    _parser.RegisterPrimConstructFunction(
-        "Sphere",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomSphere sphere;
-
-          if (ReconstructGeomSphere(properties, references, &sphere)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomSphere");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-  bool RegisterReconstructGeomCubeCallback() {
-    _parser.RegisterPrimConstructFunction(
-        "Cube",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomCube cube;
-
-          if (ReconstructGeomCube(properties, references, &cube)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomCube");
           }
 
           return true;
@@ -648,20 +594,20 @@ class USDAReader::Impl {
   //     std::vector<std::pair<ListEditQual, Reference>> &references,
   //     GPrim *sphere);
 
-  bool ReconstructGeomSphere(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomSphere *sphere);
+  //bool ReconstructGeomSphere(
+  //    const std::map<std::string, Property> &properties,
+  //    std::vector<std::pair<ListEditQual, Reference>> &references,
+  //    GeomSphere *sphere);
 
   bool ReconstructGeomCone(
       const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomCone *cone);
 
-  bool ReconstructGeomCube(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomCube *cube);
+  //bool ReconstructGeomCube(
+  //    const std::map<std::string, Property> &properties,
+  //    std::vector<std::pair<ListEditQual, Reference>> &references,
+  //    GeomCube *cube);
 
   bool ReconstructGeomCapsule(
       const std::map<std::string, Property> &properties,
@@ -672,11 +618,6 @@ class USDAReader::Impl {
       const std::map<std::string, Property> &properties,
       std::vector<std::pair<ListEditQual, Reference>> &references,
       GeomCylinder *cylinder);
-
-  bool ReconstructXform(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      Xform *xform);
 
   bool ReconstructGeomMesh(
       const std::map<std::string, Property> &properties,
@@ -777,110 +718,7 @@ class USDAReader::Impl {
   /// TODO: Use callback function(visitor) so that Reconstruct**** function is
   /// invoked in the Parser context.
   ///
-  bool Read(ascii::LoadState state = ascii::LoadState::TOPLEVEL) {
-    ///
-    /// Setup callbacks.
-    ///
-    StageMetaProcessor();
-    RegisterReconstructXformCallback();
-    RegisterReconstructGPrimCallback();
-    RegisterReconstructGeomCubeCallback();
-    RegisterReconstructGeomConeCallback();
-    RegisterReconstructGeomCylinderCallback();
-    RegisterReconstructGeomCapsuleCallback();
-    RegisterReconstructGeomSphereCallback();
-    RegisterReconstructGeomMeshCallback();
-    RegisterReconstructGeomSubsetCallback();
-
-    if (!_parser.Parse(state)) {
-      std::string warn = _parser.GetWarning();
-      if (!warn.empty()) {
-        PUSH_WARN("<parser> " + warn);
-      }
-
-      PUSH_ERROR_AND_RETURN("Parse failed:" + _parser.GetError());
-    }
-
-    // HACK
-    if (_upAxis) {
-      DCOUT("upAxis = " << to_string(_upAxis.value()));
-    }
-
-    DCOUT("# of toplevel prims = " << std::to_string(PrimSize()));
-
-    {
-      size_t i = 0;
-      for (auto it = PrimBegin(); it != PrimEnd(); ++it, i++) {
-        const auto &prim = (*it);
-        DCOUT("Prim[" << std::to_string(i) << "].type = " << prim.type_name());
-      }
-    }
-
-#if 0
-    //_sub_layered = (state == LOAD_STATE_SUBLAYER);
-    //_referenced = (state == LOAD_STATE_REFERENCE);
-    //_payloaded = (state == LOAD_STATE_PAYLOAD);
-
-    // Stage meta.
-    if (!_parser.ParseStageMetas()) {
-      PUSH_PARSER_ERROR_AND_RETURN();
-      return false;
-    }
-
-    DCOUT("Done parsing Stage metas");
-
-    // parse blocks
-    while (!_parser.Eof()) {
-      if (!_parser.SkipCommentAndWhitespaceAndNewline()) {
-        PUSH_PARSER_ERROR_AND_RETURN();
-      }
-
-      if (_parser.Eof()) {
-        // Whitespaces in the end of line.
-        break;
-      }
-
-      // Look ahead token
-      auto curr_loc = _parser.CurrLoc();
-      DCOUT("loc = " << curr_loc);
-
-      std::string tok;
-      if (!_parser.ReadIdentifier(&tok)) {
-        DCOUT("Failed to read identifier");
-        PUSH_PARSER_ERROR_AND_RETURN();
-      }
-      DCOUT("tok = " << tok);
-
-      // Rewind
-      if (!_parser.SeekTo(curr_loc)) {
-        PUSH_PARSER_ERROR_AND_RETURN();
-      }
-
-      if (tok == "def") {
-        DCOUT("`def` block");
-        bool block_ok = _parser.ParseDefBlock();
-        if (!block_ok) {
-          PUSH_PARSER_ERROR_AND_RETURN();
-        }
-      } else if (tok == "over") {
-        DCOUT("`over` block");
-        bool block_ok = _parser.ParseOverBlock();
-        if (!block_ok) {
-          PUSH_PARSER_ERROR_AND_RETURN();
-        }
-      } else if (tok == "class") {
-        DCOUT("`class` block");
-        bool block_ok = _parser.ParseClassBlock();
-        if (!block_ok) {
-          PUSH_PARSER_ERROR_AND_RETURN();
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN("Unknown identifier '" + tok + "' for Prim block statement.");
-      }
-    }
-#endif
-    return true;
-  }
+  bool Read(ascii::LoadState state = ascii::LoadState::TOPLEVEL);
 
   // std::vector<GPrim> GetGPrims() { return _gprims; }
 
@@ -918,22 +756,18 @@ class USDAReader::Impl {
                  const std::vector<value::Value> &values, size_t idx = 0)
         : _indices(indices), _values(values), _idx(idx) {}
 
-    const value::Value &operator*() const {
-      return _values[_indices[_idx]];
-    }
+    const value::Value &operator*() const { return _values[_indices[_idx]]; }
 
     PrimIterator &operator++() {
       _idx++;
       return *this;
     }
-    bool operator!=(const PrimIterator &rhs) {
-      return _idx != rhs._idx;
-    }
+    bool operator!=(const PrimIterator &rhs) { return _idx != rhs._idx; }
 
    private:
-     const std::vector<size_t> &_indices;
-     const std::vector<value::Value> &_values;
-     size_t _idx{0};
+    const std::vector<size_t> &_indices;
+    const std::vector<value::Value> &_values;
+    size_t _idx{0};
   };
   friend class PrimIterator;
 
@@ -941,13 +775,13 @@ class USDAReader::Impl {
   using const_prim_iterator = const PrimIterator;
 
   // Iterate over toplevel prims
-  const_prim_iterator PrimBegin(){return PrimIterator(_toplevel_prims, _prims); }
-  const_prim_iterator PrimEnd() {
-    return PrimIterator(_toplevel_prims, _prims, _toplevel_prims.size()); }
-  size_t PrimSize() {
-    return _toplevel_prims.size();
+  const_prim_iterator PrimBegin() {
+    return PrimIterator(_toplevel_prims, _prims);
   }
-
+  const_prim_iterator PrimEnd() {
+    return PrimIterator(_toplevel_prims, _prims, _toplevel_prims.size());
+  }
+  size_t PrimSize() { return _toplevel_prims.size(); }
 
   ///
   /// -- Members --
@@ -976,7 +810,7 @@ class USDAReader::Impl {
       _reference_cache;
 
   // toplevel prims
-  std::vector<size_t> _toplevel_prims; // index to _prims
+  std::vector<size_t> _toplevel_prims;  // index to _prims
 
   // Flattened array of prim nodes.
   std::vector<value::Value> _prims;
@@ -998,51 +832,47 @@ class USDAReader::Impl {
 
 };  // namespace usda
 
-// == impl ==
-#if 0
-bool USDAReader::Impl::ReconstructGPrim(
+///
+/// -- Impl reconstruct
+//
+template <>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references, GPrim *gprim) {
-
-  return true;
-}
-#endif
-
-static nonstd::expected<bool, std::string> CheckAllowedTypeOfXformOp(
-    const PrimAttrib &attr,
-    const std::vector<value::TypeId> &allowed_type_ids) {
-  for (size_t i = 0; i < allowed_type_ids.size(); i++) {
-    if (attr.var.type_id() == allowed_type_ids[i]) {
-      return true;
-    }
-  }
-
-  std::stringstream ss;
-
-  ss << "Allowed type for \"" << attr.name << "\"";
-  if (allowed_type_ids.size() > 1) {
-    ss << " are ";
-  } else {
-    ss << " is ";
-  }
-
-  for (size_t i = 0; i < allowed_type_ids.size(); i++) {
-    ss << value::GetTypeName(allowed_type_ids[i]);
-    if (i < (allowed_type_ids.size() - 1)) {
-      ss << ", ";
-    } else if (i == (allowed_type_ids.size() - 1)) {
-      ss << " or ";
-    }
-  }
-  ss << ", but got " << value::GetTypeName(attr.var.type_id());
-
-  return nonstd::make_unexpected(ss.str());
-}
-
-bool USDAReader::Impl::ReconstructXform(
-    const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references, Xform *xform) {
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    Xform *xform) {
   (void)xform;
+
+  auto CheckAllowedTypeOfXformOp =
+      [](const PrimAttrib &attr,
+         const std::vector<value::TypeId> &allowed_type_ids)
+      -> nonstd::expected<bool, std::string> {
+    for (size_t i = 0; i < allowed_type_ids.size(); i++) {
+      if (attr.var.type_id() == allowed_type_ids[i]) {
+        return true;
+      }
+    }
+
+    std::stringstream ss;
+
+    ss << "Allowed type for \"" << attr.name << "\"";
+    if (allowed_type_ids.size() > 1) {
+      ss << " are ";
+    } else {
+      ss << " is ";
+    }
+
+    for (size_t i = 0; i < allowed_type_ids.size(); i++) {
+      ss << value::GetTypeName(allowed_type_ids[i]);
+      if (i < (allowed_type_ids.size() - 1)) {
+        ss << ", ";
+      } else if (i == (allowed_type_ids.size() - 1)) {
+        ss << " or ";
+      }
+    }
+    ss << ", but got " << value::GetTypeName(attr.var.type_id());
+
+    return nonstd::make_unexpected(ss.str());
+  };
 
   // ret = (basename, suffix, isTimeSampled?)
   auto Split =
@@ -1216,9 +1046,10 @@ bool USDAReader::Impl::ReconstructXform(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructGeomSphere(
+template<>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomSphere *sphere) {
   (void)sphere;
 
@@ -1323,6 +1154,7 @@ bool USDAReader::Impl::ReconstructGeomSphere(
 
   return true;
 }
+
 
 bool USDAReader::Impl::ReconstructGeomCone(
     const std::map<std::string, Property> &properties,
@@ -1449,9 +1281,10 @@ bool USDAReader::Impl::ReconstructGeomCone(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructGeomCube(
+template<>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCube *cube) {
   (void)properties;
   (void)cube;
@@ -2246,6 +2079,186 @@ bool USDAReader::Impl::ReconstructPrimvarReader_float2(
     PrimvarReader_float2 *preader) {
   // TODO:
   return false;
+}
+
+///
+/// -- Impl callback
+///
+template <>
+bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
+  _parser.RegisterPrimConstructFunction(
+      "Xform",
+      [&](const Path &path, const std::map<std::string, Property> &properties,
+          std::vector<std::pair<ListEditQual, Reference>> &references) {
+        Xform xform;
+
+        DCOUT("Reconstruct Xform: Path.PrimPart = " << path.GetPrimPart());
+
+        if (!ReconstructPrim<Xform>(properties, references, &xform)) {
+          return false;
+        }
+
+        Path parent = path.GetParentPrim();
+        if (parent.IsRootPrim()) {
+          size_t idx = _prims.size();
+          _prims.push_back(xform);
+          _toplevel_prims.push_back(idx);
+        } else {
+          PUSH_WARN("TODO: Implement xform");
+        }
+
+        return true;
+      });
+
+  return true;
+}
+
+  template<>
+  bool USDAReader::Impl::RegisterReconstructCallback<GeomSphere>() {
+    _parser.RegisterPrimConstructFunction(
+        "Sphere",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomSphere sphere;
+
+          if (ReconstructPrim<GeomSphere>(properties, references, &sphere)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomSphere");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  template<>
+  bool USDAReader::Impl::RegisterReconstructCallback<GeomCube>() {
+    _parser.RegisterPrimConstructFunction(
+        "Cube",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomCube cube;
+
+          if (ReconstructPrim<GeomCube>(properties, references, &cube)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomCube");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+
+///
+/// -- Impl Read
+///
+
+bool USDAReader::Impl::Read(ascii::LoadState state) {
+  ///
+  /// Setup callbacks.
+  ///
+  StageMetaProcessor();
+  RegisterReconstructCallback<GPrim>();
+  RegisterReconstructCallback<Xform>();
+  RegisterReconstructCallback<GeomCube>();
+  RegisterReconstructCallback<GeomSphere>();
+  RegisterReconstructGeomConeCallback();
+  RegisterReconstructGeomCylinderCallback();
+  RegisterReconstructGeomCapsuleCallback();
+  RegisterReconstructGeomMeshCallback();
+  RegisterReconstructGeomSubsetCallback();
+
+  if (!_parser.Parse(state)) {
+    std::string warn = _parser.GetWarning();
+    if (!warn.empty()) {
+      PUSH_WARN("<parser> " + warn);
+    }
+
+    PUSH_ERROR_AND_RETURN("Parse failed:" + _parser.GetError());
+  }
+
+  // HACK
+  if (_upAxis) {
+    DCOUT("upAxis = " << to_string(_upAxis.value()));
+  }
+
+  DCOUT("# of toplevel prims = " << std::to_string(PrimSize()));
+
+  {
+    size_t i = 0;
+    for (auto it = PrimBegin(); it != PrimEnd(); ++it, i++) {
+      const auto &prim = (*it);
+      DCOUT("Prim[" << std::to_string(i) << "].type = " << prim.type_name());
+    }
+  }
+
+#if 0
+    //_sub_layered = (state == LOAD_STATE_SUBLAYER);
+    //_referenced = (state == LOAD_STATE_REFERENCE);
+    //_payloaded = (state == LOAD_STATE_PAYLOAD);
+
+    // Stage meta.
+    if (!_parser.ParseStageMetas()) {
+      PUSH_PARSER_ERROR_AND_RETURN();
+      return false;
+    }
+
+    DCOUT("Done parsing Stage metas");
+
+    // parse blocks
+    while (!_parser.Eof()) {
+      if (!_parser.SkipCommentAndWhitespaceAndNewline()) {
+        PUSH_PARSER_ERROR_AND_RETURN();
+      }
+
+      if (_parser.Eof()) {
+        // Whitespaces in the end of line.
+        break;
+      }
+
+      // Look ahead token
+      auto curr_loc = _parser.CurrLoc();
+      DCOUT("loc = " << curr_loc);
+
+      std::string tok;
+      if (!_parser.ReadIdentifier(&tok)) {
+        DCOUT("Failed to read identifier");
+        PUSH_PARSER_ERROR_AND_RETURN();
+      }
+      DCOUT("tok = " << tok);
+
+      // Rewind
+      if (!_parser.SeekTo(curr_loc)) {
+        PUSH_PARSER_ERROR_AND_RETURN();
+      }
+
+      if (tok == "def") {
+        DCOUT("`def` block");
+        bool block_ok = _parser.ParseDefBlock();
+        if (!block_ok) {
+          PUSH_PARSER_ERROR_AND_RETURN();
+        }
+      } else if (tok == "over") {
+        DCOUT("`over` block");
+        bool block_ok = _parser.ParseOverBlock();
+        if (!block_ok) {
+          PUSH_PARSER_ERROR_AND_RETURN();
+        }
+      } else if (tok == "class") {
+        DCOUT("`class` block");
+        bool block_ok = _parser.ParseClassBlock();
+        if (!block_ok) {
+          PUSH_PARSER_ERROR_AND_RETURN();
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN("Unknown identifier '" + tok + "' for Prim block statement.");
+      }
+    }
+#endif
+  return true;
 }
 
 //
