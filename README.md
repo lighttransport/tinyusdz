@@ -30,17 +30,16 @@ Initial working demo in 2022 Summer(August) planned after finishing implementing
   * [ ] subLayers
   * [ ] references
   * [ ] payloads(delayed load)
-  * [ ] variants/variantSets
-  * [ ] specializers
+  * [ ] variants/variantSets(priority is low)
+  * [ ] specializers(priority is low)
 * [ ] Write simple SDL viewer example(2022 Summer expected)
-* [ ] Character animation(usdSkel, blendshapes, animations) support(2022 Summer expected)
+* [ ] Character animation(usdSkel, blendshapes, animations) support(2022 Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] Write iOS and Android example(2022 Fall expected)
 * [ ] USDZ(USDC, Crate) writer
   * `src/crate-writer.cc`
 * [ ] USDA writer
-* [ ] USD <-> glTF converter
-* [ ] Polygon triangulation using mapbox/earcut.hpp
+* [ ] USD <-> glTF converter example
 
 ## Notice
 
@@ -106,6 +105,7 @@ TinyUSDZ source codes are also checked by Address Sanitizer, CodeQL and Fuzzer.
 ### Integrate to your app
 
 Recomended way is simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
+See `<tinyusdz>/CMakeLists.txt` for details.
 
 I do not recommend to use tinyusdz as a git submodule, since the repo contains lots of codes required to build TinyUSDZ examples but these are not required for your app.
 
