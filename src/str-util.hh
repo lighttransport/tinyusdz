@@ -4,6 +4,7 @@
 #include <string>
 #include <algorithm>
 #include <sstream>
+#include <vector>
 
 namespace tinyusdz {
 
@@ -44,8 +45,24 @@ inline std::string unwrap(const std::string &str, const std::string &delim = "\"
   return s;
 }
 
-inline std::string wrap(const std::string &s, const std::string &delim) {
-  return delim + s + delim; 
+inline std::string quote(const char *s, const std::string &quote_str = "\"") {
+  return quote_str + std::string(s) + quote_str; 
+}
+
+inline std::string quote(const std::string &s, const std::string &quote_str = "\"") {
+  return quote_str + s + quote_str; 
+}
+
+template<typename It>
+inline It quote(const It& v, const std::string &quote_str = "\"") {
+  
+  It dst; 
+  
+  for (typename It::const_iterator it = v.begin(); it != v.end(); ++it) {
+    dst.emplace_back(quote((*it), quote_str));
+  }
+
+  return dst;
 }
 
 // Python like join  ", ".join(v)
@@ -61,6 +78,21 @@ inline std::string join(const std::string& sep, const It& v)
   }
   return oss.str();
 }
+
+#if 0
+template<typename It>
+inline std::string quote_then_join(const std::string& sep, const It& v, const std::string &quote = "\"")
+{
+  std::ostringstream oss;
+  if (!v.empty()) {
+    typename It::const_iterator it = v.begin();
+    oss << wrap(*it++;
+    for (typename It::const_iterator e = v.end(); it != e; ++it)
+      oss << sep << *it;
+  }
+  return oss.str();
+}
+#endif
 
 #if 0
 template<typename It>

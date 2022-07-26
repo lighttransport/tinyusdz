@@ -285,15 +285,21 @@ enum TypeId {
   TYPE_ID_CRATE_UNREGISTERED_VALUE,
   TYPE_ID_CRATE_LIST_OP_UNREGISTERED_VALUE,
 
-  // Types for GPrim and usdGeom
-  TYPE_ID_GPRIM = (1 << 10),
+  // Types for Model and GPrim
+  TYPE_ID_MODEL = (1 << 10),
+  //TYPE_ID_GROUP,
+  TYPE_ID_SCOPE,
+  TYPE_ID_GPRIM,
   TYPE_ID_GEOM_XFORM,
   TYPE_ID_GEOM_MESH,
-  TYPE_ID_GEOM_BASIS_CURVE,
+  TYPE_ID_GEOM_BASIS_CURVES,
   TYPE_ID_GEOM_SPHERE,
   TYPE_ID_GEOM_CUBE,
   TYPE_ID_GEOM_CYLINDER,
   TYPE_ID_GEOM_CONE,
+  TYPE_ID_GEOM_CAPSULE,
+  TYPE_ID_GEOM_GEOMSUBSET,
+  TYPE_ID_GEOM_CAMERA,
 
   // Types for usdLux
   TYPE_ID_LUX_BEGIN = (1 << 10) + (1 << 9),
@@ -305,6 +311,8 @@ enum TypeId {
 
   // Types for usdShader
   TYPE_ID_SHADER_BEGIN = 1 << 11,
+  TYPE_ID_SHADER,
+  TYPE_ID_MATERIAL,
 
   // Types for usdImaging
   // See <pxrUSD>/pxr/usdImaging/usdImaging/tokens.h
@@ -321,8 +329,13 @@ enum TypeId {
   // Ttpes for usdVol
   TYPE_ID_VOL_BEGIN = 1 << 12,
 
+  // Ttpes for usdSkel
+  TYPE_ID_SKEL_BEGIN = 1 << 13,
+  TYPE_ID_SKEL_ROOT,
+  TYPE_ID_SKELETON,
+
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
-  TYPE_ID_USER_BEGIN = 65536,
+  TYPE_ID_USER_BEGIN = 1 << 16,
 
   TYPE_ID_ALL = (TYPE_ID_2D_ARRAY_BIT - 1)  // terminator.
 };

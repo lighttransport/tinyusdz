@@ -169,11 +169,11 @@ std::string enum_join(const std::string &sep)
 {
   std::ostringstream ss;
 
-  // wrap with "
-  ss << wrap(T::_names()[0], "\"");
+  // quote with "
+  ss << quote(T::_names()[0], "\"");
 
   for (size_t i = 1; i < T::_size(); i++) {
-    ss << sep << wrap(T::_names()[i], "\"");
+    ss << sep << quote(T::_names()[i], "\"");
   }
 
   return ss.str();
