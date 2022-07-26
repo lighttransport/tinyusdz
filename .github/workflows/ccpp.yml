@@ -74,7 +74,10 @@ jobs:
             echo $ANDROID_SDK_ROOT
       - name: Setup
         run: |
-            sudo apt-get install -y ninja-build
+            sudo apt-get install -y ninja-build tree
+      - name: Show android sdk details
+        run: |
+            tree $ANDROID_SDK_ROOT
       - name: CmakeAndBuild
         run: |
             ./scripts/bootstrap-android-cmake-linux.sh
