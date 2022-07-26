@@ -432,7 +432,7 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
   ss << Indent(indent) << "   float focalLength = " << camera.focalLength << "\n";
   ss << Indent(indent) << "   float horizontalAperture = " << camera.horizontalAperture << "\n";
   ss << Indent(indent) << "   float horizontalApertureOffset = " << camera.horizontalApertureOffset << "\n";
-  ss << Indent(indent) << "   token projection = \"" << camera.projection << "\"\n";
+  ss << Indent(indent) << "   token projection = \"" << to_string(camera.projection) << "\"\n";
   ss << Indent(indent) << "   float verticalAperture = " << camera.verticalAperture << "\n";
   ss << Indent(indent) << "   float verticalApertureOffset = " << camera.verticalApertureOffset << "\n";
 
@@ -747,6 +747,17 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
   return ss.str();
 }
 
+std::string to_string(const GeomCamera::Projection &proj, uint32_t indent, bool closing_brace) {
+  (void)closing_brace;
+  (void)indent;
+  
+  if (proj == GeomCamera::Projection::orthographic) {
+    return "orthographic";
+  } else {
+    return "perspective";
+  }
+}
+
 std::string to_string(const Path &path, bool show_full_path) {
   if (show_full_path) {
     return path.full_path_name();
@@ -770,6 +781,7 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path) {
   ss << "]";
   return ss.str();
 }
+
 
 
 } // tinyusdz

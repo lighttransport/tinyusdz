@@ -89,6 +89,8 @@ std::string to_string(const LuxSphereLight &light, const uint32_t indent = 0, bo
 std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Shader &shader, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent = 0, bool closing_brace = true);
+
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent = 0, bool closing_brace = true);
 
 } // namespace tinyusdz

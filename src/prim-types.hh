@@ -23,6 +23,7 @@
 
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
+#include "external/better-enums/enum.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -1108,6 +1109,17 @@ struct GeomCamera {
 
   int64_t parent_id{-1};  // Index to parent node
 
+  enum class Projection {
+    perspective, // "perspective"
+    orthographic, // "orthographic"
+  };
+
+  enum class StereoRole {
+    mono, // "mono"
+    left, // "left"
+    right, // "right"
+  };
+
   //
   // Properties
   //
@@ -1116,13 +1128,24 @@ struct GeomCamera {
   Purpose purpose{Purpose::Default};
 
   // TODO: Animatable?
-  value::float2 clippingRange{{0.1f, 100.0f}};
+  std::vector<value::float4> clippingPlanes;
+  value::float2 clippingRange{{0.1f, 1000000.0f}};
+  float exposure{0.0f}; // in EV
   float focalLength{50.0f};
-  float horizontalAperture{36.0f};
+  float focusDistance{0.0f};
+  float horizontalAperture{20.965f};
   float horizontalApertureOffset{0.0f};
-  std::string projection{"perspective"};
-  float verticalAperture{20.25f};
+  float verticalAperture{15.2908f};
   float verticalApertureOffset{0.0f};
+  float fStop{0.0f}; // 0.0 = no focusing
+  Projection projection;
+
+  float shutterClose = 0.0f; // shutter:close
+  float shutterOpen = 0.0f; // shutter:open
+  
+  std::vector<value::token> xformOpOrder;
+  // xformOpOrder
+  
 
   // List of Primitive attributes(primvars)
   // NOTE: `primvar:widths` are not stored here(stored in `widths`)
@@ -2020,7 +2043,7 @@ DEFINE_TYPE_TRAIT(GPrim, "GPRIM",
 // Geom
 DEFINE_TYPE_TRAIT(Xform, "Xform",
                   TYPE_ID_GEOM_XFORM, 1);
-DEFINE_TYPE_TRAIT(GeomMesh, "GeomMesh",
+DEFINE_TYPE_TRAIT(GeomMesh, "Mesh",
                   TYPE_ID_GEOM_MESH, 1);
 
 // Shader
