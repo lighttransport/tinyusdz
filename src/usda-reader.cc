@@ -114,21 +114,59 @@
 #define DCOUT(x)
 #endif
 
-//
-// Implementation in ascii-parser.cc
-//
-namespace tinyusdz {
-namespace ascii {
-
-// extern template bool AsciiParser::ReadBasicType(float*);
-// extern template bool AsciiParser::ReadBasicType(float*);
-
-}
-}  // namespace tinyusdz
-
 namespace tinyusdz {
 
 namespace usda {
+
+namespace {
+
+// TODO: Move to prim-types.hh?
+
+template<typename T>
+struct PrimTypeTrait;
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-const-variable"
+#endif
+
+#define DEFINE_PRIM_TYPE(__dty, __name, __tyid) \
+  template<> \
+  struct PrimTypeTrait<__dty> { \
+    using primt_type = __dty; \
+    static constexpr uint32_t type_id = __tyid; \
+    static constexpr auto prim_type_name = __name; \
+  }
+
+DEFINE_PRIM_TYPE(Xform, "Xform", value::TYPE_ID_GEOM_XFORM);
+DEFINE_PRIM_TYPE(GeomMesh, "Mesh", value::TYPE_ID_GEOM_MESH);
+DEFINE_PRIM_TYPE(GeomSphere, "Sphere", value::TYPE_ID_GEOM_SPHERE);
+DEFINE_PRIM_TYPE(GeomCube, "Cube", value::TYPE_ID_GEOM_CUBE);
+DEFINE_PRIM_TYPE(GeomCone, "Cone", value::TYPE_ID_GEOM_CONE);
+DEFINE_PRIM_TYPE(GeomCapsule, "Capsule", value::TYPE_ID_GEOM_CAPSULE);
+DEFINE_PRIM_TYPE(GeomCylinder, "Cylinder", value::TYPE_ID_GEOM_CYLINDER);
+DEFINE_PRIM_TYPE(GeomBasisCurves, "BasisCurves", value::TYPE_ID_GEOM_BASIS_CURVES);
+DEFINE_PRIM_TYPE(GeomSubset, "GeomSubset", value::TYPE_ID_GEOM_GEOMSUBSET);
+DEFINE_PRIM_TYPE(LuxSphereLight, "SphereLight", value::TYPE_ID_LUX_SPHERE);
+DEFINE_PRIM_TYPE(LuxDomeLight, "DomeLight", value::TYPE_ID_LUX_DOME);
+DEFINE_PRIM_TYPE(Material, "Material", value::TYPE_ID_MATERIAL);
+DEFINE_PRIM_TYPE(Shader, "Shader", value::TYPE_ID_SHADER);
+DEFINE_PRIM_TYPE(SkelRoot, "SkelRoot", value::TYPE_ID_SKEL_ROOT);
+DEFINE_PRIM_TYPE(Skeleton, "Skeleton", value::TYPE_ID_SKELETON);
+DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
+DEFINE_PRIM_TYPE(GeomCamera, "Camera", value::TYPE_ID_GEOM_CAMERA);
+
+DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
+
+//DEFINE_PRIM_TYPE(PreviewSurface, "PreviewSurface", value::TYPE_ID_IMAGING_PREVIEWSURFACE);
+//DEFINE_PRIM_TYPE(UVTexture, "UVTexture", value::TYPE_ID_IMAGING_UVTEXTURE);
+//DEFINE_PRIM_TYPE(PrimvarReader_float2, "PrimvarReaderUVTexture", value::TYPE_ID_IMAGING_UVTEXTURE);
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+} // namespace
 
 class VariableDef {
  public:
@@ -353,20 +391,39 @@ class USDAReader::Impl {
   }
 #endif
 
-  // T = Prim class(e.g. Xform)
-  template <typename T>
-  bool RegisterReconstructCallback();
-
   template <typename T>
   bool ReconstructPrim(
       const std::map<std::string, Property> &properties,
       const std::vector<std::pair<ListEditQual, Reference>> &references,
       T *out);
 
+  // T = Prim class(e.g. Xform)
+  template<typename T>
+  bool RegisterReconstructCallback() {
+    _parser.RegisterPrimConstructFunction(
+        PrimTypeTrait<T>::prim_type_name,
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            const std::vector<std::pair<ListEditQual, Reference>> &references) {
+          T prim;
+
+          if (ReconstructPrim<T>(properties, references, &prim)) {
+            // TODO
+            PUSH_WARN("TODO: Implement " + std::string(PrimTypeTrait<T>::prim_type_name));
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  ///
+  /// -- RegisterReconstructCallback specializations
+  ///
   template <>
   bool RegisterReconstructCallback<GPrim>() {
     _parser.RegisterPrimConstructFunction(
-        "GPrim",
+        PrimTypeTrait<GPrim>::prim_type_name,
         [&](const Path &path, const std::map<std::string, Property> &properties,
             std::vector<std::pair<ListEditQual, Reference>> &references) {
           // TODO: Implement
@@ -403,63 +460,11 @@ class USDAReader::Impl {
     return true;
   }
 
-  bool RegisterReconstructGeomConeCallback() {
-    _parser.RegisterPrimConstructFunction(
-        "Cone",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomCone cone;
 
-          if (ReconstructGeomCone(properties, references, &cone)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomCone");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-  bool RegisterReconstructGeomCylinderCallback() {
-    _parser.RegisterPrimConstructFunction(
-        "Cylinder",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomCylinder cylinder;
-
-          if (ReconstructGeomCylinder(properties, references, &cylinder)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomCylinder");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-  bool RegisterReconstructGeomCapsuleCallback() {
-    _parser.RegisterPrimConstructFunction(
-        "Capsule",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomCapsule capsule;
-
-          if (ReconstructGeomCapsule(properties, references, &capsule)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomCapsule");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
+#if 0
   bool RegisterReconstructGeomMeshCallback() {
     _parser.RegisterPrimConstructFunction(
-        "Mesh",
+        kGeomMesh,
         [&](const Path &path, const std::map<std::string, Property> &properties,
             std::vector<std::pair<ListEditQual, Reference>> &references) {
           GeomMesh mesh;
@@ -474,8 +479,10 @@ class USDAReader::Impl {
 
     return true;
   }
+#endif
 
-  bool RegisterReconstructGeomSubsetCallback() {
+  template<>
+  bool RegisterReconstructCallback<GeomSubset>() {
     _parser.RegisterPrimConstructFunction(
         "GeomSubset",
         [&](const Path &path, const std::map<std::string, Property> &properties,
@@ -589,45 +596,6 @@ class USDAReader::Impl {
     return true;
   }
 
-  // bool ReconstructGPrim(
-  //     const std::map<std::string, Property> &properties,
-  //     std::vector<std::pair<ListEditQual, Reference>> &references,
-  //     GPrim *sphere);
-
-  //bool ReconstructGeomSphere(
-  //    const std::map<std::string, Property> &properties,
-  //    std::vector<std::pair<ListEditQual, Reference>> &references,
-  //    GeomSphere *sphere);
-
-  bool ReconstructGeomCone(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomCone *cone);
-
-  //bool ReconstructGeomCube(
-  //    const std::map<std::string, Property> &properties,
-  //    std::vector<std::pair<ListEditQual, Reference>> &references,
-  //    GeomCube *cube);
-
-  bool ReconstructGeomCapsule(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomCapsule *capsule);
-
-  bool ReconstructGeomCylinder(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomCylinder *cylinder);
-
-  bool ReconstructGeomMesh(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomMesh *mesh);
-
-  bool ReconstructBasisCurves(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomBasisCurves *curves);
 
   bool ReconstructGeomCamera(
       const std::map<std::string, Property> &properties,
@@ -730,21 +698,25 @@ class USDAReader::Impl {
 
  private:
   void RegisterNodeTypes() {
-    _node_types.insert("Xform");
-    _node_types.insert("Sphere");
-    _node_types.insert("Cube");
-    _node_types.insert("Cylinder");
-    _node_types.insert("BasisCurves");
-    _node_types.insert("Mesh");
-    _node_types.insert("Scope");
-    _node_types.insert("Material");
-    _node_types.insert("NodeGraph");
-    _node_types.insert("Shader");
-    _node_types.insert("SphereLight");
-    _node_types.insert("DomeLight");
-    _node_types.insert("Camera");
-    _node_types.insert("SkelRoot");
-    _node_types.insert("Skeleton");
+    _node_types.insert(PrimTypeTrait<Xform>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomSphere>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomCube>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomCylinder>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomBasisCurves>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomMesh>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomSubset>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<Scope>::prim_type_name);
+
+    _node_types.insert(PrimTypeTrait<Material>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<Shader>::prim_type_name);
+
+    //_node_types.insert("NodeGraph");
+
+    _node_types.insert(PrimTypeTrait<LuxSphereLight>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<LuxDomeLight>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomCamera>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<SkelRoot>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<Skeleton>::prim_type_name);
   }
 
   ///
@@ -831,6 +803,32 @@ class USDAReader::Impl {
   nonstd::optional<Axis> _upAxis;
 
 };  // namespace usda
+
+#if 1
+// Empty allowedTokens = allow all
+template<class E, size_t N>
+static nonstd::expected<bool, std::string> CheckAllowedTokens(const std::array<std::pair<E, const char *>, N> &allowdTokens, const std::string &tok) {
+
+  if (allowdTokens.empty()) {
+    return true;
+  }
+
+  for (size_t i = 0; i < N; i++) {
+    if (tok.compare(std::get<1>(allowdTokens[i])) == 0) {
+      return true;
+    }
+  }
+
+  std::vector<std::string> toks;
+  for (size_t i = 0; i < N; i++) {
+    toks.push_back(std::get<1>(allowdTokens[i]));
+  }
+
+  std::string s = join(", ", quote(toks));
+
+  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " + quote(tok) + ".");
+};
+#endif
 
 ///
 /// -- Impl reconstruct
@@ -1156,9 +1154,10 @@ bool USDAReader::Impl::ReconstructPrim(
 }
 
 
-bool USDAReader::Impl::ReconstructGeomCone(
+template<>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCone *cone) {
   (void)properties;
   (void)cone;
@@ -1281,6 +1280,7 @@ bool USDAReader::Impl::ReconstructGeomCone(
   return true;
 }
 
+
 template<>
 bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
@@ -1390,9 +1390,10 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructGeomCapsule(
+template<>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCapsule *capsule) {
   //
   // Resolve prepend references
@@ -1552,9 +1553,10 @@ bool USDAReader::Impl::ReconstructGeomCapsule(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructGeomCylinder(
+template<>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomCylinder *cylinder) {
 #if 0
   //
@@ -1710,9 +1712,10 @@ bool USDAReader::Impl::ReconstructGeomCylinder(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructGeomMesh(
+template<>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomMesh *mesh) {
   //
   // Resolve prepend references
@@ -1842,9 +1845,10 @@ bool USDAReader::Impl::ReconstructGeomMesh(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructBasisCurves(
+template<>
+bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomBasisCurves *curves) {
   for (const auto &prop : properties) {
     if (prop.first == "points") {
@@ -1889,16 +1893,100 @@ bool USDAReader::Impl::ReconstructBasisCurves(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructGeomCamera(
-    const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
-    GeomCamera *camera) {
-  for (const auto &prop : properties) {
-    if (prop.first == "focalLength") {
-      // TODO
-    } else {
-      // std::cout << "TODO: " << prop.first << "\n";
+// TODO(syoyo): TimeSamples, Reference
+#define PARSE_PROPERTY(__prop, __name, __target)             \
+  if (__prop.first == __name) {                               \
+    const PrimAttrib &attr = __prop.second.attrib;                 \
+    if (auto v = attr.var.get_value<decltype(__target)>()) {                     \
+      __target = v.value();                                        \
+    } else {                                                       \
+      PUSH_ERROR_AND_RETURN("Type mismatch. "                      \
+                            << __name << " expects "               \
+                            << value::TypeTrait<decltype(__target)>::type_name()); \
+    } \
+  } else
+
+//#define PARSE_TOKEN_PROPETY(__prop, __name, __ty, __allowed_tokens, __target)             \
+//  if (__prop.first == __name) {                               \
+//    const PrimAttrib &attr = __prop.second.attrib;                 \
+//    if (auto v = attr.var.get_value<__ty>()) {                     \
+//      __target = v.value();                                        \
+//    } else {                                                       \
+//      PUSH_ERROR_AND_RETURN("Type mismatch. "                      \
+//                            << __name << " expects "               \
+//                            << value::TypeTrait<__ty>::type_name()); \
+//    } \
+//  } else
+
+#define PARSE_ENUM_PROPETY(__prop, __name, __enum_handler, __target)             \
+  if (__prop.first == __name) {                               \
+    const PrimAttrib &attr = __prop.second.attrib;                 \
+    if (auto tok = attr.var.get_value<value::token>()) {                     \
+      auto e = __enum_handler(tok.value().str()); \
+      if (e) { \
+        __target = e.value();                                        \
+      } else { \
+        PUSH_ERROR_AND_RETURN(e.error()); \
+      } \
+    } else {                                                       \
+      PUSH_ERROR_AND_RETURN("Type mismatch. "                      \
+                            << __name << " must be `token` type.");     \
+    } \
+  } else
+
+
+#define PARSE_PROPERTY_END_MAKE_ERROR(__prop)  { \
+      PUSH_ERROR_AND_RETURN("Unsupported/unimplemented property: " + __prop.first); \
     }
+
+#define PARSE_PROPERTY_END_MAKE_WARN(__prop)  { \
+      PUSH_WARN("Unsupported/unimplemented property: " + __prop.first); \
+    }
+
+
+template<>
+bool USDAReader::Impl::ReconstructPrim(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    GeomCamera *camera) {
+
+  auto ProjectionHandler = [](const std::string &tok) -> nonstd::expected<GeomCamera::Projection, std::string> {
+
+    using EnumTy = std::pair<GeomCamera::Projection, const char *>;
+    constexpr std::array<EnumTy, 2> enums = {
+      std::make_pair(GeomCamera::Projection::perspective, "perspective"),
+      std::make_pair(GeomCamera::Projection::orthographic, "orthographic"),
+    };
+
+    auto ret = CheckAllowedTokens<GeomCamera::Projection, enums.size()>(enums, tok);
+    if (!ret) {
+      return nonstd::make_unexpected(ret.error());
+    }
+
+    for (auto &item : enums) {
+      if (tok == item.second) {
+        return item.first;
+      }
+    }
+
+    // Should never reach here, though.
+    return nonstd::make_unexpected(quote(tok) + " is invalid token for `projection` propety");
+  };
+
+  for (const auto &prop : properties) {
+    PARSE_PROPERTY(prop, "focalLength", camera->focalLength)
+    PARSE_PROPERTY(prop, "focusDistance", camera->focusDistance)
+    PARSE_PROPERTY(prop, "exposure", camera->exposure)
+    PARSE_PROPERTY(prop, "fStop", camera->fStop)
+    PARSE_PROPERTY(prop, "horizontalAperture", camera->horizontalAperture)
+    PARSE_PROPERTY(prop, "horizontalApertureOffset", camera->horizontalApertureOffset)
+    PARSE_PROPERTY(prop, "horizontalApertureOffset", camera->horizontalApertureOffset)
+    PARSE_PROPERTY(prop, "clippingRange", camera->clippingRange)
+    PARSE_PROPERTY(prop, "clippingPlanes", camera->clippingPlanes)
+    PARSE_PROPERTY(prop, "shutter:open", camera->shutterOpen)
+    PARSE_PROPERTY(prop, "shutter:close", camera->shutterClose)
+    PARSE_ENUM_PROPETY(prop, "projection", ProjectionHandler, camera->projection)
+    PARSE_PROPERTY_END_MAKE_ERROR(prop)
   }
 
   return true;
@@ -1920,40 +2008,23 @@ bool USDAReader::Impl::ReconstructLuxSphereLight(
   return true;
 }
 
-#define PARSE_PROPERTY_BEGIN if (0) {
-// TODO(syoyo): TimeSamples, Reference
-#define PARSE_PROPERTY(__prop, __name, __ty, __target)             \
-  }                                                                \
-  else if (__prop.first == __name) {                               \
-    const PrimAttrib &attr = __prop.second.attrib;                 \
-    if (auto v = attr.var.get_value<__ty>()) {                     \
-      __target = v.value();                                        \
-    } else {                                                       \
-      PUSH_ERROR_AND_RETURN("Type mismatch. "                      \
-                            << __name << " expects "               \
-                            << value::TypeTrait<__ty>::type_name); \
-    }
 
-//#define PARSE_PROPERTY_END }
-
-bool USDAReader::Impl::ReconstructLuxDomeLight(
+template<>
+bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxDomeLight *light) {
   // TODO: Implement
   for (const auto &prop : properties) {
-    PARSE_PROPERTY_BEGIN
-    PARSE_PROPERTY(prop, "guideRadius", float, light->guideRadius)
-    PARSE_PROPERTY(prop, "inputs:color", value::color3f, light->color)
-    PARSE_PROPERTY(prop, "inputs:intensity", float, light->intensity)
+    PARSE_PROPERTY(prop, "guideRadius", light->guideRadius)
+    PARSE_PROPERTY(prop, "inputs:color", light->color)
+    PARSE_PROPERTY(prop, "inputs:intensity", light->intensity)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
-  else {
-    DCOUT("TODO: " << prop.first);
-  }
-}
 
-return true;
-}  // namespace usda
+  DCOUT("Implement DomeLight");
+  return true;
+}
 
 bool USDAReader::Impl::ReconstructScope(
     const std::map<std::string, Property> &properties,
@@ -2087,7 +2158,7 @@ bool USDAReader::Impl::ReconstructPrimvarReader_float2(
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
   _parser.RegisterPrimConstructFunction(
-      "Xform",
+      PrimTypeTrait<Xform>::prim_type_name,
       [&](const Path &path, const std::map<std::string, Property> &properties,
           std::vector<std::pair<ListEditQual, Reference>> &references) {
         Xform xform;
@@ -2113,10 +2184,11 @@ bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
   return true;
 }
 
+#if 0
   template<>
   bool USDAReader::Impl::RegisterReconstructCallback<GeomSphere>() {
     _parser.RegisterPrimConstructFunction(
-        "Sphere",
+        kGeomSphere,
         [&](const Path &path, const std::map<std::string, Property> &properties,
             std::vector<std::pair<ListEditQual, Reference>> &references) {
           GeomSphere sphere;
@@ -2151,6 +2223,26 @@ bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
     return true;
   }
 
+  template<>
+  bool USDAReader::Impl::RegisterReconstructCallback<GeomBasisCurves>() {
+    _parser.RegisterPrimConstructFunction(
+        kGeomBasisCurves,
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomCube cube;
+
+          if (ReconstructPrim<GeomCube>(properties, references, &cube)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomCube");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+#endif
+
 
 ///
 /// -- Impl Read
@@ -2165,11 +2257,11 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   RegisterReconstructCallback<Xform>();
   RegisterReconstructCallback<GeomCube>();
   RegisterReconstructCallback<GeomSphere>();
-  RegisterReconstructGeomConeCallback();
-  RegisterReconstructGeomCylinderCallback();
-  RegisterReconstructGeomCapsuleCallback();
-  RegisterReconstructGeomMeshCallback();
-  RegisterReconstructGeomSubsetCallback();
+  RegisterReconstructCallback<GeomCone>();
+  RegisterReconstructCallback<GeomCylinder>();
+  RegisterReconstructCallback<GeomCapsule>();
+  RegisterReconstructCallback<GeomMesh>();
+  RegisterReconstructCallback<GeomSubset>();
 
   if (!_parser.Parse(state)) {
     std::string warn = _parser.GetWarning();
@@ -2301,6 +2393,7 @@ std::string USDAReader::GetDefaultPrimName() const {
 
 std::string USDAReader::GetError() { return _impl->GetError(); }
 std::string USDAReader::GetWarning() { return _impl->GetWarning(); }
+
 
 }  // namespace tinyusdz
 }  // namespace tinyusdz
