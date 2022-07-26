@@ -417,184 +417,9 @@ class USDAReader::Impl {
     return true;
   }
 
-  ///
-  /// -- RegisterReconstructCallback specializations
-  ///
-  template <>
-  bool RegisterReconstructCallback<GPrim>() {
-    _parser.RegisterPrimConstructFunction(
-        PrimTypeTrait<GPrim>::prim_type_name,
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          // TODO: Implement
-          GPrim gprim;
-
-          //
-          // Resolve prepend references
-          //
-          for (const auto &ref : references) {
-            if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
-            }
-          }
-
-          // Update props;
-          for (auto item : properties) {
-            if (item.second.is_rel) {
-              PUSH_WARN("TODO: rel");
-            } else {
-              gprim.props[item.first].attrib = item.second.attrib;
-            }
-          }
-
-          //
-          // Resolve append references
-          //
-          for (const auto &ref : references) {
-            if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
-            }
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-
 #if 0
-  bool RegisterReconstructGeomMeshCallback() {
-    _parser.RegisterPrimConstructFunction(
-        kGeomMesh,
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomMesh mesh;
 
-          if (ReconstructGeomMesh(properties, references, &mesh)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomMesh");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
 #endif
-
-  template<>
-  bool RegisterReconstructCallback<GeomSubset>() {
-    _parser.RegisterPrimConstructFunction(
-        "GeomSubset",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          // Parent Prim must be GeomMesh
-          const Path parent = path.GetParentPrim();
-          if (!parent.IsValid()) {
-            PUSH_ERROR_AND_RETURN("Invalid Prim path");
-          }
-
-          if (parent.IsRootPrim()) {
-            PUSH_ERROR_AND_RETURN(
-                "GeomSubset must be a child of GeomMesh prim.");
-          }
-
-          const std::string parent_primpath = parent.GetPrimPart();
-
-          if (!_primpath_to_prim_idx_map.count(parent_primpath)) {
-            PUSH_ERROR_AND_RETURN("Parent Prim not found.");
-          }
-
-          size_t prim_idx = _primpath_to_prim_idx_map[parent_primpath];
-          auto pmesh = _prims[prim_idx].get_value<GeomMesh>();
-          if (!pmesh) {
-            PUSH_ERROR_AND_RETURN("Parent Prim must be GeomMesh, but got " +
-                                  _prims[prim_idx].type_name());
-          }
-          GeomMesh &mesh = pmesh.value();
-
-          GeomSubset subset;
-
-          // uniform token elementType
-          // uniform token familyName
-          // int[] indices
-          // rel material:binding
-
-          if (references.size()) {
-            PUSH_WARN("`references` support in GeomSubset is TODO");
-          }
-
-          // Update props;
-          for (auto item : properties) {
-            if (item.first == "elementType") {
-              if (item.second.IsRel()) {
-                PUSH_ERROR_AND_RETURN(
-                    "`elementType` property as Relation is not supported.");
-              }
-              if (auto pv = item.second.attrib.var.get_value<value::token>()) {
-                if (item.second.attrib.uniform) {
-                  auto e = subset.SetElementType(pv.value().str());
-                  if (!e) {
-                    PUSH_ERROR_AND_RETURN(e.error());
-                  }
-                  continue;
-                }
-              }
-              PUSH_ERROR_AND_RETURN(
-                  "`elementType` property must be `uniform token` type.");
-            } else if (item.first == "familyType") {
-              if (item.second.IsRel()) {
-                PUSH_ERROR_AND_RETURN(
-                    "`familyType` property as Relation is not supported.");
-              }
-
-              if (auto pv = item.second.attrib.var.get_value<value::token>()) {
-                if (item.second.attrib.uniform) {
-                  auto e = subset.SetFamilyType(pv.value().str());
-                  if (!e) {
-                    PUSH_ERROR_AND_RETURN(e.error());
-                  }
-                  continue;
-                }
-              }
-              PUSH_ERROR_AND_RETURN(
-                  "`familyType` property must be `uniform token` type.");
-
-            } else if (item.first == "indices") {
-              if (item.second.IsRel()) {
-                PUSH_ERROR_AND_RETURN(
-                    "`indices` property as Relation is not supported.");
-              }
-
-              if (auto pv =
-                      item.second.attrib.var.get_value<std::vector<int>>()) {
-                // int -> uint
-                std::transform(pv.value().begin(), pv.value().end(),
-                               std::back_inserter(subset.indices),
-                               [](int a) { return uint32_t(a); });
-              }
-
-              PUSH_ERROR_AND_RETURN(
-                  "`indices` property must be `int[]` type, but got `" +
-                  item.second.attrib.var.type_name() + "`");
-
-            } else if (item.first == "material:binding") {
-              if (!item.second.IsRel()) {
-                PUSH_ERROR_AND_RETURN(
-                    "`material:binding` property as Attribute is not "
-                    "supported.");
-              }
-            } else {
-              PUSH_WARN("GeomSubeet: TODO: " + item.first);
-            }
-          }
-
-          mesh.geom_subset_children.emplace_back(subset);
-
-          return true;
-        });
-
-    return true;
-  }
 
 
   bool ReconstructGeomCamera(
@@ -1043,6 +868,184 @@ bool USDAReader::Impl::ReconstructPrim(
 
   return true;
 }
+
+  ///
+  /// -- RegisterReconstructCallback specializations
+  ///
+  template <>
+  bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
+    _parser.RegisterPrimConstructFunction(
+        PrimTypeTrait<GPrim>::prim_type_name,
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          // TODO: Implement
+          GPrim gprim;
+
+          //
+          // Resolve prepend references
+          //
+          for (const auto &ref : references) {
+            if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+            }
+          }
+
+          // Update props;
+          for (auto item : properties) {
+            if (item.second.is_rel) {
+              PUSH_WARN("TODO: rel");
+            } else {
+              gprim.props[item.first].attrib = item.second.attrib;
+            }
+          }
+
+          //
+          // Resolve append references
+          //
+          for (const auto &ref : references) {
+            if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+            }
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+
+  template<>
+  bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
+    _parser.RegisterPrimConstructFunction(
+        "GeomSubset",
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          // Parent Prim must be GeomMesh
+          const Path parent = path.GetParentPrim();
+          if (!parent.IsValid()) {
+            PUSH_ERROR_AND_RETURN("Invalid Prim path");
+          }
+
+          if (parent.IsRootPrim()) {
+            PUSH_ERROR_AND_RETURN(
+                "GeomSubset must be a child of GeomMesh prim.");
+          }
+
+          const std::string parent_primpath = parent.GetPrimPart();
+
+          if (!_primpath_to_prim_idx_map.count(parent_primpath)) {
+            PUSH_ERROR_AND_RETURN("Parent Prim not found.");
+          }
+
+          size_t prim_idx = _primpath_to_prim_idx_map[parent_primpath];
+          auto pmesh = _prims[prim_idx].get_value<GeomMesh>();
+          if (!pmesh) {
+            PUSH_ERROR_AND_RETURN("Parent Prim must be GeomMesh, but got " +
+                                  _prims[prim_idx].type_name());
+          }
+          GeomMesh &mesh = pmesh.value();
+
+          GeomSubset subset;
+
+          // uniform token elementType
+          // uniform token familyName
+          // int[] indices
+          // rel material:binding
+
+          if (references.size()) {
+            PUSH_WARN("`references` support in GeomSubset is TODO");
+          }
+
+          // Update props;
+          for (auto item : properties) {
+            if (item.first == "elementType") {
+              if (item.second.IsRel()) {
+                PUSH_ERROR_AND_RETURN(
+                    "`elementType` property as Relation is not supported.");
+              }
+              if (auto pv = item.second.attrib.var.get_value<value::token>()) {
+                if (item.second.attrib.uniform) {
+                  auto e = subset.SetElementType(pv.value().str());
+                  if (!e) {
+                    PUSH_ERROR_AND_RETURN(e.error());
+                  }
+                  continue;
+                }
+              }
+              PUSH_ERROR_AND_RETURN(
+                  "`elementType` property must be `uniform token` type.");
+            } else if (item.first == "familyType") {
+              if (item.second.IsRel()) {
+                PUSH_ERROR_AND_RETURN(
+                    "`familyType` property as Relation is not supported.");
+              }
+
+              if (auto pv = item.second.attrib.var.get_value<value::token>()) {
+                if (item.second.attrib.uniform) {
+                  auto e = subset.SetFamilyType(pv.value().str());
+                  if (!e) {
+                    PUSH_ERROR_AND_RETURN(e.error());
+                  }
+                  continue;
+                }
+              }
+              PUSH_ERROR_AND_RETURN(
+                  "`familyType` property must be `uniform token` type.");
+
+            } else if (item.first == "indices") {
+              if (item.second.IsRel()) {
+                PUSH_ERROR_AND_RETURN(
+                    "`indices` property as Relation is not supported.");
+              }
+
+              if (auto pv =
+                      item.second.attrib.var.get_value<std::vector<int>>()) {
+                // int -> uint
+                std::transform(pv.value().begin(), pv.value().end(),
+                               std::back_inserter(subset.indices),
+                               [](int a) { return uint32_t(a); });
+              }
+
+              PUSH_ERROR_AND_RETURN(
+                  "`indices` property must be `int[]` type, but got `" +
+                  item.second.attrib.var.type_name() + "`");
+
+            } else if (item.first == "material:binding") {
+              if (!item.second.IsRel()) {
+                PUSH_ERROR_AND_RETURN(
+                    "`material:binding` property as Attribute is not "
+                    "supported.");
+              }
+            } else {
+              PUSH_WARN("GeomSubeet: TODO: " + item.first);
+            }
+          }
+
+          mesh.geom_subset_children.emplace_back(subset);
+
+          return true;
+        });
+
+    return true;
+  }
+
+#if 0
+  bool RegisterReconstructGeomMeshCallback() {
+    _parser.RegisterPrimConstructFunction(
+        kGeomMesh,
+        [&](const Path &path, const std::map<std::string, Property> &properties,
+            std::vector<std::pair<ListEditQual, Reference>> &references) {
+          GeomMesh mesh;
+
+          if (ReconstructGeomMesh(properties, references, &mesh)) {
+            // TODO
+            PUSH_WARN("TODO: Implement GeomMesh");
+          }
+
+          return true;
+        });
+
+    return true;
+  }
+#endif
 
 template<>
 bool USDAReader::Impl::ReconstructPrim(
