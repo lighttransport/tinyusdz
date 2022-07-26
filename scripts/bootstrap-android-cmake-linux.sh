@@ -18,7 +18,10 @@ rm -rf build-android
 mkdir build-android
 cd build-android
 
-$CMAKE_BIN -G Ninja -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake \
+# Sometimes CI failed to find `ninja`, so disable Ninja generator for a while.
+# -G Ninja
+
+$CMAKE_BIN -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake \
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_NATIVE_API_LEVEL=24 \
   -DANDROID_ARM_MODE=arm \
