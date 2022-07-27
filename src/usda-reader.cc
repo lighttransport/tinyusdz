@@ -417,70 +417,21 @@ class USDAReader::Impl {
     return true;
   }
 
-#if 0
-
-#endif
-
-
-  bool ReconstructGeomCamera(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      GeomCamera *curves);
-
-  bool ReconstructShader(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      Shader *shader);
-
-  bool ReconstructNodeGraph(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      NodeGraph *graph);
-
-  bool ReconstructMaterial(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      Material *material);
-
   bool ReconstructPreviewSurface(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
+      const std::vector<std::pair<ListEditQual, Reference>> &references,
       PreviewSurface *surface);
 
   bool ReconstructUVTexture(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
+      const std::vector<std::pair<ListEditQual, Reference>> &references,
       UVTexture *texture);
 
   bool ReconstructPrimvarReader_float2(
       const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
+      const std::vector<std::pair<ListEditQual, Reference>> &references,
       PrimvarReader_float2 *reader_float2);
 
-  bool ReconstructLuxSphereLight(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      LuxSphereLight *light);
-
-  bool ReconstructLuxDomeLight(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      LuxDomeLight *light);
-
-  bool ReconstructScope(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      Scope *scope);
-
-  bool ReconstructSkelRoot(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      SkelRoot *skelroot);
-
-  bool ReconstructSkeleton(
-      const std::map<std::string, Property> &properties,
-      std::vector<std::pair<ListEditQual, Reference>> &references,
-      Skeleton *skeleton);
 
   void ImportScene(tinyusdz::HighLevelScene &scene) { _imported_scene = scene; }
 
@@ -1995,17 +1946,18 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructLuxSphereLight(
+template<>
+bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxSphereLight *light) {
-  // TODO: Implement
+
   for (const auto &prop : properties) {
-    if (prop.first == "radius") {
-      // TODO
-    } else {
-      // std::cout << "TODO: " << prop.first << "\n";
-    }
+    //PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
+    PARSE_PROPERTY(prop, "inputs:color", light->color)
+    PARSE_PROPERTY(prop, "inputs:radius", light->color)
+    PARSE_PROPERTY(prop, "inputs:intensity", light->intensity)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
   return true;
@@ -2017,9 +1969,12 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxDomeLight *light) {
-  // TODO: Implement
+
   for (const auto &prop : properties) {
     PARSE_PROPERTY(prop, "guideRadius", light->guideRadius)
+    PARSE_PROPERTY(prop, "inputs:diffuse", light->diffuse)
+    PARSE_PROPERTY(prop, "inputs:specular", light->specular)
+    PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_PROPERTY(prop, "inputs:color", light->color)
     PARSE_PROPERTY(prop, "inputs:intensity", light->intensity)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
@@ -2029,20 +1984,25 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructScope(
+template<>
+bool USDAReader::Impl::ReconstructPrim<Scope>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references, Scope *scope) {
-  (void)scope;
+    const std::vector<std::pair<ListEditQual, Reference>> &references, Scope *scope) {
 
-  // TODO: Implement
-  DCOUT("Implement Scope");
+  // `Scope` is just a namespace in scene graph(no node xform)
+
+  // TODO: support custom properties
+  for (const auto &prop : properties) {
+    PUSH_WARN("Unsupported/unimplemented property: " + prop.first);
+  }
 
   return true;
 }
 
-bool USDAReader::Impl::ReconstructSkelRoot(
+template<>
+bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     SkelRoot *root) {
   (void)root;
 
@@ -2052,9 +2012,10 @@ bool USDAReader::Impl::ReconstructSkelRoot(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructSkeleton(
+template<>
+bool USDAReader::Impl::ReconstructPrim<Skeleton>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     Skeleton *skel) {
   (void)skel;
 
@@ -2064,9 +2025,10 @@ bool USDAReader::Impl::ReconstructSkeleton(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructShader(
+template<>
+bool USDAReader::Impl::ReconstructPrim<Shader>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     Shader *shader) {
   for (const auto &prop : properties) {
     if (prop.first == "info:id") {
@@ -2105,9 +2067,10 @@ bool USDAReader::Impl::ReconstructShader(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructNodeGraph(
+template<>
+bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     NodeGraph *graph) {
   (void)properties;
   (void)references;
@@ -2118,9 +2081,10 @@ bool USDAReader::Impl::ReconstructNodeGraph(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructMaterial(
+template<>
+bool USDAReader::Impl::ReconstructPrim<Material>(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     Material *material) {
   (void)properties;
   (void)references;
@@ -2133,7 +2097,7 @@ bool USDAReader::Impl::ReconstructMaterial(
 
 bool USDAReader::Impl::ReconstructPreviewSurface(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     PreviewSurface *surface) {
   // TODO:
   return false;
@@ -2141,7 +2105,7 @@ bool USDAReader::Impl::ReconstructPreviewSurface(
 
 bool USDAReader::Impl::ReconstructUVTexture(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     UVTexture *texture) {
   // TODO:
   return false;
@@ -2149,14 +2113,14 @@ bool USDAReader::Impl::ReconstructUVTexture(
 
 bool USDAReader::Impl::ReconstructPrimvarReader_float2(
     const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
     PrimvarReader_float2 *preader) {
   // TODO:
   return false;
 }
 
 ///
-/// -- Impl callback
+/// -- Impl callback specializations
 ///
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
@@ -2187,66 +2151,6 @@ bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
   return true;
 }
 
-#if 0
-  template<>
-  bool USDAReader::Impl::RegisterReconstructCallback<GeomSphere>() {
-    _parser.RegisterPrimConstructFunction(
-        kGeomSphere,
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomSphere sphere;
-
-          if (ReconstructPrim<GeomSphere>(properties, references, &sphere)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomSphere");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-  template<>
-  bool USDAReader::Impl::RegisterReconstructCallback<GeomCube>() {
-    _parser.RegisterPrimConstructFunction(
-        "Cube",
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomCube cube;
-
-          if (ReconstructPrim<GeomCube>(properties, references, &cube)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomCube");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-
-  template<>
-  bool USDAReader::Impl::RegisterReconstructCallback<GeomBasisCurves>() {
-    _parser.RegisterPrimConstructFunction(
-        kGeomBasisCurves,
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomCube cube;
-
-          if (ReconstructPrim<GeomCube>(properties, references, &cube)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomCube");
-          }
-
-          return true;
-        });
-
-    return true;
-  }
-#endif
-
-
 ///
 /// -- Impl Read
 ///
@@ -2265,6 +2169,14 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   RegisterReconstructCallback<GeomCapsule>();
   RegisterReconstructCallback<GeomMesh>();
   RegisterReconstructCallback<GeomSubset>();
+
+  RegisterReconstructCallback<Scope>();
+
+  RegisterReconstructCallback<LuxSphereLight>();
+  RegisterReconstructCallback<LuxDomeLight>();
+
+  RegisterReconstructCallback<SkelRoot>();
+  RegisterReconstructCallback<Skeleton>();
 
   if (!_parser.Parse(state)) {
     std::string warn = _parser.GetWarning();
