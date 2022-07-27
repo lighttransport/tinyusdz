@@ -1494,10 +1494,13 @@ struct LuxDomeLight {
 // BlendShapes
 // TODO(syoyo): Blendshape
 struct BlendShape {
-  std::vector<float> offsets;        // required. position offsets. vec3f
-  std::vector<float> normalOffsets;  // required. vec3f
+  std::string name;
+
+  std::vector<float> offsets;        // uniform vector3f[]. required property
+  std::vector<float> normalOffsets;  // uniform vector3f[]. required property
+                                   
   std::vector<int>
-      pointIndices;  // optional. vertex indices to the original mesh for each
+      pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
                      // values in `offsets` and `normalOffsets`.
 };
 
@@ -1505,22 +1508,23 @@ struct BlendShape {
 struct Skeleton {
   std::string name;
 
-  std::vector<value::matrix4d>
-      bindTransforms;  // bind-pose transform of each joint in world coordinate.
   AnimatableExtent extent;
 
-  std::vector<std::string> jointNames;
-  std::vector<std::string> joints;
+  std::vector<value::matrix4d>
+      bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
 
-  std::vector<value::matrix4d> restTransforms;  // rest-pose transforms of each
+  std::vector<std::string> jointNames; // uniform token[]
+  std::vector<std::string> joints; // uniform token[]
+                                   
+  // rel proxyPrim
+                                 
+  std::vector<value::matrix4d> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                                                 // joint in local coordinate.
 
   Purpose purpose{Purpose::Default};
   AnimatableVisibility visibility{Visibility::Inherited};
 
-  // TODO
-  // std::vector<std::string> xformOpOrder;
-  // ref proxyPrim
+  std::vector<value::token> xformOpOrder;
 };
 
 struct SkelRoot {
@@ -1541,15 +1545,20 @@ struct SkelRoot {
 };
 
 struct SkelAnimation {
-  std::vector<std::string> blendShapes;
-  std::vector<float> blendShapeWeights;
-  std::vector<std::string> joints;
-  std::vector<value::quatf> rotations;  // Joint-local unit quaternion rotations
-  std::vector<value::float3>
-      scales;  // Joint-local scaling. pxr USD schema uses half3,
-               // but we use float3 for convenience.
-  std::vector<value::float3> translations;  // Joint-local translation.
+  std::string name;
+
+  std::vector<value::token> blendShapes; // uniform token[]
+  std::vector<float> blendShapeWeights; // float[]
+  std::vector<value::token> joints; // uniform token[]
+  std::vector<value::quatf> rotations;  // quatf[] Joint-local unit quaternion rotations
+  std::vector<value::half3>
+      scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
+  std::vector<value::float3> translations;  // float3[] Joint-local translation.
 };
+
+// PackedJointAnimation is deprecated(Convert to SkelAnimation)
+// struct PackedJointAnimation {
+// };
 
 // W.I.P.
 struct SkelBindingAPI {
