@@ -427,10 +427,12 @@ class USDAReader::Impl {
       const std::vector<std::pair<ListEditQual, Reference>> &references,
       UVTexture *texture);
 
-  bool ReconstructPrimvarReader_float2(
+  // Currently float, float2, float3 and float4 only
+  template<typename T>
+  bool ReconstructPrimvarReader(
       const std::map<std::string, Property> &properties,
       const std::vector<std::pair<ListEditQual, Reference>> &references,
-      PrimvarReader_float2 *reader_float2);
+      T *reader);
 
 
   void ImportScene(tinyusdz::HighLevelScene &scene) { _imported_scene = scene; }
@@ -2050,7 +2052,7 @@ bool USDAReader::Impl::ReconstructPrim<Shader>(
           shader->value = texture;
         } else if (p->compare("UsdPrimvarReader_float2") == 0) {
           PrimvarReader_float2 preader;
-          if (!ReconstructPrimvarReader_float2(properties, references,
+          if (!ReconstructPrimvarReader<PrimvarReader_float2>(properties, references,
                                                &preader)) {
             PUSH_WARN("TODO: reconstruct PrimvarReader_float2.");
           }
@@ -2111,10 +2113,35 @@ bool USDAReader::Impl::ReconstructUVTexture(
   return false;
 }
 
-bool USDAReader::Impl::ReconstructPrimvarReader_float2(
+template<typename T>
+bool USDAReader::Impl::ReconstructPrimvarReader(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
-    PrimvarReader_float2 *preader) {
+    T *preader) {
+
+  // TODO: string, point, vector, matrix
+  static_assert(
+    std::is_same<T, PrimvarReader_int>::value ||
+    std::is_same<T, PrimvarReader_float>::value ||
+    std::is_same<T, PrimvarReader_float2>::value ||
+    std::is_same<T, PrimvarReader_float3>::value ||
+    std::is_same<T, PrimvarReader_float4>::value, "Invalid type for PrimvarReader");
+
+
+  // Common
+  // uniform token info:implementationSource
+  // uniform asset info:glslfx:sourceAsset
+  // string inputs:varname (`primvar` namespace should be omitted)
+  //   ( sdrMetadata = {
+  //         bool primvarProperty = 1  # or string primvarProperty = "1"
+  //    }
+  //   )
+    
+
+  // Per shader
+  // T inputs:fallback
+  // T outputs:result
+
   // TODO:
   return false;
 }
