@@ -1,5 +1,4 @@
 #include "usda-writer.hh"
-#include "value-type.hh"
 
 #include <iostream>
 
