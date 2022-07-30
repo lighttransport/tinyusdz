@@ -4,7 +4,7 @@
 #endif
 
 // "src/external"
-#include "external/staticstruct.hh"
+//#include "external/staticstruct.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -14,7 +14,7 @@
 
 #include "primvar.hh"
 #include "pprinter.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 #include "value-pprint.hh"
 
 

@@ -32,16 +32,13 @@
 #define nsel_CONFIG_NO_EXCEPTIONS 1
 #define nssv_CONFIG_NO_EXCEPTIONS 1
 #endif
-//#include "../../src/nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
-//#include "token-type.hh"
-//#include "external/staticstruct.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 namespace tinyusdz {
 namespace primvar {

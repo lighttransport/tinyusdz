@@ -1,7 +1,7 @@
 #pragma once
 
 #include "prim-types.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 namespace tinyusdz {
 

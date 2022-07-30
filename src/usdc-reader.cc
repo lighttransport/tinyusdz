@@ -25,7 +25,7 @@
 
 #include "prim-types.hh"
 #include "tinyusdz.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 #if defined(__wasi__)
 #else
 #include <thread>
