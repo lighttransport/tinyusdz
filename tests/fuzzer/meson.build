@@ -18,7 +18,7 @@ tinyusdz_sources=[
   '../../src/crate-reader.cc',
   '../../src/crate-format.cc',
   '../../src/crate-pprint.cc',
-  '../../src/value-type.cc',
+  '../../src/value-types.cc',
   '../../src/value-pprint.cc',
   # deps
   '../../src/external/fpng.cpp',
