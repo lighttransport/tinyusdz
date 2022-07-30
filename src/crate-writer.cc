@@ -3,7 +3,7 @@
 #include <cstring>
 
 #include "crate-writer.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push

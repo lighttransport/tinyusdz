@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include "value-type.hh"
+#include "value-types.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push

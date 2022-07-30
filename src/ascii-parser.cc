@@ -64,16 +64,13 @@
 #endif
 
 #include "io-util.hh"
-//#include "math-util.inc"
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
-//#include "simple-type-reflection.hh"
-//#include "primvar.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 // s = std::string
 #define PUSH_ERROR_AND_RETURN(s)                                     \

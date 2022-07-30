@@ -34,7 +34,7 @@ For more information, please refer to <http://unlicense.org/>
 #include <iostream>
 #include <string>
 
-#include "value-type.hh" // import TypeTrait
+#include "value-types.hh" // import TypeTrait
 
 #ifdef __clang__
 #pragma clang diagnostic push

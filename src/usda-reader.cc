@@ -64,13 +64,12 @@
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
-//#include "simple-type-reflection.hh"
 #include "primvar.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "usdObj.hh"
 #include "value-pprint.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 #if 0
 #define PUSH_PARSER_ERROR_AND_RETURN() \

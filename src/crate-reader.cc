@@ -30,7 +30,7 @@
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 //
 #ifdef __clang__

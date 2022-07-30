@@ -12,7 +12,7 @@
 #include <cstdlib>
 
 #include "prim-types.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 #if defined(__clang__)
 #pragma clang diagnostic push

@@ -7,7 +7,7 @@
 
 #include "crate-format.hh"
 #include "pprinter.hh"
-#include "value-type.hh"
+#include "value-types.hh"
 
 #ifndef TINYUSDZ_PRODUCTION_BUILD
 #define TINYUSDZ_LOCAL_DEBUG_PRINT
