@@ -13,7 +13,6 @@
 #include <iostream>
 #include <iterator>
 #include <map>
-#include <mutex>
 #include <set>
 #include <sstream>
 #include <stack>
@@ -22,6 +21,7 @@
 #if defined(__wasi__)
 #else
 #include <thread>
+#include <mutex>
 #endif
 #include <vector>
 
