@@ -170,7 +170,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
-    ${PROJECT_SOURCE_DIR}/src/pprinter.cc)
+    ${PROJECT_SOURCE_DIR}/src/pprinter.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/tiny-render-data.cc
+    )
 
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
