@@ -1,3 +1,5 @@
+#include <string.h>
+
 NAMESPACE_BEGIN(NB_NAMESPACE)
 NAMESPACE_BEGIN(detail)
 
@@ -10,8 +12,7 @@ public:
     Buffer &operator=(Buffer &&) = delete;
 
     Buffer(size_t size = 0)
-        : m_start(nullptr), m_cur(nullptr), m_end(nullptr) {
-        m_start = (char *) malloc(size);
+        : m_start((char *) malloc(size)) {
         if (!m_start) {
             fprintf(stderr, "Buffer::Buffer(): out of memory (unrecoverable error)!");
             abort();
@@ -155,7 +156,7 @@ private:
     }
 
 private:
-    char *m_start, *m_cur, *m_end;
+    char *m_start{nullptr}, *m_cur{nullptr}, *m_end{nullptr};
 };
 
 NAMESPACE_END(detail)

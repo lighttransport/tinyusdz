@@ -1,3 +1,14 @@
+/*
+    nanobind/stl/unique_ptr.h: Type caster for std::unique_ptr<T>
+
+    Copyright (c) 2022 Wenzel Jakob <wenzel.jakob@epfl.ch>
+
+    All rights reserved. Use of this source code is governed by a
+    BSD-style license that can be found in the LICENSE file.
+*/
+
+#pragma once
+
 #include <nanobind/nanobind.h>
 #include <memory>
 
