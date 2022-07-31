@@ -1,3 +1,5 @@
+#pragma once
+
 #include <nanobind/nanobind.h>
 #include <tuple>
 
@@ -12,7 +14,7 @@ template <typename... Ts> struct type_caster<std::tuple<Ts...>> {
     using Indices = std::make_index_sequence<N>;
 
     static constexpr bool IsClass = false;
-    static constexpr auto Name = const_name("Tuple[") +
+    static constexpr auto Name = const_name("tuple[") +
                                  concat(make_caster<Ts>::Name...) +
                                  const_name("]");
 
@@ -29,7 +31,7 @@ template <typename... Ts> struct type_caster<std::tuple<Ts...>> {
                                     std::index_sequence<Is...>) noexcept {
         (void) src; (void) flags; (void) cleanup;
 
-        PyObject *temp = nullptr;
+        PyObject *temp; // always initialized by the following line
         PyObject **o = seq_get_with_size(src.ptr(), N, &temp);
 
         bool success =
@@ -71,7 +73,7 @@ template <typename... Ts> struct type_caster<std::tuple<Ts...>> {
             return handle();
 
         PyObject *r = PyTuple_New(N);
-        (PyTuple_SET_ITEM(r, Is, o[Is].release().ptr()), ...);
+        (NB_TUPLE_SET_ITEM(r, Is, o[Is].release().ptr()), ...);
         return r;
     }
 

@@ -16,7 +16,7 @@ public:
 
     template <typename Key>
     accessor(handle obj, Key &&key)
-        : m_base(obj.ptr()), m_cache(nullptr), m_key(std::move(key)) { }
+        : m_base(obj.ptr()), m_key(std::move(key)) { }
     accessor(const accessor &) = delete;
     accessor(accessor &&) = delete;
     ~accessor() {
@@ -37,7 +37,7 @@ public:
 
 private:
     PyObject *m_base;
-    mutable PyObject *m_cache;
+    mutable PyObject *m_cache{nullptr};
     typename Impl::key_type m_key;
 };
 
@@ -120,13 +120,13 @@ struct num_item_list {
     using key_type = Py_ssize_t;
 
     NB_INLINE static void get(PyObject *obj, Py_ssize_t index, PyObject **cache) {
-        *cache = PyList_GET_ITEM(obj, index);
+        *cache = NB_LIST_GET_ITEM(obj, index);
     }
 
     NB_INLINE static void set(PyObject *obj, Py_ssize_t index, PyObject *v) {
-        PyObject *old = PyList_GET_ITEM(obj, index);
+        PyObject *old = NB_LIST_GET_ITEM(obj, index);
         Py_INCREF(v);
-        PyList_SET_ITEM(obj, index, v);
+        NB_LIST_SET_ITEM(obj, index, v);
         Py_DECREF(old);
     }
 };
@@ -136,7 +136,7 @@ struct num_item_tuple {
     using key_type = Py_ssize_t;
 
     NB_INLINE static void get(PyObject *obj, Py_ssize_t index, PyObject **cache) {
-        *cache = PyTuple_GET_ITEM(obj, index);
+        *cache = NB_TUPLE_GET_ITEM(obj, index);
     }
 
     template <typename...Ts> static void set(Ts...) {

@@ -1,24 +1,33 @@
+#pragma once
+
 #include <nanobind/nanobind.h>
 
 NAMESPACE_BEGIN(NB_NAMESPACE)
 NAMESPACE_BEGIN(detail)
 
 template <typename Value_, typename Entry> struct list_caster {
-    NB_TYPE_CASTER(Value_, const_name("List[") + make_caster<Entry>::Name +
+    NB_TYPE_CASTER(Value_, const_name("Sequence[") + make_caster<Entry>::Name +
                                const_name("]"));
 
     using Caster = make_caster<Entry>;
 
+    template <typename T> using has_reserve = decltype(std::declval<T>().reserve(0));
+
     bool from_python(handle src, uint8_t flags, cleanup_list *cleanup) noexcept {
-        size_t size = 0;
-        PyObject *temp = nullptr;
+        size_t size;
+        PyObject *temp;
+
+        /* Will initialize 'size' and 'temp'. All return values and
+           return parameters are zero/NULL in the case of a failure. */
         PyObject **o = seq_get(src.ptr(), &size, &temp);
 
         value.clear();
-        value.reserve(size);
+
+        if constexpr (is_detected_v<has_reserve, Value_>)
+            value.reserve(size);
 
         Caster caster;
-        bool success = true;
+        bool success = o != nullptr;
 
         for (size_t i = 0; i < size; ++i) {
             if (!caster.from_python(o[i], flags, cleanup)) {
@@ -43,7 +52,7 @@ template <typename Value_, typename Entry> struct list_caster {
                 handle h =
                     Caster::from_cpp(forward_like<T>(value), policy, cleanup);
 
-                PyList_SET_ITEM(list.ptr(), index++, h.ptr());
+                NB_LIST_SET_ITEM(list.ptr(), index++, h.ptr());
                 if (!h.is_valid())
                     return handle();
             }

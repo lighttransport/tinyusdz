@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.17...3.22)
+cmake_minimum_required(VERSION 3.15...3.22)
 project(nanobind)
 
 # ---------------------------------------------------------------------------
@@ -25,6 +25,16 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ---------------------------------------------------------------------------
+# Check whether all dependencies are present
+# ---------------------------------------------------------------------------
+
+if (NOT IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/ext/robin_map/include")
+  message(FATAL_ERROR "The nanobind dependencies are missing! "
+    "You probably did not clone the project with --recursive. It is possible to recover "
+    "by invoking\n$ git submodule update --init --recursive")
+endif()
+
+# ---------------------------------------------------------------------------
 # Compile with a few more compiler warnings turned on
 # ---------------------------------------------------------------------------
 
@@ -42,9 +52,12 @@ endif()
 # Find the Python interpreter and development libraries
 # ---------------------------------------------------------------------------
 
+# TinyUSDZ fix: find_package(Python3) is invoked at project toplevel.
+
 #set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
-find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
-if ((Python_VERSION_MAJOR LESS 3) OR ((Python_VERSION_MAJOR EQUAL 3) AND (Python_VERSION_MINOR LESS 8)))
+#find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
+
+if ((Python3_VERSION_MAJOR LESS 3) OR ((Python3_VERSION_MAJOR EQUAL 3) AND (Python3_VERSION_MINOR LESS 8)))
   message(FATAL_ERROR "nanobind requires Python >= 3.8")
 endif()
 
