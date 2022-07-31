@@ -40,8 +40,6 @@ enum cast_flags : uint8_t {
     construct = (1 << 1)
 };
 
-template <typename T, typename SFINAE = int> struct type_caster;
-template <typename T> using make_caster = type_caster<intrinsic_t<T>>;
 template <typename T> using cast_t = typename make_caster<T>::template Cast<T>;
 
 template <typename T>
@@ -56,65 +54,57 @@ using movable_cast_t =
 
 template <typename T>
 struct type_caster<T, enable_if_t<std::is_arithmetic_v<T> && !is_std_char_v<T>>> {
-    using T0 = std::conditional_t<sizeof(T) <= sizeof(long), long, long long>;
-    using T1 = std::conditional_t<std::is_signed_v<T>, T0, std::make_unsigned_t<T0>>;
-    using Tp = std::conditional_t<std::is_floating_point_v<T>, double, T1>;
 public:
-    bool from_python(handle src, uint8_t flags, cleanup_list *) noexcept {
-        Tp value_p;
-
-        if (!src.is_valid())
-            return false;
-
-        const bool convert = flags & (uint8_t) cast_flags::convert;
+    NB_INLINE bool from_python(handle src, uint8_t flags, cleanup_list *) noexcept {
+        std::pair<T, bool> result;
 
         if constexpr (std::is_floating_point_v<T>) {
-            if (!convert && !PyFloat_Check(src.ptr()))
-                return false;
-            value_p = (Tp) PyFloat_AsDouble(src.ptr());
+            if constexpr (sizeof(T) == 8)
+                result = detail::load_f64(src.ptr(), flags);
+            else
+                result = detail::load_f32(src.ptr(), flags);
         } else {
-            if (!convert && !PyLong_Check(src.ptr()))
-                return false;
-
-            if constexpr (std::is_unsigned_v<Tp>) {
-                value_p = sizeof(T) <= sizeof(long)
-                              ? (Tp) PyLong_AsUnsignedLong(src.ptr())
-                              : (Tp) PyLong_AsUnsignedLongLong(src.ptr());
+            if constexpr (std::is_signed_v<T>) {
+                if constexpr (sizeof(T) == 8)
+                    result = detail::load_i64(src.ptr(), flags);
+                else if constexpr (sizeof(T) == 4)
+                    result = detail::load_i32(src.ptr(), flags);
+                else if constexpr (sizeof(T) == 2)
+                    result = detail::load_i16(src.ptr(), flags);
+                else
+                    result = detail::load_i8(src.ptr(), flags);
             } else {
-                value_p = sizeof(T) <= sizeof(long)
-                              ? (Tp) PyLong_AsLong(src.ptr())
-                              : (Tp) PyLong_AsLongLong(src.ptr());
+                if constexpr (sizeof(T) == 8)
+                    result = detail::load_u64(src.ptr(), flags);
+                else if constexpr (sizeof(T) == 4)
+                    result = detail::load_u32(src.ptr(), flags);
+                else if constexpr (sizeof(T) == 2)
+                    result = detail::load_u16(src.ptr(), flags);
+                else
+                    result = detail::load_u8(src.ptr(), flags);
             }
         }
 
-        if (value_p == Tp(-1) && PyErr_Occurred()) {
-            PyErr_Clear();
-            return false;
-        }
-
-        value = (T) value_p;
-
-        if constexpr (sizeof(Tp) != sizeof(T) && !std::is_floating_point_v<T>) {
-            if (value_p != (Tp) value)
-                return false;
-        }
-
-        return true;
+        value = result.first;
+        return result.second;
     }
 
-    static handle from_cpp(T src, rv_policy, cleanup_list *) noexcept {
-        if constexpr (std::is_floating_point_v<T>)
+    NB_INLINE static handle from_cpp(T src, rv_policy, cleanup_list *) noexcept {
+        if constexpr (std::is_floating_point_v<T>) {
             return PyFloat_FromDouble((double) src);
-        else if constexpr (std::is_unsigned_v<T> && sizeof(T) <= sizeof(long))
-            return PyLong_FromUnsignedLong((unsigned long) src);
-        else if constexpr (std::is_signed_v<T> && sizeof(T) <= sizeof(long))
-            return PyLong_FromLong((long) src);
-        else if constexpr (std::is_unsigned_v<T>)
-            return PyLong_FromUnsignedLongLong((unsigned long long) src);
-        else if constexpr (std::is_signed_v<T>)
-            return PyLong_FromLongLong((long long) src);
-        else
-            fail("invalid number cast");
+        } else {
+            if constexpr (std::is_signed_v<T>) {
+                if constexpr (sizeof(T) <= sizeof(long))
+                    return PyLong_FromLong((long) src);
+                else
+                    return PyLong_FromLongLong((long long) src);
+            } else {
+                if constexpr (sizeof(T) <= sizeof(unsigned long))
+                    return PyLong_FromUnsignedLong((unsigned long) src);
+                else
+                    return PyLong_FromUnsignedLongLong((unsigned long long) src);
+            }
+        }
     }
 
     NB_TYPE_CASTER(T, const_name<std::is_integral_v<T>>("int", "float"));
@@ -159,6 +149,13 @@ template <> struct type_caster<bool> {
 };
 
 template <> struct type_caster<char> {
+    using Value = const char *;
+    Value value;
+    static constexpr bool IsClass = false;
+    static constexpr auto Name = const_name("str");
+    template <typename T_>
+    using Cast = std::conditional_t<is_pointer_v<T_>, const char *, char>;
+
     bool from_python(handle src, uint8_t, cleanup_list *) noexcept {
         value = PyUnicode_AsUTF8AndSize(src.ptr(), nullptr);
         if (!value) {
@@ -173,7 +170,17 @@ template <> struct type_caster<char> {
         return PyUnicode_FromString(value);
     }
 
-    NB_TYPE_CASTER(const char *, const_name("str"));
+    static handle from_cpp(char value, rv_policy, cleanup_list *) noexcept {
+        return PyUnicode_FromStringAndSize(&value, 1);
+    }
+
+    explicit operator const char *() { return value; }
+
+    explicit operator char() {
+        if (value && value[0] && value[1] == '\0')
+            return value[0];
+        throw next_overload();
+    }
 };
 
 template <typename T>
@@ -185,10 +192,10 @@ public:
         if (!isinstance<T>(src))
             return false;
 
-        if constexpr (std::is_same_v<T, handle>)
-            value = src;
-        else
+        if constexpr (std::is_base_of_v<object, T>)
             value = borrow<T>(src);
+        else
+            value = src;
 
         return true;
     }
@@ -211,7 +218,9 @@ template <typename T> NB_INLINE rv_policy infer_policy(rv_policy policy) {
             policy = rv_policy::copy;
     } else {
         if (policy == rv_policy::automatic ||
-            policy == rv_policy::automatic_reference)
+            policy == rv_policy::automatic_reference ||
+            policy == rv_policy::reference ||
+            policy == rv_policy::reference_internal)
             policy = rv_policy::move;
     }
     return policy;
@@ -266,7 +275,8 @@ struct type_caster : type_caster_base<Type> { };
 
 NAMESPACE_END(detail)
 
-template <typename T, typename Derived> T cast(const detail::api<Derived> &value) {
+template <typename T, typename Derived>
+T cast(const detail::api<Derived> &value, bool convert = true) {
     if constexpr (std::is_same_v<T, void>) {
         return;
     } else {
@@ -275,17 +285,22 @@ template <typename T, typename Derived> T cast(const detail::api<Derived> &value
 
         Caster caster;
         if (!caster.from_python(value.derived().ptr(),
-                                (uint8_t) detail::cast_flags::convert, nullptr))
+                                convert ? (uint8_t) detail::cast_flags::convert
+                                        : (uint8_t) 0, nullptr))
             detail::raise("nanobind::cast(...): conversion failed!");
 
-        static_assert(
-            !(std::is_reference_v<T> || std::is_pointer_v<T>) || Caster::IsClass,
-            "nanobind::cast(): cannot return a reference to a temporary.");
+        if constexpr (std::is_same_v<T, const char *>) {
+            return caster.operator const char *();
+        } else {
+            static_assert(
+                !(std::is_reference_v<T> || std::is_pointer_v<T>) || Caster::IsClass,
+                "nanobind::cast(): cannot return a reference to a temporary.");
 
-        if constexpr (detail::is_pointer_v<T>)
-            return caster.operator Ti*();
-        else
-            return caster.operator Ti&();
+            if constexpr (detail::is_pointer_v<T>)
+                return caster.operator Ti*();
+            else
+                return caster.operator Ti&();
+        }
     }
 }
 
@@ -305,7 +320,7 @@ tuple make_tuple(Args &&...args) {
     size_t nargs = 0;
     PyObject *o = result.ptr();
 
-    (PyTuple_SET_ITEM(o, nargs++,
+    (NB_TUPLE_SET_ITEM(o, nargs++,
                       detail::make_caster<Args>::from_cpp(
                           (detail::forward_t<Args>) args,
                           detail::infer_policy<Args>(policy), nullptr).ptr()),

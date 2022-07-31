@@ -8,10 +8,11 @@
 */
 
 #include <nanobind/nanobind.h>
-#include "internals.h"
+#include "nb_internals.h"
 
 NAMESPACE_BEGIN(NB_NAMESPACE)
 NAMESPACE_BEGIN(detail)
+
 
 #if defined(__GNUC__)
     __attribute__((noreturn, __format__ (__printf__, 1, 2)))
@@ -19,29 +20,23 @@ NAMESPACE_BEGIN(detail)
     [[noreturn]]
 #endif
 void raise(const char *fmt, ...) {
-    char buf[512], *ptr = buf;
+    char buf[512];
     va_list args;
 
     va_start(args, fmt);
-    size_t size = vsnprintf(ptr, sizeof(buf), fmt, args);
+    size_t size = vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
     if (size < sizeof(buf))
         throw std::runtime_error(buf);
 
-    ptr = (char *) malloc(size + 1);
-    if (!ptr) {
-        fprintf(stderr, "nb::detail::raise(): out of memory!");
-        abort();
-    }
+    scoped_pymalloc<char> temp(size + 1);
 
     va_start(args, fmt);
-    vsnprintf(ptr, size + 1, fmt, args);
+    vsnprintf(temp.get(), size + 1, fmt, args);
     va_end(args);
 
-    std::runtime_error err(ptr);
-    free(ptr);
-    throw err;
+    throw std::runtime_error(temp.get());
 }
 
 /// Abort the process with a fatal error
@@ -60,9 +55,9 @@ void fail(const char *fmt, ...) noexcept {
     abort();
 }
 
-PyObject *capsule_new(const void *ptr, void (*free)(void *)) noexcept {
+PyObject *capsule_new(const void *ptr, void (*free)(void *) noexcept) noexcept {
     auto capsule_free = [](PyObject *o) {
-        void (*free_2)(void *) = (void (*)(void *))(PyCapsule_GetContext(o));
+        auto free_2 = (void (*)(void *))(PyCapsule_GetContext(o));
         if (free_2)
             free_2(PyCapsule_GetPointer(o, nullptr));
     };
@@ -181,7 +176,7 @@ PyObject *obj_repr(PyObject *o) {
     return res;
 }
 
-bool obj_compare(PyObject *a, PyObject *b, int value) {
+bool obj_comp(PyObject *a, PyObject *b, int value) {
     int rv = PyObject_RichCompareBool(a, b, value);
     if (rv == -1)
         raise_python_error();
@@ -204,17 +199,49 @@ PyObject *obj_op_2(PyObject *a, PyObject *b,
     return res;
 }
 
-#if PY_VERSION_HEX < 0x03090000
-static PyObject *nb_vectorcall_method(PyObject *name, PyObject *const *args,
-                                      size_t nargsf, PyObject *kwnames) {
-    PyObject *obj = PyObject_GetAttr(args[0], name);
-    if (!obj)
-        return obj;
-    PyObject *result = NB_VECTORCALL(obj, args + 1, nargsf - 1, kwnames);
-    Py_DECREF(obj);
-    return result;
+#if defined(Py_LIMITED_API)
+PyObject *_PyObject_Vectorcall(PyObject *base, PyObject *const *args,
+                               size_t nargsf, PyObject *kwnames) {
+    size_t nargs = NB_VECTORCALL_NARGS(nargsf);
+
+    PyObject *args_tuple = PyTuple_New(nargs);
+    if (!args_tuple)
+        return nullptr;
+
+    for (size_t i = 0; i < nargs; ++i) {
+        Py_INCREF(args[i]);
+        NB_TUPLE_SET_ITEM(args_tuple, i, args[i]);
+    }
+
+    PyObject *kwargs = nullptr;
+    if (kwnames) {
+        kwargs = PyDict_New();
+        if (!kwargs) {
+            Py_DECREF(args_tuple);
+            return nullptr;
+        }
+
+        for (size_t i = 0, l = NB_TUPLE_GET_SIZE(kwnames); i < l; ++i) {
+            PyObject *k = NB_TUPLE_GET_ITEM(kwnames, i),
+                     *v = args[i + nargs];
+            if (PyDict_SetItem(kwargs, k, v)) {
+                Py_DECREF(kwargs);
+                Py_DECREF(args_tuple);
+                return nullptr;
+            }
+
+        }
+    }
+
+    PyObject *res = PyObject_Call(base, args_tuple, kwargs);
+
+    Py_DECREF(args_tuple);
+    Py_XDECREF(kwargs);
+
+    return res;
 }
 #endif
+
 
 PyObject *obj_vectorcall(PyObject *base, PyObject *const *args, size_t nargsf,
                          PyObject *kwnames, bool method_call) {
@@ -222,12 +249,14 @@ PyObject *obj_vectorcall(PyObject *base, PyObject *const *args, size_t nargsf,
     PyObject *res = nullptr;
 
     size_t nargs_total =
-        PyVectorcall_NARGS(nargsf) + (kwnames ? PyTuple_GET_SIZE(kwnames) : 0);
+        NB_VECTORCALL_NARGS(nargsf) + (kwnames ? NB_TUPLE_GET_SIZE(kwnames) : 0);
 
+#if !defined(Py_LIMITED_API)
     if (!PyGILState_Check()) {
         error = "nanobind::detail::obj_vectorcall(): PyGILState_Check() failure." ;
         goto end;
     }
+#endif
 
     for (size_t i = 0; i < nargs_total; ++i) {
         if (!args[i]) {
@@ -236,8 +265,20 @@ PyObject *obj_vectorcall(PyObject *base, PyObject *const *args, size_t nargsf,
         }
     }
 
-    res = (method_call ? NB_VECTORCALL_METHOD
-                       : NB_VECTORCALL)(base, args, nargsf, kwnames);
+#if PY_VERSION_HEX < 0x03090000 || defined(Py_LIMITED_API)
+    if (method_call) {
+        PyObject *self = PyObject_GetAttr(args[0], /* name = */ base);
+        if (self) {
+            res = _PyObject_Vectorcall(self, args + 1, nargsf - 1, kwnames);
+            Py_DECREF(self);
+        }
+    } else {
+        res = _PyObject_Vectorcall(base, args, nargsf, kwnames);
+    }
+#else
+    res = (method_call ? PyObject_VectorcallMethod
+                       : PyObject_Vectorcall)(base, args, nargsf, kwnames);
+#endif
 
 end:
     for (size_t i = 0; i < nargs_total; ++i)
@@ -429,75 +470,194 @@ PyObject *str_from_cstr_and_size(const char *str, size_t size) {
 
 // ========================================================================
 
-PyObject **seq_get(PyObject *seq, size_t *size, PyObject **temp) noexcept {
+PyObject **seq_get(PyObject *seq, size_t *size_out, PyObject **temp_out) noexcept {
+    PyObject *temp = nullptr;
+    size_t size = 0;
+    PyObject **result = nullptr;
+
+    /* This function is used during overload resolution; if anything
+       goes wrong, it fails gracefully without reporting errors. Other
+       overloads will then be tried. */
+
+#if !defined(Py_LIMITED_API)
     if (PyTuple_CheckExact(seq)) {
-        PyTupleObject *tuple = (PyTupleObject *) seq;
-        *size = Py_SIZE(tuple);
-        return tuple->ob_item;
+        size = (size_t) PyTuple_GET_SIZE(seq);
+        result = ((PyTupleObject *) seq)->ob_item;
+        /* Special case for zero-sized lists/tuples. CPython
+           sets ob_item to NULL, which this function incidentally uses to
+           signal an error. Return a nonzero pointer that will, however,
+           still trigger a segfault if dereferenced. */
+        if (size == 0)
+            result = (PyObject **) 1;
     } else if (PyList_CheckExact(seq)) {
-        PyListObject *list = (PyListObject *) seq;
-        *size = Py_SIZE(list);
-        return list->ob_item;
-    } else {
-        seq = PySequence_List(seq);
-        if (!seq) {
+        size = (size_t) PyList_GET_SIZE(seq);
+        result = ((PyListObject *) seq)->ob_item;
+        if (size == 0) // ditto
+            result = (PyObject **) 1;
+    } else if (PySequence_Check(seq)) {
+        temp = PySequence_Fast(seq, "");
+
+        if (temp)
+            result = seq_get(temp, &size, temp_out);
+        else
             PyErr_Clear();
-            return nullptr;
-        }
-        *temp = seq;
-        PyListObject *list = (PyListObject *) seq;
-        *size = Py_SIZE(list);
-        return list->ob_item;
     }
+#else
+    /* There isn't a nice way to get a PyObject** in Py_LIMITED_API. This
+       is going to be slow, but hopefully also very future-proof.. */
+    if (PySequence_Check(seq)) {
+        Py_ssize_t size_seq = PySequence_Length(seq);
+
+        if (size_seq >= 0) {
+            result = (PyObject **) PyObject_Malloc(sizeof(PyObject *) *
+                                                   (size_seq + 1));
+
+            if (result) {
+                result[size_seq] = nullptr;
+
+                for (Py_ssize_t i = 0; i < size_seq; ++i) {
+                    PyObject *o = PySequence_GetItem(seq, i);
+
+                    if (o) {
+                        result[i] = o;
+                    } else {
+                        for (Py_ssize_t j = 0; j < i; ++j)
+                            Py_DECREF(result[j]);
+
+                        PyObject_Free(result);
+                        result = nullptr;
+                        break;
+                    }
+                }
+            }
+
+            if (result) {
+                temp = PyCapsule_New(result, nullptr, [](PyObject *o) {
+                    PyObject **ptr = (PyObject **) PyCapsule_GetPointer(o, nullptr);
+                    for (size_t i = 0; ptr[i] != nullptr; ++i)
+                        Py_DECREF(ptr[i]);
+                    PyObject_Free(ptr);
+                });
+
+                if (temp) {
+                    size = (size_t) size_seq;
+                } else if (!temp) {
+                    PyErr_Clear();
+                    for (Py_ssize_t i = 0; i < size_seq; ++i)
+                        Py_DECREF(result[i]);
+
+                    PyObject_Free(result);
+                    result = nullptr;
+                }
+            }
+        } else if (size_seq < 0) {
+            PyErr_Clear();
+        }
+    }
+#endif
+
+    *temp_out = temp;
+    *size_out = size;
+    return result;
 }
 
 
 PyObject **seq_get_with_size(PyObject *seq, size_t size,
-                             PyObject **temp) noexcept {
+                             PyObject **temp_out) noexcept {
+
+    /* This function is used during overload resolution; if anything
+       goes wrong, it fails gracefully without reporting errors. Other
+       overloads will then be tried. */
+
+    PyObject *temp = nullptr,
+             **result = nullptr;
+
+#if !defined(Py_LIMITED_API)
     if (PyTuple_CheckExact(seq)) {
-        PyTupleObject *tuple = (PyTupleObject *) seq;
-        if (size != (size_t) Py_SIZE(tuple))
-            return nullptr;
-        return tuple->ob_item;
+        if (size == (size_t) PyTuple_GET_SIZE(seq)) {
+            result = ((PyTupleObject *) seq)->ob_item;
+            /* Special case for zero-sized lists/tuples. CPython
+               sets ob_item to NULL, which this function incidentally uses to
+               signal an error. Return a nonzero pointer that will, however,
+               still trigger a segfault if dereferenced. */
+            if (size == 0)
+                result = (PyObject **) 1;
+        }
     } else if (PyList_CheckExact(seq)) {
-        PyListObject *list = (PyListObject *) seq;
-        if (size != (size_t) Py_SIZE(list))
-            return nullptr;
-        return list->ob_item;
-    } else {
-        PySequenceMethods *m = Py_TYPE(seq)->tp_as_sequence;
-        if (m && m->sq_length) {
-            Py_ssize_t len = m->sq_length(seq);
-            if (len < 0) {
-                PyErr_Clear();
-                return nullptr;
-            }
-            if (size != (size_t) len)
-                return nullptr;
+        if (size == (size_t) PyList_GET_SIZE(seq)) {
+            result = ((PyListObject *) seq)->ob_item;
+            if (size == 0) // ditto
+                result = (PyObject **) 1;
         }
+    } else if (PySequence_Check(seq)) {
+        temp = PySequence_Fast(seq, "");
 
-        seq = PySequence_List(seq);
-        if (!seq) {
+        if (temp)
+            result = seq_get_with_size(temp, size, temp_out);
+        else
             PyErr_Clear();
-            return nullptr;
-        }
-
-        PyListObject *list = (PyListObject *) seq;
-        if (size != (size_t) Py_SIZE(list)) {
-            Py_CLEAR(seq);
-            return nullptr;
-        }
-
-        *temp = seq;
-        return list->ob_item;
     }
+#else
+    /* There isn't a nice way to get a PyObject** in Py_LIMITED_API. This
+       is going to be slow, but hopefully also very future-proof.. */
+    if (PySequence_Check(seq)) {
+        Py_ssize_t size_seq = PySequence_Length(seq);
+
+        if (size == (size_t) size_seq) {
+            result =
+                (PyObject **) PyObject_Malloc(sizeof(PyObject *) * (size + 1));
+
+            if (result) {
+                result[size] = nullptr;
+
+                for (Py_ssize_t i = 0; i < size_seq; ++i) {
+                    PyObject *o = PySequence_GetItem(seq, i);
+
+                    if (o) {
+                        result[i] = o;
+                    } else {
+                        for (Py_ssize_t j = 0; j < i; ++j)
+                            Py_DECREF(result[j]);
+
+                        PyObject_Free(result);
+                        result = nullptr;
+                        break;
+                    }
+                }
+            }
+
+            if (result) {
+                temp = PyCapsule_New(result, nullptr, [](PyObject *o) {
+                    PyObject **ptr = (PyObject **) PyCapsule_GetPointer(o, nullptr);
+                    for (size_t i = 0; ptr[i] != nullptr; ++i)
+                        Py_DECREF(ptr[i]);
+                    PyObject_Free(ptr);
+                });
+
+                if (!temp) {
+                    PyErr_Clear();
+                    for (Py_ssize_t i = 0; i < size_seq; ++i)
+                        Py_DECREF(result[i]);
+
+                    PyObject_Free(result);
+                    result = nullptr;
+                }
+            }
+        } else if (size_seq < 0) {
+            PyErr_Clear();
+        }
+    }
+#endif
+
+    *temp_out = temp;
+    return result;
 }
 
 // ========================================================================
 
 void property_install(PyObject *scope, const char *name, bool is_static,
                       PyObject *getter, PyObject *setter) noexcept {
-    const internals &internals = internals_get();
+    const nb_internals &internals = internals_get();
     handle property = (PyObject *) (is_static ? internals.nb_static_property
                                               : &PyProperty_Type);
     (void) is_static;
@@ -505,8 +665,8 @@ void property_install(PyObject *scope, const char *name, bool is_static,
     object doc = none();
 
     if (m && (Py_TYPE(m) == internals.nb_func ||
-              Py_TYPE(m) == internals.nb_meth)) {
-        func_record *f = nb_func_get(m);
+              Py_TYPE(m) == internals.nb_method)) {
+        func_data *f = nb_func_data(m);
         if (f->flags & (uint32_t) func_flags::has_doc)
             doc = str(f->doc);
     }
@@ -523,7 +683,7 @@ void property_install(PyObject *scope, const char *name, bool is_static,
 
 void tuple_check(PyObject *tuple, size_t nargs) {
     for (size_t i = 0; i < nargs; ++i) {
-        if (!PyTuple_GET_ITEM(tuple, i))
+        if (!NB_TUPLE_GET_ITEM(tuple, i))
             raise("nanobind::detail::tuple_check(...): conversion of argument "
                   "%zu failed!", i + 1);
     }
@@ -531,11 +691,9 @@ void tuple_check(PyObject *tuple, size_t nargs) {
 
 // ========================================================================
 
-_Py_IDENTIFIER(stdout);
-
 void print(PyObject *value, PyObject *end, PyObject *file) {
     if (!file)
-        file = _PySys_GetObjectId(&PyId_stdout);
+        file = PySys_GetObject("stdout");
 
     int rv = PyFile_WriteObject(value, file, Py_PRINT_RAW);
     if (rv)
@@ -548,6 +706,116 @@ void print(PyObject *value, PyObject *end, PyObject *file) {
 
     if (rv)
         raise_python_error();
+}
+
+// ========================================================================
+
+std::pair<double, bool> load_f64(PyObject *o, uint8_t flags) noexcept {
+    const bool convert = flags & (uint8_t) cast_flags::convert;
+
+    if (convert || PyFloat_Check(o)) {
+        double result = PyFloat_AsDouble(o);
+
+        if (result != -1.0 || !PyErr_Occurred())
+            return { result, true };
+        else
+            PyErr_Clear();
+    }
+
+    return { 0.0, false };
+}
+
+std::pair<float, bool> load_f32(PyObject *o, uint8_t flags) noexcept {
+    const bool convert = flags & (uint8_t) cast_flags::convert;
+    if (convert || PyFloat_Check(o)) {
+        double result = PyFloat_AsDouble(o);
+
+        if (result != -1.0 || !PyErr_Occurred())
+            return { (float) result, true };
+        else
+            PyErr_Clear();
+    }
+
+    return { 0.f, false };
+}
+
+template <typename T>
+NB_INLINE std::pair<T, bool> load_int(PyObject *o, uint32_t flags) noexcept {
+    using T0 = std::conditional_t<sizeof(T) <= sizeof(long), long, long long>;
+    using Tp = std::conditional_t<std::is_signed_v<T>, T0, std::make_unsigned_t<T0>>;
+
+    const bool convert = flags & (uint8_t) cast_flags::convert;
+    object temp;
+
+    if (!PyLong_Check(o)) {
+        if (convert) {
+            if constexpr (std::is_unsigned_v<T>) {
+                // Unsigned PyLong_* conversions don't call __index__()..
+                temp = steal(PyNumber_Long(o));
+                if (!temp.is_valid()) {
+                    PyErr_Clear();
+                    return { T(0), false };
+                }
+
+                o = temp.ptr();
+            }
+        } else {
+            return { T(0), false };
+        }
+    }
+
+    Tp value_p;
+    if constexpr (std::is_unsigned_v<Tp>) {
+        value_p = sizeof(T) <= sizeof(long) ? (Tp) PyLong_AsUnsignedLong(o)
+                                            : (Tp) PyLong_AsUnsignedLongLong(o);
+    } else {
+        value_p = sizeof(T) <= sizeof(long) ? (Tp) PyLong_AsLong(o)
+                                            : (Tp) PyLong_AsLongLong(o);
+    }
+
+    if (value_p == Tp(-1) && PyErr_Occurred()) {
+        PyErr_Clear();
+        return { T(0), false };
+    }
+
+    T value = (T) value_p;
+    if constexpr (sizeof(Tp) != sizeof(T)) {
+        if (value_p != (Tp) value)
+            return { T(0), false };
+    }
+    return { value, true };
+}
+
+std::pair<uint8_t, bool> load_u8(PyObject *o, uint8_t flags) noexcept {
+    return load_int<uint8_t>(o, flags);
+}
+
+std::pair<int8_t, bool> load_i8(PyObject *o, uint8_t flags) noexcept {
+    return load_int<int8_t>(o, flags);
+}
+
+std::pair<uint16_t, bool> load_u16(PyObject *o, uint8_t flags) noexcept {
+    return load_int<uint16_t>(o, flags);
+}
+
+std::pair<int16_t, bool> load_i16(PyObject *o, uint8_t flags) noexcept {
+    return load_int<int16_t>(o, flags);
+}
+
+std::pair<uint32_t, bool> load_u32(PyObject *o, uint8_t flags) noexcept {
+    return load_int<uint32_t>(o, flags);
+}
+
+std::pair<int32_t, bool> load_i32(PyObject *o, uint8_t flags) noexcept {
+    return load_int<int32_t>(o, flags);
+}
+
+std::pair<uint64_t, bool> load_u64(PyObject *o, uint8_t flags) noexcept {
+    return load_int<uint64_t>(o, flags);
+}
+
+std::pair<int64_t, bool> load_i64(PyObject *o, uint8_t flags) noexcept {
+    return load_int<int64_t>(o, flags);
 }
 
 NAMESPACE_END(detail)

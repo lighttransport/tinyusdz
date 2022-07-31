@@ -8,7 +8,15 @@
 */
 
 NAMESPACE_BEGIN(NB_NAMESPACE)
+
+// Forward declarations for types in dlpack.h (1)
+namespace dlpack { struct tensor; struct dtype; }
+
 NAMESPACE_BEGIN(detail)
+
+// Forward declarations for types in dlpack.h (2)
+struct tensor_handle;
+struct tensor_req;
 
 /**
  * Helper class to clean temporaries created by function dispatch.
@@ -19,10 +27,10 @@ struct NB_CORE cleanup_list {
 public:
     static constexpr uint32_t Small = 6;
 
-    cleanup_list(PyObject *self) {
-        m_size = 1;
-        m_capacity = Small;
-        m_data = m_local;
+    cleanup_list(PyObject *self) :
+        m_size{1},
+        m_capacity{Small},
+        m_data{m_local} {
         m_local[0] = self;
     }
 
@@ -181,7 +189,8 @@ NB_CORE PyObject **seq_get(PyObject *seq, size_t *size,
 // ========================================================================
 
 /// Create a new capsule object
-NB_CORE PyObject *capsule_new(const void *ptr, void (*free)(void *)) noexcept;
+NB_CORE PyObject *capsule_new(const void *ptr,
+                              void (*free)(void *) noexcept) noexcept;
 
 // ========================================================================
 
@@ -212,10 +221,22 @@ NB_CORE PyObject *nb_type_put_unique(const std::type_info *cpp_type,
 NB_CORE void nb_type_relinquish_ownership(PyObject *o, bool cpp_delete);
 
 /// Get a pointer to a user-defined 'extra' value associated with the nb_type t.
-NB_CORE void *nb_type_extra(PyObject *t) noexcept;
+NB_CORE void *nb_type_supplement(PyObject *t) noexcept;
+
+/// Check if the given python object represents a nanobind type
+NB_CORE bool nb_type_check(PyObject *t) noexcept;
+
+/// Return the size of the type wrapped by the given nanobind type object
+NB_CORE size_t nb_type_size(PyObject *t) noexcept;
+
+/// Return the alignment of the type wrapped by the given nanobind type object
+NB_CORE size_t nb_type_align(PyObject *t) noexcept;
+
+/// Return the C++ type_info wrapped by the given nanobind type object
+NB_CORE const std::type_info *nb_type_info(PyObject *t) noexcept;
 
 /// Get a pointer to the instance data of a nanobind instance (nb_inst)
-NB_CORE void *nb_inst_data(PyObject *o) noexcept;
+NB_CORE void *nb_inst_ptr(PyObject *o) noexcept;
 
 /// Check if a Python type object wraps an instance of a specific C++ type
 NB_CORE bool nb_type_isinstance(PyObject *obj, const std::type_info *t) noexcept;
@@ -223,11 +244,35 @@ NB_CORE bool nb_type_isinstance(PyObject *obj, const std::type_info *t) noexcept
 /// Search for the Python type object associated with a C++ type
 NB_CORE PyObject *nb_type_lookup(const std::type_info *t) noexcept;
 
-/// Zero-initialize a POD type and mark it as ready
+/// Allocate an instance of type 't'
+NB_CORE PyObject *nb_inst_alloc(PyTypeObject *t);
+
+/// Call the destructor of the given python object
+NB_CORE void nb_inst_destruct(PyObject *o) noexcept;
+
+/// Zero-initialize a POD type and mark it as ready + to be destructed upon GC
 NB_CORE void nb_inst_zero(PyObject *o) noexcept;
 
-/// Copy-construct 'dst' from 'src' and mark it as ready (must have the same nb_type)
+/// Copy-construct 'dst' from 'src', mark it as ready and to be destructed (must have the same nb_type)
 NB_CORE void nb_inst_copy(PyObject *dst, const PyObject *src) noexcept;
+
+/// Move-construct 'dst' from 'src', mark it as ready and to be destructed (must have the same nb_type)
+NB_CORE void nb_inst_move(PyObject *dst, const PyObject *src) noexcept;
+
+/**
+ * This function can be used to manually set two important flags associated with
+ * every nanobind instance (``nb_inst``).
+ *
+ * 1. 'ready': is the object fully constructed? Otherwise, nanobind will not
+ *    allow passing it to a function.
+ *
+ * 2. 'destruct': Should nanobind call the C++ destructor when the instance
+ *    is garbage collected?
+ */
+NB_CORE void nb_inst_set_state(PyObject *o, bool ready, bool destruct) noexcept;
+
+/// Query the 'ready' and 'destruct' flags of an instance
+NB_CORE std::pair<bool, bool> nb_inst_state(PyObject *o) noexcept;
 
 // ========================================================================
 
@@ -256,7 +301,8 @@ NB_CORE void implicitly_convertible(const std::type_info *src,
                                     const std::type_info *dst) noexcept;
 
 /// Register a callback to check if implicit conversion to 'dst' is possible
-NB_CORE void implicitly_convertible(bool (*predicate)(PyObject *,
+NB_CORE void implicitly_convertible(bool (*predicate)(PyTypeObject *,
+                                                      PyObject *,
                                                       cleanup_list *),
                                     const std::type_info *dst) noexcept;
 
@@ -265,6 +311,9 @@ NB_CORE void implicitly_convertible(bool (*predicate)(PyObject *,
 /// Add an entry to an enumeration
 NB_CORE void nb_enum_put(PyObject *type, const char *name, const void *value,
                          const char *doc) noexcept;
+
+/// Export enum entries to the parent scope
+NB_CORE void nb_enum_export(PyObject *type);
 
 // ========================================================================
 
@@ -278,10 +327,47 @@ NB_CORE PyObject *module_new(const char *name, PyModuleDef *def) noexcept;
 NB_CORE PyObject *module_new_submodule(PyObject *base, const char *name,
                                        const char *doc) noexcept;
 
+
+// ========================================================================
+
+// Try to import a reference-counted tensor object via DLPack
+NB_CORE tensor_handle *tensor_import(PyObject *o, const tensor_req *req,
+                                     bool convert) noexcept;
+
+// Describe a local tensor object using a DLPack capsule
+NB_CORE tensor_handle *tensor_create(void *value, size_t ndim,
+                                     const size_t *shape, PyObject *owner,
+                                     const int64_t *strides,
+                                     dlpack::dtype *dtype, int32_t device,
+                                     int32_t device_id);
+
+/// Increase the reference count of the given tensor object; returns a pointer
+/// to the underlying DLtensor
+NB_CORE dlpack::tensor *tensor_inc_ref(tensor_handle *) noexcept;
+
+/// Decrease the reference count of the given tensor object
+NB_CORE void tensor_dec_ref(tensor_handle *) noexcept;
+
+/// Wrap a tensor_handle* into a PyCapsule
+NB_CORE PyObject *tensor_wrap(tensor_handle *, int framework) noexcept;
+
 // ========================================================================
 
 /// Print to stdout using Python
 NB_CORE void print(PyObject *file, PyObject *str, PyObject *end);
+
+// ========================================================================
+
+NB_CORE std::pair<int8_t, bool>   load_i8 (PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<uint8_t, bool>  load_u8 (PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<int16_t, bool>  load_i16(PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<uint16_t, bool> load_u16(PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<int32_t, bool>  load_i32(PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<uint32_t, bool> load_u32(PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<int64_t, bool>  load_i64(PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<uint64_t, bool> load_u64(PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<float, bool>    load_f32(PyObject *o, uint8_t flags) noexcept;
+NB_CORE std::pair<double, bool>   load_f64(PyObject *o, uint8_t flags) noexcept;
 
 NAMESPACE_END(detail)
 NAMESPACE_END(NB_NAMESPACE)
