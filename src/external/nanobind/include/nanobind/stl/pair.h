@@ -33,14 +33,12 @@ template <typename T1, typename T2> struct type_caster<std::pair<T1, T2>> {
 
     // Value name for docstring generation
     static constexpr auto Name =
-        const_name("Tuple[") + concat(Caster1::Name, Caster2::Name) + const_name("]");
+        const_name("tuple[") + concat(Caster1::Name, Caster2::Name) + const_name("]");
 
     /// Python -> C++ caster, populates `caster1` and `caster2` upon success
     bool from_python(handle src, uint8_t flags,
                      cleanup_list *cleanup) noexcept {
-        PyObject *temp = nullptr;
-
-        // Convert `src` into a fast sequence if needed, may produce a temporary
+        PyObject *temp; // always initialized by the following line
         PyObject **o = seq_get_with_size(src.ptr(), 2, &temp);
 
         bool success = o &&
@@ -65,16 +63,16 @@ template <typename T1, typename T2> struct type_caster<std::pair<T1, T2>> {
         object o1 = steal(
             Caster1::from_cpp(forward_like<T>(value.first), policy, cleanup));
         if (!o1.is_valid())
-            return handle();
+            return {};
 
         object o2 = steal(
             Caster2::from_cpp(forward_like<T>(value.second), policy, cleanup));
         if (!o2.is_valid())
-            return handle();
+            return {};
 
         PyObject *r = PyTuple_New(2);
-        PyTuple_SET_ITEM(r, 0, o1.release().ptr());
-        PyTuple_SET_ITEM(r, 1, o2.release().ptr());
+        NB_TUPLE_SET_ITEM(r, 0, o1.release().ptr());
+        NB_TUPLE_SET_ITEM(r, 1, o2.release().ptr());
         return r;
     }
 

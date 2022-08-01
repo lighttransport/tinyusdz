@@ -23,25 +23,25 @@ enum class type_flags : uint32_t {
     /// Is this a python type that extends a bound C++ type?
     is_python_type           = (1 << 4),
 
-    /// Is the 'scope' field of the type_data struture set?
+    /// Is the 'scope' field of the type_data structure set?
     has_scope                = (1 << 5),
 
-    /// Is the 'doc' field of the type_data struture set?
+    /// Is the 'doc' field of the type_data structure set?
     has_doc                  = (1 << 6),
 
-    /// Is the 'base' field of the type_data struture set?
+    /// Is the 'base' field of the type_data structure set?
     has_base                 = (1 << 7),
 
-    /// Is the 'base_py' field of the type_data struture set?
+    /// Is the 'base_py' field of the type_data structure set?
     has_base_py              = (1 << 8),
 
-    /// Is the 'destruct' field of the type_data struture set?
+    /// Is the 'destruct' field of the type_data structure set?
     has_destruct             = (1 << 9),
 
-    /// Is the 'copy' field of the type_data struture set?
+    /// Is the 'copy' field of the type_data structure set?
     has_copy                 = (1 << 10),
 
-    /// Is the 'move' field of the type_data struture set?
+    /// Is the 'move' field of the type_data structure set?
     has_move                 = (1 << 11),
 
     /// Internal: does the type maintain a list of implicit conversions?
@@ -57,14 +57,25 @@ enum class type_flags : uint32_t {
     is_arithmetic            = (1 << 15),
 
     /// This type is an arithmetic enumeration
-    has_type_callback        = (1 << 16)
+    has_type_callback        = (1 << 16),
+
+    /// This type does not permit subclassing from Python
+    is_final                 = (1 << 17),
+
+    /// This type does not permit subclassing from Python
+    has_supplement           = (1 << 18),
+
+    /// Instances of this type support dynamic attribute assignment
+    has_dynamic_attr         = (1 << 19),
+
+    /// The class uses an intrusive reference counting approach
+    intrusive_ptr            = (1 << 20)
 };
 
 struct type_data {
-    uint32_t size : 24;
+    uint32_t size;
     uint32_t align : 8;
     uint32_t flags : 24;
-    uint32_t supplement : 8;
     const char *name;
     const char *doc;
     PyObject *scope;
@@ -76,11 +87,14 @@ struct type_data {
     void (*copy)(void *, const void *);
     void (*move)(void *, void *) noexcept;
     const std::type_info **implicit;
-    bool (**implicit_py)(PyObject *, cleanup_list *) noexcept;
-    void (*type_callback)(PyTypeObject *) noexcept;
+    bool (**implicit_py)(PyTypeObject *, PyObject *, cleanup_list *) noexcept;
+    void (*type_callback)(PyType_Slot **) noexcept;
+    void *supplement;
+    void (*set_self_py)(void *, PyObject *);
+#if defined(Py_LIMITED_API)
+    size_t dictoffset;
+#endif
 };
-
-static_assert(sizeof(type_data) == 8 + sizeof(void *) * 13);
 
 NB_INLINE void type_extra_apply(type_data &t, const handle &h) {
     t.flags |= (uint32_t) type_flags::has_base_py;
@@ -97,6 +111,12 @@ NB_INLINE void type_extra_apply(type_data &t, type_callback c) {
     t.type_callback = c.value;
 }
 
+template <typename T>
+NB_INLINE void type_extra_apply(type_data &t, intrusive_ptr<T> ip) {
+    t.flags |= (uint32_t) type_flags::intrusive_ptr;
+    t.set_self_py = (void (*)(void *, PyObject *)) ip.set_self_py;
+}
+
 NB_INLINE void type_extra_apply(type_data &t, is_enum e) {
     if (e.is_signed)
         t.flags |= (uint32_t) type_flags::is_signed_enum;
@@ -104,14 +124,24 @@ NB_INLINE void type_extra_apply(type_data &t, is_enum e) {
         t.flags |= (uint32_t) type_flags::is_unsigned_enum;
 }
 
+NB_INLINE void type_extra_apply(type_data &t, is_final) {
+    t.flags |= (uint32_t) type_flags::is_final;
+}
+
 NB_INLINE void type_extra_apply(type_data &t, is_arithmetic) {
     t.flags |= (uint32_t) type_flags::is_arithmetic;
 }
 
+NB_INLINE void type_extra_apply(type_data &t, dynamic_attr) {
+    t.flags |= (uint32_t) type_flags::has_dynamic_attr;
+}
+
 template <typename T>
 NB_INLINE void type_extra_apply(type_data &t, supplement<T>) {
-    static_assert(sizeof(T) <= 0xFF, "Supplement is too big!");
-    t.supplement += sizeof(T);
+    static_assert(std::is_trivially_default_constructible_v<T>,
+                  "The supplement type must be a POD (plain old data) type");
+    t.flags |= (uint32_t) type_flags::has_supplement;
+    t.supplement = (void *) malloc(sizeof(T));
 }
 
 template <typename... Args> struct init {
@@ -154,7 +184,8 @@ template <typename Arg> struct init_implicit {
 
         if constexpr (!Caster::IsClass) {
             implicitly_convertible(
-                [](PyObject *src, cleanup_list *cleanup) noexcept -> bool {
+                [](PyTypeObject *, PyObject *src,
+                   cleanup_list *cleanup) noexcept -> bool {
                     return Caster().from_python(src, cast_flags::convert,
                                                 cleanup);
                 },
@@ -206,7 +237,7 @@ NAMESPACE_END(detail)
 template <typename T, typename... Ts>
 class class_ : public object {
 public:
-    NB_OBJECT_DEFAULT(class_, object, PyType_Check);
+    NB_OBJECT_DEFAULT(class_, object, "type", PyType_Check);
     using Type = T;
     using Base  = typename detail::extract<T, detail::is_base,  Ts...>::type;
     using Alias = typename detail::extract<T, detail::is_alias, Ts...>::type;
@@ -422,16 +453,32 @@ public:
         detail::nb_enum_put(Base::m_ptr, name, &value, doc);
         return *this;
     }
+
+    NB_INLINE void export_values() { detail::nb_enum_export(Base::m_ptr); }
 };
 
 template <typename... Args> NB_INLINE detail::init<Args...> init() { return { }; }
 template <typename Arg> NB_INLINE detail::init_implicit<Arg> init_implicit() { return { }; }
 
+// Low level access to nanobind type objects
+inline bool type_check(handle h) { return detail::nb_type_check(h.ptr()); }
+inline size_t type_size(handle h) { return detail::nb_type_size(h.ptr()); }
+inline size_t type_align(handle h) { return detail::nb_type_align(h.ptr()); }
+inline const std::type_info& type_info(handle h) { return *detail::nb_type_info(h.ptr()); }
 template <typename T>
-inline T &type_supplement(handle h) { return *(T *) detail::nb_type_extra(h.ptr()); }
+inline T &type_supplement(handle h) { return *(T *) detail::nb_type_supplement(h.ptr()); }
 
-template <typename T> T *instance(PyObject *o) {
-    return (T *) detail::nb_inst_data(o);
-}
+// Low level access to nanobind instance objects
+inline bool inst_check(handle h) { return type_check(h.type()); }
+inline object inst_alloc(handle h) { return steal(detail::nb_inst_alloc((PyTypeObject *) h.ptr())); }
+inline void inst_zero(handle h) { detail::nb_inst_zero(h.ptr()); }
+inline void inst_set_state(handle h, bool ready, bool destruct) { detail::nb_inst_set_state(h.ptr(), ready, destruct); }
+inline std::pair<bool, bool> inst_state(handle h) { return detail::nb_inst_state(h.ptr()); }
+inline void inst_mark_ready(handle h) { inst_set_state(h, true, true); }
+inline bool inst_ready(handle h) { return inst_state(h).first; }
+inline void inst_destruct(handle h) { detail::nb_inst_destruct(h.ptr()); }
+inline void inst_copy(handle dst, handle src) { detail::nb_inst_copy(dst.ptr(), src.ptr()); }
+inline void inst_move(handle dst, handle src) { detail::nb_inst_move(dst.ptr(), src.ptr()); }
+template <typename T> T *inst_ptr(handle h) { return (T *) detail::nb_inst_ptr(h.ptr()); }
 
 NAMESPACE_END(NB_NAMESPACE)
