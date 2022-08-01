@@ -141,6 +141,7 @@ if(TINYUSDZ_WITH_PYTHON)
       CACHE INTERNAL "")
 
   # workaround: find_package() does not work well inside of nanobind, so call it here.
+  set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
   find_package(
     Python3
     COMPONENTS Interpreter Development.Module
