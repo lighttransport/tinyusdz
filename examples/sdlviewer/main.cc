@@ -102,7 +102,7 @@ struct GUIContext {
   int render_height = 512;
 
   // scene reload
-  tinyusdz::Scene scene;
+  tinyusdz::HighLevelScene scene;
   std::atomic<bool> request_reload{false};
   std::string filename;
 
@@ -142,6 +142,7 @@ std::array<double, 4> ToQuaternion(double yaw, double pitch,
   return q;
 }
 
+#if 0
 static void DrawGeomMesh(tinyusdz::GeomMesh& mesh) {}
 
 static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
@@ -157,12 +158,14 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
     // glPopMatrix();
   }
 }
+#endif
 
-static void Proc(const tinyusdz::Scene& scene) {
-  std::cout << "num geom_meshes = " << scene.geom_meshes.size() << "\n";
+static void Proc(const tinyusdz::HighLevelScene& scene) {
+  (void)scene;
 
-  for (auto& mesh : scene.geom_meshes) {
-  }
+  //std::cout << "num geom_meshes = " << scene.geom_meshes.size() << "\n";
+  //for (auto& mesh : scene.geom_meshes) {
+  //}
 }
 
 static std::string GetFileExtension(const std::string& filename) {
@@ -286,7 +289,7 @@ static void ScreenActivate(SDL_Window* window) {
 #endif
 }
 
-bool LoadModel(const std::string& filename, tinyusdz::Scene* scene) {
+bool LoadModel(const std::string& filename, tinyusdz::HighLevelScene* scene) {
   std::string ext = str_tolower(GetFileExtension(filename));
 
   std::string warn;
@@ -347,10 +350,11 @@ void RenderThread(GUIContext* ctx) {
     }
 
     if (ctx->request_reload) {
-      ctx->scene = tinyusdz::Scene();  // reset
+      ctx->scene = tinyusdz::HighLevelScene();  // reset
 
       if (LoadModel(ctx->filename, &ctx->scene)) {
         Proc(ctx->scene);
+#if 0
         if (ctx->scene.geom_meshes.empty()) {
           std::cerr << "The scene contains no GeomMesh\n";
         } else {
@@ -368,6 +372,7 @@ void RenderThread(GUIContext* ctx) {
           }
           std::cout << "Setup render mesh\n";
         }
+#endif
       }
 
       ctx->request_reload = false;
@@ -577,6 +582,7 @@ EM_BOOL em_main_loop_frame(double tm, void* user) {
 
 #endif
 
+#if 0
 void NodeTreeSubWindow(const tinyusdz::Node& node, uint32_t indent) {
   if (node.name.empty()) {
     // Do not traverse children of the node without name
@@ -592,7 +598,7 @@ void NodeTreeSubWindow(const tinyusdz::Node& node, uint32_t indent) {
   }
 }
 
-void NodeTreeWindow(const tinyusdz::Scene& scene) {
+void NodeTreeWindow(const tinyusdz::HighLevelScene& scene) {
   ImGui::Begin("Node");
 
   if (scene.nodes.size()) {
@@ -603,8 +609,10 @@ void NodeTreeWindow(const tinyusdz::Scene& scene) {
 
   ImGui::End();
 }
+#endif
 
-void ShaderParamWindow(const tinyusdz::Scene& scene) {
+#if 0
+void ShaderParamWindow(const tinyusdz::HighLevelScene& scene) {
   ImGui::Begin("Shaders");
 
   for (const auto& item : scene.shaders) {
@@ -631,7 +639,7 @@ void ShaderParamWindow(const tinyusdz::Scene& scene) {
   ImGui::End();
 }
 
-void MaterialsParamWindow(const tinyusdz::Scene& scene) {
+void MaterialsParamWindow(const tinyusdz::HighLevelScene& scene) {
   ImGui::Begin("Materials");
 
   for (const auto& item : scene.materials) {
@@ -687,7 +695,7 @@ void UVTextureNode(int node_id, const tinyusdz::UVTexture& texture) {
   ImNodes::EndNode();
 }
 
-void ShaderGraphWindow(const tinyusdz::Scene& scene) {
+void ShaderGraphWindow(const tinyusdz::HighLevelScene& scene) {
   ImGui::Begin("Shader graph");
 
   ImNodes::BeginNodeEditor();
@@ -719,6 +727,7 @@ void ShaderGraphWindow(const tinyusdz::Scene& scene) {
 
   ImGui::End();
 }
+#endif
 
 }  // namespace
 
@@ -755,7 +764,7 @@ int main(int argc, char** argv) {
 
   std::cout << "Loading file " << filename << "\n";
 
-  // tinyusdz::Scene scene;
+  // tinyusdz::HighLevelScene scene;
 
   bool init_with_empty = false;
 
@@ -767,10 +776,10 @@ int main(int argc, char** argv) {
     std::cout << "Loaded USDC file\n";
 
     Proc(g_gui_ctx.scene);
-    if (g_gui_ctx.scene.geom_meshes.empty()) {
-      std::cerr << "The scene contains no GeomMesh\n";
-      exit(-1);
-    }
+    //if (g_gui_ctx.scene.geom_meshes.empty()) {
+    //  std::cerr << "The scene contains no GeomMesh\n";
+    //  exit(-1);
+    //}
   }
 
   SDL_Window* window = SDL_CreateWindow(
@@ -803,10 +812,10 @@ int main(int argc, char** argv) {
   gui_ctx.renderer = renderer;
 
   if (!init_with_empty) {
-    for (size_t i = 0; i < g_gui_ctx.scene.geom_meshes.size(); i++) {
-      example::DrawGeomMesh draw_mesh(&g_gui_ctx.scene.geom_meshes[i]);
-      gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
-    }
+    //for (size_t i = 0; i < g_gui_ctx.scene.geom_meshes.size(); i++) {
+    //  example::DrawGeomMesh draw_mesh(&g_gui_ctx.scene.geom_meshes[i]);
+    //  gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
+    //}
 
     // Setup render mesh
     if (!gui_ctx.render_scene.Setup()) {
@@ -1036,10 +1045,10 @@ int main(int argc, char** argv) {
                  ImVec2(gui_ctx.render_width, gui_ctx.render_height));
     ImGui::End();
 
-    NodeTreeWindow(gui_ctx.scene);
-    MaterialsParamWindow(gui_ctx.scene);
-    ShaderParamWindow(gui_ctx.scene);
-    ShaderGraphWindow(gui_ctx.scene);
+    //NodeTreeWindow(gui_ctx.scene);
+    //MaterialsParamWindow(gui_ctx.scene);
+    //ShaderParamWindow(gui_ctx.scene);
+    //ShaderGraphWindow(gui_ctx.scene);
 
     if (update) {
       gui_ctx.redraw = true;
