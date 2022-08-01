@@ -279,15 +279,18 @@ list(
   ../../src/prim-types.cc
   ../../src/pprinter.cc
   ../../src/primvar.cc
+  ../../src/crate-reader.cc
   ../../src/crate-format.cc
   ../../src/crate-pprint.cc
-  ../../src/usdc-parser.cc
-  ../../src/usda-parser.cc
-  ../../src/usda-writer.cc
+  ../../src/ascii-parser.cc
+  ../../src/usdc-reader.cc
+  ../../src/usda-reader.cc
+  #../../src/usda-writer.cc
   ../../src/image-loader.cc
-  ../../src/value-type.cc
+  ../../src/value-types.cc
   ../../src/value-pprint.cc
   ../../src/usdObj.cc
+  ../../src/tydra/tiny-render-data.cc
   #../../src/integerCoding.cpp
   #../../src/pxrLZ4/lz4.cpp
   #../../src/lz4-compression.cc

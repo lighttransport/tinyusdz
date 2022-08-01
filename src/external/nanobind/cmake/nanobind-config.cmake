@@ -200,7 +200,7 @@ function(nanobind_add_module name)
   nanobind_headers(${name})
 
   # Limited API interface only supported in Python >= 3.12
-  if ((Python_VERSION_MAJOR EQUAL 3) AND (Python_VERSION_MINOR LESS 12))
+  if ((Python3_VERSION_MAJOR EQUAL 3) AND (Python3_VERSION_MINOR LESS 12))
     set(ARG_STABLE_ABI OFF)
   endif()
 
