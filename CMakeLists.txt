@@ -140,12 +140,16 @@ if(TINYUSDZ_WITH_PYTHON)
       OFF
       CACHE INTERNAL "")
 
-  # workaround: find_package() does not work well inside of nanobind, so call it here.
+  # workaround: find_package() does not work well inside of nanobind(`Python3::Module` target won't defined), so call it here.
+  # and use `FindPython3`, not `FindPython`
   set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
   find_package(
     Python3
-    COMPONENTS Interpreter Development.Module
+    COMPONENTS Interpreter Development
     REQUIRED)
+
+  #message(STATUS "Python include dirs: " ${Python_INCLUDE_DIRS})
+  #message(STATUS "Python include dirs: " ${Python3_INCLUDE_DIRS})
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/nanobind nanobind_build)
 endif()
