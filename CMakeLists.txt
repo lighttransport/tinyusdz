@@ -38,6 +38,7 @@ set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through nanobind" OFF)
+option(TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option" OFF)
 
 option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ON)
 
@@ -142,11 +143,18 @@ if(TINYUSDZ_WITH_PYTHON)
 
   # workaround: find_package() does not work well inside of nanobind(`Python3::Module` target won't defined), so call it here.
   # and use `FindPython3`, not `FindPython`
-  set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
+  if (TINYUSDZ_PREFER_CUSTOM_PYTHON)
+    set(Python_FIND_FRAMEWORK NEVER) # Do not search framework python
+    set(Python_FIND_STRATEGY LOCATION)
+  else ()
+    set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
+  endif ()
+
   find_package(
     Python3
     COMPONENTS Interpreter Development
-    REQUIRED)
+    REQUIRED
+    )
 
   #message(STATUS "Python include dirs: " ${Python_INCLUDE_DIRS})
   #message(STATUS "Python include dirs: " ${Python3_INCLUDE_DIRS})
