@@ -7,8 +7,12 @@
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(__clang__)
+// No need to define NOMINMAX for llvm-mingw
+#else
 #ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #endif
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -104,6 +108,7 @@ std::wstring UTF8ToWchar(const std::string &str) {
   return wstr;
 }
 
+#if 0
 std::string WcharToUTF8(const std::wstring &wstr) {
   int str_size = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()),
                                      nullptr, 0, nullptr, nullptr);
@@ -112,6 +117,7 @@ std::string WcharToUTF8(const std::wstring &wstr) {
                       int(str.size()), nullptr, nullptr);
   return str;
 }
+#endif
 #endif
 
 struct Section {
@@ -530,7 +536,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const HighLevelScene &scene,
   }
 
 #ifdef _WIN32
-#if defined(_MSC_VER) || defined(__GLIBCXX__)
+#if defined(_MSC_VER) || defined(__GLIBCXX__) || defined(__clang__)
   FILE *fp = nullptr;
   errno_t fperr = _wfopen_s(&fp, UTF8ToWchar(filename).c_str(), L"wb");
   if (fperr != 0) {
@@ -542,7 +548,7 @@ bool SaveAsUSDCToFile(const std::string &filename, const HighLevelScene &scene,
   }
 #else
   FILE *fp = nullptr;
-  errno_t fperr = fopen_s(&fp, abs_filename.c_str(), "wb");
+  errno_t fperr = fopen_s(&fp, filename.c_str(), "wb");
   if (fperr != 0) {
     if (err) {
       (*err) += "Failed to open file `" + filename + "` to write.\n";
