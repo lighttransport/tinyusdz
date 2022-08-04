@@ -1,13 +1,14 @@
+#!/bin/bash
+
 #
 # Build Python 3.10.6 and install it to ci/dist/python so that we don't need separated Python installation(which is sometimes difficult to setup on C.I. environment)
 #
 # This build is minimal and disables many features, including ZLIB and OpenSSL support, assuming TinyUSDZ python module does not require such python modules(ZLIB, SSL, MD5, SHA256, ...) 
 #
 git clone https://github.com/lighttransport/python-cmake-buildsystem ci/python-cmake-buildsystem
-
-# It seems `python` binary will be built by symlinking libpython.so when `BUILD_LIBPYTHON_SHARED=On`(default on Unix),
-# which need to set a path to .so in LD_LIBRARY_PATH to run `python`.
-# For convienience, we build Python twice, SHARED on and off to generate libpython.so and monolithic, statically-liked `python` binary.
+curdir=`pwd`
+cd ci/python-cmake-buildsystem && git pull origin master
+cd ${curdir}
 
 function cmake_configure_and_build () {
   # $1 = arg  to BUILD_LIBPYTHON_SHARED
@@ -33,6 +34,6 @@ function cmake_configure_and_build () {
    cmake --install `pwd`/ci/build_python
 }
 
-# On, then off so that monolitic `bin/python` is installed to the `ci/dist/python`.
 cmake_configure_and_build ON
-cmake_configure_and_build OFF
+
+#cmake_configure_and_build OFF
