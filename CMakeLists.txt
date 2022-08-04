@@ -143,9 +143,11 @@ if(TINYUSDZ_WITH_PYTHON)
 
   # workaround: find_package() does not work well inside of nanobind(`Python3::Module` target won't defined), so call it here.
   # and use `FindPython3`, not `FindPython`
-  if (TINYUSDZ_PREFER_CUSTOM_PYTHON)
-    set(Python_FIND_FRAMEWORK NEVER) # Do not search framework python
-    set(Python_FIND_STRATEGY LOCATION)
+  if (TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION)
+    #message(STATUS "Local Python") 
+    set(Python3_FIND_FRAMEWORK NEVER) # Do not search framework python
+    set(Python3_FIND_STRATEGY LOCATION)
+    set(Python3_FIND_REGISTRY NEVER) # Windows only
   else ()
     set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
   endif ()
@@ -157,7 +159,7 @@ if(TINYUSDZ_WITH_PYTHON)
     )
 
   #message(STATUS "Python include dirs: " ${Python_INCLUDE_DIRS})
-  #message(STATUS "Python include dirs: " ${Python3_INCLUDE_DIRS})
+  message(STATUS "Python include dirs: " ${Python3_INCLUDE_DIRS})
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/nanobind nanobind_build)
 endif()
