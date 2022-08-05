@@ -603,7 +603,6 @@ struct Rel {
 };
 
 // Variable class for Prim and Attribute Metadataum.
-// TODO: Rename to MetaVariable?
 class MetaVariable {
  public:
   std::string type;  // Explicit name of type
@@ -729,8 +728,8 @@ struct PrimMeta {
 
 // Metadata for Attribute
 struct AttrMeta {
-  // frequently used item
-  // nullopt = not specified in USD scene
+  // frequently used items
+  // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
   nonstd::optional<std::map<std::string, MetaVariable>>
@@ -739,7 +738,7 @@ struct AttrMeta {
   std::map<std::string, MetaVariable> meta;  // other meta values
 };
 
-// PrimAttrib is a struct to hold attribute of a property(e.g. primvar)
+// mAttrib is a struct to hold attribute of a property(e.g. primvar)
 struct PrimAttrib {
   std::string name;  // attrib name
 
@@ -748,9 +747,9 @@ struct PrimAttrib {
   ListEditQual list_edit{ListEditQual::ResetToExplicit};
 
   Variability variability;
+
   // Interpolation interpolation{Interpolation::Invalid};
-  // uint32_t elementSize{1}; // `elementSize` meta
-  // std::map<std::string, value::Value> meta; // Other meta variables.
+
   AttrMeta meta;
 
   //
@@ -776,11 +775,15 @@ struct Property {
     is_rel = false;
   }
 
+  Property(PrimAttrib &&a, bool c) : attrib(std::move(a)), is_custom(c) {
+    is_rel = false;
+  }
+
   Property(const Rel &r, bool c) : rel(r), is_custom(c) { is_rel = true; }
 
-  bool IsRel() { return is_rel; }
+  bool IsRel() const { return is_rel; }
 
-  bool IsCustom() { return is_custom; }
+  bool IsCustom() const { return is_custom; }
 };
 
 // Currently for UV texture coordinate
@@ -1658,7 +1661,7 @@ struct GeomMesh : GPrim {
   // Predefined attribs.
   //
   std::vector<value::point3f> points;  // point3f
-  PrimAttrib normals;                  // normal3f[]
+  nonstd::optional<PrimAttrib> normals;                  // normal3f[]
 
   //
   // Utility functions

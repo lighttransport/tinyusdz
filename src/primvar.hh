@@ -99,6 +99,26 @@ struct PrimVar {
     return nonstd::nullopt;
   }
 
+  // Returns nullptr when type-mismatch.
+  template <class T>
+  const T* as() const {
+
+    if (!is_scalar()) {
+      return nullptr;
+    }
+
+    if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
+      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      return linb::any_cast<const T>(&var.values[0]);
+    } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      return linb::any_cast<const T>(&var.values[0]);
+    }
+
+    return nullptr;
+  }
+
   template <class T>
   void set_scalar(const T &v) {
     var.times.clear();
