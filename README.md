@@ -246,6 +246,28 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 
 See `tests/fuzzer/` 
 
+## CI build
+
+CI build script is a build script trying to build TinyUSDZ in self-contained manner as much as possible(including custom Python build)
+
+### Linux/macOS
+
+T.B.W.
+
+### Windows
+
+Build custom Python,
+
+```
+> ci-build-python-lib.bat
+```
+
+then build TinyUSDZ by linking with this local Python build.
+
+```
+> ci-build-vs2022.bat
+```
+
 ## License
 
 TinyUSDZ is licensed under MIT license.
