@@ -5,9 +5,15 @@
 
 #include <unordered_map>
 
+#include "nonstd/expected.hpp"
+
 #include "value-types.hh"
 
 namespace tinyusdz {
+
+// forward decl
+struct GeomMesh;
+
 namespace tydra {
 
 // GLSL like data types
@@ -145,6 +151,7 @@ class RenderScene
   //uint32_t rootNodeId{0}; // root node = nodes[rootNodeId]
 };
 
+nonstd::expected<RenderMesh, std::string> Convert(const GeomMesh &mesh);
 
 } // namespace tydra
 } // namespace tinyusdz

@@ -1122,7 +1122,10 @@ class Value {
   template <class T>
   const T *as() const {
     if (TypeTrait<T>::type_id == v_.type_id()) {
-      //return reinterpret_cast<const T *>(v_.value());
+      return linb::any_cast<const T>(&v_);
+    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
       return linb::any_cast<const T>(&v_);
     } else {
       return nullptr;

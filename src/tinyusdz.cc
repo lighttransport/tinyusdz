@@ -730,9 +730,9 @@ size_t GeomMesh::GetNumPoints() const {
 bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
   (void)v;
 
-  if (normals.variability != Variability::Varying) {
-    return false;
-  }
+  //if (normals.variability != Variability::Varying) {
+  //  return false;
+  //}
 
   //if (auto p = primvar::as_vector<Vec3f>(&normals.var)) {
   //  v->resize(p->size() * 3);
