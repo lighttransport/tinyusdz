@@ -23,7 +23,7 @@ class USDCReader {
 
   bool ReconstructHighLevelScene(HighLevelScene *scene);
 
-  bool ReconstructLowLevelScene(LowLevelScene *scene);
+  //bool ReconstructLowLevelScene(LowLevelScene *scene);
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const;
