@@ -8,21 +8,29 @@
 
 #include "tinyusdz.hh"
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
 #include "nonstd/expected.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
 
 namespace tinyusdz {
 namespace image {
 
-nonstd::expected<Image, std::string> LoadImage(const std::string &filename);
+struct ImageResult {
+  Image image;
+  std::string warning;
+};
+
+///
+/// @param[in] filename Input filename(or URI)
+/// @return ImageResult or error message(std::string)
+///
+nonstd::expected<ImageResult, std::string> LoadImageFromFile(const std::string &filename);
+
+///
+/// @param[in] addr Memory address
+/// @param[in] datasize Data size(in bytes)
+/// @param[in] uri Input URI(or filename)
+/// @return ImageResult or error message(std::string)
+///
+nonstd::expected<ImageResult, std::string> LoadImageFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
 
 } // namespace image
 } // namespace tinyusdz
