@@ -645,35 +645,8 @@ using dict = std::map<std::string, linb::any>;
 template <class dtype>
 struct TypeTrait;
 
-#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
-  template <>                                                    \
-  struct TypeTrait<__dty> {                                      \
-    using value_type = __dty;                                    \
-    using value_underlying_type = __dty;                         \
-    static constexpr uint32_t ndim = 0; /* array dim */          \
-    static constexpr uint32_t ncomp =                            \
-        __nc; /* the number of components(e.g. float3 => 3) */   \
-    static constexpr uint32_t type_id = __tyid;                  \
-    static constexpr uint32_t underlying_type_id = __tyid;       \
-    static std::string type_name() { return __name; }            \
-    static std::string underlying_type_name() { return __name; } \
-  }
-
-// `role` type. Requies underlying type.
-#define DEFINE_ROLE_TYPE_TRAIT(__dty, __name, __tyid, __uty)                  \
-  template <>                                                                 \
-  struct TypeTrait<__dty> {                                                   \
-    using value_type = __dty;                                                 \
-    using value_underlying_type = TypeTrait<__uty>::value_type;               \
-    static constexpr uint32_t ndim = 0; /* array dim */                       \
-    static constexpr uint32_t ncomp = TypeTrait<__uty>::ncomp;                \
-    static constexpr uint32_t type_id = __tyid;                               \
-    static constexpr uint32_t underlying_type_id = TypeTrait<__uty>::type_id; \
-    static std::string type_name() { return __name; }                         \
-    static std::string underlying_type_name() {                               \
-      return TypeTrait<__uty>::type_name();                                   \
-    }                                                                         \
-  }
+// import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT 
+#include "define-type-trait.inc"
 
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
@@ -761,8 +734,8 @@ DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 DEFINE_TYPE_TRAIT(asset_path, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
-// Other types(e.g. TYPE_ID_REFERENCE) are defined in `prim-types.hh` and
-// `crate-format.hh`(Data types used in Crate data)
+// Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header files(e.g. `prim-types.hh`,
+// `crate-format.hh`(Data types used in Crate data))
 //
 
 #undef DEFINE_TYPE_TRAIT

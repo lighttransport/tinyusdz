@@ -11,6 +11,8 @@
 #include <sstream>
 
 #include "prim-types.hh"
+#include "usdGeom.hh"
+#include "usdLux.hh"
 
 namespace tinyusdz {
 
