@@ -475,23 +475,13 @@ struct StdHashWrapper {
 
 namespace value {
 
-// Same macro in value-type.hh
-#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
-  template <>                                                    \
-  struct TypeTrait<__dty> {                                      \
-    using value_type = __dty;                                    \
-    using value_underlying_type = __dty;                         \
-    static constexpr uint32_t ndim = 0; /* array dim */          \
-    static constexpr uint32_t ncomp =                            \
-        __nc; /* the number of components(e.g. float3 => 3) */   \
-    static constexpr uint32_t type_id = __tyid;                  \
-    static constexpr uint32_t underlying_type_id = __tyid;       \
-    static std::string type_name() { return __name; }            \
-    static std::string underlying_type_name() { return __name; } \
-  }
+#include "define-type-trait.inc"
 
 // synonym to `value::dict`
 DEFINE_TYPE_TRAIT(crate::CrateValue::Dictionary, "dict", TYPE_ID_DICT, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
 
 } // namespace value
 

@@ -1055,6 +1055,7 @@ struct MaterialBindingAPI {
 // Predefined node classes
 //
 
+#if 0
 struct Xform {
   std::string name;
   int64_t parent_id{-1};  // Index to xform node
@@ -1092,6 +1093,7 @@ struct Xform {
   mutable bool _dirty{true};
   mutable value::matrix4d _matrix;  // Resulting matrix of evaluated XformOps.
 };
+#endif
 
 struct UVCoords {
   using UVCoordType =
@@ -1107,392 +1109,7 @@ struct UVCoords {
   std::vector<uint32_t> indices;  // UV indices. Usually varying
 };
 
-struct GeomCamera {
-  std::string name;
 
-  int64_t parent_id{-1};  // Index to parent node
-
-  enum class Projection {
-    perspective, // "perspective"
-    orthographic, // "orthographic"
-  };
-
-  enum class StereoRole {
-    mono, // "mono"
-    left, // "left"
-    right, // "right"
-  };
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // TODO: Animatable?
-  std::vector<value::float4> clippingPlanes;
-  value::float2 clippingRange{{0.1f, 1000000.0f}};
-  float exposure{0.0f}; // in EV
-  float focalLength{50.0f};
-  float focusDistance{0.0f};
-  float horizontalAperture{20.965f};
-  float horizontalApertureOffset{0.0f};
-  float verticalAperture{15.2908f};
-  float verticalApertureOffset{0.0f};
-  float fStop{0.0f}; // 0.0 = no focusing
-  Projection projection;
-
-  float shutterClose = 0.0f; // shutter:close
-  float shutterOpen = 0.0f; // shutter:open
-  
-  std::vector<value::token> xformOpOrder;
-  // xformOpOrder
-  
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct GeomBoundable {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct GeomCone {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  //
-  // Properties
-  //
-  AnimatableDouble height{2.0};
-  AnimatableDouble radius{1.0};
-  Axis axis{Axis::Z};
-
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct GeomCapsule {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  //
-  // Properties
-  //
-  AnimatableDouble height{2.0};
-  AnimatableDouble radius{0.5};
-  Axis axis{Axis::Z};
-
-  AnimatableExtent extent{
-      Extent({-0.5, -0.5, -1.0},
-             {0.5, 0.5, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct GeomCylinder {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  //
-  // Properties
-  //
-  AnimatableDouble height{2.0};
-  AnimatableDouble radius{1.0};
-  Axis axis{Axis::Z};
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct GeomCube {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  //
-  // Properties
-  //
-  AnimatableDouble size{2.0};
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct GeomSphere {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  //
-  // Predefined attribs.
-  //
-  AnimatableDouble radius{1.0};
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-//
-// Basis Curves(for hair/fur)
-//
-struct GeomBasisCurves {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  // Interpolation attribute
-  std::string type = "cubic";  // "linear", "cubic"
-
-  std::string basis =
-      "bspline";  // "bezier", "catmullRom", "bspline" ("hermite" and "power" is
-                  // not supported in TinyUSDZ)
-
-  std::string wrap = "nonperiodic";  // "nonperiodic", "periodic", "pinned"
-
-  //
-  // Predefined attribs.
-  //
-  std::vector<value::float3> points;
-  std::vector<value::float3> normals;  // normal3f
-  std::vector<int> curveVertexCounts;
-  std::vector<float> widths;
-  std::vector<value::float3> velocities;     // vector3f
-  std::vector<value::float3> accelerations;  // vector3f
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-//
-// Points primitive.
-//
-struct GeomPoints {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to xform node
-
-  //
-  // Predefined attribs.
-  //
-  std::vector<value::float3> points;   // float3
-  std::vector<value::float3> normals;  // normal3f
-  std::vector<float> widths;
-  std::vector<int64_t> ids;                  // per-point ids
-  std::vector<value::float3> velocities;     // vector3f
-  std::vector<value::float3> accelerations;  // vector3f
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
-  // parameter)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct LuxSphereLight {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to xform node
-
-  //
-  // Predefined attribs.
-  //
-
-  // Light API
-  value::color3f color{1.0f, 1.0f, 1.0f}; // inputs.color Light energy in linear color space.
-  float colorTemperature{6500.0f};  // inputs:colorTemperature 
-  float diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  bool enableColorTemperature{false}; // inputs:enableColorTemperature
-  float exposure{0.0f}; // inputs:exposure EV
-  float intensity{1.0f}; // inputs:intensity
-  bool normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  float specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
-
-  float radius{0.5f}; // inputs:radius
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
-  // parameter)
-  std::map<std::string, PrimAttrib> attribs;
-};
-
-struct LuxDomeLight {
-  std::string name;
-  int64_t parent_id{-1};  // Index to xform node
-
-  enum class TextureFormat {
-    Automatic, // "automatic"
-    Latlong, // "latlong"
-    MirroredBall, // "mirroredBall"
-    Angular // "angular"
-  };
-
-  //
-  // Predefined attribs.
-  //
-  // TODO: Support texture
-
-  // Light API
-  value::color3f color{1.0f, 1.0f, 1.0f}; // inputs.color Light energy in linear color space.
-  float colorTemperature{6500.0f};  // inputs:colorTemperature 
-  float diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  bool enableColorTemperature{false}; // inputs:enableColorTemperature
-  float exposure{0.0f}; // inputs:exposure EV
-  float intensity{1.0f}; // inputs:intensity
-  bool normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  float specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
-
-
-  // DomeLight specific
-  float guideRadius{1.0e5f};
-  // asset inputs:texture:file
-  TextureFormat textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
-  // rel portals
-  // rel proxyPrim
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-  std::vector<value::token> xformOpOrder;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
-  // parameter)
-  std::map<std::string, PrimAttrib> attribs;
-};
 
 // BlendShapes
 // TODO(syoyo): Blendshape
@@ -1501,7 +1118,7 @@ struct BlendShape {
 
   std::vector<float> offsets;        // uniform vector3f[]. required property
   std::vector<float> normalOffsets;  // uniform vector3f[]. required property
-                                   
+
   std::vector<int>
       pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
                      // values in `offsets` and `normalOffsets`.
@@ -1518,9 +1135,9 @@ struct Skeleton {
 
   std::vector<std::string> jointNames; // uniform token[]
   std::vector<std::string> joints; // uniform token[]
-                                   
+
   // rel proxyPrim
-                                 
+
   std::vector<value::matrix4d> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                                                 // joint in local coordinate.
 
@@ -1578,6 +1195,7 @@ struct SkelBindingAPI {
   int64_t skeleton{-1};  // index to Scene.skeletons. // ref skel:skeleton
 };
 
+#if 0
 // Generic Prim
 struct GPrim {
   std::string name;
@@ -1738,6 +1356,7 @@ struct GeomMesh : GPrim {
   // List of Primitive attributes(primvars)
   // std::map<std::string, PrimAttrib> attribs;
 };
+#endif
 
 //
 // Similar to Maya's ShadingGroup
@@ -2039,20 +1658,7 @@ Orientation OrientationFromString(const std::string &v);
 
 namespace value {
 
-// Same macro in value-type.hh
-#define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
-  template <>                                                    \
-  struct TypeTrait<__dty> {                                      \
-    using value_type = __dty;                                    \
-    using value_underlying_type = __dty;                         \
-    static constexpr uint32_t ndim = 0; /* array dim */          \
-    static constexpr uint32_t ncomp =                            \
-        __nc; /* the number of components(e.g. float3 => 3) */   \
-    static constexpr uint32_t type_id = __tyid;                  \
-    static constexpr uint32_t underlying_type_id = __tyid;       \
-    static std::string type_name() { return __name; }            \
-    static std::string underlying_type_name() { return __name; } \
-  }
+#include "define-type-trait.inc"
 
 DEFINE_TYPE_TRAIT(Reference, "ref", TYPE_ID_REFERENCE, 1);
 DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
@@ -2082,15 +1688,6 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
-DEFINE_TYPE_TRAIT(GPrim, "GPRIM",
-                  TYPE_ID_GPRIM, 1);
-
-// Geom
-DEFINE_TYPE_TRAIT(Xform, "Xform",
-                  TYPE_ID_GEOM_XFORM, 1);
-DEFINE_TYPE_TRAIT(GeomMesh, "Mesh",
-                  TYPE_ID_GEOM_MESH, 1);
-
 // Shader
 DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface",
                   TYPE_ID_IMAGING_PREVIEWSURFACE, 1);
@@ -2107,6 +1704,7 @@ DEFINE_TYPE_TRAIT(PrimvarReader_int, "PrimvarReader_int",
                   TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
 
 #undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
 
 }  // namespace value
 

@@ -721,12 +721,15 @@ bool LoadUSDAFromFile(const std::string &_filename, HighLevelScene *scene,
                             options);
 }
 
+#if 0
 size_t GeomMesh::GetNumPoints() const {
   size_t n = points.size() / 3;
 
   return n;
 }
+#endif
 
+#if 0
 bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
   (void)v;
 
@@ -744,7 +747,9 @@ bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
   return false;
 
 }
+#endif
 
+#if 0
 bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
   (void)v;
   if (st.variability != Variability::Varying) {
@@ -771,7 +776,9 @@ bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
 
   return false;
 }
+#endif
 
+#if 0
 value::matrix4d GetTransform(XformOp xform)
 {
   value::matrix4d m;
@@ -886,7 +893,9 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
 
   return true;
 }
+#endif
 
+#if 0
 void GeomMesh::Initialize(const GPrim &gprim)
 {
   name = gprim.name;
@@ -1000,6 +1009,7 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
   //return true;
 
 }
+#endif
 
 //static_assert(sizeof(crate::Index) == 4, "");
 //static_assert(sizeof(crate::Field) == 16, "");

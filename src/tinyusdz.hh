@@ -56,6 +56,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "prim-types.hh"
 #include "image-types.hh"
 #include "texture-types.hh"
+#include "usdGeom.hh"
 
 namespace tinyusdz {
 
@@ -389,7 +390,7 @@ struct StringAndIdMap {
 //
 // For high-level scene graph.
 // Easy to use API, but may not be performant.
-// 
+//
 class PrimNode {
  public:
   std::string name;
@@ -409,7 +410,7 @@ class PrimNode {
 //
 // For low-level scene graph representation, something like Vulkan.
 // Less abstraction, and scene graph is representated by indices.
-// 
+//
 struct Node {
   std::string name;
 
@@ -458,6 +459,7 @@ struct NodeIndex {
                   // -1 = invlid(or not set)
 };
 
+#if 0
 struct LowLevelScene {
   std::string name;       // Scene name
   int64_t default_root_node{-1};  // index to default root node
@@ -510,6 +512,7 @@ struct LowLevelScene {
   std::vector<NodeIndex> node_indices;
 
 };
+#endif
 
 #if 0
 // Similar to UsdStage. Mostly equals to `Scene`

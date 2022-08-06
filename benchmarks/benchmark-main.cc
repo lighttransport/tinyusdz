@@ -3,6 +3,7 @@
 
 #include "value-types.hh"
 #include "prim-types.hh"
+#include "usdGeom.hh"
 
 using namespace tinyusdz;
 
