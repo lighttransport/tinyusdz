@@ -1688,20 +1688,6 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
-// Shader
-DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface",
-                  TYPE_ID_IMAGING_PREVIEWSURFACE, 1);
-DEFINE_TYPE_TRAIT(UVTexture, "UVTexture", TYPE_ID_IMAGING_UVTEXTURE, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float, "PrimvarReader_float",
-                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float2, "PrimvarReader_float2",
-                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT2, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float3, "PrimvarReader_float3",
-                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float4, "PrimvarReader_float4",
-                  TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_int, "PrimvarReader_int",
-                  TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
@@ -1709,6 +1695,7 @@ DEFINE_TYPE_TRAIT(PrimvarReader_int, "PrimvarReader_int",
 }  // namespace value
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
+// and Quaternion?
 
 /*
 #define VT_GFRANGE_VALUE_TYPES                 \
@@ -1724,14 +1711,7 @@ DEFINE_TYPE_TRAIT(PrimvarReader_int, "PrimvarReader_int",
 ((      GfInterval,          Interval       )) \
 ((      GfRect2i,            Rect2i         ))
 
-#define VT_STRING_VALUE_TYPES            \
-((      std::string,           String )) \
-((      TfToken,               Token  ))
-
 #define VT_QUATERNION_VALUE_TYPES           \
-((      GfQuath,             Quath ))       \
-((      GfQuatf,             Quatf ))       \
-((      GfQuatd,             Quatd ))       \
 ((      GfQuaternion,        Quaternion ))
 
 #define VT_NONARRAY_VALUE_TYPES                 \

@@ -52,7 +52,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "pprinter.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
+#include "image-loader.hh"
 
+#if 0
 #if defined(TINYUSDZ_SUPPORT_AUDIO)
 
 #if defined(__clang__)
@@ -96,89 +98,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-#if !defined(TINYUSDZ_PRODUCTION_BUILD)
-#define TINYUSDZ_LOCAL_DEBUG_PRINT
 #endif
 
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x) do { std::cout << __FILE__ << ":" << __func__ << ":" << std::to_string(__LINE__) << " " << x << "\n"; } while (false)
-#else
-#define DCOUT(x)
-#endif
+#include "common-macros.inc"
 
 namespace tinyusdz {
 
 namespace {
-
-// Decode image(png, jpg, ...)
-static bool DecodeImage(const uint8_t *bytes, const size_t size,
-                        const std::string &uri, Image *image, std::string *warn,
-                        std::string *err) {
-  (void)warn;
-
-  int w = 0, h = 0, comp = 0, req_comp = 0;
-
-  unsigned char *data = nullptr;
-
-  // force 32-bit textures for common Vulkan compatibility. It appears that
-  // some GPU drivers do not support 24-bit images for Vulkan
-  req_comp = 4;
-  int bits = 8;
-
-  // It is possible that the image we want to load is a 16bit per channel image
-  // We are going to attempt to load it as 16bit per channel, and if it worked,
-  // set the image data accodingly. We are casting the returned pointer into
-  // unsigned char, because we are representing "bytes". But we are updating
-  // the Image metadata to signal that this image uses 2 bytes (16bits) per
-  // channel:
-  if (stbi_is_16_bit_from_memory(bytes, int(size))) {
-    data = reinterpret_cast<unsigned char *>(
-        stbi_load_16_from_memory(bytes, int(size), &w, &h, &comp, req_comp));
-    if (data) {
-      bits = 16;
-    }
-  }
-
-  // at this point, if data is still NULL, it means that the image wasn't
-  // 16bit per channel, we are going to load it as a normal 8bit per channel
-  // mage as we used to do:
-  // if image cannot be decoded, ignore parsing and keep it by its path
-  // don't break in this case
-  // FIXME we should only enter this function if the image is embedded. If
-  // `uri` references an image file, it should be left as it is. Image loading
-  // should not be mandatory (to support other formats)
-  if (!data)
-    data = stbi_load_from_memory(bytes, int(size), &w, &h, &comp, req_comp);
-  if (!data) {
-    // NOTE: you can use `warn` instead of `err`
-    if (err) {
-      (*err) +=
-          "Unknown image format. STB cannot decode image data for image: " +
-          uri + "\".\n";
-    }
-    return false;
-  }
-
-  if ((w < 1) || (h < 1)) {
-    stbi_image_free(data);
-    if (err) {
-      (*err) += "Invalid image data for image: " + uri + "\"\n";
-    }
-    return false;
-  }
-
-  image->width = w;
-  image->height = h;
-  image->channels = req_comp;
-  image->bpp = bits;
-  image->data.resize(static_cast<size_t>(w * h * req_comp) * size_t(bits / 8));
-  std::copy(data, data + w * h * req_comp * (bits / 8), image->data.begin());
-  stbi_image_free(data);
-
-  return true;
-}
-
 
 ///
 /// Node represents scene graph node.
@@ -626,22 +552,16 @@ bool LoadUSDZFromFile(const std::string &_filename, HighLevelScene *scene,
       const uint8_t *usdc_addr = &data[start_addr];
 
       Image image;
-      std::string _warn, _err;
-      bool ret = DecodeImage(usdc_addr, usdc_size, uri, &image, &_warn, &_err);
-
-      if (!_warn.empty()) {
-        if (warn) {
-          (*warn) += _warn;
-        }
-      }
-
-      if (!_err.empty()) {
-        if (err) {
-          (*err) += _err;
-        }
-      }
+      nonstd::expected<image::ImageResult, std::string> ret = image::LoadImageFromMemory(usdc_addr, usdc_size, uri);
+      //bool ret = DecodeImage(usdc_addr, usdc_size, uri, &image, &_warn, &_err);
 
       if (!ret) {
+        (*err) += ret.error();
+      } else {
+        image = (*ret).image;
+        if (!(*ret).warning.empty()) {
+          (*warn) += (*ret).warning;
+        }
       }
     }
   }
@@ -721,306 +641,5 @@ bool LoadUSDAFromFile(const std::string &_filename, HighLevelScene *scene,
                             options);
 }
 
-#if 0
-size_t GeomMesh::GetNumPoints() const {
-  size_t n = points.size() / 3;
-
-  return n;
-}
-#endif
-
-#if 0
-bool GeomMesh::GetFacevaryingNormals(std::vector<float> *v) const {
-  (void)v;
-
-  //if (normals.variability != Variability::Varying) {
-  //  return false;
-  //}
-
-  //if (auto p = primvar::as_vector<Vec3f>(&normals.var)) {
-  //  v->resize(p->size() * 3);
-  //  memcpy(v->data(), p->data(), v->size() * sizeof(float));
-
-  //  return true;
-  //}
-
-  return false;
-
-}
-#endif
-
-#if 0
-bool GeomMesh::GetFacevaryingTexcoords(std::vector<float> *v) const {
-  (void)v;
-  if (st.variability != Variability::Varying) {
-    return false;
-  }
-
-  DCOUT("TODO");
-  // TODO
-#if 0
-  if (auto p = nonstd::get_if<std::vector<Vec3f>>(&st.buffer)) {
-    v->resize(p->size() * 3);
-    memcpy(v->data(), p->data(), v->size() * sizeof(float));
-
-    return true;
-  }
-
-  if (auto p = nonstd::get_if<std::vector<Vec2f>>(&st.buffer)) {
-    v->resize(p->size() * 2);
-    memcpy(v->data(), p->data(), v->size() * sizeof(float));
-
-    return true;
-  }
-#endif
-
-  return false;
-}
-#endif
-
-#if 0
-value::matrix4d GetTransform(XformOp xform)
-{
-  value::matrix4d m;
-  Identity(&m);
-
-  if (xform.op == XformOp::OpType::TRANSFORM) {
-    if (auto v = xform.value.get<value::matrix4d>()) {
-      m = v.value();
-    }
-  } else if (xform.op == XformOp::OpType::TRANSLATE) {
-      if (auto sf = xform.value.get<value::float3>()) {
-        m.m[3][0] = double(sf.value()[0]);
-        m.m[3][1] = double(sf.value()[1]);
-        m.m[3][2] = double(sf.value()[2]);
-      } else if (auto sd = xform.value.get<value::double3>()) {
-        m.m[3][0] = sd.value()[0];
-        m.m[3][1] = sd.value()[1];
-        m.m[3][2] = sd.value()[2];
-      }
-  } else if (xform.op == XformOp::OpType::SCALE) {
-      if (auto sf = xform.value.get<value::float3>()) {
-        m.m[0][0] = double(sf.value()[0]);
-        m.m[1][1] = double(sf.value()[1]);
-        m.m[2][2] = double(sf.value()[2]);
-      } else if (auto sd = xform.value.get<value::double3>()) {
-        m.m[0][0] = sd.value()[0];
-        m.m[1][1] = sd.value()[1];
-        m.m[2][2] = sd.value()[2];
-      }
-  } else {
-    DCOUT("TODO: xform.op = " << XformOp::GetOpTypeName(xform.op));
-  }
-
-  return m;
-}
-
-bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
-    Identity(out_matrix);
-
-    value::matrix4d cm;
-
-    // Concat matrices
-    for (const auto &x : xformOps) {
-      value::matrix4d m;
-      Identity(&m);
-      (void)x;
-      if (x.op == XformOp::TRANSLATE) {
-        if (auto txf = x.value.get<value::float3>()) {
-          m.m[3][0] = double(txf.value()[0]);
-          m.m[3][1] = double(txf.value()[1]);
-          m.m[3][2] = double(txf.value()[2]);
-        } else if (auto txd = x.value.get<value::double3>()) {
-          m.m[3][0] = txd.value()[0];
-          m.m[3][1] = txd.value()[1];
-          m.m[3][2] = txd.value()[2];
-        } else {
-          return false;
-        }
-      // FIXME: Validate ROTATE_X, _Y, _Z implementation
-      } else if (x.op == XformOp::ROTATE_X) {
-        double theta;
-        if (auto rf = x.value.get<float>()) {
-          theta = double(rf.value());
-        } else if (auto rd = x.value.get<double>()) {
-          theta = rd.value();
-        } else {
-          return false;
-        }
-
-        m.m[1][1] = std::cos(theta);
-        m.m[1][2] = std::sin(theta);
-        m.m[2][1] = -std::sin(theta);
-        m.m[2][2] = std::cos(theta);
-      } else if (x.op == XformOp::ROTATE_Y) {
-        double theta;
-        if (auto f = x.value.get<float>()) {
-          theta = double(f.value());
-        } else if (auto d = x.value.get<double>()) {
-          theta = d.value();
-        } else {
-          return false;
-        }
-
-        m.m[0][0] = std::cos(theta);
-        m.m[0][2] = -std::sin(theta);
-        m.m[2][0] = std::sin(theta);
-        m.m[2][2] = std::cos(theta);
-      } else if (x.op == XformOp::ROTATE_Z) {
-        double theta;
-        if (auto f = x.value.get<float>()) {
-          theta = double(f.value());
-        } else if (auto d = x.value.get<double>()) {
-          theta = d.value();
-        } else {
-          return false;
-        }
-
-        m.m[0][0] = std::cos(theta);
-        m.m[0][1] = std::sin(theta);
-        m.m[1][0] = -std::sin(theta);
-        m.m[1][1] = std::cos(theta);
-      } else {
-        // TODO
-        DCOUT("TODO");
-        return false;
-      }
-
-      cm = Mult<value::matrix4d, double, 4>(cm, m);
-    }
-
-    (*out_matrix) = cm;
-
-  return true;
-}
-#endif
-
-#if 0
-void GeomMesh::Initialize(const GPrim &gprim)
-{
-  name = gprim.name;
-  parent_id = gprim.parent_id;
-
-  props = gprim.props;
-
-#if 0
-  for (auto &prop_item : gprim.props) {
-    std::string attr_name = std::get<0>(prop_item);
-    const Property &prop = std::get<1>(prop_item);
-
-    if (prop.is_rel) {
-      //LOG_INFO("TODO: Rel property:" + attr_name);
-      continue;
-    }
-
-    const PrimAttrib &attr = prop.attrib;
-
-    if (attr_name == "points") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  points = *p;
-      //}
-    } else if (attr_name == "faceVertexIndices") {
-      //if (auto p = primvar::as_vector<int>(&attr.var)) {
-      //  faceVertexIndices = *p;
-      //}
-    } else if (attr_name == "faceVertexCounts") {
-      //if (auto p = primvar::as_vector<int>(&attr.var)) {
-      //  faceVertexCounts = *p;
-      //}
-    } else if (attr_name == "normals") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  normals.var = *p;
-      //  normals.interpolation = attr.interpolation;
-      //}
-    } else if (attr_name == "velocitiess") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  velocitiess.var = (*p);
-      //  velocitiess.interpolation = attr.interpolation;
-      //}
-    } else if (attr_name == "primvars:uv") {
-      //if (auto pv2f = primvar::as_vector<Vec2f>(&attr.var)) {
-      //  st.buffer = (*pv2f);
-      //  st.interpolation = attr.interpolation;
-      //} else if (auto pv3f = primvar::as_vector<value::float3>(&attr.var)) {
-      //  st.buffer = (*pv3f);
-      //  st.interpolation = attr.interpolation;
-      //}
-    } else {
-      // Generic PrimAtrr
-      props[attr_name] = attr;
-    }
-
-  }
-#endif
-
-  doubleSided = gprim.doubleSided;
-  orientation = gprim.orientation;
-  visibility = gprim.visibility;
-  extent = gprim.extent;
-  purpose = gprim.purpose;
-
-  displayColor = gprim.displayColor;
-  displayOpacity = gprim.displayOpacity;
-
-#if 0 // TODO
-
-
-  // PrimVar(TODO: Remove)
-  UVCoords st;
-
-  //
-  // Properties
-  //
-
-
-#endif
-
-};
-
-nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
-
-  std::stringstream ss;
-
-  if (geom_subset_children.empty()) {
-    return true;
-  }
-
-  auto CheckFaceIds = [](const size_t nfaces, const std::vector<uint32_t> ids) {
-    if (std::any_of(ids.begin(), ids.end(), [&nfaces](uint32_t id) { return id >= nfaces; })) {
-      return false;
-    }
-
-    return true;
-  };
-
-  size_t n = faceVertexIndices.size();
-
-  // Currently we only check if face ids are valid.
-  for (size_t i = 0; i < geom_subset_children.size(); i++) {
-    const GeomSubset & subset = geom_subset_children[i];
-
-    if (!CheckFaceIds(n, subset.indices)) {
-      ss << "Face index out-of-range.\n";
-      return nonstd::make_unexpected(ss.str());
-    }
-  }
-
-  return nonstd::make_unexpected("TODO: Implent GeomMesh::ValidateGeomSubset\n");
-  //return true;
-
-}
-#endif
-
-//static_assert(sizeof(crate::Index) == 4, "");
-//static_assert(sizeof(crate::Field) == 16, "");
-//static_assert(sizeof(crate::Spec) == 12, "");
-//static_assert(sizeof(Vec4h) == 8, "");
-//static_assert(sizeof(Vec2f) == 8, "");
-//static_assert(sizeof(Vec3f) == 12, "");
-//static_assert(sizeof(Vec4f) == 16, "");
-//static_assert(sizeof(Vec2d) == 16, "");
-//static_assert(sizeof(Vec3d) == 24, "");
-//static_assert(sizeof(Vec4d) == 32, "");
-//static_assert(sizeof(value::matrix4d) == (8 * 16), "");
 
 }  // namespace tinyusdz
