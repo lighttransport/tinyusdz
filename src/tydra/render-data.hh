@@ -6,7 +6,6 @@
 #include <unordered_map>
 
 #include "nonstd/expected.hpp"
-
 #include "value-types.hh"
 
 namespace tinyusdz {
@@ -20,41 +19,39 @@ namespace tydra {
 using vec2 = value::float2;
 using vec3 = value::float3;
 using vec4 = value::float4;
-using mat2 = value::matrix2f; // float precision
+using mat2 = value::matrix2f;  // float precision
 
 enum class NodeType {
   Xform,
-  Scope, // Node with no-op
-  Mesh, // Polygon mesh
+  Scope,  // Node with no-op
+  Mesh,   // Polygon mesh
   Camera,
 };
 
 // glTF-like BufferData
-struct BufferData
-{
+struct BufferData {
   value::TypeId type_id{value::TypeId::TYPE_ID_VOID};
   std::vector<uint8_t> data;  // binary data
 };
 
 // glTF-like Attribute
-struct Attribute
-{
-  std::string path; // Path string in Stage
-  uint32_t slot_id{0}; // slot ID. 
+struct Attribute {
+  std::string path;     // Path string in Stage
+  uint32_t slot_id{0};  // slot ID.
 
-  int64_t buffer_id{-1}; // index to buffer_id
+  int64_t buffer_id{-1};  // index to buffer_id
 };
 
-template<typename T>
+template <typename T>
 struct Image {
   enum class ColorSpace {
     sRGB,
     Linear,
     Rec709,
-    Custom, // TODO: Custom colorspace, OCIO colorspace
+    Custom,  // TODO: Custom colorspace, OCIO colorspace
   };
 
-  std::vector<T> image; // raw pixel data
+  std::vector<T> image;  // raw pixel data
   ColorSpace colorSpace{ColorSpace::sRGB};
   int32_t width{-1};
   int32_t height{-1};
@@ -65,10 +62,9 @@ struct Image {
 using LDRImage = Image<uint8_t>;
 
 struct Node {
-
   NodeType nodeType{NodeType::Xform};
 
-  int32_t id; // Index to node content(e.g. meshes[id] when nodeTypes == Mesh
+  int32_t id;  // Index to node content(e.g. meshes[id] when nodeTypes == Mesh
 
   std::vector<uint32_t> children;
 
@@ -76,8 +72,7 @@ struct Node {
 };
 
 // HdMeshTopology
-struct RenderMesh
-{
+struct RenderMesh {
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
   std::vector<uint32_t> faceVertexCounts;
@@ -87,31 +82,39 @@ struct RenderMesh
 
   // key = slot ID.
   std::unordered_map<uint32_t, Attribute> facevaryingTexcoords;
-  
 
-  std::vector<int32_t> materialIds; // per-face material. -1 = no material assigned
+  std::vector<int32_t>
+      materialIds;  // per-face material. -1 = no material assigned
 };
 
 struct UVTexture {
-  enum class Channel {
-    R,
-    G,
-    B,
-    RGB,
-    RGBA
-  };
+  enum class Channel { R, G, B, RGB, RGBA };
 
+  // NOTE: for single channel(e.g. R) fetch, Only [0] will be filled for the
+  // return value.
+  vec4 fetch(size_t faceId, float varyu, float varyv, float varyw = 1.0f,
+             Channel channel = Channel::RGB);
 
-  // NOTE: for single channel(e.g. R) fetch, Only [0] will be filled for the return value.
-  vec4 fetch(size_t faceId, float varyu, float varyv, float varyw = 1.0f, Channel channel=Channel::RGB);
-
-  int32_t imageId{-1}; // Index to Image
+  int32_t imageId{-1};  // Index to Image
 };
 
+struct UDIMTexture {
+  enum class Channel { R, G, B, RGB, RGBA };
 
-template<typename T>
+  // NOTE: for single channel(e.g. R) fetch, Only [0] will be filled for the
+  // return value.
+  vec4 fetch(size_t faceId, float varyu, float varyv, float varyw = 1.0f,
+             Channel channel = Channel::RGB);
+
+  // key = UDIM id(e.g. 1001)
+  std::unordered_map<uint32_t, int32_t> imageTileIds;
+};
+
+template <typename T>
 struct UVReader {
-  static_assert(std::is_same<T, float>::type || std::is_same<T, vec2>::type || std::is_same<T, vec3>::type || std::is_same<T, vec4>::type, "Type must be float, float2, float3 or float4");
+  static_assert(std::is_same<T, float>::type || std::is_same<T, vec2>::type ||
+                    std::is_same<T, vec3>::type || std::is_same<T, vec4>::type,
+                "Type must be float, float2, float3 or float4");
 
   uint32_t meshId;   // index to RenderMesh
   uint32_t coordId;  // index to RenderMesh::facevaryingTexcoords
@@ -120,7 +123,6 @@ struct UVReader {
 
   // Returns interpolated UV coordinate with UV transform
   T fetchUV(size_t faceId, float varyu, float varyv);
-
 };
 
 // base color(fallback color) or Texture
@@ -149,27 +151,27 @@ struct PreviewSurfaceShader {
   ShaderParam<float> occlusion{0.0f};
 };
 
-
 // Material + Shader
-struct Material
-{
+struct Material {
+  std::string name;
+
   PreviewSurfaceShader shader;
 };
 
 // Simple glTF-like Scene Graph
-class RenderScene
-{
+class RenderScene {
   std::vector<Node> nodes;
   std::vector<LDRImage> images;
   std::vector<Material> materials;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
+  std::vector<BufferData>
+      buffers;  // Various data storage(e.g. primvar texcoords)
 
-  //uint32_t rootNodeId{0}; // root node = nodes[rootNodeId]
+  // uint32_t rootNodeId{0}; // root node = nodes[rootNodeId]
 };
 
 nonstd::expected<RenderMesh, std::string> Convert(const GeomMesh &mesh);
 
-} // namespace tydra
-} // namespace tinyusdz
-
+}  // namespace tydra
+}  // namespace tinyusdz
