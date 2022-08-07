@@ -64,7 +64,7 @@ option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 
 
 # -- TIFF --
-option(TINYUSDZ_WITH_TIFF "Build with TIFF texture support" OFF)
+option(TINYUSDZ_WITH_TIFF "Build with TIFF texture(includes 32bit floating point TIFF) support" OFF)
 # ----------
 
 # -- EXR --
@@ -181,6 +181,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc

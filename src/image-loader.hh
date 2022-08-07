@@ -27,7 +27,7 @@ nonstd::expected<ImageResult, std::string> LoadImageFromFile(const std::string &
 ///
 /// @param[in] addr Memory address
 /// @param[in] datasize Data size(in bytes)
-/// @param[in] uri Input URI(or filename)
+/// @param[in] uri Input URI(or filename) as a hint. This is used only in error message.
 /// @return ImageResult or error message(std::string)
 ///
 nonstd::expected<ImageResult, std::string> LoadImageFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);

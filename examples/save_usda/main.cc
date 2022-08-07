@@ -5,7 +5,7 @@
 //
 // create dummy scene.
 //
-void DummyScene(tinyusdz::HighLevelScene *scene)
+void DummyScene(tinyusdz::Stage *stage)
 {
   //
   // tinyusdz currently does not provide scene graph API yet, so edit parameters directly.
@@ -60,7 +60,7 @@ void DummyScene(tinyusdz::HighLevelScene *scene)
   scene->geom_meshes.push_back(std::move(mesh));
 
   {
-    // Node graph 
+    // Node graph
     auto xform_node = tinyusdz::PrimNode();
     xform_node.data = xform;
 
@@ -95,13 +95,13 @@ void DummyScene(tinyusdz::HighLevelScene *scene)
 
 int main(int argc, char **argv)
 {
-  tinyusdz::HighLevelScene scene; // empty scene
+  tinyusdz::Stage stage; // empty scene
 
-  DummyScene(&scene);
+  DummyScene(&stage);
 
   std::string warn;
   std::string err;
-  bool ret = tinyusdz::usda::SaveAsUSDA("output.udsa", scene, &warn, &err);
+  bool ret = tinyusdz::usda::SaveAsUSDA("output.udsa", stage, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";

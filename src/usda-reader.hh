@@ -75,9 +75,9 @@ class USDAReader {
   std::string GetWarning();
 
   ///
-  /// Get as scene
+  /// Get as stage(scene graph)
   ///
-  const HighLevelScene& GetHighLevelScene() const;
+  const Stage& GetStage() const;
 
  private:
   class Impl;
