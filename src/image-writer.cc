@@ -6,8 +6,8 @@
 #include "external/tinydng.h"
 #endif
 
-#ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
+#ifndef TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
 
 #if defined(__clang__)
@@ -15,7 +15,7 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/stb_image.h"
+#include "external/stb_image_write.h"
 #include "external/fpng.h"
 
 #if defined(__clang__)
