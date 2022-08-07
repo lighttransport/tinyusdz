@@ -29,6 +29,22 @@ enum class NodeType {
   Camera,
 };
 
+// glTF-like BufferData
+struct BufferData
+{
+  value::TypeId type_id{value::TypeId::TYPE_ID_VOID};
+  std::vector<uint8_t> data;  // binary data
+};
+
+// glTF-like Attribute
+struct Attribute
+{
+  std::string path; // Path string in Stage
+  uint32_t slot_id{0}; // slot ID. 
+
+  int64_t buffer_id{-1}; // index to buffer_id
+};
+
 template<typename T>
 struct Image {
   enum class ColorSpace {
@@ -69,8 +85,9 @@ struct RenderMesh
   // non-facevarying normal and texcoords are converted to facevarying
   std::vector<vec3> facevaryingNormals;
 
-  // key = uvmap ID.
-  std::unordered_map<uint32_t, std::vector<vec3>> facevaryingTexcoords;
+  // key = slot ID.
+  std::unordered_map<uint32_t, Attribute> facevaryingTexcoords;
+  
 
   std::vector<int32_t> materialIds; // per-face material. -1 = no material assigned
 };

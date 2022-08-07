@@ -31,10 +31,10 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  tinyusdz::HighLevelScene scene;
+  tinyusdz::Stage stage;
 
   if (ext.compare("usdz") == 0) {
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &scene, &warn, &err);
+    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
       return EXIT_FAILURE;
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &scene, &warn, &err);
+    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
       return EXIT_FAILURE;

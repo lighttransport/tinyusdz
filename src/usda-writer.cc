@@ -26,7 +26,7 @@ inline std::string GetTypeName(XformOpValueType const &v) {
 
 class Writer {
  public:
-  Writer(const HighLevelScene &scene) : _scene(scene) {}
+  Writer(const Stage &stage) : _stage(stage) {}
 
   std::string Indent(size_t level) {
     std::stringstream ss;
@@ -88,23 +88,23 @@ class Writer {
 #if 0
   bool WriteNode(std::ostream &ofs, const Node &node, uint32_t level) {
     if (node.type == NODE_TYPE_XFORM) {
-      if ((node.index < 0) || (size_t(node.index) >= _scene.xforms.size())) {
+      if ((node.index < 0) || (size_t(node.index) >= _stage.xforms.size())) {
         // invalid index
         return false;
       }
 
-      if (!WriteXform(ofs, _scene.xforms.at(size_t(node.index)), level)) {
+      if (!WriteXform(ofs, _stage.xforms.at(size_t(node.index)), level)) {
         return false;
       }
 
     } else if (node.type == NODE_TYPE_GEOM_MESH) {
       if ((node.index < 0) ||
-          (size_t(node.index) >= _scene.geom_meshes.size())) {
+          (size_t(node.index) >= _stage.geom_meshes.size())) {
         // invalid index
         return false;
       }
 
-      if (!WriteGeomMesh(ofs, _scene.geom_meshes.at(size_t(node.index)),
+      if (!WriteGeomMesh(ofs, _stage.geom_meshes.at(size_t(node.index)),
                          level)) {
         return false;
       }
@@ -127,7 +127,7 @@ class Writer {
   }
 #endif
 
-  const HighLevelScene &_scene;
+  const Stage &_stage;
 
   const std::string &Error() const { return _err; }
   const std::string &Warn() const { return _warn; }
@@ -142,7 +142,7 @@ class Writer {
 
 }  // namespace
 
-bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene,
+bool SaveAsUSDA(const std::string &filename, const Stage &stage,
                 std::string *warn, std::string *err) {
 
   (void)warn;
@@ -151,25 +151,25 @@ bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene,
 
   ss << "#usda 1.0\n";
   ss << "(\n";
-  if (scene.stage_metas.doc.empty()) {
+  if (stage.stage_metas.doc.empty()) {
     ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
        << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
   } else {
-    ss << "  doc = \"" << scene.stage_metas.doc << "\"\n";
+    ss << "  doc = \"" << stage.stage_metas.doc << "\"\n";
   }
-  ss << "  metersPerUnit = " << scene.stage_metas.metersPerUnit << "\n";
-  ss << "  upAxis = \"" << to_string(scene.stage_metas.upAxis) << "\"\n";
-  ss << "  timeCodesPerSecond = \"" << scene.stage_metas.timeCodesPerSecond << "\"\n";
+  ss << "  metersPerUnit = " << stage.stage_metas.metersPerUnit << "\n";
+  ss << "  upAxis = \"" << to_string(stage.stage_metas.upAxis) << "\"\n";
+  ss << "  timeCodesPerSecond = \"" << stage.stage_metas.timeCodesPerSecond << "\"\n";
   // TODO: write other header data.
   ss << ")\n";
 
   // TODO
-  Writer writer(scene);
+  Writer writer(stage);
 
 #if 0 // TODO
-  std::cout << "# of nodes: " << scene.nodes.size() << "\n";
+  std::cout << "# of nodes: " << stage.nodes.size() << "\n";
 
-  for (const auto &root : scene.nodes) {
+  for (const auto &root : stage.nodes) {
     if (!writer.WriteNode(ss, root, 0)) {
       if (err && writer.Error().size()) {
         (*err) += writer.Error();
@@ -207,9 +207,9 @@ bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene,
 namespace tinyusdz {
 namespace usda {
 
-bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene, std::string *warn, std::string *err) {
+bool SaveAsUSDA(const std::string &filename, const Stage &stage, std::string *warn, std::string *err) {
   (void)filename;
-  (void)scene;
+  (void)stage;
   (void)warn;
 
   if (err) {
