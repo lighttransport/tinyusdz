@@ -85,26 +85,14 @@
   while (0)
 #endif
 
-#ifndef TINYUSDZ_PRODUCTION_BUILD
-#define TINYUSDZ_LOCAL_DEBUG_PRINT
-#endif
-
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x)                                               \
-  do {                                                         \
-    std::cout << __FILE__ << ":" << __func__ << ":"            \
-              << std::to_string(__LINE__) << " " << x << "\n"; \
-  } while (false)
-#else
-#define DCOUT(x)
-#endif
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace crate {
 
-constexpr char kTypeName[] = "typeName";
-constexpr char kToken[] = "Token";
-constexpr char kDefault[] = "default";
+constexpr auto kTypeName = "typeName";
+constexpr auto kToken = "Token";
+constexpr auto kDefault = "default";
 
 namespace {
 

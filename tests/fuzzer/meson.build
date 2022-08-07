@@ -20,6 +20,8 @@ tinyusdz_sources=[
   '../../src/crate-pprint.cc',
   '../../src/value-types.cc',
   '../../src/value-pprint.cc',
+  '../../src/image-loader.cc',
+  '../../src/image-writer.cc',
   # deps
   '../../src/external/fpng.cpp',
   '../../src/external/staticstruct.cc',
@@ -36,12 +38,13 @@ tinyusdz_sources=[
 #incdirs = include_directories(['../../src','../../src/external/ryu'])
 incdirs = include_directories(['../../src','../../src/external/fast_float/include'])
 
+# TINYUSDZ_FUZZER_BUILD = suppress some debug message
 executable('fuzz_tinyusdz',
   'tinyusdz_fuzzmain.cc',
   tinyusdz_sources, 
   install: true,
   include_directories : incdirs,
-  cpp_args : '-fsanitize=address,fuzzer',
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_intcoding',
@@ -60,7 +63,7 @@ executable('fuzz_usdaparser',
   tinyusdz_sources, 
   install: true,
   include_directories : incdirs,
-  cpp_args : '-fsanitize=address,fuzzer',
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 

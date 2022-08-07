@@ -97,19 +97,7 @@
     _err += ss.str();                                              \
   } while (0)
 
-#if !defined(TINYUSDZ_PRODUCTION_BUILD)
-#define TINYUSDZ_LOCAL_DEBUG_PRINT
-#endif
-
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x)                                               \
-  do {                                                         \
-    std::cout << __FILE__ << ":" << __func__ << ":"            \
-              << std::to_string(__LINE__) << " " << x << "\n"; \
-  } while (false)
-#else
-#define DCOUT(x)
-#endif
+#include "common-macros.inc"
 
 namespace tinyusdz {
 
@@ -2221,8 +2209,7 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   {
     size_t i = 0;
     for (auto it = PrimBegin(); it != PrimEnd(); ++it, i++) {
-      const auto &prim = (*it);
-      DCOUT("Prim[" << std::to_string(i) << "].type = " << prim.type_name());
+      DCOUT("Prim[" << std::to_string(i) << "].type = " << (*it).type_name());
     }
   }
 
