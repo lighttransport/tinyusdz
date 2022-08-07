@@ -9,13 +9,13 @@ namespace usda {
 /// Save scene as USDA(ASCII)
 ///
 /// @param[in] filename USDA filename
-/// @param[in] scene High-level scene class. 
+/// @param[in] stage Stage(scene graph).
 /// @param[out] warn Warning message
 /// @param[out] err Error message
 ///
 /// @return true upon success.
 ///
-bool SaveAsUSDA(const std::string &filename, const HighLevelScene &scene, std::string *warn, std::string *err);
+bool SaveAsUSDA(const std::string &filename, const Stage &stage, std::string *warn, std::string *err);
 
 } // namespace usda
 } // namespace tinyusdz

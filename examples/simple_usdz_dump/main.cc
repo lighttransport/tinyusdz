@@ -69,42 +69,42 @@ static void DumpGeomPoints(const tinyusdz::GeomPoints &pts, int level) {
   std::cout << to_string(pts, level);
 }
 
-static void DumpScene(const tinyusdz::HighLevelScene &scene)
+static void DumpScene(const tinyusdz::Stage &stage)
 {
 
-  std::cout << "Scene.name: " << scene.name << "\n";
-  std::cout << "Scene.metersPerUnit: " << scene.stage_metas.metersPerUnit << "\n";
-  std::cout << "Scene.timeCodesPerSecond: " << scene.stage_metas.timeCodesPerSecond << "\n";
-  std::cout << "Scene.defaultPrim: " << scene.stage_metas.defaultPrim << "\n";
-  std::cout << "Scene.default_root_node: " << scene.default_root_node << "\n";
+  std::cout << "Scene.name: " << stage.name << "\n";
+  std::cout << "Scene.metersPerUnit: " << stage.stage_metas.metersPerUnit << "\n";
+  std::cout << "Scene.timeCodesPerSecond: " << stage.stage_metas.timeCodesPerSecond << "\n";
+  std::cout << "Scene.defaultPrim: " << stage.stage_metas.defaultPrim << "\n";
+  std::cout << "Scene.default_root_node: " << stage.default_root_node << "\n";
 
 #if 0
-  std::cout << "# of nodes: " << scene.node_indices.size() << "\n";
-  std::cout << "# of xforms: " << scene.xforms.size() << "\n";
-  std::cout << "# of geom_meshes: " << scene.geom_meshes.size() << "\n";
-  std::cout << "# of geom_basis_curves: " << scene.geom_basis_curves.size() << "\n";
-  std::cout << "# of geom_points: " << scene.geom_points.size() << "\n";
-  std::cout << "# of materials: " << scene.geom_meshes.size() << "\n";
-  std::cout << "# of preview shaders: " << scene.shaders.size() << "\n";
-  std::cout << "# of scopes: " << scene.scopes.size() << "\n";
+  std::cout << "# of nodes: " << stage.node_indices.size() << "\n";
+  std::cout << "# of xforms: " << stage.xforms.size() << "\n";
+  std::cout << "# of geom_meshes: " << stage.geom_meshes.size() << "\n";
+  std::cout << "# of geom_basis_curves: " << stage.geom_basis_curves.size() << "\n";
+  std::cout << "# of geom_points: " << stage.geom_points.size() << "\n";
+  std::cout << "# of materials: " << stage.geom_meshes.size() << "\n";
+  std::cout << "# of preview shaders: " << stage.shaders.size() << "\n";
+  std::cout << "# of scopes: " << stage.scopes.size() << "\n";
 
-  //if (scene.default_root_node > -1) {
-  //  DumpNode(scene.nodes[size_t(scene.default_root_node)], 0);
+  //if (stage.default_root_node > -1) {
+  //  DumpNode(stage.nodes[size_t(stage.default_root_node)], 0);
   //}
 
   std::cout << "== Meshes ===\n";
-  for (size_t i = 0; i < scene.geom_meshes.size(); i++) {
-    DumpGeomMesh(scene.geom_meshes[i], 0);
+  for (size_t i = 0; i < stage.geom_meshes.size(); i++) {
+    DumpGeomMesh(stage.geom_meshes[i], 0);
   }
 
   std::cout << "== Curves ===\n";
-  for (size_t i = 0; i < scene.geom_basis_curves.size(); i++) {
-    DumpGeomCurves(scene.geom_basis_curves[i], 0);
+  for (size_t i = 0; i < stage.geom_basis_curves.size(); i++) {
+    DumpGeomCurves(stage.geom_basis_curves[i], 0);
   }
 
   std::cout << "== Points ===\n";
-  for (size_t i = 0; i < scene.geom_points.size(); i++) {
-    DumpGeomPoints(scene.geom_points[i], 0);
+  for (size_t i = 0; i < stage.geom_points.size(); i++) {
+    DumpGeomPoints(stage.geom_points[i], 0);
   }
 #endif
 }
@@ -121,11 +121,11 @@ int main(int argc, char **argv) {
 
   std::string ext = str_tolower(GetFileExtension(filepath));
 
-  tinyusdz::HighLevelScene scene;
+  tinyusdz::Stage stage;
 
   if (ext.compare("usdz") == 0) {
     std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &scene, &warn, &err);
+    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &scene, &warn, &err);
+    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -154,7 +154,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  DumpScene(scene);
+  DumpScene(stage);
 
   return EXIT_SUCCESS;
 }

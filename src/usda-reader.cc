@@ -249,7 +249,7 @@ inline bool hasOutputs(const std::string &str) {
 
 class USDAReader::Impl {
  private:
-  HighLevelScene scene_;
+  Stage stage_;
 
  public:
   Impl(StreamReader *sr) { _parser.SetStream(sr); }
@@ -432,7 +432,7 @@ class USDAReader::Impl {
       T *reader);
 
 
-  void ImportScene(tinyusdz::HighLevelScene &scene) { _imported_scene = scene; }
+  void ImportScene(tinyusdz::Stage &scene) { _imported_scene = scene; }
 
   bool HasPath(const std::string &path) {
     // TODO
@@ -540,7 +540,7 @@ class USDAReader::Impl {
 
   std::string _base_dir;  // Used for importing another USD file
 
-  nonstd::optional<tinyusdz::HighLevelScene>
+  nonstd::optional<tinyusdz::Stage>
       _imported_scene;  // Imported scene.
 
   // "class" defs
@@ -2133,7 +2133,7 @@ bool USDAReader::Impl::ReconstructPrimvarReader(
   //         bool primvarProperty = 1  # or string primvarProperty = "1"
   //    }
   //   )
-    
+
 
   // Per shader
   // T inputs:fallback

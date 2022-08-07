@@ -61,79 +61,79 @@ namespace value {
 
 // Use `Value type token` for fundamental data types.
 // See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
-constexpr char kToken[] = "token";
-constexpr char kString[] = "string";
-constexpr char kPath[] = "Path";
-constexpr char kAssetPath[] = "asset";  // `asset` in USDA
-constexpr char kDictionary[] = "dictionary";
-constexpr char kTimeCode[] = "timecode";
+constexpr auto kToken = "token";
+constexpr auto kString = "string";
+constexpr auto kPath = "Path";
+constexpr auto kAssetPath = "asset";  // `asset` in USDA
+constexpr auto kDictionary= "dictionary";
+constexpr auto kTimeCode= "timecode";
 
-constexpr char kBool[] = "bool";
-constexpr char kUChar[] = "uchar";
-constexpr char kHalf[] = "half";
-constexpr char kInt[] = "int";
-constexpr char kUInt[] = "uint";
-constexpr char kInt64[] = "int64";
-constexpr char kUInt64[] = "uint64";
+constexpr auto kBool= "bool";
+constexpr auto kUChar= "uchar";
+constexpr auto kHalf= "half";
+constexpr auto kInt= "int";
+constexpr auto kUInt= "uint";
+constexpr auto kInt64= "int64";
+constexpr auto kUInt64= "uint64";
 
-constexpr char kInt2[] = "int2";
-constexpr char kInt3[] = "int3";
-constexpr char kInt4[] = "int4";
+constexpr auto kInt2= "int2";
+constexpr auto kInt3= "int3";
+constexpr auto kInt4= "int4";
 
-constexpr char kUInt2[] = "uint2";
-constexpr char kUInt3[] = "uint3";
-constexpr char kUInt4[] = "uint4";
+constexpr auto kUInt2= "uint2";
+constexpr auto kUInt3= "uint3";
+constexpr auto kUInt4= "uint4";
 
-constexpr char kHalf2[] = "half2";
-constexpr char kHalf3[] = "half3";
-constexpr char kHalf4[] = "half4";
+constexpr auto kHalf2= "half2";
+constexpr auto kHalf3= "half3";
+constexpr auto kHalf4= "half4";
 
-constexpr char kMatrix2d[] = "matrix2d";
-constexpr char kMatrix3d[] = "matrix3d";
-constexpr char kMatrix4d[] = "matrix4d";
+constexpr auto kMatrix2d= "matrix2d";
+constexpr auto kMatrix3d= "matrix3d";
+constexpr auto kMatrix4d= "matrix4d";
 
-constexpr char kFloat[] = "float";
-constexpr char kFloat2[] = "float2";
-constexpr char kFloat3[] = "float3";
-constexpr char kFloat4[] = "float4";
+constexpr auto kFloat= "float";
+constexpr auto kFloat2= "float2";
+constexpr auto kFloat3= "float3";
+constexpr auto kFloat4= "float4";
 
-constexpr char kDouble[] = "double";
-constexpr char kDouble2[] = "double2";
-constexpr char kDouble3[] = "double3";
-constexpr char kDouble4[] = "double4";
+constexpr auto kDouble= "double";
+constexpr auto kDouble2= "double2";
+constexpr auto kDouble3= "double3";
+constexpr auto kDouble4= "double4";
 
-constexpr char kQuath[] = "quath";
-constexpr char kQuatf[] = "quatf";
-constexpr char kQuatd[] = "quatd";
+constexpr auto kQuath= "quath";
+constexpr auto kQuatf= "quatf";
+constexpr auto kQuatd= "quatd";
 
-constexpr char kVector3h[] = "vector3h";
-constexpr char kVector3f[] = "vector3f";
-constexpr char kVector3d[] = "vector3d";
+constexpr auto kVector3h= "vector3h";
+constexpr auto kVector3f= "vector3f";
+constexpr auto kVector3d= "vector3d";
 
-constexpr char kPoint3h[] = "point3h";
-constexpr char kPoint3f[] = "point3f";
-constexpr char kPoint3d[] = "point3d";
+constexpr auto kPoint3h= "point3h";
+constexpr auto kPoint3f= "point3f";
+constexpr auto kPoint3d= "point3d";
 
-constexpr char kNormal3h[] = "normal3h";
-constexpr char kNormal3f[] = "normal3f";
-constexpr char kNormal3d[] = "normal3d";
+constexpr auto kNormal3h= "normal3h";
+constexpr auto kNormal3f= "normal3f";
+constexpr auto kNormal3d= "normal3d";
 
-constexpr char kColor3f[] = "color3f";
-constexpr char kColor3d[] = "color3d";
-constexpr char kColor4f[] = "color4f";
-constexpr char kColor4d[] = "color4d";
+constexpr auto kColor3f= "color3f";
+constexpr auto kColor3d= "color3d";
+constexpr auto kColor4f= "color4f";
+constexpr auto kColor4d= "color4d";
 
-constexpr char kFrame4d[] = "frame4d";
+constexpr auto kFrame4d= "frame4d";
 
-constexpr char kTexCoord2h[] = "texCoord2h";
-constexpr char kTexCoord2f[] = "texCoord2f";
-constexpr char kTexCoord2d[] = "texCoord2d";
+constexpr auto kTexCoord2h= "texCoord2h";
+constexpr auto kTexCoord2f= "texCoord2f";
+constexpr auto kTexCoord2d= "texCoord2d";
 
-constexpr char kTexCoord3h[] = "texCoord3h";
-constexpr char kTexCoord3f[] = "texCoord3f";
-constexpr char kTexCoord3d[] = "texCoord3d";
+constexpr auto kTexCoord3h= "texCoord3h";
+constexpr auto kTexCoord3f= "texCoord3f";
+constexpr auto kTexCoord3d= "texCoord3d";
 
-constexpr char kRelationship[] = "rel";
+constexpr auto kRelationship= "rel";
 
 inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 
@@ -645,11 +645,25 @@ using dict = std::map<std::string, linb::any>;
 template <class dtype>
 struct TypeTrait;
 
-// import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT 
+// import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
+// `void` hash no sizeof(void), so define it manually.
+template <>
+struct TypeTrait<void> {
+  using value_type = void;
+  using value_underlying_type = void;
+  static constexpr uint32_t ndim = 0; /* array dim */
+  static constexpr uint32_t size = 0; /* zero for void  */
+  static constexpr uint32_t ncomp = 0;
+  static constexpr uint32_t type_id = TYPE_ID_VOID;
+  static constexpr uint32_t underlying_type_id = TYPE_ID_VOID;
+  static std::string type_name() { return "void"; }
+  static std::string underlying_type_name() { return "void"; }
+};
+
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
-DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
+//DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 DEFINE_TYPE_TRAIT(Block, "none", TYPE_ID_BLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
@@ -778,138 +792,6 @@ struct TypeTrait<std::vector<std::vector<T>>> {
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
 std::string GetTypeName(uint32_t tyid);
 
-#if 0 // TODO: Remove
-struct base_value {
-  virtual ~base_value();
-  virtual const std::string type_name() const = 0;
-  virtual const std::string underlying_type_name() const = 0;
-  virtual uint32_t type_id() const = 0;
-  virtual uint32_t underlying_type_id() const = 0;
-
-  virtual uint32_t ndim() const = 0;
-  virtual uint32_t ncomp() const = 0;
-
-  virtual const void *value() const = 0;
-  virtual void *value() = 0;
-};
-
-template <typename T>
-struct value_impl : public base_value {
-  using type = typename TypeTrait<T>::value_type;
-
-  value_impl(const T &v) : _value(v) {}
-
-  const std::string type_name() const override {
-    return TypeTrait<T>::type_name();
-  }
-
-  const std::string underlying_type_name() const override {
-    return TypeTrait<T>::underlying_type_name();
-  }
-
-  uint32_t type_id() const override { return TypeTrait<T>::type_id; }
-  uint32_t underlying_type_id() const override {
-    return TypeTrait<T>::underlying_type_id;
-  }
-
-  const void *value() const override {
-    return reinterpret_cast<const void *>(&_value);
-  }
-
-  void *value() override { return reinterpret_cast<void *>(&_value); }
-
-  uint32_t ndim() const override { return TypeTrait<T>::ndim; }
-  uint32_t ncomp() const override { return TypeTrait<T>::ncomp; }
-
-  T _value;
-};
-
-struct any_value {
-  any_value() = default;
-
-  template <typename T>
-  any_value(const T &v) {
-    p.reset(new value_impl<T>(v));
-  }
-
-  const std::string type_name() const {
-    if (p) {
-      return p->type_name();
-    }
-    return std::string();
-  }
-
-  const std::string underlying_type_name() const {
-    if (p) {
-      return p->underlying_type_name();
-    }
-    return std::string();
-  }
-
-  uint32_t type_id() const {
-    if (p) {
-      return p->type_id();
-    }
-
-    return TYPE_ID_INVALID;
-  }
-
-  uint32_t underlying_type_id() const {
-    if (p) {
-      return p->underlying_type_id();
-    }
-
-    return TYPE_ID_INVALID;
-  }
-
-  int32_t ndim() const {
-    if (p) {
-      return int32_t(p->ndim());
-    }
-
-    return -1;  // invalid
-  }
-
-  uint32_t ncomp() const {
-    if (p) {
-      return p->ncomp();
-    }
-
-    return 0;  // empty
-  }
-
-  const void *value() const {
-    if (p) {
-      return p->value();
-    }
-    return nullptr;
-  }
-
-  void *value() {
-    if (p) {
-      return p->value();
-    }
-    return nullptr;
-  }
-
-  template <class T>
-  operator T() const {
-    assert(TypeTrait<T>::type_id == p->type_id());
-
-    return *(reinterpret_cast<const T *>(p->value()));
-  }
-
-  template <class T>
-  operator std::vector<T>() const {
-    assert(TypeTrait<std::vector<T>>::type_id == p->type_id());
-
-    return *(reinterpret_cast<const std::vector<T> *>(p->value()));
-  }
-
-  std::shared_ptr<base_value> p;  // TODO: Use raw pointer?
-};
-#endif
-
 }  // namespace value
 }  // namespace tinyusdz
 
@@ -1008,67 +890,6 @@ struct AnimatableValue {
     return val;
   }
 };
-
-#if 0  // Remove
-struct PrimVar {
-  // For scalar value, times.size() == 0, and values.size() == 1
-  TimeSamples var;
-
-  bool is_scalar() const {
-    return (var.times.size() == 0) && (var.values.size() == 1);
-  }
-
-  bool is_timesample() const {
-    return (var.times.size() > 0) && (var.times.size() == var.values.size());
-  }
-
-  bool is_valid() const { return is_scalar() || is_timesample(); }
-
-  std::string type_name() const {
-    if (!is_valid()) {
-      return std::string();
-    }
-    return var.values[0].type_name();
-  }
-
-  uint32_t type_id() const {
-    if (!is_valid()) {
-      return TYPE_ID_INVALID;
-    }
-
-    return var.values[0].type_id();
-  }
-
-  // Type-safe way to get concrete value.
-  template <class T>
-  nonstd::optional<T> get_value() const {
-
-    if (!is_scalar()) {
-      return nonstd::nullopt;
-    }
-
-    if (TypeTrait<T>::type_id == var.values[0].type_id()) {
-      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-      return std::move(linb::any_cast<const T *>(var.values[0]));
-    } else if (TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-      return std::move(linb::any_cast<const T *>(var.values[0]));
-    }
-    return nonstd::nullopt;
-  }
-
-  template <class T>
-  void set_scalar(const T &v) {
-    var.times.clear();
-    var.values.clear();
-
-    var.values.push_back(v);
-  }
-
-};
-#endif
 
 ///
 /// Generic Value class using any
@@ -1193,18 +1014,6 @@ TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
 // TODO(syoyo): Implement more types...
 
 #undef TYPECAST_BASETYPE
-#endif
-
-#if 0
-//
-// Type checker
-//
-template <typename T>
-struct is_type {
-  bool operator()(const any_value &v) {
-    return TypeTrait<T>::type_id == v.type_id();
-  }
-};
 #endif
 
 struct AttribMap {

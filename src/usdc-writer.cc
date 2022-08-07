@@ -74,22 +74,7 @@
 #endif
 #endif
 
-#ifndef TINYUSDZ_PRODUCTION_BUILD
-#define TINYUSDZ_LOCAL_DEBUG_PRINT
-#endif
-
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x)                                               \
-  do {                                                         \
-    std::cout << __FILE__ << ":" << __func__ << ":"            \
-              << std::to_string(__LINE__) << " " << x << "\n"; \
-  } while (false)
-#else
-#define DCOUT(x) \
-  do {           \
-    (void)(x);   \
-  } while (false)
-#endif
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace usdc {
@@ -320,9 +305,9 @@ crate::FieldSetIndex Packer::AddFieldSet(
 
 class Writer {
  public:
-  Writer(const HighLevelScene &scene) : scene_(scene) {}
+  Writer(const Stage &stage) : stage_(stage) {}
 
-  const HighLevelScene &scene_;
+  const Stage &stage_;
 
   const std::string &Error() const { return err_; }
 
@@ -516,22 +501,22 @@ class Writer {
 
 }  // namespace
 
-bool SaveAsUSDCToFile(const std::string &filename, const HighLevelScene &scene,
+bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
                       std::string *warn, std::string *err) {
 #ifdef __ANDROID__
   (void)filename;
-  (void)scene;
+  (void)stage;
   (void)warn;
 
   if (err) {
-    (*err) += "Saving USDC to a file is not supported for Android platform.\n";
+    (*err) += "Saving USDC to a file is not supported for Android platform(at the moment).\n";
   }
   return false;
 #else
 
   std::vector<uint8_t> output;
 
-  if (!SaveAsUSDCToMemory(scene, &output, warn, err)) {
+  if (!SaveAsUSDCToMemory(stage, &output, warn, err)) {
     return false;
   }
 
@@ -581,13 +566,13 @@ bool SaveAsUSDCToFile(const std::string &filename, const HighLevelScene &scene,
 #endif
 }
 
-bool SaveAsUSDCToMemory(const HighLevelScene &scene, std::vector<uint8_t> *output,
+bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err) {
   (void)warn;
   (void)output;
 
   // TODO
-  Writer writer(scene);
+  Writer writer(stage);
 
   if (err) {
     (*err) += "USDC writer is not yet implemented.\n";

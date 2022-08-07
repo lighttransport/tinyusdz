@@ -48,7 +48,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const GeomMesh &mesh) {
     }
   }
 
-  return dst;
+  return std::move(dst);
 }
 
 }  // namespace tydra

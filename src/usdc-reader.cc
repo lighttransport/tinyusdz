@@ -99,19 +99,7 @@
 
 #endif
 
-#ifndef TINYUSDZ_PRODUCTION_BUILD
-#define TINYUSDZ_LOCAL_DEBUG_PRINT
-#endif
-
-#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
-#define DCOUT(x)                                               \
-  do {                                                         \
-    std::cout << __FILE__ << ":" << __func__ << ":"            \
-              << std::to_string(__LINE__) << " " << x << "\n"; \
-  } while (false)
-#else
-#define DCOUT(x)
-#endif
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace usdc {
@@ -212,7 +200,7 @@ class USDCReader::Impl {
                                    Scene *scene);
 #endif
 
-  bool ReconstructHighLevelScene(HighLevelScene *scene);
+  bool ReconstructStage(Stage *stage);
 
   ///
   /// --------------------------------------------------
@@ -1722,8 +1710,8 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
 }
 #endif
 
-bool USDCReader::Impl::ReconstructHighLevelScene(HighLevelScene *scene) {
-  (void)scene;
+bool USDCReader::Impl::ReconstructStage(Stage *stage) {
+  (void)stage;
 
 #if 0 // TODO
   if (_nodes.empty()) {
@@ -1850,9 +1838,9 @@ USDCReader::~USDCReader() {
   impl_ = nullptr;
 }
 
-bool USDCReader::ReconstructHighLevelScene(HighLevelScene *scene) {
-  DCOUT("Reconstruct HighLevelScene.");
-  return impl_->ReconstructHighLevelScene(scene);
+bool USDCReader::ReconstructStage(Stage *stage) {
+  DCOUT("Reconstruct Stage.");
+  return impl_->ReconstructStage(stage);
 }
 
 std::string USDCReader::GetError() { return impl_->GetError(); }

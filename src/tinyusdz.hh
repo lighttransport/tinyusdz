@@ -435,13 +435,12 @@ struct StageMetas {
   value::dict customLayerData;
 };
 
-struct HighLevelScene {
+// Similar to UsdStage, but much more something like a Scene(scene graph)
+struct Stage {
   std::string name;       // Scene name
   int64_t default_root_node{-1};  // index to default root node
 
   StageMetas stage_metas;
-
-  std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
 
   // Root nodes
   std::vector<PrimNode> root_nodes;
@@ -459,71 +458,6 @@ struct NodeIndex {
                   // -1 = invlid(or not set)
 };
 
-#if 0
-struct LowLevelScene {
-  std::string name;       // Scene name
-  int64_t default_root_node{-1};  // index to default root node
-
-  // Scene global setting
-  Axis upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
-  std::string defaultPrim;           // prim node name
-  double metersPerUnit = 1.0;        // default [m]
-  double timeCodesPerSecond = 24.0;  // default 24 fps
-  std::string doc; // `documentation`
-  value::dict customLayerData;
-
-  std::vector<std::string> primChildren; // TODO: Move to nodes[0].primChildren?
-
-
-  //
-  // glTF-like scene objects
-  // TODO(syoyo): Use std::variant(C++17) like static polymorphism?
-  //
-  std::vector<GPrim> gprims; // Generic node
-
-  // Predefined class in usdGeom, usdLux, usdSkel, ...
-  std::vector<Xform> xforms;
-  std::vector<GeomCamera> geom_cameras;
-  std::vector<LuxSphereLight> lux_sphere_lights;
-  std::vector<LuxDomeLight> lux_dome_lights;
-  std::vector<GeomMesh> geom_meshes;
-  std::vector<GeomBasisCurves> geom_basis_curves;
-  std::vector<GeomPoints> geom_points;
-  std::vector<GeomCube> geom_cubes;
-  std::vector<GeomSphere> geom_spheres;
-  std::vector<GeomCone> geom_cones;
-  std::vector<GeomCylinder> geom_cylinders;
-  std::vector<GeomCapsule> geom_capsules;
-  std::vector<GeomSubset> geom_subsets;
-  std::vector<Material> materials;
-  std::vector<NodeGraph> node_graphs;
-  std::vector<Shader> shaders;  // TODO(syoyo): Support othre shaders
-  std::vector<Scope> scopes; // TODO(syoyo): We may not need this?
-  std::vector<Volume> volumes;
-  std::vector<SkelRoot> skel_roots;
-  std::vector<Skeleton> skeletons;
-
-  StringAndIdMap geom_meshes_map;  // Path <-> array index map
-  StringAndIdMap materials_map;    // Path <-> array index map
-
-  // Scene node graph(index-based)
-  std::vector<Node> nodes;
-
-  std::vector<NodeIndex> node_indices;
-
-};
-#endif
-
-#if 0
-// Similar to UsdStage. Mostly equals to `Scene`
-class Stage {
-
- public:
-  // Root node graph
-  std::vector<Node> nodes;
-
-};
-#endif
 
 struct USDLoadOptions {
   ///
@@ -561,21 +495,21 @@ struct USDLoadOptions {
 /// Load USDZ(zip) from a file.
 ///
 /// @param[in] filename USDZ filename(UTF-8)
-/// @param[out] scene USD scene.
+/// @param[out] stage USD stage(scene graph).
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDZFromFile(const std::string &filename, HighLevelScene *scene,
+bool LoadUSDZFromFile(const std::string &filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 
 
 #ifdef _WIN32
 // WideChar version
-bool LoadUSDZFromFile(const std::wstring &filename, HighLevelScene *scene,
+bool LoadUSDZFromFile(const std::wstring &filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 #endif
@@ -584,14 +518,14 @@ bool LoadUSDZFromFile(const std::wstring &filename, HighLevelScene *scene,
 /// Load USDC(binary) from a file.
 ///
 /// @param[in] filename USDC filename(UTF-8)
-/// @param[out] scene USD scene.
+/// @param[out] stage USD stage(scene graph).
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromFile(const std::string &filename, HighLevelScene *scene,
+bool LoadUSDCFromFile(const std::string &filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 
@@ -600,14 +534,14 @@ bool LoadUSDCFromFile(const std::string &filename, HighLevelScene *scene,
 ///
 /// @param[in] addr Memory address of USDC data
 /// @param[in] length Byte length of USDC data
-/// @param[out] scene USD scene.
+/// @param[out] stage USD stage.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, HighLevelScene *scene,
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
 
@@ -615,14 +549,14 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, HighLevelScene
 /// Load USDA(ascii) from a file.
 ///
 /// @param[in] filename USDA filename(UTF-8)
-/// @param[out] scene USD scene.
+/// @param[out] stage USD stage.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDAFromFile(const std::string &filename, HighLevelScene *scene,
+bool LoadUSDAFromFile(const std::string &filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());
 
@@ -632,20 +566,20 @@ bool LoadUSDAFromFile(const std::string &filename, HighLevelScene *scene,
 /// @param[in] addr Memory address of USDA data
 /// @param[in] length Byte length of USDA data
 /// @param[in[ base_dir Base directory(can be empty)
-/// @param[out] scene USD scene.
+/// @param[out] stage USD stage.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
 /// @param[in] options Load options(optional)
 ///
 /// @return true upon success
 ///
-bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, HighLevelScene *scene,
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
 
 #if 0  // TODO
 ///
-/// Write scene as USDC to a file.
+/// Write stage as USDC to a file.
 ///
 /// @param[in] filename USDC filename
 /// @param[out] err Error message(filled when the function returns false)

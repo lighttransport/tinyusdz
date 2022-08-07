@@ -107,7 +107,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(const uint
     return nonstd::make_unexpected(err);
   }
 
-  return ret;
+  return std::move(ret);
 }
  
 } // namespace image
