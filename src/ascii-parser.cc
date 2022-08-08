@@ -48,6 +48,7 @@
 #include "external/jsteemann/atoi.h"
 #include "fast_float/fast_float.h"
 #include "nonstd/expected.hpp"
+#include "simple_match/simple_match.hpp"
 //#include "nonstd/optional.hpp"
 
 //
@@ -2758,9 +2759,6 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
 
-  //
-  // Process Stage meta variables
-  //
   if (varname == "defaultPrim" ) {
     if (auto pv = var.value.get_value<std::string>()) {
       DCOUT("defaultPrim = " << pv.value());
