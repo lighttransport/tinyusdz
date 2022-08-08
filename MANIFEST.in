@@ -526,3 +526,4 @@ include src/value-pprint.cc
 include src/value-pprint.hh
 include src/value-types.cc
 include src/value-types.hh
+recursive-include src/external/pybind11 *
