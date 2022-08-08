@@ -1,4 +1,4 @@
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
 
 #include "prim-types.hh"
 #include "usda-reader.hh"
@@ -6,9 +6,9 @@
 
 #include "nonstd/optional.hpp"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
-//using namespace py::literals;  // to bring in the `_a` literal
+using namespace nb::literals;  // to bring in the `_a` literal
 
 static double test_api() {
   // TODO: Implement
@@ -59,29 +59,29 @@ struct Stage
 
 };
 
-PYBIND11_MODULE(pytinyusd, m) {
+NB_MODULE(pytinyusd, m) {
 
   m.def("test_api", &test_api, "Test API");
 
   auto UsdModule = m.def_submodule("Usd");
 
-  py::class_<Stage>(UsdModule, "Stage")
-    .def(py::init<>())
+  nb::class_<Stage>(UsdModule, "Stage")
+    .def(nb::init<>())
     .def_static("Open", &Stage::Open)
     .def("Export", &Stage::Export)
-    .def("GetPrimAtPath", [](const Stage &s, const std::string &path) -> py::object {
+    .def("GetPrimAtPath", [](const Stage &s, const std::string &path) -> nb::object {
       if (auto p = s.GetPrimAtPath(path)) {
-        return py::cast(*p);
+        return nb::cast(*p);
       }
-      return py::none();
+      return nb::none();
     });
   ;
 
-  py::class_<tinyusdz::GPrim>(UsdModule, "GPrim");
+  nb::class_<tinyusdz::GPrim>(UsdModule, "GPrim");
 
 
-  py::class_<tinyusdz::GeomSphere>(m, "Sphere")
-    .def(py::init<>())
+  nb::class_<tinyusdz::GeomSphere>(m, "Sphere")
+    .def(nb::init<>())
   ;
 
   //py::class_<tinyusdz::GeomSphere>(m, "Sphere")

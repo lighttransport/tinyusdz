@@ -37,7 +37,8 @@ set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
-option(TINYUSDZ_WITH_PYTHON "Build with Python binding through nanobind" OFF)
+option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
+
 option(TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option" OFF)
 
 option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ON)
@@ -91,8 +92,10 @@ if(TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
 endif()
 
 if(TINYUSDZ_WITH_PYTHON)
-  # nanobind requires C++17
-  set(CMAKE_CXX_STANDARD 17)
+  #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
+
+  # for pybind11
+  set(CMAKE_CXX_STANDARD 14)
 else()
   # Require strict C++14 mode(e.g. `-std=c++14`)
   set(CMAKE_CXX_STANDARD 14)
@@ -134,12 +137,20 @@ endif()
 
 if(TINYUSDZ_WITH_PYTHON)
 
+  # For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
+  # We may switch to nanobind at some point(probably around 2024?)
+
   # We build monolithic python module, so build libtinyusdz as a static library
   # with PIC enabled.
   set(CMAKE_POSITION_INDEPENDENT_CODE On)
-  set(NB_SHARED
-      OFF
-      CACHE INTERNAL "")
+
+  #[nanobind]
+  #set(NB_SHARED
+  #    OFF
+  #    CACHE INTERNAL "")
+  #set(NB_STATIC
+  #    ON
+  #    CACHE INTERNAL "")
 
   # workaround: find_package() does not work well inside of nanobind(`Python3::Module` target won't defined), so call it here.
   # and use `FindPython3`, not `FindPython`
@@ -154,14 +165,16 @@ if(TINYUSDZ_WITH_PYTHON)
 
   find_package(
     Python3
-    COMPONENTS Interpreter Development
+    COMPONENTS Interpreter Development.Module
     REQUIRED
     )
 
   #message(STATUS "Python include dirs: " ${Python_INCLUDE_DIRS})
   message(STATUS "Python include dirs: " ${Python3_INCLUDE_DIRS})
 
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/nanobind nanobind_build)
+  #add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/nanobind nanobind_build)
+
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11)
 endif()
 
 set(TINYUSDZ_SOURCES
@@ -540,8 +553,13 @@ endif()
 
 if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
+  # For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
+  # We may switch to nanobind at some point(probably around 2024?)
+
   # build monolithic .dll
-  nanobind_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
+  #nanobind_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
+
+  pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
   
