@@ -302,3 +302,5 @@ TinyUSDZ is licensed under MIT license.
 * thelink2012/any : BSL-1.0 license. https://github.com/thelink2012/any
 * better-enums : BSD-2 license. https://aantron.github.io/better-enums/
 * simple_match : BSL-1.0 license. https://github.com/jbandela/simple_match
+* nanobind : BSD-3 license. https://github.com/wjakob/nanobind
+* pybind11 : BSD-3 license. https://github.com/pybind/pybind11
