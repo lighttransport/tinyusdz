@@ -1,7 +1,10 @@
+#
+# It seeems pyproject(python-build) is still not mature to build native modules.
+# So we don't use pyton-buold at the moment.
+# This file is just provided for future possible use of `python-build`.
+#
 [build-system]
 requires = ["setuptools>=42", "wheel", "scikit-build", "cmake>=3.16", "ninja"]
 build-backend = "setuptools.build_meta"
 
 
-[tool.pytest.ini_options]
-testpaths = [ "tests" ]
