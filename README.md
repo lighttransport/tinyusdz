@@ -301,3 +301,4 @@ TinyUSDZ is licensed under MIT license.
 * ubench.h: Unlicense. https://github.com/sheredom/ubench.h
 * thelink2012/any : BSL-1.0 license. https://github.com/thelink2012/any
 * better-enums : BSD-2 license. https://aantron.github.io/better-enums/
+* simple_match : BSL-1.0 license. https://github.com/jbandela/simple_match

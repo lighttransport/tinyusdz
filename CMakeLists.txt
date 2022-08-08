@@ -454,6 +454,8 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src/external/fast_float/include)
+  target_include_directories(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE ${PROJECT_SOURCE_DIR}/src/external/simple_match/include)
 
   target_include_directories(
     ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
@@ -542,8 +544,12 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
   nanobind_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  
+  # strip "py" prefix
+  set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "tinyusdz")
 
   # copy python binding .so file to python/
+  # For developer
   add_custom_command(
     TARGET ${BUILD_TARGET_PY}
     POST_BUILD
@@ -551,6 +557,9 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
             "${CMAKE_SOURCE_DIR}/python/$<TARGET_FILE_NAME:${BUILD_TARGET_PY}>"
     COMMENT "copying python module file to python/"
     VERBATIM)
+
+  # For pypi packaging
+  install(TARGETS ${BUILD_TARGET_PY} LIBRARY DESTINATION tinyusdz)
 
 endif()
 
