@@ -11,6 +11,7 @@
 namespace tinyusdz {
 
 // forward decl
+class Stage;
 struct GeomMesh;
 
 namespace tydra {
@@ -169,9 +170,11 @@ class RenderScene {
       buffers;  // Various data storage(e.g. primvar texcoords)
 
   // uint32_t rootNodeId{0}; // root node = nodes[rootNodeId]
+
 };
 
-nonstd::expected<RenderMesh, std::string> Convert(const GeomMesh &mesh);
+nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const GeomMesh &mesh);
+  
 
 }  // namespace tydra
 }  // namespace tinyusdz

@@ -20,7 +20,7 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 
 }  // namespace
 
-nonstd::expected<RenderMesh, std::string> Convert(const GeomMesh &mesh) {
+nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const GeomMesh &mesh) {
   RenderMesh dst;
 
   {
@@ -47,6 +47,12 @@ nonstd::expected<RenderMesh, std::string> Convert(const GeomMesh &mesh) {
           to_string(interp) + ".\n");
     }
   }
+
+  // uvs
+  // Procedure:
+  // - Find Shader
+  // - Lookup PrimvarReader
+  (void)stage;
 
   return std::move(dst);
 }
