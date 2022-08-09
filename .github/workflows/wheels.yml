@@ -24,6 +24,9 @@ jobs:
         # to supply options, put them in 'env', like:
         # env:
         #   CIBW_SOME_OPTION: value
+        # Disable building PyPy wheels on all platforms
+        env:
+            CIBW_SKIP: pp*
 
       - uses: actions/upload-artifact@v3
         with:
