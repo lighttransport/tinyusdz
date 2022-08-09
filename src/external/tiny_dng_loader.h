@@ -302,14 +302,19 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
 
 #include <stdint.h>  // for lj92
 
-#include <cassert>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <map>
 #include <sstream>
+
+#if defined(TINY_DNG_LOADER_NO_STDIO)
+#else
+#include <cstdio>
+#include <cassert>
+#include <iostream>
+#endif
 
 // #include <iostream> // dbg
 
@@ -332,7 +337,7 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-//#define TINY_DNG_LOADER_DEBUG
+#define TINY_DNG_LOADER_DEBUG
 #ifdef TINY_DNG_LOADER_DEBUG
 #define TINY_DNG_DPRINTF(...) printf(__VA_ARGS__)
 #else
@@ -363,6 +368,23 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
   } while (false)
 
 #else
+
+#if defined(TINY_DNG_LOADER_NO_STDIO)
+// No output
+
+#define TINY_DNG_ASSERT(assertion, text)                                    \
+  do {                                                                      \
+    if ((assertion) == 0) {                                                 \
+      abort();                                                              \
+    }                                                                       \
+  } while (false)
+#define TINY_DNG_ABORT(text)                                              \
+  do {                                                                    \
+    abort();                                                              \
+  } while (false)
+
+#else // NO_STDIO
+
 #define TINY_DNG_ASSERT(assertion, text)                                    \
   do {                                                                      \
     if ((assertion) == 0) {                                                 \
@@ -375,6 +397,9 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
     std::cerr << __FILE__ << ":" << __LINE__ << " " << text << std::endl; \
     abort();                                                              \
   } while (false)
+
+#endif // NO_STDIO
+
 #endif
 
 #ifdef __clang__
@@ -399,9 +424,13 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
 #endif
 #endif
 
+#if defined(TINY_DNG_LOADER_NO_STB_IMAGE_INCLUDE)
+#else
+
 // STB image to decode jpeg image.
 // Assume STB_IMAGE_IMPLEMENTATION is defined elsewhere
 #include "stb_image.h"
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -998,10 +1027,10 @@ static int parsePred6(ljp* self) {
   --write;
   int rowcount = self->x - 1;
   while (rowcount--) {
-    int errcode = LJ92_ERROR_NONE;
-    diff = nextdiff(self, self->num_huff_idx - 1, 0, &errcode);
-    if (errcode != LJ92_ERROR_NONE) {
-      return errcode;
+    int _errcode = LJ92_ERROR_NONE;
+    diff = nextdiff(self, self->num_huff_idx - 1, 0, &_errcode);
+    if (_errcode != LJ92_ERROR_NONE) {
+      return _errcode;
     }
     Px = left;
     left = Px + diff;
@@ -1031,10 +1060,10 @@ static int parsePred6(ljp* self) {
   // TINY_DNG_DPRINTF("%x %x\n",thisrow,lastrow);
   while (c < pixels) {
     col = 0;
-    int errcode = LJ92_ERROR_NONE;
-    diff = nextdiff(self, self->num_huff_idx - 1, 0, &errcode);
-    if (errcode != LJ92_ERROR_NONE) {
-      return errcode;
+    int _errcode = LJ92_ERROR_NONE;
+    diff = nextdiff(self, self->num_huff_idx - 1, 0, &_errcode);
+    if (_errcode != LJ92_ERROR_NONE) {
+      return _errcode;
     }
     Px = lastrow[col];  // Use value above for first pixel in row
     left = Px + diff;
@@ -1054,10 +1083,10 @@ static int parsePred6(ljp* self) {
       write = self->writelen;
     }
     while (rowcount--) {
-      int errcode = LJ92_ERROR_NONE;
-      diff = nextdiff(self, self->num_huff_idx - 1, 0, &errcode);
-      if (errcode != LJ92_ERROR_NONE) {
-        return errcode;
+      int errcode_d2 = LJ92_ERROR_NONE;
+      diff = nextdiff(self, self->num_huff_idx - 1, 0, &errcode_d2);
+      if (errcode_d2 != LJ92_ERROR_NONE) {
+        return errcode_d2;
       }
 
       Px = lastrow[col] + ((left - lastrow[col - 1]) >> 1);
@@ -3029,20 +3058,24 @@ static bool DecompressLosslessJPEG(const StreamReader& sr,
       TINY_DNG_DPRINTF("ret = %d\n", ret);
       TINY_DNG_ASSERT(ret == LJ92_ERROR_NONE, "Error opening JPEG stream.");
 
-      // TINY_DNG_DPRINTF("lj %d, %d, %d\n", lj_width, lj_height, lj_bits);
-      // TINY_DNG_DPRINTF("ljp x %d, y %d, c %d\n", ljp->x, ljp->y,
-      // ljp->components);
-      // TINY_DNG_DPRINTF("tile width = %d\n", image_info.tile_width);
-      // TINY_DNG_DPRINTF("tile height = %d\n", image_info.tile_length);
-      // TINY_DNG_DPRINTF("col = %d, tiff_w = %d / %d\n", column_step, tiff_w,
-      // image_info.width);
+      TINY_DNG_DPRINTF("lj %d, %d, %d\n", lj_width, lj_height, lj_bits);
+      TINY_DNG_DPRINTF("ljp x %d, y %d, c %d\n", ljp->x, ljp->y,
+      ljp->components);
+      TINY_DNG_DPRINTF("tile width = %d\n", image_info.tile_width);
+      TINY_DNG_DPRINTF("tile height = %d\n", image_info.tile_length);
+      TINY_DNG_DPRINTF("col = %d, tiff_w = %d / %d\n", int(column_step), tiff_w,
+      image_info.width);
 
-      TINY_DNG_ASSERT((lj_width * lj_height) ==
-                          image_info.tile_width * image_info.tile_length,
-                      "Unexpected JPEG tile size.");
+      TINY_DNG_ASSERT(lj_width <= image_info.tile_width, "Unexpected JPEG tile width size.");
+      TINY_DNG_ASSERT(lj_height <= image_info.tile_length, "Unexpected JPEG tile length size.");
 
-      TINY_DNG_ASSERT(ljp->components == image_info.samples_per_pixel,
-                      "# of color channels does not match.");
+      //TINY_DNG_ASSERT((lj_width * lj_height) ==
+      //                    image_info.tile_width * image_info.tile_length,
+      //                "Unexpected JPEG tile size.");
+
+      TINY_DNG_DPRINTF("lj.components %d, samples_per_pixel %d\n", ljp->components, image_info.samples_per_pixel);
+      //TINY_DNG_ASSERT(ljp->components == image_info.samples_per_pixel,
+      //                "# of color channels does not match.");
 
       // int write_length = image_info.tile_width;
       // int skip_length = dst_width - image_info.tile_width;
@@ -3059,6 +3092,7 @@ static bool DecompressLosslessJPEG(const StreamReader& sr,
       tmpbuf.resize(
           static_cast<size_t>(lj_width * lj_height * ljp->components));
 
+      // TODO: ljp->components > image_info.samples_per_pixel
       ret = lj92_decode(ljp, tmpbuf.data(), image_info.tile_width, 0, NULL, 0);
       // ret = lj92_decode(ljp, tmpbuf.data(), write_length, skip_length, NULL,
       // 0);

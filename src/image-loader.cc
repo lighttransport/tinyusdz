@@ -1,4 +1,4 @@
-#if defined(TINYUSDZ_SUPPORT_EXR)
+#if defined(TINYUSDZ_WITH_EXR)
 #include "external/tinyexr.h"
 #endif
 
@@ -11,8 +11,31 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/stb_image.h"
 #include "external/fpng.h"
+
+#include "external/stb_image.h"
+
+#if defined(TINYUSDZ_WITH_TIFF)
+#ifndef TINYUSDZ_NO_TINY_DNG_LOADER_IMPLEMENTATION
+#define TINY_DNG_LOADER_IMPLEMENTATION
+#endif
+
+#ifndef TINY_DNG_NO_EXCEPTION
+#define TINY_DNG_NO_EXCEPTION
+#endif
+
+#ifndef TINY_DNG_LOADER_NO_STDIO
+#define TINY_DNG_LOADER_NO_STDIO
+#endif
+
+// Prevent including `stb_image.h` inside of tiny_dng_loader.h
+#ifndef TINY_DNG_LOADER_NO_STB_IMAGE_INCLUDE
+#define TINY_DNG_LOADER_NO_STB_IMAGE_INCLUDE
+#endif
+
+#include "external/tiny_dng_loader.h"
+#endif
+
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -25,10 +48,11 @@ namespace image {
 
 namespace {
 
-// Decode image(png, jpg, ...)
-static bool DecodeImage(const uint8_t *bytes, const size_t size,
-                        const std::string &uri, Image *image, std::string *warn,
-                        std::string *err) {
+// Decode image(png, jpg, ...) using STB
+// 16bit PNG is supported.
+bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, Image *image, std::string *warn,
+                    std::string *err) {
   (void)warn;
 
   int w = 0, h = 0, comp = 0, req_comp = 0;
@@ -62,8 +86,10 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size,
   // FIXME we should only enter this function if the image is embedded. If
   // `uri` references an image file, it should be left as it is. Image loading
   // should not be mandatory (to support other formats)
-  if (!data)
+  if (!data) {
     data = stbi_load_from_memory(bytes, int(size), &w, &h, &comp, req_comp);
+  }
+
   if (!data) {
     // NOTE: you can use `warn` instead of `err`
     if (err) {
@@ -86,6 +112,7 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size,
   image->height = h;
   image->channels = req_comp;
   image->bpp = bits;
+  image->format = Image::PixelFormat::UInt;
   image->data.resize(static_cast<size_t>(w * h * req_comp) * size_t(bits / 8));
   std::copy(data, data + w * h * req_comp * (bits / 8), image->data.begin());
   stbi_image_free(data);
@@ -93,22 +120,162 @@ static bool DecodeImage(const uint8_t *bytes, const size_t size,
   return true;
 }
 
+#if defined(TINYUSDZ_WITH_EXR)
 
-} // namespace
+bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, Image *image,
+                    std::string *err) {
+  // TODO(syoyo): Multi-channel EXR
+
+  float *rgba = nullptr;
+  int width;
+  int height;
+  const char *exrerr = nullptr;
+  int ret = LoadEXRFromMemory(&rgba, &width, &height, bytes, size, &exrerr);
+
+  if (exrerr) {
+    (*err) += std::string(exrerr);
+
+    FreeEXRErrorMessage(exrerr);
+  }
+
+  if (!ret) {
+    (*err) += "Failed to load EXR image: " + uri + "\n";
+    return false;
+  }
+
+  image->width = width;
+  image->height = height;
+  image->channels = 4;  // RGBA
+  image->bpp = 32;      // fp32
+  image->format = Image::PixelFormat::Float;
+  image->data.resize(static_cast<size_t>(width * height * 4) * sizeof(float));
+  memcpy(image->data.data(), rgba, sizeof(float) * size_t(width) * size_t(height) * 4);
+
+  free(rgba);
+
+  return true;
+}
+
+#endif
+
+#if defined(TINYUSDZ_WITH_TIFF)
+
+bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, Image *image,
+                    std::string *err) {
 
 
-nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(const uint8_t *addr, size_t sz, const std::string &uri) {
+  std::vector<tinydng::FieldInfo> custom_fields; // no custom fields
+  std::vector<tinydng::DNGImage> images;
 
+  std::string warn;
+  std::string dngerr;
+
+  bool ret = tinydng::LoadDNGFromMemory(reinterpret_cast<const char *>(bytes), uint32_t(size), custom_fields, &images, &warn, &dngerr);
+
+  if (!dngerr.empty()) {
+    (*err) += dngerr;
+  }
+
+  if (!ret) {
+    (*err) += "Failed to load TIFF/DNG image: " + uri + "\n";
+    return false;
+  }
+
+  // TODO(syoyo): Multi-layer TIFF
+  // Use the largest image(based on width pixels).
+  size_t largest = 0;
+  int largest_width = images[0].width;
+  for (size_t i = 1; i < images.size(); i++) {
+    if (largest_width < images[i].width) {
+      largest = i;
+      largest_width = images[i].width;
+     }
+  }
+
+  size_t spp = size_t(images[largest].samples_per_pixel);
+  size_t bps = size_t(images[largest].bits_per_sample);
+
+  if (spp > 4) {
+    (*err) += "Samples per pixel must be 0 ~ 4, but got " + std::to_string(spp) + " for image: " + uri + "\n";
+    return false;
+  }
+
+  if ((bps == 8) || (bps == 16) || (bps == 32)) {
+    // ok
+  } else {
+    (*err) += "Invalid bits per sample " + std::to_string(bps) + " for image: " + uri + "\n";
+    return false;
+  }
+
+  auto sample_format = images[largest].sample_format;
+  if (sample_format == tinydng::SAMPLEFORMAT_UINT) {
+    image->format = Image::PixelFormat::UInt;
+  } else if (sample_format == tinydng::SAMPLEFORMAT_INT) {
+    image->format = Image::PixelFormat::Int;
+  } else if (sample_format == tinydng::SAMPLEFORMAT_IEEEFP) {
+    image->format = Image::PixelFormat::Float;
+  } else {
+    (*err) += "Invalid Sample format for image: " + uri + "\n";
+    return false;
+  }
+
+  image->width = images[largest].width;
+  image->height = images[largest].height;
+  image->channels = int(spp);
+  image->bpp = int(bps);
+
+  image->data.swap(images[largest].data);
+
+  return true;
+}
+
+#endif
+
+}  // namespace
+
+nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
+    const uint8_t *addr, size_t sz, const std::string &uri) {
   image::ImageResult ret;
-
   std::string err;
-  bool ok = DecodeImage(addr, sz, uri, &ret.image, &ret.warning, &err);
+
+#if defined(TINYUSDZ_WITH_EXR)
+  if (TINYEXR_SUCCESS == IsEXRFromMemory(addr, sz)) {
+
+    bool ok = DecodeImageEXR(addr, sz, uri, &ret.image, &err);
+
+    if (!ok) {
+      return nonstd::make_unexpected(err);
+    }
+
+    return std::move(ret);
+  }
+#endif
+
+#if defined(TINYUSDZ_WITH_TIFF)
+  {
+    std::string msg;
+    if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &msg)) {
+
+      bool ok = DecodeImageTIFF(addr, sz, uri, &ret.image, &err);
+
+      if (!ok) {
+        return nonstd::make_unexpected(err);
+      }
+
+      return std::move(ret);
+    }
+  }
+#endif
+
+  bool ok = DecodeImageSTB(addr, sz, uri, &ret.image, &ret.warning, &err);
   if (!ok) {
     return nonstd::make_unexpected(err);
   }
 
   return std::move(ret);
 }
- 
-} // namespace image
-} // namespace tinyusdz
+
+}  // namespace image
+}  // namespace tinyusdz
