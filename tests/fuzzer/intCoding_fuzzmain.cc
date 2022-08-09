@@ -10,7 +10,8 @@ static void parse_intCoding4(const uint8_t *data, size_t size)
 {
   if (size <= 8 + 4) return;
 
-  uint32_t n;
+  // TODO: Use Compress() to compute nInts.
+  uint32_t n; // nInts
   memcpy(&n, data, 4); 
 
   using Compressor = tinyusdz::Usd_IntegerCompression;
