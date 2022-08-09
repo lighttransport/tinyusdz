@@ -180,6 +180,7 @@ endif()
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
@@ -499,23 +500,23 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   if(TINYUSDZ_WITH_TIFF)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_SUPPORT_TIFF")
+                               PRIVATE "TINYUSDZ_WITH_TIFF")
   endif(TINYUSDZ_WITH_TIFF)
 
   if(TINYUSDZ_WITH_EXR)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_SUPPORT_EXR")
+                               PRIVATE "TINYUSDZ_WITH_EXR")
   endif(TINYUSDZ_WITH_EXR)
 
   if(TINYUSDZ_WITH_AUDIO)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_SUPPORT_AUDIO")
+                               PRIVATE "TINYUSDZ_WITH_AUDIO")
   endif(TINYUSDZ_WITH_AUDIO)
 
   if(TINYUSDZ_WITH_OPENSUBDIV)
     target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+                               PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)

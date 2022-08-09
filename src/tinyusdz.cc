@@ -55,7 +55,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "image-loader.hh"
 
 #if 0
-#if defined(TINYUSDZ_SUPPORT_AUDIO)
+#if defined(TINYUSDZ_WITH_AUDIO)
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -72,32 +72,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma clang diagnostic pop
 #endif
 
-#endif  // TINYUSDZ_SUPPORT_AUDIO
+#endif  // TINYUSDZ_WITH_AUDIO
 
-#if defined(TINYUSDZ_USE_OPENSUBDIV)
+#if defined(TINYUSDZ_WITH_OPENSUBDIV)
 
 #include "subdiv.hh"
 
 #endif
 
-#if defined(TINYUSDZ_SUPPORT_EXR)
-#include "external/tinyexr.h"
-#endif
-
-#ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#endif
-
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/stb_image.h"
-
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
 #endif
 
 #include "common-macros.inc"

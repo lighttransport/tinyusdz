@@ -4,6 +4,8 @@
 
 #include "subdiv.hh"
 
+#include "common-macros.inc"
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -64,7 +66,7 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
     subd_level = 0;
   }
 
-  std::cout << "SubD: level = " << subd_level << "\n";
+  DCOUT("SubD: level = " << subd_level);
 
   const auto start_t = std::chrono::system_clock::now();
 
@@ -72,7 +74,7 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
 
   if (maxlevel > 8) {
     maxlevel = 8;
-    std::cout << "SubD: limit subd level to " << maxlevel << "\n";
+    DCOUT("SubD: limit subd level to " << maxlevel);
   }
 
   typedef Far::TopologyDescriptor Descriptor;
@@ -193,7 +195,7 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
     // int ncolors= refLastLevel.GetNumFVarValues(channelColor);
     int nfaces = refLastLevel.GetNumFaces();
 
-    std::cout << "nverts = " << nverts << ", nfaces = " << nfaces << "\n";
+    DCOUT("nverts = " << nverts << ", nfaces = " << nfaces);
 
     // Print vertex positions
     int firstOfLastVerts = refiner->GetNumVerticesTotal() - nverts;
@@ -289,7 +291,7 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
       std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t)
           .count());
 
-  std::cout << "SubD time : " << elapsed << " [ms]\n";
+  DCOUT("SubD time : " << elapsed << " [ms]");
 
   if (dump) {
     std::cout << "dumped subdivided mesh as `subd.obj`\n";

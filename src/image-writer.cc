@@ -1,9 +1,9 @@
-#if defined(TINYUSDZ_SUPPORT_EXR)
+#if defined(TINYUSDZ_WITH_EXR)
 #include "external/tinyexr.h"
 #endif
 
-#if defined(TINYUSDZ_SUPPORT_TIFF)
-#include "external/tinydng.h"
+#if defined(TINYUSDZ_WITH_TIFF)
+#include "external/tiny_dng_writer.h"
 #endif
 
 #ifndef TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
@@ -52,9 +52,9 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
 {
   (void)image;
   (void)option;
-  
+
   return nonstd::make_unexpected("TODO: Implement WriteImageToFile");
 }
- 
+
 } // namespace image
 } // namespace tinyusdz

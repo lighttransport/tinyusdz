@@ -1,20 +1,20 @@
-// Simple image loader
-// supported file format: PNG(use fpng), JPEG(use stb_image), OpenEXR(use tinyexr), TIFF(use tinydng)  
+// Simple audio loader
+// supported file format: WAV, MP3  
 #pragma once
 
 #include <cstddef>
 #include <string>
 #include <vector>
 
-#include "image-types.hh"
+#include "tinyusdz.hh"
 
 #include "nonstd/expected.hpp"
 
 namespace tinyusdz {
-namespace image {
+namespace audio {
 
-struct ImageResult {
-  Image image;
+struct AudioResult {
+  //Image image;
   std::string warning;
 };
 
@@ -22,7 +22,7 @@ struct ImageResult {
 /// @param[in] filename Input filename(or URI)
 /// @return ImageResult or error message(std::string)
 ///
-nonstd::expected<ImageResult, std::string> LoadImageFromFile(const std::string &filename);
+nonstd::expected<AudioResult, std::string> LoadAudioFromFile(const std::string &filename);
 
 ///
 /// @param[in] addr Memory address
@@ -30,7 +30,7 @@ nonstd::expected<ImageResult, std::string> LoadImageFromFile(const std::string &
 /// @param[in] uri Input URI(or filename) as a hint. This is used only in error message.
 /// @return ImageResult or error message(std::string)
 ///
-nonstd::expected<ImageResult, std::string> LoadImageFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
+nonstd::expected<AudioResult, std::string> LoadAudioFromMemory(const uint8_t *addr, const size_t datasize, const std::string &uri);
 
-} // namespace image
+} // namespace audio
 } // namespace tinyusdz
