@@ -36,7 +36,10 @@ tinyusdz_sources=[
   ]
 
 #incdirs = include_directories(['../../src','../../src/external/ryu'])
-incdirs = include_directories(['../../src','../../src/external/fast_float/include'])
+incdirs = include_directories(['../../src',
+  '../../src/external/fast_float/include',
+  '../../src/external/simple_match/include',
+  ])
 
 # TINYUSDZ_FUZZER_BUILD = suppress some debug message
 executable('fuzz_tinyusdz',
