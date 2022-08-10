@@ -59,7 +59,7 @@ class any;
 namespace tinyusdz {
 namespace value {
 
-// Use `Value type token` for fundamental data types.
+// Identifier is the one used in USDA(Ascii)
 // See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
 constexpr auto kToken = "token";
 constexpr auto kString = "string";
@@ -273,6 +273,7 @@ enum TypeId {
   TYPE_ID_LIST_OP_UINT64,
   TYPE_ID_LIST_OP_PAYLOAD,
 
+  TYPE_ID_PATH,
   TYPE_ID_PATH_VECTOR,
   TYPE_ID_TOKEN_VECTOR,
 

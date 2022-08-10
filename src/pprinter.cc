@@ -313,7 +313,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
 
   for (auto prop : klass.props) {
 
-    if (prop.second.is_rel) {
+    if (prop.second.IsRel()) {
         ss << "TODO: Rel\n";
     } else {
       //const PrimAttrib &attrib = prop.second.attrib;
@@ -750,7 +750,7 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
 std::string to_string(const GeomCamera::Projection &proj, uint32_t indent, bool closing_brace) {
   (void)closing_brace;
   (void)indent;
-  
+
   if (proj == GeomCamera::Projection::orthographic) {
     return "orthographic";
   } else {

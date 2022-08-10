@@ -4,6 +4,7 @@
 // TODO:
 //   - [ ] List-up TODOs :-)
 
+#include <cstdio>
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -148,6 +149,10 @@
 namespace tinyusdz {
 
 namespace ascii {
+
+constexpr auto kRel = "rel";
+constexpr auto kTimeSamplesSuffix = ".timeSamples";
+constexpr auto kConnectSuffix = ".connect";
 
 // T = better-enum class
 template<typename T>
@@ -630,6 +635,22 @@ bool AsciiParser::ParseMatrix(value::matrix4d *result) {
   }
 
   return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(Path *value) {
+  if (value) {
+    std::string str;
+    if (!ReadPathIdentifier(&str)) {
+      return false;
+    }
+
+    (*value) = Path(str);
+
+    return true;
+  } else {
+    return false;
+  }
 }
 
 template <>
@@ -1786,6 +1807,30 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
     if (!Expect(']')) {
       return false;
     }
+  }
+
+  return true;
+}
+
+///
+/// Parse PathVector
+///
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result) {
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SepBy1BasicType(',', result)) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
   }
 
   return true;
@@ -4458,13 +4503,38 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
 ///
 /// Parse rel string
 ///
-bool AsciiParser::ParseRel(Rel *result) {
-  PathIdentifier value;
-  if (!ReadBasicType(&value)) {
+bool AsciiParser::ParseRelation(Relation *result) {
+
+  char c;
+  if (!LookChar1(&c)) {
     return false;
   }
 
-  result->path = value;
+  if (c == '"') {
+    // string
+    std::string value;
+    if (!ReadBasicType(&value)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse String.");
+    }
+    result->targets = value;
+
+  } else if (c == '<') {
+    // Path
+    Path value;
+    if (!ReadBasicType<Path>(&value)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse Path.");
+    }
+    result->targets = value;
+  } else if (c == '[') {
+    // PathVector
+    std::vector<Path> value;
+    if (!ParseBasicTypeArray(&value)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse PathVector.");
+    }
+    result->targets = value;
+  } else {
+    PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) + "\" found. Expects string, Path or PathVector.");
+  }
 
   if (!SkipWhitespaceAndNewline()) {
     return false;
@@ -4553,8 +4623,14 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   // prim_attr : (custom?) uniform type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
   //           | (custom?) uniform type (array_qual?) name interpolation?
+  //           | (custom?) rel name = None
+  //           | (custom?) rel name = string meta
+  //           | (custom?) rel name = path meta
+  //           | (custom?) rel name = pathvector meta
+  //           | (custom?) rel name meta
   //           ;
 
+  // Parse `custom`
   bool custom_qual = MaybeCustom();
 
   if (!SkipWhitespace()) {
@@ -4571,6 +4647,83 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   if (!SkipWhitespace()) {
     return false;
   }
+
+  // Relation('rel')
+  if (type_name == kRel) {
+
+    // - identifier
+    // - identifier, '(' metadataum ')'
+    // - identifier, '=', (None|string|path|pathvector)
+    // NOTE: There should be no 'uniform rel'
+
+    std::string attr_name;
+
+    // next token should be type
+    if (!ReadIdentifier(&attr_name)) {
+      PUSH_ERROR_AND_RETURN("Attribute name(Identifier) expected but got non-identifier.");
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == '(') {
+      // TODO:
+      PUSH_ERROR_AND_RETURN("TODO: Support parsing Property meta.");
+    }
+
+    if (c != '=') {
+      // No targets.
+      Property p(custom_qual);
+      p.type = Property::Type::NoTargetsRelation;
+
+      (*props)[attr_name] = p;
+
+      return true;
+    }
+
+    // has targets
+    if (!Expect('=')) {
+      return false;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (MaybeNone()) {
+      PUSH_ERROR_AND_RETURN("TODO: Support `None` for property.");
+    }
+
+
+    Relation rel;
+    if (!ParseRelation(&rel)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `rel` property.");
+    }
+
+    if (!SkipWhitespace()) {
+    }
+
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    // TODO: Parse Meta.
+    if (c == '(') {
+      PUSH_ERROR_AND_RETURN("TODO: Parse metadatum of property \"" + attr_name + "\"");
+    }
+
+    return true;
+  }
+
+  //
+  // Attrib.
+  //
 
   if (type_name == "uniform") {
     uniform_qual = true;
@@ -4637,7 +4790,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     return true;
   }
 
-  bool isTimeSample = endsWith(primattr_name, ".timeSamples");
+  bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
+  bool isConnection = endsWith(primattr_name, kConnectSuffix);
 
   bool define_only = false;
   {
@@ -4653,19 +4807,16 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   }
 
   if (define_only) {
-    // TODO:
+    if (isConnection || isTimeSample) {
+      PUSH_ERROR_AND_RETURN("`.connect` or `.timeSamples` suffix provided, but no target/values provided.");
+    }
 
-    // attr.custom = custom_qual;
-    // attr.uniform = uniform_qual;
-    // attr.name = primattr_name;
+    DCOUT("Define only property = " + primattr_name);
 
-    // DCOUT("primattr_name = " + primattr_name);
+    Property p(custom_qual);
+    p.type = Property::Type::EmptyAttrib;
 
-    //// FIXME
-    //{
-    //  (*props)[primattr_name].rel = rel;
-    //  (*props)[primattr_name].is_rel = true;
-    //}
+    (*props)[primattr_name] = p;
 
     return true;
   }
@@ -4675,10 +4826,27 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     return false;
   }
 
-  //
-  // TODO(syoyo): Refactror and implement value parser dispatcher.
-  //
-  if (isTimeSample) {
+  if (isConnection) {
+
+    // Target Must be Path
+    Path path;
+    if (!ReadBasicType(&path)) {
+      PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
+    }
+
+    Relation rel;
+    rel.targets = path;
+
+    Property p(rel, /* isConnection*/ true, custom_qual);
+
+    (*props)[primattr_name] = p;
+
+    return true;
+
+  } else if (isTimeSample) {
+    //
+    // TODO(syoyo): Refactror and implement value parser dispatcher.
+    //
       if (type_name == "float") {
         if (auto pv = TryParseTimeSamples<float>()) {
           value::TimeSamples ts = ConvertToTimeSamples<float>(pv.value());
@@ -4746,88 +4914,87 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     return false;
 
   } else {
+
     PrimAttrib attr;
-    Rel rel;
 
-    bool is_rel = false;
-
+    // TODO: Refactor.
     if (type_name == value::kBool) {
       if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
         return false;
       }
-    } else if (type_name == "float") {
+    } else if (type_name == value::kFloat) {
       if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
         return false;
       }
-    } else if (type_name == "int") {
+    } else if (type_name == value::kInt) {
       if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
         return false;
       }
-    } else if (type_name == "double") {
+    } else if (type_name == value::kDouble) {
       if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
         return false;
       }
-    } else if (type_name == "string") {
+    } else if (type_name == value::kString) {
       if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
         return false;
       }
-    } else if (type_name == "token") {
+    } else if (type_name == value::kToken) {
       if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
         return false;
       }
-    } else if (type_name == "float2") {
+    } else if (type_name == value::kFloat2) {
       if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
                                              &attr)) {
         return false;
       }
-    } else if (type_name == "float3") {
+    } else if (type_name == value::kFloat3) {
       if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
                                              &attr)) {
         return false;
       }
-    } else if (type_name == "float4") {
+    } else if (type_name == value::kFloat4) {
       if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
                                              &attr)) {
         return false;
       }
-    } else if (type_name == "double2") {
+    } else if (type_name == value::kDouble2) {
       if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "double3") {
+    } else if (type_name == value::kDouble3) {
       if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "double4") {
+    } else if (type_name == value::kDouble4) {
       if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "point3f") {
+    } else if (type_name == value::kPoint3f) {
       DCOUT("point3f, array_qual = " + std::to_string(array_qual));
       if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
                                               &attr)) {
         DCOUT("Failed to parse point3f data.");
         return false;
       }
-    } else if (type_name == "color3f") {
+    } else if (type_name == value::kColor3f) {
       if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "color4f") {
+    } else if (type_name == value::kColor4f) {
       if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "point3d") {
+    } else if (type_name == value::kPoint3d) {
       if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "normal3f") {
+    } else if (type_name == value::kNormal3f) {
       DCOUT("normal3f, array_qual = " + std::to_string(array_qual));
       if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
                                                &attr)) {
@@ -4835,44 +5002,37 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         return false;
       }
       DCOUT("Got it");
-    } else if (type_name == "normal3d") {
+    } else if (type_name == value::kNormal3d) {
       if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
                                                &attr)) {
         return false;
       }
-    } else if (type_name == "color3d") {
+    } else if (type_name == value::kColor3d) {
       if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "color4d") {
+    } else if (type_name == value::kColor4d) {
       if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
                                               &attr)) {
         return false;
       }
-    } else if (type_name == "matrix2d") {
+    } else if (type_name == value::kMatrix2d) {
       if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
                                                &attr)) {
         return false;
       }
-    } else if (type_name == "matrix3d") {
+    } else if (type_name == value::kMatrix3d) {
       if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
                                                &attr)) {
         return false;
       }
-    } else if (type_name == "matrix4d") {
+    } else if (type_name == value::kMatrix4d) {
       if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
                                                &attr)) {
         return false;
       }
 
-    } else if (type_name == value::kRelationship) {
-      if (!ParseRel(&rel)) {
-        PushError("Failed to parse value with type `rel`.\n");
-        return false;
-      }
-
-      is_rel = true;
     } else if (type_name == value::kTexCoord2f) {
       if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
                                                  &attr)) {
@@ -4898,15 +5058,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     DCOUT("primattr_name = " + primattr_name);
 
-    (*props)[primattr_name].is_custom = custom_qual;
+    Property p(attr, custom_qual);
 
-    if (is_rel) {
-      (*props)[primattr_name].rel = rel;
-      (*props)[primattr_name].is_rel = true;
-
-    } else {
-      (*props)[primattr_name].attrib = attr;
-    }
+    (*props)[primattr_name] = p;
 
     return true;
   }
