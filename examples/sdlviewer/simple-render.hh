@@ -8,7 +8,11 @@
 
 namespace example {
 
-using vec3 = std::array<float, 3>;
+// GLES-like naming
+
+using vec3 = tinyusdz::value::float3;
+using vec2 = tinyusdz::value::float2;
+using mat2 = tinyusdz::value::matrix2f;
 
 struct AOV {
   size_t width;
@@ -100,12 +104,19 @@ struct DrawGeomMesh {
   nanort::BVHAccel<float> accel;
 };
 
+template<typename T>
 struct UVReader {
+
+  static_assert(std::is_same<T, float>::value || std::is_same<T, vec2>::value || std::is_same<T, vec3>::value,
+                "Unsupported type for UVReader");
+
   int32_t st_id{-1};       // index to DrawGeomMesh::float_primvars
   int32_t indices_id{-1};  // index to DrawGeomMesh::int_primvars
 
+  mat2 uv_transform;
+
   // Fetch interpolated UV coordinate
-  std::array<float, 2> fetch_uv(size_t face_id, float varyu, float varyv);
+  T fetch_uv(size_t face_id, float varyu, float varyv);
 };
 
 struct Texture {
@@ -117,7 +128,7 @@ struct Texture {
     TEXTURE_CHANNEL_RGBA,
   };
 
-  UVReader uv_reader;
+  UVReader<vec2> uv_reader;
   int32_t image_id{-1};
 
   // NOTE: for single channel(e.g. R), [0] will be filled for the return value.
@@ -141,7 +152,7 @@ static uint32_t GetUDIMTileId(uint32_t u, uint32_t v)
 #endif
 
 struct UDIMTexture {
-  UVReader uv_reader;
+  UVReader<vec2> uv_reader;
   std::unordered_map<uint32_t, int32_t>
       images;  // key: udim tile_id, value: image_id
 
