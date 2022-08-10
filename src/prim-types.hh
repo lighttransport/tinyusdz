@@ -588,18 +588,18 @@ struct ConnectionPath {
                       // `Scene.shaders`)
 };
 
-struct Connection {
-  int64_t src_index{-1};
-  int64_t dest_index{-1};
-};
+//struct Connection {
+//  int64_t src_index{-1};
+//  int64_t dest_index{-1};
+//};
+//
+//using connection_id_map =
+//    std::unordered_map<std::pair<std::string, std::string>, Connection>;
 
-using connection_id_map =
-    std::unordered_map<std::pair<std::string, std::string>, Connection>;
-
-// Relation
-struct Rel {
-  // TODO: Implement
-  std::string path;
+// Relation and Connection
+struct Relation {
+  // string, Path or PathVector
+  tinyusdz::variant<std::string, Path, std::vector<Path>> targets;
 };
 
 // Variable class for Prim and Attribute Metadataum.
@@ -760,30 +760,51 @@ struct PrimAttrib {
   primvar::PrimVar var;
 };
 
-// Attribute or Relation. And has this property is custom or not
+// Attribute or Relation/Connection. And has this property is custom or not
 // (Need to lookup schema if the property is custom or not for Crate data)
 struct Property {
-  PrimAttrib attrib;
-  Rel rel;
+  enum class Type {
+    EmptyAttrib, // Attrib with no data.
+    Attrib, // contains actual data
+    Relation, // `rel` type
+    NoTargetsRelation, // `rel` with no targets.
+    Connection, // `.connect` suffix
+  };
 
-  bool is_rel{false};  // true = Attribute
-  bool is_custom{false};
+  PrimAttrib attrib;
+  Relation rel; // Relation(`rel`) or Connection(`.connect`)
+  Type type{Type::EmptyAttrib};
+
+  bool has_custom{false}; // Qualified with 'custom' keyword?
 
   Property() = default;
 
-  Property(const PrimAttrib &a, bool c) : attrib(a), is_custom(c) {
-    is_rel = false;
+  Property(bool custom) : has_custom(custom) {
+    type = Type::EmptyAttrib;
   }
 
-  Property(PrimAttrib &&a, bool c) : attrib(std::move(a)), is_custom(c) {
-    is_rel = false;
+  Property(const PrimAttrib &a, bool custom) : attrib(a), has_custom(custom) {
+    type = Type::Attrib;
   }
 
-  Property(const Rel &r, bool c) : rel(r), is_custom(c) { is_rel = true; }
+  Property(PrimAttrib &&a, bool custom) : attrib(std::move(a)), has_custom(custom) {
+    type = Type::Attrib;
+  }
 
-  bool IsRel() const { return is_rel; }
+  Property(const Relation &r, bool isConnection, bool custom) : rel(r), has_custom(custom) {
+    if (isConnection) {
+      type = Type::Connection;
+    } else {
+      type = Type::Relation;
+    }
+  }
 
-  bool IsCustom() const { return is_custom; }
+  bool IsAttrib() const { return (type == Type::EmptyAttrib) || (type == Type::Attrib); }
+  bool IsEmpty() const { return (type == Type::EmptyAttrib) || (type == Type::NoTargetsRelation); }
+  bool IsRel() const { return (type == Type::Relation) || (type == Type::NoTargetsRelation); }
+  bool IsConnection() const { return type == Type::Connection; }
+
+  bool HasCustom() const { return has_custom; }
 };
 
 // Currently for UV texture coordinate
@@ -1045,8 +1066,8 @@ struct Klass {
 };
 
 struct MaterialBindingAPI {
-  std::string materialBinding;            // rel material:binding
-  std::string materialBindingCorrection;  // rel material:binding:correction
+  Path materialBinding;            // rel material:binding
+  Path materialBindingCorrection;  // rel material:binding:correction
 
   // TODO: allPurpose, preview, ...
 };
@@ -1681,8 +1702,10 @@ DEFINE_TYPE_TRAIT(ListOp<int64_t>, "ListOpInt64", TYPE_ID_LIST_OP_INT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
-// TODO(syoyo): Define as 1D array?
+DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
+// TODO(syoyo): Define PathVector as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
+
 DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
                   TYPE_ID_TOKEN_VECTOR, 1);
 

@@ -3,6 +3,7 @@ name: Build
 on: [push, pull_request]
 
 jobs:
+
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -26,8 +27,41 @@ jobs:
         #   CIBW_SOME_OPTION: value
         # Disable building PyPy wheels on all platforms
         env:
+            CIBW_ARCHS_LINUX: auto aarch64
+            CIBW_ARCHS_MACOS: x86_64 univeresal2 arm64
             CIBW_SKIP: pp*
 
       - uses: actions/upload-artifact@v3
         with:
           path: ./wheelhouse/*.whl
+
+  make_sdist:
+    name: Make SDist
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Optional, use if you use setuptools_scm
+        submodules: true  # Optional, use if you have submodules
+
+    - name: Build SDist
+      run: pipx run build --sdist
+
+    - uses: actions/upload-artifact@v3
+      with:
+        path: dist/*.tar.gz
+
+  upload_all:
+    needs: [build_wheels, make_sdist]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+    - uses: actions/download-artifact@v3
+      with:
+        name: artifact
+        path: dist
+
+    - uses: pypa/gh-action-pypi-publish@v1.5.0
+      with:
+        user: __token__
+        password: ${{ secrets.PYPI_API_TOKEN }}

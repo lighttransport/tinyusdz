@@ -33,6 +33,7 @@ constexpr size_t kSectionNameMaxLength = 15;
 
 constexpr char kTokenVector[] = "TokenVector";
 constexpr char kStringVector[] = "StringVector";
+constexpr char kPathVector[] = "PathVector";
 
 
 // -- from USD ----------------------------------------------------------------

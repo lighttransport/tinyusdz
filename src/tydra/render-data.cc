@@ -3,6 +3,8 @@
 #include "pprinter.hh"
 #include "prim-types.hh"
 
+#include "external/tiny-color-io.h"
+
 namespace tinyusdz {
 namespace tydra {
 

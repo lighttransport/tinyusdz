@@ -41,6 +41,18 @@ Initial working demo in 2022 Summer(August) planned after finishing implementing
 * [ ] USDA writer
 * [ ] USD <-> glTF converter example
 
+
+### Tydra
+
+Tydra is an interface to Renderers/Viewers and other DCCs.
+Tydra may be something like Tiny version of pxrUSD Hydra, but its API is completely different. See [src/tydra/README.md](src/tydra/README.md) for the background.
+
+* Image color space
+  * sRGB
+  * Linear
+  * Rec.709
+  * [ ] Partial support of OCIO(OpenColor IO) through TinyColorIO https://github.com/syoyo/tinycolorio . Currently SPI3DLut only.
+
 ## Notice
 
 TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses proprietary file format and we cannot understand it(so no conversion support from/to Reality also).
@@ -281,6 +293,7 @@ TinyUSDZ is licensed under MIT license.
 * tinyexr: BSD license.
 * tinyobjloader: MIT license.
 * tinygltf: MIT license.
+* tinycolorio: MIT license. https://github.com/syoyo/tinycolorio
 * stb_image: public domain. 
 * dr_libs: public domain. https://github.com/mackron/dr_libs
 * miniaudio: public domain or MIT no attribution. https://github.com/dr-soft/miniaudio
