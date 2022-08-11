@@ -151,48 +151,48 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
 
 std::string to_string(tinyusdz::Axis v) {
   if (v == tinyusdz::Axis::X) {
-    return "\"X\"";
+    return "X";
   } else if (v == tinyusdz::Axis::Y) {
-    return "\"Y\"";
+    return "Y";
   } else if (v == tinyusdz::Axis::Z) {
-    return "\"Z\"";
+    return "Z";
   } else {
-    return "\"[[InvalidAxis]]\"";
+    return "[[InvalidAxis]]";
   }
 }
 
 std::string to_string(tinyusdz::Visibility v) {
   if (v == tinyusdz::Visibility::Inherited) {
-    return "\"inherited\"";
+    return "inherited";
   } else {
-    return "\"invisible\"";
+    return "invisible";
   }
 }
 
 std::string to_string(tinyusdz::Orientation o) {
   if (o == tinyusdz::Orientation::RightHanded) {
-    return "\"rightHanded\"";
+    return "rightHanded";
   } else {
-    return "\"leftHanded\"";
+    return "leftHanded";
   }
 }
 
 std::string to_string(tinyusdz::ListEditQual v) {
   if (v == tinyusdz::ListEditQual::ResetToExplicit) {
-    return "\"unqualified\"";
+    return "unqualified";
   } else if (v == tinyusdz::ListEditQual::Append) {
-    return "\"append\"";
+    return "append";
   } else if (v == tinyusdz::ListEditQual::Add) {
-    return "\"add\"";
+    return "add";
   } else if (v == tinyusdz::ListEditQual::Append) {
-    return "\"append\"";
+    return "append";
   } else if (v == tinyusdz::ListEditQual::Delete) {
-    return "\"delete\"";
+    return "delete";
   } else if (v == tinyusdz::ListEditQual::Prepend) {
-    return "\"prepend\"";
+    return "prepend";
   }
 
-  return "\"[[Invalid ListEditQual value]]\"";
+  return "[[Invalid ListEditQual value]]";
 }
 
 std::string to_string(tinyusdz::Interpolation interp) {
@@ -244,33 +244,33 @@ std::string to_string(tinyusdz::SpecType ty) {
 
 std::string to_string(tinyusdz::Specifier s) {
   if (s == tinyusdz::Specifier::Def) {
-    return "\"def\"";
+    return "def";
   } else if (s == tinyusdz::Specifier::Over) {
-    return "\"over\"";
+    return "over";
   } else if (s == tinyusdz::Specifier::Class) {
-    return "\"class\"";
+    return "class";
   } else {
-    return "\"[[SpecifierInvalid]]\"";
+    return "[[SpecifierInvalid]]";
   }
 }
 
 std::string to_string(tinyusdz::Permission s) {
   if (s == tinyusdz::Permission::Public) {
-    return "\"public\"";
+    return "public";
   } else if (s == tinyusdz::Permission::Private) {
-    return "\"private\"";
+    return "private";
   } else {
-    return "\"[[PermissionInvalid]]\"";
+    return "[[PermissionInvalid]]";
   }
 }
 
 std::string to_string(tinyusdz::Variability v) {
   if (v == tinyusdz::Variability::Varying) {
-    return "\"varying\"";
+    return "varying";
   } else if (v == tinyusdz::Variability::Uniform) {
-    return "\"uniform\"";
+    return "uniform";
   } else if (v == tinyusdz::Variability::Config) {
-    return "\"config\"";
+    return "config";
   } else {
     return "\"[[VariabilityInvalid]]\"";
   }
