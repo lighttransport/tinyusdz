@@ -33,6 +33,9 @@ enum class NodeType {
 struct BufferData {
   value::TypeId type_id{value::TypeId::TYPE_ID_VOID};
   std::vector<uint8_t> data;  // binary data
+
+  // TODO: Stride
+
 };
 
 // glTF-like Attribute
@@ -43,24 +46,28 @@ struct Attribute {
   int64_t buffer_id{-1};  // index to buffer_id
 };
 
-template <typename T>
-struct Image {
-  enum class ColorSpace {
-    sRGB,
-    Linear,
-    Rec709,
-    Custom,  // TODO: Custom colorspace, OCIO colorspace
-  };
+enum class ColorSpace {
+  sRGB,
+  Linear,
+  Rec709,
+  OCIO,
+  Custom,  // TODO: Custom colorspace
+};
+
+// NOTE: Please distinguish with image::Image(src/image-types.hh). image::Image is much more generic image class.
+// This `ImageData` class has typed pixel format and has colorspace info, which is suited for renderer/viewer/DCC backends.
+template <typename T, ColorSpace cs>
+struct ImageData {
 
   std::vector<T> image;  // raw pixel data
-  ColorSpace colorSpace{ColorSpace::sRGB};
+  ColorSpace colorSpace{cs};
   int32_t width{-1};
   int32_t height{-1};
   int32_t channels{-1};  // e.g. 3 for RGB.
 };
 
 // Simple LDR image
-using LDRImage = Image<uint8_t>;
+using LDRImage = ImageData<uint8_t, ColorSpace::sRGB>;
 
 struct Node {
   NodeType nodeType{NodeType::Xform};

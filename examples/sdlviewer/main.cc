@@ -102,7 +102,7 @@ struct GUIContext {
   int render_height = 512;
 
   // scene reload
-  tinyusdz::HighLevelScene scene;
+  tinyusdz::Stage stage;
   std::atomic<bool> request_reload{false};
   std::string filename;
 
@@ -160,8 +160,8 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
 }
 #endif
 
-static void Proc(const tinyusdz::HighLevelScene& scene) {
-  (void)scene;
+static void Proc(const tinyusdz::Stage& stage) {
+  (void)stage;
 
   //std::cout << "num geom_meshes = " << scene.geom_meshes.size() << "\n";
   //for (auto& mesh : scene.geom_meshes) {
@@ -289,7 +289,7 @@ static void ScreenActivate(SDL_Window* window) {
 #endif
 }
 
-bool LoadModel(const std::string& filename, tinyusdz::HighLevelScene* scene) {
+bool LoadModel(const std::string& filename, tinyusdz::Stage* stage) {
   std::string ext = str_tolower(GetFileExtension(filename));
 
   std::string warn;
@@ -297,7 +297,7 @@ bool LoadModel(const std::string& filename, tinyusdz::HighLevelScene* scene) {
 
   if (ext.compare("usdz") == 0) {
     std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filename, scene, &warn, &err);
+    bool ret = tinyusdz::LoadUSDZFromFile(filename, stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -311,7 +311,7 @@ bool LoadModel(const std::string& filename, tinyusdz::HighLevelScene* scene) {
     }
   } else if (ext.compare("usda") == 0) {
     std::cout << "usda\n";
-    bool ret = tinyusdz::LoadUSDAFromFile(filename, scene, &warn, &err);
+    bool ret = tinyusdz::LoadUSDAFromFile(filename, stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -324,7 +324,7 @@ bool LoadModel(const std::string& filename, tinyusdz::HighLevelScene* scene) {
       return false;
     }
   } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filename, scene, &warn, &err);
+    bool ret = tinyusdz::LoadUSDCFromFile(filename, stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -350,10 +350,10 @@ void RenderThread(GUIContext* ctx) {
     }
 
     if (ctx->request_reload) {
-      ctx->scene = tinyusdz::HighLevelScene();  // reset
+      ctx->stage = tinyusdz::Stage();  // reset
 
-      if (LoadModel(ctx->filename, &ctx->scene)) {
-        Proc(ctx->scene);
+      if (LoadModel(ctx->filename, &ctx->stage)) {
+        Proc(ctx->stage);
 #if 0
         if (ctx->scene.geom_meshes.empty()) {
           std::cerr << "The scene contains no GeomMesh\n";
@@ -768,14 +768,14 @@ int main(int argc, char** argv) {
 
   bool init_with_empty = false;
 
-  if (!LoadModel(filename, &g_gui_ctx.scene)) {
+  if (!LoadModel(filename, &g_gui_ctx.stage)) {
     init_with_empty = true;
   }
 
   if (!init_with_empty) {
     std::cout << "Loaded USDC file\n";
 
-    Proc(g_gui_ctx.scene);
+    Proc(g_gui_ctx.stage);
     //if (g_gui_ctx.scene.geom_meshes.empty()) {
     //  std::cerr << "The scene contains no GeomMesh\n";
     //  exit(-1);

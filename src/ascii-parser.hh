@@ -444,7 +444,7 @@ class AsciiParser {
 
   bool Eof() { return _sr->eof(); }
 
-  bool ParseRel(Rel *result);
+  bool ParseRelation(Relation *result);
   bool ParseProperty(std::map<std::string, Property> *props);
 
 

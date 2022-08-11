@@ -53,6 +53,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
 #include "image-loader.hh"
+#include "usdShade.hh"
+#include "value-pprint.hh"
 
 #if 0
 #if defined(TINYUSDZ_WITH_AUDIO)
@@ -623,5 +625,152 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
                             options);
 }
 
+///
+/// Stage
+///
+
+namespace {
+
+nonstd::optional<Path> GetPath(const value::Value &v)
+{
+  //
+  // TODO: Find a better C++ way... use a std::function?
+  //
+  if (auto pv = v.get_value<Xform>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GPrim>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomMesh>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomBasisCurves>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomSphere>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomCube>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomCylinder>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomCapsule>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomCone>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomSubset>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomCamera>()) { return Path(pv.value().name); }
+
+  if (auto pv = v.get_value<LuxDomeLight>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<LuxSphereLight>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<LuxCylinderLight>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<LuxDiskLight>()) { return Path(pv.value().name); }
+
+  if (auto pv = v.get_value<Material>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<Shader>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name); }
+
+  return nonstd::nullopt;
+}
+
+} // namespace
+
+PrimNode::PrimNode(const value::Value &rhs)
+{
+  // Check if Prim type is Model(GPrim)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+
+    if (auto pv = GetPath(rhs)) {
+      path = pv.value();
+    }
+
+    data = rhs;
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+PrimNode::PrimNode(value::Value &&rhs)
+{
+  // Check if Prim type is Model(GPrim)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+
+    data = std::move(rhs);
+
+    if (auto pv = GetPath(data)) {
+      path = pv.value();
+    }
+
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+namespace {
+
+nonstd::optional<const PrimNode*> GetPrimAtPathRec(const PrimNode *parent, const Path &path) {
+
+  //// TODO: Find better way to get path name from any value.
+  //if (auto pv = parent.get_value<Xform>)
+  if (auto pv = GetPath(parent->data)) {
+    if (path == pv.value()) {
+      return parent;
+    }
+  }
+
+  for (const auto &child : parent->children) {
+    if (auto pv = GetPrimAtPathRec(&child, path)) {
+      return pv.value();
+    }
+  }
+
+  return nonstd::nullopt;
+}
+
+
+} // namespace
+
+nonstd::expected<const PrimNode*, std::string> Stage::GetPrimAtPath(const Path &path)
+{
+  if (!path.IsValid()) {
+    return nonstd::make_unexpected("Path is invalid.\n");
+  }
+
+  if (path.IsRelativePath()) {
+    // TODO:
+    return nonstd::make_unexpected("Relative path is TODO.\n");
+  }
+
+  if (!path.IsAbsolutePath()) {
+    return nonstd::make_unexpected("Path is not absolute. Non-absolute Path is TODO.\n");
+  }
+
+  // Brute-force search.
+  // TODO: Build path -> Node lookup table
+  for (const auto &parent : root_nodes) {
+    if (auto pv = GetPrimAtPathRec(&parent, path)) {
+      return pv.value();
+    }
+  }
+
+  return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() + "> int the Stage.\n");
+}
+
+std::string Stage::ExportToString() const {
+
+  std::stringstream ss;
+
+  ss << "#usda 1.0\n";
+  ss << "(\n";
+  if (stage_metas.doc.empty()) {
+    ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
+       << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
+  } else {
+    ss << "  doc = \"" << stage_metas.doc << "\"\n";
+  }
+  ss << "  metersPerUnit = " << stage_metas.metersPerUnit << "\n";
+  ss << "  upAxis = \"" << to_string(stage_metas.upAxis) << "\"\n";
+  ss << "  timeCodesPerSecond = \"" << stage_metas.timeCodesPerSecond << "\"\n";
+  // TODO: write other header data.
+  ss << ")\n";
+  ss << "\n";
+
+  for (const auto &item : root_nodes) {
+    ss << pprint_value(item.data, /* indent */0, /* closing_brace */true);
+  }
+
+  return ss.str();
+
+}
 
 }  // namespace tinyusdz

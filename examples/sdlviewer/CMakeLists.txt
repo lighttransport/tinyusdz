@@ -282,6 +282,7 @@ list(
   ../../src/crate-reader.cc
   ../../src/crate-format.cc
   ../../src/crate-pprint.cc
+  ../../src/audio-loader.cc
   ../../src/ascii-parser.cc
   ../../src/usdc-reader.cc
   ../../src/usda-reader.cc
@@ -290,7 +291,10 @@ list(
   ../../src/value-types.cc
   ../../src/value-pprint.cc
   ../../src/usdObj.cc
-  ../../src/tydra/tiny-render-data.cc
+  ../../src/usdGeom.cc
+  ../../src/usdLux.cc
+  ../../src/usdShade.cc
+  ../../src/tydra/render-data.cc
   #../../src/integerCoding.cpp
   #../../src/pxrLZ4/lz4.cpp
   #../../src/lz4-compression.cc
