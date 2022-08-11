@@ -4,7 +4,9 @@
 #include <sstream>
 
 #include "value-pprint.hh"
+#include "pprinter.hh"
 #include "prim-types.hh"
+#include "usdGeom.hh"
 
 namespace std {
 
@@ -237,32 +239,9 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
 namespace tinyusdz {
 namespace value {
 
-//std::ostream &operator<<(std::ostream &os, const any_value &v) {
-//std::ostream &operator<<(std::ostream &os, const linb::any &v) {
-std::string pprint_any(const linb::any &v) {
+// Simple brute-force way..
+// TODO: Use std::function or some template technique?
 
-  std::stringstream os;
-
-    // Simple brute-force way..
-    // TODO: Use std::function or some template technique?
-
-#define BASETYPE_CASE_EXPR(__ty)                      \
-  case TypeTrait<__ty>::type_id: {                    \
-    os << linb::any_cast<const __ty>(v); \
-    break;                                            \
-  }
-
-#define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
-  case TypeTrait<std::vector<__ty>>::type_id: {                    \
-    os << linb::any_cast<const std::vector<__ty>>(v); \
-    break;                                                         \
-  }
-
-#define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
-  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
-    os << linb::any_cast<const std::vector<std::vector<__ty>>>(v);   \
-    break;                                                           \
-  }
 
 #define CASE_EXR_LIST(__FUNC) \
   __FUNC(token)               \
@@ -309,35 +288,137 @@ std::string pprint_any(const linb::any &v) {
   __FUNC(color4f)             \
   __FUNC(color4d)
 
-    switch (v.type_id()) {
-      // no `bool` type for 1D and 2D array
-      BASETYPE_CASE_EXPR(bool)
+#define CASE_GPRIM_LIST(__FUNC) \
+  __FUNC(Xform) \
+  __FUNC(GeomMesh) \
+  __FUNC(GeomBasisCurves)
 
-      // no std::vector<dict> and std::vector<std::vector<dict>>, ...
-      BASETYPE_CASE_EXPR(dict)
+//std::ostream &operator<<(std::ostream &os, const any_value &v) {
+//std::ostream &operator<<(std::ostream &os, const linb::any &v) {
+std::string pprint_any(const linb::any &v, const uint32_t indent, bool closing_brace) {
 
-      // base type
-      CASE_EXR_LIST(BASETYPE_CASE_EXPR)
+#define BASETYPE_CASE_EXPR(__ty)                      \
+  case TypeTrait<__ty>::type_id: {                    \
+    os << linb::any_cast<const __ty>(v); \
+    break;                                            \
+  }
 
-      // 1D array
-      CASE_EXR_LIST(ARRAY1DTYPE_CASE_EXPR)
+#define PRIMTYPE_CASE_EXPR(__ty)                      \
+  case TypeTrait<__ty>::type_id: {                    \
+    os << to_string(linb::any_cast<const __ty>(v), indent, closing_brace);   \
+    break;                                            \
+  }
 
-      // 2D array
-      CASE_EXR_LIST(ARRAY2DTYPE_CASE_EXPR)
+#define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
+  case TypeTrait<std::vector<__ty>>::type_id: {                    \
+    os << linb::any_cast<const std::vector<__ty>>(v); \
+    break;                                                         \
+  }
 
-      // TODO: List-up all case and remove `default` clause.
-      default: {
-        os << "PPRINT: TODO: (type: " << v.type_name() << ") ";
-      }
+#define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
+  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
+    os << linb::any_cast<const std::vector<std::vector<__ty>>>(v);   \
+    break;                                                           \
+  }
+
+  std::stringstream os;
+
+  switch (v.type_id()) {
+    // no `bool` type for 1D and 2D array
+    BASETYPE_CASE_EXPR(bool)
+
+    // no std::vector<dict> and std::vector<std::vector<dict>>, ...
+    BASETYPE_CASE_EXPR(dict)
+
+    // base type
+    CASE_EXR_LIST(BASETYPE_CASE_EXPR)
+
+    // 1D array
+    CASE_EXR_LIST(ARRAY1DTYPE_CASE_EXPR)
+
+    // 2D array
+    CASE_EXR_LIST(ARRAY2DTYPE_CASE_EXPR)
+
+    // GPrim
+    CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
+
+    // TODO: List-up all case and remove `default` clause.
+    default: {
+      os << "PPRINT: TODO: (type: " << v.type_name() << ") ";
     }
+  }
 
 #undef BASETYPE_CASE_EXPR
+#undef PRIMTYPE_CASE_EXPR
 #undef ARRAY1DTYPE_CASE_EXPR
 #undef ARRAY2DTYPE_CASE_EXPR
-#undef CASE_EXPR_LIST
 
-    return os.str();
+  return os.str();
+}
+
+std::string pprint_value(const value::Value &v, const uint32_t indent, bool closing_brace) {
+
+#define BASETYPE_CASE_EXPR(__ty)                      \
+  case TypeTrait<__ty>::type_id: {                    \
+    os << v.value<__ty>(); \
+    break;                                            \
   }
+
+#define PRIMTYPE_CASE_EXPR(__ty)                      \
+  case TypeTrait<__ty>::type_id: {                    \
+    os << to_string(v.value<__ty>(), indent, closing_brace);   \
+    break;                                            \
+  }
+
+#define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
+  case TypeTrait<std::vector<__ty>>::type_id: {                    \
+    os << v.value<std::vector<__ty>>(); \
+    break;                                                         \
+  }
+
+#define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
+  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
+    os << v.value<std::vector<std::vector<__ty>>>();   \
+    break;                                                           \
+  }
+
+  std::stringstream os;
+
+  switch (v.type_id()) {
+    // no `bool` type for 1D and 2D array
+    BASETYPE_CASE_EXPR(bool)
+
+    // no std::vector<dict> and std::vector<std::vector<dict>>, ...
+    BASETYPE_CASE_EXPR(dict)
+
+    // base type
+    CASE_EXR_LIST(BASETYPE_CASE_EXPR)
+
+    // 1D array
+    CASE_EXR_LIST(ARRAY1DTYPE_CASE_EXPR)
+
+    // 2D array
+    CASE_EXR_LIST(ARRAY2DTYPE_CASE_EXPR)
+
+    // GPrim
+    CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
+
+    // TODO: List-up all case and remove `default` clause.
+    default: {
+      os << "PPRINT: TODO: (type: " << v.type_name() << ") ";
+    }
+  }
+
+#undef BASETYPE_CASE_EXPR
+#undef PRIMTYPE_CASE_EXPR
+#undef ARRAY1DTYPE_CASE_EXPR
+#undef ARRAY2DTYPE_CASE_EXPR
+
+  return os.str();
+}
+
+#undef CASE_EXPR_LIST
+#undef CASE_GPRIM_LIST
 
 
 } // namespace value

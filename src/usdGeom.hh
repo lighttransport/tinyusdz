@@ -5,8 +5,21 @@
 #pragma once
 
 #include "prim-types.hh"
+#include "value-types.hh"
 
 namespace tinyusdz {
+
+constexpr auto kGPrim = "GPrim";
+constexpr auto kGeomCube = "Cube";
+constexpr auto kGeomXform = "Xform";
+constexpr auto kGeomMesh = "Mesh";
+constexpr auto kGeomSubset = "GeomSubset";
+constexpr auto kGeomBasisCurves = "BasisCurves";
+constexpr auto kGeomCylinder = "Cylinder";
+constexpr auto kGeomCapsule = "Capsule";
+constexpr auto kGeomCone = "Cone";
+constexpr auto kGeomSphere = "Sphere";
+constexpr auto kGeomCamera = "Camera";
 
 // Generic Prim
 struct GPrim {
@@ -123,7 +136,7 @@ struct GeomSubset {
 
   std::vector<uint32_t> indices;
 
-  std::map<std::string, PrimAttrib> attribs;  // custom Attrs
+  std::map<std::string, Property> props;  // custom Properties
 };
 
 // Polygon mesh geometry
@@ -192,7 +205,7 @@ struct GeomMesh : GPrim {
   // AnimatableVec3fArray displayColor; // primvars:displayColor
   // AnimatableFloatArray displayOpacity; // primvars:displaOpacity
 
-  // MaterialBindingAPI materialBinding;
+  //MaterialBindingAPI materialBinding;
 
   //
   // SubD attribs.
@@ -225,10 +238,7 @@ struct GeomMesh : GPrim {
   // std::map<std::string, PrimAttrib> attribs;
 };
 
-struct GeomCamera {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
+struct GeomCamera : public GPrim {
 
   enum class Projection {
     perspective,   // "perspective"
@@ -244,9 +254,6 @@ struct GeomCamera {
   //
   // Properties
   //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
   // TODO: Animatable?
   std::vector<value::float4> clippingPlanes;
@@ -265,36 +272,14 @@ struct GeomCamera {
   float shutterOpen = 0.0f;   // shutter:open
 
   std::vector<value::token> xformOpOrder;
-  // xformOpOrder
 
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
-struct GeomBoundable {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
+struct GeomBoundable : GPrim {
 };
 
-struct GeomCone {
-  std::string name;
+struct GeomCone : public GPrim {
 
-  int64_t parent_id{-1};  // Index to parent node
 
   //
   // Properties
@@ -303,29 +288,10 @@ struct GeomCone {
   AnimatableDouble radius{1.0};
   Axis axis{Axis::Z};
 
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
-struct GeomCapsule {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
+struct GeomCapsule : public GPrim {
 
   //
   // Properties
@@ -334,29 +300,10 @@ struct GeomCapsule {
   AnimatableDouble radius{0.5};
   Axis axis{Axis::Z};
 
-  AnimatableExtent extent{
-      Extent({-0.5, -0.5, -1.0},
-             {0.5, 0.5, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
-struct GeomCylinder {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
+struct GeomCylinder : public GPrim {
 
   //
   // Properties
@@ -364,92 +311,31 @@ struct GeomCylinder {
   AnimatableDouble height{2.0};
   AnimatableDouble radius{1.0};
   Axis axis{Axis::Z};
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
-struct GeomCube {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
+struct GeomCube : public GPrim {
 
   //
   // Properties
   //
   AnimatableDouble size{2.0};
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
-struct GeomSphere {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
+struct GeomSphere : public GPrim {
 
   //
   // Predefined attribs.
   //
   AnimatableDouble radius{1.0};
 
-  //
-  // Properties
-  //
-  AnimatableExtent extent{
-      Extent({-1.0, -1.0, -1.0},
-             {1.0, 1.0, 1.0})};  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
 //
 // Basis Curves(for hair/fur)
 //
-struct GeomBasisCurves {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
+struct GeomBasisCurves : public GPrim {
 
   // Interpolation attribute
   std::string type = "cubic";  // "linear", "cubic"
@@ -470,33 +356,13 @@ struct GeomBasisCurves {
   std::vector<value::float3> velocities;     // vector3f
   std::vector<value::float3> accelerations;  // vector3f
 
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` are not stored here(stored in `widths`)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
 //
 // Points primitive.
 //
-struct GeomPoints {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to xform node
+struct GeomPoints : public GPrim {
 
   //
   // Predefined attribs.
@@ -508,23 +374,6 @@ struct GeomPoints {
   std::vector<value::float3> velocities;     // vector3f
   std::vector<value::float3> accelerations;  // vector3f
 
-  //
-  // Properties
-  //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  // Gprim
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
-  // parameter)
-  std::map<std::string, PrimAttrib> attribs;
 };
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
@@ -533,10 +382,18 @@ struct GeomPoints {
 namespace value {
 
 // Geom
-DEFINE_TYPE_TRAIT(GPrim, "GPRIM", TYPE_ID_GPRIM, 1);
+DEFINE_TYPE_TRAIT(GPrim, kGPrim, TYPE_ID_GPRIM, 1);
 
-DEFINE_TYPE_TRAIT(Xform, "Xform", TYPE_ID_GEOM_XFORM, 1);
-DEFINE_TYPE_TRAIT(GeomMesh, "Mesh", TYPE_ID_GEOM_MESH, 1);
+DEFINE_TYPE_TRAIT(Xform, kGeomXform, TYPE_ID_GEOM_XFORM, 1);
+DEFINE_TYPE_TRAIT(GeomMesh, kGeomMesh, TYPE_ID_GEOM_MESH, 1);
+DEFINE_TYPE_TRAIT(GeomBasisCurves, kGeomBasisCurves, TYPE_ID_GEOM_BASIS_CURVES, 1);
+DEFINE_TYPE_TRAIT(GeomSphere, kGeomSphere, TYPE_ID_GEOM_SPHERE, 1);
+DEFINE_TYPE_TRAIT(GeomCube, kGeomCube, TYPE_ID_GEOM_CUBE, 1);
+DEFINE_TYPE_TRAIT(GeomCone, kGeomCone, TYPE_ID_GEOM_CONE, 1);
+DEFINE_TYPE_TRAIT(GeomCylinder, kGeomCylinder, TYPE_ID_GEOM_CYLINDER, 1);
+DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
+DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
+DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

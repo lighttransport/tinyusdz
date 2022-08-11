@@ -423,10 +423,9 @@ class USDAReader::Impl {
   void ImportScene(tinyusdz::Stage &scene) { _imported_scene = scene; }
 
   bool HasPath(const std::string &path) {
-    // TODO
     TokenizedPath tokPath(path);
     (void)tokPath;
-    return false;
+    PUSH_ERROR_AND_RETURN("TODO: HasPath()");
   }
 
   void StageMetaProcessor() {
@@ -458,6 +457,8 @@ class USDAReader::Impl {
   std::string GetError() { return _err; }
 
   std::string GetWarning() { return _warn; }
+
+  const Stage &GetStage() const { return _stage; }
 
  private:
   void RegisterNodeTypes() {
@@ -561,6 +562,8 @@ class USDAReader::Impl {
   std::string _defaultPrim;
 
   ascii::AsciiParser _parser;
+
+  Stage _stage;
 
   // HACK
   nonstd::optional<Axis> _upAxis;
@@ -688,7 +691,7 @@ bool USDAReader::Impl::ReconstructPrim(
   if (properties.count("xformOpOrder")) {
     // array of string
     auto prop = properties.at("xformOpOrder");
-    if (prop.is_rel) {
+    if (prop.IsRel()) {
       PUSH_WARN("TODO: Rel type for `xformOpOrder`");
     } else {
 #if 0
@@ -829,7 +832,7 @@ bool USDAReader::Impl::ReconstructPrim(
 
           // Update props;
           for (auto item : properties) {
-            if (item.second.is_rel) {
+            if (item.second.IsRel()) {
               PUSH_WARN("TODO: rel");
             } else {
               gprim.props[item.first].attrib = item.second.attrib;
@@ -1039,7 +1042,7 @@ bool USDAReader::Impl::ReconstructPrim(
       //   return false;
       // }
     } else {
-      if (prop.second.is_rel) {
+      if (prop.second.IsRel()) {
         PUSH_WARN("TODO: Rel");
       } else {
         if (prop.first == "radius") {
@@ -1358,7 +1361,7 @@ bool USDAReader::Impl::ReconstructPrim(
         const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
 
         for (const auto &prop : prim.props) {
-          if (prop.second.is_rel) {
+          if (prop.second.IsRel()) {
             PUSH_WARN("TODO: Rel");
           } else {
             // const PrimAttrib &attrib = prop.second.attrib;
@@ -1698,7 +1701,7 @@ bool USDAReader::Impl::ReconstructPrim(
         if (gprim.props.count("points")) {
           DCOUT("points");
           const Property &prop = gprim.props.at("points");
-          if (prop.is_rel) {
+          if (prop.IsRel()) {
             PUSH_WARN("TODO: points Rel\n");
           } else {
             const PrimAttrib &attr = prop.attrib;
@@ -1729,9 +1732,20 @@ bool USDAReader::Impl::ReconstructPrim(
   }
 
   for (const auto &prop : properties) {
-    if (prop.second.is_rel) {
+    if (prop.second.IsRel()) {
       if (prop.first == "material:binding") {
-        mesh->materialBinding.materialBinding = prop.second.rel.path;
+        // Must be relation of type Path.
+        if (prop.second.IsRel() && !prop.second.IsEmpty()) {
+          PUSH_ERROR_AND_RETURN("`material:binding` must be a Relation with Path target.");
+        }
+
+        const Relation &rel = prop.second.rel;
+        if (auto pv = rel.targets.get<Path>()) {
+          mesh->materialBinding.materialBinding = pv.value();
+        } else {
+          PUSH_ERROR_AND_RETURN("`material:binding` target must be Path.");
+        }
+
       } else {
         PUSH_WARN("TODO: rel");
       }
@@ -1793,7 +1807,7 @@ bool USDAReader::Impl::ReconstructPrim(
     GeomBasisCurves *curves) {
   for (const auto &prop : properties) {
     if (prop.first == "points") {
-      if (prop.second.is_rel) {
+      if (prop.second.IsRel()) {
         PUSH_WARN("TODO: Rel");
       } else {
         // const PrimAttrib &attrib = prop.second.attrib;
@@ -2320,6 +2334,8 @@ std::string USDAReader::GetDefaultPrimName() const {
 std::string USDAReader::GetError() { return _impl->GetError(); }
 std::string USDAReader::GetWarning() { return _impl->GetWarning(); }
 
+const Stage &USDAReader::GetStage() const { return _impl->GetStage(); }
+
 
 }  // namespace tinyusdz
 }  // namespace tinyusdz
@@ -2350,6 +2366,11 @@ std::string USDAReader::GetError() {
   return "USDA parser feature is disabled in this build.\n";
 }
 std::string USDAReader::GetWarning() { return std::string{}; }
+
+const Stage &USDAReader::GetStage() const {
+  static Stage empty;
+  return empty;
+}
 
 }  // namespace usda
 }  // namespace tinyusdz

@@ -222,6 +222,7 @@ class CrateReader {
   std::vector<crate::Index> _fieldset_indices;
   std::vector<crate::Spec> _specs;
   std::vector<Path> _paths;
+  std::vector<Path> _elemPaths; 
 
   std::vector<Node> _nodes;  // [0] = root node
                              //

@@ -229,23 +229,25 @@ enum class Variability {
 };
 
 ///
+/// Simlar to SdfPath.
+///
 /// We don't need the performance for USDZ, so use naiive implementation
 /// to represent Path.
 /// Path is something like Unix path, delimited by `/`, ':' and '.'
+/// Square brackets('<', '>' is not included)
 ///
 /// Example:
 ///
-/// `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+/// - `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+/// - `bora` : Relative path
 ///
 /// ':' is a namespce delimiter(example `input:muda`).
 ///
 /// Limitations:
 ///
-/// Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
-/// supported.
-///
-/// variant chars('{' '}') is not supported.
-/// '..' is not supported
+/// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not supported.
+/// - Variant chars('{' '}') is not supported.
+/// - '../' is TODO
 ///
 /// and have more limitatons.
 ///
@@ -253,7 +255,7 @@ class Path {
  public:
   Path() : valid(false) {}
   Path(const std::string &prim)
-      : prim_part(prim), local_part(prim), valid(true) {}
+      : prim_part(prim), valid(true) {}
   // Path(const std::string &prim, const std::string &prop)
   //    : prim_part(prim), prop_part(prop) {}
 
@@ -264,7 +266,6 @@ class Path {
 
     this->prim_part = rhs.prim_part;
     this->prop_part = rhs.prop_part;
-    this->local_part = rhs.local_part;
 
     return (*this);
   }
@@ -285,17 +286,6 @@ class Path {
     return s;
   }
 
-  std::string local_path_name() const {
-    std::string s;
-    if (!valid) {
-      s += "INVALID#";
-    }
-
-    s += local_part;
-
-    return s;
-  }
-
   std::string GetPrimPart() const { return prim_part; }
 
   std::string GetPropPart() const { return prop_part; }
@@ -305,15 +295,7 @@ class Path {
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
   static Path AbsoluteRootPath() { return Path("/"); }
-
-  void SetLocalPart(const Path &rhs) {
-    // assert(rhs.valid == true);
-
-    this->local_part = rhs.local_part;
-    this->valid = rhs.valid;
-  }
-
-  std::string GetLocalPart() const { return local_part; }
+  static Path RelativePath() { return Path("."); }
 
   Path AppendProperty(const std::string &elem) {
     Path p = (*this);
@@ -412,10 +394,27 @@ class Path {
     return false;
   }
 
+  bool IsAbsolutePath() const {
+    if (prim_part.size()) {
+      if ((prim_part.size() > 0) && (prim_part[0] == '/')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool IsRelativePath() const {
+    if (prim_part.size()) {
+      return !IsAbsolutePath();
+    }
+
+    return true; // prop part only
+  }
+
  private:
-  std::string prim_part;  // full path
-  std::string prop_part;  // full path
-  std::string local_part;
+  std::string prim_part;  // e.g. </Model/MyMesh>
+  std::string prop_part;  // e.g. .visibility
   bool valid{false};
 };
 
@@ -457,6 +456,9 @@ class TokenizedPath {
  private:
   std::vector<std::string> _tokens;
 };
+
+bool operator==(const Path &lhs, const Path &rhs);
+
 
 class TimeCode {
   TimeCode(double tm = 0.0) : _time(tm) {}
@@ -588,18 +590,18 @@ struct ConnectionPath {
                       // `Scene.shaders`)
 };
 
-struct Connection {
-  int64_t src_index{-1};
-  int64_t dest_index{-1};
-};
+//struct Connection {
+//  int64_t src_index{-1};
+//  int64_t dest_index{-1};
+//};
+//
+//using connection_id_map =
+//    std::unordered_map<std::pair<std::string, std::string>, Connection>;
 
-using connection_id_map =
-    std::unordered_map<std::pair<std::string, std::string>, Connection>;
-
-// Relation
-struct Rel {
-  // TODO: Implement
-  std::string path;
+// Relation and Connection
+struct Relation {
+  // string, Path or PathVector
+  tinyusdz::variant<std::string, Path, std::vector<Path>> targets;
 };
 
 // Variable class for Prim and Attribute Metadataum.
@@ -760,30 +762,51 @@ struct PrimAttrib {
   primvar::PrimVar var;
 };
 
-// Attribute or Relation. And has this property is custom or not
+// Attribute or Relation/Connection. And has this property is custom or not
 // (Need to lookup schema if the property is custom or not for Crate data)
 struct Property {
-  PrimAttrib attrib;
-  Rel rel;
+  enum class Type {
+    EmptyAttrib, // Attrib with no data.
+    Attrib, // contains actual data
+    Relation, // `rel` type
+    NoTargetsRelation, // `rel` with no targets.
+    Connection, // `.connect` suffix
+  };
 
-  bool is_rel{false};  // true = Attribute
-  bool is_custom{false};
+  PrimAttrib attrib;
+  Relation rel; // Relation(`rel`) or Connection(`.connect`)
+  Type type{Type::EmptyAttrib};
+
+  bool has_custom{false}; // Qualified with 'custom' keyword?
 
   Property() = default;
 
-  Property(const PrimAttrib &a, bool c) : attrib(a), is_custom(c) {
-    is_rel = false;
+  Property(bool custom) : has_custom(custom) {
+    type = Type::EmptyAttrib;
   }
 
-  Property(PrimAttrib &&a, bool c) : attrib(std::move(a)), is_custom(c) {
-    is_rel = false;
+  Property(const PrimAttrib &a, bool custom) : attrib(a), has_custom(custom) {
+    type = Type::Attrib;
   }
 
-  Property(const Rel &r, bool c) : rel(r), is_custom(c) { is_rel = true; }
+  Property(PrimAttrib &&a, bool custom) : attrib(std::move(a)), has_custom(custom) {
+    type = Type::Attrib;
+  }
 
-  bool IsRel() const { return is_rel; }
+  Property(const Relation &r, bool isConnection, bool custom) : rel(r), has_custom(custom) {
+    if (isConnection) {
+      type = Type::Connection;
+    } else {
+      type = Type::Relation;
+    }
+  }
 
-  bool IsCustom() const { return is_custom; }
+  bool IsAttrib() const { return (type == Type::EmptyAttrib) || (type == Type::Attrib); }
+  bool IsEmpty() const { return (type == Type::EmptyAttrib) || (type == Type::NoTargetsRelation); }
+  bool IsRel() const { return (type == Type::Relation) || (type == Type::NoTargetsRelation); }
+  bool IsConnection() const { return type == Type::Connection; }
+
+  bool HasCustom() const { return has_custom; }
 };
 
 // Currently for UV texture coordinate
@@ -1045,8 +1068,8 @@ struct Klass {
 };
 
 struct MaterialBindingAPI {
-  std::string materialBinding;            // rel material:binding
-  std::string materialBindingCorrection;  // rel material:binding:correction
+  Path materialBinding;            // rel material:binding
+  Path materialBindingCorrection;  // rel material:binding:correction
 
   // TODO: allPurpose, preview, ...
 };
@@ -1681,8 +1704,10 @@ DEFINE_TYPE_TRAIT(ListOp<int64_t>, "ListOpInt64", TYPE_ID_LIST_OP_INT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
-// TODO(syoyo): Define as 1D array?
+DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
+// TODO(syoyo): Define PathVector as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
+
 DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
                   TYPE_ID_TOKEN_VECTOR, 1);
 

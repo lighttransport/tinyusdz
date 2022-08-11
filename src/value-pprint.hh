@@ -82,10 +82,8 @@ inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
 namespace tinyusdz {
 namespace value {
 
-//std::ostream &operator<<(std::ostream &os, const tinyusdz::value::Value &v);
-//std::ostream &operator<<(std::ostream &os, const tinyusdz::value::any_value &v);
-//std::ostream &operator<<(std::ostream &os, const linb::any &v);
-std::string pprint_any(const linb::any &v);
+std::string pprint_value(const tinyusdz::value::Value &v, const uint32_t indent = 0, bool closing_brace = true);
+std::string pprint_any(const linb::any &v, const uint32_t indent = 0, bool closing_brace = true);
 
 } // namespace primvar
 } // namespace tinyusdz
