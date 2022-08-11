@@ -458,6 +458,8 @@ class USDAReader::Impl {
 
   std::string GetWarning() { return _warn; }
 
+  const Stage &GetStage() const { return _stage; }
+
  private:
   void RegisterNodeTypes() {
     _node_types.insert(PrimTypeTrait<Xform>::prim_type_name);
@@ -560,6 +562,8 @@ class USDAReader::Impl {
   std::string _defaultPrim;
 
   ascii::AsciiParser _parser;
+
+  Stage _stage;
 
   // HACK
   nonstd::optional<Axis> _upAxis;
@@ -2330,6 +2334,8 @@ std::string USDAReader::GetDefaultPrimName() const {
 std::string USDAReader::GetError() { return _impl->GetError(); }
 std::string USDAReader::GetWarning() { return _impl->GetWarning(); }
 
+const Stage &USDAReader::GetStage() const { return _impl->GetStage(); }
+
 
 }  // namespace tinyusdz
 }  // namespace tinyusdz
@@ -2360,6 +2366,11 @@ std::string USDAReader::GetError() {
   return "USDA parser feature is disabled in this build.\n";
 }
 std::string USDAReader::GetWarning() { return std::string{}; }
+
+const Stage &USDAReader::GetStage() const {
+  static Stage empty;
+  return empty;
+}
 
 }  // namespace usda
 }  // namespace tinyusdz

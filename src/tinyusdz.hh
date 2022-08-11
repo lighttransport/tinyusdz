@@ -445,9 +445,21 @@ struct Stage {
   std::vector<PrimNode> root_nodes;
 
   ///
+  /// Get PrimNode at a Path.
   ///
   /// @returns pointer to PrimNode(to avoid a copy). Assume no scene item removal/addition until the end of use of the pointer of `PrimNode` data.
+  ///
   nonstd::expected<const PrimNode *, std::string> GetPrimAtPath(const Path &path);
+
+  ///
+  /// Dump Stage as ASCII(USDA) representation.
+  ///
+  std::string ExportToString() const;
+
+
+ private:
+  mutable std::string _err;
+  mutable std::string _warn;
 
 };
 

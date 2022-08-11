@@ -41,5 +41,11 @@ int main(int argc, char **argv) {
     }
   }
 
+  // Dump
+  {
+    tinyusdz::Stage stage = reader.GetStage();
+    std::cout << stage.ExportToString() << "\n";
+  }
+
   return 0;
 }
