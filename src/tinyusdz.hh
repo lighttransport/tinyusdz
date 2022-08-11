@@ -431,7 +431,7 @@ struct StageMetas {
   double metersPerUnit = 1.0;        // default [m]
   double timeCodesPerSecond = 24.0;  // default 24 fps
   std::string doc; // `documentation`
-  value::dict customLayerData;
+  value::dict customData;
 };
 
 // Similar to UsdStage, but much more something like a Scene(scene graph)
