@@ -432,12 +432,22 @@ class USDAReader::Impl {
     _parser.RegisterStageMetaProcessFunction(
         [&](const ascii::AsciiParser::StageMetas &metas) {
           DCOUT("StageMeta CB:");
+
+          _stage.stage_metas.doc = metas.doc;
           if (metas.upAxis) {
-            DCOUT("upAxis = " << to_string(metas.upAxis.value()));
+            _stage.stage_metas.upAxis = metas.upAxis.value();
           }
 
-          // HACK
-          _upAxis = metas.upAxis;
+          _stage.stage_metas.defaultPrim = metas.defaultPrim;
+          if (metas.metersPerUnit) {
+            _stage.stage_metas.metersPerUnit = metas.metersPerUnit.value();
+          }
+
+          if (metas.timeCodesPerSecond) {
+            _stage.stage_metas.timeCodesPerSecond = metas.timeCodesPerSecond.value();
+          }
+    
+          _stage.stage_metas.customData = metas.customData;
 
           return true;  // ok
         });
@@ -564,9 +574,6 @@ class USDAReader::Impl {
   ascii::AsciiParser _parser;
 
   Stage _stage;
-
-  // HACK
-  nonstd::optional<Axis> _upAxis;
 
 };  // namespace usda
 
@@ -2211,11 +2218,6 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
     }
 
     PUSH_ERROR_AND_RETURN("Parse failed:" + _parser.GetError());
-  }
-
-  // HACK
-  if (_upAxis) {
-    DCOUT("upAxis = " << to_string(_upAxis.value()));
   }
 
   DCOUT("# of toplevel prims = " << std::to_string(PrimSize()));
