@@ -4623,11 +4623,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   // prim_attr : (custom?) uniform type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
   //           | (custom?) uniform type (array_qual?) name interpolation?
-  //           | (custom?) rel name = None
-  //           | (custom?) rel name = string meta
-  //           | (custom?) rel name = path meta
-  //           | (custom?) rel name = pathvector meta
-  //           | (custom?) rel name meta
+  //           | (custom?) rel attr_name = None
+  //           | (custom?) rel attr_name = string meta
+  //           | (custom?) rel attr_name = path meta
+  //           | (custom?) rel attr_name = pathvector meta
+  //           | (custom?) rel attr_name meta
   //           ;
 
   // Parse `custom`
@@ -4648,18 +4648,21 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     return false;
   }
 
+  DCOUT("type_name = " << type_name);
+
   // Relation('rel')
   if (type_name == kRel) {
+    DCOUT("relation");
 
-    // - identifier
-    // - identifier, '(' metadataum ')'
-    // - identifier, '=', (None|string|path|pathvector)
+
+    // - prim_identifier
+    // - prim_identifier, '(' metadataum ')'
+    // - prim_identifier, '=', (None|string|path|pathvector)
     // NOTE: There should be no 'uniform rel'
 
     std::string attr_name;
 
-    // next token should be type
-    if (!ReadIdentifier(&attr_name)) {
+    if (!ReadPrimAttrIdentifier(&attr_name)) {
       PUSH_ERROR_AND_RETURN("Attribute name(Identifier) expected but got non-identifier.");
     }
 

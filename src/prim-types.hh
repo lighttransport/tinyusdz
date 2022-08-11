@@ -229,23 +229,25 @@ enum class Variability {
 };
 
 ///
+/// Simlar to SdfPath.
+///
 /// We don't need the performance for USDZ, so use naiive implementation
 /// to represent Path.
 /// Path is something like Unix path, delimited by `/`, ':' and '.'
+/// Square brackets('<', '>' is not included)
 ///
 /// Example:
 ///
-/// `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+/// - `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+/// - `bora` : Relative path
 ///
 /// ':' is a namespce delimiter(example `input:muda`).
 ///
 /// Limitations:
 ///
-/// Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
-/// supported.
-///
-/// variant chars('{' '}') is not supported.
-/// '..' is not supported
+/// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not supported.
+/// - Variant chars('{' '}') is not supported.
+/// - '../' is TODO
 ///
 /// and have more limitatons.
 ///
@@ -253,7 +255,7 @@ class Path {
  public:
   Path() : valid(false) {}
   Path(const std::string &prim)
-      : prim_part(prim), local_part(prim), valid(true) {}
+      : prim_part(prim), valid(true) {}
   // Path(const std::string &prim, const std::string &prop)
   //    : prim_part(prim), prop_part(prop) {}
 
@@ -264,7 +266,6 @@ class Path {
 
     this->prim_part = rhs.prim_part;
     this->prop_part = rhs.prop_part;
-    this->local_part = rhs.local_part;
 
     return (*this);
   }
@@ -285,17 +286,6 @@ class Path {
     return s;
   }
 
-  std::string local_path_name() const {
-    std::string s;
-    if (!valid) {
-      s += "INVALID#";
-    }
-
-    s += local_part;
-
-    return s;
-  }
-
   std::string GetPrimPart() const { return prim_part; }
 
   std::string GetPropPart() const { return prop_part; }
@@ -305,15 +295,7 @@ class Path {
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
   static Path AbsoluteRootPath() { return Path("/"); }
-
-  void SetLocalPart(const Path &rhs) {
-    // assert(rhs.valid == true);
-
-    this->local_part = rhs.local_part;
-    this->valid = rhs.valid;
-  }
-
-  std::string GetLocalPart() const { return local_part; }
+  static Path RelativePath() { return Path("."); }
 
   Path AppendProperty(const std::string &elem) {
     Path p = (*this);
@@ -412,10 +394,27 @@ class Path {
     return false;
   }
 
+  bool IsAbsolutePath() const {
+    if (prim_part.size()) {
+      if ((prim_part.size() > 0) && (prim_part[0] == '/')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool IsRelativePath() const {
+    if (prim_part.size()) {
+      return !IsAbsolutePath();
+    }
+
+    return true; // prop part only
+  }
+
  private:
-  std::string prim_part;  // full path
-  std::string prop_part;  // full path
-  std::string local_part;
+  std::string prim_part;  // e.g. </Model/MyMesh>
+  std::string prop_part;  // e.g. .visibility
   bool valid{false};
 };
 
@@ -457,6 +456,9 @@ class TokenizedPath {
  private:
   std::vector<std::string> _tokens;
 };
+
+bool operator==(const Path &lhs, const Path &rhs);
+
 
 class TimeCode {
   TimeCode(double tm = 0.0) : _time(tm) {}

@@ -33,6 +33,9 @@ enum class NodeType {
 struct BufferData {
   value::TypeId type_id{value::TypeId::TYPE_ID_VOID};
   std::vector<uint8_t> data;  // binary data
+
+  // TODO: Stride
+
 };
 
 // glTF-like Attribute

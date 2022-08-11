@@ -3,7 +3,11 @@
 #include "pprinter.hh"
 #include "prim-types.hh"
 
+#if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
+#endif
+
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -48,6 +52,14 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const Geom
           "Unsupported/unimplemented interpolation for `normals` attribute: " +
           to_string(interp) + ".\n");
     }
+  }
+
+  // Material/Shader
+  if (mesh.materialBinding.materialBinding.IsValid()) {
+    const Path &matPath = mesh.materialBinding.materialBinding;
+    DCOUT("materialBinding = " << to_string(matPath));
+
+    //stage.GetPrimAtPath
   }
 
   // uvs

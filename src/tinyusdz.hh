@@ -48,6 +48,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // TODO: Use std:: version for C++17
 #include "nonstd/optional.hpp"
+#include "nonstd/expected.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -388,18 +389,16 @@ struct StringAndIdMap {
 
 
 //
-// For high-level scene graph.
+// For `Stage` scene graph.
 // Easy to use API, but may not be performant.
 //
 class PrimNode {
  public:
-  std::string name;
+  Path path;
 
-  PrimNode(const value::Value &rhs) : data(rhs) {
-  }
+  PrimNode(const value::Value &rhs);
 
-  PrimNode(value::Value &&rhs) : data(rhs) {
-  }
+  PrimNode(value::Value &&rhs);
 
   value::Value data; // GPrim, Xform, ...
 
@@ -444,6 +443,11 @@ struct Stage {
 
   // Root nodes
   std::vector<PrimNode> root_nodes;
+
+  ///
+  ///
+  /// @returns pointer to PrimNode(to avoid a copy). Assume no scene item removal/addition until the end of use of the pointer of `PrimNode` data.
+  nonstd::expected<const PrimNode *, std::string> GetPrimAtPath(const Path &path);
 
 };
 

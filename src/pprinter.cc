@@ -4,6 +4,7 @@
 //
 #include "pprinter.hh"
 #include "value-pprint.hh"
+#include "str-util.hh"
 
 
 namespace tinyusdz {
@@ -120,6 +121,10 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
   ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent) << " = " << print_animatable(gprim.extent, indent) << "\n";
 
   ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility) << " = " << print_animatable(gprim.visibility, indent) << "\n";
+
+  if (gprim.materialBinding.materialBinding.IsValid()) {
+    ss << Indent(indent) << "  rel material:binding = " << wquote(to_string(gprim.materialBinding.materialBinding), "<", ">") << "\n";
+  }
 
   // primvars
   ss << Indent(indent) << "  float3[] primvars:displayColor" << prefix(gprim.displayColor) << " = " << print_animatable(gprim.displayColor, indent) << "\n";
@@ -762,7 +767,8 @@ std::string to_string(const Path &path, bool show_full_path) {
   if (show_full_path) {
     return path.full_path_name();
   } else {
-    return path.local_path_name();
+    // TODO
+    return path.full_path_name();
   }
 }
 
