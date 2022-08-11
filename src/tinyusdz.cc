@@ -54,6 +54,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "usdc-reader.hh"
 #include "image-loader.hh"
 #include "usdShade.hh"
+#include "value-pprint.hh"
 
 #if 0
 #if defined(TINYUSDZ_WITH_AUDIO)
@@ -644,18 +645,18 @@ nonstd::optional<Path> GetPath(const value::Value &v)
   if (auto pv = v.get_value<GeomCylinder>()) { return Path(pv.value().name); }
   if (auto pv = v.get_value<GeomCapsule>()) { return Path(pv.value().name); }
   if (auto pv = v.get_value<GeomCone>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomSubset>()) { return Path(pv.value().name); } 
-  if (auto pv = v.get_value<GeomCamera>()) { return Path(pv.value().name); } 
+  if (auto pv = v.get_value<GeomSubset>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<GeomCamera>()) { return Path(pv.value().name); }
 
-  if (auto pv = v.get_value<LuxDomeLight>()) { return Path(pv.value().name); } 
-  if (auto pv = v.get_value<LuxSphereLight>()) { return Path(pv.value().name); } 
-  //if (auto pv = v.get_value<LuxCylinderLight>()) { return Path(pv.value().name); } 
-  //if (auto pv = v.get_value<LuxDiskLight>()) { return Path(pv.value().name); } 
+  if (auto pv = v.get_value<LuxDomeLight>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<LuxSphereLight>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<LuxCylinderLight>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<LuxDiskLight>()) { return Path(pv.value().name); }
 
-  if (auto pv = v.get_value<Material>()) { return Path(pv.value().name); } 
-  if (auto pv = v.get_value<Shader>()) { return Path(pv.value().name); } 
-  //if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); } 
-  //if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name); } 
+  if (auto pv = v.get_value<Material>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<Shader>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
+  //if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name); }
 
   return nonstd::nullopt;
 }
@@ -741,9 +742,35 @@ nonstd::expected<const PrimNode*, std::string> Stage::GetPrimAtPath(const Path &
       return pv.value();
     }
   }
-  
+
   return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() + "> int the Stage.\n");
 }
 
+std::string Stage::ExportToString() const {
+
+  std::stringstream ss;
+
+  ss << "#usda 1.0\n";
+  ss << "(\n";
+  if (stage_metas.doc.empty()) {
+    ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
+       << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
+  } else {
+    ss << "  doc = \"" << stage_metas.doc << "\"\n";
+  }
+  ss << "  metersPerUnit = " << stage_metas.metersPerUnit << "\n";
+  ss << "  upAxis = \"" << to_string(stage_metas.upAxis) << "\"\n";
+  ss << "  timeCodesPerSecond = \"" << stage_metas.timeCodesPerSecond << "\"\n";
+  // TODO: write other header data.
+  ss << ")\n";
+  ss << "\n";
+
+  for (const auto &item : root_nodes) {
+    ss << pprint_value(item.data, /* indent */0, /* closing_brace */true);
+  }
+
+  return ss.str();
+
+}
 
 }  // namespace tinyusdz
