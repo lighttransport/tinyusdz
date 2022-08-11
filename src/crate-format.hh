@@ -203,7 +203,7 @@ struct PathHasher {
   size_t operator()(const Path &path) const {
     size_t seed = std::hash<std::string>()(path.GetPrimPart());
     hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
-    hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
+    //hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
     hash_combine(seed, std::hash<bool>()(path.IsValid()));
 
     return seed;
@@ -214,7 +214,7 @@ struct PathKeyEqual {
   bool operator()(const Path &lhs, const Path &rhs) const {
     bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
     ret &= lhs.GetPropPart() == rhs.GetPropPart();
-    ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
+    //ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
     ret &= lhs.IsValid() == rhs.IsValid();
 
     return ret;

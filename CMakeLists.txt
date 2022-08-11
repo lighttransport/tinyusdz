@@ -72,6 +72,10 @@ option(TINYUSDZ_WITH_TIFF "Build with TIFF texture(includes 32bit floating point
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 # ---------
 
+# -- ColorIO --
+option(TINYUSDZ_WITH_COLORIO "Build with Color IO Baked LUT support(through tinycolorio)" ON)
+# ---------
+
 # -- optional tool --
 option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ON)
 # --------------
@@ -507,6 +511,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_EXR")
   endif(TINYUSDZ_WITH_EXR)
+
+  if(TINYUSDZ_WITH_COLORIO)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_COLORIO")
+  endif(TINYUSDZ_WITH_COLORIO)
 
   if(TINYUSDZ_WITH_AUDIO)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

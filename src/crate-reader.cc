@@ -142,7 +142,7 @@ static inline bool ReadIndices(const StreamReader *sr,
   return true;
 }
 
-} // namespace 
+} // namespace
 
 //
 // --
@@ -2833,8 +2833,9 @@ bool CrateReader::BuildDecompressedPathsImpl(
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
                              : parentPath.AppendElement(elemToken.str());
 
-      // also set local path for 'primChildren' check
-      _paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
+      // also set leaf path for 'primChildren' check
+      _elemPaths[pathIndexes[thisIndex]] = Path(elemToken.str());
+      //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
     }
 
     // If we have either a child or a sibling but not both, then just
@@ -2903,7 +2904,8 @@ bool CrateReader::BuildNodeHierarchy(
 
       _nodes[size_t(pathIndexes[thisIndex])] = node;
 
-      std::string name = _paths[pathIndexes[thisIndex]].local_path_name();
+      //std::string name = _paths[pathIndexes[thisIndex]].local_path_name();
+      std::string name = _elemPaths[pathIndexes[thisIndex]].full_path_name();
       DCOUT("childName = " << name);
       _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(
           name, pathIndexes[thisIndex]);
@@ -3045,6 +3047,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
   }
 
   _paths.resize(static_cast<size_t>(numPaths));
+  _elemPaths.resize(static_cast<size_t>(numPaths));
 
   _nodes.resize(static_cast<size_t>(numPaths));
 
@@ -3886,9 +3889,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         (void)path;
 
         DCOUT("full path: " << path.full_path_name());
-        DCOUT("local path: " << path.local_path_name());
+        //DCOUT("local path: " << path.local_path_name());
 
-        attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
+        attr->var.set_scalar(path);
 
         has_connection = true;
 
@@ -3907,9 +3910,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         (void)path;
 
         DCOUT("full path: " << path.full_path_name());
-        DCOUT("local path: " << path.local_path_name());
+        //DCOUT("local path: " << path.local_path_name());
 
-        attr->var.set_scalar(path.full_path_name());  // TODO: store `Path`
+        attr->var.set_scalar(path);
 
         has_connection = true;
 
