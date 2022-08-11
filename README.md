@@ -242,6 +242,12 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 * [ ] Write parser based on the schema definition.
 * [ ] Support big endian architecture.
 
+## Python binding and prebuit packages
+
+Python binding and prebuilt packages(uploadded on PyPI) are provided.
+
+See [python/README.md](python/README.md) and [doc/python_binding.md](doc/python_binding.md) for details.
+
 ## Fuzzing test
 
 See `tests/fuzzer/` 
