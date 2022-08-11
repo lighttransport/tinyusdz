@@ -19,6 +19,9 @@ DEFINE_TYPE_TRAIT(Material, "Material",
                   TYPE_ID_MATERIAL, 1);
 
 // Shader
+DEFINE_TYPE_TRAIT(Shader, "Shader",
+                  TYPE_ID_SHADER, 1);
+
 DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface",
                   TYPE_ID_IMAGING_PREVIEWSURFACE, 1);
 DEFINE_TYPE_TRAIT(UVTexture, "UVTexture", TYPE_ID_IMAGING_UVTEXTURE, 1);

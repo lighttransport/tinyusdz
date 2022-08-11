@@ -53,6 +53,10 @@ inline std::string quote(const std::string &s, const std::string &quote_str = "\
   return quote_str + s + quote_str; 
 }
 
+inline std::string wquote(const std::string &s, const std::string &quote_lstr = "\"", const std::string &quote_rstr = "\"") {
+  return quote_lstr + s + quote_rstr; 
+}
+
 template<typename It>
 inline It quote(const It& v, const std::string &quote_str = "\"") {
   

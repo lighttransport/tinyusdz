@@ -165,27 +165,27 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 #endif
   dst->vertices.resize(mesh.points.size() * 3);
   memcpy(dst->vertices.data(), mesh.points.data(),
-         dst->vertices.size() * sizeof(float));
-  std::cout << __func__ << ": mesh.points = " << mesh.points.size() * 3 << "\n";
+         dst->vertices.size() * sizeof(tinyusdz::value::point3f));
+  std::cout << __func__ << "# of mesh.points = " << mesh.points.size() << "\n";
 
-  std::vector<float> facevarying_normals;
-  if (!mesh.GetFacevaryingNormals(&facevarying_normals)) {
-    std::cout << __func__ << ":Warn: failed to retrieve facevarying normals\n";
-  }
+  //std::vector<float> facevarying_normals;
+  //if (!mesh.GetFacevaryingNormals(&facevarying_normals)) {
+  //  std::cout << __func__ << ":Warn: failed to retrieve facevarying normals\n";
+  //}
 
-  std::vector<float> facevarying_texcoords;
-  if (!mesh.GetFacevaryingTexcoords(&facevarying_texcoords)) {
-    std::cout << __func__
-              << ":Warn: failed to retrieve facevarying texcoords\n";
-  }
+  //std::vector<float> facevarying_texcoords;
+  //if (!mesh.GetFacevaryingTexcoords(&facevarying_texcoords)) {
+  //  std::cout << __func__
+  //            << ":Warn: failed to retrieve facevarying texcoords\n";
+  //}
 
-  std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
-            << "\n";
+  //std::cout << "# of facevarying normals = " << facevarying_normals.size() / 3
+  //          << "\n";
 
-  std::cout << "# of faceVertexCounts: " << mesh.faceVertexCounts.size()
-            << "\n";
-  std::cout << "# of faceVertexIndices: " << mesh.faceVertexIndices.size()
-            << "\n";
+  //std::cout << "# of faceVertexCounts: " << mesh.faceVertexCounts.size()
+  //          << "\n";
+  //std::cout << "# of faceVertexIndices: " << mesh.faceVertexIndices.size()
+  //          << "\n";
 
   // for (size_t i = 0; i < facevarying_normals.size() / 3; i++) {
   //  std::cout << "fid[" << i << "] = " << facevarying_normals[3 * i + 0] << ",
@@ -214,6 +214,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
           dst->facevertex_indices.push_back(
               mesh.faceVertexIndices[face_offset + f]);
 
+#if 0
           if (facevarying_normals.size()) {
             // x, y, z
             dst->facevarying_normals.push_back(
@@ -231,6 +232,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
             dst->facevarying_texcoords.push_back(
                 facevarying_texcoords[2 * (face_offset + f) + 1]);
           }
+#endif
         }
 
       } else {
@@ -249,6 +251,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
           dst->facevertex_indices.push_back(
               mesh.faceVertexIndices[face_offset + f2]);
 
+#if 0
           if (facevarying_normals.size()) {
             size_t fid0 = face_offset + f0;
             size_t fid1 = face_offset + f1;
@@ -301,6 +304,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
             dst->facevarying_texcoords.push_back(
                 facevarying_texcoords[2 * fid2 + 1]);
           }
+#endif
         }
       }
       face_offset += f_count;

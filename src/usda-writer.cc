@@ -14,12 +14,14 @@
 
 #include "pprinter.hh"
 #include "value-pprint.hh"
+#include "tinyusdz.hh"
 
 namespace tinyusdz {
 namespace usda {
 
 namespace {
 
+#if 0 // TODO: Remove
 inline std::string GetTypeName(XformOpValueType const &v) {
   return value::GetTypeName(v.id());
 }
@@ -139,12 +141,21 @@ class Writer {
   std::string _err;
   std::string _warn;
 };
+#endif
 
 }  // namespace
 
 bool SaveAsUSDA(const std::string &filename, const Stage &stage,
                 std::string *warn, std::string *err) {
 
+  // TODO: warn and err on export.
+  std::string s = stage.ExportToString();
+
+  (void)warn;
+
+
+#if 0
+  // TODO: Use Stage::ExportToString
   (void)warn;
 
   std::stringstream ss;
@@ -183,6 +194,7 @@ bool SaveAsUSDA(const std::string &filename, const Stage &stage,
     }
   }
 #endif
+#endif
 
   std::ofstream ofs(filename);
   if (!ofs) {
@@ -192,7 +204,7 @@ bool SaveAsUSDA(const std::string &filename, const Stage &stage,
     return false;
   }
 
-  ofs << ss.str();
+  ofs << s;
 
   std::cout << "Wrote to [" << filename << "]\n";
 
