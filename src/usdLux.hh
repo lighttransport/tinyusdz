@@ -8,6 +8,9 @@
 
 namespace tinyusdz {
 
+constexpr auto kLuxSphereLight = "LuxSphereLight";
+constexpr auto kLuxDomeLight = "LuxDomeLight";
+
 struct LuxSphereLight {
   std::string name;
 
@@ -98,6 +101,8 @@ struct LuxDomeLight {
 
 namespace value {
 
+DEFINE_TYPE_TRAIT(LuxDomeLight, kLuxDomeLight, TYPE_ID_LUX_DOME, 1);
+DEFINE_TYPE_TRAIT(LuxSphereLight, kLuxSphereLight, TYPE_ID_LUX_SPHERE, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

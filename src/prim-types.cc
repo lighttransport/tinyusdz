@@ -261,5 +261,20 @@ Orientation OrientationFromString(const std::string &v)
   return Orientation::Invalid;
 }
 
+bool operator==(const Path &lhs, const Path &rhs) {
+  if (!lhs.IsValid()) {
+    return false;
+  }
+
+  if (!rhs.IsValid()) {
+    return false;
+  }
+
+  // Currently simply compare string.
+  // FIXME: Better Path identity check.
+  return (lhs.full_path_name() == rhs.full_path_name());
+}
+
+
 
 } // namespace tinyusdz
