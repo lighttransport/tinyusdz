@@ -101,10 +101,16 @@
 #include "common-macros.inc"
 
 namespace tinyusdz {
-
 namespace usda {
 
 namespace {
+
+struct PrimNode {
+  value::Value prim;
+
+  int64_t parent{-1}; // -1 = root node
+  std::vector<size_t> children; // index to USDAReader._prims[]
+};
 
 // TODO: Move to prim-types.hh?
 
@@ -502,6 +508,7 @@ class USDAReader::Impl {
     _node_types.insert(PrimTypeTrait<Skeleton>::prim_type_name);
   }
 
+#if 0
   ///
   /// -- Iterators --
   ///
@@ -537,6 +544,7 @@ class USDAReader::Impl {
     return PrimIterator(_toplevel_prims, _prims, _toplevel_prims.size());
   }
   size_t PrimSize() { return _toplevel_prims.size(); }
+#endif
 
   ///
   /// -- Members --
@@ -564,12 +572,12 @@ class USDAReader::Impl {
       _reference_cache;
 
   // toplevel prims
-  std::vector<size_t> _toplevel_prims;  // index to _prims
+  std::vector<size_t> _toplevel_prims;  // index to _prim_nodes
 
   // Flattened array of prim nodes.
-  std::vector<value::Value> _prims;
+  std::vector<PrimNode> _prim_nodes;
 
-  // Path(prim part only) -> index to _prims[]
+  // Path(prim part only) -> index to _prim_nodes[]
   std::map<std::string, size_t> _primpath_to_prim_idx_map;
 
   // load flags
@@ -621,7 +629,14 @@ bool USDAReader::Impl::ReconstructStage() {
   for (const auto &idx : _toplevel_prims) {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
 
-    const auto &prim = _prims[idx];
+    const auto &node = _prim_nodes[idx];
+
+    Prim prim(node.prim);
+
+    for (const auto &cidx : node.children) {
+      (void)cidx;
+      // TODO: Process child prim nodes.
+    }
 
     _stage.root_nodes.push_back(prim);
   }
@@ -962,10 +977,10 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
         }
 
         size_t prim_idx = _primpath_to_prim_idx_map[parent_primpath];
-        auto pmesh = _prims[prim_idx].get_value<GeomMesh>();
+        auto pmesh = _prim_nodes[prim_idx].prim.get_value<GeomMesh>();
         if (!pmesh) {
           PUSH_ERROR_AND_RETURN("Parent Prim must be GeomMesh, but got " +
-                                _prims[prim_idx].type_name());
+                                _prim_nodes[prim_idx].prim.type_name());
         }
         GeomMesh &mesh = pmesh.value();
 
@@ -2205,8 +2220,10 @@ bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
 
         Path parent = path.GetParentPrim();
         if (parent.IsRootPrim()) {
-          size_t idx = _prims.size();
-          _prims.push_back(xform);
+          size_t idx = _prim_nodes.size();
+          PrimNode node;
+          node.prim = xform;
+          _prim_nodes.push_back(node);
           _toplevel_prims.push_back(idx);
         } else {
           PUSH_WARN("TODO: Implement xform");
@@ -2254,6 +2271,7 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
     PUSH_ERROR_AND_RETURN("Parse failed:" + _parser.GetError());
   }
 
+#if 0
   DCOUT("# of toplevel prims = " << std::to_string(PrimSize()));
 
   {
@@ -2262,6 +2280,7 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
       DCOUT("Prim[" << std::to_string(i) << "].type = " << (*it).type_name());
     }
   }
+#endif
 
 #if 0
     //_sub_layered = (state == LOAD_STATE_SUBLAYER);
