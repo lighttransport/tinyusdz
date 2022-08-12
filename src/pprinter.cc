@@ -108,41 +108,35 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
 
   // properties
-  if (gprim.doubleSided != false) {
-    ss << Indent(indent) << "  uniform bool doubleSided = " << gprim.doubleSided << "\n";
+  if (gprim.doubleSided.has_value()) {
+    ss << Indent(indent) << "  uniform bool doubleSided = " << gprim.doubleSided.get() << "\n";
   }
 
-  if (gprim.orientation != Orientation::RightHanded) {
-    ss << Indent(indent) << "  uniform token orientation = " << to_string(gprim.orientation)
+  if (gprim.orientation.has_value()) {
+    ss << Indent(indent) << "  uniform token orientation = " << to_string(gprim.orientation.get())
        << "\n";
   }
 
 
-  ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent) << " = " << print_animatable(gprim.extent, indent) << "\n";
+  if (gprim.extent.has_value()) {
+    ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value(), indent) << "\n";
+  }
 
-  ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility) << " = " << print_animatable(gprim.visibility, indent) << "\n";
+  if (gprim.visibility.has_value()) {
+    ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent) << "\n";
+  }
 
-  if (gprim.materialBinding.materialBinding.IsValid()) {
-    ss << Indent(indent) << "  rel material:binding = " << wquote(to_string(gprim.materialBinding.materialBinding), "<", ">") << "\n";
+  if (gprim.materialBinding) {
+    auto m = gprim.materialBinding.value();
+    if (m.binding.IsValid()) {
+      ss << Indent(indent) << "  rel material:binding = " << wquote(to_string(m.binding), "<", ">") << "\n";
+    }
   }
 
   // primvars
-  ss << Indent(indent) << "  float3[] primvars:displayColor" << prefix(gprim.displayColor) << " = " << print_animatable(gprim.displayColor, indent) << "\n";
-
-#if 0
-  if (!gprim.displayColor.empty()) {
-    ss << Indent(indent) << "  primvars:displayColor = [";
-    for (size_t i = 0; i < gprim.displayColor.size(); i++) {
-      ss << gprim.displayColor[i];
-      if (i != (gprim.displayColor.size() - 1)) {
-        ss << ", ";
-      }
-    }
-    ss << "]\n";
-
-    // TODO: print optional meta value(e.g. `interpolation`)
+  if (gprim.displayColor) {
+    ss << Indent(indent) << "  float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value(), indent) << "\n";
   }
-#endif
 
   return ss.str();
 }
@@ -360,8 +354,10 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   // props
   // TODO:
 
-  ss << Indent(indent) << "  visibility" << prefix(gprim.visibility) << " = " << print_animatable(gprim.visibility, indent)
-     << "\n";
+  if (gprim.visibility.has_value()) {
+    ss << Indent(indent) << "  visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent)
+       << "\n";
+  }
 
   if (closing_brace) {
     ss << Indent(indent) << "}\n";
@@ -413,8 +409,10 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
     ss << "]\n";
   }
 
-  ss << Indent(indent) << "  visibility" << prefix(xform.visibility) << " = " << print_animatable(xform.visibility, indent)
+  if (xform.visibility.has_value()) {
+    ss << Indent(indent) << "  visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get(), indent)
      << "\n";
+  }
 
   if (closing_brace) {
     ss << Indent(indent) << "}\n";

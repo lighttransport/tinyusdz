@@ -663,7 +663,7 @@ nonstd::optional<Path> GetPath(const value::Value &v)
 
 } // namespace
 
-PrimNode::PrimNode(const value::Value &rhs)
+Prim::Prim(const value::Value &rhs)
 {
   // Check if Prim type is Model(GPrim)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
@@ -679,7 +679,7 @@ PrimNode::PrimNode(const value::Value &rhs)
   }
 }
 
-PrimNode::PrimNode(value::Value &&rhs)
+Prim::Prim(value::Value &&rhs)
 {
   // Check if Prim type is Model(GPrim)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
@@ -698,7 +698,7 @@ PrimNode::PrimNode(value::Value &&rhs)
 
 namespace {
 
-nonstd::optional<const PrimNode*> GetPrimAtPathRec(const PrimNode *parent, const Path &path) {
+nonstd::optional<const Prim*> GetPrimAtPathRec(const Prim *parent, const Path &path) {
 
   //// TODO: Find better way to get path name from any value.
   //if (auto pv = parent.get_value<Xform>)
@@ -720,7 +720,7 @@ nonstd::optional<const PrimNode*> GetPrimAtPathRec(const PrimNode *parent, const
 
 } // namespace
 
-nonstd::expected<const PrimNode*, std::string> Stage::GetPrimAtPath(const Path &path)
+nonstd::expected<const Prim*, std::string> Stage::GetPrimAtPath(const Path &path)
 {
   if (!path.IsValid()) {
     return nonstd::make_unexpected("Path is invalid.\n");
