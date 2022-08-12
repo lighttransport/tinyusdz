@@ -75,7 +75,13 @@ class USDAReader {
   std::string GetWarning();
 
   ///
-  /// Get as stage(scene graph)
+  /// Reconstruct Stage from loaded USD scene data.
+  /// Must be called after `Read`
+  ///
+  bool ReconstructStage();
+
+  ///
+  /// Get as stage(scene graph). Must call `ReconstructStage` beforehand.
   ///
   const Stage& GetStage() const;
 

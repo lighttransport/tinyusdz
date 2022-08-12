@@ -55,9 +55,12 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const Geom
   }
 
   // Material/Shader
-  if (mesh.materialBinding.materialBinding.IsValid()) {
-    const Path &matPath = mesh.materialBinding.materialBinding;
-    DCOUT("materialBinding = " << to_string(matPath));
+  if (mesh.materialBinding) {
+    const MaterialBindingAPI &materialBinding = mesh.materialBinding.value();
+    if (materialBinding.binding.IsValid()) {
+      const Path &matPath = materialBinding.binding;
+      DCOUT("materialBinding = " << to_string(matPath));
+    }
 
     //stage.GetPrimAtPath
   }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <math.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -33,6 +34,64 @@
 #include "tiny-variant.hh"
 
 namespace tinyusdz {
+
+template<typename T>
+class AttribWithFallback {
+ public:
+
+  //AttribWithFallback() = delete;
+
+  AttribWithFallback(const T &f) : fallback(f) {
+  }
+
+  // TODO
+  //AttribWithFallback(const AttribWithFallback &rhs) = delete;
+  //AttribWithFallback(const AttribWithFallback &&rhs) = delete;
+
+  void set(const T& v) {
+    attrib = v;
+  }
+
+  const T &get() const {
+    if (attrib) {
+      return attrib.value();
+    }
+    return fallback;
+  }
+
+  bool has_value() const {
+    if (attrib) {
+      return true;
+    }
+    return false;
+  }
+
+ private:
+  nonstd::optional<T> attrib;
+  T fallback;
+};
+
+
+
+class PrimNode;
+
+#if 0 // TODO
+class PrimRange
+{
+ public:
+  class iterator;
+
+  iterator begin() const {
+  }
+  iterator end() const {
+  }
+
+ private:
+  const PrimNode *begin_;
+  const PrimNode *end_;
+  size_t depth_{0};
+};
+#endif
 
 template <typename T>
 class ListOp {
@@ -156,8 +215,8 @@ enum class Orientation {
 };
 
 enum class Visibility {
-  Inherited,  // 0
-  Invisible,
+  Inherited,  // "inherited" (default)
+  Invisible, // "invisible"
   Invalid
 };
 
@@ -1068,8 +1127,9 @@ struct Klass {
 };
 
 struct MaterialBindingAPI {
-  Path materialBinding;            // rel material:binding
-  Path materialBindingCorrection;  // rel material:binding:correction
+  Path binding;            // rel material:binding
+  Path bindingCorrection;  // rel material:binding:correction
+  Path bindingPreview;     // rel material:binding:preview
 
   // TODO: allPurpose, preview, ...
 };
@@ -1705,6 +1765,7 @@ DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
 DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
+DEFINE_TYPE_TRAIT(Relation, "Relationship", TYPE_ID_RELATIONSHIP, 1);
 // TODO(syoyo): Define PathVector as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
 
