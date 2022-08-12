@@ -5059,7 +5059,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     attr.uniform = uniform_qual;
     attr.name = primattr_name;
 
-    DCOUT("primattr_name = " + primattr_name);
+    DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);
 
     Property p(attr, custom_qual);
 
@@ -5491,7 +5491,14 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
 
       Identifier tok;
       if (!ReadBasicType(&tok)) {
-        return false;
+        // maybe ';'?
+
+        if (LookChar1(&c)) {
+          if (c == ';') {
+            PUSH_ERROR_AND_RETURN("Semicolon is not allowd in `def` block statement.");
+          }
+        }
+        PUSH_ERROR_AND_RETURN("Failed to parse an identifier in `def` block statement.");
       }
 
       if (!Rewind(tok.size())) {
@@ -5627,11 +5634,12 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
       auto construct_fun = _prim_construct_fun_map[prim_type];
 
       Path path(GetCurrentPath());
-      if (!construct_fun(path, props, references)) {
+      bool ret = construct_fun(path, props, references);
+      DCOUT("prim_type " << prim_type << " ret = " << ret);
+      if (!ret) {
         // construction failed.
         PUSH_ERROR_AND_RETURN("Constructing " + prim_type + " failed.");
       }
-
     }
   }
 
@@ -5674,7 +5682,10 @@ bool AsciiParser::Parse(LoadState state) {
 
   if (_stage_meta_process_fun) {
     DCOUT("StageMeta callback.");
-    _stage_meta_process_fun(_stage_metas);
+    bool ret = _stage_meta_process_fun(_stage_metas);
+    if (!ret) {
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage metas.");
+    }
   }
 
   PushPath("/");

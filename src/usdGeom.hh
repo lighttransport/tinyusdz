@@ -30,15 +30,22 @@ struct GPrim {
   std::string prim_type;  // Primitive type(if specified by `def`)
 
   // Gprim
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
 
-  MaterialBindingAPI materialBinding;
+  // nonstd::nullopt = not authorized.
+  nonstd::optional<AnimatableExtent> extent;  // bounding extent. When authorized, the extent is the bounding box of whole its children.
+
+  AttribWithFallback<bool> doubleSided{false};
+
+  AttribWithFallback<Orientation> orientation{Orientation::RightHanded};
+  AttribWithFallback<AnimatableVisibility> visibility{Visibility::Inherited};
+  AttribWithFallback<Purpose> purpose{Purpose::Default};
+
+  nonstd::optional<AnimatableVec3fArray> displayColor;    // primvars:displayColor
+  nonstd::optional<AnimatableFloatArray> displayOpacity;  // primvars:displaOpacity
+
+  nonstd::optional<Relation> proxyPrim;
+  nonstd::optional<MaterialBindingAPI> materialBinding;
+  std::vector<value::token> xformOpOrder;
 
   std::map<std::string, Property> props;
 
@@ -52,15 +59,9 @@ struct GPrim {
   std::vector<GPrim> children;
 };
 
-struct Xform {
-  std::string name;
-  int64_t parent_id{-1};  // Index to xform node
+struct Xform : GPrim {
 
   std::vector<XformOp> xformOps;
-
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
   Xform() {}
 
@@ -271,7 +272,6 @@ struct GeomCamera : public GPrim {
   float shutterClose = 0.0f;  // shutter:close
   float shutterOpen = 0.0f;   // shutter:open
 
-  std::vector<value::token> xformOpOrder;
 
 };
 

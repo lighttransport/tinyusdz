@@ -390,20 +390,20 @@ struct StringAndIdMap {
 
 //
 // For `Stage` scene graph.
-// Easy to use API, but may not be performant.
+// Similar to `Prim` in pxrUSD.
+// This class uses tree-representation of `Prim`. Easy to use, but may not be performant.
 //
-class PrimNode {
+class Prim {
  public:
   Path path;
 
-  PrimNode(const value::Value &rhs);
+  Prim(const value::Value &rhs);
 
-  PrimNode(value::Value &&rhs);
+  Prim(value::Value &&rhs);
 
   value::Value data; // GPrim, Xform, ...
 
-  //int64_t parent{-1};          // parent node index
-  std::vector<PrimNode> children;  // child nodes
+  std::vector<Prim> children;  // child nodes
 };
 
 //
@@ -434,6 +434,8 @@ struct StageMetas {
   value::dict customData;
 };
 
+class PrimRange;
+
 // Similar to UsdStage, but much more something like a Scene(scene graph)
 struct Stage {
   std::string name;       // Scene name
@@ -442,14 +444,19 @@ struct Stage {
   StageMetas stage_metas;
 
   // Root nodes
-  std::vector<PrimNode> root_nodes;
+  std::vector<Prim> root_nodes;
 
   ///
-  /// Get PrimNode at a Path.
+  /// Traverse by depth-first order.
   ///
-  /// @returns pointer to PrimNode(to avoid a copy). Assume no scene item removal/addition until the end of use of the pointer of `PrimNode` data.
+  PrimRange Traverse();
+
   ///
-  nonstd::expected<const PrimNode *, std::string> GetPrimAtPath(const Path &path);
+  /// Get Prim at a Path.
+  ///
+  /// @returns pointer to Prim(to avoid a copy). Assume no scene item removal/addition until the end of use of the pointer of `Prim` data.
+  ///
+  nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path);
 
   ///
   /// Dump Stage as ASCII(USDA) representation.
