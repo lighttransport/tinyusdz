@@ -94,7 +94,7 @@ std::string print_timesampled(const TypedTimeSamples<T> &v, const uint32_t inden
 #endif
 
 template<typename T>
-std::string print_animatable(const Animatable<T> &v, const uint32_t indent) {
+std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) {
   if (v.IsTimeSampled()) {
     // TODO: print all ranges
     return "TODO"; //print_timesampled(v.ranges.[0], indent);
@@ -119,11 +119,11 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
 
 
   if (gprim.extent.has_value()) {
-    ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value(), indent) << "\n";
+    ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value()) << "\n";
   }
 
   if (gprim.visibility.has_value()) {
-    ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent) << "\n";
+    ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get()) << "\n";
   }
 
   if (gprim.materialBinding) {
@@ -135,13 +135,30 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
 
   // primvars
   if (gprim.displayColor) {
-    ss << Indent(indent) << "  float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value(), indent) << "\n";
+    ss << Indent(indent) << "  float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value()) << "\n";
   }
 
   return ss.str();
 }
 
 } // namespace
+
+std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
+  switch (v) {
+    case tinyusdz::GeomMesh::InterpolateBoundary::None: return "none";
+    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: return "edgeAndCorner";
+    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: return "edgeOnly";
+  }
+}
+
+std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
+  switch (v) {
+    case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: return "catmullClark";
+    case tinyusdz::GeomMesh::SubdivisionScheme::Loop: return "loop";
+    case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: return "bilinear";
+    case tinyusdz::GeomMesh::SubdivisionScheme::None: return "none";
+  }
+}
 
 std::string to_string(tinyusdz::Axis v) {
   if (v == tinyusdz::Axis::X) {
@@ -355,7 +372,7 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   // TODO:
 
   if (gprim.visibility.has_value()) {
-    ss << Indent(indent) << "  visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent)
+    ss << Indent(indent) << "  visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get())
        << "\n";
   }
 
@@ -410,7 +427,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   }
 
   if (xform.visibility.has_value()) {
-    ss << Indent(indent) << "  visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get(), indent)
+    ss << Indent(indent) << "  visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get())
      << "\n";
   }
 
@@ -459,7 +476,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   ss << Indent(indent) << "{\n";
 
   // members
-  ss << Indent(indent) << "  double radius" << prefix(sphere.radius) << " = " << print_animatable(sphere.radius, indent) << "\n";
+  ss << Indent(indent) << "  double radius" << prefix(sphere.radius) << " = " << print_animatable(sphere.radius) << "\n";
 
   ss << print_predefined(sphere, indent);
 
@@ -480,7 +497,39 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << Indent(indent) << "{\n";
 
   // members
-  ss << Indent(indent) << "  point3[] points = " << mesh.points << "\n";
+  if (mesh.points.size()) {
+    ss << Indent(indent) << "  point3[] points = " << mesh.points << "\n";
+  }
+  if (mesh.faceVertexIndices.size()) {
+    ss << Indent(indent) << "  int[] faceVertexIndices = " << mesh.faceVertexIndices << "\n";
+  }
+  if (mesh.faceVertexCounts.size()) {
+    ss << Indent(indent) << "  int[] faceVertexCounts = " << mesh.faceVertexCounts << "\n";
+  }
+
+  // subdiv
+  if (mesh.cornerIndices.size()) {
+    ss << Indent(indent) << "  int[] cornerIndices = " << mesh.cornerIndices << "\n";
+  }
+  if (mesh.cornerSharpnesses.size()) {
+    ss << Indent(indent) << "  float[] cornerSharpnesses = " << mesh.cornerSharpnesses << "\n";
+  }
+  if (mesh.creaseIndices.size()) {
+    ss << Indent(indent) << "  int[] creaseIndices = " << mesh.creaseIndices << "\n";
+  }
+  if (mesh.creaseLengths.size()) {
+    ss << Indent(indent) << "  int[] creaseLengths = " << mesh.creaseLengths << "\n";
+  }
+  if (mesh.holeIndices.size()) {
+    ss << Indent(indent) << "  int[] holeIndices = " << mesh.holeIndices << "\n";
+  }
+
+  if (mesh.subdivisionScheme.has_value()) {
+    ss << Indent(indent) << "  uniform token subdivisionScheme = " << quote(to_string(mesh.subdivisionScheme.get())) << "\n";
+  }
+  if (mesh.interpolateBoundary.has_value()) {
+    ss << Indent(indent) << "  uniform token interpolateBoundary = " << to_string(mesh.interpolateBoundary.get()) << "\n";
+  }
 
   ss << print_predefined(mesh, indent);
 
@@ -545,7 +594,7 @@ std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_
   ss << Indent(indent) << "{\n";
 
   // members
-  ss << Indent(indent) << "  double size" << prefix(geom.size) << " = " << print_animatable(geom.size, indent) << "\n";
+  ss << Indent(indent) << "  double size" << prefix(geom.size) << " = " << print_animatable(geom.size) << "\n";
 
   ss << print_predefined(geom, indent);
 
@@ -566,8 +615,8 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
   ss << Indent(indent) << "{\n";
 
   // members
-  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
-  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius) << "\n";
+  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height) << "\n";
 
   ss << print_predefined(geom, indent);
 
@@ -588,8 +637,8 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool clos
   ss << Indent(indent) << "{\n";
 
   // members
-  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
-  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius) << "\n";
+  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height) << "\n";
 
   std::string axis;
   if (geom.axis == Axis::X) {
@@ -621,8 +670,8 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
   ss << Indent(indent) << "{\n";
 
   // members
-  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius, indent) << "\n";
-  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height, indent) << "\n";
+  ss << Indent(indent) << "  double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius) << "\n";
+  ss << Indent(indent) << "  double height" << prefix(geom.height) << " = " << print_animatable(geom.height) << "\n";
 
   std::string axis;
   if (geom.axis == Axis::X) {
