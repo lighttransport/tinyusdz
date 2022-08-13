@@ -746,6 +746,22 @@ nonstd::expected<const Prim*, std::string> Stage::GetPrimAtPath(const Path &path
   return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() + "> int the Stage.\n");
 }
 
+namespace {
+
+void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent)
+{
+  ss << pprint_value(prim.data, indent, /* closing_brace */false);
+
+  DCOUT("num_children = " << prim.children.size());
+  for (const auto &child : prim.children) {
+    PrimPrintRec(ss, child, indent+1);
+  }
+
+  ss << Indent(indent) << "}\n";
+}
+
+} // namespace
+
 std::string Stage::ExportToString() const {
 
   std::stringstream ss;
@@ -766,7 +782,7 @@ std::string Stage::ExportToString() const {
   ss << "\n";
 
   for (const auto &item : root_nodes) {
-    ss << pprint_value(item.data, /* indent */0, /* closing_brace */true);
+    PrimPrintRec(ss, item, 0);
   }
 
   return ss.str();

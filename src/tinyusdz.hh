@@ -445,6 +445,10 @@ struct Stage {
 
   // Root nodes
   std::vector<Prim> root_nodes;
+  
+  static Stage CreateInMemory() {
+    return Stage();
+  }
 
   ///
   /// Traverse by depth-first order.

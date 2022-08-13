@@ -6,13 +6,12 @@
 #pragma once
 
 #include <clocale>
-#include <stack>
 #include <functional>
-
-#include "stream-reader.hh"
-#include "tinyusdz.hh"
+#include <stack>
 
 #include "external/better-enums/enum.h"
+#include "stream-reader.hh"
+#include "tinyusdz.hh"
 
 //
 #ifdef __clang__
@@ -27,7 +26,6 @@
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
-
 
 namespace tinyusdz {
 
@@ -84,23 +82,18 @@ BETTER_ENUM(Kind, int, model, group, assembly, component, subcomponent);
 
 #endif
 
-
 ///
 /// Test if input file is USDA ascii format.
 ///
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
-
-
 class AsciiParser {
-
  public:
-
   struct PrimMetas {
     // Frequently used prim metas
     nonstd::optional<Kind> kind;
 
-    value::dict customData; // `customData`
+    value::dict customData;  // `customData`
   };
 
   struct StageMetas {
@@ -110,11 +103,11 @@ class AsciiParser {
     std::vector<std::string> subLayers;
     std::string defaultPrim;
     std::string doc;
-    nonstd::optional<Axis> upAxis; // not specified = nullopt
+    nonstd::optional<Axis> upAxis;  // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
 
-    value::dict customData; // `customData`(non-predefined Stage metas).
+    value::dict customData;  // `customData`(non-predefined Stage metas).
   };
 
   struct ParseState {
@@ -164,14 +157,16 @@ class AsciiParser {
   bool IsStageMeta(const std::string &name);
   bool IsPrimMeta(const std::string &name);
 
-
   class VariableDef {
    public:
     // Handler functor in post parsing stage.
-    // e.g. Check input string is a valid one: one of "common", "group", "assembly", "component" or "subcomponent" for "kind" metadata
-    using PostParseHandler = std::function<nonstd::expected<bool, std::string>(const std::string &)>;
+    // e.g. Check input string is a valid one: one of "common", "group",
+    // "assembly", "component" or "subcomponent" for "kind" metadata
+    using PostParseHandler =
+        std::function<nonstd::expected<bool, std::string>(const std::string &)>;
 
-    static nonstd::expected<bool, std::string> DefaultPostParseHandler(const std::string &) {
+    static nonstd::expected<bool, std::string> DefaultPostParseHandler(
+        const std::string &) {
       return true;
     }
 
@@ -182,16 +177,17 @@ class AsciiParser {
 
     VariableDef() = default;
 
-    VariableDef(const std::string &t, const std::string &n, PostParseHandler ph = DefaultPostParseHandler)
+    VariableDef(const std::string &t, const std::string &n,
+                PostParseHandler ph = DefaultPostParseHandler)
         : type(t), name(n), post_parse_handler(ph) {}
 
     VariableDef(const VariableDef &rhs) = default;
     VariableDef &operator=(const VariableDef &rhs) = default;
 
-    //VariableDef &operator=(const VariableDef &rhs) {
-    //  type = rhs.type;
-    //  name = rhs.name;
-    //  parse_handler = rhs.parse_handler;
+    // VariableDef &operator=(const VariableDef &rhs) {
+    //   type = rhs.type;
+    //   name = rhs.name;
+    //   parse_handler = rhs.parse_handler;
 
     //  return *this;
     //}
@@ -206,9 +202,22 @@ class AsciiParser {
   ~AsciiParser();
 
   ///
+  /// Callback functions which is called from a class outside of AsciiParser(i.e. USDAReader)
+  ///
+
+  ///
+  /// Assign index to primitive for index-based prim scene graph representation.
+  /// -1 = root
+  ///
+  using PrimIdxAssignFunctin = std::function<int64_t(const int64_t parentIdx)>;
+  void RegisterPrimIdxAssignFunction(PrimIdxAssignFunctin fun) {
+    _prim_idx_assign_fun = fun;
+  }
+
+  ///
   /// Stage Meta construction callback function
   ///
-  using StageMetaProcessFunction = std::function<bool(const StageMetas& metas)>;
+  using StageMetaProcessFunction = std::function<bool(const StageMetas &metas)>;
 
   ///
   /// Register Stage metadatum processing callback function.
@@ -221,23 +230,40 @@ class AsciiParser {
   ///
   /// Prim Meta construction callback function
   ///
-  using PrimMetaProcessFunction = std::function<bool(const PrimMetas& metas)>;
-
+  using PrimMetaProcessFunction = std::function<bool(const PrimMetas &metas)>;
 
   ///
   /// Prim construction callback function
-  /// TODO: use std::function?
   ///
-  using PrimConstructFunction = std::function<bool(const Path &path, const std::map<std::string, Property> &properties,
-    std::vector<std::pair<ListEditQual, Reference>> &references)>;
+  /// @param primIdx : primitive index
+  /// @param parentPrimIdx : -1 for root
+  /// @return true upon success or error message.
+  ///
+  using PrimConstructFunction =
+      std::function<nonstd::expected<bool, std::string>(
+          const Path &path, const int64_t primIdx, const int64_t parentPrimIdx,
+          const std::map<std::string, Property> &properties,
+          std::vector<std::pair<ListEditQual, Reference>> &references)>;
 
   ///
   /// Register Prim construction callback function.
   /// Example: "Xform", ReconstrctXform
   ///
-  void RegisterPrimConstructFunction(const std::string &prim_type, PrimConstructFunction fun) {
+  void RegisterPrimConstructFunction(const std::string &prim_type,
+                                     PrimConstructFunction fun) {
     _prim_construct_fun_map[prim_type] = fun;
   }
+
+  ///
+  /// Callbacks called at closing `def` block.
+  /// 
+  using PostPrimConstructFunction = std::function<nonstd::expected<bool, std::string>(
+          const Path &path, const int64_t primIdx, const int64_t parentPrimIdx)>;
+  void RegisterPostPrimConstructFunction(const std::string &prim_type,
+                                     PostPrimConstructFunction fun) {
+    _post_prim_construct_fun_map[prim_type] = fun;
+  }
+
 
   ///
   /// Base filesystem directory to search asset files.
@@ -271,7 +297,7 @@ class AsciiParser {
   template <typename T>
   bool ReadBasicType(T *value);
 
-  template<typename T>
+  template <typename T>
   bool ParseMatrix(T *result);
 
   ///
@@ -355,7 +381,6 @@ class AsciiParser {
   using const_iterator = PrimIterator;
   const_iterator begin() const;
   const_iterator end() const;
-  
 
   ///
   /// Get error message(when `Parse` failed)
@@ -424,8 +449,7 @@ class AsciiParser {
   bool ParsePrimMetas(
       std::map<std::string, std::tuple<ListEditQual, MetaVariable>> *args);
 
-  bool ParseMetaValue(const VariableDef &def,
-                      MetaVariable *outvar);
+  bool ParseMetaValue(const VariableDef &def, MetaVariable *outvar);
 
   bool ParseStageMetaOpt();
   // Parsed Stage metadatum is stored in this instance.
@@ -447,7 +471,6 @@ class AsciiParser {
   bool ParseRelation(Relation *result);
   bool ParseProperty(std::map<std::string, Property> *props);
 
-
   //
   // Look***() : Fetch chars but do not change input stream position.
   //
@@ -468,35 +491,35 @@ class AsciiParser {
   //
   // Valid after ParseStageMetas() --------------
   //
-  StageMetas GetStageMetas() const {
-    return _stage_metas;
-  }
+  StageMetas GetStageMetas() const { return _stage_metas; }
 
-  bool ParseClassBlock();
-  bool ParseOverBlock();
-  bool ParseDefBlock(uint32_t nestlevel = 0);
+  // primIdx is assigned through `PrimIdxAssignFunctin`
+  // parentPrimIdx = -1 => root prim
+  // depth = tree level(recursion count)
+  bool ParseClassBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  bool ParseOverBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  bool ParseDefBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
 
   // --------------------------------------------
 
  private:
-
   ///
   /// Do common setups. Assume called in ctor.
   ///
   void Setup();
 
-  //template<typename T>
-  //bool ParseTimeSampleData(nonstd::optional<T> *out_value);
+  // template<typename T>
+  // bool ParseTimeSampleData(nonstd::optional<T> *out_value);
 
-  template<typename T>
+  template <typename T>
   using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
 
   ///
-  /// Convert TimeSampleData<T> to TimeSamples(type-erased TimeSample Sdata struct)
+  /// Convert TimeSampleData<T> to TimeSamples(type-erased TimeSample Sdata
+  /// struct)
   ///
-  template<typename T>
-  value::TimeSamples ConvertToTimeSamples(
-      const TimeSampleData<T> &in);
+  template <typename T>
+  value::TimeSamples ConvertToTimeSamples(const TimeSampleData<T> &in);
 
   template <typename T>
   nonstd::optional<TimeSampleData<T>> TryParseTimeSamples() {
@@ -563,15 +586,12 @@ class AsciiParser {
     return std::move(data);
   }
 
-
   nonstd::optional<std::tuple<ListEditQual, MetaVariable>> ParsePrimMeta();
   bool ParsePrimAttr(std::map<std::string, Property> *props);
 
   template <typename T>
-  bool ParseBasicPrimAttr(bool array_qual,
-                                       const std::string &primattr_name,
-                                       PrimAttrib *out_attr);
-
+  bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
+                          PrimAttrib *out_attr);
 
   bool ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out);
   nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
@@ -633,9 +653,11 @@ class AsciiParser {
   //
   // Callbacks
   //
+  PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   PrimMetaProcessFunction _prim_meta_process_fun;
   std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   // class Impl;
   // Impl *_impl;

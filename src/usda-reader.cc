@@ -397,11 +397,41 @@ class USDAReader::Impl {
   bool RegisterReconstructCallback() {
     _parser.RegisterPrimConstructFunction(
         PrimTypeTrait<T>::prim_type_name,
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            const std::vector<std::pair<ListEditQual, Reference>> &references) {
+        [&](const Path &path, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
+            const std::vector<std::pair<ListEditQual, Reference>> &references) -> nonstd::expected<bool, std::string> {
           T prim;
 
-          return ReconstructPrim<T>(properties, references, &prim);
+          DCOUT("primType = " << value::TypeTrait<T>::type_name() << ", node.size " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx << ", parentPrimIdx = " << parentPrimIdx);
+
+          bool ret = ReconstructPrim<T>(properties, references, &prim);
+
+          if (!ret) {
+            return nonstd::make_unexpected("Failed to reconstruct Prim: " + path.full_path_name());
+          }
+
+
+          // Add to scene graph.
+          if (primIdx < 0) {
+            return nonstd::make_unexpected("Unexpected primIdx value. primIdx must be positive.");
+          }
+
+          if (size_t(primIdx) <= _prim_nodes.size()) {
+            _prim_nodes.resize(size_t(primIdx)+1);
+          }
+          DCOUT("sz " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx);
+
+          // NOTE: Scene graph is constructed from bottom up manner(Children first), so no `children` update here.
+          _prim_nodes[size_t(primIdx)].prim = std::move(prim);
+          _prim_nodes[size_t(primIdx)].parent = parentPrimIdx;
+
+          if (parentPrimIdx == -1) {
+            _toplevel_prims.push_back(size_t(primIdx));
+          } else {
+            _prim_nodes[size_t(parentPrimIdx)].children.push_back(size_t(primIdx));
+          }
+
+          return true;
+
         });
 
     return true;
@@ -456,6 +486,20 @@ class USDAReader::Impl {
 
           return true;  // ok
         });
+  }
+
+  void RegisterPrimIdxAssignCallback() {
+    _parser.RegisterPrimIdxAssignFunction([&](const int64_t parentPrimIdx) {
+
+      size_t idx = _prim_nodes.size();
+
+      if (parentPrimIdx < 0) { // root
+        // allocate empty prim to reserve _prim_nodes[idx]
+        _prim_nodes.resize(idx + 1);
+      }
+
+      return idx;
+    });
   }
 
   ///
@@ -634,14 +678,19 @@ bool USDAReader::Impl::ReconstructStage() {
     Prim prim(node.prim);
 
     for (const auto &cidx : node.children) {
-      (void)cidx;
-      // TODO: Process child prim nodes.
+      DCOUT("prim[" << idx << "].children = " << cidx);
+
+      const auto &child_node = _prim_nodes[cidx];
+
+      prim.children.emplace_back(std::move(child_node.prim));
     }
 
-    _stage.root_nodes.push_back(prim);
-  }
+    DCOUT("prim[" << idx << "].num_children = " << prim.children.size());
+    size_t sz = _stage.root_nodes.size();
+    _stage.root_nodes.emplace_back(std::move(prim));
 
-  PUSH_WARN("TODO: Recursively reconstruct Prim");
+    DCOUT("num_children = " << _stage.root_nodes[sz].children.size());
+  }
 
   return true;
 }
@@ -912,6 +961,7 @@ bool USDAReader::Impl::ReconstructPrim(
 ///
 /// -- RegisterReconstructCallback specializations
 ///
+#if 0
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
   // TODO: Move to ReconstructPrim
@@ -952,35 +1002,48 @@ bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
 
   return true;
 }
+#endif
 
+///
+/// For GeomSubset, we embed it to parent GeomMesh and don't create Prim node for it.
+///
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
-  // TODO: Move to ReconstructPrim
   _parser.RegisterPrimConstructFunction(
       "GeomSubset",
-      [&](const Path &path, const std::map<std::string, Property> &properties,
-          std::vector<std::pair<ListEditQual, Reference>> &references) {
+      [&](const Path &path, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
+          std::vector<std::pair<ListEditQual, Reference>> &references) -> nonstd::expected<bool, std::string> {
         // Parent Prim must be GeomMesh
         const Path parent = path.GetParentPrim();
         if (!parent.IsValid()) {
-          PUSH_ERROR_AND_RETURN("Invalid Prim path");
+          return nonstd::make_unexpected("Invalid Prim path.");
         }
 
         if (parent.IsRootPrim()) {
-          PUSH_ERROR_AND_RETURN("GeomSubset must be a child of GeomMesh prim.");
+          return nonstd::make_unexpected("GeomSubset must be defined as a child of GeomMesh prim.");
+        }
+
+        if (parentPrimIdx < 0) {
+          return nonstd::make_unexpected("GeomSubset muet be defined as a child of GeomMesh.");
+        }
+
+        if (_prim_nodes.size() < size_t(parentPrimIdx)) {
+          return nonstd::make_unexpected("Unexpected parentPrimIdx for GeomSubset.");
         }
 
         const std::string parent_primpath = parent.GetPrimPart();
 
+#if 0
         if (!_primpath_to_prim_idx_map.count(parent_primpath)) {
           PUSH_ERROR_AND_RETURN("Parent Prim not found.");
         }
 
         size_t prim_idx = _primpath_to_prim_idx_map[parent_primpath];
-        auto pmesh = _prim_nodes[prim_idx].prim.get_value<GeomMesh>();
+#endif
+        const PrimNode &pnode = _prim_nodes[size_t(parentPrimIdx)];
+        auto pmesh = pnode.prim.get_value<GeomMesh>();
         if (!pmesh) {
-          PUSH_ERROR_AND_RETURN("Parent Prim must be GeomMesh, but got " +
-                                _prim_nodes[prim_idx].prim.type_name());
+          return nonstd::make_unexpected("Parent Prim must be GeomMesh, but got " + pnode.prim.type_name());
         }
         GeomMesh &mesh = pmesh.value();
 
@@ -1068,25 +1131,19 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
   return true;
 }
 
-#if 0
-  bool RegisterReconstructGeomMeshCallback() {
-    _parser.RegisterPrimConstructFunction(
-        kGeomMesh,
-        [&](const Path &path, const std::map<std::string, Property> &properties,
-            std::vector<std::pair<ListEditQual, Reference>> &references) {
-          GeomMesh mesh;
+template <>
+bool USDAReader::Impl::ReconstructPrim(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    GPrim *gprim) {
+  (void)gprim;
 
-          if (ReconstructGeomMesh(properties, references, &mesh)) {
-            // TODO
-            PUSH_WARN("TODO: Implement GeomMesh");
-          }
+  DCOUT("TODO: Reconstruct GPrim.");
 
-          return true;
-        });
+  PUSH_WARN("TODO: Reconstruct GPrim.");
 
-    return true;
-  }
-#endif
+  return true;
+}
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
@@ -2203,6 +2260,7 @@ bool USDAReader::Impl::ReconstructPrimvarReader(
 ///
 /// -- Impl callback specializations
 ///
+#if 0
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
   // TODO: Move to ReconstructPrim
@@ -2234,6 +2292,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
 
   return true;
 }
+#endif
 
 ///
 /// -- Impl Read
@@ -2244,6 +2303,9 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   /// Setup callbacks.
   ///
   StageMetaProcessor();
+
+  RegisterPrimIdxAssignCallback();
+
   RegisterReconstructCallback<GPrim>();
   RegisterReconstructCallback<Xform>();
   RegisterReconstructCallback<GeomCube>();

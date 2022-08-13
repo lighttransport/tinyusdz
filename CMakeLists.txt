@@ -201,6 +201,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
+    ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc
     # usdMtlX has less dependency(tinyxml2), so add it to core component
