@@ -5140,7 +5140,7 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
 ///
 /// Parse `class` block.
 ///
-bool AsciiParser::ParseClassBlock() {
+bool AsciiParser::ParseClassBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth) {
   if (!SkipWhitespaceAndNewline()) {
     return false;
   }
@@ -5225,7 +5225,9 @@ bool AsciiParser::ParseClassBlock() {
 
       if (tok == "def") {
         // recusive call
-        if (!ParseDefBlock()) {
+        int64_t idx = _prim_idx_assign_fun(primIdx);
+        DCOUT("Enter parseDef. primIdx = " << idx << ", parentPrimIdx = " << primIdx);
+        if (!ParseDefBlock(idx, primIdx, depth+1)) {
           return false;
         }
       } else {
@@ -5258,7 +5260,7 @@ bool AsciiParser::ParseClassBlock() {
 ///
 /// Parse `over` block.
 ///
-bool AsciiParser::ParseOverBlock() {
+bool AsciiParser::ParseOverBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth) {
   std::string tok;
 
   if (!SkipWhitespaceAndNewline()) {
@@ -5332,7 +5334,7 @@ bool AsciiParser::ParseOverBlock() {
 /// TODO: Support `def` without type(i.e. actual definition is defined in
 /// another USD file or referenced USD)
 ///
-bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
+bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth) {
 
   DCOUT("ParseDefBlock");
 
@@ -5506,11 +5508,16 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
       }
 
       if (tok == "def") {
+
+        int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
+        DCOUT("enter parseDef. idx = " << idx << ", rootIdx = " << primIdx);
+
         // recusive call
-        if (!ParseDefBlock(nestlevel + 1)) {
+        if (!ParseDefBlock(idx, primIdx, depth + 1)) {
           PUSH_ERROR_AND_RETURN("`def` block parse failed.");
         }
       } else {
+
         // Assume PrimAttr
         if (!ParsePrimAttr(&props)) {
           PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
@@ -5634,11 +5641,11 @@ bool AsciiParser::ParseDefBlock(uint32_t nestlevel) {
       auto construct_fun = _prim_construct_fun_map[prim_type];
 
       Path path(GetCurrentPath());
-      bool ret = construct_fun(path, props, references);
-      DCOUT("prim_type " << prim_type << " ret = " << ret);
+      nonstd::expected<bool, std::string> ret = construct_fun(path, primIdx, parentPrimIdx, props, references);
+      //DCOUT("prim_type " << prim_type << " ret = " << ret);
       if (!ret) {
         // construction failed.
-        PUSH_ERROR_AND_RETURN("Constructing " + prim_type + " failed.");
+        PUSH_ERROR_AND_RETURN("Constructing " + prim_type + " failed: " + ret.error());
       }
     }
   }
@@ -5716,19 +5723,25 @@ bool AsciiParser::Parse(LoadState state) {
     }
 
     if (tok == "def") {
-      bool block_ok = ParseDefBlock();
+      int64_t primIdx = _prim_idx_assign_fun(-1);
+      DCOUT("Enter parseDef. primIdx = " << primIdx << ", parentPrimIdx = root(-1)");
+      bool block_ok = ParseDefBlock(primIdx, /* parent */-1);
       if (!block_ok) {
         PushError("Failed to parse `def` block.\n");
         return false;
       }
     } else if (tok == "over") {
-      bool block_ok = ParseOverBlock();
+      int64_t primIdx = _prim_idx_assign_fun(-1);
+      DCOUT("Enter parseOver. primIdx = " << primIdx << ", parentPrimIdx = root(-1)");
+      bool block_ok = ParseOverBlock(primIdx, /* parent */-1);
       if (!block_ok) {
         PushError("Failed to parse `over` block.\n");
         return false;
       }
     } else if (tok == "class") {
-      bool block_ok = ParseClassBlock();
+      int64_t primIdx = _prim_idx_assign_fun(-1);
+      DCOUT("Enter parseClass. primIdx = " << primIdx << ", parentPrimIdx = root(-1)");
+      bool block_ok = ParseClassBlock(primIdx, /* parent */-1);
       if (!block_ok) {
         PushError("Failed to parse `class` block.\n");
         return false;

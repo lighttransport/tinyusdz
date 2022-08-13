@@ -1192,255 +1192,7 @@ struct UVCoords {
   std::vector<uint32_t> indices;  // UV indices. Usually varying
 };
 
-
-
-// BlendShapes
-// TODO(syoyo): Blendshape
-struct BlendShape {
-  std::string name;
-
-  std::vector<float> offsets;        // uniform vector3f[]. required property
-  std::vector<float> normalOffsets;  // uniform vector3f[]. required property
-
-  std::vector<int>
-      pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
-                     // values in `offsets` and `normalOffsets`.
-};
-
-// Skeleton
-struct Skeleton {
-  std::string name;
-
-  AnimatableExtent extent;
-
-  std::vector<value::matrix4d>
-      bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
-
-  std::vector<std::string> jointNames; // uniform token[]
-  std::vector<std::string> joints; // uniform token[]
-
-  // rel proxyPrim
-
-  std::vector<value::matrix4d> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
-                                                // joint in local coordinate.
-
-  Purpose purpose{Purpose::Default};
-  AnimatableVisibility visibility{Visibility::Inherited};
-
-  std::vector<value::token> xformOpOrder;
-};
-
-struct SkelRoot {
-  std::string name;
-  int64_t parent_id{-1};
-
-  AnimatableExtent extent;
-  Purpose purpose{Purpose::Default};
-  AnimatableVisibility visibility{Visibility::Inherited};
-
-  // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
-
-  // ref proxyPrim
-  std::vector<value::token> xformOpOrder;
-
-  int64_t skeleton_id{-1};  // index to scene.skeletons
-  // Skeleton skeleton;
-};
-
-struct SkelAnimation {
-  std::string name;
-
-  std::vector<value::token> blendShapes; // uniform token[]
-  std::vector<float> blendShapeWeights; // float[]
-  std::vector<value::token> joints; // uniform token[]
-  std::vector<value::quatf> rotations;  // quatf[] Joint-local unit quaternion rotations
-  std::vector<value::half3>
-      scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
-  std::vector<value::float3> translations;  // float3[] Joint-local translation.
-};
-
-// PackedJointAnimation is deprecated(Convert to SkelAnimation)
-// struct PackedJointAnimation {
-// };
-
-// W.I.P.
-struct SkelBindingAPI {
-  value::matrix4d geomBindTransform;     // primvars:skel:geomBindTransform
-  std::vector<int> jointIndices;         // primvars:skel:jointIndices
-  std::vector<float> jointWeights;       // primvars:skel:jointWeights
-  std::vector<std::string> blendShapes;  // optional?
-  std::vector<std::string> joints;       // optional
-
-  int64_t animationSource{
-      -1};  // index to Scene.animations. ref skel:animationSource
-  int64_t blendShapeTargets{
-      -1};  // index to Scene.blendshapes. ref skel:bindShapeTargets
-  int64_t skeleton{-1};  // index to Scene.skeletons. // ref skel:skeleton
-};
-
 #if 0
-// Generic Prim
-struct GPrim {
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  std::string prim_type;  // Primitive type(if specified by `def`)
-
-  // Gprim
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  bool doubleSided{false};
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-  AnimatableVec3fArray displayColor;    // primvars:displayColor
-  AnimatableFloatArray displayOpacity;  // primvars:displaOpacity
-
-  MaterialBindingAPI materialBinding;
-
-  std::map<std::string, Property> props;
-
-  std::map<std::string, value::Value> args;
-
-  bool _valid{true};  // default behavior is valid(allow empty GPrim)
-
-  bool active{true};
-
-  // child nodes
-  std::vector<GPrim> children;
-};
-
-// GeomSubset
-struct GeomSubset {
-  enum class ElementType { Face };
-
-  enum class FamilyType {
-    Partition,       // 'partition'
-    NonOverlapping,  // 'nonOverlapping'
-    Unrestricted,    // 'unrestricted' (fallback)
-  };
-
-  std::string name;
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  ElementType elementType{ElementType::Face};  // must be face
-  FamilyType familyType{FamilyType::Unrestricted};
-
-  nonstd::expected<bool, std::string> SetElementType(const std::string &str) {
-    if (str == "face") {
-      elementType = ElementType::Face;
-      return true;
-    }
-
-    return nonstd::make_unexpected("Only `face` is supported for `elementType`, but `" + str + "` specified");
-  }
-
-  nonstd::expected<bool, std::string> SetFamilyType(const std::string &str) {
-    if (str == "partition") {
-      familyType = FamilyType::Partition;
-      return true;
-    } else if (str == "nonOverlapping") {
-      familyType = FamilyType::NonOverlapping;
-      return true;
-    } else if (str == "unrestricted") {
-      familyType = FamilyType::Unrestricted;
-      return true;
-    }
-
-    return nonstd::make_unexpected("Invalid `familyType` specified: `" + str + "`.");
-  }
-
-  std::vector<uint32_t> indices;
-
-  std::map<std::string, PrimAttrib> attribs; // custom Attrs
-};
-
-// Polygon mesh geometry
-struct GeomMesh : GPrim {
-  //
-  // Predefined attribs.
-  //
-  std::vector<value::point3f> points;  // point3f
-  nonstd::optional<PrimAttrib> normals;                  // normal3f[]
-
-  //
-  // Utility functions
-  //
-
-  // Initialize GeomMesh by GPrim(prepend references)
-  void Initialize(const GPrim &pprim);
-
-  // Update GeomMesh by GPrim(append references)
-  void UpdateBy(const GPrim &pprim);
-
-  size_t GetNumPoints() const;
-  size_t GetNumFacevaryingNormals() const;
-
-  // Get `normals` as float3 array + facevarying
-  // Return false if `normals` is neither float3[] type nor `varying`
-  bool GetFacevaryingNormals(std::vector<float> *v) const;
-
-  // Get `texcoords` as float2 array + facevarying
-  // Return false if `texcoords` is neither float2[] type nor `varying`
-  bool GetFacevaryingTexcoords(std::vector<float> *v) const;
-
-  // Primary UV coords(TODO: Remove. Read uv coords through PrimVarReader)
-  UVCoords st;
-
-  PrimAttrib velocitiess;  // Usually float3[], varying
-
-  std::vector<int32_t> faceVertexCounts;
-  std::vector<int32_t> faceVertexIndices;
-
-  //
-  // Properties
-  //
-  // AnimatableExtent extent;  // bounding extent(in local coord?).
-  std::string facevaryingLinearInterpolation = "cornerPlus1";
-  // AnimatableVisibility visibility{Visibility::Inherited};
-  // Purpose purpose{Purpose::Default};
-
-  // Gprim
-  // bool doubleSided{false};
-  // Orientation orientation{Orientation::RightHanded};
-  // AnimatableVec3fArray displayColor; // primvars:displayColor
-  // AnimatableFloatArray displayOpacity; // primvars:displaOpacity
-
-  // MaterialBindingAPI materialBinding;
-
-  //
-  // SubD attribs.
-  //
-  std::vector<int32_t> cornerIndices;
-  std::vector<float> cornerSharpnesses;
-  std::vector<int32_t> creaseIndices;
-  std::vector<int32_t> creaseLengths;
-  std::vector<float> creaseSharpnesses;
-  std::vector<int32_t> holeIndices;
-  std::string interpolateBoundary =
-      "edgeAndCorner";  // "none", "edgeAndCorner" or "edgeOnly"
-  SubdivisionScheme subdivisionScheme{SubdivisionScheme::CatmullClark};
-
-  //
-  // GeomSubset
-  //
-  // uniform token `subsetFamily:materialBind:familyType`
-  GeomSubset::FamilyType materialBindFamilyType{
-      GeomSubset::FamilyType::Partition};
-
-  std::vector<GeomSubset> geom_subset_children;
-
-  ///
-  /// Validate GeomSubset data attached to this GeomMesh.
-  ///
-  nonstd::expected<bool, std::string> ValidateGeomSubset();
-
-  // List of Primitive attributes(primvars)
-  // std::map<std::string, PrimAttrib> attribs;
-};
-#endif
-
 //
 // Similar to Maya's ShadingGroup
 //
@@ -1466,6 +1218,9 @@ struct NodeGraph {
 
   int64_t parent_id{-1};
 };
+#endif
+
+#if 0 
 
 // result = (texture_id == -1) ? use color : lookup texture
 struct Color3OrTexture {
@@ -1590,7 +1345,9 @@ struct PreviewSurface {
   int64_t surface_id{-1};       // index to `Scene::shaders`
   int64_t displacement_id{-1};  // index to `Scene::shaders`
 };
+#endif
 
+#if 0
 struct Shader {
   std::string name;
 
@@ -1602,6 +1359,7 @@ struct Shader {
                     PrimvarReader_float2>
       value;
 };
+#endif
 
 // USDZ Schemas for AR
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
@@ -1774,6 +1532,7 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
+DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

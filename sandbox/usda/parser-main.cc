@@ -43,6 +43,13 @@ int main(int argc, char **argv) {
 
   // Dump
   {
+    bool ret = reader.ReconstructStage();
+    if (!ret) {
+      std::cerr << "Failed to reconstruct Stage: \n";
+      std::cerr << reader.GetError() << "\n";
+      return -1;
+    }
+
     tinyusdz::Stage stage = reader.GetStage();
     std::cout << stage.ExportToString() << "\n";
   }
