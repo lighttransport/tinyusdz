@@ -291,6 +291,7 @@ namespace value {
 #define CASE_GPRIM_LIST(__FUNC) \
   __FUNC(Xform) \
   __FUNC(GeomMesh) \
+  __FUNC(GeomSphere) \
   __FUNC(GeomBasisCurves)
 
 //std::ostream &operator<<(std::ostream &os, const any_value &v) {

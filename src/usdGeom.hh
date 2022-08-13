@@ -142,6 +142,29 @@ struct GeomSubset {
 
 // Polygon mesh geometry
 struct GeomMesh : GPrim {
+  enum class InterpolateBoundary {
+    None, // "none"
+    EdgeAndCorner, // "edgeAndCorner"
+    EdgeOnly // "edgeOnly"
+  };
+
+  enum class FacevaryingLinearInterpolation {
+    CornersPlus1, // "cornersPlus1"
+    CornersPlus2,  // "cornersPlus2"
+    CornersOnly, // "cornersOnly"
+    Boundaries, // "boundaries"
+    None, // "none"
+    All, // "all"
+  };
+
+  enum class SubdivisionScheme {
+    CatmullClark,  // "catmullClark"
+    Loop, // "loop"
+    Bilinear, // "bilinear"
+    None, // "none"
+  };
+
+
   //
   // Predefined attribs.
   //
@@ -195,10 +218,6 @@ struct GeomMesh : GPrim {
   //
   // Properties
   //
-  // AnimatableExtent extent;  // bounding extent(in local coord?).
-  std::string facevaryingLinearInterpolation = "cornerPlus1";
-  // AnimatableVisibility visibility{Visibility::Inherited};
-  // Purpose purpose{Purpose::Default};
 
   // Gprim
   // bool doubleSided{false};
@@ -217,9 +236,9 @@ struct GeomMesh : GPrim {
   std::vector<int32_t> creaseLengths;
   std::vector<float> creaseSharpnesses;
   std::vector<int32_t> holeIndices;
-  std::string interpolateBoundary =
-      "edgeAndCorner";  // "none", "edgeAndCorner" or "edgeOnly"
-  SubdivisionScheme subdivisionScheme{SubdivisionScheme::CatmullClark};
+  AttribWithFallback<InterpolateBoundary> interpolateBoundary{InterpolateBoundary::EdgeAndCorner};
+  AttribWithFallback<SubdivisionScheme> subdivisionScheme{SubdivisionScheme::CatmullClark};
+  AttribWithFallback<FacevaryingLinearInterpolation> facevaryingLinearInterpolation{FacevaryingLinearInterpolation::CornersPlus1};
 
   //
   // GeomSubset

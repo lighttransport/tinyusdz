@@ -29,11 +29,13 @@ std::string to_string(Interpolation interp);
 std::string to_string(Axis axis);
 std::string to_string(ListEditQual axis);
 std::string to_string(Specifier specifier);
-std::string to_string(SubdivisionScheme subd_scheme);
 std::string to_string(Purpose purpose);
 std::string to_string(Permission permission);
 std::string to_string(Variability variability);
 std::string to_string(SpecType spec_type);
+
+std::string to_string(GeomMesh::InterpolateBoundary interp_boundary);
+std::string to_string(GeomMesh::SubdivisionScheme subd_scheme);
 
 std::string to_string(const Path &path, bool show_full_path = true);
 std::string to_string(const std::vector<Path> &v, bool show_full_path = true);

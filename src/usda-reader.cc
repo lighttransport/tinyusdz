@@ -415,13 +415,18 @@ class USDAReader::Impl {
             return nonstd::make_unexpected("Unexpected primIdx value. primIdx must be positive.");
           }
 
-          if (size_t(primIdx) <= _prim_nodes.size()) {
+          if (size_t(primIdx) >= _prim_nodes.size()) {
             _prim_nodes.resize(size_t(primIdx)+1);
           }
           DCOUT("sz " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx);
 
-          // NOTE: Scene graph is constructed from bottom up manner(Children first), so no `children` update here.
+          // NOTE: Scene graph is constructed from bottom up manner(Children first), so add this primIdx to parent's children.
           _prim_nodes[size_t(primIdx)].prim = std::move(prim);
+          DCOUT("prim[" << primIdx << "].ty = " << _prim_nodes[size_t(primIdx)].prim.type_name());
+          if (_prim_nodes.size() > 1) {
+            DCOUT("prim[0].ty = " << _prim_nodes[0].prim.type_name());
+            DCOUT("prim[1].ty = " << _prim_nodes[1].prim.type_name());
+          }
           _prim_nodes[size_t(primIdx)].parent = parentPrimIdx;
 
           if (parentPrimIdx == -1) {
@@ -530,6 +535,7 @@ class USDAReader::Impl {
  private:
   bool stage_reconstructed_{false};
 
+#if 0 // TODO: Remove
   void RegisterNodeTypes() {
     _node_types.insert(PrimTypeTrait<Xform>::prim_type_name);
     _node_types.insert(PrimTypeTrait<GeomSphere>::prim_type_name);
@@ -538,6 +544,7 @@ class USDAReader::Impl {
     _node_types.insert(PrimTypeTrait<GeomBasisCurves>::prim_type_name);
     _node_types.insert(PrimTypeTrait<GeomMesh>::prim_type_name);
     _node_types.insert(PrimTypeTrait<GeomSubset>::prim_type_name);
+    _node_types.insert(PrimTypeTrait<GeomSphere>::prim_type_name);
     _node_types.insert(PrimTypeTrait<Scope>::prim_type_name);
 
     _node_types.insert(PrimTypeTrait<Material>::prim_type_name);
@@ -551,6 +558,7 @@ class USDAReader::Impl {
     _node_types.insert(PrimTypeTrait<SkelRoot>::prim_type_name);
     _node_types.insert(PrimTypeTrait<Skeleton>::prim_type_name);
   }
+#endif
 
 #if 0
   ///
@@ -594,7 +602,8 @@ class USDAReader::Impl {
   /// -- Members --
   ///
 
-  std::set<std::string> _node_types;
+  // TODO: Remove
+  //std::set<std::string> _node_types;
 
   std::stack<ParseState> parse_stack;
 
@@ -676,11 +685,12 @@ bool USDAReader::Impl::ReconstructStage() {
     const auto &node = _prim_nodes[idx];
 
     Prim prim(node.prim);
+    DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
 
     for (const auto &cidx : node.children) {
-      DCOUT("prim[" << idx << "].children = " << cidx);
 
       const auto &child_node = _prim_nodes[cidx];
+      DCOUT("prim[" << idx << "].children = " << cidx << ", type = " << child_node.prim.type_name());
 
       prim.children.emplace_back(std::move(child_node.prim));
     }
@@ -1915,17 +1925,11 @@ bool USDAReader::Impl::ReconstructPrim(
         PUSH_WARN("TODO: rel");
       }
     } else {
-      const PrimAttrib &attr = prop.second.attrib;
-      if (prop.first == "points") {
-        auto p = attr.var.get_value<std::vector<value::point3f>>();
-        if (p) {
-          mesh->points = (*p);
-        } else {
-          PUSH_ERROR_AND_RETURN(
-              "`GeomMesh::points` must be point3[] type, but got " +
-              attr.var.type_name());
-        }
-      } else if (prop.first == "subdivisionScheme") {
+      PARSE_PROPERTY(prop, "points", mesh->points)
+      PARSE_PROPERTY(prop, "faceVertexCounts", mesh->faceVertexCounts)
+      PARSE_PROPERTY(prop, "faceVertexIndices", mesh->faceVertexIndices)
+      if (prop.first == "subdivisionScheme") {
+        const auto &attr = prop.second.attrib;
         auto p = attr.var.get_value<std::string>();
         if (!p) {
           PUSH_ERROR_AND_RETURN(
@@ -1935,13 +1939,13 @@ bool USDAReader::Impl::ReconstructPrim(
         } else {
           DCOUT("subdivisionScheme = " + (*p));
           if (p->compare("none") == 0) {
-            mesh->subdivisionScheme = SubdivisionScheme::None;
+            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::None;
           } else if (p->compare("catmullClark") == 0) {
-            mesh->subdivisionScheme = SubdivisionScheme::CatmullClark;
+            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::CatmullClark;
           } else if (p->compare("bilinear") == 0) {
-            mesh->subdivisionScheme = SubdivisionScheme::Bilinear;
+            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::Bilinear;
           } else if (p->compare("loop") == 0) {
-            mesh->subdivisionScheme = SubdivisionScheme::Loop;
+            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::Loop;
           } else {
             PUSH_ERROR_AND_RETURN("Unknown subdivision scheme: " + (*p));
           }
