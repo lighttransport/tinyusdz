@@ -12,6 +12,8 @@
 
 #include "prim-types.hh"
 #include "usdGeom.hh"
+#include "usdSkel.hh"
+#include "usdShade.hh"
 #include "usdLux.hh"
 
 namespace tinyusdz {
