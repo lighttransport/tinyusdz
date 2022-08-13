@@ -44,6 +44,12 @@ class AttribWithFallback {
   AttribWithFallback(const T &f) : fallback(f) {
   }
 
+  AttribWithFallback& operator=(const T& v) {
+    attrib = v;
+
+    return (*this);
+  }
+
   // TODO
   //AttribWithFallback(const AttribWithFallback &rhs) = delete;
   //AttribWithFallback(const AttribWithFallback &&rhs) = delete;
@@ -225,14 +231,6 @@ enum class Purpose {
   Render,
   Proxy,
   Guide,
-  Invalid
-};
-
-enum class SubdivisionScheme {
-  CatmullClark,  // 0
-  Loop,
-  Bilinear,
-  None,
   Invalid
 };
 
