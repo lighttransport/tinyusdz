@@ -55,6 +55,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "image-loader.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
+#include "str-util.hh"
 
 #if 0
 #if defined(TINYUSDZ_WITH_AUDIO)
@@ -774,9 +775,18 @@ std::string Stage::ExportToString() const {
   } else {
     ss << "  doc = \"" << stage_metas.doc << "\"\n";
   }
-  ss << "  metersPerUnit = " << stage_metas.metersPerUnit << "\n";
-  ss << "  upAxis = \"" << to_string(stage_metas.upAxis) << "\"\n";
-  ss << "  timeCodesPerSecond = \"" << stage_metas.timeCodesPerSecond << "\"\n";
+  if (stage_metas.metersPerUnit.authorized()) {
+    ss << "  metersPerUnit = " << stage_metas.metersPerUnit.get() << "\n";
+  }
+
+  if (stage_metas.upAxis.authorized()) {
+    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.get())) << "\n";
+  }
+
+  if (stage_metas.timeCodesPerSecond.authorized()) {
+    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.get() << "\n";
+  }
+
   // TODO: write other header data.
   ss << ")\n";
   ss << "\n";

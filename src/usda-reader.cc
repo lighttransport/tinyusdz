@@ -706,14 +706,14 @@ bool USDAReader::Impl::ReconstructStage() {
 }
 
 // TODO(syoyo): TimeSamples, Reference
-#define PARSE_PROPERTY(__prop, __name, __target)                          \
+#define PARSE_PROPERTY(__prop, __name, __klass, __target)                          \
   if (__prop.first == __name) {                                           \
     const PrimAttrib &attr = __prop.second.attrib;                        \
     if (auto v = attr.var.get_value<decltype(__target)>()) {              \
       __target = v.value();                                               \
     } else {                                                              \
       PUSH_ERROR_AND_RETURN(                                              \
-          "Type mismatch. "                                               \
+          "(" << value::TypeTrait<__klass>::type_name() << ") Property type mismatch. "                                               \
           << __name << " expects type `"                                  \
           << value::TypeTrait<decltype(__target)>::type_name()            \
           << "` but defined as type `" << attr.var.type_name() << "`"); \
@@ -732,7 +732,7 @@ bool USDAReader::Impl::ReconstructStage() {
 //    } \
 //  } else
 
-#define PARSE_ENUM_PROPETY(__prop, __name, __enum_handler, __target)        \
+#define PARSE_ENUM_PROPETY(__prop, __name, __enum_handler, __klass, __target)        \
   if (__prop.first == __name) {                                             \
     const PrimAttrib &attr = __prop.second.attrib;                          \
     if (auto tok = attr.var.get_value<value::token>()) {                    \
@@ -740,10 +740,10 @@ bool USDAReader::Impl::ReconstructStage() {
       if (e) {                                                              \
         __target = e.value();                                               \
       } else {                                                              \
-        PUSH_ERROR_AND_RETURN(e.error());                                   \
+        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name() << ") " << e.error());                                   \
       }                                                                     \
     } else {                                                                \
-      PUSH_ERROR_AND_RETURN("Type mismatch. " << __name                     \
+      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name() << ") Property type mismatch. " << __name                     \
                                               << " must be `token` type."); \
     }                                                                       \
   } else
@@ -1903,6 +1903,33 @@ bool USDAReader::Impl::ReconstructPrim(
     }
   }
 
+  auto SubdivisioSchemeHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomMesh::SubdivisionScheme, std::string> {
+    using EnumTy = std::pair<GeomMesh::SubdivisionScheme, const char *>;
+    constexpr std::array<EnumTy, 4> enums = {
+        std::make_pair(GeomMesh::SubdivisionScheme::None, "none"),
+        std::make_pair(GeomMesh::SubdivisionScheme::CatmullClark, "catmullClark"),
+        std::make_pair(GeomMesh::SubdivisionScheme::Loop, "loop"),
+        std::make_pair(GeomMesh::SubdivisionScheme::Bilinear, "bilinear"),
+    };
+
+    auto ret =
+        CheckAllowedTokens<GeomMesh::SubdivisionScheme, enums.size()>(enums, tok);
+    if (!ret) {
+      return nonstd::make_unexpected(ret.error());
+    }
+
+    for (auto &item : enums) {
+      if (tok == item.second) {
+        return item.first;
+      }
+    }
+
+    // Should never reach here, though.
+    return nonstd::make_unexpected(
+        quote(tok) + " is invalid token for `subdivisionScheme` propety");
+  };
+
   for (const auto &prop : properties) {
     if (prop.second.IsRel()) {
       if (prop.first == "material:binding") {
@@ -1925,34 +1952,11 @@ bool USDAReader::Impl::ReconstructPrim(
         PUSH_WARN("TODO: rel");
       }
     } else {
-      PARSE_PROPERTY(prop, "points", mesh->points)
-      PARSE_PROPERTY(prop, "faceVertexCounts", mesh->faceVertexCounts)
-      PARSE_PROPERTY(prop, "faceVertexIndices", mesh->faceVertexIndices)
-      if (prop.first == "subdivisionScheme") {
-        const auto &attr = prop.second.attrib;
-        auto p = attr.var.get_value<std::string>();
-        if (!p) {
-          PUSH_ERROR_AND_RETURN(
-              "Invalid type for \'subdivisionScheme\'. expected \'STRING\' but "
-              "got " +
-              attr.var.type_name());
-        } else {
-          DCOUT("subdivisionScheme = " + (*p));
-          if (p->compare("none") == 0) {
-            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::None;
-          } else if (p->compare("catmullClark") == 0) {
-            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::CatmullClark;
-          } else if (p->compare("bilinear") == 0) {
-            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::Bilinear;
-          } else if (p->compare("loop") == 0) {
-            mesh->subdivisionScheme = GeomMesh::SubdivisionScheme::Loop;
-          } else {
-            PUSH_ERROR_AND_RETURN("Unknown subdivision scheme: " + (*p));
-          }
-        }
-      } else {
-        PUSH_WARN(" TODO: prop: " + prop.first);
-      }
+      PARSE_PROPERTY(prop, "points", GeomMesh, mesh->points)
+      PARSE_PROPERTY(prop, "faceVertexCounts",  GeomMesh,mesh->faceVertexCounts)
+      PARSE_PROPERTY(prop, "faceVertexIndices",  GeomMesh,mesh->faceVertexIndices)
+      PARSE_ENUM_PROPETY(prop, "subdivisionScheme", SubdivisioSchemeHandler,GeomMesh,  mesh->subdivisionScheme)
+      PARSE_PROPERTY_END_MAKE_WARN(prop)
     }
   }
 
@@ -2048,21 +2052,21 @@ bool USDAReader::Impl::ReconstructPrim(
   };
 
   for (const auto &prop : properties) {
-    PARSE_PROPERTY(prop, "focalLength", camera->focalLength)
-    PARSE_PROPERTY(prop, "focusDistance", camera->focusDistance)
-    PARSE_PROPERTY(prop, "exposure", camera->exposure)
-    PARSE_PROPERTY(prop, "fStop", camera->fStop)
-    PARSE_PROPERTY(prop, "horizontalAperture", camera->horizontalAperture)
+    PARSE_PROPERTY(prop, "focalLength", GeomCamera, camera->focalLength)
+    PARSE_PROPERTY(prop, "focusDistance", GeomCamera, camera->focusDistance)
+    PARSE_PROPERTY(prop, "exposure", GeomCamera, camera->exposure)
+    PARSE_PROPERTY(prop, "fStop", GeomCamera, camera->fStop)
+    PARSE_PROPERTY(prop, "horizontalAperture", GeomCamera, camera->horizontalAperture)
     PARSE_PROPERTY(prop, "horizontalApertureOffset",
-                   camera->horizontalApertureOffset)
+                   GeomCamera, camera->horizontalApertureOffset)
     PARSE_PROPERTY(prop, "horizontalApertureOffset",
-                   camera->horizontalApertureOffset)
-    PARSE_PROPERTY(prop, "clippingRange", camera->clippingRange)
-    PARSE_PROPERTY(prop, "clippingPlanes", camera->clippingPlanes)
-    PARSE_PROPERTY(prop, "shutter:open", camera->shutterOpen)
-    PARSE_PROPERTY(prop, "shutter:close", camera->shutterClose)
+                   GeomCamera, camera->horizontalApertureOffset)
+    PARSE_PROPERTY(prop, "clippingRange", GeomCamera, camera->clippingRange)
+    PARSE_PROPERTY(prop, "clippingPlanes",GeomCamera,  camera->clippingPlanes)
+    PARSE_PROPERTY(prop, "shutter:open", GeomCamera, camera->shutterOpen)
+    PARSE_PROPERTY(prop, "shutter:close", GeomCamera, camera->shutterClose)
     PARSE_ENUM_PROPETY(prop, "projection", ProjectionHandler,
-                       camera->projection)
+                       GeomCamera, camera->projection)
     PARSE_PROPERTY_END_MAKE_ERROR(prop)
   }
 
@@ -2076,9 +2080,9 @@ bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
     LuxSphereLight *light) {
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_PROPERTY(prop, "inputs:color", light->color)
-    PARSE_PROPERTY(prop, "inputs:radius", light->color)
-    PARSE_PROPERTY(prop, "inputs:intensity", light->intensity)
+    PARSE_PROPERTY(prop, "inputs:color", LuxSphereLight, light->color)
+    PARSE_PROPERTY(prop, "inputs:radius",  LuxSphereLight, light->radius)
+    PARSE_PROPERTY(prop, "inputs:intensity",  LuxSphereLight, light->intensity)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
@@ -2091,12 +2095,12 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxDomeLight *light) {
   for (const auto &prop : properties) {
-    PARSE_PROPERTY(prop, "guideRadius", light->guideRadius)
-    PARSE_PROPERTY(prop, "inputs:diffuse", light->diffuse)
-    PARSE_PROPERTY(prop, "inputs:specular", light->specular)
-    PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_PROPERTY(prop, "inputs:color", light->color)
-    PARSE_PROPERTY(prop, "inputs:intensity", light->intensity)
+    PARSE_PROPERTY(prop, "guideRadius", LuxDomeLight, light->guideRadius)
+    PARSE_PROPERTY(prop, "inputs:diffuse", LuxDomeLight,light->diffuse)
+    PARSE_PROPERTY(prop, "inputs:specular", LuxDomeLight,light->specular)
+    PARSE_PROPERTY(prop, "inputs:colorTemperature", LuxDomeLight,light->colorTemperature)
+    PARSE_PROPERTY(prop, "inputs:color", LuxDomeLight,light->color)
+    PARSE_PROPERTY(prop, "inputs:intensity", LuxDomeLight,light->intensity)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 

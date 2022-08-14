@@ -108,21 +108,21 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
 
   // properties
-  if (gprim.doubleSided.has_value()) {
+  if (gprim.doubleSided.authorized()) {
     ss << Indent(indent) << "  uniform bool doubleSided = " << gprim.doubleSided.get() << "\n";
   }
 
-  if (gprim.orientation.has_value()) {
+  if (gprim.orientation.authorized()) {
     ss << Indent(indent) << "  uniform token orientation = " << to_string(gprim.orientation.get())
        << "\n";
   }
 
 
-  if (gprim.extent.has_value()) {
+  if (gprim.extent) {
     ss << Indent(indent) << "  float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value()) << "\n";
   }
 
-  if (gprim.visibility.has_value()) {
+  if (gprim.visibility.authorized()) {
     ss << Indent(indent) << "  token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get()) << "\n";
   }
 
@@ -371,7 +371,7 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   // props
   // TODO:
 
-  if (gprim.visibility.has_value()) {
+  if (gprim.visibility.authorized()) {
     ss << Indent(indent) << "  visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get())
        << "\n";
   }
@@ -426,7 +426,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
     ss << "]\n";
   }
 
-  if (xform.visibility.has_value()) {
+  if (xform.visibility.authorized()) {
     ss << Indent(indent) << "  visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get())
      << "\n";
   }
@@ -524,10 +524,10 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
     ss << Indent(indent) << "  int[] holeIndices = " << mesh.holeIndices << "\n";
   }
 
-  if (mesh.subdivisionScheme.has_value()) {
+  if (mesh.subdivisionScheme.authorized()) {
     ss << Indent(indent) << "  uniform token subdivisionScheme = " << quote(to_string(mesh.subdivisionScheme.get())) << "\n";
   }
-  if (mesh.interpolateBoundary.has_value()) {
+  if (mesh.interpolateBoundary.authorized()) {
     ss << Indent(indent) << "  uniform token interpolateBoundary = " << to_string(mesh.interpolateBoundary.get()) << "\n";
   }
 

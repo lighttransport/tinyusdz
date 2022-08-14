@@ -65,7 +65,8 @@ class AttribWithFallback {
     return fallback;
   }
 
-  bool has_value() const {
+  // value set?
+  bool authorized() const {
     if (attrib) {
       return true;
     }

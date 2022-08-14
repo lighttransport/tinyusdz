@@ -7,9 +7,9 @@
 #include "nanort.h"
 #include "nanosg.h"
 
-// Part of TinyUSDZ core
+// Loading image is the part of TinyUSDZ core
 //#define STB_IMAGE_IMPLEMENTATION
-#include "external/stb_image.h"
+//#include "external/stb_image.h"
 
 // common
 #include "mapbox/earcut.hpp"  // For polygon triangulation
@@ -56,6 +56,7 @@ inline void CalcNormal(float3& N, float3 v0, float3 v1, float3 v2) {
   N = vnormalize(N);
 }
 
+#if 0
 bool LoadTextureImage(const tinyusdz::UVTexture &tex, Image *out_image) {
   
   // Asssume asset name = file name
@@ -79,6 +80,7 @@ bool LoadTextureImage(const tinyusdz::UVTexture &tex, Image *out_image) {
   return true;
  
 }
+#endif
     
 bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere,
                          DrawGeomMesh* dst) {
