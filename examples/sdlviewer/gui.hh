@@ -5,6 +5,7 @@
 #include "imgui.h"
 
 #include "tinyusdz.hh"
+#include "usdShade.hh"
 
 namespace example {
 

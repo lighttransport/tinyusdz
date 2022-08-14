@@ -426,10 +426,10 @@ struct Node {
 
 struct StageMetas {
   // Scene global setting
-  Axis upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
+  AttribWithFallback<Axis> upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
   std::string defaultPrim;           // prim node name
-  double metersPerUnit = 1.0;        // default [m]
-  double timeCodesPerSecond = 24.0;  // default 24 fps
+  AttribWithFallback<double> metersPerUnit{1.0};        // default [m]
+  AttribWithFallback<double> timeCodesPerSecond {24.0};  // default 24 fps
   std::string doc; // `documentation`
   value::dict customData;
 };
