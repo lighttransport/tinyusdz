@@ -2812,7 +2812,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       // Assume single root node in the scene.
       DCOUT("paths[" << pathIndexes[thisIndex]
                      << "] is parent. name = " << parentPath.full_path_name());
-      parentPath = Path::AbsoluteRootPath();
+      parentPath = Path::RootPath();
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
       int32_t tokenIndex = elementTokenIndexes[thisIndex];

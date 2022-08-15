@@ -1,6 +1,7 @@
 #include "prim-types.hh"
 //#include "pprinter.hh"
 
+#include <algorithm>
 #include <limits>
 
 namespace tinyusdz {
@@ -8,17 +9,15 @@ namespace tinyusdz {
 namespace {
 
 // https://www.realtime.bc.ca/articles/endian-safe.html
-union HostEndianness
-{
+union HostEndianness {
   int i;
   char c[sizeof(int)];
 
-  HostEndianness() : i(1) { }
+  HostEndianness() : i(1) {}
 
   bool isBig() const { return c[0] == 0; }
   bool isLittle() const { return c[0] != 0; }
 };
-
 
 // https://gist.github.com/rygorous/2156668
 // Little endian
@@ -109,7 +108,6 @@ float half_to_float_be(float16be h) {
   return o.f;
 }
 
-
 value::half float_to_half_full_be(float _f) {
   FP32be f;
   f.f = _f;
@@ -195,7 +193,7 @@ value::half float_to_half_full_le(float _f) {
   return ret;
 }
 
-} // namespace
+}  // namespace
 
 float half_to_float(value::half h) {
   // TODO: Compile time detection of endianness
@@ -213,9 +211,7 @@ float half_to_float(value::half h) {
 
   ///???
   return std::numeric_limits<float>::quiet_NaN();
-
 }
-
 
 value::half float_to_half_full(float _f) {
   // TODO: Compile time detection of endianness
@@ -228,15 +224,11 @@ value::half float_to_half_full(float _f) {
   }
 
   ///???
-  value::half fp16{0}; // TODO: Raise exception or return NaN
+  value::half fp16{0};  // TODO: Raise exception or return NaN
   return fp16;
-
-
 }
 
-
-Interpolation InterpolationFromString(const std::string &v)
-{
+Interpolation InterpolationFromString(const std::string &v) {
   if ("faceVarying" == v) {
     return Interpolation::FaceVarying;
   } else if ("constant" == v) {
@@ -251,8 +243,7 @@ Interpolation InterpolationFromString(const std::string &v)
   return Interpolation::Invalid;
 }
 
-Orientation OrientationFromString(const std::string &v)
-{
+Orientation OrientationFromString(const std::string &v) {
   if ("rightHanded" == v) {
     return Orientation::RightHanded;
   } else if ("leftHanded" == v) {
@@ -275,6 +266,253 @@ bool operator==(const Path &lhs, const Path &rhs) {
   return (lhs.full_path_name() == rhs.full_path_name());
 }
 
+//
+// -- Path
+//
 
+Path::Path(const std::string &p) {
+  //
+  // For absolute path, starts with '/' and no other '/' exists.
+  // For property part, '.' exists only once.
 
-} // namespace tinyusdz
+  if (p.size() < 1) {
+    valid = false;
+    return;
+  }
+
+  auto slash_fun = [](const char c) { return c == '/'; };
+  auto dot_fun = [](const char c) { return c == '.'; };
+
+  // TODO: More checks('{', '[', ...)
+
+  if (p[0] == '/') {
+    // absolute path
+
+    auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
+
+    if (ndots == 0) {
+      // absolute prim.
+      prim_part = p;
+      valid = true;
+    } else if (ndots == 1) {
+      if (p.size() < 3) { 
+        // "/."
+        valid = false;
+        return;
+      }
+
+      auto loc = p.find_first_of('.');
+      if (loc == std::string::npos) {
+        // ?
+        valid = false;
+        return;
+      }
+
+      if (loc <= 0) {
+        // this should not happen though.
+        valid = false;
+      }
+
+      // split
+      std::string prop_name = p.substr(size_t(loc));
+
+      // Check if No '/' in prop_part
+      if (std::count_if(prop_name.begin(), prop_name.end(), slash_fun) > 0) {
+        valid = false;
+        return;
+      }
+
+      prop_part = prop_name.erase(0, 1); // remove '.'
+      prim_part = p.substr(0, size_t(loc));
+      
+      valid = true;
+
+    } else {
+      valid = false;
+      return;
+    }
+
+  } else if (p[0] == '.') {
+
+    // property
+    auto nslashes = std::count_if(p.begin(), p.end(), slash_fun);
+    if (nslashes > 0) {
+      valid = false;
+      return;
+    }
+
+    prop_part = p;
+    prop_part = prop_part.erase(0, 1);
+    valid = true;
+
+  } else {
+
+    // prim.prop
+
+    auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
+    if (ndots == 0) {
+      // relative prim.
+      prim_part = p;
+      valid = true;
+    } else if (ndots == 1) {
+
+      if (p.size() < 3) { 
+        // "/."
+        valid = false;
+        return;
+      }
+
+      auto loc = p.find_first_of('.');
+      if (loc == std::string::npos) {
+        // ?
+        valid = false;
+        return;
+      }
+
+      if (loc <= 0) {
+        // this should not happen though.
+        valid = false;
+      }
+
+      // split
+      std::string prop_name = p.substr(size_t(loc));
+
+      // Check if No '/' in prop_part
+      if (std::count_if(prop_name.begin(), prop_name.end(), slash_fun) > 0) {
+        valid = false;
+        return;
+      }
+
+      prim_part = p.substr(0, size_t(loc));
+      prop_part = prop_name.erase(0, 1); // remove '.'
+
+      valid = true;
+
+    } else {
+      valid = false;
+      return;
+    }
+  }
+}
+
+Path Path::AppendProperty(const std::string &elem) {
+  Path p = (*this);
+
+  if (elem.empty()) {
+    p.valid = false;
+    return p;
+  }
+
+  if (elem[0] == '{') {
+    // variant chars are not supported
+    p.valid = false;
+    return p;
+  } else if (elem[0] == '[') {
+    // relational attrib are not supported
+    p.valid = false;
+    return p;
+  } else if (elem[0] == '.') {
+    // std::cerr << "???. elem[0] is '.'\n";
+    // For a while, make this valid.
+    p.valid = false;
+    return p;
+  } else {
+    p.prop_part = elem;
+
+    return p;
+  }
+}
+
+std::pair<Path, Path> Path::SplitAtRoot() const {
+  if (IsAbsolutePath()) {
+    if (IsRootPath()) {
+      return std::make_pair(Path("/"), Path());
+    }
+
+    std::string p = full_path_name();
+
+    if (p.size() < 2) {
+      // Never should reach here. just in case
+      return std::make_pair(*this, Path());
+    }
+
+    // Fine 2nd '/'
+    auto ret =
+        std::find_if(p.begin() + 1, p.end(), [](char c) { return c == '/'; });
+
+    if (ret != p.end()) {
+      auto ndist = std::distance(p.begin(), ret);  // distance from str[0]
+      if (ndist < 1) {
+        // This should not happen though.
+        return std::make_pair(*this, Path());
+      }
+      size_t n = size_t(ndist);
+      std::string root = p.substr(0, n);
+      std::string siblings = p.substr(n);
+
+      return std::make_pair(root, siblings);
+    }
+
+    return std::make_pair(*this, Path());
+  } else {
+    return std::make_pair(Path(), *this);
+  }
+}
+
+Path Path::AppendElement(const std::string &elem) {
+  Path p = (*this);
+
+  if (elem.empty()) {
+    p.valid = false;
+    return p;
+  }
+
+  if (elem[0] == '{') {
+    // variant chars are not supported
+    p.valid = false;
+    return p;
+  } else if (elem[0] == '[') {
+    // relational attrib are not supported
+    p.valid = false;
+    return p;
+  } else if (elem[0] == '.') {
+    // std::cerr << "???. elem[0] is '.'\n";
+    // For a while, make this valid.
+    p.valid = false;
+    return p;
+  } else {
+    // std::cout << "elem " << elem << "\n";
+    if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
+      p.prim_part += elem;
+    } else {
+      p.prim_part += '/' + elem;
+    }
+
+    return p;
+  }
+}
+
+Path Path::GetParentPrim() const {
+  if (!valid) {
+    return Path();
+  }
+
+  if (IsRootPrim()) {
+    return *this;
+  }
+
+  size_t n = prim_part.find_last_of('/');
+  if (n == std::string::npos) {
+    // this should never happen though.
+    return Path();
+  }
+
+  if (n == 0) {
+    // return root
+    return Path("/");
+  }
+
+  return Path(prim_part.substr(0, n));
+}
+
+}  // namespace tinyusdz
