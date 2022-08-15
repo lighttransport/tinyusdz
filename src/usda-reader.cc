@@ -397,30 +397,46 @@ class USDAReader::Impl {
   bool RegisterReconstructCallback() {
     _parser.RegisterPrimConstructFunction(
         PrimTypeTrait<T>::prim_type_name,
-        [&](const Path &path, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
+        [&](const Path &full_path, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
             const std::vector<std::pair<ListEditQual, Reference>> &references) -> nonstd::expected<bool, std::string> {
-          T prim;
 
-          DCOUT("primType = " << value::TypeTrait<T>::type_name() << ", node.size " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx << ", parentPrimIdx = " << parentPrimIdx);
-
-          bool ret = ReconstructPrim<T>(properties, references, &prim);
-
-          if (!ret) {
-            return nonstd::make_unexpected("Failed to reconstruct Prim: " + path.full_path_name());
+          if (!prim_name.IsValid()) {
+            return nonstd::make_unexpected("Invalid Prim name: " + prim_name.full_path_name());
+          }
+          if (prim_name.IsAbsolutePath() || prim_name.IsRootPath()) {
+            return nonstd::make_unexpected("Prim name should not starts with '/' or contain `/`: Prim name = " + prim_name.full_path_name());
           }
 
+          if (!prim_name.GetPropPart().empty()) {
+            return nonstd::make_unexpected("Prim path should not contain property part(`.`): Prim name = " + prim_name.full_path_name());
+          }
 
-          // Add to scene graph.
           if (primIdx < 0) {
             return nonstd::make_unexpected("Unexpected primIdx value. primIdx must be positive.");
           }
 
+          T prim;
+
+          DCOUT("primType = " << value::TypeTrait<T>::type_name() << ", node.size " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx << ", parentPrimIdx = " << parentPrimIdx);
+
+          DCOUT("full_path = " << full_path.full_path_name());
+          DCOUT("primName = " << prim_name.full_path_name());
+
+          bool ret = ReconstructPrim<T>(properties, references, &prim);
+
+          if (!ret) {
+            return nonstd::make_unexpected("Failed to reconstruct Prim: " + prim_name.full_path_name());
+          }
+
+          prim.name = prim_name.GetPrimPart();
+
+          // Add to scene graph.
+          // NOTE: Scene graph is constructed from bottom up manner(Children first), so add this primIdx to parent's children.
           if (size_t(primIdx) >= _prim_nodes.size()) {
             _prim_nodes.resize(size_t(primIdx)+1);
           }
           DCOUT("sz " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx);
 
-          // NOTE: Scene graph is constructed from bottom up manner(Children first), so add this primIdx to parent's children.
           _prim_nodes[size_t(primIdx)].prim = std::move(prim);
           DCOUT("prim[" << primIdx << "].ty = " << _prim_nodes[size_t(primIdx)].prim.type_name());
           if (_prim_nodes.size() > 1) {
@@ -1021,10 +1037,10 @@ template <>
 bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
   _parser.RegisterPrimConstructFunction(
       "GeomSubset",
-      [&](const Path &path, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
+      [&](const Path &full_path, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
           std::vector<std::pair<ListEditQual, Reference>> &references) -> nonstd::expected<bool, std::string> {
         // Parent Prim must be GeomMesh
-        const Path parent = path.GetParentPrim();
+        const Path parent = full_path.GetParentPrim();
         if (!parent.IsValid()) {
           return nonstd::make_unexpected("Invalid Prim path.");
         }

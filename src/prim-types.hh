@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#include <math.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -10,11 +9,14 @@
 #include <iostream>
 #include <limits>
 #include <map>
-#include <set>
 #include <memory>
+#include <set>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <utility>
+#include <vector>
+
+//
 #include "value-types.hh"
 
 #ifdef __clang__
@@ -22,9 +24,9 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#include "external/better-enums/enum.h"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
-#include "external/better-enums/enum.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -35,28 +37,59 @@
 
 namespace tinyusdz {
 
-template<typename T>
+///
+/// Attribute with fallback(default) value
+///
+/// - `authorized() = true` : Attribute value is authorized(attribute is
+/// described in USDA/USDC)
+/// - `authorized() = false` : Attribute value is not authorized(not described
+/// in USD). If you call `get()`, fallback value is returned.
+///
+template <typename T>
 class AttribWithFallback {
  public:
+  AttribWithFallback() = delete;
 
-  //AttribWithFallback() = delete;
+  ///
+  /// Init with fallback value;
+  ///
+  AttribWithFallback(const T &fallback_) : fallback(fallback_) {}
 
-  AttribWithFallback(const T &f) : fallback(f) {
-  }
+  AttribWithFallback &operator=(const T &value) {
+    attrib = value;
 
-  AttribWithFallback& operator=(const T& v) {
-    attrib = v;
+    // fallback Value should be already set with `AttribWithFallback(const T&
+    // fallback)` constructor.
 
     return (*this);
   }
 
-  // TODO
-  //AttribWithFallback(const AttribWithFallback &rhs) = delete;
-  //AttribWithFallback(const AttribWithFallback &&rhs) = delete;
+  //
+  // FIXME: Defininig copy constructor, move constructor and  move assignment
+  // operator Gives compilation error :-(. so do not define it.
+  //
 
-  void set(const T& v) {
-    attrib = v;
-  }
+  // AttribWithFallback(const AttribWithFallback &rhs) {
+  //   attrib = rhs.attrib;
+  //   fallback = rhs.fallback;
+  // }
+
+  // AttribWithFallback &operator=(T&& value) noexcept {
+  //   if (this != &value) {
+  //       attrib = std::move(value.attrib);
+  //       fallback = std::move(value.fallback);
+  //   }
+  //   return (*this);
+  // }
+
+  // AttribWithFallback(AttribWithFallback &&rhs) noexcept {
+  //   if (this != &rhs) {
+  //       attrib = std::move(rhs.attrib);
+  //       fallback = std::move(rhs.fallback);
+  //   }
+  // }
+
+  void set(const T &v) { attrib = v; }
 
   const T &get() const {
     if (attrib) {
@@ -78,11 +111,9 @@ class AttribWithFallback {
   T fallback;
 };
 
-
-
 class PrimNode;
 
-#if 0 // TODO
+#if 0  // TODO
 class PrimRange
 {
  public:
@@ -223,7 +254,7 @@ enum class Orientation {
 
 enum class Visibility {
   Inherited,  // "inherited" (default)
-  Invisible, // "invisible"
+  Invisible,  // "invisible"
   Invalid
 };
 
@@ -235,14 +266,7 @@ enum class Purpose {
   Invalid
 };
 
-enum class Kind {
-  Model,
-  Group,
-  Assembly,
-  Component,
-  Subcomponent,
-  Invalid
-};
+enum class Kind { Model, Group, Assembly, Component, Subcomponent, Invalid };
 
 // Attribute interpolation
 enum class Interpolation {
@@ -303,7 +327,8 @@ enum class Variability {
 ///
 /// Limitations:
 ///
-/// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not supported.
+/// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
+/// supported.
 /// - Variant chars('{' '}') is not supported.
 /// - '../' is TODO
 ///
@@ -312,8 +337,12 @@ enum class Variability {
 class Path {
  public:
   Path() : valid(false) {}
-  Path(const std::string &prim)
-      : prim_part(prim), valid(true) {}
+
+  // `p` is split into prim_part and prop_part 
+  Path(const std::string &p);
+  Path(const std::string &prim, const std::string &prop);
+
+  // : prim_part(prim), valid(true) {}
   // Path(const std::string &prim, const std::string &prop)
   //    : prim_part(prim), prop_part(prop) {}
 
@@ -331,7 +360,7 @@ class Path {
   std::string full_path_name() const {
     std::string s;
     if (!valid) {
-      s += "INVALID#";
+      s += "#INVALID#";
     }
 
     s += prim_part;
@@ -352,101 +381,61 @@ class Path {
 
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
-  static Path AbsoluteRootPath() { return Path("/"); }
-  static Path RelativePath() { return Path("."); }
+  static Path RootPath() { return Path("/"); }
+  //static Path RelativePath() { return Path("."); }
 
-  Path AppendProperty(const std::string &elem) {
-    Path p = (*this);
+  Path AppendProperty(const std::string &elem);
 
-    if (elem.empty()) {
-      p.valid = false;
-      return p;
-    }
+  Path AppendElement(const std::string &elem);
 
-    if (elem[0] == '{') {
-      // variant chars are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '[') {
-      // relational attrib are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '.') {
-      // std::cerr << "???. elem[0] is '.'\n";
-      // For a while, make this valid.
-      p.valid = false;
-      return p;
-    } else {
-      p.prop_part = elem;
+  ///
+  /// Split a path to the root(common ancestor) and its siblings
+  ///
+  /// example:
+  ///
+  /// - / -> [/, Empty]
+  /// - /bora -> [/bora, Empty]
+  /// - /bora/dora -> [/bora, /dora]
+  /// - /bora/dora/muda -> [/bora, /dora/muda]
+  /// - bora -> [Empty, bora]
+  /// - .muda -> [Empty, .muda]
+  ///
+  std::pair<Path, Path> SplitAtRoot() const;
 
-      return p;
-    }
-  }
+  Path GetParentPrim() const;
 
-  Path AppendElement(const std::string &elem) {
-    Path p = (*this);
-
-    if (elem.empty()) {
-      p.valid = false;
-      return p;
-    }
-
-    if (elem[0] == '{') {
-      // variant chars are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '[') {
-      // relational attrib are not supported
-      p.valid = false;
-      return p;
-    } else if (elem[0] == '.') {
-      // std::cerr << "???. elem[0] is '.'\n";
-      // For a while, make this valid.
-      p.valid = false;
-      return p;
-    } else {
-      // std::cout << "elem " << elem << "\n";
-      if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
-        p.prim_part += elem;
-      } else {
-        p.prim_part += '/' + elem;
-      }
-
-      return p;
-    }
-  }
-
-  Path GetParentPrim() const {
-
-    if (!valid) {
-      return Path();
-    }
-
-    if (IsRootPrim()) {
-      return *this;
-    }
-
-    size_t n = prim_part.find_last_of('/');
-    if (n == std::string::npos) {
-      // this should never happen though.
-      return Path();
-    }
-
-    if (n == 0) {
-      // return root
-      return Path("/");
-    }
-
-    return Path(prim_part.substr(0, n));
-  }
-
-  bool IsRootPrim() const {
+  ///
+  /// @returns true if a path is '/' only
+  ///
+  bool IsRootPath() const {
     if (!valid) {
       return false;
     }
 
     if ((prim_part.size() == 1) && (prim_part[0] == '/')) {
       return true;
+    }
+
+    return false;
+  }
+
+  ///
+  /// @returns true if a path is root prim: e.g. '/bora'
+  ///
+  bool IsRootPrim() const {
+    if (!valid) {
+      return false;
+    }
+
+    if (IsRootPath()) {
+      return false;
+    }
+
+    if ((prim_part.size() > 1) && (prim_part[0] == '/')) {
+      // no other '/' except for the fist one
+      if (prim_part.find_last_of('/') == 0) {
+        return true;
+      }
     }
 
     return false;
@@ -467,11 +456,33 @@ class Path {
       return !IsAbsolutePath();
     }
 
-    return true; // prop part only
+    return true;  // prop part only
+  }
+
+  // Strip '/'
+  Path &MakeRelative() {
+    if (IsAbsolutePath() && (prim_part.size() > 1)) {
+      // Remove first '/'
+      prim_part.erase(0, 1);
+    }
+    return *this;
+  }
+
+  const Path MakeRelative(Path &&rhs) {
+    (*this) = std::move(rhs);
+
+    return MakeRelative();
+  }
+
+  static const Path MakeRelative(const Path &rhs) {
+    Path p = rhs; // copy
+    return p.MakeRelative();
   }
 
  private:
-  std::string prim_part;  // e.g. </Model/MyMesh>
+
+
+  std::string prim_part;  // e.g. /Model/MyMesh, MySphere
   std::string prop_part;  // e.g. .visibility
   bool valid{false};
 };
@@ -516,7 +527,6 @@ class TokenizedPath {
 };
 
 bool operator==(const Path &lhs, const Path &rhs);
-
 
 class TimeCode {
   TimeCode(double tm = 0.0) : _time(tm) {}
@@ -648,13 +658,13 @@ struct ConnectionPath {
                       // `Scene.shaders`)
 };
 
-//struct Connection {
-//  int64_t src_index{-1};
-//  int64_t dest_index{-1};
-//};
+// struct Connection {
+//   int64_t src_index{-1};
+//   int64_t dest_index{-1};
+// };
 //
-//using connection_id_map =
-//    std::unordered_map<std::pair<std::string, std::string>, Connection>;
+// using connection_id_map =
+//     std::unordered_map<std::pair<std::string, std::string>, Connection>;
 
 // Relation and Connection
 struct Relation {
@@ -778,7 +788,7 @@ class MetaVariable {
 
 // Metadata for Prim
 struct PrimMeta {
-  nonstd::optional<Kind> kind;  // 'kind'
+  nonstd::optional<Kind> kind;                    // 'kind'
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<std::map<std::string, MetaVariable>>
       customData;  // `customData`
@@ -824,34 +834,34 @@ struct PrimAttrib {
 // (Need to lookup schema if the property is custom or not for Crate data)
 struct Property {
   enum class Type {
-    EmptyAttrib, // Attrib with no data.
-    Attrib, // contains actual data
-    Relation, // `rel` type
-    NoTargetsRelation, // `rel` with no targets.
-    Connection, // `.connect` suffix
+    EmptyAttrib,        // Attrib with no data.
+    Attrib,             // contains actual data
+    Relation,           // `rel` type
+    NoTargetsRelation,  // `rel` with no targets.
+    Connection,         // `.connect` suffix
   };
 
   PrimAttrib attrib;
-  Relation rel; // Relation(`rel`) or Connection(`.connect`)
+  Relation rel;  // Relation(`rel`) or Connection(`.connect`)
   Type type{Type::EmptyAttrib};
 
-  bool has_custom{false}; // Qualified with 'custom' keyword?
+  bool has_custom{false};  // Qualified with 'custom' keyword?
 
   Property() = default;
 
-  Property(bool custom) : has_custom(custom) {
-    type = Type::EmptyAttrib;
-  }
+  Property(bool custom) : has_custom(custom) { type = Type::EmptyAttrib; }
 
   Property(const PrimAttrib &a, bool custom) : attrib(a), has_custom(custom) {
     type = Type::Attrib;
   }
 
-  Property(PrimAttrib &&a, bool custom) : attrib(std::move(a)), has_custom(custom) {
+  Property(PrimAttrib &&a, bool custom)
+      : attrib(std::move(a)), has_custom(custom) {
     type = Type::Attrib;
   }
 
-  Property(const Relation &r, bool isConnection, bool custom) : rel(r), has_custom(custom) {
+  Property(const Relation &r, bool isConnection, bool custom)
+      : rel(r), has_custom(custom) {
     if (isConnection) {
       type = Type::Connection;
     } else {
@@ -859,9 +869,15 @@ struct Property {
     }
   }
 
-  bool IsAttrib() const { return (type == Type::EmptyAttrib) || (type == Type::Attrib); }
-  bool IsEmpty() const { return (type == Type::EmptyAttrib) || (type == Type::NoTargetsRelation); }
-  bool IsRel() const { return (type == Type::Relation) || (type == Type::NoTargetsRelation); }
+  bool IsAttrib() const {
+    return (type == Type::EmptyAttrib) || (type == Type::Attrib);
+  }
+  bool IsEmpty() const {
+    return (type == Type::EmptyAttrib) || (type == Type::NoTargetsRelation);
+  }
+  bool IsRel() const {
+    return (type == Type::Relation) || (type == Type::NoTargetsRelation);
+  }
   bool IsConnection() const { return type == Type::Connection; }
 
   bool HasCustom() const { return has_custom; }
@@ -1041,7 +1057,8 @@ struct TimeSamples {
 #endif
 
 // Animatable = run-time data structure(e.g. for GeomMesh)
-// TimeSample data is splitted into multiple ranges when it contains `None`(Blocked)
+// TimeSample data is splitted into multiple ranges when it contains
+// `None`(Blocked)
 //
 // e.g.
 //
@@ -1055,8 +1072,7 @@ struct TimeSamples {
 // for Animatable type.
 
 template <typename T>
-struct TypedTimeSamples
-{
+struct TypedTimeSamples {
   std::vector<double> times;
   std::vector<T> samples;
 
@@ -1073,7 +1089,7 @@ struct TypedTimeSamples
 
 template <typename T>
 struct Animatable {
-  T value; // scalar
+  T value;  // scalar
 
   // TODO: sort by timeframe
   std::vector<TypedTimeSamples<T>> ranges;
@@ -1086,7 +1102,7 @@ struct Animatable {
     return false;
   }
 
-#if 0 // TODO
+#if 0  // TODO
   T Get() const { return value; }
 
   T Get(double t) {
