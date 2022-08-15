@@ -5465,13 +5465,13 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
   std::map<std::string, Property> props;
 
   {
-    std::string path = GetCurrentPath();
-    if (path == "/") {
-      path += prim_name;
+    std::string full_path = GetCurrentPath();
+    if (full_path == "/") {
+      full_path += prim_name;
     } else {
-      path += "/" + prim_name;
+      full_path += "/" + prim_name;
     }
-    PushPath(path);
+    PushPath(full_path);
   }
 
   // expect = '}'
@@ -5640,8 +5640,9 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
 
       auto construct_fun = _prim_construct_fun_map[prim_type];
 
-      Path path(GetCurrentPath());
-      nonstd::expected<bool, std::string> ret = construct_fun(path, primIdx, parentPrimIdx, props, references);
+      Path fullpath(GetCurrentPath());
+      Path pname(prim_name);
+      nonstd::expected<bool, std::string> ret = construct_fun(fullpath, prim_name, primIdx, parentPrimIdx, props, references);
       //DCOUT("prim_type " << prim_type << " ret = " << ret);
       if (!ret) {
         // construction failed.

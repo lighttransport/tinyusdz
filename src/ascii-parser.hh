@@ -241,7 +241,7 @@ class AsciiParser {
   ///
   using PrimConstructFunction =
       std::function<nonstd::expected<bool, std::string>(
-          const Path &path, const int64_t primIdx, const int64_t parentPrimIdx,
+          const Path &full_path, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
           std::vector<std::pair<ListEditQual, Reference>> &references)>;
 
