@@ -514,12 +514,18 @@ class USDAReader::Impl {
   void RegisterPrimIdxAssignCallback() {
     _parser.RegisterPrimIdxAssignFunction([&](const int64_t parentPrimIdx) {
 
+
       size_t idx = _prim_nodes.size();
 
-      if (parentPrimIdx < 0) { // root
-        // allocate empty prim to reserve _prim_nodes[idx]
-        _prim_nodes.resize(idx + 1);
-      }
+      DCOUT("parentPrimIdx: " << parentPrimIdx << ", idx = " << idx);
+
+      _prim_nodes.resize(idx + 1);
+
+      //if (parentPrimIdx < 0) { // root
+      //  // allocate empty prim to reserve _prim_nodes[idx]
+      //  _prim_nodes.resize(idx + 1);
+      //  DCOUT("resize to : " << (idx + 1));
+      //}
 
       return idx;
     });
@@ -669,8 +675,29 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
 /// -- Impl reconstruct
 //
 
+namespace {
+
+void ReconstructNodeRec(const size_t idx, const std::vector<PrimNode> &prim_nodes, Prim &parent) {
+
+    const auto &node = prim_nodes[idx];
+
+    Prim prim(node.prim);
+    DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
+
+
+    for (const auto &cidx : node.children) {
+      ReconstructNodeRec(cidx, prim_nodes, prim);
+    }
+
+    parent.children.emplace_back(std::move(prim));
+
+}
+
+} // namespace 
+
 bool USDAReader::Impl::ReconstructStage() {
   _stage.root_nodes.clear();
+
 
   for (const auto &idx : _toplevel_prims) {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
@@ -681,14 +708,18 @@ bool USDAReader::Impl::ReconstructStage() {
     DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
 
     for (const auto &cidx : node.children) {
-
+#if 0
       const auto &child_node = _prim_nodes[cidx];
       DCOUT("prim[" << idx << "].children = " << cidx << ", type = " << child_node.prim.type_name());
 
       prim.children.emplace_back(std::move(child_node.prim));
+#else
+      ReconstructNodeRec(cidx, _prim_nodes, prim);
+#endif
     }
 
     DCOUT("prim[" << idx << "].num_children = " << prim.children.size());
+
     size_t sz = _stage.root_nodes.size();
     _stage.root_nodes.emplace_back(std::move(prim));
 
