@@ -28,6 +28,7 @@ tinyusdz_sources=[
   '../../src/image-writer.cc',
   # deps
   '../../src/external/fpng.cpp',
+  '../../src/external/pystring.cpp',
   '../../src/external/staticstruct.cc',
   '../../src/external/tinyxml2/tinyxml2.cpp',
   '../../src/external/string_id/string_id.cpp',
