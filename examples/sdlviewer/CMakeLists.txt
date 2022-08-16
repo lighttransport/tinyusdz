@@ -296,14 +296,13 @@ list(
   ../../src/usdShade.cc
   ../../src/tydra/render-data.cc
   #../../src/integerCoding.cpp
-  #../../src/pxrLZ4/lz4.cpp
   #../../src/lz4-compression.cc
 )
 
 set(TINYUSDZ_DEP_SOURCES
     ../../src/integerCoding.cpp
     ../../src/lz4-compression.cc
-    ../../src/pxrLZ4/lz4.cpp
+    ../../src/lz4/lz4.c
     ../../src/external/string_id/string_id.cpp
     ../../src/external/string_id/database.cpp
     ../../src/external/string_id/error.cpp
