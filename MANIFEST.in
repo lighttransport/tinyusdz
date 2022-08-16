@@ -190,6 +190,9 @@ include src/external/nanobind/src/nb_type.cpp
 include src/external/nanobind/src/tensor.cpp
 include src/external/nanobind/src/trampoline.cpp
 include src/external/ogt_vox.h
+include src/external/pystring.cpp
+include src/external/pystring.h
+include src/external/pystring.LICENSE
 include src/external/ryu/LICENSE-Boost
 include src/external/ryu/README.md
 include src/external/ryu/ryu/common.h
