@@ -290,6 +290,7 @@ enum TypeId {
 
   // Types for Model and GPrim
   TYPE_ID_MODEL_BEGIN = (1 << 10),
+  TYPE_ID_MODEL, // internally used class
   //TYPE_ID_GROUP,
   TYPE_ID_SCOPE,
   TYPE_ID_GPRIM,

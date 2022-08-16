@@ -1130,6 +1130,17 @@ using AnimatableVec3f = Animatable<value::float3>;
 using AnimatableVec3fArray = Animatable<std::vector<value::float3>>;
 using AnimatableFloatArray = Animatable<std::vector<float>>;
 
+// `def` with no type.
+struct Model {
+  std::string name;
+
+  int64_t parent_id{-1};  // Index to parent node
+
+  std::vector<std::pair<ListEditQual, Reference>> references;
+
+  std::map<std::string, Property> props;
+};
+
 // Generic "class" Node
 // Mostly identical to GPrim
 struct Klass {
@@ -1547,6 +1558,7 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
+DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 
 #undef DEFINE_TYPE_TRAIT
