@@ -33,6 +33,7 @@ std::string to_string(Purpose purpose);
 std::string to_string(Permission permission);
 std::string to_string(Variability variability);
 std::string to_string(SpecType spec_type);
+std::string to_string(Kind kind);
 
 std::string to_string(GeomMesh::InterpolateBoundary interp_boundary);
 std::string to_string(GeomMesh::SubdivisionScheme subd_scheme);
@@ -70,11 +71,12 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   return ss.str();
 }
 
-// Do not recursively print Node info.
 //
 // Setting `closing_brace` false won't emit `}`(for printing USD scene graph recursively).
 //
 
+std::string to_string(const Model &model, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const Scope &scope, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Klass &klass, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const GPrim &gprim, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Xform &xform, const uint32_t indent = 0, bool closing_brace = true);
@@ -89,10 +91,12 @@ std::string to_string(const GeomCube &geom, const uint32_t indent = 0, bool clos
 std::string to_string(const GeomCamera &camera, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const SkelRoot &root, const uint32_t indent = 0, bool closing_brace = true);
-std::string to_string(const Skeleton &root, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const Skeleton &skel, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const LuxSphereLight &light, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0, bool closing_brace = true);
+
+std::string to_string(const Material &material, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Shader &shader, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent = 0, bool closing_brace = true);
