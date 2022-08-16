@@ -3,6 +3,7 @@
 
 #include <sstream>
 
+#include "usdLux.hh"
 #include "value-pprint.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -292,7 +293,9 @@ namespace value {
   __FUNC(Xform) \
   __FUNC(GeomMesh) \
   __FUNC(GeomSphere) \
-  __FUNC(GeomBasisCurves)
+  __FUNC(GeomBasisCurves) \
+  __FUNC(LuxSphereLight) \
+  __FUNC(LuxDomeLight) \
 
 //std::ostream &operator<<(std::ostream &os, const any_value &v) {
 //std::ostream &operator<<(std::ostream &os, const linb::any &v) {
@@ -345,7 +348,7 @@ std::string pprint_any(const linb::any &v, const uint32_t indent, bool closing_b
 
     // TODO: List-up all case and remove `default` clause.
     default: {
-      os << "PPRINT: TODO: (type: " << v.type_name() << ") ";
+      os << "VALUE_PPRINT: TODO: (type: " << v.type_name() << ") ";
     }
   }
 

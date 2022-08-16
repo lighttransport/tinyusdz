@@ -130,6 +130,8 @@ struct PrimTypeTrait;
     static constexpr auto prim_type_name = __name; \
   }
 
+DEFINE_PRIM_TYPE(Model, "Model", value::TYPE_ID_MODEL);
+
 DEFINE_PRIM_TYPE(Xform, "Xform", value::TYPE_ID_GEOM_XFORM);
 DEFINE_PRIM_TYPE(GeomMesh, "Mesh", value::TYPE_ID_GEOM_MESH);
 DEFINE_PRIM_TYPE(GeomSphere, "Sphere", value::TYPE_ID_GEOM_SPHERE);
@@ -551,31 +553,6 @@ class USDAReader::Impl {
  private:
   bool stage_reconstructed_{false};
 
-#if 0 // TODO: Remove
-  void RegisterNodeTypes() {
-    _node_types.insert(PrimTypeTrait<Xform>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomSphere>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomCube>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomCylinder>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomBasisCurves>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomMesh>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomSubset>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomSphere>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<Scope>::prim_type_name);
-
-    _node_types.insert(PrimTypeTrait<Material>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<Shader>::prim_type_name);
-
-    //_node_types.insert("NodeGraph");
-
-    _node_types.insert(PrimTypeTrait<LuxSphereLight>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<LuxDomeLight>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<GeomCamera>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<SkelRoot>::prim_type_name);
-    _node_types.insert(PrimTypeTrait<Skeleton>::prim_type_name);
-  }
-#endif
-
 #if 0
   ///
   /// -- Iterators --
@@ -760,7 +737,7 @@ bool USDAReader::Impl::ReconstructStage() {
       }                                                                     \
     } else {                                                                \
       PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name() << ") Property type mismatch. " << __name                     \
-                                              << " must be `token` type."); \
+                                              << " must be type `token`, but got `" << attr.var.type_name() << "`."); \
     }                                                                       \
   } else
 
@@ -1971,7 +1948,7 @@ bool USDAReader::Impl::ReconstructPrim(
       PARSE_PROPERTY(prop, "points", GeomMesh, mesh->points)
       PARSE_PROPERTY(prop, "faceVertexCounts",  GeomMesh,mesh->faceVertexCounts)
       PARSE_PROPERTY(prop, "faceVertexIndices",  GeomMesh,mesh->faceVertexIndices)
-      PARSE_ENUM_PROPETY(prop, "subdivisionScheme", SubdivisioSchemeHandler,GeomMesh,  mesh->subdivisionScheme)
+      PARSE_ENUM_PROPETY(prop, "subdivisionScheme", SubdivisioSchemeHandler, GeomMesh,  mesh->subdivisionScheme)
       PARSE_PROPERTY_END_MAKE_WARN(prop)
     }
   }
@@ -2125,11 +2102,29 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
 }
 
 template <>
+bool USDAReader::Impl::ReconstructPrim<Model>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    Model *model) {
+
+  DCOUT("Model(`def` with no type)");
+
+  // TODO: support custom properties
+  for (const auto &prop : properties) {
+    PUSH_WARN("Unsupported/unimplemented property: " + prop.first);
+  }
+
+  return true;
+}
+
+template <>
 bool USDAReader::Impl::ReconstructPrim<Scope>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Scope *scope) {
   // `Scope` is just a namespace in scene graph(no node xform)
+
+  DCOUT("Scope");
 
   // TODO: support custom properties
   for (const auto &prop : properties) {
@@ -2330,7 +2325,10 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
 
   RegisterPrimIdxAssignCallback();
 
+  RegisterReconstructCallback<Model>(); // `def` with no type.
+
   RegisterReconstructCallback<GPrim>();
+
   RegisterReconstructCallback<Xform>();
   RegisterReconstructCallback<GeomCube>();
   RegisterReconstructCallback<GeomSphere>();
@@ -2339,6 +2337,9 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   RegisterReconstructCallback<GeomCapsule>();
   RegisterReconstructCallback<GeomMesh>();
   RegisterReconstructCallback<GeomSubset>();
+
+  RegisterReconstructCallback<Material>();
+  RegisterReconstructCallback<Shader>();
 
   RegisterReconstructCallback<Scope>();
 

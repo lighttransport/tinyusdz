@@ -317,6 +317,8 @@ static void RegisterPrimTypes(std::set<std::string> &d)
   d.insert("SkelRoot");
   d.insert("Skeleton");
 
+  d.insert("GPrim");
+
 }
 
 namespace {
@@ -813,6 +815,33 @@ bool AsciiParser::ReadBasicType(nonstd::optional<Identifier> *value) {
   }
 
   Identifier v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::token *value) {
+  std::string s;
+  if (!ReadStringLiteral(&s)) {
+    return false;
+  }
+
+  (*value) = value::token(s);
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::token> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::token v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -4942,7 +4971,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         return false;
       }
     } else if (type_name == value::kToken) {
-      if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
+      if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name, &attr)) {
         return false;
       }
     } else if (type_name == value::kFloat2) {
@@ -5530,8 +5559,13 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
     }
   }
 
+  std::string pTy = prim_type;
+
   if (prim_type.empty()) {
-    // No Prim type specified. Treat it as GPrim
+    // No Prim type specified. Treat it as Model
+    // TODO: support `references` and infer prim type from referenced asset.
+
+    pTy = "Model";
 
 #if 0  // TODO
     if (IsToplevel()) {
@@ -5634,21 +5668,21 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
       LOG_ERROR("TODO: unresolved node type\n");
     }
 #endif
-  } else {
 
-    if (_prim_construct_fun_map.count(prim_type)) {
+  }
 
-      auto construct_fun = _prim_construct_fun_map[prim_type];
+  if (_prim_construct_fun_map.count(pTy)) {
 
-      Path fullpath(GetCurrentPath());
-      Path pname(prim_name);
-      nonstd::expected<bool, std::string> ret = construct_fun(fullpath, prim_name, primIdx, parentPrimIdx, props, references);
-      //DCOUT("prim_type " << prim_type << " ret = " << ret);
-      if (!ret) {
-        // construction failed.
-        PUSH_ERROR_AND_RETURN("Constructing " + prim_type + " failed: " + ret.error());
-      }
-    }
+    auto construct_fun = _prim_construct_fun_map[pTy];
+
+    Path fullpath(GetCurrentPath());
+    Path pname(prim_name);
+    nonstd::expected<bool, std::string> ret = construct_fun(fullpath, prim_name, primIdx, parentPrimIdx, props, references);
+
+    if (!ret) {
+      // construction failed.
+      PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy + "` failed: " + ret.error());
+     }
   }
 
   PopPath();
