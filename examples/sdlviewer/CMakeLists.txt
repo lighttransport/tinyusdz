@@ -303,6 +303,7 @@ set(TINYUSDZ_DEP_SOURCES
     ../../src/integerCoding.cpp
     ../../src/lz4-compression.cc
     ../../src/lz4/lz4.c
+    ../../src/external/pystring.cpp
     ../../src/external/string_id/string_id.cpp
     ../../src/external/string_id/database.cpp
     ../../src/external/string_id/error.cpp
