@@ -103,6 +103,28 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
   }
 }
 
+std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
+
+  std::stringstream ss;
+
+  if (meta.kind) {
+    ss << Indent(indent) << "kind = " << quote(to_string(meta.kind.value())) << "\n";
+  }
+
+  if (meta.customData) {
+    ss << Indent(indent) << "customData = {\n";
+    ss << Indent(indent+1) << "TODO:\n";
+    ss << Indent(indent) << "}\n";
+  }
+
+  for (const auto &item : meta.meta) {
+    (void)item;
+    // TODO:
+  }
+
+  return ss.str();
+}
+
 template<typename T>
 std::string print_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
@@ -167,6 +189,23 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
 
   return s;
 }
+
+std::string to_string(tinyusdz::Kind v) {
+  if (v == tinyusdz::Kind::Model) {
+    return "model";
+  } else if (v == tinyusdz::Kind::Group) {
+    return "group";
+  } else if (v == tinyusdz::Kind::Assembly) {
+    return "assembly";
+  } else if (v == tinyusdz::Kind::Component) {
+    return "component";
+  } else if (v == tinyusdz::Kind::Subcomponent) {
+    return "subcomponent";
+  } else {
+    return "[[InvalidKind]]";
+  }
+}
+
 
 std::string to_string(tinyusdz::Axis v) {
   if (v == tinyusdz::Axis::X) {
@@ -367,10 +406,49 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
   return ss.str();
 }
 
+std::string to_string(const Model &model, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  // Currently, `Model` is used for typeless `def`
+  ss << Indent(indent) << "def \"" << model.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  ss << print_prim_metas(model.meta, indent+1);
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // props
+  // TODO:
+
+  if (closing_brace) {
+    ss << Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const Scope &scope, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Scope \"" << scope.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  ss << print_prim_metas(scope.meta, indent+1);
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // props
+  // TODO:
+
+  if (closing_brace) {
+    ss << Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
-  ss << Indent(indent) << "def \"" << gprim.name << "\"\n";
+  ss << Indent(indent) << "def GPrim \"" << gprim.name << "\"\n";
   ss << Indent(indent) << "(\n";
   // args
   ss << Indent(indent) << ")\n";
@@ -723,6 +801,41 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   return ss.str();
 }
 
+std::string to_string(const Material &material, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Material \"" << material.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  //print_prim_metas(material.metas, indent);
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  if (closing_brace) {
+    ss << Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << Indent(indent) << "def Shader \"" << shader.name << "\"\n";
+  ss << Indent(indent) << "(\n";
+  //print_prim_metas(shader.metas, indent);
+  ss << Indent(indent) << ")\n";
+  ss << Indent(indent) << "{\n";
+
+  // members
+  ss << Indent(indent) << "   uniform token info:id = \"" << shader.info_id << "\"\n";
+
+  if (closing_brace) {
+    ss << Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -784,28 +897,6 @@ std::string to_string(const LuxDomeLight &light, const uint32_t indent, bool clo
   return ss.str();
 }
 
-std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
-
-  ss << Indent(indent) << "def Shader \"" << shader.name << "\"\n";
-  ss << Indent(indent) << "(\n";
-  // args
-  ss << Indent(indent) << ")\n";
-  ss << Indent(indent) << "{\n";
-
-  // members
-  ss << Indent(indent) << "   uniform token info:id = \"" << shader.info_id << "\"\n";
-
-  // TODO
-  //if (auto p = nonstd::get_if<PreviewSurface>(shader.value)) {
-  //}
-
-  if (closing_brace) {
-    ss << Indent(indent) << "}\n";
-  }
-
-  return ss.str();
-}
 
 std::string to_string(const GeomCamera::Projection &proj, uint32_t indent, bool closing_brace) {
   (void)closing_brace;

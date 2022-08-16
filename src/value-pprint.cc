@@ -290,12 +290,16 @@ namespace value {
   __FUNC(color4d)
 
 #define CASE_GPRIM_LIST(__FUNC) \
+  __FUNC(Model) \
+  __FUNC(Scope) \
   __FUNC(Xform) \
   __FUNC(GeomMesh) \
   __FUNC(GeomSphere) \
   __FUNC(GeomBasisCurves) \
   __FUNC(LuxSphereLight) \
   __FUNC(LuxDomeLight) \
+  __FUNC(Material) \
+  __FUNC(Shader) 
 
 //std::ostream &operator<<(std::ostream &os, const any_value &v) {
 //std::ostream &operator<<(std::ostream &os, const linb::any &v) {

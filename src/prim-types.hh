@@ -789,11 +789,11 @@ class MetaVariable {
 // Metadata for Prim
 struct PrimMeta {
   nonstd::optional<Kind> kind;                    // 'kind'
-  nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<std::map<std::string, MetaVariable>>
       customData;  // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
+
 };
 
 // Metadata for Attribute
@@ -1135,6 +1135,8 @@ struct Model {
   std::string name;
 
   int64_t parent_id{-1};  // Index to parent node
+
+  PrimMeta meta;
 
   std::vector<std::pair<ListEditQual, Reference>> references;
 
@@ -1515,6 +1517,8 @@ struct Scope {
   std::string name;
 
   int64_t parent_id{-1};
+
+  PrimMeta meta;
 
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
