@@ -35,7 +35,7 @@ list(
 set(TINYUSDZ_DEP_SOURCES
   ../../src/integerCoding.cpp
   ../../src/lz4-compression.cc
-  ../../src/pxrLZ4/lz4.cpp
+  ../../src/lz4/lz4.c
   ../../src/external/fpng.cpp
   ../../src/external/staticstruct.cc
   ../../src/external/tinyxml2/tinyxml2.cpp

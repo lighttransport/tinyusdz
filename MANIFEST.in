@@ -481,9 +481,9 @@ include src/primvar.cc
 include src/primvar.hh
 include src/pxr-compat.cc
 include src/pxr-compat.hh
-include src/pxrLZ4/README.md
-include src/pxrLZ4/lz4.cpp
-include src/pxrLZ4/lz4.h
+include src/lz4/LICENSE
+include src/lz4/lz4.c
+include src/lz4/lz4.h
 include src/python-bindings.cc
 include src/str-util.hh
 include src/stream-reader.hh

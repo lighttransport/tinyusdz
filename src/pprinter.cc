@@ -144,20 +144,28 @@ std::string print_predefined(const T &gprim, const uint32_t indent) {
 } // namespace
 
 std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
+  std::string s;
+
   switch (v) {
-    case tinyusdz::GeomMesh::InterpolateBoundary::None: return "none";
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: return "edgeAndCorner";
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: return "edgeOnly";
+    case tinyusdz::GeomMesh::InterpolateBoundary::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: {s = "edgeAndCorner"; break; }
+    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: { s = "edgeOnly"; break; }
   }
+
+  return s;
 }
 
 std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
+  std::string s;
+
   switch (v) {
-    case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: return "catmullClark";
-    case tinyusdz::GeomMesh::SubdivisionScheme::Loop: return "loop";
-    case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: return "bilinear";
-    case tinyusdz::GeomMesh::SubdivisionScheme::None: return "none";
+    case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: { s = "catmullClark"; break; }
+    case tinyusdz::GeomMesh::SubdivisionScheme::Loop: { s = "loop"; break; }
+    case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: { s = "bilinear"; break; }
+    case tinyusdz::GeomMesh::SubdivisionScheme::None: { s = "none"; break; }
   }
+
+  return s;
 }
 
 std::string to_string(tinyusdz::Axis v) {

@@ -323,3 +323,4 @@ TinyUSDZ is licensed under MIT license.
 * simple_match : BSL-1.0 license. https://github.com/jbandela/simple_match
 * nanobind : BSD-3 license. https://github.com/wjakob/nanobind
 * pybind11 : BSD-3 license. https://github.com/pybind/pybind11
+* pystring : BSD-3 license. https://github.com/imageworks/pystring
