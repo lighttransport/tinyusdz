@@ -394,6 +394,16 @@ class USDAReader::Impl {
       const std::vector<std::pair<ListEditQual, Reference>> &references,
       T *out);
 
+  ///
+  /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface) here,
+  /// not in Tydra
+  ///
+  template <typename T>
+  bool ReconstructShader(
+      const std::map<std::string, Property> &properties,
+      const std::vector<std::pair<ListEditQual, Reference>> &references,
+      T *out);
+
   // T = Prim class(e.g. Xform)
   template <typename T>
   bool RegisterReconstructCallback() {
@@ -460,6 +470,7 @@ class USDAReader::Impl {
     return true;
   }
 
+#if 0
   bool ReconstructPreviewSurface(
       const std::map<std::string, Property> &properties,
       const std::vector<std::pair<ListEditQual, Reference>> &references,
@@ -476,6 +487,7 @@ class USDAReader::Impl {
       const std::map<std::string, Property> &properties,
       const std::vector<std::pair<ListEditQual, Reference>> &references,
       T *reader);
+#endif
 
   void ImportScene(tinyusdz::Stage &scene) { _imported_scene = scene; }
 
@@ -693,7 +705,7 @@ void ReconstructNodeRec(const size_t idx, const std::vector<PrimNode> &prim_node
 
 }
 
-} // namespace 
+} // namespace
 
 bool USDAReader::Impl::ReconstructStage() {
   _stage.root_nodes.clear();
@@ -2191,40 +2203,161 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
   return true;
 }
 
+template<>
+bool USDAReader::Impl::ReconstructShader<UsdPreviewSurface>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    UsdPreviewSurface *surface) {
+  // TODO:
+  return false;
+}
+
+template<>
+bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    UsdUVTexture *texture) {
+  // TODO:
+  return false;
+}
+
+template <>
+bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_int>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    UsdPrimvarReader_int *preader) {
+  // TODO:
+  return false;
+}
+
+template <>
+bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    UsdPrimvarReader_float *preader) {
+
+  // TODO:
+  return false;
+}
+
+template <>
+bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float2>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    UsdPrimvarReader_float2 *preader) {
+
+  // TODO:
+  return false;
+}
+
+template <>
+bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float3>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    UsdPrimvarReader_float3 *preader) {
+
+  // TODO:
+  return false;
+}
+
+template <>
+bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float4>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    UsdPrimvarReader_float4 *preader) {
+
+  // TODO:
+  return false;
+}
+
 template <>
 bool USDAReader::Impl::ReconstructPrim<Shader>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Shader *shader) {
+
+  constexpr auto kUsdPreviewSurface = "UsdPreviewSurface";
+  constexpr auto kUsdUVTexture = "UsdUVTexture";
+  constexpr auto kUsdPrimvarReader_int = "UsdPrimvarReader_int";
+  constexpr auto kUsdPrimvarReader_float = "UsdPrimvarReader_float";
+  constexpr auto kUsdPrimvarReader_float2 = "UsdPrimvarReader_float2";
+  constexpr auto kUsdPrimvarReader_float3 = "UsdPrimvarReader_float3";
+  constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
+
   for (const auto &prop : properties) {
+
     if (prop.first == "info:id") {
       const PrimAttrib &attr = prop.second.attrib;
 
-      auto p = attr.var.get_value<std::string>();
-      if (p) {
-        if (p->compare("UsdPreviewSurface") == 0) {
-          PreviewSurface surface;
-          if (!ReconstructPreviewSurface(properties, references, &surface)) {
-            PUSH_WARN("TODO: reconstruct PreviewSurface.");
-          }
-          shader->value = surface;
-        } else if (p->compare("UsdUVTexture") == 0) {
-          UVTexture texture;
-          if (!ReconstructUVTexture(properties, references, &texture)) {
-            PUSH_WARN("TODO: reconstruct UVTexture.");
-          }
-          shader->value = texture;
-        } else if (p->compare("UsdPrimvarReader_float2") == 0) {
-          PrimvarReader_float2 preader;
-          if (!ReconstructPrimvarReader<PrimvarReader_float2>(
-                  properties, references, &preader)) {
-            PUSH_WARN("TODO: reconstruct PrimvarReader_float2.");
-          }
-          shader->value = preader;
-        } else {
-          PUSH_ERROR_AND_RETURN("Invalid or Unsupported Shader id: " + (*p));
-        }
+      auto pv = attr.var.get_value<value::token>();
+      if (!pv) {
+        PUSH_ERROR_AND_RETURN("`info:id` must be type `token`, but got type `" << attr.var.type_name() << "`.");
       }
+
+      std::string shader_type = pv.value().str();
+
+      DCOUT("info:id = " << shader_type);
+
+      if (shader_type.compare(kUsdPreviewSurface) == 0) {
+        UsdPreviewSurface surface;
+        if (!ReconstructShader<UsdPreviewSurface>(properties, references, &surface)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
+        }
+        shader->info_id = kUsdPreviewSurface;
+        shader->value = surface;
+        DCOUT("info_id = " << shader->info_id);
+      } else if (shader_type.compare(kUsdUVTexture) == 0) {
+        UsdUVTexture texture;
+        if (!ReconstructShader<UsdUVTexture>(properties, references, &texture)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
+        }
+        shader->info_id = kUsdUVTexture;
+        shader->value = texture;
+      } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
+        UsdPrimvarReader_int preader;
+        if (!ReconstructShader<UsdPrimvarReader_int>(
+                properties, references, &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_int);
+        }
+        shader->info_id = kUsdPrimvarReader_int;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
+        UsdPrimvarReader_float preader;
+        if (!ReconstructShader<UsdPrimvarReader_float>(
+                properties, references, &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float);
+        }
+        shader->info_id = kUsdPrimvarReader_float;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
+        UsdPrimvarReader_float2 preader;
+        if (!ReconstructShader<UsdPrimvarReader_float2>(
+                properties, references, &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float2);
+        }
+        shader->info_id = kUsdPrimvarReader_float2;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
+        UsdPrimvarReader_float3 preader;
+        if (!ReconstructShader<UsdPrimvarReader_float3>(
+                properties, references, &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float3);
+        }
+        shader->info_id = kUsdPrimvarReader_float3;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
+        UsdPrimvarReader_float4 preader;
+        if (!ReconstructShader<UsdPrimvarReader_float4>(
+                properties, references, &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float4);
+        }
+        shader->info_id = kUsdPrimvarReader_float4;
+        shader->value = preader;
+      } else {
+        // TODO: string, point, vector, matrix
+        PUSH_ERROR_AND_RETURN("Invalid or Unsupported Shader type. info:id = \"" + shader_type + "\n");
+      }
+
     } else {
       // std::cout << "TODO: " << prop.first << "\n";
     }
@@ -2261,51 +2394,6 @@ bool USDAReader::Impl::ReconstructPrim<Material>(
   return true;
 }
 
-bool USDAReader::Impl::ReconstructPreviewSurface(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
-    PreviewSurface *surface) {
-  // TODO:
-  return false;
-}
-
-bool USDAReader::Impl::ReconstructUVTexture(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
-    UVTexture *texture) {
-  // TODO:
-  return false;
-}
-
-template <typename T>
-bool USDAReader::Impl::ReconstructPrimvarReader(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
-    T *preader) {
-  // TODO: string, point, vector, matrix
-  static_assert(std::is_same<T, PrimvarReader_int>::value ||
-                    std::is_same<T, PrimvarReader_float>::value ||
-                    std::is_same<T, PrimvarReader_float2>::value ||
-                    std::is_same<T, PrimvarReader_float3>::value ||
-                    std::is_same<T, PrimvarReader_float4>::value,
-                "Invalid type for PrimvarReader");
-
-  // Common
-  // uniform token info:implementationSource
-  // uniform asset info:glslfx:sourceAsset
-  // string inputs:varname (`primvar` namespace should be omitted)
-  //   ( sdrMetadata = {
-  //         bool primvarProperty = 1  # or string primvarProperty = "1"
-  //    }
-  //   )
-
-  // Per shader
-  // T inputs:fallback
-  // T outputs:result
-
-  // TODO:
-  return false;
-}
 
 ///
 /// -- Impl callback specializations

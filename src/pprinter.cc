@@ -817,7 +817,7 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   return ss.str();
 }
 
-std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
+std::string to_string(const UsdPrimvarReader_float &shader, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
   ss << Indent(indent) << "def Shader \"" << shader.name << "\"\n";
@@ -827,13 +827,40 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
   ss << Indent(indent) << "{\n";
 
   // members
-  ss << Indent(indent) << "   uniform token info:id = \"" << shader.info_id << "\"\n";
+  ss << Indent(indent) << "   uniform token info:id = \"UsdPrimvarReader_float\"\n";
 
   if (closing_brace) {
     ss << Indent(indent) << "}\n";
   }
 
   return ss.str();
+
+}
+
+std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
+
+  if (auto pv = shader.value.get_value<UsdPrimvarReader_float>()) {
+    return to_string(pv.value());
+  } else {
+    // generic Shader class
+    std::stringstream ss;
+
+    ss << Indent(indent) << "def Shader \"" << shader.name << "\"\n";
+    ss << Indent(indent) << "(\n";
+    //print_prim_metas(shader.metas, indent);
+    ss << Indent(indent) << ")\n";
+    ss << Indent(indent) << "{\n";
+
+    // members
+    ss << Indent(indent) << "   uniform token info:id = \"" << shader.info_id << "\"\n";
+
+    if (closing_brace) {
+      ss << Indent(indent) << "}\n";
+    }
+
+    return ss.str();
+  }
+
 }
 
 std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_brace) {
@@ -854,6 +881,7 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
 
   return ss.str();
 }
+
 
 std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;

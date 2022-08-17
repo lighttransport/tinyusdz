@@ -338,7 +338,7 @@ class Path {
  public:
   Path() : valid(false) {}
 
-  // `p` is split into prim_part and prop_part 
+  // `p` is split into prim_part and prop_part
   Path(const std::string &p);
   Path(const std::string &prim, const std::string &prop);
 
@@ -658,6 +658,12 @@ struct ConnectionPath {
                       // `Scene.shaders`)
 };
 
+class Asset
+{
+ public:
+  std::string value; 
+};
+
 // struct Connection {
 //   int64_t src_index{-1};
 //   int64_t dest_index{-1};
@@ -668,8 +674,17 @@ struct ConnectionPath {
 
 // Relation and Connection
 struct Relation {
-  // string, Path or PathVector
-  tinyusdz::variant<std::string, Path, std::vector<Path>> targets;
+ public:
+  // monostate(empty(define only)), string, Path or PathVector
+  tinyusdz::variant<tinyusdz::monostate, std::string, Path, std::vector<Path>> targets;
+
+  bool IsEmpty() {
+    return targets.is<tinyusdz::monostate>();
+  }
+
+  Relation() : targets(tinyusdz::monostate()) {
+  }
+
 };
 
 // Variable class for Prim and Attribute Metadataum.
@@ -883,6 +898,7 @@ struct Property {
   bool HasCustom() const { return has_custom; }
 };
 
+#if 0 // Moved to usdShade.
 // Currently for UV texture coordinate
 template <typename T>
 struct PrimvarReader {
@@ -903,6 +919,7 @@ using PrimvarReaderType =
     tinyusdz::variant<PrimvarReader_float, PrimvarReader_float2,
                       PrimvarReader_float3, PrimvarReader_float4,
                       PrimvarReader_int>;
+#endif
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`
@@ -1248,7 +1265,7 @@ struct NodeGraph {
 };
 #endif
 
-#if 0 
+#if 0
 
 // result = (texture_id == -1) ? use color : lookup texture
 struct Color3OrTexture {
