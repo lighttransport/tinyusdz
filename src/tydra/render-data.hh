@@ -35,7 +35,6 @@ struct BufferData {
   std::vector<uint8_t> data;  // binary data
 
   // TODO: Stride
-
 };
 
 // glTF-like Attribute
@@ -54,11 +53,12 @@ enum class ColorSpace {
   Custom,  // TODO: Custom colorspace
 };
 
-// NOTE: Please distinguish with image::Image(src/image-types.hh). image::Image is much more generic image class.
-// This `ImageData` class has typed pixel format and has colorspace info, which is suited for renderer/viewer/DCC backends.
+// NOTE: Please distinguish with image::Image(src/image-types.hh). image::Image
+// is much more generic image class. This `ImageData` class has typed pixel
+// format and has colorspace info, which is suited for renderer/viewer/DCC
+// backends.
 template <typename T, ColorSpace cs>
 struct ImageData {
-
   std::vector<T> image;  // raw pixel data
   ColorSpace colorSpace{cs};
   int32_t width{-1};
@@ -177,11 +177,89 @@ class RenderScene {
       buffers;  // Various data storage(e.g. primvar texcoords)
 
   // uint32_t rootNodeId{0}; // root node = nodes[rootNodeId]
-
 };
 
-nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const GeomMesh &mesh);
-  
+#if 0  // TODO:
+// result = (texture_id == -1) ? use color : lookup texture
+struct Color3OrTexture {
+  Color3OrTexture(float x, float y, float z) {
+    color[0] = x;
+    color[1] = y;
+    color[2] = z;
+  }
+
+  std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
+
+  std::string path;  // path to .connect(We only support texture file connection
+                     // at the moment)
+  int64_t texture_id{-1};
+
+  bool HasTexture() const { return texture_id > -1; }
+};
+
+struct FloatOrTexture {
+  FloatOrTexture(float x) { value = x; }
+
+  float value{0.0f};
+
+  std::string path;  // path to .connect(We only support texture file connection
+                     // at the moment)
+  int64_t texture_id{-1};
+
+  bool HasTexture() const { return texture_id > -1; }
+};
+
+enum TextureWrap {
+  TextureWrapUseMetadata,  // look for wrapS and wrapT metadata in the texture
+                           // file itself
+  TextureWrapBlack,
+  TextureWrapClamp,
+  TextureWrapRepeat,
+  TextureWrapMirror
+};
+
+// For texture transform
+// result = in * scale * rotate * translation
+struct UsdTranform2d {
+  float rotation =
+      0.0f;  // counter-clockwise rotation in degrees around the origin.
+  std::array<float, 2> scale{{1.0f, 1.0f}};
+  std::array<float, 2> translation{{0.0f, 0.0f}};
+};
+
+// UsdUvTexture
+struct UVTexture {
+  std::string asset;  // asset name(usually file path)
+  int64_t image_id{
+      -1};  // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
+
+  TextureWrap wrapS{};
+  TextureWrap wrapT{};
+
+  std::array<float, 4> fallback{
+      {0.0f, 0.0f, 0.0f,
+       1.0f}};  // fallback color used when texture cannot be read.
+  std::array<float, 4> scale{
+      {1.0f, 1.0f, 1.0f, 1.0f}};  // scale to be applied to output texture value
+  std::array<float, 4> bias{
+      {0.0f, 0.0f, 0.0f, 0.0f}};  // bias to be applied to output texture value
+
+  UsdTranform2d texture_transfom;  // texture coordinate orientation.
+
+  // key = connection name: e.g. "outputs:rgb"
+  // item = pair<type, name> : example: <"float3", "outputs:rgb">
+  std::map<std::string, std::pair<std::string, std::string>> outputs;
+
+  PrimvarReaderType st;  // texture coordinate(`inputs:st`). We assume there is
+                         // a connection to this.
+
+  // TODO: orientation?
+  // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
+};
+#endif
+
+nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
+                                                  const GeomMesh &mesh);
 
 }  // namespace tydra
 }  // namespace tinyusdz
