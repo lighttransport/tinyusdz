@@ -46,6 +46,8 @@ For more information, please refer to <http://unlicense.org/>
 
 namespace tinyusdz {
 
+namespace {
+
 // Equivalent to std::aligned_storage
 template <unsigned int Len, unsigned int Align>
 struct aligned_storage {
@@ -188,6 +190,8 @@ struct is_one_of<T, S, Ts...> {
   static constexpr bool value =
       std::is_same<T, S>::value || is_one_of<T, Ts...>::value;
 };
+
+} // namespace
 
 template <typename... Ts>
 struct variant {

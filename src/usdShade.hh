@@ -16,15 +16,9 @@ struct Material {
 
   int64_t parent_id{-1};
 
-  std::string outputs_surface;  // Intermediate variable. Path of
-                                // `outputs:surface.connect`
-  std::string outputs_volume;   // Intermediate variable. Path of
-                                // `outputs:volume.connect`
+  Relation surface; // outputs:surface.connect
+  Relation volume; // outputs:volume.connect
 
-  // Id will be filled after resolving paths
-  int64_t surface_shader_id{-1};  // Index to `Scene::shaders`
-  int64_t volume_shader_id{-1};   // Index to `Scene::shaders`
-  // int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
 };
 
 // TODO
@@ -34,79 +28,73 @@ struct NodeGraph {
   int64_t parent_id{-1};
 };
 
-// TODO: Move to Tydra/
-// result = (texture_id == -1) ? use color : lookup texture
-struct Color3OrTexture {
-  Color3OrTexture(float x, float y, float z) {
-    color[0] = x;
-    color[1] = y;
-    color[2] = z;
-  }
+template <typename T>
+struct UsdPrimvarReader {
+  std::string name;
 
-  std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
+  nonstd::optional<T> fallback;  // "inputs:fallback"
 
-  std::string path;  // path to .connect(We only support texture file connection
-                     // at the moment)
-  int64_t texture_id{-1};
+  nonstd::optional<std::string> varname;  // Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
 
-  bool HasTexture() const { return texture_id > -1; }
+  // "outputs:result"
+  nonstd::optional<Relation> result;  // "outputs:result"
 };
 
-struct FloatOrTexture {
-  FloatOrTexture(float x) { value = x; }
+using UsdPrimvarReader_float = UsdPrimvarReader<float>;
+using UsdPrimvarReader_float2 = UsdPrimvarReader<value::float2>;
+using UsdPrimvarReader_float3 = UsdPrimvarReader<value::float3>;
+using UsdPrimvarReader_float4 = UsdPrimvarReader<value::float4>;
+using UsdPrimvarReader_int = UsdPrimvarReader<int>;
 
-  float value{0.0f};
+using UsdPrimvarReaderType =
+    tinyusdz::variant<UsdPrimvarReader_float, UsdPrimvarReader_float2,
+                      UsdPrimvarReader_float3, UsdPrimvarReader_float4,
+                      UsdPrimvarReader_int>;
 
-  std::string path;  // path to .connect(We only support texture file connection
-                     // at the moment)
-  int64_t texture_id{-1};
+#if 0
+#endif
 
-  bool HasTexture() const { return texture_id > -1; }
-};
+struct UsdUVTexture {
 
-enum TextureWrap {
-  TextureWrapUseMetadata,  // look for wrapS and wrapT metadata in the texture
-                           // file itself
-  TextureWrapBlack,
-  TextureWrapClamp,
-  TextureWrapRepeat,
-  TextureWrapMirror
-};
+  enum class Wrap {
+    UseMetadata, // "useMetadata" (default)
+    Black, // "black"
+    Clamp, // "clamp"
+    Repeat, // "repeat"
+    Mirror, // "mirror"
+  };
 
-// For texture transform
-// result = in * scale * rotate * translation
-struct UsdTranform2d {
-  float rotation =
-      0.0f;  // counter-clockwise rotation in degrees around the origin.
-  std::array<float, 2> scale{{1.0f, 1.0f}};
-  std::array<float, 2> translation{{0.0f, 0.0f}};
-};
+  enum class SourceColorSpace {
+    Auto, // "auto"(default)
+    Raw, // "raw"
+    SRgb, // "sRGB
+  };
 
-// UsdUvTexture
-struct UVTexture {
-  std::string asset;  // asset name(usually file path)
-  int64_t image_id{
-      -1};  // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
+  std::string name;
 
-  TextureWrap wrapS{};
-  TextureWrap wrapT{};
+  Asset file; // "asset inputs:file" interfaceOnly
 
-  std::array<float, 4> fallback{
-      {0.0f, 0.0f, 0.0f,
-       1.0f}};  // fallback color used when texture cannot be read.
-  std::array<float, 4> scale{
-      {1.0f, 1.0f, 1.0f, 1.0f}};  // scale to be applied to output texture value
-  std::array<float, 4> bias{
-      {0.0f, 0.0f, 0.0f, 0.0f}};  // bias to be applied to output texture value
+  AttribWithFallback<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
 
-  UsdTranform2d texture_transfom;  // texture coordinate orientation.
+  nonstd::optional<Wrap> wrapS; // "inputs:wrapS" interfaceOnly
+  nonstd::optional<Wrap> wrapT; // "inputs:wrapT" interfaceOnly
 
-  // key = connection name: e.g. "outputs:rgb"
-  // item = pair<type, name> : example: <"float3", "outputs:rgb">
-  std::map<std::string, std::pair<std::string, std::string>> outputs;
+  AttribWithFallback<value::color4f> falllback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected(TODO: Disallow Relation?(i.e, `fallback.connect = </Path/To/FallbackColor>`)
 
-  PrimvarReaderType st;  // texture coordinate(`inputs:st`). We assume there is
-                         // a connection to this.
+  nonstd::optional<SourceColorSpace> sourceColorSpace; // "inputs:sourceColorSpace" interfaceOnly
+
+  AttribWithFallback<value::float4> scale{{1.0f, 1.0f, 1.0f, 1.0f}}; // "inputs:scale" interfaceOnly
+  AttribWithFallback<value::float4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // "inputs:bias" interfaceOnly
+
+  ///
+  /// Outputs
+  ///
+  nonstd::optional<Relation> outputsR; // "outputs:r"
+  nonstd::optional<Relation> outputsG; // "outputs:g"
+  nonstd::optional<Relation> outputsB; // "outputs:b"
+  nonstd::optional<Relation> outputsA; // "outputs:a"
+  nonstd::optional<Relation> outputsRGB; // "outputs:rgb"
+
 
   // TODO: orientation?
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
@@ -116,6 +104,42 @@ struct UVTexture {
 // USD's default? PBR shader
 // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
 // $USD/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
+
+struct UsdPreviewSurface {
+
+  std::string name;
+
+  AttribWithFallback<value::color3f> diffuseColor{{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
+  AttribWithFallback<value::color3f> emissiveColor{{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
+
+  AttribWithFallback<int> useSpecularWorkflow{0}; // "inputs:useSpecularWorkflow"
+
+  // specular workflow
+  AttribWithFallback<value::color3f> specularColor{{0.0f, 0.0f, 0.0f}};
+
+  // metalness workflow
+  AttribWithFallback<float> metallic{0.0f};  // "inputs:clearcoat"
+
+  //
+  AttribWithFallback<float> clearcoat{0.0f};  // "inputs:clearcoat"
+  AttribWithFallback<float> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
+  AttribWithFallback<float> roughness{0.5f};  // "inputs:roughness"
+  AttribWithFallback<float> opacity{1.0f};  // "inputs:opacity"
+  AttribWithFallback<float> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
+  AttribWithFallback<float> ior{1.5f};  // "inputs:ior"
+
+  AttribWithFallback<value::normal3f> normal{{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
+  AttribWithFallback<float> displacement{0.0f}; // "inputs:displacement"
+  AttribWithFallback<float> occlusion{0.0f}; // "inputs:occlusion"
+
+  //
+  // Outputs
+  //
+  nonstd::optional<Relation> outputsSurface; // "outputs:surface", "outputs:surface.connect"
+  nonstd::optional<Relation> outputsDisplacement; // "outputs:displacement", "outputs:displacement.connect"
+};
+
+#if 0 // TODO: Move to Tydra
 struct PreviewSurface {
   std::string doc;
 
@@ -158,17 +182,22 @@ struct PreviewSurface {
   int64_t surface_id{-1};       // index to `Scene::shaders`
   int64_t displacement_id{-1};  // index to `Scene::shaders`
 };
+#endif
 
 struct Shader {
   std::string name;
 
   std::string info_id;  // Shader type.
 
+  // UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader_float2, ...
+  value::Value value;
+#if 0
   // Currently we only support PreviewSurface, UVTexture and
   // PrimvarReader_float2
   tinyusdz::variant<tinyusdz::monostate, PreviewSurface, UVTexture,
                     PrimvarReader_float2>
       value;
+#endif
 };
 
 
@@ -185,18 +214,19 @@ DEFINE_TYPE_TRAIT(Material, "Material",
 DEFINE_TYPE_TRAIT(Shader, "Shader",
                   TYPE_ID_SHADER, 1);
 
-DEFINE_TYPE_TRAIT(PreviewSurface, "PreviewSurface",
+DEFINE_TYPE_TRAIT(UsdPreviewSurface, "UsdPreviewSurface",
                   TYPE_ID_IMAGING_PREVIEWSURFACE, 1);
-DEFINE_TYPE_TRAIT(UVTexture, "UVTexture", TYPE_ID_IMAGING_UVTEXTURE, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float, "PrimvarReader_float",
+DEFINE_TYPE_TRAIT(UsdUVTexture, "UsdUVTexture", TYPE_ID_IMAGING_UVTEXTURE, 1);
+
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float, "UsdPrimvarReader_float",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float2, "PrimvarReader_float2",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float2, "UsdPrimvarReader_float2",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT2, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float3, "PrimvarReader_float3",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float3, "UsdPrimvarReader_float3",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_float4, "PrimvarReader_float4",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float4, "UsdPrimvarReader_float4",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4, 1);
-DEFINE_TYPE_TRAIT(PrimvarReader_int, "PrimvarReader_int",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_int, "UsdPrimvarReader_int",
                   TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
 
 #undef DEFINE_TYPE_TRAIT
