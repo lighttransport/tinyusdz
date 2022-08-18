@@ -5,7 +5,6 @@
 // TODO:
 //   - [ ] Use common base code for Reconstruct**** with USDC reader
 
-#include <alloca.h>
 #include <algorithm>
 #include <atomic>
 #include <cassert>
