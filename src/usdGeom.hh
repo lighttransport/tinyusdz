@@ -356,24 +356,36 @@ struct GeomSphere : public GPrim {
 //
 struct GeomBasisCurves : public GPrim {
 
-  // Interpolation attribute
-  std::string type = "cubic";  // "linear", "cubic"
+  enum class Type {
+    Cubic, // "cubic"(default)
+    Linear, // "linear"
+  };
 
-  std::string basis =
-      "bspline";  // "bezier", "catmullRom", "bspline" ("hermite" and "power" is
-                  // not supported in TinyUSDZ)
+  enum class Basis {
+    Bezier, // "bezier"(default)
+    Bspline, // "bspline"
+    CatmullRom, // "catmullRom"
+  };
 
-  std::string wrap = "nonperiodic";  // "nonperiodic", "periodic", "pinned"
+  enum class Wrap {
+    Nonperiodic, // "nonperiodic"(default)
+    Periodic, // "periodic"
+    Pinned, // "pinned"
+  };
+
+  nonstd::optional<Type> type;
+  nonstd::optional<Basis> basis;
+  nonstd::optional<Wrap> wrap;
 
   //
   // Predefined attribs.
   //
-  std::vector<value::float3> points;
-  std::vector<value::float3> normals;  // normal3f
+  std::vector<value::point3f> points;    // point3f
+  std::vector<value::normal3f> normals;  // normal3f
   std::vector<int> curveVertexCounts;
   std::vector<float> widths;
-  std::vector<value::float3> velocities;     // vector3f
-  std::vector<value::float3> accelerations;  // vector3f
+  std::vector<value::vector3f> velocities;     // vector3f
+  std::vector<value::vector3f> accelerations;  // vector3f
 
 
 };
