@@ -751,6 +751,7 @@ namespace {
 
 void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent)
 {
+  ss << "\n";
   ss << pprint_value(prim.data, indent, /* closing_brace */false);
 
   DCOUT("num_children = " << prim.children.size());
@@ -758,7 +759,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent)
     PrimPrintRec(ss, child, indent+1);
   }
 
-  ss << Indent(indent) << "}\n";
+  ss << pprint::Indent(indent) << "}\n";
 }
 
 } // namespace
