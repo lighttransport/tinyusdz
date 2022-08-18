@@ -1,3 +1,4 @@
 path_classifiers:
   legacy:
-    - exclude: src/stb_image.h "src/dr_*" 
+    - exclude: src/miniz.c
+    - exclude: src/miniz.h
