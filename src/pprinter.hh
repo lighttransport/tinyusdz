@@ -18,9 +18,14 @@
 
 namespace tinyusdz {
 
-constexpr char kIndentString[] = "  ";
+namespace pprint {
 
-std::string Indent(uint32_t n);
+void SetIndentString(const std::string &s);
+std::string Indent(uint32_t level);
+
+} // namespace pprint
+
+//constexpr char kIndentString[] = "  ";
 
 std::string to_string(Visibility v);
 std::string to_string(Orientation o);
@@ -44,7 +49,7 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
 template<typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
   std::stringstream ss;
-  ss << Indent(level) << "[";
+  ss << pprint::Indent(level) << "[";
 
   // TODO(syoyo): indent
   for (size_t i = 0; i < v.size(); i++) {
@@ -60,13 +65,13 @@ std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
 template<typename T>
 std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   std::stringstream ss;
-  ss << Indent(indent_level) << "ListOp(isExplicit " << op.IsExplicit() << ") {\n";
-  ss << Indent(indent_level) << "  explicit_items = " << to_string(op.GetExplicitItems()) << "\n";
-  ss << Indent(indent_level) << "  added_items = " << to_string(op.GetAddedItems()) << "\n";
-  ss << Indent(indent_level) << "  prepended_items = " << to_string(op.GetPrependedItems()) << "\n";
-  ss << Indent(indent_level) << "  deleted_items = " << to_string(op.GetDeletedItems()) << "\n";
-  ss << Indent(indent_level) << "  ordered_items = " << to_string(op.GetOrderedItems()) << "\n";
-  ss << Indent(indent_level) << "}";
+  ss << pprint::Indent(indent_level) << "ListOp(isExplicit " << op.IsExplicit() << ") {\n";
+  ss << pprint::Indent(indent_level) << "  explicit_items = " << to_string(op.GetExplicitItems()) << "\n";
+  ss << pprint::Indent(indent_level) << "  added_items = " << to_string(op.GetAddedItems()) << "\n";
+  ss << pprint::Indent(indent_level) << "  prepended_items = " << to_string(op.GetPrependedItems()) << "\n";
+  ss << pprint::Indent(indent_level) << "  deleted_items = " << to_string(op.GetDeletedItems()) << "\n";
+  ss << pprint::Indent(indent_level) << "  ordered_items = " << to_string(op.GetOrderedItems()) << "\n";
+  ss << pprint::Indent(indent_level) << "}";
 
   return ss.str();
 }
@@ -90,6 +95,10 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent = 0, bool 
 std::string to_string(const GeomCube &geom, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const GeomCamera &camera, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const GeomBasisCurves::Wrap &v);
+std::string to_string(const GeomBasisCurves::Type &v);
+std::string to_string(const GeomBasisCurves::Basis &v);
+
 std::string to_string(const SkelRoot &root, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Skeleton &skel, const uint32_t indent = 0, bool closing_brace = true);
 
@@ -110,5 +119,6 @@ std::string to_string(const UsdPrimvarReader_int &shader, const uint32_t indent 
 std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent = 0, bool closing_brace = true);
+
 
 } // namespace tinyusdz

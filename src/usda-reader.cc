@@ -782,6 +782,13 @@ bool USDAReader::Impl::ReconstructStage() {
     }                                                                     \
   } else
 
+#define PARSE_PRIMVAR_PROPERY(__prop, __klass, __dst) \
+  if (startsWith(__prop.first, "primvars:")) { \
+    /* TODO: Duplication check */ \
+    DCOUT("primvars added: name = " << __prop.first); \
+    __dst[__prop.first] = __prop.second; \
+  } else 
+
 
 //#define PARSE_TOKEN_PROPETY(__prop, __name, __ty, __allowed_tokens, __target)             \
 //  if (__prop.first == __name) {                               \
@@ -2111,6 +2118,9 @@ bool USDAReader::Impl::ReconstructPrim(
     PARSE_ENUM_PROPETY(prop, "type", TypeHandler, GeomBasisCurves, curves->type)
     PARSE_ENUM_PROPETY(prop, "basis", BasisHandler, GeomBasisCurves, curves->basis)
     PARSE_ENUM_PROPETY(prop, "wrap", WrapHandler, GeomBasisCurves, curves->wrap)
+
+    PARSE_PRIMVAR_PROPERY(prop, GeomBasisCurves, curves->props);
+
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
