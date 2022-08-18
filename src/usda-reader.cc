@@ -5,6 +5,7 @@
 // TODO:
 //   - [ ] Use common base code for Reconstruct**** with USDC reader
 
+#include <alloca.h>
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -19,6 +20,7 @@
 #include <stack>
 
 #include "ascii-parser.hh"
+#include "usdGeom.hh"
 #if defined(__wasi__)
 #else
 #include <mutex>
@@ -659,21 +661,46 @@ class USDAReader::Impl {
 // Empty allowedTokens = allow all
 template <class E, size_t N>
 static nonstd::expected<bool, std::string> CheckAllowedTokens(
-    const std::array<std::pair<E, const char *>, N> &allowdTokens,
+    const std::array<std::pair<E, const char *>, N> &allowedTokens,
     const std::string &tok) {
-  if (allowdTokens.empty()) {
+  if (allowedTokens.empty()) {
     return true;
   }
 
   for (size_t i = 0; i < N; i++) {
-    if (tok.compare(std::get<1>(allowdTokens[i])) == 0) {
+    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
       return true;
     }
   }
 
   std::vector<std::string> toks;
   for (size_t i = 0; i < N; i++) {
-    toks.push_back(std::get<1>(allowdTokens[i]));
+    toks.push_back(std::get<1>(allowedTokens[i]));
+  }
+
+  std::string s = join(", ", quote(toks));
+
+  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
+                                 quote(tok) + ".");
+};
+
+template <class E>
+static nonstd::expected<bool, std::string> CheckAllowedTokens(
+    const std::vector<std::pair<E, const char *>> &allowedTokens,
+    const std::string &tok) {
+  if (allowedTokens.empty()) {
+    return true;
+  }
+
+  for (size_t i = 0; i < allowedTokens.size(); i++) {
+    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
+      return true;
+    }
+  }
+
+  std::vector<std::string> toks;
+  for (size_t i = 0; i < allowedTokens.size(); i++) {
+    toks.push_back(std::get<1>(allowedTokens[i]));
   }
 
   std::string s = join(", ", quote(toks));
@@ -755,6 +782,7 @@ bool USDAReader::Impl::ReconstructStage() {
           << "` but defined as type `" << attr.var.type_name() << "`"); \
     }                                                                     \
   } else
+
 
 //#define PARSE_TOKEN_PROPETY(__prop, __name, __ty, __allowed_tokens, __target)             \
 //  if (__prop.first == __name) {                               \
@@ -2009,49 +2037,82 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
+template<typename T>
+nonstd::expected<T, std::string> EnumHandler(const std::string &prop_name, const std::string &tok, const std::vector<std::pair<T, const char *>> &enums) {
+
+    auto ret =
+        CheckAllowedTokens<T>(enums, tok);
+    if (!ret) {
+      return nonstd::make_unexpected(ret.error());
+    }
+
+    for (auto &item : enums) {
+      if (tok == item.second) {
+        return item.first;
+      }
+    }
+    // Should never reach here, though.
+    return nonstd::make_unexpected(
+        quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
+  }
+
 template <>
 bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomBasisCurves *curves) {
+
+  DCOUT("GeomBasisCurves");
+
+  auto BasisHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomBasisCurves::Basis, std::string> {
+    using EnumTy = std::pair<GeomBasisCurves::Basis, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomBasisCurves::Basis::Bezier, "bezier"),
+        std::make_pair(GeomBasisCurves::Basis::Bspline, "bspline"),
+        std::make_pair(GeomBasisCurves::Basis::CatmullRom, "catmullRom"),
+    };
+
+    return EnumHandler<GeomBasisCurves::Basis>("basis", tok, enums);
+
+  };
+
+  auto TypeHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomBasisCurves::Type, std::string> {
+    using EnumTy = std::pair<GeomBasisCurves::Type, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomBasisCurves::Type::Cubic, "cubic"),
+        std::make_pair(GeomBasisCurves::Type::Linear, "linear"),
+    };
+
+    return EnumHandler<GeomBasisCurves::Type>("type", tok, enums);
+  };
+
+  auto WrapHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomBasisCurves::Wrap, std::string> {
+    using EnumTy = std::pair<GeomBasisCurves::Wrap, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomBasisCurves::Wrap::Nonperiodic, "nonperiodic"),
+        std::make_pair(GeomBasisCurves::Wrap::Periodic, "periodic"),
+        std::make_pair(GeomBasisCurves::Wrap::Pinned, "periodic"),
+    };
+
+    return EnumHandler<GeomBasisCurves::Wrap>("wrap", tok, enums);
+  };
+
   for (const auto &prop : properties) {
-    if (prop.first == "points") {
-      if (prop.second.IsRel()) {
-        PUSH_WARN("TODO: Rel");
-      } else {
-        // const PrimAttrib &attrib = prop.second.attrib;
-#if 0  // TODO
-        attrib.
-        attrib.IsFloat3() && !prop.second.IsArray()) {
-        PushError("`points` must be float3 array type.");
-        return false;
-      }
-
-      const std::vector<float3> p =
-          nonstd::get<std::vector<float3>>(prop.second.value);
-
-      curves->points.resize(p.size() * 3);
-      memcpy(curves->points.data(), p.data(), p.size() * 3);
-#endif
-      }
-
-    } else if (prop.first == "curveVertexCounts") {
-#if 0  // TODO
-      if (!prop.second.IsInt() && !prop.second.IsArray()) {
-        PushError("`curveVertexCounts` must be int array type.");
-        return false;
-      }
-
-      const std::vector<int32_t> p =
-          nonstd::get<std::vector<int32_t>>(prop.second.value);
-
-      curves->curveVertexCounts.resize(p.size());
-      memcpy(curves->curveVertexCounts.data(), p.data(), p.size());
-#endif
-
-    } else {
-      PUSH_WARN("TODO: " << prop.first);
-    }
+    PARSE_PROPERTY(prop, "curveVertexCounts", GeomBasisCurves, curves->curveVertexCounts)
+    PARSE_PROPERTY(prop, "points", GeomBasisCurves, curves->points)
+    PARSE_PROPERTY(prop, "velocities", GeomBasisCurves, curves->velocities)
+    PARSE_PROPERTY(prop, "normals", GeomBasisCurves, curves->normals)
+    PARSE_PROPERTY(prop, "accelerations", GeomBasisCurves, curves->accelerations)
+    //PARSE_PROPERTY(prop, "primvar::displayColor", GeomBasisCurves, curves->displayColor)
+    PARSE_PROPERTY(prop, "widths", GeomBasisCurves, curves->widths) 
+    PARSE_PROPERTY(prop, "primvar::widths", GeomBasisCurves, curves->widths) // TODO: Precedence over "widths"
+    PARSE_ENUM_PROPETY(prop, "type", TypeHandler, GeomBasisCurves, curves->type)
+    PARSE_ENUM_PROPETY(prop, "basis", BasisHandler, GeomBasisCurves, curves->basis)
+    PARSE_ENUM_PROPETY(prop, "wrap", WrapHandler, GeomBasisCurves, curves->wrap)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
   return true;
@@ -2456,6 +2517,7 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   RegisterReconstructCallback<GeomCapsule>();
   RegisterReconstructCallback<GeomMesh>();
   RegisterReconstructCallback<GeomSubset>();
+  RegisterReconstructCallback<GeomBasisCurves>();
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();

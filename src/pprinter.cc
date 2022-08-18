@@ -658,8 +658,9 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
   ss << Indent(indent) << "{\n";
 
   // members
-  // FIXME
-  //ss << Indent(indent) << "  " << primvar::type_name(geom.points) << " points = " << geom.points << "\n";
+  if (geom.points.size()) {
+    ss << Indent(indent) << "  point3f[] points = " << geom.points << "\n";
+  }
 
   ss << print_predefined(geom, indent);
 
