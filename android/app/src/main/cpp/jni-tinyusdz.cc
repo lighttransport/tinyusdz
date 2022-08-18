@@ -123,10 +123,10 @@ Java_com_example_hellotinyusdz_MainActivity_touchMove(JNIEnv *env, jobject obj, 
         tinyusdz::USDLoadOptions options;
 
         // load from Android asset folder
-        example::g_gui_ctx.scene = tinyusdz::HighLevelScene(); // reset
+        example::g_gui_ctx.stage = tinyusdz::Stage(); // reset
 
         std::string warn, err;
-        bool ret = LoadUSDCFromFile(filename, &example::g_gui_ctx.scene, &warn, &err, options);
+        bool ret = LoadUSDCFromFile(filename, &example::g_gui_ctx.stage, &warn, &err, options);
 
         if (warn.size()) {
             __android_log_print(ANDROID_LOG_WARN, "tinyusdz", "USD load warning: %s", warn.c_str());
@@ -140,7 +140,7 @@ Java_com_example_hellotinyusdz_MainActivity_touchMove(JNIEnv *env, jobject obj, 
 
         if (ret) {
             // TODO
-            //__android_log_print(ANDROID_LOG_INFO, "tinyusdz", "USD loaded. #of geom_meshes: %d", int(example::g_gui_ctx.scene.geom_meshes.size()));
+            //__android_log_print(ANDROID_LOG_INFO, "tinyusdz", "USD loaded. #of geom_meshes: %d", int(example::g_gui_ctx.stage.geom_meshes.size()));
         }
 
         ret = example::SetupScene(example::g_gui_ctx);
@@ -151,7 +151,7 @@ Java_com_example_hellotinyusdz_MainActivity_touchMove(JNIEnv *env, jobject obj, 
 
 
         // TODO
-        //return int(example::g_gui_ctx.scene.geom_meshes.size()); // OK
+        //return int(example::g_gui_ctx.stage.geom_meshes.size()); // OK
         return 0;
     }
 }

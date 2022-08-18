@@ -14,9 +14,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/../../../../../src/crate-pprint.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/io-util.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/pprinter.cc
-    ${PROJECT_SOURCE_DIR}/../../../../../src/value-type.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/value-types.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/primvar.cc
+    ${PROJECT_SOURCE_DIR}/../../../../../src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/../../../../../src/usda-writer.cc)
 
 if(TINYUSDZ_USE_USDOBJ)
@@ -29,7 +30,7 @@ endif()
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/../../../../../src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/../../../../../src/lz4-compression.cc
-    ${PROJECT_SOURCE_DIR}/../../../../../src/pxrLZ4/lz4.cpp
+    ${PROJECT_SOURCE_DIR}/../../../../../src/lz4/lz4.c
     ${PROJECT_SOURCE_DIR}/../../../../../src/external/string_id/database.cpp
     ${PROJECT_SOURCE_DIR}/../../../../../src/external/string_id/string_id.cpp
     ${PROJECT_SOURCE_DIR}/../../../../../src/external/string_id/error.cpp

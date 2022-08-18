@@ -324,3 +324,5 @@ TinyUSDZ is licensed under MIT license.
 * nanobind : BSD-3 license. https://github.com/wjakob/nanobind
 * pybind11 : BSD-3 license. https://github.com/pybind/pybind11
 * pystring : BSD-3 license. https://github.com/imageworks/pystring
+* gulrak/filesytem : MIT license. https://github.com/gulrak/filesystem
+* p-ranav/glob : MIT license. https://github.com/p-ranav/glob

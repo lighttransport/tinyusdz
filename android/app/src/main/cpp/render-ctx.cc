@@ -57,7 +57,8 @@ inline uint8_t ftouc(float f) {
 bool SetupScene(GUIContext &ctx) {
 
     __android_log_print(ANDROID_LOG_INFO, "tinyusdz", "SetupScene");
-    if (ctx.scene.root_nodes.empty()) {
+#if 0 // TODO
+    if (ctx.stage.root_nodes.empty()) {
         __android_log_print(ANDROID_LOG_ERROR, "tinyusdz", "No GeomMesh");
         // No GeomMesh in the scene
         return false;
@@ -78,6 +79,7 @@ bool SetupScene(GUIContext &ctx) {
         __android_log_print(ANDROID_LOG_ERROR, "tinyusdz", "Scene::Setup failed");
        return false;
     }
+#endif
 
     // init camera matrix
     {

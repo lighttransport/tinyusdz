@@ -44,7 +44,20 @@
 
 #endif
 
+
 #endif // _WIN32
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "external/filesystem/include/ghc/filesystem.hpp"
+#include "external/glob/single_include/glob/glob.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include "io-util.hh"
 
@@ -85,7 +98,8 @@ std::string ExpandFilePath(const std::string &filepath, void *) {
   // Quote the string to keep any spaces in filepath intact.
   std::string quoted_path = "\"" + filepath + "\"";
   // char** w;
-  int ret = wordexp(quoted_path.c_str(), &p, 0);
+  // TODO: Implement our own file path expansion routine.
+  int ret = wordexp(quoted_path.c_str(), &p, WRDE_NOCMD);
   if (ret) {
     // err
     s = filepath;
