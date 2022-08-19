@@ -310,10 +310,10 @@ struct variant {
   template <typename T, typename... Args,
             typename =
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
-  T* get_if() {
+  const T* get_if() const {
     // It is a dynamic_cast-like behaviour
     if (variant_id == value::TypeTrait<T>::type_id) {
-      return reinterpret_cast<T*>(&data);
+      return reinterpret_cast<const T*>(&data);
     }
 
     return nullptr;

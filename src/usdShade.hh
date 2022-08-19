@@ -34,10 +34,9 @@ struct UsdPrimvarReader {
 
   nonstd::optional<T> fallback;  // "inputs:fallback"
 
-  nonstd::optional<std::string> varname;  // Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
+  nonstd::optional<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
 
-  // "outputs:result"
-  nonstd::optional<Relation> result;  // "outputs:result"
+  nonstd::optional<Connection<T>> result; // "T outputs:result"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -92,11 +91,11 @@ struct UsdUVTexture {
   ///
   /// Outputs
   ///
-  nonstd::optional<Relation> outputsR; // "outputs:r"
-  nonstd::optional<Relation> outputsG; // "outputs:g"
-  nonstd::optional<Relation> outputsB; // "outputs:b"
-  nonstd::optional<Relation> outputsA; // "outputs:a"
-  nonstd::optional<Relation> outputsRGB; // "outputs:rgb"
+  nonstd::optional<Connection<float>> outputsR; // "float outputs:r"
+  nonstd::optional<Connection<float>> outputsG; // "float outputs:g"
+  nonstd::optional<Connection<float>> outputsB; // "float outputs:b"
+  nonstd::optional<Connection<float>> outputsA; // "float outputs:a"
+  nonstd::optional<Connection<value::float3>> outputsRGB; // "float3 outputs:rgb"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -140,8 +139,8 @@ struct UsdPreviewSurface {
   //
   // Outputs
   //
-  nonstd::optional<Relation> outputsSurface; // "outputs:surface", "outputs:surface.connect"
-  nonstd::optional<Relation> outputsDisplacement; // "outputs:displacement", "outputs:displacement.connect"
+  nonstd::optional<Relation> outputsSurface; // "token outputs:surface", "outputs:surface.connect"
+  nonstd::optional<Relation> outputsDisplacement; // "token outputs:displacement", "outputs:displacement.connect"
 
   // Custom properties
   std::map<std::string, Property> props;
