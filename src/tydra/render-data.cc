@@ -30,9 +30,9 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const Geom
   RenderMesh dst;
 
   {
-    dst.points.resize(mesh.points.size());
-    memcpy(dst.points.data(), mesh.points.data(),
-           sizeof(value::float3) * mesh.points.size());
+    dst.points.resize(mesh.points.value.size());
+    memcpy(dst.points.data(), mesh.points.value.data(),
+           sizeof(value::float3) * mesh.points.value.size());
   }
 
   // normals

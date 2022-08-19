@@ -168,8 +168,13 @@ struct GeomMesh : GPrim {
   //
   // Predefined attribs.
   //
-  std::vector<value::point3f> points;    // point3f
-  nonstd::optional<PrimAttrib> normals;  // normal3f[]
+  TypedAttribute<std::vector<value::point3f>> points;    // point3f[]
+  TypedAttribute<std::vector<value::normal3f>> normals;  // normal3f[] (NOTE: "primvars:normals" are stored in `GPrim::props`)
+
+  TypedAttribute<std::vector<value::vector3f>> velocities; // vector3f[]
+
+  TypedAttribute<std::vector<int32_t>> faceVertexCounts;
+  TypedAttribute<std::vector<int32_t>> faceVertexIndices;
 
   //
   // Utility functions
@@ -182,11 +187,11 @@ struct GeomMesh : GPrim {
   void UpdateBy(const GPrim &pprim);
 
   ///
-  /// @brief Returns normals vector. Precedence order: `primvar::normals` then
+  /// @brief Returns normals vector. Precedence order: `primvars:normals` then
   /// `normals`.
   ///
   /// @return normals vector(copied). Returns empty normals vector when neither
-  /// `primvar::normals` nor `normals` attribute defined, attribute is a
+  /// `primvars:normals` nor `normals` attribute defined, attribute is a
   /// relation or normals attribute have invalid type(other than `normal3f`).
   ///
   std::vector<value::normal3f> GetNormals() const;
@@ -197,45 +202,15 @@ struct GeomMesh : GPrim {
   ///
   Interpolation GetNormalsInterpolation() const;
 
-#if 0
-  // Get `normals` as float3 array + facevarying
-  // Return false if `normals` is neither float3[] type nor `varying`
-  bool GetFacevaryingNormals(std::vector<float> *v) const;
-#endif
-
-  // Get `texcoords` as float2 array + facevarying
-  // Return false if `texcoords` is neither float2[] type nor `varying`
-  bool GetFacevaryingTexcoords(std::vector<float> *v) const;
-
-  // Primary UV coords(TODO: Remove. Read uv coords through PrimVarReader)
-  UVCoords st;
-
-  PrimAttrib velocitiess;  // Usually float3[], varying
-
-  std::vector<int32_t> faceVertexCounts;
-  std::vector<int32_t> faceVertexIndices;
-
-  //
-  // Properties
-  //
-
-  // Gprim
-  // bool doubleSided{false};
-  // Orientation orientation{Orientation::RightHanded};
-  // AnimatableVec3fArray displayColor; // primvars:displayColor
-  // AnimatableFloatArray displayOpacity; // primvars:displaOpacity
-
-  //MaterialBindingAPI materialBinding;
-
   //
   // SubD attribs.
   //
-  std::vector<int32_t> cornerIndices;
-  std::vector<float> cornerSharpnesses;
-  std::vector<int32_t> creaseIndices;
-  std::vector<int32_t> creaseLengths;
-  std::vector<float> creaseSharpnesses;
-  std::vector<int32_t> holeIndices;
+  TypedAttribute<std::vector<int32_t>> cornerIndices;
+  TypedAttribute<std::vector<float>> cornerSharpnesses;
+  TypedAttribute<std::vector<int32_t>> creaseIndices;
+  TypedAttribute<std::vector<int32_t>> creaseLengths;
+  TypedAttribute<std::vector<float>> creaseSharpnesses;
+  TypedAttribute<std::vector<int32_t>> holeIndices;
   AttribWithFallback<InterpolateBoundary> interpolateBoundary{InterpolateBoundary::EdgeAndCorner};
   AttribWithFallback<SubdivisionScheme> subdivisionScheme{SubdivisionScheme::CatmullClark};
   AttribWithFallback<FacevaryingLinearInterpolation> facevaryingLinearInterpolation{FacevaryingLinearInterpolation::CornersPlus1};
@@ -250,12 +225,10 @@ struct GeomMesh : GPrim {
   std::vector<GeomSubset> geom_subset_children;
 
   ///
-  /// Validate GeomSubset data attached to this GeomMesh.
+  /// Validate GeomSubset data whose are attached to this GeomMesh.
   ///
   nonstd::expected<bool, std::string> ValidateGeomSubset();
 
-  // List of Primitive attributes(primvars)
-  // std::map<std::string, PrimAttrib> attribs;
 };
 
 struct GeomCamera : public GPrim {
@@ -380,12 +353,12 @@ struct GeomBasisCurves : public GPrim {
   //
   // Predefined attribs.
   //
-  std::vector<value::point3f> points;    // point3f
-  std::vector<value::normal3f> normals;  // normal3f
-  std::vector<int> curveVertexCounts;
-  std::vector<float> widths;
-  std::vector<value::vector3f> velocities;     // vector3f
-  std::vector<value::vector3f> accelerations;  // vector3f
+  TypedAttribute<std::vector<value::point3f>> points;    // point3f
+  TypedAttribute<std::vector<value::normal3f>> normals;  // normal3f
+  TypedAttribute<std::vector<int>> curveVertexCounts;
+  TypedAttribute<std::vector<float>> widths;
+  TypedAttribute<std::vector<value::vector3f>> velocities;     // vector3f
+  TypedAttribute<std::vector<value::vector3f>> accelerations;  // vector3f
 
 
 };
@@ -398,12 +371,12 @@ struct GeomPoints : public GPrim {
   //
   // Predefined attribs.
   //
-  std::vector<value::float3> points;   // float3
-  std::vector<value::float3> normals;  // normal3f
-  std::vector<float> widths;
-  std::vector<int64_t> ids;                  // per-point ids
-  std::vector<value::float3> velocities;     // vector3f
-  std::vector<value::float3> accelerations;  // vector3f
+  TypedAttribute<std::vector<value::float3>> points;   // float3
+  TypedAttribute<std::vector<value::float3>> normals;  // normal3f
+  TypedAttribute<std::vector<float>> widths;
+  TypedAttribute<std::vector<int64_t>> ids;                  // per-point ids
+  TypedAttribute<std::vector<value::float3>> velocities;     // vector3f
+  TypedAttribute<std::vector<value::float3>> accelerations;  // vector3f
 
 };
 

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present, Syoyo Fujita.
 
+#include "value-pprint.hh"
+
 #include <sstream>
 
-#include "usdLux.hh"
-#include "value-pprint.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
 
 namespace std {
 
@@ -96,90 +97,122 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v) {
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::vector3f &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::vector3d &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3d &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::normal3h &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::normal3f &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3f &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::normal3d &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3d &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::point3h &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3h &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::point3f &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3f &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::point3d &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3d &v) {
   os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color3f &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color3d &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color4f &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::color4d &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::quath &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quath &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::quatf &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatf &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::quatd &v) {
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatd &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &os, const  tinyusdz::value::texcoord2f &v) {
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord2h &v) {
   os << "(" << v.s << ", " << v.t << ")";
   return os;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix2d &m) {
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord2f &v) {
+  os << "(" << v.s << ", " << v.t << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord2d &v) {
+  os << "(" << v.s << ", " << v.t << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord3h &v) {
+  os << "(" << v.s << ", " << v.t << ", " << v.r <<  ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord3f &v) {
+  os << "(" << v.s << ", " << v.t << ", " << v.r << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord3d &v) {
+  os << "(" << v.s << ", " << v.t << ", " << v.r << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::matrix2d &m) {
   ofs << "( ";
 
   ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << "), ";
@@ -190,7 +223,8 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix2d &m) 
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix3d &m) {
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::matrix3d &m) {
   ofs << "( ";
 
   ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << "), ";
@@ -202,7 +236,8 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix3d &m) 
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::matrix4d &m) {
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::matrix4d &m) {
   ofs << "( ";
 
   ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << ", "
@@ -228,21 +263,21 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
   ofs << "{\n";
   for (const auto &item : m) {
-    ofs << item.first << " = " << tinyusdz::value::pprint_any(item.second) << "\n";
+    ofs << item.first << " = " << tinyusdz::value::pprint_any(item.second)
+        << "\n";
   }
   ofs << "}";
 
   return ofs;
 }
 
-} // namespace std
+}  // namespace std
 
 namespace tinyusdz {
 namespace value {
 
 // Simple brute-force way..
 // TODO: Use std::function or some template technique?
-
 
 #define CASE_EXR_LIST(__FUNC) \
   __FUNC(token)               \
@@ -287,46 +322,52 @@ namespace value {
   __FUNC(color3f)             \
   __FUNC(color3d)             \
   __FUNC(color4f)             \
-  __FUNC(color4d)
+  __FUNC(color4d)             \
+  __FUNC(texcoord2h)          \
+  __FUNC(texcoord2f)          \
+  __FUNC(texcoord2d)          \
+  __FUNC(texcoord3h)          \
+  __FUNC(texcoord3f)          \
+  __FUNC(texcoord3d)
 
 #define CASE_GPRIM_LIST(__FUNC) \
-  __FUNC(Model) \
-  __FUNC(Scope) \
-  __FUNC(Xform) \
-  __FUNC(GeomMesh) \
-  __FUNC(GeomSphere) \
-  __FUNC(GeomBasisCurves) \
-  __FUNC(LuxSphereLight) \
-  __FUNC(LuxDomeLight) \
-  __FUNC(Material) \
-  __FUNC(Shader) 
+  __FUNC(Model)                 \
+  __FUNC(Scope)                 \
+  __FUNC(Xform)                 \
+  __FUNC(GeomMesh)              \
+  __FUNC(GeomSphere)            \
+  __FUNC(GeomBasisCurves)       \
+  __FUNC(LuxSphereLight)        \
+  __FUNC(LuxDomeLight)          \
+  __FUNC(Material)              \
+  __FUNC(Shader)
 
-//std::ostream &operator<<(std::ostream &os, const any_value &v) {
-//std::ostream &operator<<(std::ostream &os, const linb::any &v) {
-std::string pprint_any(const linb::any &v, const uint32_t indent, bool closing_brace) {
-
-#define BASETYPE_CASE_EXPR(__ty)                      \
-  case TypeTrait<__ty>::type_id: {                    \
+// std::ostream &operator<<(std::ostream &os, const any_value &v) {
+// std::ostream &operator<<(std::ostream &os, const linb::any &v) {
+std::string pprint_any(const linb::any &v, const uint32_t indent,
+                       bool closing_brace) {
+#define BASETYPE_CASE_EXPR(__ty)         \
+  case TypeTrait<__ty>::type_id: {       \
     os << linb::any_cast<const __ty>(v); \
-    break;                                            \
+    break;                               \
   }
 
-#define PRIMTYPE_CASE_EXPR(__ty)                      \
-  case TypeTrait<__ty>::type_id: {                    \
-    os << to_string(linb::any_cast<const __ty>(v), indent, closing_brace);   \
-    break;                                            \
+#define PRIMTYPE_CASE_EXPR(__ty)                                           \
+  case TypeTrait<__ty>::type_id: {                                         \
+    os << to_string(linb::any_cast<const __ty>(v), indent, closing_brace); \
+    break;                                                                 \
   }
 
-#define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
-  case TypeTrait<std::vector<__ty>>::type_id: {                    \
+#define ARRAY1DTYPE_CASE_EXPR(__ty)                   \
+  case TypeTrait<std::vector<__ty>>::type_id: {       \
     os << linb::any_cast<const std::vector<__ty>>(v); \
-    break;                                                         \
+    break;                                            \
   }
 
-#define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
-  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
-    os << linb::any_cast<const std::vector<std::vector<__ty>>>(v);   \
-    break;                                                           \
+#define ARRAY2DTYPE_CASE_EXPR(__ty)                                \
+  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {       \
+    os << linb::any_cast<const std::vector<std::vector<__ty>>>(v); \
+    break;                                                         \
   }
 
   std::stringstream os;
@@ -364,30 +405,30 @@ std::string pprint_any(const linb::any &v, const uint32_t indent, bool closing_b
   return os.str();
 }
 
-std::string pprint_value(const value::Value &v, const uint32_t indent, bool closing_brace) {
-
-#define BASETYPE_CASE_EXPR(__ty)                      \
-  case TypeTrait<__ty>::type_id: {                    \
-    os << v.value<__ty>(); \
-    break;                                            \
+std::string pprint_value(const value::Value &v, const uint32_t indent,
+                         bool closing_brace) {
+#define BASETYPE_CASE_EXPR(__ty)   \
+  case TypeTrait<__ty>::type_id: { \
+    os << v.value<__ty>();         \
+    break;                         \
   }
 
-#define PRIMTYPE_CASE_EXPR(__ty)                      \
-  case TypeTrait<__ty>::type_id: {                    \
-    os << to_string(v.value<__ty>(), indent, closing_brace);   \
-    break;                                            \
+#define PRIMTYPE_CASE_EXPR(__ty)                             \
+  case TypeTrait<__ty>::type_id: {                           \
+    os << to_string(v.value<__ty>(), indent, closing_brace); \
+    break;                                                   \
   }
 
-#define ARRAY1DTYPE_CASE_EXPR(__ty)                                \
-  case TypeTrait<std::vector<__ty>>::type_id: {                    \
-    os << v.value<std::vector<__ty>>(); \
-    break;                                                         \
+#define ARRAY1DTYPE_CASE_EXPR(__ty)             \
+  case TypeTrait<std::vector<__ty>>::type_id: { \
+    os << v.value<std::vector<__ty>>();         \
+    break;                                      \
   }
 
-#define ARRAY2DTYPE_CASE_EXPR(__ty)                                  \
-  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {         \
-    os << v.value<std::vector<std::vector<__ty>>>();   \
-    break;                                                           \
+#define ARRAY2DTYPE_CASE_EXPR(__ty)                          \
+  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: { \
+    os << v.value<std::vector<std::vector<__ty>>>();         \
+    break;                                                   \
   }
 
   std::stringstream os;
@@ -428,6 +469,5 @@ std::string pprint_value(const value::Value &v, const uint32_t indent, bool clos
 #undef CASE_EXPR_LIST
 #undef CASE_GPRIM_LIST
 
-
-} // namespace value
-} // namespace tinyusdz
+}  // namespace value
+}  // namespace tinyusdz

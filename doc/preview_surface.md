@@ -2,6 +2,8 @@
 
 https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html 
 
+https://github.com/PixarAnimationStudios/USD/blob/release/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
+
 ## Inputs
 
 * diffuseColor - color3f - (0.18, 0.18, 0.18)
