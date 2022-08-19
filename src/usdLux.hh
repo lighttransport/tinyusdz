@@ -40,10 +40,7 @@ struct LuxSphereLight {
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
-  // parameter)
-  std::map<std::string, PrimAttrib> attribs;
+  std::map<std::string, Property> props;
 };
 
 struct LuxDomeLight {
@@ -89,10 +86,7 @@ struct LuxDomeLight {
   Purpose purpose{Purpose::Default};
   std::vector<value::token> xformOpOrder;
 
-  // List of Primitive attributes(primvars)
-  // NOTE: `primvar:widths` may exist(in that ase, please ignore `widths`
-  // parameter)
-  std::map<std::string, PrimAttrib> attribs;
+  std::map<std::string, Property> props;
 };
 
 

@@ -109,8 +109,8 @@ namespace {
 struct PrimNode {
   value::Value prim;
 
-  int64_t parent{-1}; // -1 = root node
-  std::vector<size_t> children; // index to USDAReader._prims[]
+  int64_t parent{-1};            // -1 = root node
+  std::vector<size_t> children;  // index to USDAReader._prims[]
 };
 
 // TODO: Move to prim-types.hh?
@@ -396,8 +396,8 @@ class USDAReader::Impl {
       T *out);
 
   ///
-  /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface) here,
-  /// not in Tydra
+  /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
+  /// here, not in Tydra
   ///
   template <typename T>
   bool ReconstructShader(
@@ -410,27 +410,41 @@ class USDAReader::Impl {
   bool RegisterReconstructCallback() {
     _parser.RegisterPrimConstructFunction(
         PrimTypeTrait<T>::prim_type_name,
-        [&](const Path &full_path, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
-            const std::vector<std::pair<ListEditQual, Reference>> &references) -> nonstd::expected<bool, std::string> {
-
+        [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
+            const int64_t parentPrimIdx,
+            const std::map<std::string, Property> &properties,
+            const std::vector<std::pair<ListEditQual, Reference>> &references)
+            -> nonstd::expected<bool, std::string> {
           if (!prim_name.IsValid()) {
-            return nonstd::make_unexpected("Invalid Prim name: " + prim_name.full_path_name());
+            return nonstd::make_unexpected("Invalid Prim name: " +
+                                           prim_name.full_path_name());
           }
           if (prim_name.IsAbsolutePath() || prim_name.IsRootPath()) {
-            return nonstd::make_unexpected("Prim name should not starts with '/' or contain `/`: Prim name = " + prim_name.full_path_name());
+            return nonstd::make_unexpected(
+                "Prim name should not starts with '/' or contain `/`: Prim "
+                "name = " +
+                prim_name.full_path_name());
           }
 
           if (!prim_name.GetPropPart().empty()) {
-            return nonstd::make_unexpected("Prim path should not contain property part(`.`): Prim name = " + prim_name.full_path_name());
+            return nonstd::make_unexpected(
+                "Prim path should not contain property part(`.`): Prim name "
+                "= " +
+                prim_name.full_path_name());
           }
 
           if (primIdx < 0) {
-            return nonstd::make_unexpected("Unexpected primIdx value. primIdx must be positive.");
+            return nonstd::make_unexpected(
+                "Unexpected primIdx value. primIdx must be positive.");
           }
 
           T prim;
 
-          DCOUT("primType = " << value::TypeTrait<T>::type_name() << ", node.size " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx << ", parentPrimIdx = " << parentPrimIdx);
+          DCOUT("primType = " << value::TypeTrait<T>::type_name()
+                              << ", node.size "
+                              << std::to_string(_prim_nodes.size())
+                              << ", primIdx = " << primIdx
+                              << ", parentPrimIdx = " << parentPrimIdx);
 
           DCOUT("full_path = " << full_path.full_path_name());
           DCOUT("primName = " << prim_name.full_path_name());
@@ -438,20 +452,24 @@ class USDAReader::Impl {
           bool ret = ReconstructPrim<T>(properties, references, &prim);
 
           if (!ret) {
-            return nonstd::make_unexpected("Failed to reconstruct Prim: " + prim_name.full_path_name());
+            return nonstd::make_unexpected("Failed to reconstruct Prim: " +
+                                           prim_name.full_path_name());
           }
 
           prim.name = prim_name.GetPrimPart();
 
           // Add to scene graph.
-          // NOTE: Scene graph is constructed from bottom up manner(Children first), so add this primIdx to parent's children.
+          // NOTE: Scene graph is constructed from bottom up manner(Children
+          // first), so add this primIdx to parent's children.
           if (size_t(primIdx) >= _prim_nodes.size()) {
-            _prim_nodes.resize(size_t(primIdx)+1);
+            _prim_nodes.resize(size_t(primIdx) + 1);
           }
-          DCOUT("sz " << std::to_string(_prim_nodes.size()) << ", primIdx = " << primIdx);
+          DCOUT("sz " << std::to_string(_prim_nodes.size())
+                      << ", primIdx = " << primIdx);
 
           _prim_nodes[size_t(primIdx)].prim = std::move(prim);
-          DCOUT("prim[" << primIdx << "].ty = " << _prim_nodes[size_t(primIdx)].prim.type_name());
+          DCOUT("prim[" << primIdx << "].ty = "
+                        << _prim_nodes[size_t(primIdx)].prim.type_name());
           if (_prim_nodes.size() > 1) {
             DCOUT("prim[0].ty = " << _prim_nodes[0].prim.type_name());
             DCOUT("prim[1].ty = " << _prim_nodes[1].prim.type_name());
@@ -461,11 +479,11 @@ class USDAReader::Impl {
           if (parentPrimIdx == -1) {
             _toplevel_prims.push_back(size_t(primIdx));
           } else {
-            _prim_nodes[size_t(parentPrimIdx)].children.push_back(size_t(primIdx));
+            _prim_nodes[size_t(parentPrimIdx)].children.push_back(
+                size_t(primIdx));
           }
 
           return true;
-
         });
 
     return true;
@@ -526,19 +544,17 @@ class USDAReader::Impl {
 
   void RegisterPrimIdxAssignCallback() {
     _parser.RegisterPrimIdxAssignFunction([&](const int64_t parentPrimIdx) {
-
-
       size_t idx = _prim_nodes.size();
 
       DCOUT("parentPrimIdx: " << parentPrimIdx << ", idx = " << idx);
 
       _prim_nodes.resize(idx + 1);
 
-      //if (parentPrimIdx < 0) { // root
-      //  // allocate empty prim to reserve _prim_nodes[idx]
-      //  _prim_nodes.resize(idx + 1);
-      //  DCOUT("resize to : " << (idx + 1));
-      //}
+      // if (parentPrimIdx < 0) { // root
+      //   // allocate empty prim to reserve _prim_nodes[idx]
+      //   _prim_nodes.resize(idx + 1);
+      //   DCOUT("resize to : " << (idx + 1));
+      // }
 
       return idx;
     });
@@ -615,7 +631,7 @@ class USDAReader::Impl {
   ///
 
   // TODO: Remove
-  //std::set<std::string> _node_types;
+  // std::set<std::string> _node_types;
 
   std::stack<ParseState> parse_stack;
 
@@ -715,27 +731,24 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
 
 namespace {
 
-void ReconstructNodeRec(const size_t idx, const std::vector<PrimNode> &prim_nodes, Prim &parent) {
+void ReconstructNodeRec(const size_t idx,
+                        const std::vector<PrimNode> &prim_nodes, Prim &parent) {
+  const auto &node = prim_nodes[idx];
 
-    const auto &node = prim_nodes[idx];
+  Prim prim(node.prim);
+  DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
 
-    Prim prim(node.prim);
-    DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
+  for (const auto &cidx : node.children) {
+    ReconstructNodeRec(cidx, prim_nodes, prim);
+  }
 
-
-    for (const auto &cidx : node.children) {
-      ReconstructNodeRec(cidx, prim_nodes, prim);
-    }
-
-    parent.children.emplace_back(std::move(prim));
-
+  parent.children.emplace_back(std::move(prim));
 }
 
-} // namespace
+}  // namespace
 
 bool USDAReader::Impl::ReconstructStage() {
   _stage.root_nodes.clear();
-
 
   for (const auto &idx : _toplevel_prims) {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
@@ -767,28 +780,108 @@ bool USDAReader::Impl::ReconstructStage() {
   return true;
 }
 
-// TODO(syoyo): TimeSamples, Reference
-#define PARSE_PROPERTY(__prop, __name, __klass, __target)                          \
-  if (__prop.first == __name) {                                           \
-    const PrimAttrib &attr = __prop.second.attrib;                        \
-    if (auto v = attr.var.get_value<decltype(__target)>()) {              \
-      __target = v.value();                                               \
-    } else {                                                              \
-      PUSH_ERROR_AND_RETURN(                                              \
-          "(" << value::TypeTrait<__klass>::type_name() << ") Property type mismatch. "                                               \
-          << __name << " expects type `"                                  \
-          << value::TypeTrait<decltype(__target)>::type_name()            \
-          << "` but defined as type `" << attr.var.type_name() << "`"); \
-    }                                                                     \
+template <typename T>
+nonstd::expected<T, std::string> EnumHandler(
+    const std::string &prop_name, const std::string &tok,
+    const std::vector<std::pair<T, const char *>> &enums) {
+  auto ret = CheckAllowedTokens<T>(enums, tok);
+  if (!ret) {
+    return nonstd::make_unexpected(ret.error());
+  }
+
+  for (auto &item : enums) {
+    if (tok == item.second) {
+      return item.first;
+    }
+  }
+  // Should never reach here, though.
+  return nonstd::make_unexpected(
+      quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
+}
+
+template<typename T>
+struct AttribType;
+
+template<typename T>
+struct AttribType {
+  using type = T;
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+
+};
+
+// `nonstd::optional<T>` -> T
+template<typename T>
+struct AttribType<nonstd::optional<T>> {
+  using type = T;
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+};
+
+// `AttribWithFallback<T>` -> T
+template<typename T>
+struct AttribType<AttribWithFallback<T>> {
+  using type = T;
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+};
+
+#if 0
+template<typename T>
+struct AttribSetter;
+
+template<typename T>
+struct AttribSetter {
+  static T set(const T &v) {
+    return v;
+  }
+};
+
+template<typename T>
+struct AttribSetter<AttribWithFallback<T>> {
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+};
+#endif
+
+
+
+// TODO(syoyo): AttrMeta, TimeSamples, Reference
+#define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)                    \
+  if (__prop.first == __name) {                                              \
+    const PrimAttrib &attr = __prop.second.attrib;                           \
+    if (auto v = attr.var.get_value<AttribType<decltype(__target.value)>::type>()) {                 \
+      __target.value = v.value();                                                  \
+      __target.meta = attr.meta; \
+      __table.insert(__name); \
+    } else {                                                                 \
+      PUSH_ERROR_AND_RETURN(                                                 \
+          "(" << value::TypeTrait<__klass>::type_name()                      \
+              << ") Property type mismatch. " << __name << " expects type `" \
+              << AttribType<decltype(__target.value)>::type_name()           \
+              << "` but defined as type `" << attr.var.type_name() << "`");  \
+    }                                                                        \
   } else
 
-#define PARSE_PRIMVAR_PROPERY(__prop, __klass, __dst) \
-  if (startsWith(__prop.first, "primvars:")) { \
-    /* TODO: Duplication check */ \
-    DCOUT("primvars added: name = " << __prop.first); \
-    __dst[__prop.first] = __prop.second; \
-  } else 
-
+// TODO(syoyo): AttrMeta, TimeSamples, Reference
+#define PARSE_PROPERTY(__table, __prop, __name, __klass, __target)                    \
+  if (__prop.first == __name) {                                              \
+    const PrimAttrib &attr = __prop.second.attrib;                           \
+    if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) {                 \
+      __target = v.value();                                                  \
+      __table.insert(__name); \
+    } else {                                                                 \
+      PUSH_ERROR_AND_RETURN(                                                 \
+          "(" << value::TypeTrait<__klass>::type_name()                      \
+              << ") Property type mismatch. " << __name << " expects type `" \
+              << AttribType<decltype(__target)>::type_name()           \
+              << "` but defined as type `" << attr.var.type_name() << "`");  \
+    }                                                                        \
+  } else
 
 //#define PARSE_TOKEN_PROPETY(__prop, __name, __ty, __allowed_tokens, __target)             \
 //  if (__prop.first == __name) {                               \
@@ -802,28 +895,45 @@ bool USDAReader::Impl::ReconstructStage() {
 //    } \
 //  } else
 
-#define PARSE_ENUM_PROPETY(__prop, __name, __enum_handler, __klass, __target)        \
-  if (__prop.first == __name) {                                             \
-    const PrimAttrib &attr = __prop.second.attrib;                          \
-    if (auto tok = attr.var.get_value<value::token>()) {                    \
-      auto e = __enum_handler(tok.value().str());                           \
-      if (e) {                                                              \
-        __target = e.value();                                               \
-      } else {                                                              \
-        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name() << ") " << e.error());                                   \
-      }                                                                     \
-    } else {                                                                \
-      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name() << ") Property type mismatch. " << __name                     \
-                                              << " must be type `token`, but got `" << attr.var.type_name() << "`."); \
-    }                                                                       \
+#define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, __target) \
+  if (__prop.first == __name) {                                               \
+    const PrimAttrib &attr = __prop.second.attrib;                            \
+    if (auto tok = attr.var.get_value<value::token>()) {                      \
+      auto e = __enum_handler(tok.value().str());                             \
+      if (e) {                                                                \
+        __target = e.value();                                                 \
+        __table.insert(__name); \
+      } else {                                                                \
+        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()   \
+                                  << ") " << e.error());                      \
+      }                                                                       \
+    } else {                                                                  \
+      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()     \
+                                << ") Property type mismatch. " << __name     \
+                                << " must be type `token`, but got `"         \
+                                << attr.var.type_name() << "`.");             \
+    }                                                                         \
   } else
 
+// Add custom property(including property with "primvars" prefix)
+// Please call this macro after listing up all predefined property using `PARSE_PROPERTY` and `PARSE_ENUM_PROPETY`
+#define ADD_PROPERY(__table, __prop, __klass, __dst) \
+  /* Check if the property name is a predefined property */ \
+  if (!__table.count(__prop.first)) {        \
+    DCOUT("custom property added: name = " << __prop.first); \
+    __dst[__prop.first] = __prop.second;              \
+    __table.insert(__prop.first);              \
+  } else
+
+
+// This code path should not be reached though.
 #define PARSE_PROPERTY_END_MAKE_ERROR(__prop)                      \
   {                                                                \
     PUSH_ERROR_AND_RETURN("Unsupported/unimplemented property: " + \
                           __prop.first);                           \
   }
 
+// This code path should not be reached though.
 #define PARSE_PROPERTY_END_MAKE_WARN(__prop) \
   { PUSH_WARN("Unsupported/unimplemented property: " + __prop.first); }
 
@@ -1085,14 +1195,18 @@ bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
 #endif
 
 ///
-/// For GeomSubset, we embed it to parent GeomMesh and don't create Prim node for it.
+/// For GeomSubset, we embed it to parent GeomMesh and don't create Prim node
+/// for it.
 ///
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
   _parser.RegisterPrimConstructFunction(
       "GeomSubset",
-      [&](const Path &full_path, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx, const std::map<std::string, Property> &properties,
-          std::vector<std::pair<ListEditQual, Reference>> &references) -> nonstd::expected<bool, std::string> {
+      [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
+          const int64_t parentPrimIdx,
+          const std::map<std::string, Property> &properties,
+          std::vector<std::pair<ListEditQual, Reference>> &references)
+          -> nonstd::expected<bool, std::string> {
         // Parent Prim must be GeomMesh
         const Path parent = full_path.GetParentPrim();
         if (!parent.IsValid()) {
@@ -1100,15 +1214,18 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
         }
 
         if (parent.IsRootPrim()) {
-          return nonstd::make_unexpected("GeomSubset must be defined as a child of GeomMesh prim.");
+          return nonstd::make_unexpected(
+              "GeomSubset must be defined as a child of GeomMesh prim.");
         }
 
         if (parentPrimIdx < 0) {
-          return nonstd::make_unexpected("GeomSubset muet be defined as a child of GeomMesh.");
+          return nonstd::make_unexpected(
+              "GeomSubset muet be defined as a child of GeomMesh.");
         }
 
         if (_prim_nodes.size() < size_t(parentPrimIdx)) {
-          return nonstd::make_unexpected("Unexpected parentPrimIdx for GeomSubset.");
+          return nonstd::make_unexpected(
+              "Unexpected parentPrimIdx for GeomSubset.");
         }
 
         const std::string parent_primpath = parent.GetPrimPart();
@@ -1123,7 +1240,9 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
         const PrimNode &pnode = _prim_nodes[size_t(parentPrimIdx)];
         auto pmesh = pnode.prim.get_value<GeomMesh>();
         if (!pmesh) {
-          return nonstd::make_unexpected("Parent Prim must be GeomMesh, but got " + pnode.prim.type_name());
+          return nonstd::make_unexpected(
+              "Parent Prim must be GeomMesh, but got " +
+              pnode.prim.type_name());
         }
         GeomMesh &mesh = pmesh.value();
 
@@ -1952,7 +2071,7 @@ bool USDAReader::Impl::ReconstructPrim(
             if (attr.var.is_scalar()) {
               auto p = attr.var.get_value<std::vector<value::point3f>>();
               if (p) {
-                mesh->points = p.value();
+                mesh->points.value = p.value();
               } else {
                 PUSH_ERROR_AND_RETURN("TODO: points.type = " +
                                       attr.var.type_name());
@@ -1976,29 +2095,46 @@ bool USDAReader::Impl::ReconstructPrim(
   auto SubdivisioSchemeHandler = [](const std::string &tok)
       -> nonstd::expected<GeomMesh::SubdivisionScheme, std::string> {
     using EnumTy = std::pair<GeomMesh::SubdivisionScheme, const char *>;
-    constexpr std::array<EnumTy, 4> enums = {
+    const std::vector<EnumTy> enums = {
         std::make_pair(GeomMesh::SubdivisionScheme::None, "none"),
-        std::make_pair(GeomMesh::SubdivisionScheme::CatmullClark, "catmullClark"),
+        std::make_pair(GeomMesh::SubdivisionScheme::CatmullClark,
+                       "catmullClark"),
         std::make_pair(GeomMesh::SubdivisionScheme::Loop, "loop"),
         std::make_pair(GeomMesh::SubdivisionScheme::Bilinear, "bilinear"),
     };
-
-    auto ret =
-        CheckAllowedTokens<GeomMesh::SubdivisionScheme, enums.size()>(enums, tok);
-    if (!ret) {
-      return nonstd::make_unexpected(ret.error());
-    }
-
-    for (auto &item : enums) {
-      if (tok == item.second) {
-        return item.first;
-      }
-    }
-
-    // Should never reach here, though.
-    return nonstd::make_unexpected(
-        quote(tok) + " is invalid token for `subdivisionScheme` propety");
+    return EnumHandler<GeomMesh::SubdivisionScheme>("subdivisionScheme", tok,
+                                                    enums);
   };
+
+  auto InterpolateBoundaryHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomMesh::InterpolateBoundary, std::string> {
+    using EnumTy = std::pair<GeomMesh::InterpolateBoundary, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomMesh::InterpolateBoundary::None, "none"),
+        std::make_pair(GeomMesh::InterpolateBoundary::EdgeAndCorner,
+                       "edgeAndCorner"),
+        std::make_pair(GeomMesh::InterpolateBoundary::EdgeOnly, "edgeOnly"),
+    };
+    return EnumHandler<GeomMesh::InterpolateBoundary>("interpolateBoundary", tok,
+                                                    enums);
+  };
+
+  auto FacevaryingLinearInterpolationHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomMesh::FacevaryingLinearInterpolation, std::string> {
+    using EnumTy = std::pair<GeomMesh::FacevaryingLinearInterpolation, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus1, "cornersPlus1"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus2, "cornersPlus2"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersOnly, "cornersOnly"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::Boundaries, "boundaries"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::None, "none"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::All, "all"),
+    };
+    return EnumHandler<GeomMesh::FacevaryingLinearInterpolation>("facevaryingLinearInterpolation", tok,
+                                                    enums);
+  };
+
+  std::set<std::string> table;
 
   for (const auto &prop : properties) {
     if (prop.second.IsRel()) {
@@ -2022,10 +2158,29 @@ bool USDAReader::Impl::ReconstructPrim(
         PUSH_WARN("TODO: rel");
       }
     } else {
-      PARSE_PROPERTY(prop, "points", GeomMesh, mesh->points)
-      PARSE_PROPERTY(prop, "faceVertexCounts",  GeomMesh,mesh->faceVertexCounts)
-      PARSE_PROPERTY(prop, "faceVertexIndices",  GeomMesh,mesh->faceVertexIndices)
-      PARSE_ENUM_PROPETY(prop, "subdivisionScheme", SubdivisioSchemeHandler, GeomMesh,  mesh->subdivisionScheme)
+      PARSE_TYPED_PROPERTY(table, prop, "points", GeomMesh, mesh->points)
+      PARSE_TYPED_PROPERTY(table, prop, "normals", GeomMesh, mesh->normals)
+      PARSE_TYPED_PROPERTY(table, prop, "faceVertexCounts", GeomMesh, mesh->faceVertexCounts)
+      PARSE_TYPED_PROPERTY(table, prop, "faceVertexIndices", GeomMesh,
+                     mesh->faceVertexIndices)
+      // Subd
+      PARSE_TYPED_PROPERTY(table, prop, "cornerIndices", GeomMesh, mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "cornerSharpnesses", GeomMesh, mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "creaseIndices", GeomMesh, mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "creaseLengths", GeomMesh, mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "creaseSharpnesses", GeomMesh, mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "holeIndices", GeomMesh, mesh->cornerIndices)
+      //
+      PARSE_PROPERTY(table, prop, "doubleSided", GeomMesh, mesh->doubleSided)
+      PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme", SubdivisioSchemeHandler,
+                         GeomMesh, mesh->subdivisionScheme)
+      PARSE_ENUM_PROPETY(table, prop, "interpolateBoundary",
+                         InterpolateBoundaryHandler, GeomMesh,
+                         mesh->interpolateBoundary)
+      PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
+                         FacevaryingLinearInterpolationHandler, GeomMesh,
+                         mesh->facevaryingLinearInterpolation)
+      ADD_PROPERY(table, prop, GeomMesh, mesh->props)
       PARSE_PROPERTY_END_MAKE_WARN(prop)
     }
   }
@@ -2043,31 +2198,11 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
-template<typename T>
-nonstd::expected<T, std::string> EnumHandler(const std::string &prop_name, const std::string &tok, const std::vector<std::pair<T, const char *>> &enums) {
-
-    auto ret =
-        CheckAllowedTokens<T>(enums, tok);
-    if (!ret) {
-      return nonstd::make_unexpected(ret.error());
-    }
-
-    for (auto &item : enums) {
-      if (tok == item.second) {
-        return item.first;
-      }
-    }
-    // Should never reach here, though.
-    return nonstd::make_unexpected(
-        quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
-  }
-
 template <>
 bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     GeomBasisCurves *curves) {
-
   DCOUT("GeomBasisCurves");
 
   auto BasisHandler = [](const std::string &tok)
@@ -2080,7 +2215,6 @@ bool USDAReader::Impl::ReconstructPrim(
     };
 
     return EnumHandler<GeomBasisCurves::Basis>("basis", tok, enums);
-
   };
 
   auto TypeHandler = [](const std::string &tok)
@@ -2106,20 +2240,23 @@ bool USDAReader::Impl::ReconstructPrim(
     return EnumHandler<GeomBasisCurves::Wrap>("wrap", tok, enums);
   };
 
-  for (const auto &prop : properties) {
-    PARSE_PROPERTY(prop, "curveVertexCounts", GeomBasisCurves, curves->curveVertexCounts)
-    PARSE_PROPERTY(prop, "points", GeomBasisCurves, curves->points)
-    PARSE_PROPERTY(prop, "velocities", GeomBasisCurves, curves->velocities)
-    PARSE_PROPERTY(prop, "normals", GeomBasisCurves, curves->normals)
-    PARSE_PROPERTY(prop, "accelerations", GeomBasisCurves, curves->accelerations)
-    //PARSE_PROPERTY(prop, "primvar::displayColor", GeomBasisCurves, curves->displayColor)
-    PARSE_PROPERTY(prop, "widths", GeomBasisCurves, curves->widths) 
-    PARSE_PROPERTY(prop, "primvar::widths", GeomBasisCurves, curves->widths) // TODO: Precedence over "widths"
-    PARSE_ENUM_PROPETY(prop, "type", TypeHandler, GeomBasisCurves, curves->type)
-    PARSE_ENUM_PROPETY(prop, "basis", BasisHandler, GeomBasisCurves, curves->basis)
-    PARSE_ENUM_PROPETY(prop, "wrap", WrapHandler, GeomBasisCurves, curves->wrap)
+  std::set<std::string> table;
 
-    PARSE_PRIMVAR_PROPERY(prop, GeomBasisCurves, curves->props);
+  for (const auto &prop : properties) {
+    PARSE_TYPED_PROPERTY(table, prop, "curveVertexCounts", GeomBasisCurves,
+                   curves->curveVertexCounts)
+    PARSE_TYPED_PROPERTY(table, prop, "points", GeomBasisCurves, curves->points)
+    PARSE_TYPED_PROPERTY(table, prop, "velocities", GeomBasisCurves, curves->velocities)
+    PARSE_TYPED_PROPERTY(table, prop, "normals", GeomBasisCurves, curves->normals)
+    PARSE_TYPED_PROPERTY(table, prop, "accelerations", GeomBasisCurves,
+                   curves->accelerations)
+    PARSE_TYPED_PROPERTY(table, prop, "widths", GeomBasisCurves, curves->widths)
+    PARSE_ENUM_PROPETY(table, prop, "type", TypeHandler, GeomBasisCurves, curves->type)
+    PARSE_ENUM_PROPETY(table, prop, "basis", BasisHandler, GeomBasisCurves,
+                       curves->basis)
+    PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves, curves->wrap)
+
+    ADD_PROPERY(table, prop, GeomBasisCurves, curves->props);
 
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
@@ -2157,22 +2294,25 @@ bool USDAReader::Impl::ReconstructPrim(
         quote(tok) + " is invalid token for `projection` propety");
   };
 
+  std::set<std::string> table;
   for (const auto &prop : properties) {
-    PARSE_PROPERTY(prop, "focalLength", GeomCamera, camera->focalLength)
-    PARSE_PROPERTY(prop, "focusDistance", GeomCamera, camera->focusDistance)
-    PARSE_PROPERTY(prop, "exposure", GeomCamera, camera->exposure)
-    PARSE_PROPERTY(prop, "fStop", GeomCamera, camera->fStop)
-    PARSE_PROPERTY(prop, "horizontalAperture", GeomCamera, camera->horizontalAperture)
-    PARSE_PROPERTY(prop, "horizontalApertureOffset",
-                   GeomCamera, camera->horizontalApertureOffset)
-    PARSE_PROPERTY(prop, "horizontalApertureOffset",
-                   GeomCamera, camera->horizontalApertureOffset)
-    PARSE_PROPERTY(prop, "clippingRange", GeomCamera, camera->clippingRange)
-    PARSE_PROPERTY(prop, "clippingPlanes",GeomCamera,  camera->clippingPlanes)
-    PARSE_PROPERTY(prop, "shutter:open", GeomCamera, camera->shutterOpen)
-    PARSE_PROPERTY(prop, "shutter:close", GeomCamera, camera->shutterClose)
-    PARSE_ENUM_PROPETY(prop, "projection", ProjectionHandler,
-                       GeomCamera, camera->projection)
+    PARSE_PROPERTY(table, prop, "focalLength", GeomCamera, camera->focalLength)
+    PARSE_PROPERTY(table, prop, "focusDistance", GeomCamera, camera->focusDistance)
+    PARSE_PROPERTY(table, prop, "exposure", GeomCamera, camera->exposure)
+    PARSE_PROPERTY(table, prop, "fStop", GeomCamera, camera->fStop)
+    PARSE_PROPERTY(table, prop, "horizontalAperture", GeomCamera,
+                   camera->horizontalAperture)
+    PARSE_PROPERTY(table, prop, "horizontalApertureOffset", GeomCamera,
+                   camera->horizontalApertureOffset)
+    PARSE_PROPERTY(table, prop, "horizontalApertureOffset", GeomCamera,
+                   camera->horizontalApertureOffset)
+    PARSE_PROPERTY(table, prop, "clippingRange", GeomCamera, camera->clippingRange)
+    PARSE_PROPERTY(table, prop, "clippingPlanes", GeomCamera, camera->clippingPlanes)
+    PARSE_PROPERTY(table, prop, "shutter:open", GeomCamera, camera->shutterOpen)
+    PARSE_PROPERTY(table, prop, "shutter:close", GeomCamera, camera->shutterClose)
+    PARSE_ENUM_PROPETY(table, prop, "projection", ProjectionHandler, GeomCamera,
+                       camera->projection)
+    ADD_PROPERY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(prop)
   }
 
@@ -2184,11 +2324,14 @@ bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxSphereLight *light) {
+
+  std::set<std::string> table;
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_PROPERTY(prop, "inputs:color", LuxSphereLight, light->color)
-    PARSE_PROPERTY(prop, "inputs:radius",  LuxSphereLight, light->radius)
-    PARSE_PROPERTY(prop, "inputs:intensity",  LuxSphereLight, light->intensity)
+    PARSE_PROPERTY(table, prop, "inputs:color", LuxSphereLight, light->color)
+    PARSE_PROPERTY(table, prop, "inputs:radius", LuxSphereLight, light->radius)
+    PARSE_PROPERTY(table, prop, "inputs:intensity", LuxSphereLight, light->intensity)
+    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
@@ -2200,13 +2343,18 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxDomeLight *light) {
+
+  std::set<std::string> table;
+
   for (const auto &prop : properties) {
-    PARSE_PROPERTY(prop, "guideRadius", LuxDomeLight, light->guideRadius)
-    PARSE_PROPERTY(prop, "inputs:diffuse", LuxDomeLight,light->diffuse)
-    PARSE_PROPERTY(prop, "inputs:specular", LuxDomeLight,light->specular)
-    PARSE_PROPERTY(prop, "inputs:colorTemperature", LuxDomeLight,light->colorTemperature)
-    PARSE_PROPERTY(prop, "inputs:color", LuxDomeLight,light->color)
-    PARSE_PROPERTY(prop, "inputs:intensity", LuxDomeLight,light->intensity)
+    PARSE_PROPERTY(table, prop, "guideRadius", LuxDomeLight, light->guideRadius)
+    PARSE_PROPERTY(table, prop, "inputs:diffuse", LuxDomeLight, light->diffuse)
+    PARSE_PROPERTY(table, prop, "inputs:specular", LuxDomeLight, light->specular)
+    PARSE_PROPERTY(table, prop, "inputs:colorTemperature", LuxDomeLight,
+                   light->colorTemperature)
+    PARSE_PROPERTY(table, prop, "inputs:color", LuxDomeLight, light->color)
+    PARSE_PROPERTY(table, prop, "inputs:intensity", LuxDomeLight, light->intensity)
+    ADD_PROPERY(table, prop, LuxDomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
@@ -2219,12 +2367,12 @@ bool USDAReader::Impl::ReconstructPrim<Model>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Model *model) {
-
   DCOUT("Model(`def` with no type)");
 
-  // TODO: support custom properties
+  std::set<std::string> table;
   for (const auto &prop : properties) {
-    PUSH_WARN("Unsupported/unimplemented property: " + prop.first);
+    ADD_PROPERY(table, prop, Model, model->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
   return true;
@@ -2238,10 +2386,10 @@ bool USDAReader::Impl::ReconstructPrim<Scope>(
   // `Scope` is just a namespace in scene graph(no node xform)
 
   DCOUT("Scope");
-
-  // TODO: support custom properties
+  std::set<std::string> table;
   for (const auto &prop : properties) {
-    PUSH_WARN("Unsupported/unimplemented property: " + prop.first);
+    ADD_PROPERY(table, prop, Scope, scope->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
 
   return true;
@@ -2273,16 +2421,40 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
   return true;
 }
 
-template<>
+template <>
 bool USDAReader::Impl::ReconstructShader<UsdPreviewSurface>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPreviewSurface *surface) {
-  // TODO:
-  return false;
+
+  // TODO: references
+
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface, surface->diffuseColor)
+    PARSE_PROPERTY(table, prop, "inputs:emissiveColor", UsdPreviewSurface, surface->emissiveColor)
+    PARSE_PROPERTY(table, prop, "inputs:roughness", UsdPreviewSurface, surface->roughness)
+    PARSE_PROPERTY(table, prop, "inputs:specularColor", UsdPreviewSurface, surface->specularColor) // specular workflow
+    PARSE_PROPERTY(table, prop, "inputs:metallic", UsdPreviewSurface, surface->metallic) // non specular workflow
+    PARSE_PROPERTY(table, prop, "inputs:clearcoat", UsdPreviewSurface, surface->clearcoat)
+    PARSE_PROPERTY(table, prop, "inputs:clearcoatRoughness", UsdPreviewSurface, surface->clearcoatRoughness)
+    PARSE_PROPERTY(table, prop, "inputs:opacity", UsdPreviewSurface, surface->opacity)
+    PARSE_PROPERTY(table, prop, "inputs:opacityThreshold", UsdPreviewSurface, surface->opacityThreshold)
+    PARSE_PROPERTY(table, prop, "inputs:ior", UsdPreviewSurface, surface->ior)
+    PARSE_PROPERTY(table, prop, "inputs:normal", UsdPreviewSurface, surface->normal)
+    PARSE_PROPERTY(table, prop, "inputs:dispacement", UsdPreviewSurface, surface->displacement)
+    PARSE_PROPERTY(table, prop, "inputs:occlusion", UsdPreviewSurface, surface->occlusion)
+    PARSE_PROPERTY(table, prop, "inputs:useSpecularWorkflow", UsdPreviewSurface, surface->useSpecularWorkflow)
+    PARSE_PROPERTY(table, prop, "outputs:surface", UsdPreviewSurface, surface->outputsSurface)
+    PARSE_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface, surface->outputsDisplacement)
+    ADD_PROPERY(table, prop, UsdPreviewSurface, surface->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+
+  return true;
 }
 
-template<>
+template <>
 bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
@@ -2305,7 +2477,6 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPrimvarReader_float *preader) {
-
   // TODO:
   return false;
 }
@@ -2315,7 +2486,6 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float2>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPrimvarReader_float2 *preader) {
-
   // TODO:
   return false;
 }
@@ -2325,7 +2495,6 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float3>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPrimvarReader_float3 *preader) {
-
   // TODO:
   return false;
 }
@@ -2335,7 +2504,6 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float4>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPrimvarReader_float4 *preader) {
-
   // TODO:
   return false;
 }
@@ -2345,7 +2513,6 @@ bool USDAReader::Impl::ReconstructPrim<Shader>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Shader *shader) {
-
   constexpr auto kUsdPreviewSurface = "UsdPreviewSurface";
   constexpr auto kUsdUVTexture = "UsdUVTexture";
   constexpr auto kUsdPrimvarReader_int = "UsdPrimvarReader_int";
@@ -2355,13 +2522,13 @@ bool USDAReader::Impl::ReconstructPrim<Shader>(
   constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
 
   for (const auto &prop : properties) {
-
     if (prop.first == "info:id") {
       const PrimAttrib &attr = prop.second.attrib;
 
       auto pv = attr.var.get_value<value::token>();
       if (!pv) {
-        PUSH_ERROR_AND_RETURN("`info:id` must be type `token`, but got type `" << attr.var.type_name() << "`.");
+        PUSH_ERROR_AND_RETURN("`info:id` must be type `token`, but got type `"
+                              << attr.var.type_name() << "`.");
       }
 
       std::string shader_type = pv.value().str();
@@ -2370,7 +2537,8 @@ bool USDAReader::Impl::ReconstructPrim<Shader>(
 
       if (shader_type.compare(kUsdPreviewSurface) == 0) {
         UsdPreviewSurface surface;
-        if (!ReconstructShader<UsdPreviewSurface>(properties, references, &surface)) {
+        if (!ReconstructShader<UsdPreviewSurface>(properties, references,
+                                                  &surface)) {
           PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
         }
         shader->info_id = kUsdPreviewSurface;
@@ -2378,54 +2546,62 @@ bool USDAReader::Impl::ReconstructPrim<Shader>(
         DCOUT("info_id = " << shader->info_id);
       } else if (shader_type.compare(kUsdUVTexture) == 0) {
         UsdUVTexture texture;
-        if (!ReconstructShader<UsdUVTexture>(properties, references, &texture)) {
+        if (!ReconstructShader<UsdUVTexture>(properties, references,
+                                             &texture)) {
           PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
         }
         shader->info_id = kUsdUVTexture;
         shader->value = texture;
       } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
         UsdPrimvarReader_int preader;
-        if (!ReconstructShader<UsdPrimvarReader_int>(
-                properties, references, &preader)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_int);
+        if (!ReconstructShader<UsdPrimvarReader_int>(properties, references,
+                                                     &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_int);
         }
         shader->info_id = kUsdPrimvarReader_int;
         shader->value = preader;
       } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
         UsdPrimvarReader_float preader;
-        if (!ReconstructShader<UsdPrimvarReader_float>(
-                properties, references, &preader)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float);
+        if (!ReconstructShader<UsdPrimvarReader_float>(properties, references,
+                                                       &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float);
         }
         shader->info_id = kUsdPrimvarReader_float;
         shader->value = preader;
       } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
         UsdPrimvarReader_float2 preader;
-        if (!ReconstructShader<UsdPrimvarReader_float2>(
-                properties, references, &preader)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float2);
+        if (!ReconstructShader<UsdPrimvarReader_float2>(properties, references,
+                                                        &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float2);
         }
         shader->info_id = kUsdPrimvarReader_float2;
         shader->value = preader;
       } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
         UsdPrimvarReader_float3 preader;
-        if (!ReconstructShader<UsdPrimvarReader_float3>(
-                properties, references, &preader)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float3);
+        if (!ReconstructShader<UsdPrimvarReader_float3>(properties, references,
+                                                        &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float3);
         }
         shader->info_id = kUsdPrimvarReader_float3;
         shader->value = preader;
       } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
         UsdPrimvarReader_float4 preader;
-        if (!ReconstructShader<UsdPrimvarReader_float4>(
-                properties, references, &preader)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPrimvarReader_float4);
+        if (!ReconstructShader<UsdPrimvarReader_float4>(properties, references,
+                                                        &preader)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float4);
         }
         shader->info_id = kUsdPrimvarReader_float4;
         shader->value = preader;
       } else {
         // TODO: string, point, vector, matrix
-        PUSH_ERROR_AND_RETURN("Invalid or Unsupported Shader type. info:id = \"" + shader_type + "\n");
+        PUSH_ERROR_AND_RETURN(
+            "Invalid or Unsupported Shader type. info:id = \"" + shader_type +
+            "\n");
       }
 
     } else {
@@ -2463,7 +2639,6 @@ bool USDAReader::Impl::ReconstructPrim<Material>(
 
   return true;
 }
-
 
 ///
 /// -- Impl callback specializations
@@ -2514,7 +2689,7 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
 
   RegisterPrimIdxAssignCallback();
 
-  RegisterReconstructCallback<Model>(); // `def` with no type.
+  RegisterReconstructCallback<Model>();  // `def` with no type.
 
   RegisterReconstructCallback<GPrim>();
 
