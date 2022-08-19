@@ -648,6 +648,7 @@ struct Extent {
   }
 };
 
+#if 0
 struct ConnectionPath {
   bool is_input{false};  // true: Input connection. false: Output connection.
 
@@ -665,8 +666,9 @@ struct ConnectionPath {
 //
 // using connection_id_map =
 //     std::unordered_map<std::pair<std::string, std::string>, Connection>;
+#endif
 
-// Relation and Connection
+// Relation
 struct Relation {
  public:
   // monostate(empty(define only)), string, Path or PathVector
@@ -679,6 +681,21 @@ struct Relation {
   Relation() : targets(tinyusdz::monostate()) {
   }
 
+};
+
+//
+// Connection is a typed version of Relation
+// 
+template<typename T>
+struct Connection
+{
+  using type = typename value::TypeTrait<T>::value_type;
+
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+
+  nonstd::optional<Path> target; 
 };
 
 // Variable class for Prim and Attribute Metadataum.
@@ -907,6 +924,18 @@ struct Property {
     return (type == Type::Relation) || (type == Type::NoTargetsRelation);
   }
   bool IsConnection() const { return type == Type::Connection; }
+
+  nonstd::optional<Path> GetConnectionTarget() const {
+    if (!IsConnection()) {
+      return nonstd::nullopt;
+    }
+
+    if (auto pv = rel.targets.get_if<Path>()) {
+      return (*pv);
+    }
+
+    return nonstd::nullopt;
+  }
 
   bool HasCustom() const { return has_custom; }
 };

@@ -792,6 +792,15 @@ struct AttribType {
 
 };
 
+// `nonstd::optional<Connection<T>>` -> T
+template<typename T>
+struct AttribType<nonstd::optional<Connection<T>>> {
+  using type = T;
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+};
+
 // `nonstd::optional<T>` -> T
 template<typename T>
 struct AttribType<nonstd::optional<T>> {
@@ -800,6 +809,7 @@ struct AttribType<nonstd::optional<T>> {
     return value::TypeTrait<T>::type_name();
   }
 };
+
 
 // `AttribWithFallback<T>` -> T
 template<typename T>
@@ -810,28 +820,9 @@ struct AttribType<AttribWithFallback<T>> {
   }
 };
 
-#if 0
-template<typename T>
-struct AttribSetter;
-
-template<typename T>
-struct AttribSetter {
-  static T set(const T &v) {
-    return v;
-  }
-};
-
-template<typename T>
-struct AttribSetter<AttribWithFallback<T>> {
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
-};
-#endif
 
 
-
-// TODO(syoyo): AttrMeta, TimeSamples, Reference
+// TODO(syoyo): TimeSamples, Reference
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)                    \
   if (__prop.first == __name) {                                              \
     const PrimAttrib &attr = __prop.second.attrib;                           \
@@ -848,7 +839,35 @@ struct AttribSetter<AttribWithFallback<T>> {
     }                                                                        \
   } else
 
-// TODO(syoyo): AttrMeta, TimeSamples, Reference
+// e.g. "float3 outputs:rgb"
+// Attribute type is EmptyAttrib or Connection(`target` is Path)
+// TODO: Metadatum
+#define PARSE_TYPED_OUTPUT_CONNECTION(__table, __prop, __name, __klass, __target)                    \
+  if (__prop.first == __name) {                                              \
+    const Property &p = __prop.second; \
+    const PrimAttrib &attr = p.attrib;                           \
+    /* Type info is stored in attrib.type_name */ \
+    if (AttribType<decltype(__target)>::type_name() == attr.type_name) {                 \
+      if (auto pv = p.GetConnectionTarget()) { \
+        __target->target = pv.value(); \
+        __table.insert(__name); \
+      } else if (p.type == Property::Type::EmptyAttrib) { \
+        __table.insert(__name); \
+      } else { \
+        PUSH_ERROR_AND_RETURN(                                                 \
+            "(" << value::TypeTrait<__klass>::type_name()                      \
+                << ") Connection Property `" << __name << "` must not be value assigned."); \
+      } \
+    } else {                                                                 \
+      PUSH_ERROR_AND_RETURN(                                                 \
+          "(" << value::TypeTrait<__klass>::type_name()                      \
+              << ") Property type mismatch. " << __name << " expects type `" \
+              << AttribType<decltype(__target)>::type_name()           \
+              << "` but defined as type `" << attr.type_name << "`");  \
+    }                                                                        \
+  } else
+
+// TODO(syoyo): TimeSamples, Reference
 #define PARSE_PROPERTY(__table, __prop, __name, __klass, __target)                    \
   if (__prop.first == __name) {                                              \
     const PrimAttrib &attr = __prop.second.attrib;                           \
@@ -2456,15 +2475,16 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
   };
 
   std::set<std::string> table;
+
   for (auto &prop : properties) {
     PARSE_PROPERTY(table, prop, "inputs:file", UsdPreviewSurface, texture->file)
     PARSE_PROPERTY(table, prop, "inputs:st", UsdPreviewSurface, texture->st)
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace", SourceColorSpaceHandler, UsdPreviewSurface, texture->sourceColorSpace)
-    PARSE_PROPERTY(table, prop, "outputs:r", UsdPreviewSurface, texture->outputsR)
-    PARSE_PROPERTY(table, prop, "outputs:g", UsdPreviewSurface, texture->outputsG)
-    PARSE_PROPERTY(table, prop, "outputs:b", UsdPreviewSurface, texture->outputsB)
-    PARSE_PROPERTY(table, prop, "outputs:a", UsdPreviewSurface, texture->outputsA)
-    PARSE_PROPERTY(table, prop, "outputs:rgb", UsdPreviewSurface, texture->outputsRGB)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:r", UsdPreviewSurface, texture->outputsR)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:g", UsdPreviewSurface, texture->outputsG)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:b", UsdPreviewSurface, texture->outputsB)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:a", UsdPreviewSurface, texture->outputsA)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:rgb", UsdPreviewSurface, texture->outputsRGB)
     ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
@@ -2495,8 +2515,17 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float2>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPrimvarReader_float2 *preader) {
-  // TODO:
-  return false;
+
+  std::set<std::string> table;
+
+  for (auto &prop : properties) {
+    PARSE_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float2, preader->varname) // `token`
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:result", UsdPrimvarReader_float2, preader->result)
+    ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+
+  return true;
 }
 
 template <>
