@@ -4451,6 +4451,8 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         return false;
       }
 
+      DCOUT("Attribute meta name: " << token); 
+
       if ((token != "interpolation") && (token != "customData") &&
           (token != "elementSize")) {
         PushError(
@@ -4479,6 +4481,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           return false;
         }
 
+        DCOUT("Got `interpolation` meta : " << value); 
         out_meta->interpolation = InterpolationFromString(value);
       } else if (token == "elementSize") {
         uint32_t value;
@@ -4486,6 +4489,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
         }
 
+        DCOUT("Got `elementSize` meta : " << value); 
         out_meta->elementSize = value;
       } else if (token == "customData") {
         std::map<std::string, MetaVariable> dict;
@@ -4494,6 +4498,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           return false;
         }
 
+        DCOUT("Got `customData` meta");
         out_meta->customData = dict;
 
       } else {
@@ -4838,10 +4843,14 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     }
   }
 
+  DCOUT("define only:" << define_only);
+
   if (define_only) {
+#if 0
     if (isConnection || isTimeSample) {
       PUSH_ERROR_AND_RETURN("`.connect` or `.timeSamples` suffix provided, but no target/values provided.");
     }
+#endif
 
     DCOUT("Define only property = " + primattr_name);
 

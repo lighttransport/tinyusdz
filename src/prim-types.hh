@@ -809,6 +809,10 @@ struct PrimMeta {
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
+  bool authorizerd() const {
+    return (kind || customData || meta.size());
+  }
+
 };
 
 // Metadata for Attribute
@@ -821,9 +825,13 @@ struct AttrMeta {
       customData;  // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
+
+  bool authorized() const {
+    return (interpolation || elementSize || customData || meta.size());
+  }
 };
 
-// mAttrib is a struct to hold attribute of a property(e.g. primvar)
+// PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
   std::string name;  // attrib name
 
@@ -843,6 +851,17 @@ struct PrimAttrib {
   bool uniform{false};  // `uniform`
 
   primvar::PrimVar var;
+};
+
+///
+/// Typed version of PrimAttrib(e.g. for `points`, `normals`)
+/// TODO: Relationship support
+///
+template <typename T>
+struct TypedAttribute {
+  T value;
+  AttrMeta meta;
+  bool uniform{false};  // `uniform`
 };
 
 // Attribute or Relation/Connection. And has this property is custom or not
@@ -897,29 +916,6 @@ struct Property {
 
   bool HasCustom() const { return has_custom; }
 };
-
-#if 0 // Moved to usdShade.
-// Currently for UV texture coordinate
-template <typename T>
-struct PrimvarReader {
-  // const char *output_type = TypeTrait<T>::type_name;
-  T fallback_value{};  // fallback value
-
-  ConnectionPath
-      varname;  // Name of the primvar to be fetched from the geometry.
-};
-
-using PrimvarReader_float = PrimvarReader<float>;
-using PrimvarReader_float2 = PrimvarReader<value::float2>;
-using PrimvarReader_float3 = PrimvarReader<value::float3>;
-using PrimvarReader_float4 = PrimvarReader<value::float4>;
-using PrimvarReader_int = PrimvarReader<int>;
-
-using PrimvarReaderType =
-    tinyusdz::variant<PrimvarReader_float, PrimvarReader_float2,
-                      PrimvarReader_float3, PrimvarReader_float4,
-                      PrimvarReader_int>;
-#endif
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `matrix4f`
@@ -1183,228 +1179,6 @@ struct MaterialBindingAPI {
 // Predefined node classes
 //
 
-#if 0
-struct Xform {
-  std::string name;
-  int64_t parent_id{-1};  // Index to xform node
-
-  std::vector<XformOp> xformOps;
-
-  Orientation orientation{Orientation::RightHanded};
-  AnimatableVisibility visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  Xform() {}
-
-  ///
-  /// Evaluate XformOps
-  ///
-  bool EvaluateXformOps(value::matrix4d *out_matrix) const;
-
-  ///
-  /// Get concatenated matrix.
-  ///
-  nonstd::optional<value::matrix4d> GetMatrix() const {
-    if (_dirty) {
-      value::matrix4d m;
-      if (EvaluateXformOps(&m)) {
-        _matrix = m;
-        _dirty = false;
-      } else {
-        // TODO: Report an error.
-        return nonstd::nullopt;
-      }
-    }
-    return _matrix;
-  }
-
-  mutable bool _dirty{true};
-  mutable value::matrix4d _matrix;  // Resulting matrix of evaluated XformOps.
-};
-#endif
-
-struct UVCoords {
-  using UVCoordType =
-      tinyusdz::variant<std::vector<value::float2>, std::vector<value::float3>>;
-
-  std::string name;
-  UVCoordType buffer;
-
-  Interpolation interpolation{Interpolation::Vertex};
-  Variability variability;
-
-  // non-empty when UV has its own indices.
-  std::vector<uint32_t> indices;  // UV indices. Usually varying
-};
-
-#if 0
-//
-// Similar to Maya's ShadingGroup
-//
-struct Material {
-  std::string name;
-
-  int64_t parent_id{-1};
-
-  std::string outputs_surface;  // Intermediate variable. Path of
-                                // `outputs:surface.connect`
-  std::string outputs_volume;   // Intermediate variable. Path of
-                                // `outputs:volume.connect`
-
-  // Id will be filled after resolving paths
-  int64_t surface_shader_id{-1};  // Index to `Scene::shaders`
-  int64_t volume_shader_id{-1};   // Index to `Scene::shaders`
-  // int64_t displacement_shader_id{-1}; // Index to shader object. TODO(syoyo)
-};
-
-// TODO
-struct NodeGraph {
-  std::string name;
-
-  int64_t parent_id{-1};
-};
-#endif
-
-#if 0
-
-// result = (texture_id == -1) ? use color : lookup texture
-struct Color3OrTexture {
-  Color3OrTexture(float x, float y, float z) {
-    color[0] = x;
-    color[1] = y;
-    color[2] = z;
-  }
-
-  std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
-
-  std::string path;  // path to .connect(We only support texture file connection
-                     // at the moment)
-  int64_t texture_id{-1};
-
-  bool HasTexture() const { return texture_id > -1; }
-};
-
-struct FloatOrTexture {
-  FloatOrTexture(float x) { value = x; }
-
-  float value{0.0f};
-
-  std::string path;  // path to .connect(We only support texture file connection
-                     // at the moment)
-  int64_t texture_id{-1};
-
-  bool HasTexture() const { return texture_id > -1; }
-};
-
-enum TextureWrap {
-  TextureWrapUseMetadata,  // look for wrapS and wrapT metadata in the texture
-                           // file itself
-  TextureWrapBlack,
-  TextureWrapClamp,
-  TextureWrapRepeat,
-  TextureWrapMirror
-};
-
-// For texture transform
-// result = in * scale * rotate * translation
-struct UsdTranform2d {
-  float rotation =
-      0.0f;  // counter-clockwise rotation in degrees around the origin.
-  std::array<float, 2> scale{{1.0f, 1.0f}};
-  std::array<float, 2> translation{{0.0f, 0.0f}};
-};
-
-// UsdUvTexture
-struct UVTexture {
-  std::string asset;  // asset name(usually file path)
-  int64_t image_id{
-      -1};  // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
-
-  TextureWrap wrapS{};
-  TextureWrap wrapT{};
-
-  std::array<float, 4> fallback{
-      {0.0f, 0.0f, 0.0f,
-       1.0f}};  // fallback color used when texture cannot be read.
-  std::array<float, 4> scale{
-      {1.0f, 1.0f, 1.0f, 1.0f}};  // scale to be applied to output texture value
-  std::array<float, 4> bias{
-      {0.0f, 0.0f, 0.0f, 0.0f}};  // bias to be applied to output texture value
-
-  UsdTranform2d texture_transfom;  // texture coordinate orientation.
-
-  // key = connection name: e.g. "outputs:rgb"
-  // item = pair<type, name> : example: <"float3", "outputs:rgb">
-  std::map<std::string, std::pair<std::string, std::string>> outputs;
-
-  PrimvarReaderType st;  // texture coordinate(`inputs:st`). We assume there is
-                         // a connection to this.
-
-  // TODO: orientation?
-  // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
-};
-
-// UsdPreviewSurface
-// USD's default? PBR shader
-// https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
-// $USD/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
-struct PreviewSurface {
-  std::string doc;
-
-  //
-  // Infos
-  //
-  std::string info_id;  // `uniform token`
-
-  //
-  // Inputs
-  //
-  // Currently we don't support nested shader description.
-  //
-  Color3OrTexture diffuseColor{0.18f, 0.18f, 0.18f};
-  Color3OrTexture emissiveColor{0.0f, 0.0f, 0.0f};
-  int usdSpecularWorkflow{0};  // 0 = metalness workflow, 1 = specular workflow
-
-  // specular workflow
-  Color3OrTexture specularColor{0.0f, 0.0f, 0.0f};
-
-  // metalness workflow
-  FloatOrTexture metallic{0.0f};
-
-  FloatOrTexture roughness{0.5f};
-  FloatOrTexture clearcoat{0.0f};
-  FloatOrTexture clearcoatRoughness{0.01f};
-  FloatOrTexture opacity{1.0f};
-  FloatOrTexture opacityThreshold{0.0f};
-  FloatOrTexture ior{1.5f};
-  Color3OrTexture normal{0.0f, 0.0f, 1.0f};
-  FloatOrTexture displacement{0.0f};
-  FloatOrTexture occlusion{1.0f};
-
-  // Blender Specific?
-  FloatOrTexture specular{0.5f};
-
-  //
-  // Outputs
-  //
-  int64_t surface_id{-1};       // index to `Scene::shaders`
-  int64_t displacement_id{-1};  // index to `Scene::shaders`
-};
-#endif
-
-#if 0
-struct Shader {
-  std::string name;
-
-  std::string info_id;  // Shader type.
-
-  // Currently we only support PreviewSurface, UVTexture and
-  // PrimvarReader_float2
-  tinyusdz::variant<tinyusdz::monostate, PreviewSurface, UVTexture,
-                    PrimvarReader_float2>
-      value;
-};
-#endif
 
 // USDZ Schemas for AR
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
@@ -1539,6 +1313,8 @@ struct Scope {
 
   AnimatableVisibility visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
+
+  std::map<std::string, Property> props;
 };
 
 Interpolation InterpolationFromString(const std::string &v);

@@ -3,26 +3,26 @@
 //
 // UsdGeom API implementations
 
+#include "usdGeom.hh"
+
 #include <sstream>
 
-#include "usdGeom.hh"
-#include "prim-types.hh"
-
 #include "common-macros.inc"
+#include "prim-types.hh"
 
 namespace tinyusdz {
 
 namespace {
 
-constexpr auto kPrimvarNormals = "primvar::normals";
+constexpr auto kPrimvarsNormals = "primvars:normals";
 
-} // namespace
+}  // namespace
 
 std::vector<value::normal3f> GeomMesh::GetNormals() const {
   std::vector<value::normal3f> dst;
 
-  if (props.count(kPrimvarNormals)) {
-    const auto prop = props.at(kPrimvarNormals);
+  if (props.count(kPrimvarsNormals)) {
+    const auto prop = props.at(kPrimvarsNormals);
     if (prop.IsRel()) {
       // TODO:
       return dst;
@@ -33,34 +33,29 @@ std::vector<value::normal3f> GeomMesh::GetNormals() const {
         dst = pv.value();
       }
     }
-  } else if (normals) {
-    if (normals.value().var.type_name() == "normal3f[]") {
-      if (auto pv = normals.value().var.get_value<std::vector<value::normal3f>>()) {
-        dst = pv.value();
-      }
-    }
+  } else if (normals.value.size()) {
+    dst = normals.value;
   }
 
   return dst;
 }
 
 Interpolation GeomMesh::GetNormalsInterpolation() const {
-
-  if (props.count(kPrimvarNormals)) {
-    // TODO: Check if `primvar::normals` type is `normal3f[]`
-    const auto &prop = props.at(kPrimvarNormals);
-    if (prop.attrib.meta.interpolation) {
-      return prop.attrib.meta.interpolation.value();
+  if (props.count(kPrimvarsNormals)) {
+    const auto &prop = props.at(kPrimvarsNormals);
+    if (prop.attrib.var.type_name() == "normal3f[]") {
+      if (prop.attrib.meta.interpolation) {
+        return prop.attrib.meta.interpolation.value();
+      }
     }
-  } else if (normals) {
-    return normals.value().meta.interpolation.value();
+  } else if (normals.meta.interpolation) {
+    return normals.meta.interpolation.value();
   }
 
-  return Interpolation::Vertex; // default 'vertex'
+  return Interpolation::Vertex;  // default 'vertex'
 }
 
-void GeomMesh::Initialize(const GPrim &gprim)
-{
+void GeomMesh::Initialize(const GPrim &gprim) {
   name = gprim.name;
   parent_id = gprim.parent_id;
 
@@ -125,7 +120,7 @@ void GeomMesh::Initialize(const GPrim &gprim)
   displayColor = gprim.displayColor;
   displayOpacity = gprim.displayOpacity;
 
-#if 0 // TODO
+#if 0  // TODO
 
 
   // PrimVar(TODO: Remove)
@@ -135,13 +130,10 @@ void GeomMesh::Initialize(const GPrim &gprim)
   // Properties
   //
 
-
 #endif
-
 };
 
 nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
-
   std::stringstream ss;
 
   if (geom_subset_children.empty()) {
@@ -149,18 +141,19 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
   }
 
   auto CheckFaceIds = [](const size_t nfaces, const std::vector<uint32_t> ids) {
-    if (std::any_of(ids.begin(), ids.end(), [&nfaces](uint32_t id) { return id >= nfaces; })) {
+    if (std::any_of(ids.begin(), ids.end(),
+                    [&nfaces](uint32_t id) { return id >= nfaces; })) {
       return false;
     }
 
     return true;
   };
 
-  size_t n = faceVertexIndices.size();
+  size_t n = faceVertexIndices.value.size();
 
   // Currently we only check if face ids are valid.
   for (size_t i = 0; i < geom_subset_children.size(); i++) {
-    const GeomSubset & subset = geom_subset_children[i];
+    const GeomSubset &subset = geom_subset_children[i];
 
     if (!CheckFaceIds(n, subset.indices)) {
       ss << "Face index out-of-range.\n";
@@ -168,9 +161,9 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     }
   }
 
-  return nonstd::make_unexpected("TODO: Implent GeomMesh::ValidateGeomSubset\n");
-  //return true;
-
+  return nonstd::make_unexpected(
+      "TODO: Implent GeomMesh::ValidateGeomSubset\n");
+  // return true;
 }
 
 namespace {
@@ -213,87 +206,85 @@ value::matrix4d GetTransform(XformOp xform)
 }
 #endif
 
-} // namespace
+}  // namespace
 
 bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
-    Identity(out_matrix);
+  Identity(out_matrix);
 
-    value::matrix4d cm;
+  value::matrix4d cm;
 
-    // Concat matrices
-    for (const auto &x : xformOps) {
-      value::matrix4d m;
-      Identity(&m);
-      (void)x;
-      if (x.op == XformOp::TRANSLATE) {
-        if (auto txf = x.value.get<value::float3>()) {
-          m.m[3][0] = double(txf.value()[0]);
-          m.m[3][1] = double(txf.value()[1]);
-          m.m[3][2] = double(txf.value()[2]);
-        } else if (auto txd = x.value.get<value::double3>()) {
-          m.m[3][0] = txd.value()[0];
-          m.m[3][1] = txd.value()[1];
-          m.m[3][2] = txd.value()[2];
-        } else {
-          return false;
-        }
-      // FIXME: Validate ROTATE_X, _Y, _Z implementation
-      } else if (x.op == XformOp::ROTATE_X) {
-        double theta;
-        if (auto rf = x.value.get<float>()) {
-          theta = double(rf.value());
-        } else if (auto rd = x.value.get<double>()) {
-          theta = rd.value();
-        } else {
-          return false;
-        }
-
-        m.m[1][1] = std::cos(theta);
-        m.m[1][2] = std::sin(theta);
-        m.m[2][1] = -std::sin(theta);
-        m.m[2][2] = std::cos(theta);
-      } else if (x.op == XformOp::ROTATE_Y) {
-        double theta;
-        if (auto f = x.value.get<float>()) {
-          theta = double(f.value());
-        } else if (auto d = x.value.get<double>()) {
-          theta = d.value();
-        } else {
-          return false;
-        }
-
-        m.m[0][0] = std::cos(theta);
-        m.m[0][2] = -std::sin(theta);
-        m.m[2][0] = std::sin(theta);
-        m.m[2][2] = std::cos(theta);
-      } else if (x.op == XformOp::ROTATE_Z) {
-        double theta;
-        if (auto f = x.value.get<float>()) {
-          theta = double(f.value());
-        } else if (auto d = x.value.get<double>()) {
-          theta = d.value();
-        } else {
-          return false;
-        }
-
-        m.m[0][0] = std::cos(theta);
-        m.m[0][1] = std::sin(theta);
-        m.m[1][0] = -std::sin(theta);
-        m.m[1][1] = std::cos(theta);
+  // Concat matrices
+  for (const auto &x : xformOps) {
+    value::matrix4d m;
+    Identity(&m);
+    (void)x;
+    if (x.op == XformOp::TRANSLATE) {
+      if (auto txf = x.value.get<value::float3>()) {
+        m.m[3][0] = double(txf.value()[0]);
+        m.m[3][1] = double(txf.value()[1]);
+        m.m[3][2] = double(txf.value()[2]);
+      } else if (auto txd = x.value.get<value::double3>()) {
+        m.m[3][0] = txd.value()[0];
+        m.m[3][1] = txd.value()[1];
+        m.m[3][2] = txd.value()[2];
       } else {
-        // TODO
-        DCOUT("TODO");
+        return false;
+      }
+      // FIXME: Validate ROTATE_X, _Y, _Z implementation
+    } else if (x.op == XformOp::ROTATE_X) {
+      double theta;
+      if (auto rf = x.value.get<float>()) {
+        theta = double(rf.value());
+      } else if (auto rd = x.value.get<double>()) {
+        theta = rd.value();
+      } else {
         return false;
       }
 
-      cm = Mult<value::matrix4d, double, 4>(cm, m);
+      m.m[1][1] = std::cos(theta);
+      m.m[1][2] = std::sin(theta);
+      m.m[2][1] = -std::sin(theta);
+      m.m[2][2] = std::cos(theta);
+    } else if (x.op == XformOp::ROTATE_Y) {
+      double theta;
+      if (auto f = x.value.get<float>()) {
+        theta = double(f.value());
+      } else if (auto d = x.value.get<double>()) {
+        theta = d.value();
+      } else {
+        return false;
+      }
+
+      m.m[0][0] = std::cos(theta);
+      m.m[0][2] = -std::sin(theta);
+      m.m[2][0] = std::sin(theta);
+      m.m[2][2] = std::cos(theta);
+    } else if (x.op == XformOp::ROTATE_Z) {
+      double theta;
+      if (auto f = x.value.get<float>()) {
+        theta = double(f.value());
+      } else if (auto d = x.value.get<double>()) {
+        theta = d.value();
+      } else {
+        return false;
+      }
+
+      m.m[0][0] = std::cos(theta);
+      m.m[0][1] = std::sin(theta);
+      m.m[1][0] = -std::sin(theta);
+      m.m[1][1] = std::cos(theta);
+    } else {
+      // TODO
+      DCOUT("TODO");
+      return false;
     }
 
-    (*out_matrix) = cm;
+    cm = Mult<value::matrix4d, double, 4>(cm, m);
+  }
+
+  (*out_matrix) = cm;
 
   return true;
 }
 
-} // namespace tinyusdz
-
-
+}  // namespace tinyusdz

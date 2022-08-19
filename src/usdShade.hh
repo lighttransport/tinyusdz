@@ -38,6 +38,9 @@ struct UsdPrimvarReader {
 
   // "outputs:result"
   nonstd::optional<Relation> result;  // "outputs:result"
+
+  // Custom properties
+  std::map<std::string, Property> props;
 };
 
 using UsdPrimvarReader_float = UsdPrimvarReader<float>;
@@ -95,6 +98,8 @@ struct UsdUVTexture {
   nonstd::optional<Relation> outputsA; // "outputs:a"
   nonstd::optional<Relation> outputsRGB; // "outputs:rgb"
 
+  // Custom properties
+  std::map<std::string, Property> props;
 
   // TODO: orientation?
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
@@ -137,6 +142,9 @@ struct UsdPreviewSurface {
   //
   nonstd::optional<Relation> outputsSurface; // "outputs:surface", "outputs:surface.connect"
   nonstd::optional<Relation> outputsDisplacement; // "outputs:displacement", "outputs:displacement.connect"
+
+  // Custom properties
+  std::map<std::string, Property> props;
 };
 
 #if 0 // TODO: Move to Tydra
