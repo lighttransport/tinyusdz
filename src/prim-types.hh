@@ -658,12 +658,6 @@ struct ConnectionPath {
                       // `Scene.shaders`)
 };
 
-class Asset
-{
- public:
-  std::string value; 
-};
-
 // struct Connection {
 //   int64_t src_index{-1};
 //   int64_t dest_index{-1};

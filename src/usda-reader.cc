@@ -489,25 +489,6 @@ class USDAReader::Impl {
     return true;
   }
 
-#if 0
-  bool ReconstructPreviewSurface(
-      const std::map<std::string, Property> &properties,
-      const std::vector<std::pair<ListEditQual, Reference>> &references,
-      PreviewSurface *surface);
-
-  bool ReconstructUVTexture(
-      const std::map<std::string, Property> &properties,
-      const std::vector<std::pair<ListEditQual, Reference>> &references,
-      UVTexture *texture);
-
-  // Currently float, float2, float3 and float4 only
-  template <typename T>
-  bool ReconstructPrimvarReader(
-      const std::map<std::string, Property> &properties,
-      const std::vector<std::pair<ListEditQual, Reference>> &references,
-      T *reader);
-#endif
-
   void ImportScene(tinyusdz::Stage &scene) { _imported_scene = scene; }
 
   bool HasPath(const std::string &path) {
@@ -2459,8 +2440,36 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdUVTexture *texture) {
-  // TODO:
-  return false;
+
+  // TODO: references
+
+  auto SourceColorSpaceHandler = [](const std::string &tok)
+      -> nonstd::expected<UsdUVTexture::SourceColorSpace, std::string> {
+    using EnumTy = std::pair<UsdUVTexture::SourceColorSpace, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(UsdUVTexture::SourceColorSpace::Auto, "auto"),
+        std::make_pair(UsdUVTexture::SourceColorSpace::Raw, "raw"),
+        std::make_pair(UsdUVTexture::SourceColorSpace::SRgb, "sRGB"),
+    };
+
+    return EnumHandler<UsdUVTexture::SourceColorSpace>("inputs:sourceColorSpace", tok, enums);
+  };
+
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_PROPERTY(table, prop, "inputs:file", UsdPreviewSurface, texture->file)
+    PARSE_PROPERTY(table, prop, "inputs:st", UsdPreviewSurface, texture->st)
+    PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace", SourceColorSpaceHandler, UsdPreviewSurface, texture->sourceColorSpace)
+    PARSE_PROPERTY(table, prop, "outputs:r", UsdPreviewSurface, texture->outputsR)
+    PARSE_PROPERTY(table, prop, "outputs:g", UsdPreviewSurface, texture->outputsG)
+    PARSE_PROPERTY(table, prop, "outputs:b", UsdPreviewSurface, texture->outputsB)
+    PARSE_PROPERTY(table, prop, "outputs:a", UsdPreviewSurface, texture->outputsA)
+    PARSE_PROPERTY(table, prop, "outputs:rgb", UsdPreviewSurface, texture->outputsRGB)
+    ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+
+  return true;
 }
 
 template <>

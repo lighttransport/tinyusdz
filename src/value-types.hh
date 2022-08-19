@@ -152,6 +152,8 @@ class asset_path {
   std::string resolved_path_;
 };
 
+using AssetPath = asset_path;
+
 //
 // Type ID for TypeTrait<T>::type_id.
 //
