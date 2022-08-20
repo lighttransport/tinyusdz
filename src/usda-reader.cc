@@ -2505,7 +2505,7 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
     const std::vector<EnumTy> enums = {
         std::make_pair(UsdUVTexture::SourceColorSpace::Auto, "auto"),
         std::make_pair(UsdUVTexture::SourceColorSpace::Raw, "raw"),
-        std::make_pair(UsdUVTexture::SourceColorSpace::SRgb, "sRGB"),
+        std::make_pair(UsdUVTexture::SourceColorSpace::SRGB, "sRGB"),
     };
 
     return EnumHandler<UsdUVTexture::SourceColorSpace>("inputs:sourceColorSpace", tok, enums);
