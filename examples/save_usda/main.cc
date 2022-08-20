@@ -30,25 +30,37 @@ void DummyScene(tinyusdz::Stage *stage)
   mesh_node_id.type_id = tinyusdz::value::TYPE_ID_GEOM_MESH;
   mesh_node_id.index = 0; // geom_meshes[0]
 
-  mesh.points.value.push_back({0.0f, 0.0f, 0.0f});
+  {
+    std::vector<tinyusdz::value::point3f> pts;
+    pts.push_back({0.0f, 0.0f, 0.0f});
 
-  mesh.points.value.push_back({1.0f, 0.0f, 0.0f});
+    pts.push_back({1.0f, 0.0f, 0.0f});
 
-  mesh.points.value.push_back({1.0f, 1.0f, 0.0f});
+    pts.push_back({1.0f, 1.0f, 0.0f});
 
-  mesh.points.value.push_back({0.0f, 1.0f, 0.0f});
+    pts.push_back({0.0f, 1.0f, 0.0f});
 
-  // quad plane composed of 2 triangles.
-  mesh.faceVertexCounts.value.push_back(3);
-  mesh.faceVertexCounts.value.push_back(3);
+    mesh.points.value = pts;
+  }
 
-  mesh.faceVertexIndices.value.push_back(0);
-  mesh.faceVertexIndices.value.push_back(1);
-  mesh.faceVertexIndices.value.push_back(2);
+  {
+    // quad plane composed of 2 triangles.
+    std::vector<int> indices;
+    std::vector<int> counts;
+    counts.push_back(3);
+    counts.push_back(3);
+    mesh.faceVertexCounts.value = counts;
 
-  mesh.faceVertexIndices.value.push_back(0);
-  mesh.faceVertexIndices.value.push_back(2);
-  mesh.faceVertexIndices.value.push_back(3);
+    indices.push_back(0);
+    indices.push_back(1);
+    indices.push_back(2);
+
+    indices.push_back(0);
+    indices.push_back(2);
+    indices.push_back(3);
+
+    mesh.faceVertexIndices.value = indices;
+  }
 
   tinyusdz::NodeIndex xform_node_id;
   xform_node_id.type_id = tinyusdz::value::TYPE_ID_GEOM_XFORM;
