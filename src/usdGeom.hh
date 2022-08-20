@@ -371,12 +371,12 @@ struct GeomPoints : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedAttribute<std::vector<value::float3>> points;   // float3
-  TypedAttribute<std::vector<value::float3>> normals;  // normal3f
+  TypedAttribute<std::vector<value::point3f>> points;   // point3f
+  TypedAttribute<std::vector<value::normal3f>> normals;  // normal3f
   TypedAttribute<std::vector<float>> widths;
-  TypedAttribute<std::vector<int64_t>> ids;                  // per-point ids
-  TypedAttribute<std::vector<value::float3>> velocities;     // vector3f
-  TypedAttribute<std::vector<value::float3>> accelerations;  // vector3f
+  TypedAttribute<std::vector<int64_t>> ids;                  // per-point ids. 
+  TypedAttribute<std::vector<value::vector3f>> velocities;     // vector3f
+  TypedAttribute<std::vector<value::vector3f>> accelerations;  // vector3f
 
 };
 

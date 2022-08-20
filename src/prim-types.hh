@@ -37,6 +37,9 @@
 
 namespace tinyusdz {
 
+template <typename T>
+class AttribWithFallback;
+
 ///
 /// Attribute with fallback(default) value
 ///
@@ -110,6 +113,7 @@ class AttribWithFallback {
   nonstd::optional<T> attrib;
   T fallback;
 };
+
 
 class PrimNode;
 
@@ -687,13 +691,17 @@ struct Relation {
 // Connection is a typed version of Relation
 // 
 template<typename T>
-struct Connection
+class Connection
 {
+ public:
   using type = typename value::TypeTrait<T>::value_type;
 
   static std::string type_name() {
     return value::TypeTrait<T>::type_name();
   }
+
+  //Connection() = delete;
+  //Connection(const T &v) : fallback(v) {}
 
   nonstd::optional<Path> target; 
 };
@@ -865,12 +873,33 @@ struct PrimAttrib {
 };
 
 ///
-/// Typed version of PrimAttrib(e.g. for `points`, `normals`)
-/// TODO: Relationship support
+/// Typed version of PrimAttrib(e.g. for `points`, `normals`, `inputs:st.connect`)
 ///
 template <typename T>
-struct TypedAttribute {
-  T value;
+class TypedAttribute {
+ public:
+
+  TypedAttribute() = default;
+
+  explicit TypedAttribute(const T& fv) : fallback(fv) {
+  }
+
+  using type = typename value::TypeTrait<T>::value_type;
+
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+
+  // Empty(Define only), value or connection(`.connect`) target path
+  using value_type = tinyusdz::variant<tinyusdz::monostate, T, Path>;
+
+  nonstd::optional<value_type> value;
+
+  bool authorized() const {
+    return value;
+  }
+
+  nonstd::optional<T> fallback; // may have fallback
   AttrMeta meta;
   bool uniform{false};  // `uniform`
 };
