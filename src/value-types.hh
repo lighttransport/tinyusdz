@@ -147,6 +147,19 @@ class asset_path {
   asset_path(const std::string &a, const std::string &r)
       : asset_path_(a), resolved_path_(r) {}
 
+  bool Resolve() {
+    // TODO;
+    return false;
+  }
+
+  const std::string &GetAssetPath() const {
+    return asset_path_;
+  }
+
+  const std::string GetResolvedPath() const {
+    return resolved_path_;
+  }
+
  private:
   std::string asset_path_;
   std::string resolved_path_;

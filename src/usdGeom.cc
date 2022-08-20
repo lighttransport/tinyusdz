@@ -33,8 +33,10 @@ std::vector<value::normal3f> GeomMesh::GetNormals() const {
         dst = pv.value();
       }
     }
-  } else if (normals.value.size()) {
-    dst = normals.value;
+  } else if (normals.value) {
+    if (auto pv = normals.value.value().get<std::vector<value::normal3f>>()) {
+      dst = pv.value();
+    }
   }
 
   return dst;
@@ -149,21 +151,36 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     return true;
   };
 
-  size_t n = faceVertexIndices.value.size();
-
-  // Currently we only check if face ids are valid.
-  for (size_t i = 0; i < geom_subset_children.size(); i++) {
-    const GeomSubset &subset = geom_subset_children[i];
-
-    if (!CheckFaceIds(n, subset.indices)) {
-      ss << "Face index out-of-range.\n";
-      return nonstd::make_unexpected(ss.str());
-    }
+  if (!faceVertexCounts.value) {
+    // No `faceVertexCounts` definition
+    ss << "`faceVerexCounts` attribute is not present in GeomMesh.\n";
+    return nonstd::make_unexpected(ss.str());
   }
 
-  return nonstd::make_unexpected(
-      "TODO: Implent GeomMesh::ValidateGeomSubset\n");
-  // return true;
+  if (auto pfv = faceVertexCounts.value.value().get<std::vector<int>>()) {
+
+    size_t n = pfv.value().size();
+
+    // Currently we only check if face ids are valid.
+    for (size_t i = 0; i < geom_subset_children.size(); i++) {
+      const GeomSubset &subset = geom_subset_children[i];
+
+      if (!CheckFaceIds(n, subset.indices)) {
+        ss << "Face index out-of-range.\n";
+        return nonstd::make_unexpected(ss.str());
+      }
+    }
+
+    // TODO
+    return nonstd::make_unexpected(
+        "TODO: Implent GeomMesh::ValidateGeomSubset\n");
+  } else if (auto pfvp = faceVertexCounts.value.value().get<Path>()) {
+    return nonstd::make_unexpected(
+        "TODO: Support faceVertexCounts.connect\n");
+  } else {
+    return false;
+  }
+
 }
 
 namespace {

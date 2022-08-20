@@ -23,7 +23,6 @@ static std::string sIndentString = "    ";
 #pragma clang diagnostic pop
 #endif
 
-
 std::string Indent(uint32_t n) {
   std::stringstream ss;
 
@@ -41,6 +40,17 @@ void SetIndentString(const std::string &s) {
 } // namespace pprint
 
 namespace {
+
+// Path quote
+std::string pquote(const Path &p) {
+  return wquote(p.full_path_name(), "<", ">");
+}
+
+// TODO: Triple @
+std::string aquote(const value::AssetPath &p) {
+  return wquote(p.GetAssetPath(), "@", "@");
+}
+
 
 
 #if 0
@@ -680,29 +690,38 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  if (mesh.points.value.size()) {
-    ss << pprint::Indent(indent+1) << "point3[] points = " << mesh.points.value;
+  if (mesh.points.value) {
+    if (auto v = mesh.points.value.value().get<std::vector<value::point3f>>()) {
+      ss << pprint::Indent(indent+1) << "point3[] points = " << v.value();
+    }
     if (mesh.points.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.points.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
-  if (mesh.normals.value.size()) {
-    ss << pprint::Indent(indent+1) << "normal3f[] normals = " << mesh.points.value;
+  if (mesh.normals.value) {
+    if (auto v = mesh.normals.value.value().get<std::vector<value::normal3f>>()) {
+      ss << pprint::Indent(indent+1) << "normal3f[] normals = " << v.value();
+    }
     if (mesh.normals.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.normals.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
-  if (mesh.faceVertexIndices.value.size()) {
-    ss << pprint::Indent(indent+1) << "int[] faceVertexIndices = " << mesh.faceVertexIndices.value;
+  if (mesh.faceVertexIndices.value) {
+    if (auto v = mesh.faceVertexIndices.value.value().get<std::vector<int>>()) {
+      ss << pprint::Indent(indent+1) << "int[] faceVertexIndices = " << v.value();
+    }
     if (mesh.faceVertexIndices.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.faceVertexIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
-  if (mesh.faceVertexCounts.value.size()) {
-    ss << pprint::Indent(indent+1) << "int[] faceVertexCounts = " << mesh.faceVertexCounts.value;
+  if (mesh.faceVertexCounts.value) {
+    if (auto v = mesh.faceVertexCounts.value.value().get<std::vector<int>>()) {
+      ss << pprint::Indent(indent+1) << "int[] faceVertexCounts = " << v.value();
+    }
+
     if (mesh.faceVertexCounts.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.faceVertexCounts.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
@@ -710,36 +729,56 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   }
 
   // subdiv
-  if (mesh.cornerIndices.value.size()) {
-    ss << pprint::Indent(indent+1) << "int[] cornerIndices = " << mesh.cornerIndices.value << "\n";
+  if (mesh.cornerIndices.value) {
+    if (auto v = mesh.cornerIndices.value.value().get<std::vector<int>>()) {
+      ss << pprint::Indent(indent+1) << "int[] cornerIndices = " << v.value();
+    }
     if (mesh.cornerIndices.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.cornerIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
-  if (mesh.cornerSharpnesses.value.size()) {
-    ss << pprint::Indent(indent+1) << "float[] cornerSharpnesses = " << mesh.cornerSharpnesses.value << "\n";
+  if (mesh.cornerSharpnesses.value) {
+    if (auto v = mesh.cornerSharpnesses.value.value().get<std::vector<float>>()) {
+      ss << pprint::Indent(indent+1) << "float[] cornerSharpnesses = " << v.value();
+    }
     if (mesh.cornerSharpnesses.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.cornerSharpnesses.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
-  if (mesh.creaseIndices.value.size()) {
-    ss << pprint::Indent(indent+1) << "int[] creaseIndices = " << mesh.creaseIndices.value << "\n";
+  if (mesh.creaseIndices.value) {
+    if (auto v = mesh.creaseIndices.value.value().get<std::vector<int>>()) {
+      ss << pprint::Indent(indent+1) << "int[] creaseIndices = " << v.value();
+    }
     if (mesh.creaseIndices.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.creaseIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
-  if (mesh.creaseLengths.value.size()) {
-    ss << pprint::Indent(indent+1) << "int[] creaseLengths = " << mesh.creaseLengths.value << "\n";
+  if (mesh.creaseLengths.value) {
+    if (auto v = mesh.creaseLengths.value.value().get<std::vector<int>>()) {
+      ss << pprint::Indent(indent+1) << "int[] creaseLengths = " << v.value();
+    }
     if (mesh.creaseLengths.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.creaseLengths.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
-  if (mesh.holeIndices.value.size()) {
-    ss << pprint::Indent(indent+1) << "int[] holeIndices = " << mesh.holeIndices.value << "\n";
+  if (mesh.creaseSharpnesses.value) {
+    if (auto v = mesh.creaseSharpnesses.value.value().get<std::vector<float>>()) {
+      ss << pprint::Indent(indent+1) << "float[] creaseSharpnesses = " << v.value();
+    }
+    if (mesh.creaseSharpnesses.meta.authorized()) {
+      ss << " (\n" << print_attr_metas(mesh.creaseSharpnesses.meta, indent + 2) << pprint::Indent(indent+1) << ")";
+    }
+    ss << "\n";
+  }
+
+  if (mesh.holeIndices.value) {
+    if (auto v = mesh.holeIndices.value.value().get<std::vector<int>>()) {
+      ss << pprint::Indent(indent+1) << "int[] holeIndices = " << v.value();
+    }
     if (mesh.holeIndices.meta.authorized()) {
       ss << " (\n" << print_attr_metas(mesh.holeIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
@@ -776,15 +815,18 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  if (geom.points.value.size()) {
-    ss << pprint::Indent(indent+1) << "point3f[] points = " << geom.points.value;
+  if (geom.points.value) {
+    if (auto v = geom.points.value.value().get<std::vector<value::point3f>>()) {
+      ss << pprint::Indent(indent+1) << "point3f[] points = " << v.value();
+    }
     if (geom.points.meta.authorized()) {
       ss << " (\n" << print_attr_metas(geom.points.meta, indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
 
-  if (geom.normals.value.size()) {
+  if (geom.normals.value) {
+    if (geom.normals.value.value
     ss << pprint::Indent(indent+1) << "normal3f[] normals = " << geom.normals.value;
     if (geom.normals.meta.authorized()) {
       ss << " (\n" << print_attr_metas(geom.normals.meta, indent + 2) << pprint::Indent(indent+1) << ")";
@@ -792,7 +834,7 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
     ss << "\n";
   }
 
-  if (geom.widths.value.size()) {
+  if (geom.widths.value) {
     ss << pprint::Indent(indent+1) << "float[] widths = " << geom.widths.value << "\n";
     if (geom.widths.meta.authorized()) {
       ss << " (\n" << print_attr_metas(geom.widths.meta, indent + 2) << pprint::Indent(indent+1) << ")";
@@ -1072,6 +1114,20 @@ std::string to_string(const UsdPrimvarReader_float &shader, const uint32_t inden
   // members
   ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdPrimvarReader_float\"\n";
 
+  if (shader.varname) {
+    ss << pprint::Indent(indent+1) << "token varname = " << quote(shader.varname.value().str()) << "\n";
+    // TODO: meta
+  }
+
+  if (shader.result) {
+    ss << pprint::Indent(indent+1) << "float outputs:result";
+    if (shader.result.value().target) {
+      ss << " = " << quote(shader.result.value().target.value().full_path_name()) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
@@ -1080,10 +1136,128 @@ std::string to_string(const UsdPrimvarReader_float &shader, const uint32_t inden
 
 }
 
+std::string to_string(const UsdPrimvarReader_float2 &shader, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  //print_prim_metas(shader.metas, indent);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdPrimvarReader_float2\"\n";
+
+  if (shader.varname) {
+    ss << pprint::Indent(indent+1) << "token varname = " << quote(shader.varname.value().str()) << "\n";
+    // TODO: meta
+  }
+
+  if (shader.result) {
+    ss << pprint::Indent(indent+1) << "float2 outputs:result";
+    if (shader.result.value().target) {
+      ss << " = " << quote(shader.result.value().target.value().full_path_name()) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const UsdUVTexture &shader, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  //print_prim_metas(shader.metas, indent);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdUVTexture\"\n";
+
+  if (shader.file) {
+    ss << pprint::Indent(indent+1) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
+    // TODO: meta
+  }
+
+  if (shader.sourceColorSpace) {
+    ss << pprint::Indent(indent+1) << "token inputs:sourceColorSpace = " << quote(to_string(shader.sourceColorSpace.value())) << "\n";
+    // TOOD: meta
+  }
+
+  if (shader.st.authorized()) {
+  //  if (shader.st.
+  //  ss << pprint::Indent(indent+1)
+  }
+
+  if (shader.outputsR) {
+    ss << pprint::Indent(indent+1) << "float outputs:r";
+    if (shader.outputsR.value().target) {
+      ss << " = " << quote(shader.outputsR.value().target.value().full_path_name()) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
+  if (shader.outputsG) {
+    ss << pprint::Indent(indent+1) << "float outputs:g";
+    if (shader.outputsG.value().target) {
+      ss << " = " << quote(shader.outputsG.value().target.value().full_path_name()) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
+  if (shader.outputsB) {
+    ss << pprint::Indent(indent+1) << "float outputs:b";
+    if (shader.outputsB.value().target) {
+      ss << " = " << quote(shader.outputsB.value().target.value().full_path_name()) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
+  if (shader.outputsA) {
+    ss << pprint::Indent(indent+1) << "float outputs:a";
+    if (shader.outputsA.value().target) {
+      ss << " = " << quote(shader.outputsA.value().target.value().full_path_name()) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
+  if (shader.outputsRGB) {
+    ss << pprint::Indent(indent+1) << "float3 outputs:rgb";
+    if (shader.outputsRGB.value().target) {
+      ss << " = " << quote(shader.outputsRGB.value().target.value().full_path_name()) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
 
-  if (auto pv = shader.value.get_value<UsdPrimvarReader_float>()) {
-    return to_string(pv.value());
+  if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
+    return to_string(pvr.value());
+  } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
+    return to_string(pvr2.value());
+  } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
+    return to_string(pvtex.value());
+  } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
+    return to_string(pvs.value());
   } else {
     // generic Shader class
     std::stringstream ss;

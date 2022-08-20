@@ -810,6 +810,14 @@ struct AttribType<nonstd::optional<T>> {
   }
 };
 
+template<typename T>
+struct AttribType<TypedAttribute<T>> {
+  using type = T;
+  static std::string type_name() {
+    return value::TypeTrait<T>::type_name();
+  }
+};
+
 
 // `AttribWithFallback<T>` -> T
 template<typename T>
@@ -826,7 +834,7 @@ struct AttribType<AttribWithFallback<T>> {
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)                    \
   if (__prop.first == __name) {                                              \
     const PrimAttrib &attr = __prop.second.attrib;                           \
-    if (auto v = attr.var.get_value<AttribType<decltype(__target.value)>::type>()) {                 \
+    if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) {                 \
       __target.value = v.value();                                                  \
       __target.meta = attr.meta; \
       __table.insert(__name); \
@@ -834,8 +842,37 @@ struct AttribType<AttribWithFallback<T>> {
       PUSH_ERROR_AND_RETURN(                                                 \
           "(" << value::TypeTrait<__klass>::type_name()                      \
               << ") Property type mismatch. " << __name << " expects type `" \
-              << AttribType<decltype(__target.value)>::type_name()           \
+              << AttribType<decltype(__target)>::type_name()           \
               << "` but defined as type `" << attr.var.type_name() << "`");  \
+    }                                                                        \
+  } else
+
+// e.g. "float2 inputs:st"
+// Attribute type is EmptyAttrib, Attrib(fallback) or Connection(`target` is Path)
+// TODO: Attrib assign
+#define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target)                    \
+  if (__prop.first == __name) {                                              \
+    const Property &p = __prop.second; \
+    const PrimAttrib &attr = p.attrib;                           \
+    /* Type info is stored in attrib.type_name */ \
+    if (AttribType<decltype(__target)>::type_name() == attr.type_name) {                 \
+      if (auto pv = p.GetConnectionTarget()) { \
+        __target.value = pv.value(); \
+        __table.insert(__name); \
+      } else if (p.type == Property::Type::EmptyAttrib) { \
+        __target.value = tinyusdz::monostate(); \
+        __table.insert(__name); \
+      } else { \
+        PUSH_ERROR_AND_RETURN(                                                 \
+            "(" << value::TypeTrait<__klass>::type_name()                      \
+                << ") TODO: Connection Property `" << __name << "` must not be value assigned."); \
+      } \
+    } else {                                                                 \
+      PUSH_ERROR_AND_RETURN(                                                 \
+          "(" << value::TypeTrait<__klass>::type_name()                      \
+              << ") Property type mismatch. " << __name << " expects type `" \
+              << AttribType<decltype(__target)>::type_name()           \
+              << "` but defined as type `" << attr.type_name << "`");  \
     }                                                                        \
   } else
 
@@ -2478,7 +2515,7 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
 
   for (auto &prop : properties) {
     PARSE_PROPERTY(table, prop, "inputs:file", UsdPreviewSurface, texture->file)
-    PARSE_PROPERTY(table, prop, "inputs:st", UsdPreviewSurface, texture->st)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdPreviewSurface, texture->st)
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace", SourceColorSpaceHandler, UsdPreviewSurface, texture->sourceColorSpace)
     PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:r", UsdPreviewSurface, texture->outputsR)
     PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:g", UsdPreviewSurface, texture->outputsG)
