@@ -116,6 +116,8 @@ std::string to_string(const UsdPrimvarReader_float3 &shader, const uint32_t inde
 std::string to_string(const UsdPrimvarReader_float4 &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdPrimvarReader_int &shader, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const UsdUVTexture::SourceColorSpace &v);
+
 std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent = 0, bool closing_brace = true);

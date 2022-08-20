@@ -74,9 +74,10 @@ struct UsdUVTexture {
 
   std::string name;
 
-  value::AssetPath file; // "asset inputs:file" interfaceOnly
+  nonstd::optional<value::AssetPath> file; // "asset inputs:file" interfaceOnly
 
-  AttribWithFallback<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
+  //AttribWithFallback<Connection<value::texcoord2f>> st{Connection<value::texcoord2f>({0.0f, 0.0f})}; // "inputs:st"
+  TypedAttribute<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
 
   nonstd::optional<Wrap> wrapS; // "inputs:wrapS" interfaceOnly
   nonstd::optional<Wrap> wrapT; // "inputs:wrapT" interfaceOnly
