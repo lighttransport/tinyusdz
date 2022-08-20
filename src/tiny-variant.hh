@@ -46,7 +46,7 @@ For more information, please refer to <http://unlicense.org/>
 
 namespace tinyusdz {
 
-namespace {
+namespace variant_detail {
 
 // Equivalent to std::aligned_storage
 template <unsigned int Len, unsigned int Align>
@@ -191,10 +191,13 @@ struct is_one_of<T, S, Ts...> {
       std::is_same<T, S>::value || is_one_of<T, Ts...>::value;
 };
 
-} // namespace
+} // namespace variant_detail
+
+using namespace variant_detail;
 
 template <typename... Ts>
 struct variant {
+
  private:
   static const unsigned int data_size = static_max<sizeof(Ts)...>::value;
   static const unsigned int data_align = static_max<alignof(Ts)...>::value;
