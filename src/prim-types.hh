@@ -896,7 +896,7 @@ class TypedAttribute {
   nonstd::optional<value_type> value;
 
   bool authorized() const {
-    return value;
+    return value.has_value();
   }
 
   nonstd::optional<T> fallback; // may have fallback

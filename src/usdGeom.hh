@@ -187,6 +187,13 @@ struct GeomMesh : GPrim {
   void UpdateBy(const GPrim &pprim);
 
   ///
+  /// @brief Returns `points`.
+  ///
+  /// @return points vectro(copied). Returns empty when `points` attribute is not defined.
+  ///
+  std::vector<value::point3f> GetPoints() const;
+
+  ///
   /// @brief Returns normals vector. Precedence order: `primvars:normals` then
   /// `normals`.
   ///

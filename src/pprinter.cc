@@ -41,10 +41,12 @@ void SetIndentString(const std::string &s) {
 
 namespace {
 
+#if 0
 // Path quote
 std::string pquote(const Path &p) {
   return wquote(p.full_path_name(), "<", ">");
 }
+#endif
 
 // TODO: Triple @
 std::string aquote(const value::AssetPath &p) {
@@ -52,14 +54,6 @@ std::string aquote(const value::AssetPath &p) {
 }
 
 
-
-#if 0
-std::string to_string(const float &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-#endif
 
 std::string to_string(const double &v) {
   std::stringstream ss;
@@ -182,6 +176,24 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 }
 
 template<typename T>
+std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &name, const uint32_t indent) {
+
+  std::stringstream ss;
+
+  if (attr.value) {
+    if (auto v = attr.value.value().template get<T>()) {
+      ss << pprint::Indent(indent) << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
+    }
+    if (attr.meta.authorized()) {
+      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    }
+    ss << "\n";
+  }
+
+  return ss.str();
+}
+
+template<typename T>
 std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
 
@@ -292,6 +304,18 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
     case tinyusdz::GeomMesh::SubdivisionScheme::Loop: { s = "loop"; break; }
     case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: { s = "bilinear"; break; }
     case tinyusdz::GeomMesh::SubdivisionScheme::None: { s = "none"; break; }
+  }
+
+  return s;
+}
+
+std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
+  std::string s;
+
+  switch (v) {
+    case tinyusdz::UsdUVTexture::SourceColorSpace::Auto: { s = "auto"; break; }
+    case tinyusdz::UsdUVTexture::SourceColorSpace::Raw: {s = "raw"; break; }
+    case tinyusdz::UsdUVTexture::SourceColorSpace::SRGB: { s = "sRGB"; break; }
   }
 
   return s;
@@ -690,100 +714,18 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  if (mesh.points.value) {
-    if (auto v = mesh.points.value.value().get<std::vector<value::point3f>>()) {
-      ss << pprint::Indent(indent+1) << "point3[] points = " << v.value();
-    }
-    if (mesh.points.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.points.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-  if (mesh.normals.value) {
-    if (auto v = mesh.normals.value.value().get<std::vector<value::normal3f>>()) {
-      ss << pprint::Indent(indent+1) << "normal3f[] normals = " << v.value();
-    }
-    if (mesh.normals.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.normals.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-  if (mesh.faceVertexIndices.value) {
-    if (auto v = mesh.faceVertexIndices.value.value().get<std::vector<int>>()) {
-      ss << pprint::Indent(indent+1) << "int[] faceVertexIndices = " << v.value();
-    }
-    if (mesh.faceVertexIndices.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.faceVertexIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-  if (mesh.faceVertexCounts.value) {
-    if (auto v = mesh.faceVertexCounts.value.value().get<std::vector<int>>()) {
-      ss << pprint::Indent(indent+1) << "int[] faceVertexCounts = " << v.value();
-    }
-
-    if (mesh.faceVertexCounts.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.faceVertexCounts.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
+  ss << print_typed_attr(mesh.points, "points", indent+1);
+  ss << print_typed_attr(mesh.normals, "normals", indent+1);
+  ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
+  ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
 
   // subdiv
-  if (mesh.cornerIndices.value) {
-    if (auto v = mesh.cornerIndices.value.value().get<std::vector<int>>()) {
-      ss << pprint::Indent(indent+1) << "int[] cornerIndices = " << v.value();
-    }
-    if (mesh.cornerIndices.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.cornerIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-  if (mesh.cornerSharpnesses.value) {
-    if (auto v = mesh.cornerSharpnesses.value.value().get<std::vector<float>>()) {
-      ss << pprint::Indent(indent+1) << "float[] cornerSharpnesses = " << v.value();
-    }
-    if (mesh.cornerSharpnesses.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.cornerSharpnesses.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-  if (mesh.creaseIndices.value) {
-    if (auto v = mesh.creaseIndices.value.value().get<std::vector<int>>()) {
-      ss << pprint::Indent(indent+1) << "int[] creaseIndices = " << v.value();
-    }
-    if (mesh.creaseIndices.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.creaseIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-  if (mesh.creaseLengths.value) {
-    if (auto v = mesh.creaseLengths.value.value().get<std::vector<int>>()) {
-      ss << pprint::Indent(indent+1) << "int[] creaseLengths = " << v.value();
-    }
-    if (mesh.creaseLengths.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.creaseLengths.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-  if (mesh.creaseSharpnesses.value) {
-    if (auto v = mesh.creaseSharpnesses.value.value().get<std::vector<float>>()) {
-      ss << pprint::Indent(indent+1) << "float[] creaseSharpnesses = " << v.value();
-    }
-    if (mesh.creaseSharpnesses.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.creaseSharpnesses.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-
-  if (mesh.holeIndices.value) {
-    if (auto v = mesh.holeIndices.value.value().get<std::vector<int>>()) {
-      ss << pprint::Indent(indent+1) << "int[] holeIndices = " << v.value();
-    }
-    if (mesh.holeIndices.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(mesh.holeIndices.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
+  ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
+  ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
+  ss << print_typed_attr(mesh.creaseIndices, "creaseIndices", indent+1);
+  ss << print_typed_attr(mesh.creaseLengths, "creaseLengths", indent+1);
+  ss << print_typed_attr(mesh.creaseSharpnesses, "creaseSharpnesses", indent+1);
+  ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent+1);
 
   if (mesh.subdivisionScheme.authorized()) {
     ss << pprint::Indent(indent+1) << "uniform token subdivisionScheme = " << quote(to_string(mesh.subdivisionScheme.get())) << "\n";
@@ -815,32 +757,8 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  if (geom.points.value) {
-    if (auto v = geom.points.value.value().get<std::vector<value::point3f>>()) {
-      ss << pprint::Indent(indent+1) << "point3f[] points = " << v.value();
-    }
-    if (geom.points.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(geom.points.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-
-  if (geom.normals.value) {
-    if (geom.normals.value.value
-    ss << pprint::Indent(indent+1) << "normal3f[] normals = " << geom.normals.value;
-    if (geom.normals.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(geom.normals.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-
-  if (geom.widths.value) {
-    ss << pprint::Indent(indent+1) << "float[] widths = " << geom.widths.value << "\n";
-    if (geom.widths.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(geom.widths.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
+  ss << print_typed_attr(geom.points, "points", indent);
+  ss << print_typed_attr(geom.widths, "widths", indent);
 
   ss << print_gprim_predefined(geom, indent);
 
@@ -912,37 +830,12 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
     ss << pprint::Indent(indent+1) << "uniform token wrap = " << quote(to_string(geom.wrap.value())) << "\n";
   }
 
-  if (geom.points.value.size()) {
-    ss << pprint::Indent(indent+1) << "point3f[] points = " << geom.points.value;
-    if (geom.points.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(geom.points.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-
-  if (geom.normals.value.size()) {
-    ss << pprint::Indent(indent+1) << "normal3f[] normals = " << geom.normals.value;
-    if (geom.normals.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(geom.normals.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-
-  if (geom.widths.value.size()) {
-    ss << pprint::Indent(indent+1) << "float[] widths = " << geom.widths.value << "\n";
-    if (geom.widths.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(geom.widths.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
-
-  if (geom.curveVertexCounts.value.size()) {
-    ss << pprint::Indent(indent+1) << "int[] curveVertexCounts = " << geom.curveVertexCounts.value << "\n";
-    if (geom.curveVertexCounts.meta.authorized()) {
-      ss << " (\n" << print_attr_metas(geom.curveVertexCounts.meta, indent + 2) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
+  ss << print_typed_attr(geom.points, "points", indent);
+  ss << print_typed_attr(geom.normals, "normals", indent);
+  ss << print_typed_attr(geom.widths, "widths", indent);
+  ss << print_typed_attr(geom.velocities, "velocites", indent);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent);
+  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent);
 
   ss << print_gprim_predefined(geom, indent+1);
 
@@ -1167,6 +1060,28 @@ std::string to_string(const UsdPrimvarReader_float2 &shader, const uint32_t inde
   }
 
   return ss.str();
+}
+
+std::string to_string(const UsdPreviewSurface &shader, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  //print_prim_metas(shader.metas, indent);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdPreviewSurface\"\n";
+
+  ss << "[TODO]\n";
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+
 }
 
 std::string to_string(const UsdUVTexture &shader, const uint32_t indent, bool closing_brace) {

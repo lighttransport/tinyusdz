@@ -69,7 +69,7 @@ struct UsdUVTexture {
   enum class SourceColorSpace {
     Auto, // "auto"(default)
     Raw, // "raw"
-    SRgb, // "sRGB
+    SRGB, // "sRGB
   };
 
   std::string name;

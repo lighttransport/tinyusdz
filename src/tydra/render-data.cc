@@ -29,11 +29,12 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const GeomMesh &mesh) {
   RenderMesh dst;
 
-  {
-    dst.points.resize(mesh.points.value.size());
-    memcpy(dst.points.data(), mesh.points.value.data(),
-           sizeof(value::float3) * mesh.points.value.size());
-  }
+  //if (mesh.points.value) {
+  //  if (auto pv = mesh.points.
+  //  dst.points.resize(mesh.points.value.size());
+  //  memcpy(dst.points.data(), mesh.points.value.data(),
+  //         sizeof(value::float3) * mesh.points.value.size());
+  //}
 
   // normals
   {
