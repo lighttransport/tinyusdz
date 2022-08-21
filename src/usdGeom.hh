@@ -107,6 +107,7 @@ struct GeomSubset {
 
   ElementType elementType{ElementType::Face};  // must be face
   FamilyType familyType{FamilyType::Unrestricted};
+  nonstd::optional<value::token> familyName; // "token familyName"
 
   nonstd::expected<bool, std::string> SetElementType(const std::string &str) {
     if (str == "face") {

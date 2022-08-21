@@ -732,7 +732,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
 
   // material binding.
   if (mesh.materialBinding) {
-    ss << pprint::Indent(indent) << "rel material:binding = " << pquote(mesh.materialBinding.value().binding) << "\n";
+    ss << pprint::Indent(indent+1) << "rel material:binding = " << pquote(mesh.materialBinding.value().binding) << "\n";
   }
 
   // subdiv
@@ -1038,12 +1038,12 @@ static std::string print_shader_params(const UsdPrimvarReader_float &shader, con
   std::stringstream ss;
 
   if (shader.varname) {
-    ss << pprint::Indent(indent+1) << "token varname = " << quote(shader.varname.value().str()) << "\n";
+    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
     // TODO: meta
   }
 
   if (shader.result) {
-    ss << pprint::Indent(indent+1) << "float outputs:result";
+    ss << pprint::Indent(indent) << "float outputs:result";
     if (shader.result.value().target) {
       ss << " = " << quote(shader.result.value().target.value().full_path_name()) << "\n";
     }
@@ -1059,12 +1059,12 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
   std::stringstream ss;
 
   if (shader.varname) {
-    ss << pprint::Indent(indent+1) << "token varname = " << quote(shader.varname.value().str()) << "\n";
+    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
     // TODO: meta
   }
 
   if (shader.result) {
-    ss << pprint::Indent(indent+1) << "float2 outputs:result";
+    ss << pprint::Indent(indent) << "float2 outputs:result";
     if (shader.result.value().target) {
       ss << " = " << quote(shader.result.value().target.value().full_path_name()) << "\n";
     }
@@ -1078,10 +1078,40 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
 
 static std::string print_shader_params(const UsdPreviewSurface &shader, const uint32_t indent) {
   std::stringstream ss;
-  (void)shader;
-  (void)indent;
 
-  ss << "[TODO] UsdPreviewSurface.\n";
+  ss << print_typed_attr(shader.diffuseColor, "inputs:diffuseColor", indent);
+  ss << print_typed_attr(shader.emissiveColor, "inputs:emissiveColor", indent);
+  ss << print_typed_attr(shader.useSpecularWorkflow, "inputs:useSpecularWorkflow", indent);
+  ss << print_typed_attr(shader.ior, "inputs:ior", indent);
+  ss << print_typed_attr(shader.specularColor, "inputs:specularColor", indent);
+  ss << print_typed_attr(shader.metallic, "inputs:metallic", indent);
+  ss << print_typed_attr(shader.clearcoat, "inputs:clearcoat", indent);
+  ss << print_typed_attr(shader.clearcoatRoughness, "inputs:clearcoatRoughness", indent);
+  ss << print_typed_attr(shader.roughness, "inputs:roughness", indent);
+  ss << print_typed_attr(shader.opacity, "inputs:opacity", indent);
+  ss << print_typed_attr(shader.opacityThreshold, "inputs:opacityThreshold", indent);
+  ss << print_typed_attr(shader.normal, "inputs:normal", indent);
+  ss << print_typed_attr(shader.displacement, "inputs:displacement", indent);
+  ss << print_typed_attr(shader.occlusion, "inputs:occlusion", indent);
+
+  // Outputs
+  if (shader.outputsSurface) {
+    ss << pprint::Indent(indent) << "token outputs:surface";
+    if (shader.outputsSurface.value().IsPath()) {
+      ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
+
+  if (shader.outputsDisplacement) {
+    ss << pprint::Indent(indent) << "token outputs:displacement";
+    if (shader.outputsSurface.value().IsPath()) {
+      ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath) << "\n";
+    }
+    ss << "\n";
+    // TODO: meta
+  }
 
   return ss.str();
 
@@ -1091,12 +1121,12 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   std::stringstream ss;
 
   if (shader.file) {
-    ss << pprint::Indent(indent+1) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
+    ss << pprint::Indent(indent) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
     // TODO: meta
   }
 
   if (shader.sourceColorSpace) {
-    ss << pprint::Indent(indent+1) << "token inputs:sourceColorSpace = " << quote(to_string(shader.sourceColorSpace.value())) << "\n";
+    ss << pprint::Indent(indent) << "token inputs:sourceColorSpace = " << quote(to_string(shader.sourceColorSpace.value())) << "\n";
     // TOOD: meta
   }
 
@@ -1106,7 +1136,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   }
 
   if (shader.outputsR) {
-    ss << pprint::Indent(indent+1) << "float outputs:r";
+    ss << pprint::Indent(indent) << "float outputs:r";
     if (shader.outputsR.value().target) {
       ss << " = " << quote(shader.outputsR.value().target.value().full_path_name()) << "\n";
     }
@@ -1115,7 +1145,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   }
 
   if (shader.outputsG) {
-    ss << pprint::Indent(indent+1) << "float outputs:g";
+    ss << pprint::Indent(indent) << "float outputs:g";
     if (shader.outputsG.value().target) {
       ss << " = " << quote(shader.outputsG.value().target.value().full_path_name()) << "\n";
     }
@@ -1124,7 +1154,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   }
 
   if (shader.outputsB) {
-    ss << pprint::Indent(indent+1) << "float outputs:b";
+    ss << pprint::Indent(indent) << "float outputs:b";
     if (shader.outputsB.value().target) {
       ss << " = " << quote(shader.outputsB.value().target.value().full_path_name()) << "\n";
     }
@@ -1133,7 +1163,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   }
 
   if (shader.outputsA) {
-    ss << pprint::Indent(indent+1) << "float outputs:a";
+    ss << pprint::Indent(indent) << "float outputs:a";
     if (shader.outputsA.value().target) {
       ss << " = " << quote(shader.outputsA.value().target.value().full_path_name()) << "\n";
     }
@@ -1142,7 +1172,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   }
 
   if (shader.outputsRGB) {
-    ss << pprint::Indent(indent+1) << "float3 outputs:rgb";
+    ss << pprint::Indent(indent) << "float3 outputs:rgb";
     if (shader.outputsRGB.value().target) {
       ss << " = " << quote(shader.outputsRGB.value().target.value().full_path_name()) << "\n";
     }
@@ -1169,13 +1199,13 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
     ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
 
     if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
-      ss << print_shader_params(pvr.value(), indent);
+      ss << print_shader_params(pvr.value(), indent+1);
     } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
-      ss << print_shader_params(pvr2.value(), indent);
+      ss << print_shader_params(pvr2.value(), indent+1);
     } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
-      ss << print_shader_params(pvtex.value(), indent);
+      ss << print_shader_params(pvtex.value(), indent+1);
     } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
-      ss << print_shader_params(pvs.value(), indent);
+      ss << print_shader_params(pvs.value(), indent+1);
     } else {
       ss << pprint::Indent(indent+1) << "[TODO] Generic Shader\n";
     }

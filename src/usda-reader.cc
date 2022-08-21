@@ -470,10 +470,6 @@ class USDAReader::Impl {
           _prim_nodes[size_t(primIdx)].prim = std::move(prim);
           DCOUT("prim[" << primIdx << "].ty = "
                         << _prim_nodes[size_t(primIdx)].prim.type_name());
-          if (_prim_nodes.size() > 1) {
-            DCOUT("prim[0].ty = " << _prim_nodes[0].prim.type_name());
-            DCOUT("prim[1].ty = " << _prim_nodes[1].prim.type_name());
-          }
           _prim_nodes[size_t(primIdx)].parent = parentPrimIdx;
 
           if (parentPrimIdx == -1) {
@@ -852,7 +848,18 @@ struct AttribType<AttribWithFallback<T>> {
 // Attribute type is EmptyAttrib, Attrib(fallback) or Connection(`target` is Path)
 // TODO: Attrib assign
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target)                    \
-  if (__prop.first == __name) {                                              \
+  if (__prop.first.compare(__name ".connect") == 0) { \
+    std::string propname = removeSuffix(__name, ".connect"); \
+    const Property &p = __prop.second; \
+    if (auto pv = p.GetConnectionTarget()) { \
+      __target.value = pv.value(); \
+      __table.insert(propname); \
+    } else { \
+      PUSH_ERROR_AND_RETURN(                                                 \
+          "(" << value::TypeTrait<__klass>::type_name()                      \
+              << ") No connection target or invalid syntax of connection target for attribute `" << propname << "`."); \
+    } \
+  } else if (__prop.first == __name) {                                              \
     const Property &p = __prop.second; \
     const PrimAttrib &attr = p.attrib;                           \
     /* Type info is stored in attrib.type_name */ \
@@ -1232,10 +1239,6 @@ bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
 }
 #endif
 
-///
-/// For GeomSubset, we embed it to parent GeomMesh and don't create Prim node
-/// for it.
-///
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
   _parser.RegisterPrimConstructFunction(
@@ -1245,8 +1248,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           const std::map<std::string, Property> &properties,
           std::vector<std::pair<ListEditQual, Reference>> &references)
           -> nonstd::expected<bool, std::string> {
-        // Parent Prim must be GeomMesh
-        const Path parent = full_path.GetParentPrim();
+
+        const Path& parent = full_path.GetParentPrim();
         if (!parent.IsValid()) {
           return nonstd::make_unexpected("Invalid Prim path.");
         }
@@ -1266,15 +1269,10 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
               "Unexpected parentPrimIdx for GeomSubset.");
         }
 
+        // TODO: Construct GeomMesh first
+#if 0
         const std::string parent_primpath = parent.GetPrimPart();
 
-#if 0
-        if (!_primpath_to_prim_idx_map.count(parent_primpath)) {
-          PUSH_ERROR_AND_RETURN("Parent Prim not found.");
-        }
-
-        size_t prim_idx = _primpath_to_prim_idx_map[parent_primpath];
-#endif
         const PrimNode &pnode = _prim_nodes[size_t(parentPrimIdx)];
         auto pmesh = pnode.prim.get_value<GeomMesh>();
         if (!pmesh) {
@@ -1356,11 +1354,119 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
                   "supported.");
             }
           } else {
-            PUSH_WARN("GeomSubeet: TODO: " + item.first);
+            PUSH_WARN("GeomSubset: TODO: " + item.first);
           }
         }
 
         mesh.geom_subset_children.emplace_back(subset);
+#else
+
+        // Add GeomSubset to _prim_nodes.
+
+        GeomSubset subset;
+
+        for (auto item : properties) {
+          if (item.first == "elementType") {
+            if (item.second.IsRel()) {
+              PUSH_ERROR_AND_RETURN(
+                  "`elementType` property as Relation is not supported.");
+            }
+            if (auto pv = item.second.attrib.var.get_value<value::token>()) {
+              if (item.second.attrib.uniform) {
+                auto e = subset.SetElementType(pv.value().str());
+                if (!e) {
+                  PUSH_ERROR_AND_RETURN(e.error());
+                }
+                continue;
+              }
+            }
+            PUSH_ERROR_AND_RETURN(
+                "`elementType` property must be `uniform token` type.");
+          } else if (item.first == "familyType") {
+            if (item.second.IsRel()) {
+              PUSH_ERROR_AND_RETURN(
+                  "`familyType` property as Relation is not supported.");
+            }
+
+            if (auto pv = item.second.attrib.var.get_value<value::token>()) {
+              if (item.second.attrib.uniform) {
+                auto e = subset.SetFamilyType(pv.value().str());
+                if (!e) {
+                  PUSH_ERROR_AND_RETURN(e.error());
+                }
+                continue;
+              }
+            }
+            PUSH_ERROR_AND_RETURN(
+                "`familyType` property must be `uniform token` type.");
+
+          } else if (item.first == "indices") {
+            if (item.second.IsRel()) {
+              PUSH_ERROR_AND_RETURN(
+                  "`indices` property as Relation is not supported.");
+            }
+
+            if (auto pv =
+                    item.second.attrib.var.get_value<std::vector<int>>()) {
+              // int -> uint
+              std::transform(pv.value().begin(), pv.value().end(),
+                             std::back_inserter(subset.indices),
+                             [](int a) { return uint32_t(a); });
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`indices` property must be `int[]` type, but got `" +
+                  item.second.attrib.var.type_name() + "`");
+            }
+
+          } else if (item.first == "material:binding") {
+            if (!item.second.IsRel()) {
+              PUSH_ERROR_AND_RETURN(
+                  "`material:binding` property as Attribute is not "
+                  "supported.");
+            }
+          } else if (item.first == "familyName") {
+            if (item.second.IsRel()) {
+              PUSH_ERROR_AND_RETURN(
+                  "`familyName` property as Relation is not supported.");
+            }
+
+            if (auto pv = item.second.attrib.var.get_value<value::token>()) {
+              subset.familyName = pv.value();
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`familyName` property must be `token` type, but got `" +
+                  item.second.attrib.var.type_name() + "`");
+            }
+          } else {
+            PUSH_WARN("GeomSubset: TODO: " + item.first);
+          }
+        }
+
+        subset.name = prim_name.GetPrimPart();
+
+        // Add to scene graph.
+        // NOTE: Scene graph is constructed from bottom up manner(Children
+        // first), so add this primIdx to parent's children.
+        if (size_t(primIdx) >= _prim_nodes.size()) {
+          _prim_nodes.resize(size_t(primIdx) + 1);
+        }
+        DCOUT("sz " << std::to_string(_prim_nodes.size())
+                    << ", primIdx = " << primIdx);
+
+        _prim_nodes[size_t(primIdx)].prim = std::move(subset);
+        DCOUT("prim[" << primIdx << "].ty = "
+                      << _prim_nodes[size_t(primIdx)].prim.type_name());
+        _prim_nodes[size_t(primIdx)].parent = parentPrimIdx;
+
+        if (parentPrimIdx == -1) {
+          _toplevel_prims.push_back(size_t(primIdx));
+        } else {
+          _prim_nodes[size_t(parentPrimIdx)].children.push_back(
+              size_t(primIdx));
+        }
+
+
+#endif
 
         return true;
       });
@@ -2215,7 +2321,7 @@ bool USDAReader::Impl::ReconstructPrim(
         }
 
       } else {
-        PUSH_WARN("TODO: rel");
+        PUSH_WARN("TODO: rel : " << prop.first);
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "points", GeomMesh, mesh->points)
@@ -2491,20 +2597,20 @@ bool USDAReader::Impl::ReconstructShader<UsdPreviewSurface>(
 
   std::set<std::string> table;
   for (auto &prop : properties) {
-    PARSE_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface, surface->diffuseColor)
-    PARSE_PROPERTY(table, prop, "inputs:emissiveColor", UsdPreviewSurface, surface->emissiveColor)
-    PARSE_PROPERTY(table, prop, "inputs:roughness", UsdPreviewSurface, surface->roughness)
-    PARSE_PROPERTY(table, prop, "inputs:specularColor", UsdPreviewSurface, surface->specularColor) // specular workflow
-    PARSE_PROPERTY(table, prop, "inputs:metallic", UsdPreviewSurface, surface->metallic) // non specular workflow
-    PARSE_PROPERTY(table, prop, "inputs:clearcoat", UsdPreviewSurface, surface->clearcoat)
-    PARSE_PROPERTY(table, prop, "inputs:clearcoatRoughness", UsdPreviewSurface, surface->clearcoatRoughness)
-    PARSE_PROPERTY(table, prop, "inputs:opacity", UsdPreviewSurface, surface->opacity)
-    PARSE_PROPERTY(table, prop, "inputs:opacityThreshold", UsdPreviewSurface, surface->opacityThreshold)
-    PARSE_PROPERTY(table, prop, "inputs:ior", UsdPreviewSurface, surface->ior)
-    PARSE_PROPERTY(table, prop, "inputs:normal", UsdPreviewSurface, surface->normal)
-    PARSE_PROPERTY(table, prop, "inputs:dispacement", UsdPreviewSurface, surface->displacement)
-    PARSE_PROPERTY(table, prop, "inputs:occlusion", UsdPreviewSurface, surface->occlusion)
-    PARSE_PROPERTY(table, prop, "inputs:useSpecularWorkflow", UsdPreviewSurface, surface->useSpecularWorkflow)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface, surface->diffuseColor)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:emissiveColor", UsdPreviewSurface, surface->emissiveColor)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:roughness", UsdPreviewSurface, surface->roughness)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:specularColor", UsdPreviewSurface, surface->specularColor) // specular workflow
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:metallic", UsdPreviewSurface, surface->metallic) // non specular workflow
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoat", UsdPreviewSurface, surface->clearcoat)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoatRoughness", UsdPreviewSurface, surface->clearcoatRoughness)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacity", UsdPreviewSurface, surface->opacity)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacityThreshold", UsdPreviewSurface, surface->opacityThreshold)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:ior", UsdPreviewSurface, surface->ior)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:normal", UsdPreviewSurface, surface->normal)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:dispacement", UsdPreviewSurface, surface->displacement)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:occlusion", UsdPreviewSurface, surface->occlusion)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:useSpecularWorkflow", UsdPreviewSurface, surface->useSpecularWorkflow)
     PARSE_PROPERTY(table, prop, "outputs:surface", UsdPreviewSurface, surface->outputsSurface)
     PARSE_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface, surface->outputsDisplacement)
     ADD_PROPERY(table, prop, UsdPreviewSurface, surface->props)

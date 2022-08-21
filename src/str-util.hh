@@ -18,6 +18,22 @@ inline bool endsWith(const std::string &str, const std::string &suffix) {
          (str.find(suffix, str.size() - suffix.size()) != std::string::npos);
 }
 
+inline std::string removePrefix(const std::string &str, const std::string &prefix) {
+  
+  if (startsWith(str, prefix)) {
+    return str.substr(prefix.length());
+  } 
+  return str;
+}
+
+inline std::string removeSuffix(const std::string &str, const std::string &suffix) {
+  
+  if (endsWith(str, suffix)) {
+    return str.substr(0, str.length() - suffix.length());
+  } 
+  return str;
+}
+
 inline bool contains(const std::string &str, char c) {
   return str.find(c) == std::string::npos;
 }
