@@ -1,5 +1,5 @@
 
-#include <ctime>
+//#include <ctime>
 
 //
 #include "pprinter.hh"
@@ -41,12 +41,10 @@ void SetIndentString(const std::string &s) {
 
 namespace {
 
-#if 0
 // Path quote
 std::string pquote(const Path &p) {
   return wquote(p.full_path_name(), "<", ">");
 }
-#endif
 
 // TODO: Triple @
 std::string aquote(const value::AssetPath &p) {
@@ -247,16 +245,29 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
       const PrimAttrib &attr = item.second.attrib;
 
       bool isUniform = attr.uniform;
-      std::string ty = attr.var.type_name();
 
       if (isUniform) {
         ss << "uniform ";
       }
 
+      std::string ty;
+
+      if (prop.IsConnection()) {
+        ty = attr.type_name;
+      } else {
+        // TODO: Use `attr.type_name`?
+        ty = attr.var.type_name();
+      }
       ss << ty << " " << item.first;
 
       if (prop.IsConnection()) {
-        ss << ".connect = <TODO: Connection>";
+
+        // Currently, ".connect" prefix included in property's name
+
+        ss << " = ";
+        if (prop.rel.IsPath()) {
+          ss << pquote(prop.rel.targetPath);
+        }
       } else if (prop.IsEmpty()) {
         ss << "\n";
       } else {
@@ -719,6 +730,11 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
   ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
 
+  // material binding.
+  if (mesh.materialBinding) {
+    ss << pprint::Indent(indent) << "rel material:binding = " << pquote(mesh.materialBinding.value().binding) << "\n";
+  }
+
   // subdiv
   ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
   ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
@@ -738,7 +754,30 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
 
   ss << print_gprim_predefined(mesh, indent+1);
 
+  // GeomSubset.
+  for (const auto &subset : mesh.geom_subset_children) {
+    ss << to_string(subset, indent+1, /* closing_brace */true);
+  }
+
   ss << print_props(mesh.props, indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const GeomSubset &geom, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def GeomSubset \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  // args
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  ss << pprint::Indent(indent+1) << "[TODO] GeomSubset\n";
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -995,17 +1034,8 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   return ss.str();
 }
 
-std::string to_string(const UsdPrimvarReader_float &shader, const uint32_t indent, bool closing_brace) {
+static std::string print_shader_params(const UsdPrimvarReader_float &shader, const uint32_t indent) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  //print_prim_metas(shader.metas, indent);
-  ss << pprint::Indent(indent) << ")\n";
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdPrimvarReader_float\"\n";
 
   if (shader.varname) {
     ss << pprint::Indent(indent+1) << "token varname = " << quote(shader.varname.value().str()) << "\n";
@@ -1021,25 +1051,12 @@ std::string to_string(const UsdPrimvarReader_float &shader, const uint32_t inden
     // TODO: meta
   }
 
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
   return ss.str();
 
 }
 
-std::string to_string(const UsdPrimvarReader_float2 &shader, const uint32_t indent, bool closing_brace) {
+static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, const uint32_t indent) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  //print_prim_metas(shader.metas, indent);
-  ss << pprint::Indent(indent) << ")\n";
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdPrimvarReader_float2\"\n";
 
   if (shader.varname) {
     ss << pprint::Indent(indent+1) << "token varname = " << quote(shader.varname.value().str()) << "\n";
@@ -1055,46 +1072,23 @@ std::string to_string(const UsdPrimvarReader_float2 &shader, const uint32_t inde
     // TODO: meta
   }
 
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
 
   return ss.str();
 }
 
-std::string to_string(const UsdPreviewSurface &shader, const uint32_t indent, bool closing_brace) {
+static std::string print_shader_params(const UsdPreviewSurface &shader, const uint32_t indent) {
   std::stringstream ss;
+  (void)shader;
+  (void)indent;
 
-  ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  //print_prim_metas(shader.metas, indent);
-  ss << pprint::Indent(indent) << ")\n";
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdPreviewSurface\"\n";
-
-  ss << "[TODO]\n";
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
+  ss << "[TODO] UsdPreviewSurface.\n";
 
   return ss.str();
 
 }
 
-std::string to_string(const UsdUVTexture &shader, const uint32_t indent, bool closing_brace) {
+static std::string print_shader_params(const UsdUVTexture &shader, const uint32_t indent) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  //print_prim_metas(shader.metas, indent);
-  ss << pprint::Indent(indent) << ")\n";
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << pprint::Indent(indent+1) << "uniform token info:id = \"UsdUVTexture\"\n";
 
   if (shader.file) {
     ss << pprint::Indent(indent+1) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
@@ -1156,24 +1150,12 @@ std::string to_string(const UsdUVTexture &shader, const uint32_t indent, bool cl
     // TODO: meta
   }
 
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
   return ss.str();
 }
 
 std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
 
-  if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
-    return to_string(pvr.value());
-  } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
-    return to_string(pvr2.value());
-  } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
-    return to_string(pvtex.value());
-  } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
-    return to_string(pvs.value());
-  } else {
+  {
     // generic Shader class
     std::stringstream ss;
 
@@ -1185,6 +1167,18 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
 
     // members
     ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
+
+    if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
+      ss << print_shader_params(pvr.value(), indent);
+    } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
+      ss << print_shader_params(pvr2.value(), indent);
+    } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
+      ss << print_shader_params(pvtex.value(), indent);
+    } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
+      ss << print_shader_params(pvs.value(), indent);
+    } else {
+      ss << pprint::Indent(indent+1) << "[TODO] Generic Shader\n";
+    }
 
     if (closing_brace) {
       ss << pprint::Indent(indent) << "}\n";

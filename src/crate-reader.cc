@@ -2834,7 +2834,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
                              : parentPath.AppendElement(elemToken.str());
 
       // also set leaf path for 'primChildren' check
-      _elemPaths[pathIndexes[thisIndex]] = Path(elemToken.str());
+      _elemPaths[pathIndexes[thisIndex]] = Path(elemToken.str(), "");
       //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
     }
 
