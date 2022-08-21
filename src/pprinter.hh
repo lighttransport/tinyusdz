@@ -95,6 +95,8 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent = 0, bool 
 std::string to_string(const GeomCube &geom, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const GeomCamera &camera, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const GeomSubset &subset, const uint32_t indent = 0, bool closing_brace = true);
+
 std::string to_string(const GeomBasisCurves::Wrap &v);
 std::string to_string(const GeomBasisCurves::Type &v);
 std::string to_string(const GeomBasisCurves::Basis &v);
@@ -108,6 +110,7 @@ std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0, bool
 std::string to_string(const Material &material, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Shader &shader, const uint32_t indent = 0, bool closing_brace = true);
 
+#if 0
 std::string to_string(const UsdPreviewSurface &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdUVTexture &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdPrimvarReader_float &shader, const uint32_t indent = 0, bool closing_brace = true);
@@ -115,6 +118,7 @@ std::string to_string(const UsdPrimvarReader_float2 &shader, const uint32_t inde
 std::string to_string(const UsdPrimvarReader_float3 &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdPrimvarReader_float4 &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdPrimvarReader_int &shader, const uint32_t indent = 0, bool closing_brace = true);
+#endif
 
 std::string to_string(const UsdUVTexture::SourceColorSpace v);
 

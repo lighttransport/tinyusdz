@@ -281,10 +281,11 @@ bool operator==(const Path &lhs, const Path &rhs) {
 // -- Path
 //
 
-Path::Path(const std::string &p) {
+Path::Path(const std::string &p, const std::string &prop) {
   //
   // For absolute path, starts with '/' and no other '/' exists.
   // For property part, '.' exists only once.
+  (void)prop;
 
   if (p.size() < 1) {
     valid = false;
@@ -306,7 +307,7 @@ Path::Path(const std::string &p) {
       prim_part = p;
       valid = true;
     } else if (ndots == 1) {
-      if (p.size() < 3) { 
+      if (p.size() < 3) {
         // "/."
         valid = false;
         return;
@@ -335,7 +336,7 @@ Path::Path(const std::string &p) {
 
       prop_part = prop_name.erase(0, 1); // remove '.'
       prim_part = p.substr(0, size_t(loc));
-      
+
       valid = true;
 
     } else {
@@ -367,7 +368,7 @@ Path::Path(const std::string &p) {
       valid = true;
     } else if (ndots == 1) {
 
-      if (p.size() < 3) { 
+      if (p.size() < 3) {
         // "/."
         valid = false;
         return;
@@ -437,7 +438,7 @@ Path Path::AppendProperty(const std::string &elem) {
 std::pair<Path, Path> Path::SplitAtRoot() const {
   if (IsAbsolutePath()) {
     if (IsRootPath()) {
-      return std::make_pair(Path("/"), Path());
+      return std::make_pair(Path("/", ""), Path());
     }
 
     std::string p = full_path_name();
@@ -461,7 +462,10 @@ std::pair<Path, Path> Path::SplitAtRoot() const {
       std::string root = p.substr(0, n);
       std::string siblings = p.substr(n);
 
-      return std::make_pair(root, siblings);
+      Path rP(root, "");
+      Path sP(siblings, "");
+
+      return std::make_pair(rP, sP);
     }
 
     return std::make_pair(*this, Path());
@@ -520,10 +524,10 @@ Path Path::GetParentPrim() const {
 
   if (n == 0) {
     // return root
-    return Path("/");
+    return Path("/", "");
   }
 
-  return Path(prim_part.substr(0, n));
+  return Path(prim_part.substr(0, n), "");
 }
 
 }  // namespace tinyusdz

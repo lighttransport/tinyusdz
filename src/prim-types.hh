@@ -343,7 +343,7 @@ class Path {
   Path() : valid(false) {}
 
   // `p` is split into prim_part and prop_part
-  Path(const std::string &p);
+  //Path(const std::string &p);
   Path(const std::string &prim, const std::string &prop);
 
   // : prim_part(prim), valid(true) {}
@@ -385,7 +385,7 @@ class Path {
 
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
-  static Path RootPath() { return Path("/"); }
+  static Path RootPath() { return Path("/", ""); }
   //static Path RelativePath() { return Path("."); }
 
   Path AppendProperty(const std::string &elem);
@@ -673,23 +673,71 @@ struct ConnectionPath {
 #endif
 
 // Relation
-struct Relation {
+class Relation {
  public:
   // monostate(empty(define only)), string, Path or PathVector
-  tinyusdz::variant<tinyusdz::monostate, std::string, Path, std::vector<Path>> targets;
+  //tinyusdz::variant<tinyusdz::monostate, std::string, Path, std::vector<Path>> targets;
 
-  bool IsEmpty() {
-    return targets.is<tinyusdz::monostate>();
+  // For some reaon, using tinyusdz::variant will cause double-free in some environemt on clang,
+  // so use old-fashioned way for a while.
+  enum class Type {
+    Empty,
+    String,
+    Path,
+    PathVector
+  };
+
+  Type type{Type::Empty};
+  std::string targetString;
+  Path targetPath;
+  std::vector<Path> targetPathVector;
+
+  static Relation MakeEmpty() {
+    Relation r;
+    r.SetEmpty();
+    return r;
   }
 
-  Relation() : targets(tinyusdz::monostate()) {
+  void SetEmpty() {
+    type = Type::Empty;
+  }
+
+  void Set(const std::string &s) {
+    targetString = s;
+    type = Type::String;
+  }
+
+  void Set(const Path &p) {
+    targetPath = p;
+    type = Type::Path;
+  }
+
+  void Set(const std::vector<Path> &pv) {
+    targetPathVector = pv;
+    type = Type::PathVector;
+  }
+
+  bool IsEmpty() const {
+    return type == Type::Empty;
+  }
+
+  bool IsString() const {
+    return type == Type::String;
+  }
+
+  bool IsPath() const {
+    return type == Type::Path;
+  }
+
+  bool IsPathVector() const {
+    return type == Type::PathVector;
   }
 
 };
 
 //
 // Connection is a typed version of Relation
-// 
+//
 template<typename T>
 class Connection
 {
@@ -703,7 +751,7 @@ class Connection
   //Connection() = delete;
   //Connection(const T &v) : fallback(v) {}
 
-  nonstd::optional<Path> target; 
+  nonstd::optional<Path> target;
 };
 
 // Variable class for Prim and Attribute Metadataum.
@@ -906,7 +954,8 @@ class TypedAttribute {
 
 // Attribute or Relation/Connection. And has this property is custom or not
 // (Need to lookup schema if the property is custom or not for Crate data)
-struct Property {
+class Property {
+ public:
   enum class Type {
     EmptyAttrib,        // Attrib with no data.
     Attrib,             // contains actual data
@@ -943,6 +992,15 @@ struct Property {
     }
   }
 
+  Property(Relation &&r, bool isConnection, bool custom)
+      : rel(std::move(r)), has_custom(custom) {
+    if (isConnection) {
+      type = Type::Connection;
+    } else {
+      type = Type::Relation;
+    }
+  }
+
   bool IsAttrib() const {
     return (type == Type::EmptyAttrib) || (type == Type::Attrib);
   }
@@ -959,8 +1017,8 @@ struct Property {
       return nonstd::nullopt;
     }
 
-    if (auto pv = rel.targets.get_if<Path>()) {
-      return (*pv);
+    if (rel.IsPath()) {
+      return rel.targetPath;
     }
 
     return nonstd::nullopt;
