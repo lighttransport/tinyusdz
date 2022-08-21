@@ -301,10 +301,12 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
 
 static void RegisterPrimTypes(std::set<std::string> &d)
 {
+  // TODO: Register Prim types from USDAReader.
   d.insert("Xform");
   d.insert("Sphere");
   d.insert("Cube");
   d.insert("Cylinder");
+  d.insert("Capsule");
   d.insert("BasisCurves");
   d.insert("Mesh");
   d.insert("Scope");
@@ -313,9 +315,11 @@ static void RegisterPrimTypes(std::set<std::string> &d)
   d.insert("Shader");
   d.insert("SphereLight");
   d.insert("DomeLight");
+  d.insert("DiskLight");
   d.insert("Camera");
   d.insert("SkelRoot");
   d.insert("Skeleton");
+  d.insert("GeomSubset");
 
   d.insert("GPrim");
 
@@ -4713,6 +4717,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     }
 
     if (c != '=') {
+
+      DCOUT("Relationship with no target: " << attr_name);
+
       // No targets.
       Property p(custom_qual);
       p.type = Property::Type::NoTargetsRelation;
@@ -4752,6 +4759,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     if (c == '(') {
       PUSH_ERROR_AND_RETURN("TODO: Parse metadatum of property \"" + attr_name + "\"");
     }
+
+    DCOUT("Relationship with target: " << attr_name);
+    Property p(rel, /* isConnection */false, custom_qual);
+
+    (*props)[attr_name] = p;
 
     return true;
   }

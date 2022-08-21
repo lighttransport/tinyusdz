@@ -241,6 +241,24 @@ public:
         }
     }
 
+    /// Casts (with no type_info checks) the storage pointer as const T*.
+    template<typename T>
+    const T* cast() const noexcept
+    {
+        return requires_allocation<typename std::decay<T>::type>::value?
+            reinterpret_cast<const T*>(storage.dynamic) :
+            reinterpret_cast<const T*>(&storage.stack);
+    }
+
+    /// Casts (with no type_info checks) the storage pointer as T*.
+    template<typename T>
+    T* cast() noexcept
+    {
+        return requires_allocation<typename std::decay<T>::type>::value?
+            reinterpret_cast<T*>(storage.dynamic) :
+            reinterpret_cast<T*>(&storage.stack);
+    }
+
 private: // Storage and Virtual Method Table
 
     union storage_union
@@ -464,23 +482,6 @@ protected:
     }
 #endif
 
-    /// Casts (with no type_info checks) the storage pointer as const T*.
-    template<typename T>
-    const T* cast() const noexcept
-    {
-        return requires_allocation<typename std::decay<T>::type>::value?
-            reinterpret_cast<const T*>(storage.dynamic) :
-            reinterpret_cast<const T*>(&storage.stack);
-    }
-
-    /// Casts (with no type_info checks) the storage pointer as T*.
-    template<typename T>
-    T* cast() noexcept
-    {
-        return requires_allocation<typename std::decay<T>::type>::value?
-            reinterpret_cast<T*>(storage.dynamic) :
-            reinterpret_cast<T*>(&storage.stack);
-    }
 
 private:
     storage_union storage; // on offset(0) so no padding for align
@@ -603,6 +604,19 @@ inline ValueType* any_cast(any* operand) noexcept
         return operand->cast<ValueType>();
     else
         return nullptr;
+}
+
+// Force cast(no type check)
+template<typename ValueType>
+inline const ValueType* cast(const any* operand) noexcept
+{
+    return operand->cast<ValueType>();
+}
+
+template<typename ValueType>
+inline ValueType* cast(any* operand) noexcept
+{
+    return operand->cast<ValueType>();
 }
 
 }
