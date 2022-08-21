@@ -492,7 +492,8 @@ class USDAReader::Impl {
   void ImportScene(tinyusdz::Stage &scene) { _imported_scene = scene; }
 
   bool HasPath(const std::string &path) {
-    TokenizedPath tokPath(path);
+    Path p(path, "");
+    TokenizedPath tokPath(p);
     (void)tokPath;
     PUSH_ERROR_AND_RETURN("TODO: HasPath()");
   }
@@ -1447,12 +1448,21 @@ bool USDAReader::Impl::ReconstructPrim(
     } else if (prop.first == kMaterialBinding) {
       if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
         MaterialBindingAPI m;
+#if 0
         if (auto pathv = pv.value().targets.get<Path>()) {
           m.binding = pathv.value();
           sphere->materialBinding = m;
         } else {
           PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
         }
+#else
+        if (pv.value().IsPath()) {
+          m.binding = pv.value().targetPath;
+          sphere->materialBinding = m;
+        } else {
+          PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+        }
+#endif
       } else {
         PUSH_WARN(kMaterialBinding << " must be Relationship ");
       }
@@ -2177,18 +2187,31 @@ bool USDAReader::Impl::ReconstructPrim(
     if (prop.second.IsRel()) {
       if (prop.first == "material:binding") {
         // Must be relation of type Path.
-        if (prop.second.IsRel() && !prop.second.IsEmpty()) {
+        if (prop.second.IsRel() && prop.second.IsEmpty()) {
           PUSH_ERROR_AND_RETURN(
               "`material:binding` must be a Relation with Path target.");
         }
 
-        const Relation &rel = prop.second.rel;
-        if (auto pv = rel.targets.get<Path>()) {
-          MaterialBindingAPI m;
-          m.binding = pv.value();
-          mesh->materialBinding = m;
-        } else {
-          PUSH_ERROR_AND_RETURN("`material:binding` target must be Path.");
+        {
+          const Relation &rel = prop.second.rel;
+#if 0
+          if (auto pv = rel.targets.get<Path>()) {
+            MaterialBindingAPI m;
+            m.binding = pv.value();
+            mesh->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN("`material:binding` target must be Path.");
+          }
+#else
+          if (rel.IsPath()) {
+            DCOUT("materialBinding");
+            MaterialBindingAPI m;
+            m.binding = rel.targetPath;
+            mesh->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN("`material:binding` target must be Path.");
+          }
+#endif
         }
 
       } else {

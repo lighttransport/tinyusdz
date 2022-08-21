@@ -647,7 +647,7 @@ bool AsciiParser::ReadBasicType(Path *value) {
       return false;
     }
 
-    (*value) = Path(str);
+    (*value) = Path(str, "");
 
     return true;
   } else {
@@ -2675,7 +2675,7 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
     if (c == '_') {
       // ok
     } else if (!std::isalpha(int(c))) {
-      DCOUT("Invalid identiefier.");
+      DCOUT("Invalid identiefier: c = " << c);
       _sr->seek_from_current(-1);
       return false;
     }
@@ -2718,14 +2718,6 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
   if (!SkipWhitespace()) {
     return false;
   }
-
-  // Must start with '/'
-  if (!Expect('/')) {
-    PushError("Path identifier must start with '/'");
-    return false;
-  }
-
-  ss << '/';
 
   // read until '>'
   bool ok = false;
@@ -3248,6 +3240,7 @@ bool AsciiParser::SkipWhitespaceAndNewline() {
 }
 
 bool AsciiParser::SkipCommentAndWhitespaceAndNewline() {
+  // Skip multiple line of comments.
   while (!_sr->eof()) {
     char c;
     if (!_sr->read1(&c)) {
@@ -3766,7 +3759,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
         return false;
       }
 
-      out->prim_path = path;
+      out->prim_path = Path(path, "");
     } else {
       if (!Rewind(1)) {
         return false;
@@ -4451,7 +4444,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         return false;
       }
 
-      DCOUT("Attribute meta name: " << token); 
+      DCOUT("Attribute meta name: " << token);
 
       if ((token != "interpolation") && (token != "customData") &&
           (token != "elementSize")) {
@@ -4481,7 +4474,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           return false;
         }
 
-        DCOUT("Got `interpolation` meta : " << value); 
+        DCOUT("Got `interpolation` meta : " << value);
         out_meta->interpolation = InterpolationFromString(value);
       } else if (token == "elementSize") {
         uint32_t value;
@@ -4489,7 +4482,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
         }
 
-        DCOUT("Got `elementSize` meta : " << value); 
+        DCOUT("Got `elementSize` meta : " << value);
         out_meta->elementSize = value;
       } else if (token == "customData") {
         std::map<std::string, MetaVariable> dict;
@@ -4550,7 +4543,7 @@ bool AsciiParser::ParseRelation(Relation *result) {
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse String.");
     }
-    result->targets = value;
+    result->Set(value);
 
   } else if (c == '<') {
     // Path
@@ -4558,14 +4551,14 @@ bool AsciiParser::ParseRelation(Relation *result) {
     if (!ReadBasicType<Path>(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse Path.");
     }
-    result->targets = value;
+    result->Set(value);
   } else if (c == '[') {
     // PathVector
     std::vector<Path> value;
     if (!ParseBasicTypeArray(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse PathVector.");
     }
-    result->targets = value;
+    result->Set(value);
   } else {
     PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) + "\" found. Expects string, Path or PathVector.");
   }
@@ -4663,6 +4656,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   //           | (custom?) rel attr_name = pathvector meta
   //           | (custom?) rel attr_name meta
   //           ;
+
+  // Skip comment
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
 
   // Parse `custom`
   bool custom_qual = MaybeCustom();
@@ -4872,6 +4870,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
   if (isConnection) {
 
+    DCOUT("isConnection");
+
     // Target Must be Path
     Path path;
     if (!ReadBasicType(&path)) {
@@ -4879,9 +4879,10 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     }
 
     Relation rel;
-    rel.targets = path;
+    rel.Set(path);
 
     Property p(rel, /* isConnection*/ true, custom_qual);
+    p.attrib.type_name = type_name;
 
     (*props)[primattr_name] = p;
 
@@ -5519,6 +5520,11 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
   //        | def_block
   //        | prim_attr+
   while (!_sr->eof()) {
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
     char c;
     if (!Char1(&c)) {
       return false;
@@ -5532,6 +5538,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
         return false;
       }
 
+      DCOUT("Read stmt token");
       Identifier tok;
       if (!ReadBasicType(&tok)) {
         // maybe ';'?
@@ -5559,6 +5566,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
         }
       } else {
 
+        DCOUT("Enter ParsePrimAttr.");
         // Assume PrimAttr
         if (!ParsePrimAttr(&props)) {
           PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
@@ -5687,9 +5695,9 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
 
     auto construct_fun = _prim_construct_fun_map[pTy];
 
-    Path fullpath(GetCurrentPath());
-    Path pname(prim_name);
-    nonstd::expected<bool, std::string> ret = construct_fun(fullpath, prim_name, primIdx, parentPrimIdx, props, references);
+    Path fullpath(GetCurrentPath(), "");
+    Path pname(prim_name, "");
+    nonstd::expected<bool, std::string> ret = construct_fun(fullpath, pname, primIdx, parentPrimIdx, props, references);
 
     if (!ret) {
       // construction failed.

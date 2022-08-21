@@ -637,25 +637,25 @@ nonstd::optional<Path> GetPath(const value::Value &v)
   //
   // TODO: Find a better C++ way... use a std::function?
   //
-  if (auto pv = v.get_value<Xform>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GPrim>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomMesh>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomBasisCurves>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomSphere>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomCube>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomCylinder>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomCapsule>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomCone>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomSubset>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<GeomCamera>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<Xform>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GPrim>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomMesh>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomBasisCurves>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomSphere>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomCube>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomCylinder>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomCapsule>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomCone>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomSubset>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<GeomCamera>()) { return Path(pv.value().name, ""); }
 
-  if (auto pv = v.get_value<LuxDomeLight>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<LuxSphereLight>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<LuxDomeLight>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<LuxSphereLight>()) { return Path(pv.value().name, ""); }
   //if (auto pv = v.get_value<LuxCylinderLight>()) { return Path(pv.value().name); }
   //if (auto pv = v.get_value<LuxDiskLight>()) { return Path(pv.value().name); }
 
-  if (auto pv = v.get_value<Material>()) { return Path(pv.value().name); }
-  if (auto pv = v.get_value<Shader>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<Material>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<Shader>()) { return Path(pv.value().name, ""); }
   //if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
   //if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name); }
 
