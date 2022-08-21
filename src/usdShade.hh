@@ -114,28 +114,29 @@ struct UsdPreviewSurface {
 
   std::string name;
 
-  AttribWithFallback<value::color3f> diffuseColor{{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
-  AttribWithFallback<value::color3f> emissiveColor{{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
+  TypedAttribute<value::color3f> diffuseColor{{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
+  TypedAttribute<value::color3f> emissiveColor{{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
 
-  AttribWithFallback<int> useSpecularWorkflow{0}; // "inputs:useSpecularWorkflow"
+  TypedAttribute<int> useSpecularWorkflow{0}; // "inputs:useSpecularWorkflow"
 
   // specular workflow
-  AttribWithFallback<value::color3f> specularColor{{0.0f, 0.0f, 0.0f}};
+  TypedAttribute<value::color3f> specularColor{{0.0f, 0.0f, 0.0f}};
 
   // metalness workflow
-  AttribWithFallback<float> metallic{0.0f};  // "inputs:clearcoat"
+  //AttribWithFallback<float> metallic{0.0f};  // "inputs:metallic"
+  TypedAttribute<float> metallic{0.0f};  // "inputs:metallic"
 
   //
-  AttribWithFallback<float> clearcoat{0.0f};  // "inputs:clearcoat"
-  AttribWithFallback<float> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
-  AttribWithFallback<float> roughness{0.5f};  // "inputs:roughness"
-  AttribWithFallback<float> opacity{1.0f};  // "inputs:opacity"
-  AttribWithFallback<float> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
-  AttribWithFallback<float> ior{1.5f};  // "inputs:ior"
+  TypedAttribute<float> clearcoat{0.0f};  // "inputs:clearcoat"
+  TypedAttribute<float> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
+  TypedAttribute<float> roughness{0.5f};  // "inputs:roughness"
+  TypedAttribute<float> opacity{1.0f};  // "inputs:opacity"
+  TypedAttribute<float> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
+  TypedAttribute<float> ior{1.5f};  // "inputs:ior"
 
-  AttribWithFallback<value::normal3f> normal{{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
-  AttribWithFallback<float> displacement{0.0f}; // "inputs:displacement"
-  AttribWithFallback<float> occlusion{0.0f}; // "inputs:occlusion"
+  TypedAttribute<value::normal3f> normal{{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
+  TypedAttribute<float> displacement{0.0f}; // "inputs:displacement"
+  TypedAttribute<float> occlusion{0.0f}; // "inputs:occlusion"
 
   //
   // Outputs

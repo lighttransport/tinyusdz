@@ -91,10 +91,9 @@ struct PrimVar {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       //return *reinterpret_cast<const T *>(var.values[0].value());
-      if (auto pv = linb::any_cast<const T>(&var.values[0])) {
-        return (*pv);
-      }
-      return nonstd::nullopt;
+      
+      // TODO: strict type check.
+      return *linb::cast<const T>(&var.values[0]);
     }
     return nonstd::nullopt;
   }
@@ -113,7 +112,8 @@ struct PrimVar {
     } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
-      return linb::any_cast<const T>(&var.values[0]);
+      // TODO: strict type check.
+      return *linb::cast<const T>(&var.values[0]);
     }
 
     return nullptr;
