@@ -19,18 +19,18 @@ inline bool endsWith(const std::string &str, const std::string &suffix) {
 }
 
 inline std::string removePrefix(const std::string &str, const std::string &prefix) {
-  
+
   if (startsWith(str, prefix)) {
     return str.substr(prefix.length());
-  } 
+  }
   return str;
 }
 
 inline std::string removeSuffix(const std::string &str, const std::string &suffix) {
-  
+
   if (endsWith(str, suffix)) {
     return str.substr(0, str.length() - suffix.length());
-  } 
+  }
   return str;
 }
 
@@ -53,7 +53,7 @@ inline std::string unwrap(const std::string &str, const std::string &delim = "\"
   if (s.substr(0, n) == delim) {
     s.erase(0, n);
   }
-  
+
   if (s.substr(s.size() - n) == delim) {
     s.erase(s.size() - n);
   }
@@ -62,28 +62,41 @@ inline std::string unwrap(const std::string &str, const std::string &delim = "\"
 }
 
 inline std::string quote(const char *s, const std::string &quote_str = "\"") {
-  return quote_str + std::string(s) + quote_str; 
+  return quote_str + std::string(s) + quote_str;
 }
 
 inline std::string quote(const std::string &s, const std::string &quote_str = "\"") {
-  return quote_str + s + quote_str; 
+  return quote_str + s + quote_str;
 }
 
 inline std::string wquote(const std::string &s, const std::string &quote_lstr = "\"", const std::string &quote_rstr = "\"") {
-  return quote_lstr + s + quote_rstr; 
+  return quote_lstr + s + quote_rstr;
 }
 
+#if 0
 template<typename It>
 inline It quote(const It& v, const std::string &quote_str = "\"") {
-  
-  It dst; 
-  
+
+  It dst;
+
   for (typename It::const_iterator it = v.begin(); it != v.end(); ++it) {
     dst.emplace_back(quote((*it), quote_str));
   }
 
   return dst;
 }
+#else
+inline std::vector<std::string> quote(const std::vector<std::string>& vs, const std::string &quote_str = "\"") {
+
+  std::vector<std::string> dst;
+
+  for (const auto &item : vs) {
+    dst.emplace_back(quote(item, quote_str));
+  }
+
+  return dst;
+}
+#endif
 
 // Python like join  ", ".join(v)
 template<typename It>
