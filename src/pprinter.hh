@@ -40,6 +40,8 @@ std::string to_string(Variability variability);
 std::string to_string(SpecType spec_type);
 std::string to_string(Kind kind);
 
+std::string to_string(const XformOp::OpType &ty);
+
 std::string to_string(GeomMesh::InterpolateBoundary interp_boundary);
 std::string to_string(GeomMesh::SubdivisionScheme subd_scheme);
 

@@ -653,7 +653,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
     for (size_t i = 0; i < xform.xformOps.size(); i++) {
       auto xformOp = xform.xformOps[i];
       ss << pprint::Indent(indent);
-      ss << tinyusdz::XformOp::GetOpTypeName(xformOp.op);
+      ss << to_string(xformOp.op);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
@@ -670,7 +670,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
     ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
     for (size_t i = 0; i < xform.xformOps.size(); i++) {
       auto xformOp = xform.xformOps[i];
-      ss << "\"" << tinyusdz::XformOp::GetOpTypeName(xformOp.op);
+      ss << "\"" << to_string(xformOp.op);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
@@ -1346,6 +1346,18 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path) {
   }
   ss << "]";
   return ss.str();
+}
+
+std::string to_string(const XformOp::OpType &op) {
+  std::string ss;
+
+  if (op == XformOp::OpType::ResetXformStack) {
+    ss = "!resetXformStack!";
+  } else {
+    ss = "XformOp::TODO";
+  }
+
+  return ss;
 }
 
 
