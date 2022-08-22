@@ -126,6 +126,27 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
   }
 }
 
+std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << meta.type << " " << meta.name;
+  ss << " [TODO]\n"; 
+
+  return ss.str();
+}
+
+std::string print_customData(const CustomDataType &customData, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "customData = {\n";
+  for (const auto &item : customData) {
+    ss << print_meta(item.second, indent+1);
+  }
+  ss << pprint::Indent(indent) << "\n}\n";
+
+  return ss.str();
+}
+
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   std::stringstream ss;
@@ -135,9 +156,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.customData) {
-    ss << pprint::Indent(indent) << "customData = {\n";
-    ss << pprint::Indent(indent+1) << "TODO:\n";
-    ss << pprint::Indent(indent) << "}\n";
+    ss << print_customData(meta.customData.value(), indent+1);
   }
 
   for (const auto &item : meta.meta) {
@@ -157,7 +176,7 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   }
 
   if (meta.elementSize) {
-    ss << pprint::Indent(indent) << "elementSize = " << quote(to_string(meta.elementSize.value())) << "\n";
+    ss << pprint::Indent(indent) << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
   }
 
   if (meta.customData) {
