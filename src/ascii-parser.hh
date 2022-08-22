@@ -5,11 +5,11 @@
 
 #pragma once
 
-#include <clocale>
 #include <functional>
 #include <stack>
 
-#include "external/better-enums/enum.h"
+//#include "external/better-enums/enum.h"
+#include "prim-types.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
@@ -59,7 +59,7 @@ enum class LoadState {
 
 // Prim Kind
 // https://graphics.pixar.com/usd/release/glossary.html#usdglossary-kind
-#if 0
+#if 1
 enum class Kind {
   Model,  // "model"
   Group,  // "group"
@@ -89,6 +89,7 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
  public:
+  // TODO: refactor
   struct PrimMetas {
     // Frequently used prim metas
     nonstd::optional<Kind> kind;
@@ -230,7 +231,10 @@ class AsciiParser {
   ///
   /// Prim Meta construction callback function
   ///
-  using PrimMetaProcessFunction = std::function<bool(const PrimMetas &metas)>;
+  //using PrimMetaProcessFunction = std::function<bool(const PrimMetas &metas)>;
+
+  using PrimMetaInput = std::map<std::string, std::tuple<ListEditQual, MetaVariable>>;
+
 
   ///
   /// Prim construction callback function
@@ -243,7 +247,7 @@ class AsciiParser {
       std::function<nonstd::expected<bool, std::string>(
           const Path &full_path, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
-          std::vector<std::pair<ListEditQual, Reference>> &references)>;
+          std::vector<std::pair<ListEditQual, Reference>> &references, const PrimMetaInput &in_meta)>;
 
   ///
   /// Register Prim construction callback function.
@@ -655,7 +659,7 @@ class AsciiParser {
   //
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
-  PrimMetaProcessFunction _prim_meta_process_fun;
+  //PrimMetaProcessFunction _prim_meta_process_fun;
   std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
   std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 

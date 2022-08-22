@@ -200,6 +200,7 @@ static void RegisterStageMetas(
   metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers");
 }
 
+#if 0
 // T = better-enums
 template<class T>
 class OneOf
@@ -218,12 +219,14 @@ class OneOf
     return nonstd::make_unexpected(err_msg);
   }
 };
+#endif
 
 static void RegisterPrimMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
-  metas["kind"] = AsciiParser::VariableDef(value::kString, "kind", OneOf<Kind>());
+  //metas["kind"] = AsciiParser::VariableDef(value::kString, "kind", OneOf<Kind>());
+  metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
 
   // Composition arcs
   // Type can be array. i.e. path, path[]
@@ -2371,7 +2374,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
 
   //
   // Supports limited types for customData/Dictionary.
-  // TODO: array_qual
+  // TODO: support more types?
   //
   MetaVariable var;
   if (type_name == value::kBool) {
@@ -2381,17 +2384,33 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     }
     var.value = val;
   } else if (type_name == "float") {
-    float val;
-    if (!ReadBasicType(&val)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `float`");
+    if (array_qual) {
+      std::vector<float> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float[]`");
+      }
+      var.value = vss;
+    } else {
+      float val;
+      if (!ReadBasicType(&val)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float`");
+      }
+      var.value = val;
     }
-    var.value = val;
   } else if (type_name == "string") {
-    std::string str;
-    if (!ReadStringLiteral(&str)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+    if (array_qual) {
+      std::vector<std::string> strs;
+      if (!ParseBasicTypeArray(&strs)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
+      }
+      var.value = strs;
+    } else {
+      std::string str;
+      if (!ReadStringLiteral(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+      }
+      var.value = str;
     }
-    var.value = str;
   } else if (type_name == "token") {
     if (array_qual) {
       std::vector<std::string> strs;
@@ -2414,12 +2433,23 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   } else if (type_name == "dictionary") {
     std::map<std::string, MetaVariable> dict;
 
+    DCOUT("Parse dictionary");
     if (!ParseDict(&dict)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
     }
+    var.obj_value = dict;
   } else {
     PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
   }
+
+  var.type = type_name;
+  if (array_qual) {
+    // TODO: 2D array
+    var.type += "[]";
+  }
+  var.name = key_name;
+
+  DCOUT("key: " << key_name << ", type: " << type_name);
 
   (*out_key) = key_name;
   (*out_var) = var;
@@ -2482,8 +2512,11 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
         return false;
       }
 
-      assert(var.valid());
+      if (!var.valid()) {
+        PUSH_ERROR_AND_RETURN("Invalid Dict element(probably internal issue).");
+      }
 
+      DCOUT("Add to dict: " << key);
       (*out_dict)[key] = var;
     }
   }
@@ -3790,10 +3823,40 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
     DCOUT("bool = " << value);
 
     var.value = value;
+  } else if (vartype == value::kToken) {
+
+    value::token value;
+    if (!ReadBasicType(&value)) {
+      std::string msg = "Token expected for `" + varname + "`.\n";
+      PushError(msg);
+      return false;
+    }
+    DCOUT("token = " << value);
+
+#if 0 // TODO
+    auto ret = def.post_parse_handler(value);
+    if (!ret) {
+      DCOUT("error = " << ret.error());
+      PUSH_ERROR_AND_RETURN("Invalid token for `" + varname + "`. " + ret.error());
+    }
+#endif
+
+    var.value = value;
+  } else if (vartype == "token[]") {
+
+    std::vector<value::token> value;
+    if (!ParseBasicTypeArray(&value)) {
+      std::string msg = "Token array expected for `" + varname + "`.\n";
+      PushError(msg);
+      return false;
+    }
+    // TODO
+    //DCOUT("token[] = " << to_string(value));
+
+    var.value = value;
   } else if (vartype == value::kString) {
 
     std::string value;
-    DCOUT("parse meta = " << value);
     if (!ReadStringLiteral(&value)) {
       std::string msg = "String literal expected for `" + varname + "`.\n";
       PushError(msg);
@@ -3904,6 +3967,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
 
     var.value = values;
   } else if (vartype == value::kDictionary) {
+#if 0
     DCOUT("dict type");
     if (!Expect('{')) {
       PushError("'{' expected.\n");
@@ -3935,9 +3999,19 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
     }
 
     PUSH_WARN("TODO: Implement object type(customData)");
+#else
+    DCOUT("Parse dict in Prim meta.");
+    std::map<std::string, MetaVariable> dict;
+    if (!ParseDict(&dict)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` in Prim meta.");
+    }
+    var.obj_value = dict;
+#endif
   } else {
     PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
   }
+
+  var.type = vartype;
 
   (*outvar) = var;
 
@@ -4323,6 +4397,7 @@ AsciiParser::ParsePrimMeta() {
     PushError("Failed to parse Prim meta value.\n");
     return nonstd::nullopt;
   }
+  var.name = varname;
 
   return std::make_tuple(qual, var);
 }
@@ -4386,7 +4461,7 @@ bool AsciiParser::ParsePrimMetas(
 
     // ty = std::tuple<ListEditQual, MetaVariable>;
     if (auto m = ParsePrimMeta()) {
-      DCOUT("arg: list-edit qual = " << tinyusdz::to_string(std::get<0>(m.value()))
+      DCOUT("PrimMeta: list-edit qual = " << tinyusdz::to_string(std::get<0>(m.value()))
                                      << ", name = " << std::get<1>(m.value()).name);
 
       (*args)[std::get<1>(m.value()).name] = m.value();
@@ -5508,7 +5583,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
     // DCOUT("`references.size` = " + std::to_string(references.size()));
   }
 
-#if 0
+#if 0 // TODO
   if (auto v = ReconstructPrimMetas(in_metas)) {
     DCOUT("TODO: ");
   } else {
@@ -5709,7 +5784,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
 
     Path fullpath(GetCurrentPath(), "");
     Path pname(prim_name, "");
-    nonstd::expected<bool, std::string> ret = construct_fun(fullpath, pname, primIdx, parentPrimIdx, props, references);
+    nonstd::expected<bool, std::string> ret = construct_fun(fullpath, pname, primIdx, parentPrimIdx, props, references, in_metas);
 
     if (!ret) {
       // construction failed.
