@@ -57,6 +57,9 @@ struct GPrim {
 
   // child nodes
   std::vector<GPrim> children;
+
+  // Prim metadataum.
+  PrimMeta meta;
 };
 
 struct Xform : GPrim {
@@ -139,6 +142,7 @@ struct GeomSubset {
   std::vector<uint32_t> indices;
 
   std::map<std::string, Property> props;  // custom Properties
+  PrimMeta meta;
 };
 
 // Polygon mesh geometry

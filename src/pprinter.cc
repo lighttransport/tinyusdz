@@ -129,8 +129,18 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << meta.type << " " << meta.name;
-  ss << " [TODO]\n"; 
+  //ss << "TODO: isObject " << meta.IsObject() << ", isValue " << meta.IsValue() << "\n";
+
+  if (meta.IsObject()) {
+    // dict
+    ss << pprint::Indent(indent) << "dictionary " << meta.name << " {\n";
+    for (const auto &item : meta.obj_value) { 
+      ss << print_meta(item.second, indent+1);
+    }
+    ss << pprint::Indent(indent) << "}\n";
+  } else {
+    ss << pprint::Indent(indent) << meta.type << " " << meta.name << " = " << pprint_value(meta.value) << "\n";
+  }
 
   return ss.str();
 }
@@ -142,7 +152,7 @@ std::string print_customData(const CustomDataType &customData, const uint32_t in
   for (const auto &item : customData) {
     ss << print_meta(item.second, indent+1);
   }
-  ss << pprint::Indent(indent) << "\n}\n";
+  ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
@@ -180,11 +190,10 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   }
 
   if (meta.customData) {
-    ss << pprint::Indent(indent) << "customData = {\n";
-    ss << pprint::Indent(indent+1) << "TODO:\n";
-    ss << pprint::Indent(indent) << "}\n";
+    ss << print_customData(meta.customData.value(), indent);
   }
 
+  // other user defined metadataum.
   for (const auto &item : meta.meta) {
     ss << pprint::Indent(indent) << item.first << " = TODO\n";
   }
@@ -635,7 +644,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
 
   ss << pprint::Indent(indent) << "def Xform \"" << xform.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(xform.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -739,7 +748,9 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
 
   ss << pprint::Indent(indent) << "def Mesh \"" << mesh.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  if (mesh.meta.authorized()) {
+    ss << print_prim_metas(mesh.meta, indent+1);
+  }
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -792,7 +803,7 @@ std::string to_string(const GeomSubset &geom, const uint32_t indent, bool closin
 
   ss << pprint::Indent(indent) << "def GeomSubset \"" << geom.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(geom.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -810,7 +821,7 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
 
   ss << pprint::Indent(indent) << "def Points \"" << geom.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(geom.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -871,7 +882,7 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
 
   ss << pprint::Indent(indent) << "def BasisCurves \"" << geom.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(geom.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -911,7 +922,7 @@ std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_
 
   ss << pprint::Indent(indent) << "def Cube \"" << geom.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(geom.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -932,7 +943,7 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
 
   ss << pprint::Indent(indent) << "def Cone \"" << geom.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(geom.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -954,7 +965,7 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool clos
 
   ss << pprint::Indent(indent) << "def Cylinder \"" << geom.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(geom.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -987,7 +998,7 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
 
   ss << pprint::Indent(indent) << "def Capsule \"" << geom.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(geom.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -1020,7 +1031,7 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
 
   ss << pprint::Indent(indent) << "def SkelRoot \"" << root.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(root.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -1042,7 +1053,7 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
 
   ss << pprint::Indent(indent) << "def Material \"" << material.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  //print_prim_metas(material.metas, indent);
+  ss << print_prim_metas(material.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -1210,7 +1221,7 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
 
     ss << pprint::Indent(indent) << "def Shader \"" << shader.name << "\"\n";
     ss << pprint::Indent(indent) << "(\n";
-    //print_prim_metas(shader.metas, indent);
+    ss << print_prim_metas(shader.meta, indent+1);
     ss << pprint::Indent(indent) << ")\n";
     ss << pprint::Indent(indent) << "{\n";
 
@@ -1243,7 +1254,7 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
 
   ss << pprint::Indent(indent) << "def Skeleton \"" << skel.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(skel.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -1263,7 +1274,7 @@ std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool c
 
   ss << pprint::Indent(indent) << "def SphereLight \"" << light.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(light.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
@@ -1285,7 +1296,7 @@ std::string to_string(const LuxDomeLight &light, const uint32_t indent, bool clo
 
   ss << pprint::Indent(indent) << "def DomeLight \"" << light.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  // args
+  ss << print_prim_metas(light.meta, indent+1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 

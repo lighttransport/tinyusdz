@@ -755,6 +755,7 @@ class Connection
 };
 
 // Variable class for Prim and Attribute Metadataum.
+// TODO: use tiny-any
 class MetaVariable {
  public:
   std::string type;  // Explicit name of type
@@ -795,7 +796,7 @@ class MetaVariable {
 
     // infer type from value content
     if (v.IsObject()) {
-      return "dict";
+      return "dictionary";
     } else if (v.IsTimeSamples()) {
       std::string ts_type = "TODO: TimeSample typee";
       // FIXME
@@ -878,7 +879,7 @@ struct PrimMeta {
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
-  bool authorizerd() const {
+  bool authorized() const {
     return (kind || customData || meta.size());
   }
 

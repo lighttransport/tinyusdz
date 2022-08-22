@@ -413,7 +413,7 @@ class USDAReader::Impl {
         [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const std::map<std::string, Property> &properties,
-            const std::vector<std::pair<ListEditQual, Reference>> &references)
+            const std::vector<std::pair<ListEditQual, Reference>> &references, const ascii::AsciiParser::PrimMetaInput &in_meta)
             -> nonstd::expected<bool, std::string> {
           if (!prim_name.IsValid()) {
             return nonstd::make_unexpected("Invalid Prim name: " +
@@ -439,6 +439,11 @@ class USDAReader::Impl {
           }
 
           T prim;
+
+          if (!ReconstructPrimMeta(in_meta, &prim.meta)) {
+            return nonstd::make_unexpected("Failed to process Prim metadataum.");
+          }
+
 
           DCOUT("primType = " << value::TypeTrait<T>::type_name()
                               << ", node.size "
@@ -536,6 +541,61 @@ class USDAReader::Impl {
 
       return idx;
     });
+  }
+
+  bool ReconstructPrimMeta(
+    const ascii::AsciiParser::PrimMetaInput &in_meta,
+    PrimMeta *out) {
+
+    DCOUT("ReconstructPrimMeta");
+    for (const auto &meta : in_meta) {
+      DCOUT("meta.name = " << meta.first);
+
+      if (meta.first == "kind") {
+        // std::tuple<ListEditQual, MetaVariable>
+        // TODO: list-edit qual
+        const MetaVariable &var = std::get<1>(meta.second);
+        DCOUT("kind. type = " << var.type);
+        if (var.type == "token") {
+          if (auto pv = var.value.get_value<value::token>()) {
+            const value::token tok = pv.value();
+            if (tok.str() == "subcomponent") {
+              out->kind = Kind::Subcomponent;
+            } else if (tok.str() == "component") {
+              out->kind = Kind::Component;
+            } else if (tok.str() == "model") {
+              out->kind = Kind::Model;
+            } else if (tok.str() == "group") {
+              out->kind = Kind::Group;
+            } else if (tok.str() == "assembly") {
+              out->kind = Kind::Assembly;
+            } else {
+              PUSH_ERROR_AND_RETURN("Invalid token for `kind` metadataum.");
+            }
+            DCOUT("Added kind: " << to_string(out->kind.value()));
+          } else {
+            PUSH_ERROR_AND_RETURN("(Internal error?) `kind` metadataum is not type `token`.");
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN("(Internal error?) `kind` metadataum is not type `token`. got `" << var.type << "`.");
+        }
+      } else if (meta.first == "customData") {
+        const MetaVariable &var = std::get<1>(meta.second);
+        DCOUT("customData. type = " << var.type);
+        if (var.type == "dictionary") {
+          CustomDataType customData;
+          customData = var.obj_value;
+          DCOUT("dict size = " << var.obj_value.size());
+          out->customData = customData;
+        } else {
+          PUSH_ERROR_AND_RETURN("(Internal error?) `customData` metadataum is not type `dictionary`. got type `" << var.type << "`\n");
+        }
+      } else {
+        PUSH_WARN("TODO: Prim metadataum : " << meta.first);
+      }
+    }
+
+    return true;
   }
 
   ///
@@ -1246,7 +1306,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
       [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
           const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
-          std::vector<std::pair<ListEditQual, Reference>> &references)
+          const std::vector<std::pair<ListEditQual, Reference>> &references, const ascii::AsciiParser::PrimMetaInput &in_meta)
           -> nonstd::expected<bool, std::string> {
 
         const Path& parent = full_path.GetParentPrim();
@@ -1267,6 +1327,11 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
         if (_prim_nodes.size() < size_t(parentPrimIdx)) {
           return nonstd::make_unexpected(
               "Unexpected parentPrimIdx for GeomSubset.");
+        }
+
+        PrimMeta meta;
+        if (!ReconstructPrimMeta(in_meta, &meta)) {
+          return nonstd::make_unexpected("Failed to process Prim metadataum.");
         }
 
         // TODO: Construct GeomMesh first
@@ -1443,6 +1508,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
         }
 
         subset.name = prim_name.GetPrimPart();
+        subset.meta = meta;
 
         // Add to scene graph.
         // NOTE: Scene graph is constructed from bottom up manner(Children
