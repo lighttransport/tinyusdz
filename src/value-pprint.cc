@@ -9,6 +9,7 @@
 #include "prim-types.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
+#include "str-util.hh"
 
 namespace std {
 
@@ -279,9 +280,7 @@ namespace value {
 // Simple brute-force way..
 // TODO: Use std::function or some template technique?
 
-#define CASE_EXR_LIST(__FUNC) \
-  __FUNC(token)               \
-  __FUNC(std::string)         \
+#define CASE_EXPR_LIST(__FUNC) \
   __FUNC(half)                \
   __FUNC(half2)               \
   __FUNC(half3)               \
@@ -352,6 +351,7 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
     break;                               \
   }
 
+
 #define PRIMTYPE_CASE_EXPR(__ty)                                           \
   case TypeTrait<__ty>::type_id: {                                         \
     os << to_string(linb::any_cast<const __ty>(v), indent, closing_brace); \
@@ -380,16 +380,43 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
     BASETYPE_CASE_EXPR(dict)
 
     // base type
-    CASE_EXR_LIST(BASETYPE_CASE_EXPR)
+    CASE_EXPR_LIST(BASETYPE_CASE_EXPR)
 
     // 1D array
-    CASE_EXR_LIST(ARRAY1DTYPE_CASE_EXPR)
+    CASE_EXPR_LIST(ARRAY1DTYPE_CASE_EXPR)
 
     // 2D array
-    CASE_EXR_LIST(ARRAY2DTYPE_CASE_EXPR)
+    CASE_EXPR_LIST(ARRAY2DTYPE_CASE_EXPR)
+    // Assume no 2D array of string-like data.
 
     // GPrim
     CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
+
+    // token, str: wrap with '"'
+    case TypeTrait<value::token>::type_id: {                
+      os << quote(linb::any_cast<const value::token>(v).str());
+      break;                                           
+    }
+    case TypeTrait<std::vector<value::token>>::type_id: {                
+      const std::vector<value::token> &lst = linb::any_cast<const std::vector<value::token>>(v);
+      std::vector<std::string> vs;
+      std::transform(lst.begin(), lst.end(), std::back_inserter(vs), [](const value::token &tok) {
+        return tok.str();
+      });
+
+      os << quote(vs);
+      break;                                           
+    }
+    case TypeTrait<std::string>::type_id: {                
+      os << quote(linb::any_cast<const std::string>(v));
+      break;                                           
+    }
+    case TypeTrait<std::vector<std::string>>::type_id: {                
+      const std::vector<std::string> &vs = linb::any_cast<const std::vector<std::string>>(v);
+      os << quote(vs);
+      break;                                           
+    }
+    
 
     // TODO: List-up all case and remove `default` clause.
     default: {
@@ -441,16 +468,40 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     BASETYPE_CASE_EXPR(dict)
 
     // base type
-    CASE_EXR_LIST(BASETYPE_CASE_EXPR)
+    CASE_EXPR_LIST(BASETYPE_CASE_EXPR)
 
     // 1D array
-    CASE_EXR_LIST(ARRAY1DTYPE_CASE_EXPR)
+    CASE_EXPR_LIST(ARRAY1DTYPE_CASE_EXPR)
 
     // 2D array
-    CASE_EXR_LIST(ARRAY2DTYPE_CASE_EXPR)
+    CASE_EXPR_LIST(ARRAY2DTYPE_CASE_EXPR)
 
     // GPrim
     CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
+
+    case TypeTrait<value::token>::type_id: {                
+      os << quote(v.value<value::token>().str());
+      break;                                           
+    }
+    case TypeTrait<std::vector<value::token>>::type_id: {                
+      const std::vector<value::token> &lst = v.value<std::vector<value::token>>();
+      std::vector<std::string> vs;
+      std::transform(lst.begin(), lst.end(), std::back_inserter(vs), [](const value::token &tok) {
+        return tok.str();
+      });
+
+      os << quote(vs);
+      break;                                           
+    }
+    case TypeTrait<std::string>::type_id: {                
+      os << quote(v.value<const std::string>());
+      break;                                           
+    }
+    case TypeTrait<std::vector<std::string>>::type_id: {                
+      const std::vector<std::string> &vs = v.value<std::vector<std::string>>();
+      os << quote(vs);
+      break;                                           
+    }
 
     // TODO: List-up all case and remove `default` clause.
     default: {

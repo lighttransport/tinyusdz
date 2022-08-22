@@ -868,10 +868,12 @@ class MetaVariable {
   // representation of Object.
 };
 
+using CustomDataType = std::map<std::string, MetaVariable>;
+
 // Metadata for Prim
 struct PrimMeta {
   nonstd::optional<Kind> kind;                    // 'kind'
-  nonstd::optional<std::map<std::string, MetaVariable>>
+  nonstd::optional<CustomDataType>
       customData;  // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
@@ -888,7 +890,7 @@ struct AttrMeta {
   // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
-  nonstd::optional<std::map<std::string, MetaVariable>>
+  nonstd::optional<CustomDataType>
       customData;  // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
