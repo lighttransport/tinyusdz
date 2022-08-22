@@ -1037,6 +1037,35 @@ using XformOpValueType =
                       value::double3, value::quatd, value::matrix4d>;
 
 struct XformOp {
+  enum class OpType {
+    // matrix
+    Transform,
+
+    // vector3
+    Translate,
+    Scale, 
+
+    // scalar
+    RotateX,
+    RotateY,
+    RotateZ,
+
+    // vector3
+    RotateXYZ,
+    RotateXZY,
+    RotateYXZ,
+    RotateYZX,
+    RotateZXY,
+    RotateZYX,
+
+    // quaternion
+    Orient,
+    
+    // Special token
+    ResetXformStack,  // !resetXformStack!
+  };
+
+#if 0
   enum OpType {
     // Matrix
     TRANSFORM,
@@ -1060,6 +1089,7 @@ struct XformOp {
 
     // 4D
     ORIENT
+
   };
 
   static std::string GetOpTypeName(OpType op) {
@@ -1120,8 +1150,11 @@ struct XformOp {
     }
     return str;
   }
+#endif
 
+  //OpType op;
   OpType op;
+  bool inverted{false};  // `!inverted!` prefix
   std::string suffix;
   XformOpValueType value;  // When you look up the value, select basic type
                            // based on `precision`
