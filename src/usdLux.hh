@@ -41,6 +41,7 @@ struct LuxSphereLight {
   Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;
+  PrimMeta meta;
 };
 
 struct LuxDomeLight {
@@ -87,6 +88,7 @@ struct LuxDomeLight {
   std::vector<value::token> xformOpOrder;
 
   std::map<std::string, Property> props;
+  PrimMeta meta;
 };
 
 

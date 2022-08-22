@@ -47,6 +47,8 @@ struct Skeleton {
   AnimatableVisibility visibility{Visibility::Inherited};
 
   std::vector<value::token> xformOpOrder;
+
+  PrimMeta meta;
 };
 
 struct SkelRoot {
@@ -64,6 +66,8 @@ struct SkelRoot {
 
   int64_t skeleton_id{-1};  // index to scene.skeletons
   // Skeleton skeleton;
+
+  PrimMeta meta;
 };
 
 struct SkelAnimation {

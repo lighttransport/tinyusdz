@@ -16,6 +16,8 @@ struct Material {
 
   int64_t parent_id{-1};
 
+  PrimMeta meta;
+
   Relation surface; // outputs:surface.connect
   Relation volume; // outputs:volume.connect
 
@@ -26,11 +28,15 @@ struct NodeGraph {
   std::string name;
 
   int64_t parent_id{-1};
+
+  PrimMeta meta;
 };
 
 template <typename T>
 struct UsdPrimvarReader {
   std::string name;
+
+  PrimMeta meta;
 
   nonstd::optional<T> fallback;  // "inputs:fallback"
 
@@ -101,6 +107,8 @@ struct UsdUVTexture {
   // Custom properties
   std::map<std::string, Property> props;
 
+  PrimMeta meta;
+
   // TODO: orientation?
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
 };
@@ -146,6 +154,8 @@ struct UsdPreviewSurface {
 
   // Custom properties
   std::map<std::string, Property> props;
+
+  PrimMeta meta;
 };
 
 #if 0 // TODO: Move to Tydra
@@ -207,6 +217,8 @@ struct Shader {
                     PrimvarReader_float2>
       value;
 #endif
+
+  PrimMeta meta;
 };
 
 
