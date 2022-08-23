@@ -9,6 +9,8 @@
 
 #include "common-macros.inc"
 #include "prim-types.hh"
+#include "pprinter.hh"
+#include "xform.hh"
 
 namespace tinyusdz {
 
@@ -306,9 +308,18 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
       m.m[0][1] = std::sin(theta);
       m.m[1][0] = -std::sin(theta);
       m.m[1][1] = std::cos(theta);
+    } else if (x.op == XformOp::OpType::Orient) {
+      // quat(w, x, y, z)
+      if (auto f = x.value.get<value::quatf>()) {
+        m = to_matrix(f.value());
+      } else if (auto d = x.value.get<value::quatd>()) {
+        m = to_matrix(d.value());
+      } else {
+        return false;
+      }
     } else {
       // TODO
-      DCOUT("TODO");
+      DCOUT("TODO: XformOp " << to_string(x.op));
       return false;
     }
 

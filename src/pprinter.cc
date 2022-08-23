@@ -126,25 +126,6 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
   }
 }
 
-std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
-  std::stringstream ss;
-
-  //ss << "TODO: isObject " << meta.IsObject() << ", isValue " << meta.IsValue() << "\n";
-
-  if (meta.IsObject()) {
-    // dict
-    ss << pprint::Indent(indent) << "dictionary " << meta.name << " {\n";
-    for (const auto &item : meta.obj_value) { 
-      ss << print_meta(item.second, indent+1);
-    }
-    ss << pprint::Indent(indent) << "}\n";
-  } else {
-    ss << pprint::Indent(indent) << meta.type << " " << meta.name << " = " << pprint_value(meta.value) << "\n";
-  }
-
-  return ss.str();
-}
-
 std::string print_customData(const CustomDataType &customData, const uint32_t indent) {
   std::stringstream ss;
 
@@ -322,6 +303,25 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
 }
 
 } // namespace
+
+std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
+  std::stringstream ss;
+
+  //ss << "TODO: isObject " << meta.IsObject() << ", isValue " << meta.IsValue() << "\n";
+
+  if (meta.IsObject()) {
+    // dict
+    ss << pprint::Indent(indent) << "dictionary " << meta.name << " {\n";
+    for (const auto &item : meta.obj_value) {
+      ss << print_meta(item.second, indent+1);
+    }
+    ss << pprint::Indent(indent) << "}\n";
+  } else {
+    ss << pprint::Indent(indent) << meta.type << " " << meta.name << " = " << pprint_value(meta.value) << "\n";
+  }
+
+  return ss.str();
+}
 
 std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
   std::string s;
@@ -639,6 +639,79 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   return ss.str();
 }
 
+static std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent) {
+  std::stringstream ss;
+
+  if (xformOps.size()) {
+
+    ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
+    for (size_t i = 0; i < xformOps.size(); i++) {
+      if (i > 0) {
+        ss << ", ";
+      }
+
+      auto xformOp = xformOps[i];
+      ss << "\"";
+      if (xformOp.inverted) {
+        ss << "!invert!";
+      }
+      ss << to_string(xformOp.op);
+      if (!xformOp.suffix.empty()) {
+        ss << ":" << xformOp.suffix;
+      }
+      ss << "\"";
+    }
+    ss << "]\n";
+  }
+
+  return ss.str();
+}
+
+static std::string print_xform_value_type(const XformOpValueType &v) {
+  std::stringstream ss;
+
+  // TODO: Store type name in XformOpValueType
+  if (auto qf = v.get<value::quatf>()) {
+    ss << value::TypeTrait<value::quatf>::type_name();
+  } else if (auto qd = v.get<value::quatd>()) {
+    ss << value::TypeTrait<value::quatd>::type_name();
+  } else if (auto d = v.get<double>()) {
+    ss << value::TypeTrait<double>::type_name();
+  } else if (auto f = v.get<float>()) {
+    ss << value::TypeTrait<float>::type_name();
+  } else if (auto d3 = v.get<value::double3>()) {
+    ss << value::TypeTrait<value::double3>::type_name();
+  } else if (auto f3 = v.get<value::float3>()) {
+    ss << value::TypeTrait<value::float3>::type_name();
+  } else if (auto m = v.get<value::matrix4d>()) {
+    ss << value::TypeTrait<value::matrix4d>::type_name();
+  }
+
+  return ss.str();
+}
+
+static std::string print_xform_value(const XformOpValueType &v) {
+  std::stringstream ss;
+
+  if (auto qf = v.get<value::quatf>()) {
+    ss << qf.value();
+  } else if (auto qd = v.get<value::quatd>()) {
+    ss << qd.value();
+  } else if (auto d = v.get<double>()) {
+    ss << d.value();
+  } else if (auto f = v.get<float>()) {
+    ss << f.value();
+  } else if (auto d3 = v.get<value::double3>()) {
+    ss << d3.value();
+  } else if (auto f3 = v.get<value::float3>()) {
+    ss << f3.value();
+  } else if (auto m = v.get<value::matrix4d>()) {
+    ss << m.value();
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const Xform &xform, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -648,39 +721,34 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  // props
+  // xforms props
   if (xform.xformOps.size()) {
     for (size_t i = 0; i < xform.xformOps.size(); i++) {
       auto xformOp = xform.xformOps[i];
-      ss << pprint::Indent(indent);
+
+      if (xformOp.op == XformOp::OpType::ResetXformStack) {
+        // No need to print value.
+        continue;
+      }
+
+      ss << pprint::Indent(indent+1);
+
+      ss << print_xform_value_type(xformOp.value) << " " ;
+
       ss << to_string(xformOp.op);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
 
-      // TODO
-      // ss << " = " << to_string(xformOp.value);
+      ss << " = " << print_xform_value(xformOp.value);
 
       ss << "\n";
     }
   }
 
-  // xformOpOrder
-  if (xform.xformOps.size()) {
-    ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
-    for (size_t i = 0; i < xform.xformOps.size(); i++) {
-      auto xformOp = xform.xformOps[i];
-      ss << "\"" << to_string(xformOp.op);
-      if (!xformOp.suffix.empty()) {
-        ss << ":" << xformOp.suffix;
-      }
-      ss << "\"";
-      if (i != (xform.xformOps.size() - 1)) {
-        ss << ",\n";
-      }
-    }
-    ss << "]\n";
-  }
+  ss << print_xformOpOrder(xform.xformOps, indent+1);
+
+  // TODO: Generic properties
 
   if (xform.visibility.authorized()) {
     ss << pprint::Indent(indent+1) << "visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get())
@@ -1351,10 +1419,21 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path) {
 std::string to_string(const XformOp::OpType &op) {
   std::string ss;
 
-  if (op == XformOp::OpType::ResetXformStack) {
-    ss = "!resetXformStack!";
-  } else {
-    ss = "XformOp::TODO";
+  switch (op) {
+  case XformOp::OpType::ResetXformStack: { ss = "!resetXformStack!"; break; }
+  case XformOp::OpType::Transform: { ss = "xformOp:transform"; break; }
+  case XformOp::OpType::Translate: { ss = "xformOp:translate"; break; }
+  case XformOp::OpType::Scale: { ss = "xformOp:scale"; break; }
+  case XformOp::OpType::RotateX: { ss = "xformOp:rotateX"; break; }
+  case XformOp::OpType::RotateY: { ss = "xformOp:rotateY"; break; }
+  case XformOp::OpType::RotateZ: { ss = "xformOp:rotateZ"; break; }
+  case XformOp::OpType::RotateXYZ: { ss = "xformOp:rotateXYZ"; break; }
+  case XformOp::OpType::RotateXZY: { ss = "xformOp:rotateXZY"; break; }
+  case XformOp::OpType::RotateYXZ: { ss = "xformOp:rotateYXZ"; break; }
+  case XformOp::OpType::RotateYZX: { ss = "xformOp:rotateYZX"; break; }
+  case XformOp::OpType::RotateZXY: { ss = "xformOp:rotateZXY"; break; }
+  case XformOp::OpType::RotateZYX: { ss = "xformOp:rotateZYX"; break; }
+  case XformOp::OpType::Orient: { ss = "xformOp:orient"; break; }
   }
 
   return ss;

@@ -108,7 +108,7 @@ class AsciiParser {
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
 
-    value::dict customData;  // `customData`(non-predefined Stage metas).
+    std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
   };
 
   struct ParseState {

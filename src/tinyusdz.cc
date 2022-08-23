@@ -788,6 +788,18 @@ std::string Stage::ExportToString() const {
     ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.get() << "\n";
   }
 
+  if (stage_metas.defaultPrim.size()) {
+    ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim) << "\n";
+  }
+
+  if (stage_metas.customLayerData.size()) {
+    ss << "  customLayerData = {\n";
+    for (const auto &item : stage_metas.customLayerData) {
+      ss << print_meta(item.second, /* indent */1);
+    }
+    ss << "  }\n";
+  }
+
   // TODO: write other header data.
   ss << ")\n";
   ss << "\n";
