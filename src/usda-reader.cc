@@ -519,7 +519,7 @@ class USDAReader::Impl {
                 metas.timeCodesPerSecond.value();
           }
 
-          _stage.stage_metas.customData = metas.customData;
+          _stage.stage_metas.customLayerData = metas.customLayerData;
 
           return true;  // ok
         });
@@ -1049,6 +1049,7 @@ bool USDAReader::Impl::ReconstructPrim(
     Xform *xform) {
   (void)xform;
 
+#if 0
   auto CheckAllowedTypeOfXformOp =
       [](const PrimAttrib &attr,
          const std::vector<value::TypeId> &allowed_type_ids)
@@ -1080,7 +1081,9 @@ bool USDAReader::Impl::ReconstructPrim(
 
     return nonstd::make_unexpected(ss.str());
   };
+#endif
 
+#if 0
   // ret = (basename, suffix, isTimeSampled?)
   auto Split =
       [](const std::string &str) -> std::tuple<std::string, std::string, bool> {
@@ -1109,6 +1112,7 @@ bool USDAReader::Impl::ReconstructPrim(
 
     return std::make_tuple(basename, suffix, isTimeSampled);
   };
+#endif
 
   //
   // Resolve prepend references
@@ -1118,6 +1122,9 @@ bool USDAReader::Impl::ReconstructPrim(
     }
   }
 
+  std::set<std::string> table;
+
+#if 0
   for (const auto &prop : properties) {
     DCOUT("prop.name = " << prop.first);
     if (startsWith(prop.first, "xformOp:translate")) {
@@ -1129,117 +1136,173 @@ bool USDAReader::Impl::ReconstructPrim(
       }
     }
   }
+#endif
+
+  constexpr auto kTranslate = "xformOp:translate";
+  constexpr auto kTransform = "xformOp:transform";
+  constexpr auto kScale = "xformOp:scale";
+  constexpr auto kRotateX = "xformOp:rotateX";
+#if 0
+  constexpr auto kRotateY = "xformOp:rotateY";
+  constexpr auto kRotateZ = "xformOp:rotateZ";
+  constexpr auto kRotateXYZ = "xformOp:rotateXYZ";
+  constexpr auto kRotateXZY = "xformOp:rotateXZY";
+  constexpr auto kRotateYXZ = "xformOp:rotateYXZ";
+  constexpr auto kRotateYZX = "xformOp:rotateYZX";
+  constexpr auto kRotateZXY = "xformOp:rotateZXY";
+#endif
+  constexpr auto kOrient = "xformOp:orient";
+
+  // false : no prefix found.
+  // true : return suffix(first namespace ':' is ommited.).
+  // - "" for prefix only "xformOp:translate"
+  // - "blender:pivot" for "xformOp:translate:blender:pivot"
+  auto SplitXformOpToken = [](const std::string &s, const std::string &prefix) -> nonstd::optional<std::string> {
+
+    if (startsWith(s, prefix)) {
+      if (s.compare(prefix) == 0) {
+        // prefix only. 
+        return std::string(); // empty suffix
+      } else {
+        std::string suffix = removePrefix(s, prefix);
+        DCOUT("suffix = " << suffix);
+        if (suffix.length() == 1) { // maybe namespace only.
+          return nonstd::nullopt;
+        }
+
+        // remove namespace ':'
+        if (suffix[0] == ':') {
+          suffix.erase(0, 1);
+        }
+
+        return std::move(suffix);
+      }
+    }
+
+    return nonstd::nullopt;
+  };
 
   // Lookup xform values from `xformOpOrder`
+  // TODO: TimeSamples, Connection
   if (properties.count("xformOpOrder")) {
     // array of string
     auto prop = properties.at("xformOpOrder");
     if (prop.IsRel()) {
-      PUSH_WARN("TODO: Rel type for `xformOpOrder`");
-    } else {
-#if 0
-      if (auto parr = value::as_vector<std::string>(&attrib->var)) {
-        for (const auto &item : *parr) {
-          // remove double-quotation
-          std::string identifier = item;
-          identifier.erase(
-              std::remove(identifier.begin(), identifier.end(), '\"'),
-              identifier.end());
+      PUSH_ERROR_AND_RETURN("Relation for `xformOpOrder` is not supported.");
+    } else if (auto pv = prop.attrib.var.get_value<std::vector<value::token>>()) {
+      // TODO: 'uniform' qualifier check?
+      for (size_t i = 0; i < pv.value().size(); i++) {
 
-          auto tup = Split(identifier);
-          auto basename = std::get<0>(tup);
-          auto suffix = std::get<1>(tup);
-          auto isTimeSampled = std::get<2>(tup);
-          (void)isTimeSampled;
+        const auto &item = pv.value()[i];
 
-          XformOp op;
+        XformOp op;
 
-          std::string target_name = basename;
-          if (!suffix.empty()) {
-            target_name += ":" + suffix;
+        std::string tok = item.str();
+        DCOUT("xformOp token = " << tok);
+
+        if (startsWith(tok, "!resetXformStack!")) {
+          if (tok.compare("!resetXformStack!") != 0) {
+            PUSH_ERROR_AND_RETURN("`!resetXformStack!` must be defined solely(not to be a prefix to \"xformOp:*\")");
           }
 
-          if (!properties.count(target_name)) {
-            PushError("Property '" + target_name +
-                       "' not found in Xform node.");
-            return false;
+          if (i != 0) {
+            PUSH_ERROR_AND_RETURN("`!resetXformStack!` must appear at the first element of xformOpOrder list.");
           }
 
-          auto targetProp = properties.at(target_name);
+          op.op = XformOp::OpType::ResetXformStack;
+          xform->xformOps.emplace_back(op);
 
-          if (basename == "xformOp:rotateZ") {
-            if (auto targetAttr = nonstd::get_if<PrimAttrib>(&targetProp)) {
-              if (auto p = value::as_basic<float>(&targetAttr->var)) {
-                std::cout << "xform got it "
-                          << "\n";
-                op.op = XformOp::OpType::ROTATE_Z;
-                op.suffix = suffix;
-                op.value = (*p);
-
-                xform->xformOps.push_back(op);
-              }
-            }
-          }
-        }
-      }
-      PushError("`xformOpOrder` must be an array of string type.");
-#endif
-      (void)Split;
-    }
-
-  } else {
-    // std::cout << "no xformOpOrder\n";
-  }
-
-  // For xformO
-  // TinyUSDZ does no accept arbitrary types for variables with `xformOp` su
-#if 0
-    for (const auto &prop : properties) {
-
-
-      if (prop.first == "xformOpOrder") {
-        if (!prop.second.IsArray()) {
-          PushError("`xformOpOrder` must be an array type.");
-          return false;
+          // skip looking up property
+          continue;
         }
 
-        for (const auto &item : prop.second.array) {
-          if (auto p = nonstd::get_if<std::string>(&item)) {
-            // TODO
-            //XformOp op;
-            //op.op =
-          }
+        if (startsWith(tok, "!invert!")) {
+          DCOUT("invert!");
+          op.inverted = true;
+          tok = removePrefix(tok, "!invert!");
+          DCOUT("tok = " << tok);
         }
 
-      } else if (std::get<0>(tup) == "xformOp:rotateZ") {
+        auto it = properties.find(tok);
+        if (it == properties.end()) {
+          PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
+        }
+        if (it->second.IsConnection()) {
+          PUSH_ERROR_AND_RETURN("Connection(.connect) of xformOp property is not yet supported: `" + tok + "`");
+        }
+        const PrimAttrib &attr = it->second.attrib;
 
-        if (prop.second.IsTimeSampled()) {
+        // Check `xformOp` namespace
+        if (auto xfm = SplitXformOpToken(tok, kTransform)) {
 
-        } else if (prop.second.IsFloat()) {
-          if (auto p = nonstd::get_if<float>(&prop.second.value)) {
-            XformOp op;
-            op.op = XformOp::OpType::ROTATE_Z;
-            op.precision = XformOp::PrecisionType::PRECISION_FLOAT;
-            op.value = *p;
+          op.op = XformOp::OpType::Transform;
+          op.suffix = xfm.value(); // may contain nested namespaces
 
-            std::cout << "rotateZ value = " << *p << "\n";
-
+          if (auto pvd = attr.var.get_value<value::matrix4d>()) {
+            op.value = pvd.value();
           } else {
-            PushError("`xformOp:rotateZ` must be an float type.");
-            return false;
+            PUSH_ERROR_AND_RETURN("`xformOp:transform` must be type `matrix4d`, but got type `" + attr.var.type_name() + "`.");
+          }
+
+        } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
+
+          op.op = XformOp::OpType::Translate;
+          op.suffix = tx.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN("`xformOp:translate` must be type `double3` or `float3`, but got type `" + attr.var.type_name() + "`.");
+          }
+        } else if (auto scale = SplitXformOpToken(tok, kScale)) {
+
+          op.op = XformOp::OpType::Scale;
+          op.suffix = scale.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN("`xformOp:scale` must be type `double3` or `float3`, but got type `" + attr.var.type_name() + "`.");
+          }
+        } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
+          op.op = XformOp::OpType::RotateX;
+          op.suffix = rotX.value();
+
+          if (auto pvd = attr.var.get_value<double>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<float>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN("`xformOp:rotateX` must be type `double` or `float`, but got type `" + attr.var.type_name() + "`.");
+          }
+        } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
+          op.op = XformOp::OpType::Orient;
+          op.suffix = orient.value();
+
+          if (auto pvd = attr.var.get_value<value::quatf>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::quatd>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN("`xformOp:orient` must be type `quatf` or `quatd`, but got type `" + attr.var.type_name() + "`.");
           }
         } else {
-          PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                     "\n");
+          PUSH_ERROR_AND_RETURN("token for xformOpOrder must have namespace `xformOp:***`, or .");
         }
 
-      } else {
-        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
+        xform->xformOps.emplace_back(op);
+        table.insert(tok);
       }
+
+    } else {
+      PUSH_ERROR_AND_RETURN("`xformOpOrder` must be type `token[]` but got type `" << prop.attrib.var.type_name() << "`.");
     }
-#endif
+
+  }
 
   //
   // Resolve append references

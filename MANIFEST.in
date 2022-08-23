@@ -117,6 +117,9 @@ include src/external/jsteemann/LICENSE
 include src/external/jsteemann/README.md
 include src/external/jsteemann/atoi.h
 include src/external/jsteemann/modification.md
+include src/external/linalg.README
+include src/external/linalg.UNLICENSE
+include src/external/linalg.h
 include src/external/mapbox/variant/LICENSE
 include src/external/mapbox/variant/LICENSE_1_0.txt
 include src/external/mapbox/variant/README.md
@@ -529,6 +532,8 @@ include src/value-pprint.cc
 include src/value-pprint.hh
 include src/value-types.cc
 include src/value-types.hh
+include src/xform.hh
+include src/xform.cc
 include src/audio-loader.cc
 include src/audio-loader.hh
 recursive-include src/external/pybind11 *

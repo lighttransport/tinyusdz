@@ -326,3 +326,4 @@ TinyUSDZ is licensed under MIT license.
 * pystring : BSD-3 license. https://github.com/imageworks/pystring
 * gulrak/filesytem : MIT license. https://github.com/gulrak/filesystem
 * p-ranav/glob : MIT license. https://github.com/p-ranav/glob
+* linalg.h : Unlicense. https://github.com/sgorsten/linalg

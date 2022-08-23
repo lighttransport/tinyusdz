@@ -26,6 +26,7 @@ tinyusdz_sources=[
   '../../src/value-pprint.cc',
   '../../src/image-loader.cc',
   '../../src/image-writer.cc',
+  '../../src/xform.cc',
   # deps
   '../../src/external/fpng.cpp',
   '../../src/external/pystring.cpp',

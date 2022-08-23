@@ -2,7 +2,9 @@
 // Copyright 2021 - Present, Syoyo Fujita.
 //
 // TODO:
-//   - [ ] List-up TODOs :-)
+//   - [ ] Parse here document in Stage metadataum.
+//   - [ ] Pars document-only line in Stage metadatum.
+//   - [ ] List up more TODOs.
 
 #include <cstdio>
 #ifdef _MSC_VER
@@ -2923,6 +2925,12 @@ bool AsciiParser::ParseStageMetaOpt() {
     } else {
       PUSH_ERROR_AND_RETURN("`timeCodesPerSecond` isn't a floating-point value.");
     }
+  } else if (varname == "customLayerData") {
+    if (var.IsObject()) {
+      _stage_metas.customLayerData = var.obj_value;
+    } else {
+      PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
+    }
   } else {
     DCOUT("TODO: Stage meta: " << varname);
     PUSH_WARN("TODO: Stage meta: " << varname);
@@ -3081,7 +3089,6 @@ bool AsciiParser::ParseStageMetas() {
       return true;
 
     } else {
-      DCOUT("aaa not");
       if (!SkipWhitespace()) {
         // eof
         return false;
@@ -4000,10 +4007,10 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
 
     PUSH_WARN("TODO: Implement object type(customData)");
 #else
-    DCOUT("Parse dict in Prim meta.");
+    DCOUT("Parse dict in meta.");
     std::map<std::string, MetaVariable> dict;
     if (!ParseDict(&dict)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` in Prim meta.");
+      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` in metadataum.");
     }
     var.obj_value = dict;
 #endif
@@ -4724,7 +4731,6 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   return true;
 }
 
-// bool ParsePrimAttr(std::map<std::string, MetaVariable> *props) {
 bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   // prim_attr : (custom?) uniform type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?

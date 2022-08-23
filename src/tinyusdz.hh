@@ -431,7 +431,8 @@ struct StageMetas {
   AttribWithFallback<double> metersPerUnit{1.0};        // default [m]
   AttribWithFallback<double> timeCodesPerSecond {24.0};  // default 24 fps
   std::string doc; // `documentation`
-  value::dict customData;
+
+  std::map<std::string, MetaVariable> customLayerData; // customLayerData
 };
 
 class PrimRange;

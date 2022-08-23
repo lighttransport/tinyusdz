@@ -114,7 +114,6 @@ class AttribWithFallback {
   T fallback;
 };
 
-
 class PrimNode;
 
 #if 0  // TODO
@@ -343,7 +342,7 @@ class Path {
   Path() : valid(false) {}
 
   // `p` is split into prim_part and prop_part
-  //Path(const std::string &p);
+  // Path(const std::string &p);
   Path(const std::string &prim, const std::string &prop);
 
   // : prim_part(prim), valid(true) {}
@@ -386,7 +385,7 @@ class Path {
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
   static Path RootPath() { return Path("/", ""); }
-  //static Path RelativePath() { return Path("."); }
+  // static Path RelativePath() { return Path("."); }
 
   Path AppendProperty(const std::string &elem);
 
@@ -479,13 +478,11 @@ class Path {
   }
 
   static const Path MakeRelative(const Path &rhs) {
-    Path p = rhs; // copy
+    Path p = rhs;  // copy
     return p.MakeRelative();
   }
 
  private:
-
-
   std::string prim_part;  // e.g. /Model/MyMesh, MySphere
   std::string prop_part;  // e.g. .visibility
   bool valid{false};
@@ -676,16 +673,12 @@ struct ConnectionPath {
 class Relation {
  public:
   // monostate(empty(define only)), string, Path or PathVector
-  //tinyusdz::variant<tinyusdz::monostate, std::string, Path, std::vector<Path>> targets;
+  // tinyusdz::variant<tinyusdz::monostate, std::string, Path,
+  // std::vector<Path>> targets;
 
-  // For some reaon, using tinyusdz::variant will cause double-free in some environemt on clang,
-  // so use old-fashioned way for a while.
-  enum class Type {
-    Empty,
-    String,
-    Path,
-    PathVector
-  };
+  // For some reaon, using tinyusdz::variant will cause double-free in some
+  // environemt on clang, so use old-fashioned way for a while.
+  enum class Type { Empty, String, Path, PathVector };
 
   Type type{Type::Empty};
   std::string targetString;
@@ -698,9 +691,7 @@ class Relation {
     return r;
   }
 
-  void SetEmpty() {
-    type = Type::Empty;
-  }
+  void SetEmpty() { type = Type::Empty; }
 
   void Set(const std::string &s) {
     targetString = s;
@@ -717,39 +708,27 @@ class Relation {
     type = Type::PathVector;
   }
 
-  bool IsEmpty() const {
-    return type == Type::Empty;
-  }
+  bool IsEmpty() const { return type == Type::Empty; }
 
-  bool IsString() const {
-    return type == Type::String;
-  }
+  bool IsString() const { return type == Type::String; }
 
-  bool IsPath() const {
-    return type == Type::Path;
-  }
+  bool IsPath() const { return type == Type::Path; }
 
-  bool IsPathVector() const {
-    return type == Type::PathVector;
-  }
-
+  bool IsPathVector() const { return type == Type::PathVector; }
 };
 
 //
 // Connection is a typed version of Relation
 //
-template<typename T>
-class Connection
-{
+template <typename T>
+class Connection {
  public:
   using type = typename value::TypeTrait<T>::value_type;
 
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
+  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 
-  //Connection() = delete;
-  //Connection(const T &v) : fallback(v) {}
+  // Connection() = delete;
+  // Connection(const T &v) : fallback(v) {}
 
   nonstd::optional<Path> target;
 };
@@ -873,16 +852,12 @@ using CustomDataType = std::map<std::string, MetaVariable>;
 
 // Metadata for Prim
 struct PrimMeta {
-  nonstd::optional<Kind> kind;                    // 'kind'
-  nonstd::optional<CustomDataType>
-      customData;  // `customData`
+  nonstd::optional<Kind> kind;                  // 'kind'
+  nonstd::optional<CustomDataType> customData;  // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
-  bool authorized() const {
-    return (kind || customData || meta.size());
-  }
-
+  bool authorized() const { return (kind || customData || meta.size()); }
 };
 
 // Metadata for Attribute
@@ -891,8 +866,7 @@ struct AttrMeta {
   // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
-  nonstd::optional<CustomDataType>
-      customData;  // `customData`
+  nonstd::optional<CustomDataType> customData;    // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
@@ -924,33 +898,28 @@ struct PrimAttrib {
 };
 
 ///
-/// Typed version of PrimAttrib(e.g. for `points`, `normals`, `inputs:st.connect`)
+/// Typed version of PrimAttrib(e.g. for `points`, `normals`,
+/// `inputs:st.connect`)
 ///
 template <typename T>
 class TypedAttribute {
  public:
-
   TypedAttribute() = default;
 
-  explicit TypedAttribute(const T& fv) : fallback(fv) {
-  }
+  explicit TypedAttribute(const T &fv) : fallback(fv) {}
 
   using type = typename value::TypeTrait<T>::value_type;
 
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
+  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 
   // Empty(Define only), value or connection(`.connect`) target path
   using value_type = tinyusdz::variant<tinyusdz::monostate, T, Path>;
 
   nonstd::optional<value_type> value;
 
-  bool authorized() const {
-    return value.has_value();
-  }
+  bool authorized() const { return value.has_value(); }
 
-  nonstd::optional<T> fallback; // may have fallback
+  nonstd::optional<T> fallback;  // may have fallback
   AttrMeta meta;
   bool uniform{false};  // `uniform`
 };
@@ -1031,7 +1000,7 @@ class Property {
 };
 
 // Orient: axis/angle expressed as a quaternion.
-// NOTE: no `matrix4f`
+// NOTE: no `quath`, `matrix4f`
 using XformOpValueType =
     tinyusdz::variant<float, value::float3, value::quatf, double,
                       value::double3, value::quatd, value::matrix4d>;
@@ -1043,7 +1012,7 @@ struct XformOp {
 
     // vector3
     Translate,
-    Scale, 
+    Scale,
 
     // scalar
     RotateX,
@@ -1060,7 +1029,7 @@ struct XformOp {
 
     // quaternion
     Orient,
-    
+
     // Special token
     ResetXformStack,  // !resetXformStack!
   };
@@ -1152,10 +1121,13 @@ struct XformOp {
   }
 #endif
 
-  //OpType op;
+  // OpType op;
   OpType op;
-  bool inverted{false};  // `!inverted!` prefix
-  std::string suffix;
+  bool inverted{false};  // true when `!inverted!` prefix
+  std::string
+      suffix;  // may contain nested namespaces. e.g. suffix will be
+               // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
+               // will be empty for "xformOp:translate"
   XformOpValueType value;  // When you look up the value, select basic type
                            // based on `precision`
 };
@@ -1324,7 +1296,6 @@ struct MaterialBindingAPI {
 //
 // Predefined node classes
 //
-
 
 // USDZ Schemas for AR
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
