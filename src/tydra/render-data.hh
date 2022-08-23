@@ -13,6 +13,7 @@ namespace tinyusdz {
 // forward decl
 class Stage;
 struct GeomMesh;
+struct Xform;
 
 namespace tydra {
 
@@ -79,7 +80,13 @@ struct Node {
   bool isScope{false};
 };
 
-// HdMeshTopology
+struct TransformNode {
+
+  value::matrix4d local_matrix;
+  value::matrix4d global_matrix;
+
+};
+
 struct RenderMesh {
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
@@ -257,6 +264,9 @@ struct UVTexture {
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
 };
 #endif
+
+nonstd::expected<TransformNode, std::string> Convert(const Stage &stage,
+                                                  const Xform &xform);
 
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
                                                   const GeomMesh &mesh);
