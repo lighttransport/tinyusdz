@@ -26,6 +26,18 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 
 }  // namespace
 
+nonstd::expected<TransformNode, std::string> Convert(const Stage &stage, const Xform &xform) {
+
+  (void)stage;
+
+  TransformNode node;
+  if (auto m = xform.GetLocalMatrix()) {
+    node.local_matrix = m.value();
+  }
+
+  return node;
+}
+
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const GeomMesh &mesh) {
   RenderMesh dst;
 

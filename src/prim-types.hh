@@ -592,7 +592,7 @@ inline void Identity(value::matrix4d *mat) {
 
 // ret = m x n
 template <typename MTy, typename STy, size_t N>
-MTy Mult(MTy &m, MTy &n) {
+MTy Mult(const MTy &m, const MTy &n) {
   MTy ret;
   memset(ret.m, 0, sizeof(MTy));
 
