@@ -128,5 +128,6 @@ std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent 
 
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string print_meta(const MetaVariable &meta, const uint32_t indent);
 
 } // namespace tinyusdz
