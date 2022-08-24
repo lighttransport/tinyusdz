@@ -53,9 +53,9 @@ class AttribWithFallback;
 ///
 /// Attribute with fallback(default) value
 ///
-/// - `authorized() = true` : Attribute value is authorized(attribute is
+/// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
-/// - `authorized() = false` : Attribute value is not authorized(not described
+/// - `authored() = false` : Attribute value is not authored(not described
 /// in USD). If you call `get()`, fallback value is returned.
 ///
 template <typename T>
@@ -112,7 +112,7 @@ class AttribWithFallback {
   }
 
   // value set?
-  bool authorized() const {
+  bool authored() const {
     if (attrib) {
       return true;
     }
@@ -871,7 +871,7 @@ struct PrimMeta {
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authorized() const { return (kind || customData || meta.size() || stringData.size()); }
+  bool authored() const { return (kind || customData || meta.size() || stringData.size()); }
 };
 
 // Metadata for Attribute
@@ -888,7 +888,7 @@ struct AttrMeta {
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authorized() const {
+  bool authored() const {
     return (interpolation || elementSize || customData || meta.size() || stringData.size());
   }
 };
@@ -935,7 +935,7 @@ class TypedAttribute {
 
   nonstd::optional<value_type> value;
 
-  bool authorized() const { return value.has_value(); }
+  bool authored() const { return value.has_value(); }
 
   nonstd::optional<T> fallback;  // may have fallback
   AttrMeta meta;
