@@ -770,11 +770,11 @@ std::string Stage::ExportToString() const {
 
   ss << "#usda 1.0\n";
   ss << "(\n";
-  if (stage_metas.doc.empty()) {
+  if (stage_metas.doc.value.empty()) {
     ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
        << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
   } else {
-    ss << "  doc = \"" << stage_metas.doc << "\"\n";
+    ss << "  doc = " << to_string(stage_metas.doc) << "\n";
   }
   if (stage_metas.metersPerUnit.authorized()) {
     ss << "  metersPerUnit = " << stage_metas.metersPerUnit.get() << "\n";
@@ -798,6 +798,11 @@ std::string Stage::ExportToString() const {
       ss << print_meta(item.second, /* indent */1);
     }
     ss << "  }\n";
+  }
+
+  // TODO: Sort by line_no?(preserve appearance in read USDA)
+  for (const auto &item : stage_metas.stringData) {
+    ss << "  " << to_string(item) << "\n";
   }
 
   // TODO: write other header data.

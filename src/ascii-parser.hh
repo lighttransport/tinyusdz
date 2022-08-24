@@ -89,26 +89,29 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
  public:
+
   // TODO: refactor
   struct PrimMetas {
     // Frequently used prim metas
     nonstd::optional<Kind> kind;
 
     value::dict customData;  // `customData`
+    std::vector<StringData> strings; // String only unregistered metadata.
   };
 
   struct StageMetas {
     ///
     /// Predefined Stage metas
     ///
-    std::vector<std::string> subLayers;
-    std::string defaultPrim;
-    std::string doc;
+    std::vector<std::string> subLayers; // 'subLayers'
+    std::string defaultPrim; // 'defaultPrim'
+    StringData doc; // 'doc' 
     nonstd::optional<Axis> upAxis;  // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
+    std::vector<StringData> strings; // String only unregistered metadata.
   };
 
   struct ParseState {
@@ -369,6 +372,16 @@ class AsciiParser {
   bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
 
   bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
+
+  ///
+  /// Try parsing single-quoted(`"`) string
+  ///
+  bool MaybeString(StringData*str);
+
+  ///
+  /// Try parsing triple-quited(`"""`) multi-line string.
+  ///
+  bool MaybeTripleQuotedString(StringData *str);
 
 #if 0
   ///
