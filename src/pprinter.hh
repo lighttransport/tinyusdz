@@ -107,6 +107,8 @@ std::string to_string(const GeomBasisCurves::Basis &v);
 
 std::string to_string(const SkelRoot &root, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Skeleton &skel, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const SkelAnimation &anim, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const BlendShape &bs, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const LuxSphereLight &light, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0, bool closing_brace = true);

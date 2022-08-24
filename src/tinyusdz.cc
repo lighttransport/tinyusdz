@@ -776,20 +776,20 @@ std::string Stage::ExportToString() const {
   } else {
     ss << "  doc = " << to_string(stage_metas.doc) << "\n";
   }
-  if (stage_metas.metersPerUnit.authorized()) {
+  if (stage_metas.metersPerUnit.authored()) {
     ss << "  metersPerUnit = " << stage_metas.metersPerUnit.get() << "\n";
   }
 
-  if (stage_metas.upAxis.authorized()) {
+  if (stage_metas.upAxis.authored()) {
     ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.get())) << "\n";
   }
 
-  if (stage_metas.timeCodesPerSecond.authorized()) {
+  if (stage_metas.timeCodesPerSecond.authored()) {
     ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.get() << "\n";
   }
 
-  if (stage_metas.defaultPrim.size()) {
-    ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim) << "\n";
+  if (stage_metas.defaultPrim.str().size()) {
+    ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str()) << "\n";
   }
 
   if (stage_metas.customLayerData.size()) {
