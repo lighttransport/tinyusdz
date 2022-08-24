@@ -48,6 +48,8 @@ std::string to_string(GeomMesh::SubdivisionScheme subd_scheme);
 std::string to_string(const Path &path, bool show_full_path = true);
 std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
 
+std::string to_string(const StringData &s);
+
 template<typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
   std::stringstream ss;

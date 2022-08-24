@@ -413,7 +413,8 @@ class USDAReader::Impl {
         [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const std::map<std::string, Property> &properties,
-            const std::vector<std::pair<ListEditQual, Reference>> &references, const ascii::AsciiParser::PrimMetaInput &in_meta)
+            const std::vector<std::pair<ListEditQual, Reference>> &references,
+            const ascii::AsciiParser::PrimMetaInput &in_meta)
             -> nonstd::expected<bool, std::string> {
           if (!prim_name.IsValid()) {
             return nonstd::make_unexpected("Invalid Prim name: " +
@@ -441,9 +442,9 @@ class USDAReader::Impl {
           T prim;
 
           if (!ReconstructPrimMeta(in_meta, &prim.meta)) {
-            return nonstd::make_unexpected("Failed to process Prim metadataum.");
+            return nonstd::make_unexpected(
+                "Failed to process Prim metadataum.");
           }
-
 
           DCOUT("primType = " << value::TypeTrait<T>::type_name()
                               << ", node.size "
@@ -521,6 +522,8 @@ class USDAReader::Impl {
 
           _stage.stage_metas.customLayerData = metas.customLayerData;
 
+          _stage.stage_metas.stringData = metas.strings;
+
           return true;  // ok
         });
   }
@@ -543,18 +546,17 @@ class USDAReader::Impl {
     });
   }
 
-  bool ReconstructPrimMeta(
-    const ascii::AsciiParser::PrimMetaInput &in_meta,
-    PrimMeta *out) {
-
+  bool ReconstructPrimMeta(const ascii::AsciiParser::PrimMetaInput &in_meta,
+                           PrimMeta *out) {
     DCOUT("ReconstructPrimMeta");
     for (const auto &meta : in_meta) {
       DCOUT("meta.name = " << meta.first);
 
+      const MetaVariable &var = std::get<1>(meta.second);
+
       if (meta.first == "kind") {
         // std::tuple<ListEditQual, MetaVariable>
         // TODO: list-edit qual
-        const MetaVariable &var = std::get<1>(meta.second);
         DCOUT("kind. type = " << var.type);
         if (var.type == "token") {
           if (auto pv = var.value.get_value<value::token>()) {
@@ -574,13 +576,15 @@ class USDAReader::Impl {
             }
             DCOUT("Added kind: " << to_string(out->kind.value()));
           } else {
-            PUSH_ERROR_AND_RETURN("(Internal error?) `kind` metadataum is not type `token`.");
+            PUSH_ERROR_AND_RETURN(
+                "(Internal error?) `kind` metadataum is not type `token`.");
           }
         } else {
-          PUSH_ERROR_AND_RETURN("(Internal error?) `kind` metadataum is not type `token`. got `" << var.type << "`.");
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `kind` metadataum is not type `token`. got `"
+              << var.type << "`.");
         }
       } else if (meta.first == "customData") {
-        const MetaVariable &var = std::get<1>(meta.second);
         DCOUT("customData. type = " << var.type);
         if (var.type == "dictionary") {
           CustomDataType customData;
@@ -588,10 +592,18 @@ class USDAReader::Impl {
           DCOUT("dict size = " << var.obj_value.size());
           out->customData = customData;
         } else {
-          PUSH_ERROR_AND_RETURN("(Internal error?) `customData` metadataum is not type `dictionary`. got type `" << var.type << "`\n");
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `customData` metadataum is not type "
+              "`dictionary`. got type `"
+              << var.type << "`\n");
         }
       } else {
-        PUSH_WARN("TODO: Prim metadataum : " << meta.first);
+        // string-only data?
+        if (auto pv = var.value.get_value<StringData>()) {
+          out->stringData.push_back(pv.value());
+        } else {
+          PUSH_WARN("TODO: Prim metadataum : " << meta.first);
+        }
       }
     }
 
@@ -837,155 +849,147 @@ nonstd::expected<T, std::string> EnumHandler(
       quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
 }
 
-template<typename T>
+template <typename T>
 struct AttribType;
 
-template<typename T>
+template <typename T>
 struct AttribType {
   using type = T;
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
-
+  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
 
 // `nonstd::optional<Connection<T>>` -> T
-template<typename T>
+template <typename T>
 struct AttribType<nonstd::optional<Connection<T>>> {
   using type = T;
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
+  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
 
 // `nonstd::optional<T>` -> T
-template<typename T>
+template <typename T>
 struct AttribType<nonstd::optional<T>> {
   using type = T;
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
+  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
 
-template<typename T>
+template <typename T>
 struct AttribType<TypedAttribute<T>> {
   using type = T;
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
+  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
-
 
 // `AttribWithFallback<T>` -> T
-template<typename T>
+template <typename T>
 struct AttribType<AttribWithFallback<T>> {
   using type = T;
-  static std::string type_name() {
-    return value::TypeTrait<T>::type_name();
-  }
+  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
 
-
-
 // TODO(syoyo): TimeSamples, Reference
-#define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)                    \
-  if (__prop.first == __name) {                                              \
-    const PrimAttrib &attr = __prop.second.attrib;                           \
-    if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) {                 \
-      __target.value = v.value();                                                  \
-      __target.meta = attr.meta; \
-      __table.insert(__name); \
-    } else {                                                                 \
-      PUSH_ERROR_AND_RETURN(                                                 \
-          "(" << value::TypeTrait<__klass>::type_name()                      \
-              << ") Property type mismatch. " << __name << " expects type `" \
-              << AttribType<decltype(__target)>::type_name()           \
-              << "` but defined as type `" << attr.var.type_name() << "`");  \
-    }                                                                        \
+#define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)       \
+  if (__prop.first.compare(__name) == 0) {                                     \
+    const PrimAttrib &attr = __prop.second.attrib;                             \
+    DCOUT("Got prop: " << __name); \
+    if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) { \
+      DCOUT("Add prop: " << __name);                                           \
+      __target.value = v.value();                                              \
+      __target.meta = attr.meta;                                               \
+      __table.insert(__name);                                                  \
+    } else {                                                                   \
+      PUSH_ERROR_AND_RETURN(                                                   \
+          "(" << value::TypeTrait<__klass>::type_name()                        \
+              << ") Property type mismatch. " << __name << " expects type `"   \
+              << AttribType<decltype(__target)>::type_name()                   \
+              << "` but defined as type `" << attr.var.type_name() << "`");    \
+    }                                                                          \
   } else
 
 // e.g. "float2 inputs:st"
-// Attribute type is EmptyAttrib, Attrib(fallback) or Connection(`target` is Path)
+// Attribute type is EmptyAttrib, Attrib(fallback) or Connection(`target` is
+// Path)
 // TODO: Attrib assign
-#define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target)                    \
-  if (__prop.first.compare(__name ".connect") == 0) { \
-    std::string propname = removeSuffix(__name, ".connect"); \
-    const Property &p = __prop.second; \
-    if (auto pv = p.GetConnectionTarget()) { \
-      __target.value = pv.value(); \
-      __table.insert(propname); \
-    } else { \
-      PUSH_ERROR_AND_RETURN(                                                 \
-          "(" << value::TypeTrait<__klass>::type_name()                      \
-              << ") No connection target or invalid syntax of connection target for attribute `" << propname << "`."); \
-    } \
-  } else if (__prop.first == __name) {                                              \
-    const Property &p = __prop.second; \
-    const PrimAttrib &attr = p.attrib;                           \
-    /* Type info is stored in attrib.type_name */ \
-    if (AttribType<decltype(__target)>::type_name() == attr.type_name) {                 \
-      if (auto pv = p.GetConnectionTarget()) { \
-        __target.value = pv.value(); \
-        __table.insert(__name); \
-      } else if (p.type == Property::Type::EmptyAttrib) { \
-        __target.value = tinyusdz::monostate(); \
-        __table.insert(__name); \
-      } else { \
-        PUSH_ERROR_AND_RETURN(                                                 \
-            "(" << value::TypeTrait<__klass>::type_name()                      \
-                << ") TODO: Connection Property `" << __name << "` must not be value assigned."); \
-      } \
-    } else {                                                                 \
-      PUSH_ERROR_AND_RETURN(                                                 \
-          "(" << value::TypeTrait<__klass>::type_name()                      \
-              << ") Property type mismatch. " << __name << " expects type `" \
-              << AttribType<decltype(__target)>::type_name()           \
-              << "` but defined as type `" << attr.type_name << "`");  \
-    }                                                                        \
+#define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target)      \
+  if (__prop.first.compare(__name ".connect") == 0) {                          \
+    std::string propname = removeSuffix(__name, ".connect");                   \
+    const Property &p = __prop.second;                                         \
+    if (auto pv = p.GetConnectionTarget()) {                                   \
+      __target.value = pv.value();                                             \
+      __table.insert(propname);                                                \
+    } else {                                                                   \
+      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()      \
+                                << ") No connection target or invalid syntax " \
+                                   "of connection target for attribute `"      \
+                                << propname << "`.");                          \
+    }                                                                          \
+  } else if (__prop.first == __name) {                                         \
+    const Property &p = __prop.second;                                         \
+    const PrimAttrib &attr = p.attrib;                                         \
+    /* Type info is stored in attrib.type_name */                              \
+    if (AttribType<decltype(__target)>::type_name() == attr.type_name) {       \
+      if (auto pv = p.GetConnectionTarget()) {                                 \
+        __target.value = pv.value();                                           \
+        __table.insert(__name);                                                \
+      } else if (p.type == Property::Type::EmptyAttrib) {                      \
+        __target.value = tinyusdz::monostate();                                \
+        __target.meta = attr.meta;                                             \
+        __table.insert(__name);                                                \
+      } else {                                                                 \
+        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()    \
+                                  << ") TODO: Connection Property `" << __name \
+                                  << "` must not be value assigned.");         \
+      }                                                                        \
+    } else {                                                                   \
+      PUSH_ERROR_AND_RETURN(                                                   \
+          "(" << value::TypeTrait<__klass>::type_name()                        \
+              << ") Property type mismatch. " << __name << " expects type `"   \
+              << AttribType<decltype(__target)>::type_name()                   \
+              << "` but defined as type `" << attr.type_name << "`");          \
+    }                                                                          \
   } else
 
 // e.g. "float3 outputs:rgb"
 // Attribute type is EmptyAttrib or Connection(`target` is Path)
 // TODO: Metadatum
-#define PARSE_TYPED_OUTPUT_CONNECTION(__table, __prop, __name, __klass, __target)                    \
+#define PARSE_TYPED_OUTPUT_CONNECTION(__table, __prop, __name, __klass,      \
+                                      __target)                              \
   if (__prop.first == __name) {                                              \
-    const Property &p = __prop.second; \
-    const PrimAttrib &attr = p.attrib;                           \
-    /* Type info is stored in attrib.type_name */ \
-    if (AttribType<decltype(__target)>::type_name() == attr.type_name) {                 \
-      if (auto pv = p.GetConnectionTarget()) { \
-        __target->target = pv.value(); \
-        __table.insert(__name); \
-      } else if (p.type == Property::Type::EmptyAttrib) { \
-        __table.insert(__name); \
-      } else { \
-        PUSH_ERROR_AND_RETURN(                                                 \
-            "(" << value::TypeTrait<__klass>::type_name()                      \
-                << ") Connection Property `" << __name << "` must not be value assigned."); \
-      } \
+    const Property &p = __prop.second;                                       \
+    const PrimAttrib &attr = p.attrib;                                       \
+    /* Type info is stored in attrib.type_name */                            \
+    if (AttribType<decltype(__target)>::type_name() == attr.type_name) {     \
+      if (auto pv = p.GetConnectionTarget()) {                               \
+        __target->target = pv.value();                                       \
+        __table.insert(__name);                                              \
+      } else if (p.type == Property::Type::EmptyAttrib) {                    \
+        __table.insert(__name);                                              \
+      } else {                                                               \
+        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()  \
+                                  << ") Connection Property `" << __name     \
+                                  << "` must not be value assigned.");       \
+      }                                                                      \
     } else {                                                                 \
       PUSH_ERROR_AND_RETURN(                                                 \
           "(" << value::TypeTrait<__klass>::type_name()                      \
               << ") Property type mismatch. " << __name << " expects type `" \
-              << AttribType<decltype(__target)>::type_name()           \
-              << "` but defined as type `" << attr.type_name << "`");  \
+              << AttribType<decltype(__target)>::type_name()                 \
+              << "` but defined as type `" << attr.type_name << "`");        \
     }                                                                        \
   } else
 
 // TODO(syoyo): TimeSamples, Reference
-#define PARSE_PROPERTY(__table, __prop, __name, __klass, __target)                    \
-  if (__prop.first == __name) {                                              \
-    const PrimAttrib &attr = __prop.second.attrib;                           \
-    if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) {                 \
-      __target = v.value();                                                  \
-      __table.insert(__name); \
-    } else {                                                                 \
-      PUSH_ERROR_AND_RETURN(                                                 \
-          "(" << value::TypeTrait<__klass>::type_name()                      \
-              << ") Property type mismatch. " << __name << " expects type `" \
-              << AttribType<decltype(__target)>::type_name()           \
-              << "` but defined as type `" << attr.var.type_name() << "`");  \
-    }                                                                        \
+#define PARSE_PROPERTY(__table, __prop, __name, __klass, __target)             \
+  if (__prop.first == __name) {                                                \
+    const PrimAttrib &attr = __prop.second.attrib;                             \
+    if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) { \
+      __target = v.value();                                                    \
+      __table.insert(__name);                                                  \
+    } else {                                                                   \
+      PUSH_ERROR_AND_RETURN(                                                   \
+          "(" << value::TypeTrait<__klass>::type_name()                        \
+              << ") Property type mismatch. " << __name << " expects type `"   \
+              << AttribType<decltype(__target)>::type_name()                   \
+              << "` but defined as type `" << attr.var.type_name() << "`");    \
+    }                                                                          \
   } else
 
 //#define PARSE_TOKEN_PROPETY(__prop, __name, __ty, __allowed_tokens, __target)             \
@@ -1000,36 +1004,37 @@ struct AttribType<AttribWithFallback<T>> {
 //    } \
 //  } else
 
-#define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, __target) \
-  if (__prop.first == __name) {                                               \
-    const PrimAttrib &attr = __prop.second.attrib;                            \
-    if (auto tok = attr.var.get_value<value::token>()) {                      \
-      auto e = __enum_handler(tok.value().str());                             \
-      if (e) {                                                                \
-        __target = e.value();                                                 \
-        __table.insert(__name); \
-      } else {                                                                \
-        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()   \
-                                  << ") " << e.error());                      \
-      }                                                                       \
-    } else {                                                                  \
-      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()     \
-                                << ") Property type mismatch. " << __name     \
-                                << " must be type `token`, but got `"         \
-                                << attr.var.type_name() << "`.");             \
-    }                                                                         \
+#define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
+                           __target)                                         \
+  if (__prop.first == __name) {                                              \
+    const PrimAttrib &attr = __prop.second.attrib;                           \
+    if (auto tok = attr.var.get_value<value::token>()) {                     \
+      auto e = __enum_handler(tok.value().str());                            \
+      if (e) {                                                               \
+        __target = e.value();                                                \
+        __table.insert(__name);                                              \
+      } else {                                                               \
+        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()  \
+                                  << ") " << e.error());                     \
+      }                                                                      \
+    } else {                                                                 \
+      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()    \
+                                << ") Property type mismatch. " << __name    \
+                                << " must be type `token`, but got `"        \
+                                << attr.var.type_name() << "`.");            \
+    }                                                                        \
   } else
 
 // Add custom property(including property with "primvars" prefix)
-// Please call this macro after listing up all predefined property using `PARSE_PROPERTY` and `PARSE_ENUM_PROPETY`
-#define ADD_PROPERY(__table, __prop, __klass, __dst) \
-  /* Check if the property name is a predefined property */ \
-  if (!__table.count(__prop.first)) {        \
+// Please call this macro after listing up all predefined property using
+// `PARSE_PROPERTY` and `PARSE_ENUM_PROPETY`
+#define ADD_PROPERY(__table, __prop, __klass, __dst)         \
+  /* Check if the property name is a predefined property */  \
+  if (!__table.count(__prop.first)) {                        \
     DCOUT("custom property added: name = " << __prop.first); \
-    __dst[__prop.first] = __prop.second;              \
-    __table.insert(__prop.first);              \
+    __dst[__prop.first] = __prop.second;                     \
+    __table.insert(__prop.first);                            \
   } else
-
 
 // This code path should not be reached though.
 #define PARSE_PROPERTY_END_MAKE_ERROR(__prop)                      \
@@ -1157,16 +1162,17 @@ bool USDAReader::Impl::ReconstructPrim(
   // true : return suffix(first namespace ':' is ommited.).
   // - "" for prefix only "xformOp:translate"
   // - "blender:pivot" for "xformOp:translate:blender:pivot"
-  auto SplitXformOpToken = [](const std::string &s, const std::string &prefix) -> nonstd::optional<std::string> {
-
+  auto SplitXformOpToken =
+      [](const std::string &s,
+         const std::string &prefix) -> nonstd::optional<std::string> {
     if (startsWith(s, prefix)) {
       if (s.compare(prefix) == 0) {
-        // prefix only. 
-        return std::string(); // empty suffix
+        // prefix only.
+        return std::string();  // empty suffix
       } else {
         std::string suffix = removePrefix(s, prefix);
         DCOUT("suffix = " << suffix);
-        if (suffix.length() == 1) { // maybe namespace only.
+        if (suffix.length() == 1) {  // maybe namespace only.
           return nonstd::nullopt;
         }
 
@@ -1189,10 +1195,10 @@ bool USDAReader::Impl::ReconstructPrim(
     auto prop = properties.at("xformOpOrder");
     if (prop.IsRel()) {
       PUSH_ERROR_AND_RETURN("Relation for `xformOpOrder` is not supported.");
-    } else if (auto pv = prop.attrib.var.get_value<std::vector<value::token>>()) {
+    } else if (auto pv =
+                   prop.attrib.var.get_value<std::vector<value::token>>()) {
       // TODO: 'uniform' qualifier check?
       for (size_t i = 0; i < pv.value().size(); i++) {
-
         const auto &item = pv.value()[i];
 
         XformOp op;
@@ -1202,11 +1208,15 @@ bool USDAReader::Impl::ReconstructPrim(
 
         if (startsWith(tok, "!resetXformStack!")) {
           if (tok.compare("!resetXformStack!") != 0) {
-            PUSH_ERROR_AND_RETURN("`!resetXformStack!` must be defined solely(not to be a prefix to \"xformOp:*\")");
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must be defined solely(not to be a prefix "
+                "to \"xformOp:*\")");
           }
 
           if (i != 0) {
-            PUSH_ERROR_AND_RETURN("`!resetXformStack!` must appear at the first element of xformOpOrder list.");
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must appear at the first element of "
+                "xformOpOrder list.");
           }
 
           op.op = XformOp::OpType::ResetXformStack;
@@ -1228,24 +1238,27 @@ bool USDAReader::Impl::ReconstructPrim(
           PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
         }
         if (it->second.IsConnection()) {
-          PUSH_ERROR_AND_RETURN("Connection(.connect) of xformOp property is not yet supported: `" + tok + "`");
+          PUSH_ERROR_AND_RETURN(
+              "Connection(.connect) of xformOp property is not yet supported: "
+              "`" +
+              tok + "`");
         }
         const PrimAttrib &attr = it->second.attrib;
 
         // Check `xformOp` namespace
         if (auto xfm = SplitXformOpToken(tok, kTransform)) {
-
           op.op = XformOp::OpType::Transform;
-          op.suffix = xfm.value(); // may contain nested namespaces
+          op.suffix = xfm.value();  // may contain nested namespaces
 
           if (auto pvd = attr.var.get_value<value::matrix4d>()) {
             op.value = pvd.value();
           } else {
-            PUSH_ERROR_AND_RETURN("`xformOp:transform` must be type `matrix4d`, but got type `" + attr.var.type_name() + "`.");
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:transform` must be type `matrix4d`, but got type `" +
+                attr.var.type_name() + "`.");
           }
 
         } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
-
           op.op = XformOp::OpType::Translate;
           op.suffix = tx.value();
 
@@ -1254,10 +1267,12 @@ bool USDAReader::Impl::ReconstructPrim(
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
             op.value = pvf.value();
           } else {
-            PUSH_ERROR_AND_RETURN("`xformOp:translate` must be type `double3` or `float3`, but got type `" + attr.var.type_name() + "`.");
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:translate` must be type `double3` or `float3`, but "
+                "got type `" +
+                attr.var.type_name() + "`.");
           }
         } else if (auto scale = SplitXformOpToken(tok, kScale)) {
-
           op.op = XformOp::OpType::Scale;
           op.suffix = scale.value();
 
@@ -1266,7 +1281,10 @@ bool USDAReader::Impl::ReconstructPrim(
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
             op.value = pvf.value();
           } else {
-            PUSH_ERROR_AND_RETURN("`xformOp:scale` must be type `double3` or `float3`, but got type `" + attr.var.type_name() + "`.");
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:scale` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
           }
         } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
           op.op = XformOp::OpType::RotateX;
@@ -1277,7 +1295,10 @@ bool USDAReader::Impl::ReconstructPrim(
           } else if (auto pvf = attr.var.get_value<float>()) {
             op.value = pvf.value();
           } else {
-            PUSH_ERROR_AND_RETURN("`xformOp:rotateX` must be type `double` or `float`, but got type `" + attr.var.type_name() + "`.");
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateX` must be type `double` or `float`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
           }
         } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
           op.op = XformOp::OpType::Orient;
@@ -1288,10 +1309,14 @@ bool USDAReader::Impl::ReconstructPrim(
           } else if (auto pvf = attr.var.get_value<value::quatd>()) {
             op.value = pvf.value();
           } else {
-            PUSH_ERROR_AND_RETURN("`xformOp:orient` must be type `quatf` or `quatd`, but got type `" + attr.var.type_name() + "`.");
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
           }
         } else {
-          PUSH_ERROR_AND_RETURN("token for xformOpOrder must have namespace `xformOp:***`, or .");
+          PUSH_ERROR_AND_RETURN(
+              "token for xformOpOrder must have namespace `xformOp:***`, or .");
         }
 
         xform->xformOps.emplace_back(op);
@@ -1299,9 +1324,10 @@ bool USDAReader::Impl::ReconstructPrim(
       }
 
     } else {
-      PUSH_ERROR_AND_RETURN("`xformOpOrder` must be type `token[]` but got type `" << prop.attrib.var.type_name() << "`.");
+      PUSH_ERROR_AND_RETURN(
+          "`xformOpOrder` must be type `token[]` but got type `"
+          << prop.attrib.var.type_name() << "`.");
     }
-
   }
 
   //
@@ -1369,10 +1395,10 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
       [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
           const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
-          const std::vector<std::pair<ListEditQual, Reference>> &references, const ascii::AsciiParser::PrimMetaInput &in_meta)
+          const std::vector<std::pair<ListEditQual, Reference>> &references,
+          const ascii::AsciiParser::PrimMetaInput &in_meta)
           -> nonstd::expected<bool, std::string> {
-
-        const Path& parent = full_path.GetParentPrim();
+        const Path &parent = full_path.GetParentPrim();
         if (!parent.IsValid()) {
           return nonstd::make_unexpected("Invalid Prim path.");
         }
@@ -1397,7 +1423,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           return nonstd::make_unexpected("Failed to process Prim metadataum.");
         }
 
-        // TODO: Construct GeomMesh first
+    // TODO: Construct GeomMesh first
 #if 0
         const std::string parent_primpath = parent.GetPrimPart();
 
@@ -1594,7 +1620,6 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
               size_t(primIdx));
         }
 
-
 #endif
 
         return true;
@@ -1624,7 +1649,6 @@ bool USDAReader::Impl::ReconstructPrim(
     GeomSphere *sphere) {
   (void)sphere;
 
-  constexpr auto kRadius = "radius";
   constexpr auto kMaterialBinding = "material:binding";
 
   DCOUT("Reconstruct Sphere.");
@@ -1667,42 +1691,38 @@ bool USDAReader::Impl::ReconstructPrim(
     }
   }
 
+  std::set<std::string> table;
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    if (prop.first == kRadius) {
-      DCOUT("prop radius");
-      // TODO: timeSamples
-      if (auto pv = prop.second.attrib.var.get_value<double>()) {
-        sphere->radius = pv.value();
-        DCOUT("radius = " << pv.value());
-      } else {
-        DCOUT("radius err");
-        PUSH_ERROR_AND_RETURN("`radius` must be type `double` but got `" +
-                              prop.second.attrib.var.type_name() + "`.");
-      }
-    } else if (prop.first == kMaterialBinding) {
-      if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
-        MaterialBindingAPI m;
+    if (prop.second.IsRel()) {
+      if (prop.first == kMaterialBinding) {
+        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
+          MaterialBindingAPI m;
 #if 0
-        if (auto pathv = pv.value().targets.get<Path>()) {
-          m.binding = pathv.value();
-          sphere->materialBinding = m;
-        } else {
-          PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-        }
+          if (auto pathv = pv.value().targets.get<Path>()) {
+            m.binding = pathv.value();
+            sphere->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
 #else
-        if (pv.value().IsPath()) {
-          m.binding = pv.value().targetPath;
-          sphere->materialBinding = m;
-        } else {
-          PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-        }
+          if (pv.value().IsPath()) {
+            m.binding = pv.value().targetPath;
+            sphere->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
 #endif
+        } else {
+          PUSH_WARN(kMaterialBinding << " must be Relationship ");
+        }
       } else {
-        PUSH_WARN(kMaterialBinding << " must be Relationship ");
+        PUSH_WARN("TODO:" << prop.first);
       }
-    } else
+    } else {
+      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomSphere, sphere->radius)
       PARSE_PROPERTY_END_MAKE_ERROR(prop)
+    }
   }
 
   //
@@ -1792,38 +1812,42 @@ bool USDAReader::Impl::ReconstructPrim(
     }
   }
 
-#if 0
+  constexpr auto kMaterialBinding = "material:binding";
+
+  std::set<std::string> table;
   for (const auto &prop : properties) {
-    if (prop.first == "material:binding") {
-      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
-        cone->materialBinding.materialBinding = prel->path;
-      } else {
-        PushError("`material:binding` must be 'rel' type.");
-        return false;
-      }
-    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-      if (prop.first == "radius") {
-        if (auto p = value::as_basic<double>(&attr->var)) {
-          cone->radius = *p;
+    DCOUT("prop: " << prop.first);
+    if (prop.second.IsRel()) {
+      if (prop.first == kMaterialBinding) {
+        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
+          MaterialBindingAPI m;
+#if 0
+          if (auto pathv = pv.value().targets.get<Path>()) {
+            m.binding = pathv.value();
+            sphere->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
+#else
+          if (pv.value().IsPath()) {
+            m.binding = pv.value().targetPath;
+            cone->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
+#endif
         } else {
-          PushError("`radius` must be double type.");
-          return false;
-        }
-      } else if (prop.first == "height") {
-        if (auto p = value::as_basic<double>(&attr->var)) {
-          cone->height = *p;
-        } else {
-          PushError("`height` must be double type.");
-          return false;
+          PUSH_WARN(kMaterialBinding << " must be Relationship ");
         }
       } else {
-        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
+        PUSH_WARN("TODO:" << prop.first);
       }
+    } else {
+      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->radius)
+      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->height)
+      PARSE_PROPERTY_END_MAKE_ERROR(prop)
     }
   }
-#endif
 
 #if 0
   //
@@ -1913,31 +1937,42 @@ bool USDAReader::Impl::ReconstructPrim(
   }
 #endif
 
-#if 0
+  constexpr auto kMaterialBinding = "material:binding";
+
+  std::set<std::string> table;
   for (const auto &prop : properties) {
-    if (prop.first == "material:binding") {
-      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
-        cube->materialBinding.materialBinding = prel->path;
-      } else {
-        PushError("`material:binding` must be 'rel' type.");
-        return false;
-      }
-    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-      if (prop.first == "size") {
-        if (auto p = value::as_basic<double>(&attr->var)) {
-          cube->size = *p;
+    DCOUT("prop: " << prop.first);
+    if (prop.second.IsRel()) {
+      if (prop.first == kMaterialBinding) {
+        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
+          MaterialBindingAPI m;
+#if 0
+          if (auto pathv = pv.value().targets.get<Path>()) {
+            m.binding = pathv.value();
+            sphere->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
+#else
+          if (pv.value().IsPath()) {
+            m.binding = pv.value().targetPath;
+            cube->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
+#endif
         } else {
-          PushError("`size` must be double type.");
-          return false;
+          PUSH_WARN(kMaterialBinding << " must be Relationship ");
         }
       } else {
-        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
+        PUSH_WARN("TODO:" << prop.first);
       }
+    } else {
+      PARSE_TYPED_PROPERTY(table, prop, "size", GeomCube, cube->size)
+      ADD_PROPERY(table, prop, GeomCube, cube->props)
+      PARSE_PROPERTY_END_MAKE_ERROR(prop)
     }
   }
-#endif
 
 #if 0
   //
@@ -2040,51 +2075,44 @@ bool USDAReader::Impl::ReconstructPrim(
     }
   }
 
-#if 0
+  constexpr auto kMaterialBinding = "material:binding";
+
+  std::set<std::string> table;
   for (const auto &prop : properties) {
-    if (prop.first == "material:binding") {
-      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
-        capsule->materialBinding.materialBinding = prel->path;
-      } else {
-        PushError("`material:binding` must be 'rel' type.");
-        return false;
-      }
-    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-      if (prop.first == "height") {
-        if (auto p = value::as_basic<double>(&attr->var)) {
-          capsule->height = *p;
-        } else {
-          PushError("`height` must be double type.");
-          return false;
-        }
-      } else if (prop.first == "radius") {
-        if (auto p = value::as_basic<double>(&attr->var)) {
-          capsule->radius = *p;
-        } else {
-          PushError("`radius` must be double type.");
-          return false;
-        }
-      } else if (prop.first == "axis") {
-        if (auto p = value::as_basic<Token>(&attr->var)) {
-          if (p->value == "x") {
-            capsule->axis = Axis::X;
-          } else if (p->value == "y") {
-            capsule->axis = Axis::Y;
-          } else if (p->value == "z") {
-            capsule->axis = Axis::Z;
+    DCOUT("prop: " << prop.first);
+    if (prop.second.IsRel()) {
+      if (prop.first == kMaterialBinding) {
+        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
+          MaterialBindingAPI m;
+#if 0
+          if (auto pathv = pv.value().targets.get<Path>()) {
+            m.binding = pathv.value();
+            sphere->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
           }
+#else
+          if (pv.value().IsPath()) {
+            m.binding = pv.value().targetPath;
+            capsule->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
+#endif
         } else {
-          PushError("`axis` must be token type.");
-          return false;
+          PUSH_WARN(kMaterialBinding << " must be Relationship ");
         }
       } else {
-        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
+        PUSH_WARN("TODO:" << prop.first);
       }
+    } else {
+      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCapsule, capsule->radius)
+      PARSE_TYPED_PROPERTY(table, prop, "height", GeomCapsule, capsule->height)
+      PARSE_PROPERTY_END_MAKE_ERROR(prop)
     }
   }
 
+#if 0
   //
   // Resolve append references
   // (Overwrite variables with the referenced one).
@@ -2199,51 +2227,48 @@ bool USDAReader::Impl::ReconstructPrim(
       }
     }
   }
+#endif
 
+  constexpr auto kMaterialBinding = "material:binding";
+
+  std::set<std::string> table;
   for (const auto &prop : properties) {
-    if (prop.first == "material:binding") {
-      if (auto prel = nonstd::get_if<Rel>(&prop.second)) {
-        cylinder->materialBinding.materialBinding = prel->path;
-      } else {
-        PushError("`material:binding` must be 'rel' type.");
-        return false;
-      }
-    } else if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
-      if (prop.first == "height") {
-        if (auto p = value::as_basic<double>(&attr->var)) {
-          cylinder->height = *p;
-        } else {
-          PushError("`height` must be double type.");
-          return false;
-        }
-      } else if (prop.first == "radius") {
-        if (auto p = value::as_basic<double>(&attr->var)) {
-          cylinder->radius = *p;
-        } else {
-          PushError("`radius` must be double type.");
-          return false;
-        }
-      } else if (prop.first == "axis") {
-        if (auto p = value::as_basic<Token>(&attr->var)) {
-          if (p->value == "x") {
-            cylinder->axis = Axis::X;
-          } else if (p->value == "y") {
-            cylinder->axis = Axis::Y;
-          } else if (p->value == "z") {
-            cylinder->axis = Axis::Z;
+    DCOUT("prop: " << prop.first);
+    if (prop.second.IsRel()) {
+      if (prop.first == kMaterialBinding) {
+        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
+          MaterialBindingAPI m;
+#if 0
+          if (auto pathv = pv.value().targets.get<Path>()) {
+            m.binding = pathv.value();
+            sphere->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
           }
+#else
+          if (pv.value().IsPath()) {
+            m.binding = pv.value().targetPath;
+            cylinder->materialBinding = m;
+          } else {
+            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
+          }
+#endif
         } else {
-          PushError("`axis` must be token type.");
-          return false;
+          PUSH_WARN(kMaterialBinding << " must be Relationship ");
         }
       } else {
-        PushError(std::to_string(__LINE__) + " TODO: type: " + prop.first +
-                   "\n");
-        return false;
+        PUSH_WARN("TODO:" << prop.first);
       }
+    } else {
+      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCylinder,
+                           cylinder->radius)
+      PARSE_TYPED_PROPERTY(table, prop, "height", GeomCylinder,
+                           cylinder->height)
+      PARSE_PROPERTY_END_MAKE_ERROR(prop)
     }
   }
 
+#if 0
   //
   // Resolve append references
   // (Overwrite variables with the referenced one).
@@ -2397,23 +2422,29 @@ bool USDAReader::Impl::ReconstructPrim(
                        "edgeAndCorner"),
         std::make_pair(GeomMesh::InterpolateBoundary::EdgeOnly, "edgeOnly"),
     };
-    return EnumHandler<GeomMesh::InterpolateBoundary>("interpolateBoundary", tok,
-                                                    enums);
+    return EnumHandler<GeomMesh::InterpolateBoundary>("interpolateBoundary",
+                                                      tok, enums);
   };
 
   auto FacevaryingLinearInterpolationHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomMesh::FacevaryingLinearInterpolation, std::string> {
-    using EnumTy = std::pair<GeomMesh::FacevaryingLinearInterpolation, const char *>;
+      -> nonstd::expected<GeomMesh::FacevaryingLinearInterpolation,
+                          std::string> {
+    using EnumTy =
+        std::pair<GeomMesh::FacevaryingLinearInterpolation, const char *>;
     const std::vector<EnumTy> enums = {
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus1, "cornersPlus1"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus2, "cornersPlus2"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersOnly, "cornersOnly"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::Boundaries, "boundaries"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus1,
+                       "cornersPlus1"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus2,
+                       "cornersPlus2"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersOnly,
+                       "cornersOnly"),
+        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::Boundaries,
+                       "boundaries"),
         std::make_pair(GeomMesh::FacevaryingLinearInterpolation::None, "none"),
         std::make_pair(GeomMesh::FacevaryingLinearInterpolation::All, "all"),
     };
-    return EnumHandler<GeomMesh::FacevaryingLinearInterpolation>("facevaryingLinearInterpolation", tok,
-                                                    enums);
+    return EnumHandler<GeomMesh::FacevaryingLinearInterpolation>(
+        "facevaryingLinearInterpolation", tok, enums);
   };
 
   std::set<std::string> table;
@@ -2455,20 +2486,28 @@ bool USDAReader::Impl::ReconstructPrim(
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "points", GeomMesh, mesh->points)
       PARSE_TYPED_PROPERTY(table, prop, "normals", GeomMesh, mesh->normals)
-      PARSE_TYPED_PROPERTY(table, prop, "faceVertexCounts", GeomMesh, mesh->faceVertexCounts)
+      PARSE_TYPED_PROPERTY(table, prop, "faceVertexCounts", GeomMesh,
+                           mesh->faceVertexCounts)
       PARSE_TYPED_PROPERTY(table, prop, "faceVertexIndices", GeomMesh,
-                     mesh->faceVertexIndices)
+                           mesh->faceVertexIndices)
       // Subd
-      PARSE_TYPED_PROPERTY(table, prop, "cornerIndices", GeomMesh, mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "cornerSharpnesses", GeomMesh, mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "creaseIndices", GeomMesh, mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "creaseLengths", GeomMesh, mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "creaseSharpnesses", GeomMesh, mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "holeIndices", GeomMesh, mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "cornerIndices", GeomMesh,
+                           mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "cornerSharpnesses", GeomMesh,
+                           mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "creaseIndices", GeomMesh,
+                           mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "creaseLengths", GeomMesh,
+                           mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "creaseSharpnesses", GeomMesh,
+                           mesh->cornerIndices)
+      PARSE_TYPED_PROPERTY(table, prop, "holeIndices", GeomMesh,
+                           mesh->cornerIndices)
       //
       PARSE_PROPERTY(table, prop, "doubleSided", GeomMesh, mesh->doubleSided)
-      PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme", SubdivisioSchemeHandler,
-                         GeomMesh, mesh->subdivisionScheme)
+      PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme",
+                         SubdivisioSchemeHandler, GeomMesh,
+                         mesh->subdivisionScheme)
       PARSE_ENUM_PROPETY(table, prop, "interpolateBoundary",
                          InterpolateBoundaryHandler, GeomMesh,
                          mesh->interpolateBoundary)
@@ -2539,17 +2578,21 @@ bool USDAReader::Impl::ReconstructPrim(
 
   for (const auto &prop : properties) {
     PARSE_TYPED_PROPERTY(table, prop, "curveVertexCounts", GeomBasisCurves,
-                   curves->curveVertexCounts)
+                         curves->curveVertexCounts)
     PARSE_TYPED_PROPERTY(table, prop, "points", GeomBasisCurves, curves->points)
-    PARSE_TYPED_PROPERTY(table, prop, "velocities", GeomBasisCurves, curves->velocities)
-    PARSE_TYPED_PROPERTY(table, prop, "normals", GeomBasisCurves, curves->normals)
+    PARSE_TYPED_PROPERTY(table, prop, "velocities", GeomBasisCurves,
+                         curves->velocities)
+    PARSE_TYPED_PROPERTY(table, prop, "normals", GeomBasisCurves,
+                         curves->normals)
     PARSE_TYPED_PROPERTY(table, prop, "accelerations", GeomBasisCurves,
-                   curves->accelerations)
+                         curves->accelerations)
     PARSE_TYPED_PROPERTY(table, prop, "widths", GeomBasisCurves, curves->widths)
-    PARSE_ENUM_PROPETY(table, prop, "type", TypeHandler, GeomBasisCurves, curves->type)
+    PARSE_ENUM_PROPETY(table, prop, "type", TypeHandler, GeomBasisCurves,
+                       curves->type)
     PARSE_ENUM_PROPETY(table, prop, "basis", BasisHandler, GeomBasisCurves,
                        curves->basis)
-    PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves, curves->wrap)
+    PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves,
+                       curves->wrap)
 
     ADD_PROPERY(table, prop, GeomBasisCurves, curves->props);
 
@@ -2592,7 +2635,8 @@ bool USDAReader::Impl::ReconstructPrim(
   std::set<std::string> table;
   for (const auto &prop : properties) {
     PARSE_PROPERTY(table, prop, "focalLength", GeomCamera, camera->focalLength)
-    PARSE_PROPERTY(table, prop, "focusDistance", GeomCamera, camera->focusDistance)
+    PARSE_PROPERTY(table, prop, "focusDistance", GeomCamera,
+                   camera->focusDistance)
     PARSE_PROPERTY(table, prop, "exposure", GeomCamera, camera->exposure)
     PARSE_PROPERTY(table, prop, "fStop", GeomCamera, camera->fStop)
     PARSE_PROPERTY(table, prop, "horizontalAperture", GeomCamera,
@@ -2601,10 +2645,13 @@ bool USDAReader::Impl::ReconstructPrim(
                    camera->horizontalApertureOffset)
     PARSE_PROPERTY(table, prop, "horizontalApertureOffset", GeomCamera,
                    camera->horizontalApertureOffset)
-    PARSE_PROPERTY(table, prop, "clippingRange", GeomCamera, camera->clippingRange)
-    PARSE_PROPERTY(table, prop, "clippingPlanes", GeomCamera, camera->clippingPlanes)
+    PARSE_PROPERTY(table, prop, "clippingRange", GeomCamera,
+                   camera->clippingRange)
+    PARSE_PROPERTY(table, prop, "clippingPlanes", GeomCamera,
+                   camera->clippingPlanes)
     PARSE_PROPERTY(table, prop, "shutter:open", GeomCamera, camera->shutterOpen)
-    PARSE_PROPERTY(table, prop, "shutter:close", GeomCamera, camera->shutterClose)
+    PARSE_PROPERTY(table, prop, "shutter:close", GeomCamera,
+                   camera->shutterClose)
     PARSE_ENUM_PROPETY(table, prop, "projection", ProjectionHandler, GeomCamera,
                        camera->projection)
     ADD_PROPERY(table, prop, GeomCamera, camera->props)
@@ -2619,13 +2666,13 @@ bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxSphereLight *light) {
-
   std::set<std::string> table;
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_PROPERTY(table, prop, "inputs:color", LuxSphereLight, light->color)
     PARSE_PROPERTY(table, prop, "inputs:radius", LuxSphereLight, light->radius)
-    PARSE_PROPERTY(table, prop, "inputs:intensity", LuxSphereLight, light->intensity)
+    PARSE_PROPERTY(table, prop, "inputs:intensity", LuxSphereLight,
+                   light->intensity)
     ADD_PROPERY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
@@ -2638,17 +2685,18 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxDomeLight *light) {
-
   std::set<std::string> table;
 
   for (const auto &prop : properties) {
     PARSE_PROPERTY(table, prop, "guideRadius", LuxDomeLight, light->guideRadius)
     PARSE_PROPERTY(table, prop, "inputs:diffuse", LuxDomeLight, light->diffuse)
-    PARSE_PROPERTY(table, prop, "inputs:specular", LuxDomeLight, light->specular)
+    PARSE_PROPERTY(table, prop, "inputs:specular", LuxDomeLight,
+                   light->specular)
     PARSE_PROPERTY(table, prop, "inputs:colorTemperature", LuxDomeLight,
                    light->colorTemperature)
     PARSE_PROPERTY(table, prop, "inputs:color", LuxDomeLight, light->color)
-    PARSE_PROPERTY(table, prop, "inputs:intensity", LuxDomeLight, light->intensity)
+    PARSE_PROPERTY(table, prop, "inputs:intensity", LuxDomeLight,
+                   light->intensity)
     ADD_PROPERY(table, prop, LuxDomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
@@ -2721,27 +2769,42 @@ bool USDAReader::Impl::ReconstructShader<UsdPreviewSurface>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPreviewSurface *surface) {
-
   // TODO: references
 
   std::set<std::string> table;
   for (auto &prop : properties) {
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface, surface->diffuseColor)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:emissiveColor", UsdPreviewSurface, surface->emissiveColor)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:roughness", UsdPreviewSurface, surface->roughness)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:specularColor", UsdPreviewSurface, surface->specularColor) // specular workflow
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:metallic", UsdPreviewSurface, surface->metallic) // non specular workflow
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoat", UsdPreviewSurface, surface->clearcoat)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoatRoughness", UsdPreviewSurface, surface->clearcoatRoughness)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacity", UsdPreviewSurface, surface->opacity)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacityThreshold", UsdPreviewSurface, surface->opacityThreshold)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:ior", UsdPreviewSurface, surface->ior)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:normal", UsdPreviewSurface, surface->normal)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:dispacement", UsdPreviewSurface, surface->displacement)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:occlusion", UsdPreviewSurface, surface->occlusion)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:useSpecularWorkflow", UsdPreviewSurface, surface->useSpecularWorkflow)
-    PARSE_PROPERTY(table, prop, "outputs:surface", UsdPreviewSurface, surface->outputsSurface)
-    PARSE_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface, surface->outputsDisplacement)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
+                         surface->diffuseColor)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:emissiveColor", UsdPreviewSurface,
+                         surface->emissiveColor)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:roughness", UsdPreviewSurface,
+                         surface->roughness)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:specularColor", UsdPreviewSurface,
+                         surface->specularColor)  // specular workflow
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:metallic", UsdPreviewSurface,
+                         surface->metallic)  // non specular workflow
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoat", UsdPreviewSurface,
+                         surface->clearcoat)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoatRoughness",
+                         UsdPreviewSurface, surface->clearcoatRoughness)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacity", UsdPreviewSurface,
+                         surface->opacity)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacityThreshold",
+                         UsdPreviewSurface, surface->opacityThreshold)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:ior", UsdPreviewSurface,
+                         surface->ior)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:normal", UsdPreviewSurface,
+                         surface->normal)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:dispacement", UsdPreviewSurface,
+                         surface->displacement)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:occlusion", UsdPreviewSurface,
+                         surface->occlusion)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:useSpecularWorkflow",
+                         UsdPreviewSurface, surface->useSpecularWorkflow)
+    PARSE_PROPERTY(table, prop, "outputs:surface", UsdPreviewSurface,
+                   surface->outputsSurface)
+    PARSE_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface,
+                   surface->outputsDisplacement)
     ADD_PROPERY(table, prop, UsdPreviewSurface, surface->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
@@ -2754,7 +2817,6 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdUVTexture *texture) {
-
   // TODO: references
 
   auto SourceColorSpaceHandler = [](const std::string &tok)
@@ -2766,20 +2828,29 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
         std::make_pair(UsdUVTexture::SourceColorSpace::SRGB, "sRGB"),
     };
 
-    return EnumHandler<UsdUVTexture::SourceColorSpace>("inputs:sourceColorSpace", tok, enums);
+    return EnumHandler<UsdUVTexture::SourceColorSpace>(
+        "inputs:sourceColorSpace", tok, enums);
   };
 
   std::set<std::string> table;
 
   for (auto &prop : properties) {
     PARSE_PROPERTY(table, prop, "inputs:file", UsdPreviewSurface, texture->file)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdPreviewSurface, texture->st)
-    PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace", SourceColorSpaceHandler, UsdPreviewSurface, texture->sourceColorSpace)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:r", UsdPreviewSurface, texture->outputsR)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:g", UsdPreviewSurface, texture->outputsG)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:b", UsdPreviewSurface, texture->outputsB)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:a", UsdPreviewSurface, texture->outputsA)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:rgb", UsdPreviewSurface, texture->outputsRGB)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdPreviewSurface,
+                          texture->st)
+    PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
+                       SourceColorSpaceHandler, UsdPreviewSurface,
+                       texture->sourceColorSpace)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:r", UsdPreviewSurface,
+                                  texture->outputsR)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:g", UsdPreviewSurface,
+                                  texture->outputsG)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:b", UsdPreviewSurface,
+                                  texture->outputsB)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:a", UsdPreviewSurface,
+                                  texture->outputsA)
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:rgb", UsdPreviewSurface,
+                                  texture->outputsRGB)
     ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }
@@ -2810,12 +2881,13 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float2>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     UsdPrimvarReader_float2 *preader) {
-
   std::set<std::string> table;
 
   for (auto &prop : properties) {
-    PARSE_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float2, preader->varname) // `token`
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:result", UsdPrimvarReader_float2, preader->result)
+    PARSE_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+                   preader->varname)  // `token`
+    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:result",
+                                  UsdPrimvarReader_float2, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }

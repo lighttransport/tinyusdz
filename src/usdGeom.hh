@@ -306,8 +306,9 @@ struct GeomCone : public GPrim {
   //
   // Properties
   //
-  AnimatableDouble height{2.0};
-  AnimatableDouble radius{1.0};
+  TypedAttribute<double> height{2.0};
+  TypedAttribute<double> radius{1.0};
+
   Axis axis{Axis::Z};
 
 
@@ -318,8 +319,8 @@ struct GeomCapsule : public GPrim {
   //
   // Properties
   //
-  AnimatableDouble height{2.0};
-  AnimatableDouble radius{0.5};
+  TypedAttribute<double> height{2.0};
+  TypedAttribute<double> radius{0.5};
   Axis axis{Axis::Z};
 
 
@@ -330,8 +331,8 @@ struct GeomCylinder : public GPrim {
   //
   // Properties
   //
-  AnimatableDouble height{2.0};
-  AnimatableDouble radius{1.0};
+  TypedAttribute<double> height{2.0};
+  TypedAttribute<double> radius{1.0};
   Axis axis{Axis::Z};
 
 };
@@ -341,7 +342,7 @@ struct GeomCube : public GPrim {
   //
   // Properties
   //
-  AnimatableDouble size{2.0};
+  TypedAttribute<double> size{2.0};
 
 };
 
@@ -350,8 +351,7 @@ struct GeomSphere : public GPrim {
   //
   // Predefined attribs.
   //
-  AnimatableDouble radius{1.0};
-
+  TypedAttribute<double> radius{1.0};
 };
 
 //

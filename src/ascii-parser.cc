@@ -910,7 +910,7 @@ bool AsciiParser::ReadBasicType(bool *value) {
   }
 
   char sc;
-  if (!_sr->read1(&sc)) {
+  if (!Char1(&sc)) {
     return false;
   }
   _curr_cursor.col++;
@@ -953,7 +953,7 @@ bool AsciiParser::ReadBasicType(int *value) {
   // bool negative = false;
   {
     char sc;
-    if (!_sr->read1(&sc)) {
+    if (!Char1(&sc)) {
       return false;
     }
     _curr_cursor.col++;
@@ -976,9 +976,9 @@ bool AsciiParser::ReadBasicType(int *value) {
     ss << sc;
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -1035,7 +1035,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   bool negative = false;
   {
     char sc;
-    if (!_sr->read1(&sc)) {
+    if (!Char1(&sc)) {
       return false;
     }
     _curr_cursor.col++;
@@ -1063,9 +1063,9 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     return false;
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -1138,7 +1138,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   bool negative = false;
   {
     char sc;
-    if (!_sr->read1(&sc)) {
+    if (!Char1(&sc)) {
       return false;
     }
     _curr_cursor.col++;
@@ -1166,9 +1166,9 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     return false;
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -1385,14 +1385,14 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     result->push_back(value);
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     // sep
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
 
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -1444,14 +1444,14 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
     result->push_back(value);
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     // sep
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
 
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -1506,13 +1506,13 @@ bool AsciiParser::SepBy1TupleType(
     result->push_back(value);
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
 
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -1568,13 +1568,13 @@ bool AsciiParser::SepBy1TupleType(const char sep,
     result->push_back(value);
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
 
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -1672,14 +1672,14 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     result->push_back(ref);
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     // sep
     if (!SkipWhitespaceAndNewline()) {
       return false;
     }
 
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       return false;
     }
 
@@ -2491,7 +2491,7 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
     return false;
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
     if (!Char1(&c)) {
       return false;
@@ -2595,7 +2595,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
   std::stringstream ss;
 
   char c0;
-  if (!_sr->read1(&c0)) {
+  if (!Char1(&c0)) {
     return false;
   }
 
@@ -2607,11 +2607,16 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 
   bool end_with_quotation{false};
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
+    }
+
+    if ((c == '\n') || (c == '\r')) {
+      PUSH_ERROR_AND_RETURN(
+          "New line in string literal.");
     }
 
     if (c == '"') {
@@ -2634,14 +2639,178 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
   return true;
 }
 
+bool AsciiParser::MaybeString(StringData *str) {
+  std::stringstream ss;
+
+  if (!str) {
+    return false;
+  }
+
+  auto loc = CurrLoc();
+  auto start_cursor = _curr_cursor;
+
+  char c0;
+  if (!Char1(&c0)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (c0 != '"') {
+    SeekTo(loc);
+    return false;
+  }
+
+  bool end_with_quotation{false};
+
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      // this should not happen.
+      SeekTo(loc);
+      return false;
+    }
+
+    if ((c == '\n') || (c == '\r')) {
+      SeekTo(loc);
+      return false;
+    }
+
+    if (c == '"') {
+      end_with_quotation = true;
+      break;
+    }
+
+    ss << c;
+  }
+
+  if (!end_with_quotation) {
+    SeekTo(loc);
+    return false;
+  }
+
+  DCOUT("Single quoted string found. col " << start_cursor.col << ", row " << start_cursor.row);
+
+  str->value = ss.str();
+  str->line_col = start_cursor.col;
+  str->line_row = start_cursor.row;
+  str->is_triple_quoted = false;
+
+  _curr_cursor.col += int(str->value.size() + 2);  // +2 for quotation chars
+
+  return true;
+
+}
+
+bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
+  std::stringstream ss;
+
+  auto loc = CurrLoc();
+  auto start_cursor = _curr_cursor;
+
+  std::vector<char> triple_quote;
+  if (!CharN(3, &triple_quote)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (triple_quote.size() != 3) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (triple_quote[0] == '"' &&
+      triple_quote[1] == '"' &&
+      triple_quote[2] == '"') {
+    // ok
+  } else {
+    SeekTo(loc);
+    return false;
+  }
+
+  // Read until next triple-quote `"""`
+  std::stringstream str_buf;
+
+  auto locinfo = _curr_cursor;
+
+  int quote_count = 0;
+
+  while (!Eof()) {
+    char c;
+
+    if (!Char1(&c)) {
+      SeekTo(loc);
+      return false;
+    }
+
+    str_buf << c;
+
+    quote_count = (c == '"') ? (quote_count + 1) : 0;
+
+    // Update loc info
+    locinfo.col++;
+    if (c == '\n') {
+      locinfo.col = 0;
+      locinfo.row++;
+    } else if (c == '\r') {
+      // CRLF?
+      if (_sr->tell() < (_sr->size() - 1)) {
+        char d;
+        if (!Char1(&d)) {
+          // this should not happen.
+          SeekTo(loc);
+          return false;
+        }
+
+        if (d == '\n') {
+          // CRLF
+          str_buf << d;
+        } else {
+          // unwind 1 char
+          if (!_sr->seek_from_current(-1)) {
+            // this should not happen.
+            SeekTo(loc);
+            return false;
+          }
+        }
+      }
+      locinfo.col = 0;
+      locinfo.row++;
+    }
+
+    if (quote_count == 3) {
+      // got '"""'
+      break;
+    }
+
+  }
+
+  if (quote_count != 3) {
+    SeekTo(loc);
+    return false;
+  }
+
+
+  DCOUT("Triple quoted string found. col " << start_cursor.col << ", row " << start_cursor.row);
+
+  // remove last '"""'
+  str->value = removeSuffix(str_buf.str(), "\"\"\"");
+  str->line_col = start_cursor.col;
+  str->line_row = start_cursor.row;
+  str->is_triple_quoted = true;
+
+  _curr_cursor = locinfo;
+
+  return true;
+}
+
 bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   // Example: xformOp:transform
 
   std::stringstream ss;
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -2705,7 +2874,7 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
   // The first character.
   {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       DCOUT("read1 failed.");
       return false;
@@ -2723,9 +2892,9 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
     ss << c;
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -2760,9 +2929,9 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
 
   // read until '>'
   bool ok = false;
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -2789,9 +2958,9 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
 }
 
 bool AsciiParser::SkipUntilNewline() {
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -2802,7 +2971,7 @@ bool AsciiParser::SkipUntilNewline() {
       // CRLF?
       if (_sr->tell() < (_sr->size() - 1)) {
         char d;
-        if (!_sr->read1(&d)) {
+        if (!Char1(&d)) {
           // this should not happen.
           return false;
         }
@@ -2834,6 +3003,19 @@ bool AsciiParser::SkipUntilNewline() {
 //              |  var '=' value '\n'
 //
 bool AsciiParser::ParseStageMetaOpt() {
+
+  // Maybe string
+  {
+    StringData str;
+    if (MaybeTripleQuotedString(&str)) {
+      _stage_metas.strings.push_back(str);
+      return true;
+    } else if (MaybeString(&str)) {
+      _stage_metas.strings.push_back(str);
+      return true;
+    }
+  }
+
 
   std::string varname;
   if (!ReadIdentifier(&varname)) {
@@ -2897,8 +3079,8 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`upAxis` isn't a string value.");
     }
   } else if (varname == "doc") {
-    if (auto pv = var.value.get_value<std::string>()) {
-      DCOUT("doc = " << pv.value());
+    if (auto pv = var.value.get_value<StringData>()) {
+      DCOUT("doc = " << to_string(pv.value()));
       _stage_metas.doc = pv.value();
     } else {
       PUSH_ERROR_AND_RETURN("`doc` isn't a string value.");
@@ -3068,7 +3250,7 @@ bool AsciiParser::ParseStageMetas() {
     return false;
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
     if (!LookChar1(&c)) {
       return false;
@@ -3112,7 +3294,7 @@ bool AsciiParser::ParseStageMetas() {
 // `#` style comment
 bool AsciiParser::ParseSharpComment() {
   char c;
-  if (!_sr->read1(&c)) {
+  if (!Char1(&c)) {
     // eol
     return false;
   }
@@ -3126,7 +3308,7 @@ bool AsciiParser::ParseSharpComment() {
 
 // Fetch 1 char. Do not change input stream position.
 bool AsciiParser::LookChar1(char *c) {
-  if (!_sr->read1(c)) {
+  if (!Char1(c)) {
     return false;
   }
 
@@ -3208,9 +3390,9 @@ bool AsciiParser::PopParserState(ParseState *state) {
 }
 
 bool AsciiParser::SkipWhitespace() {
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -3233,9 +3415,9 @@ bool AsciiParser::SkipWhitespace() {
 }
 
 bool AsciiParser::SkipWhitespaceAndNewline() {
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -3253,7 +3435,7 @@ bool AsciiParser::SkipWhitespaceAndNewline() {
       // CRLF?
       if (_sr->tell() < (_sr->size() - 1)) {
         char d;
-        if (!_sr->read1(&d)) {
+        if (!Char1(&d)) {
           // this should not happen.
           return false;
         }
@@ -3285,9 +3467,9 @@ bool AsciiParser::SkipWhitespaceAndNewline() {
 
 bool AsciiParser::SkipCommentAndWhitespaceAndNewline() {
   // Skip multiple line of comments.
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -3309,7 +3491,7 @@ bool AsciiParser::SkipCommentAndWhitespaceAndNewline() {
       // CRLF?
       if (_sr->tell() < (_sr->size() - 1)) {
         char d;
-        if (!_sr->read1(&d)) {
+        if (!Char1(&d)) {
           // this should not happen.
           return false;
         }
@@ -3346,7 +3528,7 @@ bool AsciiParser::Expect(char expect_c) {
   }
 
   char c;
-  if (!_sr->read1(&c)) {
+  if (!Char1(&c)) {
     // this should not happen.
     return false;
   }
@@ -3612,7 +3794,7 @@ bool AsciiParser::ParseMagicHeader() {
     return false;
   }
 
-  if (_sr->eof()) {
+  if (Eof()) {
     return false;
   }
 
@@ -3717,7 +3899,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 
     // Read until '@'
     bool found_delimiter = false;
-    while (!_sr->eof()) {
+    while (!Eof()) {
       char c;
 
       if (!Char1(&c)) {
@@ -3745,7 +3927,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
     std::string tok;
 
     // Read until '@@@' appears
-    while (!_sr->eof()) {
+    while (!Eof()) {
       char c;
 
       if (!Char1(&c)) {
@@ -3863,22 +4045,25 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
     var.value = value;
   } else if (vartype == value::kString) {
 
-    std::string value;
-    if (!ReadStringLiteral(&value)) {
-      std::string msg = "String literal expected for `" + varname + "`.\n";
-      PushError(msg);
-      return false;
-    }
-    DCOUT("string = " << value);
+    StringData sdata;
+    if (MaybeTripleQuotedString(&sdata)) {
+    } else {
+      std::string value;
+      auto lineinfo = _curr_cursor;
+      if (!ReadStringLiteral(&value)) {
+        PUSH_ERROR_AND_RETURN("String literal expected for `" + varname + "`.");
+      }
 
-    auto ret = def.post_parse_handler(value);
-    if (!ret) {
-      DCOUT("error = " << ret.error());
-      PUSH_ERROR_AND_RETURN("Invalid string for `" + varname + "`. " + ret.error());
+      sdata.value = value;
+      sdata.is_triple_quoted = false;
+      sdata.line_row = lineinfo.row;
+      sdata.line_col = lineinfo.col;
     }
+    DCOUT("string = " << sdata.value);
 
-    var.value = value;
+    var.value = sdata;
   } else if (vartype == "string[]") {
+    // TODO: Support multi-line string?
     std::vector<std::string> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
@@ -3981,7 +4166,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
       return false;
     }
 
-    while (!_sr->eof()) {
+    while (!Eof()) {
       if (!SkipWhitespaceAndNewline()) {
         return false;
       }
@@ -4040,7 +4225,7 @@ bool AsciiParser::LexFloat(std::string *result) {
   bool leading_decimal_dots{false};
   {
     char sc;
-    if (!_sr->read1(&sc)) {
+    if (!Char1(&sc)) {
       return false;
     }
     _curr_cursor.col++;
@@ -4052,7 +4237,7 @@ bool AsciiParser::LexFloat(std::string *result) {
       has_sign = true;
 
       char c;
-      if (!_sr->read1(&c)) {
+      if (!Char1(&c)) {
         return false;
       }
 
@@ -4084,8 +4269,8 @@ bool AsciiParser::LexFloat(std::string *result) {
   if (!leading_decimal_dots) {
     // std::cout << "1 read int part: ss = " << ss.str() << "\n";
 
-    while (!_sr->eof()) {
-      if (!_sr->read1(&curr)) {
+    while (!Eof()) {
+      if (!Char1(&curr)) {
         return false;
       }
 
@@ -4100,12 +4285,12 @@ bool AsciiParser::LexFloat(std::string *result) {
     }
   }
 
-  if (_sr->eof()) {
+  if (Eof()) {
     (*result) = ss.str();
     return true;
   }
 
-  if (!_sr->read1(&curr)) {
+  if (!Char1(&curr)) {
     return false;
   }
 
@@ -4116,8 +4301,8 @@ bool AsciiParser::LexFloat(std::string *result) {
   if (curr == '.') {
     ss << curr;
 
-    while (!_sr->eof()) {
-      if (!_sr->read1(&curr)) {
+    while (!Eof()) {
+      if (!Char1(&curr)) {
         return false;
       }
 
@@ -4137,7 +4322,7 @@ bool AsciiParser::LexFloat(std::string *result) {
     return true;
   }
 
-  if (_sr->eof()) {
+  if (Eof()) {
     (*result) = ss.str();
     return true;
   }
@@ -4147,7 +4332,7 @@ bool AsciiParser::LexFloat(std::string *result) {
   if ((curr == 'e') || (curr == 'E')) {
     ss << curr;
 
-    if (!_sr->read1(&curr)) {
+    if (!Char1(&curr)) {
       return false;
     }
 
@@ -4164,8 +4349,8 @@ bool AsciiParser::LexFloat(std::string *result) {
       PUSH_ERROR_AND_RETURN("Empty `E' is not allowed.");
     }
 
-    while (!_sr->eof()) {
-      if (!_sr->read1(&curr)) {
+    while (!Eof()) {
+      if (!Char1(&curr)) {
         return false;
       }
 
@@ -4369,6 +4554,32 @@ AsciiParser::ParsePrimMeta() {
   }
 
   tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
+
+  // May be string only
+  // For some reason, string-only data is stored in `MetaVariable` and
+  // reconstructed in ReconstructPrimMeta in usda-reader.cc
+  //
+  {
+    StringData sdata;
+    if (MaybeTripleQuotedString(&sdata)) {
+
+      MetaVariable var;
+      var.name = ""; // empty
+      var.value = sdata;
+
+      return std::make_tuple(qual, var);
+      
+    } else if (MaybeString(&sdata)) {
+
+      MetaVariable var;
+      var.name = ""; // empty
+      var.value = sdata;
+
+      return std::make_tuple(qual, var);
+    }
+
+  }
+
   if (!MaybeListEditQual(&qual)) {
     return nonstd::nullopt;
   }
@@ -4492,7 +4703,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
   // The first character.
   {
     char c;
-    if (!_sr->read1(&c)) {
+    if (!Char1(&c)) {
       // this should not happen.
       return false;
     }
@@ -4511,7 +4722,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
     return false;
   }
 
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
     if (!Char1(&c)) {
       return false;
@@ -4525,6 +4736,28 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         return false;
       }
 
+      // May be string only
+      {
+        StringData sdata;
+        if (MaybeTripleQuotedString(&sdata)) {
+          out_meta->stringData.push_back(sdata);
+
+          DCOUT("Add string to attr meta:" << to_string(sdata));
+          if (!SkipWhitespaceAndNewline()) {
+            return false;
+          }
+          continue;
+        } else if (MaybeString(&sdata)) {
+          out_meta->stringData.push_back(sdata);
+
+          DCOUT("Add string to attr meta:" << to_string(sdata));
+          if (!SkipWhitespaceAndNewline()) {
+            return false;
+          }
+          continue;
+        }
+      }
+
       std::string token;
       if (!ReadIdentifier(&token)) {
         return false;
@@ -4534,12 +4767,10 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       if ((token != "interpolation") && (token != "customData") &&
           (token != "elementSize")) {
-        PushError(
-            "Currently only `interpolation`, `elementSize` or `customData` "
+        PUSH_ERROR_AND_RETURN("Currently only string-only data, `interpolation`, `elementSize` or `customData` "
             "is supported but "
             "got: " +
             token);
-        return false;
       }
 
       if (!SkipWhitespaceAndNewline()) {
@@ -5335,7 +5566,7 @@ bool AsciiParser::ParseClassBlock(const int64_t primIdx, const int64_t parentPri
   //        | def_block
   //        | prim_attr+
   std::map<std::string, Property> props;
-  while (!_sr->eof()) {
+  while (!Eof()) {
     char c;
     if (!Char1(&c)) {
       return false;
@@ -5612,7 +5843,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
   // expect = '}'
   //        | def_block
   //        | prim_attr+
-  while (!_sr->eof()) {
+  while (!Eof()) {
 
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
@@ -5846,12 +6077,12 @@ bool AsciiParser::Parse(LoadState state) {
   PushPath("/");
 
   // parse blocks
-  while (!_sr->eof()) {
+  while (!Eof()) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
-    if (_sr->eof()) {
+    if (Eof()) {
       // Whitespaces in the end of line.
       break;
     }

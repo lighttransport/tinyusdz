@@ -430,9 +430,13 @@ struct StageMetas {
   std::string defaultPrim;           // prim node name
   AttribWithFallback<double> metersPerUnit{1.0};        // default [m]
   AttribWithFallback<double> timeCodesPerSecond {24.0};  // default 24 fps
-  std::string doc; // `documentation`
+  StringData doc; // `documentation`
 
   std::map<std::string, MetaVariable> customLayerData; // customLayerData
+
+  // String only metadataum.
+  // TODO: Represent as `MetaVariable`?
+  std::vector<StringData> stringData;
 };
 
 class PrimRange;

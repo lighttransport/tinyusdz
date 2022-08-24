@@ -190,6 +190,7 @@ enum TypeId {
 
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
+  TYPE_ID_STRING_DATA, // String for primvar and metadata. Includes multi-line string
 
   TYPE_ID_BOOL,
 
