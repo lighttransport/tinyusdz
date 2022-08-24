@@ -151,8 +151,11 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   for (const auto &item : meta.meta) {
-    (void)item;
-    // TODO:
+    ss << print_meta(item.second, indent+1);
+  }
+
+  for (const auto &item : meta.stringData) {
+    ss << pprint::Indent(indent) << to_string(item) << "\n";
   }
 
   return ss.str();
@@ -176,7 +179,11 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   // other user defined metadataum.
   for (const auto &item : meta.meta) {
-    ss << pprint::Indent(indent) << item.first << " = TODO\n";
+    ss << print_meta(item.second, indent+1);
+  }
+
+  for (const auto &item : meta.stringData) {
+    ss << pprint::Indent(indent) << to_string(item) << "\n";
   }
 
   return ss.str();
@@ -303,6 +310,14 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
 }
 
 } // namespace
+
+std::string to_string(const StringData &s) {
+  if (s.is_triple_quoted) {
+    return quote(s.value, "\"\"\"");
+  } else {
+    return quote(s.value);
+  }
+}
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
   std::stringstream ss;
@@ -800,7 +815,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "double radius" << prefix(sphere.radius) << " = " << print_animatable(sphere.radius) << "\n";
+  ss << print_typed_attr(sphere.radius, "radius", indent+1);
 
   ss << print_gprim_predefined(sphere, indent);
 
@@ -995,7 +1010,7 @@ std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "double size" << prefix(geom.size) << " = " << print_animatable(geom.size) << "\n";
+  ss << print_typed_attr(geom.size, "size", indent+1);
 
   ss << print_gprim_predefined(geom, indent);
 
@@ -1016,8 +1031,8 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius) << "\n";
-  ss << pprint::Indent(indent+1) << "double height" << prefix(geom.height) << " = " << print_animatable(geom.height) << "\n";
+  ss << print_typed_attr(geom.radius, "radius", indent+1);
+  ss << print_typed_attr(geom.height, "height", indent+1);
 
   ss << print_gprim_predefined(geom, indent);
 
@@ -1038,8 +1053,8 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool clos
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius) << "\n";
-  ss << pprint::Indent(indent+1) << "double height" << prefix(geom.height) << " = " << print_animatable(geom.height) << "\n";
+  ss << print_typed_attr(geom.radius, "radius", indent+1);
+  ss << print_typed_attr(geom.height, "height", indent+1);
 
   std::string axis;
   if (geom.axis == Axis::X) {
@@ -1071,8 +1086,8 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "double radius" << prefix(geom.radius) << " = " << print_animatable(geom.radius) << "\n";
-  ss << pprint::Indent(indent+1) << "double height" << prefix(geom.height) << " = " << print_animatable(geom.height) << "\n";
+  ss << print_typed_attr(geom.radius, "radius", indent+1);
+  ss << print_typed_attr(geom.height, "height", indent+1);
 
   std::string axis;
   if (geom.axis == Axis::X) {

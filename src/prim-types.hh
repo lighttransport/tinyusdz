@@ -37,6 +37,16 @@
 
 namespace tinyusdz {
 
+// single or triple-quoted('"""') string
+struct StringData {
+  std::string value;
+  bool is_triple_quoted{false};
+
+  // optional(for USDA)
+  int line_row{0};
+  int line_col{0};
+};
+
 template <typename T>
 class AttribWithFallback;
 
@@ -857,7 +867,11 @@ struct PrimMeta {
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
-  bool authorized() const { return (kind || customData || meta.size()); }
+  // String only metadataum.
+  // TODO: Represent as `MetaVariable`?
+  std::vector<StringData> stringData;
+
+  bool authorized() const { return (kind || customData || meta.size() || stringData.size()); }
 };
 
 // Metadata for Attribute
@@ -870,8 +884,12 @@ struct AttrMeta {
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
+  // String only metadataum.
+  // TODO: Represent as `MetaVariable`?
+  std::vector<StringData> stringData;
+
   bool authorized() const {
-    return (interpolation || elementSize || customData || meta.size());
+    return (interpolation || elementSize || customData || meta.size() || stringData.size());
   }
 };
 
@@ -1474,6 +1492,8 @@ DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
+
+DEFINE_TYPE_TRAIT(StringData, "String", TYPE_ID_SCOPE, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
