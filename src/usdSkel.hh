@@ -11,6 +11,7 @@ namespace tinyusdz {
 
 constexpr auto kSkelRoot = "SkelRoot";
 constexpr auto kSkeleton = "Skeleton";
+constexpr auto kSkelAnimation = "SkelAnimation";
 constexpr auto kBlendShape = "BlendShape";
 
 // BlendShapes
@@ -18,12 +19,14 @@ constexpr auto kBlendShape = "BlendShape";
 struct BlendShape {
   std::string name;
 
-  std::vector<float> offsets;        // uniform vector3f[]. required property
-  std::vector<float> normalOffsets;  // uniform vector3f[]. required property
+  TypedAttribute<std::vector<value::vector3f>> offsets;        // uniform vector3f[]. required property
+  TypedAttribute<std::vector<value::vector3f>> normalOffsets;  // uniform vector3f[]. required property
 
-  std::vector<int>
+  TypedAttribute<std::vector<int>>
       pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
                      // values in `offsets` and `normalOffsets`.
+                    
+  PrimMeta meta;
 };
 
 // Skeleton
@@ -32,16 +35,15 @@ struct Skeleton {
 
   AnimatableExtent extent;
 
-  std::vector<value::matrix4d>
-      bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
+  TypedAttribute<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
 
-  std::vector<std::string> jointNames; // uniform token[]
-  std::vector<std::string> joints; // uniform token[]
+  TypedAttribute<std::vector<std::string>> jointNames; // uniform token[]
+  TypedAttribute<std::vector<std::string>> joints; // uniform token[]
+
+  TypedAttribute<std::vector<value::matrix4d>> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
+                                                // joint in local coordinate.
 
   // rel proxyPrim
-
-  std::vector<value::matrix4d> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
-                                                // joint in local coordinate.
 
   Purpose purpose{Purpose::Default};
   AnimatableVisibility visibility{Visibility::Inherited};
@@ -73,13 +75,15 @@ struct SkelRoot {
 struct SkelAnimation {
   std::string name;
 
-  std::vector<value::token> blendShapes; // uniform token[]
-  std::vector<float> blendShapeWeights; // float[]
-  std::vector<value::token> joints; // uniform token[]
-  std::vector<value::quatf> rotations;  // quatf[] Joint-local unit quaternion rotations
-  std::vector<value::half3>
+  TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[]
+  TypedAttribute<std::vector<float>> blendShapeWeights; // float[]
+  TypedAttribute<std::vector<value::token>> joints; // uniform token[]
+  TypedAttribute<std::vector<value::quatf>> rotations;  // quatf[] Joint-local unit quaternion rotations
+  TypedAttribute<std::vector<value::half3>>
       scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
-  std::vector<value::float3> translations;  // float3[] Joint-local translation.
+  TypedAttribute<std::vector<value::float3>> translations;  // float3[] Joint-local translation.
+
+  PrimMeta meta;
 };
 
 // PackedJointAnimation is deprecated(Convert to SkelAnimation)
@@ -109,6 +113,8 @@ namespace value {
 // Geom
 DEFINE_TYPE_TRAIT(SkelRoot, kSkelRoot, TYPE_ID_SKEL_ROOT, 1);
 DEFINE_TYPE_TRAIT(Skeleton, kSkeleton, TYPE_ID_SKELETON, 1);
+DEFINE_TYPE_TRAIT(SkelAnimation, kSkelAnimation, TYPE_ID_SKELANIMATION, 1);
+DEFINE_TYPE_TRAIT(BlendShape, kBlendShape, TYPE_ID_BLENDSHAPE, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

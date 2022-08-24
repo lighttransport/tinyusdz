@@ -198,7 +198,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
     if (auto v = attr.value.value().template get<T>()) {
       ss << pprint::Indent(indent) << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
     }
-    if (attr.meta.authorized()) {
+    if (attr.meta.authored()) {
       ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
@@ -212,11 +212,11 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
 
   // properties
-  if (gprim.doubleSided.authorized()) {
+  if (gprim.doubleSided.authored()) {
     ss << pprint::Indent(indent) << "uniform bool doubleSided = " << gprim.doubleSided.get() << "\n";
   }
 
-  if (gprim.orientation.authorized()) {
+  if (gprim.orientation.authored()) {
     ss << pprint::Indent(indent) << "uniform token orientation = " << to_string(gprim.orientation.get())
        << "\n";
   }
@@ -226,7 +226,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
     ss << pprint::Indent(indent) << "float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value()) << "\n";
   }
 
-  if (gprim.visibility.authorized()) {
+  if (gprim.visibility.authored()) {
     ss << pprint::Indent(indent) << "token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get()) << "\n";
   }
 
@@ -299,7 +299,7 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
       }
     }
 
-    if (item.second.attrib.meta.authorized()) {
+    if (item.second.attrib.meta.authored()) {
       ss << " (\n" << print_attr_metas(item.second.attrib.meta, indent+1) << pprint::Indent(indent) << ")";
     }
 
@@ -642,7 +642,7 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   // props
   // TODO:
 
-  if (gprim.visibility.authorized()) {
+  if (gprim.visibility.authored()) {
     ss << pprint::Indent(indent+1) << "visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get())
        << "\n";
   }
@@ -765,7 +765,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
 
   // TODO: Generic properties
 
-  if (xform.visibility.authorized()) {
+  if (xform.visibility.authored()) {
     ss << pprint::Indent(indent+1) << "visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get())
      << "\n";
   }
@@ -831,7 +831,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
 
   ss << pprint::Indent(indent) << "def Mesh \"" << mesh.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  if (mesh.meta.authorized()) {
+  if (mesh.meta.authored()) {
     ss << print_prim_metas(mesh.meta, indent+1);
   }
   ss << pprint::Indent(indent) << ")\n";
@@ -856,11 +856,11 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << print_typed_attr(mesh.creaseSharpnesses, "creaseSharpnesses", indent+1);
   ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent+1);
 
-  if (mesh.subdivisionScheme.authorized()) {
+  if (mesh.subdivisionScheme.authored()) {
     ss << pprint::Indent(indent+1) << "uniform token subdivisionScheme = " << quote(to_string(mesh.subdivisionScheme.get())) << "\n";
     // TODO: meta
   }
-  if (mesh.interpolateBoundary.authorized()) {
+  if (mesh.interpolateBoundary.authored()) {
     ss << pprint::Indent(indent+1) << "uniform token interpolateBoundary = " << to_string(mesh.interpolateBoundary.get()) << "\n";
     // TODO: meta
   }
@@ -1131,6 +1131,71 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   return ss.str();
 }
 
+std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def Skeleton \"" << skel.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  ss << print_prim_metas(skel.meta, indent+1);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  ss << print_typed_attr(skel.bindTransforms, "bindTransforms", indent+1);
+  ss << print_typed_attr(skel.jointNames, "jointNames", indent+1);
+  ss << print_typed_attr(skel.joints, "joints", indent+1);
+  ss << print_typed_attr(skel.restTransforms, "restTransforms", indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def SkelAnimation \"" << skelanim.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  ss << print_prim_metas(skelanim.meta, indent+1);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent+1);
+  ss << print_typed_attr(skelanim.blendShapeWeights, "blendShapeWeights", indent+1);
+  ss << print_typed_attr(skelanim.joints, "joints", indent+1);
+  ss << print_typed_attr(skelanim.rotations, "rotations", indent+1);
+  ss << print_typed_attr(skelanim.scales, "scales", indent+1);
+  ss << print_typed_attr(skelanim.translations, "translations", indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+
+std::string to_string(const BlendShape &prim, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def BlendShape \"" << prim.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  ss << print_prim_metas(prim.meta, indent+1);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  ss << print_typed_attr(prim.offsets, "offsets", indent+1);
+  ss << print_typed_attr(prim.normalOffsets, "normalOffsets", indent+1);
+  ss << print_typed_attr(prim.pointIndices, "pointIndices", indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const Material &material, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -1243,7 +1308,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
     // TOOD: meta
   }
 
-  if (shader.st.authorized()) {
+  if (shader.st.authored()) {
   //  if (shader.st.
   //  ss << pprint::Indent(indent+1)
   }
@@ -1330,25 +1395,6 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
     return ss.str();
   }
 
-}
-
-std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "def Skeleton \"" << skel.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(skel.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
-  ss << pprint::Indent(indent) << "{\n";
-
-  // TODO
-  ss << pprint::Indent(indent) << "[TODO]\n";
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
-  return ss.str();
 }
 
 

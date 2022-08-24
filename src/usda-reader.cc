@@ -149,6 +149,8 @@ DEFINE_PRIM_TYPE(Material, "Material", value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, "Shader", value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(SkelRoot, "SkelRoot", value::TYPE_ID_SKEL_ROOT);
 DEFINE_PRIM_TYPE(Skeleton, "Skeleton", value::TYPE_ID_SKELETON);
+DEFINE_PRIM_TYPE(SkelAnimation, "SkelAnimation", value::TYPE_ID_SKELANIMATION);
+DEFINE_PRIM_TYPE(BlendShape, "Blendshape", value::TYPE_ID_BLENDSHAPE);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 DEFINE_PRIM_TYPE(GeomCamera, "Camera", value::TYPE_ID_GEOM_CAMERA);
 
@@ -889,7 +891,6 @@ struct AttribType<AttribWithFallback<T>> {
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)       \
   if (__prop.first.compare(__name) == 0) {                                     \
     const PrimAttrib &attr = __prop.second.attrib;                             \
-    DCOUT("Got prop: " << __name); \
     if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) { \
       DCOUT("Add prop: " << __name);                                           \
       __target.value = v.value();                                              \
@@ -928,6 +929,7 @@ struct AttribType<AttribWithFallback<T>> {
     if (AttribType<decltype(__target)>::type_name() == attr.type_name) {       \
       if (auto pv = p.GetConnectionTarget()) {                                 \
         __target.value = pv.value();                                           \
+        __target.meta = attr.meta;                                             \
         __table.insert(__name);                                                \
       } else if (p.type == Property::Type::EmptyAttrib) {                      \
         __target.value = tinyusdz::monostate();                                \
@@ -2745,8 +2747,8 @@ bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
     SkelRoot *root) {
   (void)root;
 
-  // TODO: Implement
-  DCOUT("Implement SkelRoot");
+  // SkelRoot is something like a grouping node.
+  // No specific properties for SkelRoot(AFAIK)
 
   return true;
 }
@@ -2756,10 +2758,65 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Skeleton *skel) {
-  (void)skel;
 
-  // TODO: Implement
-  DCOUT("Implement Skeleton");
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_PROPERTY(table, prop, "bindTransforms", Skeleton, skel->bindTransforms)
+    PARSE_TYPED_PROPERTY(table, prop, "joints", Skeleton, skel->joints)
+    PARSE_TYPED_PROPERTY(table, prop, "jointNames", Skeleton, skel->jointNames)
+    PARSE_TYPED_PROPERTY(table, prop, "restTransforms", Skeleton, skel->restTransforms)
+    PARSE_PROPERTY_END_MAKE_ERROR(prop)
+  }
+
+  return true;
+}
+
+template <>
+bool USDAReader::Impl::ReconstructPrim<SkelAnimation>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    SkelAnimation *skelanim) {
+
+
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_PROPERTY(table, prop, "joints", SkelAnimation, skelanim->joints)
+    PARSE_TYPED_PROPERTY(table, prop, "translations", SkelAnimation, skelanim->translations)
+    PARSE_TYPED_PROPERTY(table, prop, "rotations", SkelAnimation, skelanim->rotations)
+    PARSE_TYPED_PROPERTY(table, prop, "scales", SkelAnimation, skelanim->scales)
+    PARSE_TYPED_PROPERTY(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
+    PARSE_TYPED_PROPERTY(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
+    PARSE_PROPERTY_END_MAKE_ERROR(prop)
+  }
+
+  return true;
+}
+
+template <>
+bool USDAReader::Impl::ReconstructPrim<BlendShape>(
+    const std::map<std::string, Property> &properties,
+    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    BlendShape *bs) {
+
+  constexpr auto kOffsets = "offsets";
+  constexpr auto kNormalOffsets = "normalOffsets";
+  constexpr auto kPointIndices = "pointIndices";
+
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_PROPERTY(table, prop, kOffsets, BlendShape, bs->offsets)
+    PARSE_TYPED_PROPERTY(table, prop, kNormalOffsets, BlendShape, bs->normalOffsets)
+    PARSE_TYPED_PROPERTY(table, prop, kPointIndices, BlendShape, bs->pointIndices)
+    PARSE_PROPERTY_END_MAKE_ERROR(prop)
+  }
+
+  // `offsets` and `normalOffsets` are required property.
+  if (!table.count(kOffsets)) {
+    PUSH_ERROR_AND_RETURN("`offsets` property is missing. `uniform vector3f[] offsets` is a required property.");
+  }
+  if (!table.count(kNormalOffsets)) {
+    PUSH_ERROR_AND_RETURN("`normalOffsets` property is missing. `uniform vector3f[] normalOffsets` is a required property.");
+  }
 
   return true;
 }
@@ -3118,6 +3175,8 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
+  RegisterReconstructCallback<SkelAnimation>();
+  RegisterReconstructCallback<BlendShape>();
 
   if (!_parser.Parse(state)) {
     std::string warn = _parser.GetWarning();
