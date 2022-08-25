@@ -1939,6 +1939,9 @@ bool USDAReader::Impl::ReconstructPrim(
 
   constexpr auto kMaterialBinding = "material:binding";
 
+  //
+  // pxrUSD says... "If you author size you must also author extent."
+  //
   std::set<std::string> table;
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
