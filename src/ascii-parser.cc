@@ -255,7 +255,7 @@ static void RegisterPrimMetas(
 
  // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
-      value::Add1DArraySuffix(value::kString), "apiSchemas");
+      value::Add1DArraySuffix(value::kToken), "apiSchemas");
 }
 
 static void RegisterPrimAttrTypes(std::set<std::string> &d) {
@@ -330,6 +330,16 @@ static void RegisterPrimTypes(std::set<std::string> &d)
 
   d.insert("GPrim");
 
+}
+
+// TinyUSDZ does not allow user-defined API schema at the moment
+// (Primarily for security reason, secondary it requires re-design of Prim classes to support user-defined API schema)
+static void RegisterAPISchemas(std::set<std::string> &d)
+{
+  d.insert("MaterialBindingAPI");
+  d.insert("SkelBindingAPI");
+
+  // TODO: usdPhysics API
 }
 
 namespace {
@@ -2659,6 +2669,11 @@ bool AsciiParser::IsSupportedPrimAttrType(const std::string &ty) {
   return _supported_prim_attr_types.count(ty);
 }
 
+bool AsciiParser::IsSupportedAPISchema(const std::string &ty) {
+  return _supported_api_schemas.count(ty);
+}
+
+
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
   std::stringstream ss;
 
@@ -3174,6 +3189,19 @@ bool AsciiParser::ParseStageMetaOpt() {
       _stage_metas.timeCodesPerSecond = pvd.value();
     } else {
       PUSH_ERROR_AND_RETURN("`timeCodesPerSecond` isn't a floating-point value.");
+    }
+  } else if (varname == "apiSchemas") {
+    // TODO: ListEdit qualifer check
+    if (auto pv = var.value.get_value<std::vector<value::token>>()) {
+      for (auto &item : pv.value()) {
+        if (IsSupportedAPISchema(item.str())) {
+          // OK
+        } else {
+          PUSH_ERROR_AND_RETURN("\"" << item.str() << "\" is not supported(at the moment) for `apiSchemas` in TinyUSDZ.");
+        }
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("`apiSchemas` isn't an `token[]` type.");
     }
   } else if (varname == "customLayerData") {
     if (var.IsObject()) {
@@ -5256,6 +5284,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     // Empty Attribute. type info only
     p.attrib.type_name = type_name;
+    p.attrib.uniform = uniform_qual;
 
     (*props)[primattr_name] = p;
 
@@ -5580,6 +5609,7 @@ void AsciiParser::Setup() {
   RegisterPrimMetas(_supported_prim_metas);
   RegisterPrimAttrTypes(_supported_prim_attr_types);
   RegisterPrimTypes(_supported_prim_types);
+  RegisterAPISchemas(_supported_api_schemas);
 }
 
 AsciiParser::~AsciiParser() {}

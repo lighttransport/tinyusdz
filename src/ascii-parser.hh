@@ -482,6 +482,7 @@ class AsciiParser {
 
   bool IsSupportedPrimAttrType(const std::string &ty);
   bool IsSupportedPrimType(const std::string &ty);
+  bool IsSupportedAPISchema(const std::string &ty);
 
   bool Eof() { return _sr->eof(); }
 
@@ -645,6 +646,9 @@ class AsciiParser {
   // Supported Prim types
   std::set<std::string> _supported_prim_types;
   std::set<std::string> _supported_prim_attr_types;
+ 
+  // Supported API schemas
+  std::set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
   std::map<std::string, VariableDef> _supported_stage_metas;

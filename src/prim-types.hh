@@ -1493,7 +1493,7 @@ DEFINE_TYPE_TRAIT(Relation, "Relationship", TYPE_ID_RELATIONSHIP, 1);
 // TODO(syoyo): Define PathVector as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
 
-DEFINE_TYPE_TRAIT(std::vector<value::token>, "TokenVector",
+DEFINE_TYPE_TRAIT(std::vector<value::token>, "token[]",
                   TYPE_ID_TOKEN_VECTOR, 1);
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
