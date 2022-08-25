@@ -256,7 +256,7 @@ std::ostream &operator<<(std::ostream &ofs,
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
-  ofs << tok.str();
+  ofs << tinyusdz::quote(tok.str());
 
   return ofs;
 }
