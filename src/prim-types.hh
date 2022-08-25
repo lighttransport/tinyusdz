@@ -903,7 +903,7 @@ struct PrimAttrib {
 
   std::string type_name;  // name of attrib type(e.g. "float', "color3f")
 
-  ListEditQual list_edit{ListEditQual::ResetToExplicit};
+  //ListEditQual list_edit{ListEditQual::ResetToExplicit}; // moved to Property
 
   Variability variability;
 
@@ -964,6 +964,7 @@ class Property {
   PrimAttrib attrib;
   Relation rel;  // Relation(`rel`) or Connection(`.connect`)
   Type type{Type::EmptyAttrib};
+  ListEditQual qual{ListEditQual::ResetToExplicit}; // List Edit qualifier
 
   bool has_custom{false};  // Qualified with 'custom' keyword?
 

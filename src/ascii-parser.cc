@@ -1271,6 +1271,30 @@ bool AsciiParser::ReadBasicType(value::normal3f *value) {
 }
 
 template <>
+bool AsciiParser::ReadBasicType(value::vector3f *value) {
+  value::float3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = v[0];
+    value->y = v[1];
+    value->z = v[2];
+    return true;
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::vector3d *value) {
+  value::double3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = v[0];
+    value->y = v[1];
+    value->z = v[2];
+    return true;
+  }
+  return false;
+}
+
+template <>
 bool AsciiParser::ReadBasicType(value::float4 *value) {
   return ParseBasicTypeTuple(value);
 }
@@ -2118,6 +2142,38 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::normal3d> *value) {
 }
 
 template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::vector3f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::vector3f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::vector3d> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::vector3d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
 bool AsciiParser::ReadBasicType(nonstd::optional<value::color3f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -2563,22 +2619,32 @@ bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
 
   auto loc = CurrLoc();
   if (!ReadIdentifier(&tok)) {
+    SeekTo(loc);
     return false;
   }
 
   if (tok == "prepend") {
+    DCOUT("`prepend` list edit qualifier.");
     (*qual) = tinyusdz::ListEditQual::Prepend;
   } else if (tok == "append") {
+    DCOUT("`append` list edit qualifier.");
     (*qual) = tinyusdz::ListEditQual::Append;
   } else if (tok == "add") {
+    DCOUT("`add` list edit qualifier.");
     (*qual) = tinyusdz::ListEditQual::Add;
   } else if (tok == "delete") {
+    DCOUT("`delete` list edit qualifier.");
     (*qual) = tinyusdz::ListEditQual::Delete;
   } else {
+    DCOUT("No ListEdit qualifier.");
     // unqualified
     // rewind
     SeekTo(loc);
     (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
   }
 
   return true;
@@ -4643,7 +4709,7 @@ bool AsciiParser::ParsePrimMetas(
     DCOUT("c = " << c);
 
     if (c == '(') {
-      DCOUT("def args start");
+      DCOUT("Prim meta start");
       // ok
     } else {
       _sr->seek_from_current(-1);
@@ -4670,7 +4736,7 @@ bool AsciiParser::ParsePrimMetas(
     }
 
     if (s == ')') {
-      DCOUT("def args end");
+      DCOUT("Prim meta end");
       // End
       break;
     }
@@ -4968,11 +5034,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   // prim_attr : (custom?) uniform type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
   //           | (custom?) uniform type (array_qual?) name interpolation?
-  //           | (custom?) rel attr_name = None
-  //           | (custom?) rel attr_name = string meta
-  //           | (custom?) rel attr_name = path meta
-  //           | (custom?) rel attr_name = pathvector meta
-  //           | (custom?) rel attr_name meta
+  //           | (custom?) (listeditqual?) rel attr_name = None
+  //           | (custom?) (listeditqual?) rel attr_name = string meta
+  //           | (custom?) (listeditqual?) rel attr_name = path meta
+  //           | (custom?) (listeditqual?) rel attr_name = pathvector meta
+  //           | (custom?) (listeditqual?) rel attr_name meta
   //           ;
 
   // Skip comment
@@ -4984,6 +5050,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   bool custom_qual = MaybeCustom();
 
   if (!SkipWhitespace()) {
+    return false;
+  }
+
+  ListEditQual qual;
+  if (!MaybeListEditQual(&qual)) {
     return false;
   }
 
@@ -5037,6 +5108,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       // No targets.
       Property p(custom_qual);
       p.type = Property::Type::NoTargetsRelation;
+      p.qual = qual;
 
       (*props)[attr_name] = p;
 
@@ -5076,6 +5148,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     DCOUT("Relationship with target: " << attr_name);
     Property p(rel, /* isConnection */false, custom_qual);
+    p.qual = qual;
 
     (*props)[attr_name] = p;
 
@@ -5378,6 +5451,22 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
                                                &attr)) {
         return false;
       }
+    } else if (type_name == value::kVector3f) {
+      DCOUT("vector3f, array_qual = " + std::to_string(array_qual));
+      if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
+                                               &attr)) {
+        DCOUT("Failed to parse vector3f data.");
+        return false;
+      }
+      DCOUT("Got it");
+    } else if (type_name == value::kVector3d) {
+      DCOUT("vector3d, array_qual = " + std::to_string(array_qual));
+      if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
+                                               &attr)) {
+        DCOUT("Failed to parse vector3d data.");
+        return false;
+      }
+      DCOUT("Got it");
     } else if (type_name == value::kColor3d) {
       if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
                                               &attr)) {
