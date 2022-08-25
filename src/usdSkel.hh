@@ -45,6 +45,11 @@ struct Skeleton {
                                                 // joint in local coordinate.
 
   // rel proxyPrim
+  
+
+  // SkelBindingAPI
+  nonstd::optional<Path> animationSource; // rel skel:animationSource = </path/...>
+  
 
   Purpose purpose{Purpose::Default};
   AnimatableVisibility visibility{Visibility::Inherited};

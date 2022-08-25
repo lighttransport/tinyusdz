@@ -1219,6 +1219,7 @@ struct AttribType<AttribWithFallback<T>> {
     if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) { \
       DCOUT("Add prop: " << __name);                                           \
       __target.value = v.value();                                              \
+      __target.uniform = attr.uniform; \
       __target.meta = attr.meta;                                               \
       __table.insert(__name);                                                  \
     } else {                                                                   \
@@ -1242,6 +1243,7 @@ struct AttribType<AttribWithFallback<T>> {
     const Property &p = __prop.second;                                         \
     if (auto pv = p.GetConnectionTarget()) {                                   \
       __target.value = pv.value();                                             \
+      __target.uniform = p.attrib.uniform; \
       __target.meta = p.attrib.meta;                             \
       __table.insert(propname);                                                \
     } else {                                                                   \
@@ -1260,10 +1262,12 @@ struct AttribType<AttribWithFallback<T>> {
     if (AttribType<decltype(__target)>::type_name() == attr.type_name) {       \
       if (auto pv = p.GetConnectionTarget()) {                                 \
         __target.value = pv.value();                                           \
+        __target.uniform = attr.uniform; \
         __target.meta = attr.meta;                                             \
         __table.insert(__name);                                                \
       } else if (p.type == Property::Type::EmptyAttrib) {                      \
         __target.value = tinyusdz::monostate();                                \
+        __target.uniform = attr.uniform; \
         __target.meta = attr.meta;                                             \
         __table.insert(__name);                                                \
       } else {                                                                 \
@@ -1375,8 +1379,8 @@ struct AttribType<AttribWithFallback<T>> {
   } else
 
 // This code path should not be reached though.
-#define PARSE_PROPERTY_END_MAKE_ERROR(__prop)                      \
-  {                                                                \
+#define PARSE_PROPERTY_END_MAKE_ERROR(__table, __prop)                      \
+  if (!__table.count(__prop.first)) {                              \
     PUSH_ERROR_AND_RETURN("Unsupported/unimplemented property: " + \
                           __prop.first);                           \
   }
@@ -1863,7 +1867,7 @@ bool USDAReader::Impl::ReconstructPrim(
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomSphere, sphere->radius)
-      PARSE_PROPERTY_END_MAKE_ERROR(prop)
+      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
 
@@ -1987,7 +1991,7 @@ bool USDAReader::Impl::ReconstructPrim(
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->radius)
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->height)
-      PARSE_PROPERTY_END_MAKE_ERROR(prop)
+      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
 
@@ -2115,7 +2119,7 @@ bool USDAReader::Impl::ReconstructPrim(
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "size", GeomCube, cube->size)
       ADD_PROPERY(table, prop, GeomCube, cube->props)
-      PARSE_PROPERTY_END_MAKE_ERROR(prop)
+      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
 
@@ -2253,7 +2257,7 @@ bool USDAReader::Impl::ReconstructPrim(
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCapsule, capsule->radius)
       PARSE_TYPED_PROPERTY(table, prop, "height", GeomCapsule, capsule->height)
-      PARSE_PROPERTY_END_MAKE_ERROR(prop)
+      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
 
@@ -2409,7 +2413,7 @@ bool USDAReader::Impl::ReconstructPrim(
                            cylinder->radius)
       PARSE_TYPED_PROPERTY(table, prop, "height", GeomCylinder,
                            cylinder->height)
-      PARSE_PROPERTY_END_MAKE_ERROR(prop)
+      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
 
@@ -2800,7 +2804,7 @@ bool USDAReader::Impl::ReconstructPrim(
     PARSE_ENUM_PROPETY(table, prop, "projection", ProjectionHandler, GeomCamera,
                        camera->projection)
     ADD_PROPERY(table, prop, GeomCamera, camera->props)
-    PARSE_PROPERTY_END_MAKE_ERROR(prop)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
@@ -2915,13 +2919,39 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Skeleton *skel) {
 
+  constexpr auto kSkelAnimationSource = "skel:animationSource";
+
   std::set<std::string> table;
   for (auto &prop : properties) {
+
+    // SkelBindingAPI
+    if (prop.first == kSkelAnimationSource) {
+      
+      // Must be relation of type Path.
+      if (prop.second.IsRel() && prop.second.rel.IsPath()) {
+        {
+          const Relation &rel = prop.second.rel;
+          if (rel.IsPath()) {
+            DCOUT(kSkelAnimationSource);
+            skel->animationSource = rel.targetPath;
+            table.insert(kSkelAnimationSource);
+          } else {
+            PUSH_ERROR_AND_RETURN("`" << kSkelAnimationSource << "` target must be Path.");
+          }
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`" << kSkelAnimationSource << "` must be a Relation with Path target.");
+      }
+    }
+
+    //
+    
     PARSE_TYPED_PROPERTY(table, prop, "bindTransforms", Skeleton, skel->bindTransforms)
     PARSE_TYPED_PROPERTY(table, prop, "joints", Skeleton, skel->joints)
     PARSE_TYPED_PROPERTY(table, prop, "jointNames", Skeleton, skel->jointNames)
     PARSE_TYPED_PROPERTY(table, prop, "restTransforms", Skeleton, skel->restTransforms)
-    PARSE_PROPERTY_END_MAKE_ERROR(prop)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
@@ -2942,7 +2972,7 @@ bool USDAReader::Impl::ReconstructPrim<SkelAnimation>(
     PARSE_TYPED_PROPERTY(table, prop, "scales", SkelAnimation, skelanim->scales)
     PARSE_TYPED_PROPERTY(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
     PARSE_TYPED_PROPERTY(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
-    PARSE_PROPERTY_END_MAKE_ERROR(prop)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
@@ -2963,7 +2993,7 @@ bool USDAReader::Impl::ReconstructPrim<BlendShape>(
     PARSE_TYPED_PROPERTY(table, prop, kOffsets, BlendShape, bs->offsets)
     PARSE_TYPED_PROPERTY(table, prop, kNormalOffsets, BlendShape, bs->normalOffsets)
     PARSE_TYPED_PROPERTY(table, prop, kPointIndices, BlendShape, bs->pointIndices)
-    PARSE_PROPERTY_END_MAKE_ERROR(prop)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   // `offsets` and `normalOffsets` are required property.

@@ -195,10 +195,20 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
   std::stringstream ss;
 
   if (attr.value) {
+
+    ss << pprint::Indent(indent);
+
+    if (attr.uniform) {
+      ss << "uniform ";
+    }
+
+    // TODO: ListEdit qual.
+    
+
     if (auto v = attr.value.value().template get<T>()) {
-      ss << pprint::Indent(indent) << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
+      ss << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
     } else if (auto empty = attr.value.value().template get<tinyusdz::monostate>()) { // define only
-      ss << pprint::Indent(indent) << value::TypeTrait<T>::type_name();
+      ss << value::TypeTrait<T>::type_name();
     }
 
     if (attr.meta.authored()) {
@@ -1175,12 +1185,12 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent+1);
-  ss << print_typed_attr(skelanim.blendShapeWeights, "blendShapeWeights", indent+1);
-  ss << print_typed_attr(skelanim.joints, "joints", indent+1);
-  ss << print_typed_attr(skelanim.rotations, "rotations", indent+1);
-  ss << print_typed_attr(skelanim.scales, "scales", indent+1);
-  ss << print_typed_attr(skelanim.translations, "translations", indent+1);
+  ss << print_typed_attr(skelanim.blendShapes, "skel:blendShapes", indent+1);
+  ss << print_typed_attr(skelanim.blendShapeWeights, "skel:blendShapeWeights", indent+1);
+  ss << print_typed_attr(skelanim.joints, "skel:joints", indent+1);
+  ss << print_typed_attr(skelanim.rotations, "skel:rotations", indent+1);
+  ss << print_typed_attr(skelanim.scales, "skel:scales", indent+1);
+  ss << print_typed_attr(skelanim.translations, "skel:translations", indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
