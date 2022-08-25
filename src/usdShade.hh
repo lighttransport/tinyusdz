@@ -42,7 +42,7 @@ struct UsdPrimvarReader {
 
   nonstd::optional<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
 
-  nonstd::optional<Connection<T>> result; // "T outputs:result"
+  TypedAttribute<T> result; // "T outputs:result"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -98,11 +98,11 @@ struct UsdUVTexture {
   ///
   /// Outputs
   ///
-  nonstd::optional<Connection<float>> outputsR; // "float outputs:r"
-  nonstd::optional<Connection<float>> outputsG; // "float outputs:g"
-  nonstd::optional<Connection<float>> outputsB; // "float outputs:b"
-  nonstd::optional<Connection<float>> outputsA; // "float outputs:a"
-  nonstd::optional<Connection<value::float3>> outputsRGB; // "float3 outputs:rgb"
+  TypedAttribute<float> outputsR; // "float outputs:r"
+  TypedAttribute<float> outputsG; // "float outputs:g"
+  TypedAttribute<float> outputsB; // "float outputs:b"
+  TypedAttribute<float> outputsA; // "float outputs:a"
+  TypedAttribute<value::float3> outputsRGB; // "float3 outputs:rgb"
 
   // Custom properties
   std::map<std::string, Property> props;

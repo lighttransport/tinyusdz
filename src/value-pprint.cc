@@ -338,6 +338,10 @@ namespace value {
   __FUNC(GeomBasisCurves)       \
   __FUNC(LuxSphereLight)        \
   __FUNC(LuxDomeLight)          \
+  __FUNC(SkelRoot)          \
+  __FUNC(Skeleton)          \
+  __FUNC(SkelAnimation)          \
+  __FUNC(BlendShape)          \
   __FUNC(Material)              \
   __FUNC(Shader)
 
