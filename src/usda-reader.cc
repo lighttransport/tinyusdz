@@ -391,6 +391,16 @@ class USDAReader::Impl {
   }
 #endif
 
+  ///
+  /// Reconstruct properties with `xformOp:***` namespace by looking up
+  /// tokens in `xformOpOrder` property.
+  /// Name of processed xformOp properties are added to `table`
+  ///
+  bool ReconstructXformOpProperties(
+    std::set<std::string> &table, /* inout */
+    const std::map<std::string, Property> &properties,
+    std::vector<XformOp> *xformOps);
+
   template <typename T>
   bool ReconstructPrim(
       const std::map<std::string, Property> &properties,
@@ -799,6 +809,318 @@ void ReconstructNodeRec(const size_t idx,
 
 }  // namespace
 
+bool USDAReader::Impl::ReconstructXformOpProperties(
+  std::set<std::string> &table, /* inout */
+  const std::map<std::string, Property> &properties,
+  std::vector<XformOp> *xformOps)
+{
+
+  constexpr auto kTranslate = "xformOp:translate";
+  constexpr auto kTransform = "xformOp:transform";
+  constexpr auto kScale = "xformOp:scale";
+  constexpr auto kRotateX = "xformOp:rotateX";
+  constexpr auto kRotateY = "xformOp:rotateY";
+  constexpr auto kRotateZ = "xformOp:rotateZ";
+  constexpr auto kRotateXYZ = "xformOp:rotateXYZ";
+  constexpr auto kRotateXZY = "xformOp:rotateXZY";
+  constexpr auto kRotateYXZ = "xformOp:rotateYXZ";
+  constexpr auto kRotateYZX = "xformOp:rotateYZX";
+  constexpr auto kRotateZXY = "xformOp:rotateZXY";
+  constexpr auto kRotateZYX = "xformOp:rotateZYX";
+  constexpr auto kOrient = "xformOp:orient";
+
+  // false : no prefix found.
+  // true : return suffix(first namespace ':' is ommited.).
+  // - "" for prefix only "xformOp:translate"
+  // - "blender:pivot" for "xformOp:translate:blender:pivot"
+  auto SplitXformOpToken =
+      [](const std::string &s,
+         const std::string &prefix) -> nonstd::optional<std::string> {
+    if (startsWith(s, prefix)) {
+      if (s.compare(prefix) == 0) {
+        // prefix only.
+        return std::string();  // empty suffix
+      } else {
+        std::string suffix = removePrefix(s, prefix);
+        DCOUT("suffix = " << suffix);
+        if (suffix.length() == 1) {  // maybe namespace only.
+          return nonstd::nullopt;
+        }
+
+        // remove namespace ':'
+        if (suffix[0] == ':') {
+          // ok
+          suffix.erase(0, 1);
+        } else {
+          return nonstd::nullopt; 
+        }
+
+        return std::move(suffix);
+      }
+    }
+
+    return nonstd::nullopt;
+  };
+
+
+  // Lookup xform values from `xformOpOrder`
+  // TODO: TimeSamples, Connection
+  if (properties.count("xformOpOrder")) {
+    // array of string
+    auto prop = properties.at("xformOpOrder");
+    if (prop.IsRel()) {
+      PUSH_ERROR_AND_RETURN("Relation for `xformOpOrder` is not supported.");
+    } else if (auto pv =
+                   prop.attrib.var.get_value<std::vector<value::token>>()) {
+      // TODO: 'uniform' qualifier check?
+      for (size_t i = 0; i < pv.value().size(); i++) {
+        const auto &item = pv.value()[i];
+
+        XformOp op;
+
+        std::string tok = item.str();
+        DCOUT("xformOp token = " << tok);
+
+        if (startsWith(tok, "!resetXformStack!")) {
+          if (tok.compare("!resetXformStack!") != 0) {
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must be defined solely(not to be a prefix "
+                "to \"xformOp:*\")");
+          }
+
+          if (i != 0) {
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must appear at the first element of "
+                "xformOpOrder list.");
+          }
+
+          op.op = XformOp::OpType::ResetXformStack;
+          xformOps->emplace_back(op);
+
+          // skip looking up property
+          continue;
+        }
+
+        if (startsWith(tok, "!invert!")) {
+          DCOUT("invert!");
+          op.inverted = true;
+          tok = removePrefix(tok, "!invert!");
+          DCOUT("tok = " << tok);
+        }
+
+        auto it = properties.find(tok);
+        if (it == properties.end()) {
+          PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
+        }
+        if (it->second.IsConnection()) {
+          PUSH_ERROR_AND_RETURN(
+              "Connection(.connect) of xformOp property is not yet supported: "
+              "`" +
+              tok + "`");
+        }
+        const PrimAttrib &attr = it->second.attrib;
+
+        // Check `xformOp` namespace
+        if (auto xfm = SplitXformOpToken(tok, kTransform)) {
+          op.op = XformOp::OpType::Transform;
+          op.suffix = xfm.value();  // may contain nested namespaces
+
+          if (auto pvd = attr.var.get_value<value::matrix4d>()) {
+            op.value = pvd.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:transform` must be type `matrix4d`, but got type `" +
+                attr.var.type_name() + "`.");
+          }
+
+        } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
+          op.op = XformOp::OpType::Translate;
+          op.suffix = tx.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:translate` must be type `double3` or `float3`, but "
+                "got type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto scale = SplitXformOpToken(tok, kScale)) {
+          op.op = XformOp::OpType::Scale;
+          op.suffix = scale.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:scale` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
+          op.op = XformOp::OpType::RotateX;
+          op.suffix = rotX.value();
+
+          if (auto pvd = attr.var.get_value<double>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<float>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateX` must be type `double` or `float`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
+          op.op = XformOp::OpType::RotateY;
+          op.suffix = rotX.value();
+
+          if (auto pvd = attr.var.get_value<double>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<float>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateY` must be type `double` or `float`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotZ = SplitXformOpToken(tok, kRotateZ)) {
+          op.op = XformOp::OpType::RotateY;
+          op.suffix = rotZ.value();
+
+          if (auto pvd = attr.var.get_value<double>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<float>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateZ` must be type `double` or `float`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
+          op.op = XformOp::OpType::RotateXYZ;
+          op.suffix = rotateXYZ.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotateXZY = SplitXformOpToken(tok, kRotateXZY)) {
+          op.op = XformOp::OpType::RotateXZY;
+          op.suffix = rotateXZY.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
+          op.op = XformOp::OpType::RotateYXZ;
+          op.suffix = rotateYXZ.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotateYZX = SplitXformOpToken(tok, kRotateYZX)) {
+          op.op = XformOp::OpType::RotateYZX;
+          op.suffix = rotateYZX.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
+          op.op = XformOp::OpType::RotateZXY;
+          op.suffix = rotateZXY.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto rotateZYX = SplitXformOpToken(tok, kRotateZYX)) {
+          op.op = XformOp::OpType::RotateZYX;
+          op.suffix = rotateZYX.value();
+
+          if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
+          op.op = XformOp::OpType::Orient;
+          op.suffix = orient.value();
+
+          if (auto pvd = attr.var.get_value<value::quatf>()) {
+            op.value = pvd.value();
+          } else if (auto pvf = attr.var.get_value<value::quatd>()) {
+            op.value = pvf.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                "type `" +
+                attr.var.type_name() + "`.");
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "token for xformOpOrder must have namespace `xformOp:***`, or .");
+        }
+
+        xformOps->emplace_back(op);
+        table.insert(tok);
+      }
+
+    } else {
+      PUSH_ERROR_AND_RETURN(
+          "`xformOpOrder` must be type `token[]` but got type `"
+          << prop.attrib.var.type_name() << "`.");
+    }
+  }
+
+  return true;
+}
+
+
 bool USDAReader::Impl::ReconstructStage() {
   _stage.root_nodes.clear();
 
@@ -890,6 +1212,9 @@ struct AttribType<AttribWithFallback<T>> {
 // TODO(syoyo): TimeSamples, Reference
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)       \
   if (__prop.first.compare(__name) == 0) {                                     \
+    if (__table.count(__name)) { \
+      continue; \
+    } \
     const PrimAttrib &attr = __prop.second.attrib;                             \
     if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) { \
       DCOUT("Add prop: " << __name);                                           \
@@ -908,13 +1233,16 @@ struct AttribType<AttribWithFallback<T>> {
 // e.g. "float2 inputs:st"
 // Attribute type is EmptyAttrib, Attrib(fallback) or Connection(`target` is
 // Path)
-// TODO: Attrib assign
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target)      \
   if (__prop.first.compare(__name ".connect") == 0) {                          \
     std::string propname = removeSuffix(__name, ".connect");                   \
+    if (__table.count(propname)) { \
+      continue; \
+    } \
     const Property &p = __prop.second;                                         \
     if (auto pv = p.GetConnectionTarget()) {                                   \
       __target.value = pv.value();                                             \
+      __target.meta = p.attrib.meta;                             \
       __table.insert(propname);                                                \
     } else {                                                                   \
       PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()      \
@@ -923,6 +1251,9 @@ struct AttribType<AttribWithFallback<T>> {
                                 << propname << "`.");                          \
     }                                                                          \
   } else if (__prop.first == __name) {                                         \
+    if (__table.count(__name)) { \
+      continue; \
+    } \
     const Property &p = __prop.second;                                         \
     const PrimAttrib &attr = p.attrib;                                         \
     /* Type info is stored in attrib.type_name */                              \
@@ -950,24 +1281,25 @@ struct AttribType<AttribWithFallback<T>> {
   } else
 
 // e.g. "float3 outputs:rgb"
-// Attribute type is EmptyAttrib or Connection(`target` is Path)
-// TODO: Metadatum
-#define PARSE_TYPED_OUTPUT_CONNECTION(__table, __prop, __name, __klass,      \
+// Attribute type must be EmptyAttrib(No value or connection assigned)
+#define PARSE_TYPED_OUTPUT_ATTRIBUTE(__table, __prop, __name, __klass,      \
                                       __target)                              \
   if (__prop.first == __name) {                                              \
+    if (__table.count(__name)) { \
+      continue; \
+    } \
     const Property &p = __prop.second;                                       \
     const PrimAttrib &attr = p.attrib;                                       \
     /* Type info is stored in attrib.type_name */                            \
     if (AttribType<decltype(__target)>::type_name() == attr.type_name) {     \
-      if (auto pv = p.GetConnectionTarget()) {                               \
-        __target->target = pv.value();                                       \
-        __table.insert(__name);                                              \
-      } else if (p.type == Property::Type::EmptyAttrib) {                    \
+      if (p.type == Property::Type::EmptyAttrib) {                    \
+        __target.meta = attr.meta; \
+        __target.set_define_only(); \
         __table.insert(__name);                                              \
       } else {                                                               \
         PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()  \
-                                  << ") Connection Property `" << __name     \
-                                  << "` must not be value assigned.");       \
+                                  << ") Attribute `" << __name     \
+                                  << "` must be `define-only`(no valur or connection assigned).");       \
       }                                                                      \
     } else {                                                                 \
       PUSH_ERROR_AND_RETURN(                                                 \
@@ -981,9 +1313,11 @@ struct AttribType<AttribWithFallback<T>> {
 // TODO(syoyo): TimeSamples, Reference
 #define PARSE_PROPERTY(__table, __prop, __name, __klass, __target)             \
   if (__prop.first == __name) {                                                \
+    if (__table.count(__name)) { continue; } \
     const PrimAttrib &attr = __prop.second.attrib;                             \
     if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) { \
       __target = v.value();                                                    \
+      /* TODO: attr meta  __target.meta = attr.meta; */ \
       __table.insert(__name);                                                  \
     } else {                                                                   \
       PUSH_ERROR_AND_RETURN(                                                   \
@@ -1009,11 +1343,13 @@ struct AttribType<AttribWithFallback<T>> {
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target)                                         \
   if (__prop.first == __name) {                                              \
+    if (__table.count(__name)) { continue; } \
     const PrimAttrib &attr = __prop.second.attrib;                           \
     if (auto tok = attr.var.get_value<value::token>()) {                     \
       auto e = __enum_handler(tok.value().str());                            \
       if (e) {                                                               \
         __target = e.value();                                                \
+        /* TODO: attr meta __target.meta = attr.meta;  */                    \
         __table.insert(__name);                                              \
       } else {                                                               \
         PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()  \
@@ -1131,205 +1467,9 @@ bool USDAReader::Impl::ReconstructPrim(
 
   std::set<std::string> table;
 
-#if 0
-  for (const auto &prop : properties) {
-    DCOUT("prop.name = " << prop.first);
-    if (startsWith(prop.first, "xformOp:translate")) {
-      // TODO: Implement
-      // using allowedTys = tinyusdz::variant<value::float3, value::double3>;
-      std::vector<value::TypeId> ids;
-      auto ret = CheckAllowedTypeOfXformOp(prop.second.attrib, ids);
-      if (!ret) {
-      }
-    }
-  }
-#endif
-
-  constexpr auto kTranslate = "xformOp:translate";
-  constexpr auto kTransform = "xformOp:transform";
-  constexpr auto kScale = "xformOp:scale";
-  constexpr auto kRotateX = "xformOp:rotateX";
-#if 0
-  constexpr auto kRotateY = "xformOp:rotateY";
-  constexpr auto kRotateZ = "xformOp:rotateZ";
-  constexpr auto kRotateXYZ = "xformOp:rotateXYZ";
-  constexpr auto kRotateXZY = "xformOp:rotateXZY";
-  constexpr auto kRotateYXZ = "xformOp:rotateYXZ";
-  constexpr auto kRotateYZX = "xformOp:rotateYZX";
-  constexpr auto kRotateZXY = "xformOp:rotateZXY";
-#endif
-  constexpr auto kOrient = "xformOp:orient";
-
-  // false : no prefix found.
-  // true : return suffix(first namespace ':' is ommited.).
-  // - "" for prefix only "xformOp:translate"
-  // - "blender:pivot" for "xformOp:translate:blender:pivot"
-  auto SplitXformOpToken =
-      [](const std::string &s,
-         const std::string &prefix) -> nonstd::optional<std::string> {
-    if (startsWith(s, prefix)) {
-      if (s.compare(prefix) == 0) {
-        // prefix only.
-        return std::string();  // empty suffix
-      } else {
-        std::string suffix = removePrefix(s, prefix);
-        DCOUT("suffix = " << suffix);
-        if (suffix.length() == 1) {  // maybe namespace only.
-          return nonstd::nullopt;
-        }
-
-        // remove namespace ':'
-        if (suffix[0] == ':') {
-          suffix.erase(0, 1);
-        }
-
-        return std::move(suffix);
-      }
-    }
-
-    return nonstd::nullopt;
-  };
-
-  // Lookup xform values from `xformOpOrder`
-  // TODO: TimeSamples, Connection
-  if (properties.count("xformOpOrder")) {
-    // array of string
-    auto prop = properties.at("xformOpOrder");
-    if (prop.IsRel()) {
-      PUSH_ERROR_AND_RETURN("Relation for `xformOpOrder` is not supported.");
-    } else if (auto pv =
-                   prop.attrib.var.get_value<std::vector<value::token>>()) {
-      // TODO: 'uniform' qualifier check?
-      for (size_t i = 0; i < pv.value().size(); i++) {
-        const auto &item = pv.value()[i];
-
-        XformOp op;
-
-        std::string tok = item.str();
-        DCOUT("xformOp token = " << tok);
-
-        if (startsWith(tok, "!resetXformStack!")) {
-          if (tok.compare("!resetXformStack!") != 0) {
-            PUSH_ERROR_AND_RETURN(
-                "`!resetXformStack!` must be defined solely(not to be a prefix "
-                "to \"xformOp:*\")");
-          }
-
-          if (i != 0) {
-            PUSH_ERROR_AND_RETURN(
-                "`!resetXformStack!` must appear at the first element of "
-                "xformOpOrder list.");
-          }
-
-          op.op = XformOp::OpType::ResetXformStack;
-          xform->xformOps.emplace_back(op);
-
-          // skip looking up property
-          continue;
-        }
-
-        if (startsWith(tok, "!invert!")) {
-          DCOUT("invert!");
-          op.inverted = true;
-          tok = removePrefix(tok, "!invert!");
-          DCOUT("tok = " << tok);
-        }
-
-        auto it = properties.find(tok);
-        if (it == properties.end()) {
-          PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
-        }
-        if (it->second.IsConnection()) {
-          PUSH_ERROR_AND_RETURN(
-              "Connection(.connect) of xformOp property is not yet supported: "
-              "`" +
-              tok + "`");
-        }
-        const PrimAttrib &attr = it->second.attrib;
-
-        // Check `xformOp` namespace
-        if (auto xfm = SplitXformOpToken(tok, kTransform)) {
-          op.op = XformOp::OpType::Transform;
-          op.suffix = xfm.value();  // may contain nested namespaces
-
-          if (auto pvd = attr.var.get_value<value::matrix4d>()) {
-            op.value = pvd.value();
-          } else {
-            PUSH_ERROR_AND_RETURN(
-                "`xformOp:transform` must be type `matrix4d`, but got type `" +
-                attr.var.type_name() + "`.");
-          }
-
-        } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
-          op.op = XformOp::OpType::Translate;
-          op.suffix = tx.value();
-
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
-          } else {
-            PUSH_ERROR_AND_RETURN(
-                "`xformOp:translate` must be type `double3` or `float3`, but "
-                "got type `" +
-                attr.var.type_name() + "`.");
-          }
-        } else if (auto scale = SplitXformOpToken(tok, kScale)) {
-          op.op = XformOp::OpType::Scale;
-          op.suffix = scale.value();
-
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
-          } else {
-            PUSH_ERROR_AND_RETURN(
-                "`xformOp:scale` must be type `double3` or `float3`, but got "
-                "type `" +
-                attr.var.type_name() + "`.");
-          }
-        } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
-          op.op = XformOp::OpType::RotateX;
-          op.suffix = rotX.value();
-
-          if (auto pvd = attr.var.get_value<double>()) {
-            op.value = pvd.value();
-          } else if (auto pvf = attr.var.get_value<float>()) {
-            op.value = pvf.value();
-          } else {
-            PUSH_ERROR_AND_RETURN(
-                "`xformOp:rotateX` must be type `double` or `float`, but got "
-                "type `" +
-                attr.var.type_name() + "`.");
-          }
-        } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
-          op.op = XformOp::OpType::Orient;
-          op.suffix = orient.value();
-
-          if (auto pvd = attr.var.get_value<value::quatf>()) {
-            op.value = pvd.value();
-          } else if (auto pvf = attr.var.get_value<value::quatd>()) {
-            op.value = pvf.value();
-          } else {
-            PUSH_ERROR_AND_RETURN(
-                "`xformOp:orient` must be type `quatf` or `quatd`, but got "
-                "type `" +
-                attr.var.type_name() + "`.");
-          }
-        } else {
-          PUSH_ERROR_AND_RETURN(
-              "token for xformOpOrder must have namespace `xformOp:***`, or .");
-        }
-
-        xform->xformOps.emplace_back(op);
-        table.insert(tok);
-      }
-
-    } else {
-      PUSH_ERROR_AND_RETURN(
-          "`xformOpOrder` must be type `token[]` but got type `"
-          << prop.attrib.var.type_name() << "`.");
-    }
+  if (!ReconstructXformOpProperties(table, properties, &xform->xformOps)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOps.");
+    return false;
   }
 
   //
@@ -2750,8 +2890,21 @@ bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
     SkelRoot *root) {
   (void)root;
 
-  // SkelRoot is something like a grouping node.
+
+  std::set<std::string> table;
+  if (!ReconstructXformOpProperties(table, properties, &root->xformOps)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data.");
+  }
+
+  // SkelRoot is something like a grouping node, having 1 Skeleton and possibly?
+  // multiple Prim hierarchy containing GeomMesh.
   // No specific properties for SkelRoot(AFAIK)
+
+  // custom props only
+  for (const auto &prop : properties) {
+    ADD_PROPERY(table, prop, SkelRoot, root->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
 
   return true;
 }
@@ -2901,15 +3054,15 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
                        SourceColorSpaceHandler, UsdPreviewSurface,
                        texture->sourceColorSpace)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:r", UsdPreviewSurface,
+    PARSE_TYPED_OUTPUT_ATTRIBUTE(table, prop, "outputs:r", UsdPreviewSurface,
                                   texture->outputsR)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:g", UsdPreviewSurface,
+    PARSE_TYPED_OUTPUT_ATTRIBUTE(table, prop, "outputs:g", UsdPreviewSurface,
                                   texture->outputsG)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:b", UsdPreviewSurface,
+    PARSE_TYPED_OUTPUT_ATTRIBUTE(table, prop, "outputs:b", UsdPreviewSurface,
                                   texture->outputsB)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:a", UsdPreviewSurface,
+    PARSE_TYPED_OUTPUT_ATTRIBUTE(table, prop, "outputs:a", UsdPreviewSurface,
                                   texture->outputsA)
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:rgb", UsdPreviewSurface,
+    PARSE_TYPED_OUTPUT_ATTRIBUTE(table, prop, "outputs:rgb", UsdPreviewSurface,
                                   texture->outputsRGB)
     ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
@@ -2946,7 +3099,7 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float2>(
   for (auto &prop : properties) {
     PARSE_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float2,
                    preader->varname)  // `token`
-    PARSE_TYPED_OUTPUT_CONNECTION(table, prop, "outputs:result",
+    PARSE_TYPED_OUTPUT_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float2, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)

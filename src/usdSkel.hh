@@ -26,6 +26,7 @@ struct BlendShape {
       pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
                      // values in `offsets` and `normalOffsets`.
                     
+  std::map<std::string, Property> props;
   PrimMeta meta;
 };
 
@@ -37,8 +38,8 @@ struct Skeleton {
 
   TypedAttribute<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
 
-  TypedAttribute<std::vector<std::string>> jointNames; // uniform token[]
-  TypedAttribute<std::vector<std::string>> joints; // uniform token[]
+  TypedAttribute<std::vector<value::token>> jointNames; // uniform token[]
+  TypedAttribute<std::vector<value::token>> joints; // uniform token[]
 
   TypedAttribute<std::vector<value::matrix4d>> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                                                 // joint in local coordinate.
@@ -48,6 +49,7 @@ struct Skeleton {
   Purpose purpose{Purpose::Default};
   AnimatableVisibility visibility{Visibility::Inherited};
 
+  std::map<std::string, Property> props;
   std::vector<value::token> xformOpOrder;
 
   PrimMeta meta;
@@ -64,12 +66,13 @@ struct SkelRoot {
   // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
 
   // ref proxyPrim
-  std::vector<value::token> xformOpOrder;
+  std::vector<XformOp> xformOps;
 
-  int64_t skeleton_id{-1};  // index to scene.skeletons
-  // Skeleton skeleton;
-
+  std::map<std::string, Property> props;
   PrimMeta meta;
+
+  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh` node?;
+
 };
 
 struct SkelAnimation {
@@ -83,6 +86,7 @@ struct SkelAnimation {
       scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
   TypedAttribute<std::vector<value::float3>> translations;  // float3[] Joint-local translation.
 
+  std::map<std::string, Property> props;
   PrimMeta meta;
 };
 
@@ -95,8 +99,8 @@ struct SkelBindingAPI {
   value::matrix4d geomBindTransform;     // primvars:skel:geomBindTransform
   std::vector<int> jointIndices;         // primvars:skel:jointIndices
   std::vector<float> jointWeights;       // primvars:skel:jointWeights
-  std::vector<std::string> blendShapes;  // optional?
-  std::vector<std::string> joints;       // optional
+  std::vector<value::token> blendShapes;  // optional?
+  std::vector<value::token> joints;       // optional
 
   int64_t animationSource{
       -1};  // index to Scene.animations. ref skel:animationSource

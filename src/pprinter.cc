@@ -197,7 +197,10 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
   if (attr.value) {
     if (auto v = attr.value.value().template get<T>()) {
       ss << pprint::Indent(indent) << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
+    } else if (auto empty = attr.value.value().template get<tinyusdz::monostate>()) { // define only
+      ss << pprint::Indent(indent) << value::TypeTrait<T>::type_name();
     }
+
     if (attr.meta.authored()) {
       ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
     }
@@ -309,7 +312,116 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
   return ss.str();
 }
 
-} // namespace
+std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent) {
+  std::stringstream ss;
+
+  if (xformOps.size()) {
+
+    ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
+    for (size_t i = 0; i < xformOps.size(); i++) {
+      if (i > 0) {
+        ss << ", ";
+      }
+
+      auto xformOp = xformOps[i];
+      ss << "\"";
+      if (xformOp.inverted) {
+        ss << "!invert!";
+      }
+      ss << to_string(xformOp.op);
+      if (!xformOp.suffix.empty()) {
+        ss << ":" << xformOp.suffix;
+      }
+      ss << "\"";
+    }
+    ss << "]\n";
+  }
+
+  return ss.str();
+}
+
+std::string print_xform_value_type(const XformOpValueType &v) {
+  std::stringstream ss;
+
+  // TODO: Store type name in XformOpValueType
+  if (auto qf = v.get<value::quatf>()) {
+    ss << value::TypeTrait<value::quatf>::type_name();
+  } else if (auto qd = v.get<value::quatd>()) {
+    ss << value::TypeTrait<value::quatd>::type_name();
+  } else if (auto d = v.get<double>()) {
+    ss << value::TypeTrait<double>::type_name();
+  } else if (auto f = v.get<float>()) {
+    ss << value::TypeTrait<float>::type_name();
+  } else if (auto d3 = v.get<value::double3>()) {
+    ss << value::TypeTrait<value::double3>::type_name();
+  } else if (auto f3 = v.get<value::float3>()) {
+    ss << value::TypeTrait<value::float3>::type_name();
+  } else if (auto m = v.get<value::matrix4d>()) {
+    ss << value::TypeTrait<value::matrix4d>::type_name();
+  }
+
+  return ss.str();
+}
+
+std::string print_xform_value(const XformOpValueType &v) {
+  std::stringstream ss;
+
+  if (auto qf = v.get<value::quatf>()) {
+    ss << qf.value();
+  } else if (auto qd = v.get<value::quatd>()) {
+    ss << qd.value();
+  } else if (auto d = v.get<double>()) {
+    ss << d.value();
+  } else if (auto f = v.get<float>()) {
+    ss << f.value();
+  } else if (auto d3 = v.get<value::double3>()) {
+    ss << d3.value();
+  } else if (auto f3 = v.get<value::float3>()) {
+    ss << f3.value();
+  } else if (auto m = v.get<value::matrix4d>()) {
+    ss << m.value();
+  }
+
+  return ss.str();
+}
+
+std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t indent) {
+
+  std::stringstream ss;
+
+  // xforms props
+  if (xformOps.size()) {
+    for (size_t i = 0; i < xformOps.size(); i++) {
+      const auto xformOp = xformOps[i];
+
+      if (xformOp.op == XformOp::OpType::ResetXformStack) {
+        // No need to print value.
+        continue;
+      }
+
+      ss << pprint::Indent(indent);
+
+      ss << print_xform_value_type(xformOp.value) << " " ;
+
+      ss << to_string(xformOp.op);
+      if (!xformOp.suffix.empty()) {
+        ss << ":" << xformOp.suffix;
+      }
+
+      ss << " = " << print_xform_value(xformOp.value);
+
+      ss << "\n";
+    }
+  }
+
+  // uniform token[] xformOpOrder
+  ss << print_xformOpOrder(xformOps, indent);
+
+  return ss.str();
+}
+
+
+} // namespace local
 
 std::string to_string(const StringData &s) {
   if (s.is_triple_quoted) {
@@ -654,79 +766,6 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   return ss.str();
 }
 
-static std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent) {
-  std::stringstream ss;
-
-  if (xformOps.size()) {
-
-    ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
-    for (size_t i = 0; i < xformOps.size(); i++) {
-      if (i > 0) {
-        ss << ", ";
-      }
-
-      auto xformOp = xformOps[i];
-      ss << "\"";
-      if (xformOp.inverted) {
-        ss << "!invert!";
-      }
-      ss << to_string(xformOp.op);
-      if (!xformOp.suffix.empty()) {
-        ss << ":" << xformOp.suffix;
-      }
-      ss << "\"";
-    }
-    ss << "]\n";
-  }
-
-  return ss.str();
-}
-
-static std::string print_xform_value_type(const XformOpValueType &v) {
-  std::stringstream ss;
-
-  // TODO: Store type name in XformOpValueType
-  if (auto qf = v.get<value::quatf>()) {
-    ss << value::TypeTrait<value::quatf>::type_name();
-  } else if (auto qd = v.get<value::quatd>()) {
-    ss << value::TypeTrait<value::quatd>::type_name();
-  } else if (auto d = v.get<double>()) {
-    ss << value::TypeTrait<double>::type_name();
-  } else if (auto f = v.get<float>()) {
-    ss << value::TypeTrait<float>::type_name();
-  } else if (auto d3 = v.get<value::double3>()) {
-    ss << value::TypeTrait<value::double3>::type_name();
-  } else if (auto f3 = v.get<value::float3>()) {
-    ss << value::TypeTrait<value::float3>::type_name();
-  } else if (auto m = v.get<value::matrix4d>()) {
-    ss << value::TypeTrait<value::matrix4d>::type_name();
-  }
-
-  return ss.str();
-}
-
-static std::string print_xform_value(const XformOpValueType &v) {
-  std::stringstream ss;
-
-  if (auto qf = v.get<value::quatf>()) {
-    ss << qf.value();
-  } else if (auto qd = v.get<value::quatd>()) {
-    ss << qd.value();
-  } else if (auto d = v.get<double>()) {
-    ss << d.value();
-  } else if (auto f = v.get<float>()) {
-    ss << f.value();
-  } else if (auto d3 = v.get<value::double3>()) {
-    ss << d3.value();
-  } else if (auto f3 = v.get<value::float3>()) {
-    ss << f3.value();
-  } else if (auto m = v.get<value::matrix4d>()) {
-    ss << m.value();
-  }
-
-  return ss.str();
-}
-
 std::string to_string(const Xform &xform, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -736,32 +775,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  // xforms props
-  if (xform.xformOps.size()) {
-    for (size_t i = 0; i < xform.xformOps.size(); i++) {
-      auto xformOp = xform.xformOps[i];
-
-      if (xformOp.op == XformOp::OpType::ResetXformStack) {
-        // No need to print value.
-        continue;
-      }
-
-      ss << pprint::Indent(indent+1);
-
-      ss << print_xform_value_type(xformOp.value) << " " ;
-
-      ss << to_string(xformOp.op);
-      if (!xformOp.suffix.empty()) {
-        ss << ":" << xformOp.suffix;
-      }
-
-      ss << " = " << print_xform_value(xformOp.value);
-
-      ss << "\n";
-    }
-  }
-
-  ss << print_xformOpOrder(xform.xformOps, indent+1);
+  ss << print_xformOps(xform.xformOps, indent+1);
 
   // TODO: Generic properties
 
@@ -1122,7 +1136,7 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   // Skeleton id
   //ss << pprint::Indent(indent) << "skelroot.skeleton_id << "\n"
 
-  ss << pprint::Indent(indent) << "[TODO]\n";
+  ss << print_xformOps(root.xformOps, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1220,14 +1234,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float &shader, con
     // TODO: meta
   }
 
-  if (shader.result) {
-    ss << pprint::Indent(indent) << "float outputs:result";
-    if (shader.result.value().target) {
-      ss << " = " << quote(shader.result.value().target.value().full_path_name()) << "\n";
-    }
-    ss << "\n";
-    // TODO: meta
-  }
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
 
   return ss.str();
 
@@ -1241,15 +1248,33 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
     // TODO: meta
   }
 
-  if (shader.result) {
-    ss << pprint::Indent(indent) << "float2 outputs:result";
-    if (shader.result.value().target) {
-      ss << " = " << quote(shader.result.value().target.value().full_path_name()) << "\n";
-    }
-    ss << "\n";
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
+
+  return ss.str();
+}
+
+static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, const uint32_t indent) {
+  std::stringstream ss;
+
+  if (shader.varname) {
+    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
     // TODO: meta
   }
 
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
+
+  return ss.str();
+}
+
+static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, const uint32_t indent) {
+  std::stringstream ss;
+
+  if (shader.varname) {
+    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
+    // TODO: meta
+  }
+
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
 
   return ss.str();
 }
@@ -1313,50 +1338,11 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   //  ss << pprint::Indent(indent+1)
   }
 
-  if (shader.outputsR) {
-    ss << pprint::Indent(indent) << "float outputs:r";
-    if (shader.outputsR.value().target) {
-      ss << " = " << quote(shader.outputsR.value().target.value().full_path_name()) << "\n";
-    }
-    ss << "\n";
-    // TODO: meta
-  }
-
-  if (shader.outputsG) {
-    ss << pprint::Indent(indent) << "float outputs:g";
-    if (shader.outputsG.value().target) {
-      ss << " = " << quote(shader.outputsG.value().target.value().full_path_name()) << "\n";
-    }
-    ss << "\n";
-    // TODO: meta
-  }
-
-  if (shader.outputsB) {
-    ss << pprint::Indent(indent) << "float outputs:b";
-    if (shader.outputsB.value().target) {
-      ss << " = " << quote(shader.outputsB.value().target.value().full_path_name()) << "\n";
-    }
-    ss << "\n";
-    // TODO: meta
-  }
-
-  if (shader.outputsA) {
-    ss << pprint::Indent(indent) << "float outputs:a";
-    if (shader.outputsA.value().target) {
-      ss << " = " << quote(shader.outputsA.value().target.value().full_path_name()) << "\n";
-    }
-    ss << "\n";
-    // TODO: meta
-  }
-
-  if (shader.outputsRGB) {
-    ss << pprint::Indent(indent) << "float3 outputs:rgb";
-    if (shader.outputsRGB.value().target) {
-      ss << " = " << quote(shader.outputsRGB.value().target.value().full_path_name()) << "\n";
-    }
-    ss << "\n";
-    // TODO: meta
-  }
+  ss << print_typed_attr(shader.outputsR, "outputs:r", indent+1);
+  ss << print_typed_attr(shader.outputsG, "outputs:g", indent+1);
+  ss << print_typed_attr(shader.outputsB, "outputs:b", indent+1);
+  ss << print_typed_attr(shader.outputsA, "outputs:a", indent+1);
+  ss << print_typed_attr(shader.outputsRGB, "outputs:rgb", indent+1);
 
   return ss.str();
 }
@@ -1380,6 +1366,10 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
       ss << print_shader_params(pvr.value(), indent+1);
     } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
       ss << print_shader_params(pvr2.value(), indent+1);
+    } else if (auto pvr3 = shader.value.get_value<UsdPrimvarReader_float3>()) {
+      ss << print_shader_params(pvr3.value(), indent+1);
+    } else if (auto pvr4 = shader.value.get_value<UsdPrimvarReader_float4>()) {
+      ss << print_shader_params(pvr4.value(), indent+1);
     } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
       ss << print_shader_params(pvtex.value(), indent+1);
     } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {

@@ -37,6 +37,85 @@
 
 namespace tinyusdz {
 
+enum class SpecType {
+  Attribute,
+  Connection,
+  Expression,
+  Mapper,
+  MapperArg,
+  Prim,
+  PseudoRoot,
+  Relationship,
+  RelationshipTarget,
+  Variant,
+  VariantSet,
+  Invalid,
+};
+
+enum class Orientation {
+  RightHanded,  // 0
+  LeftHanded,
+  Invalid
+};
+
+enum class Visibility {
+  Inherited,  // "inherited" (default)
+  Invisible,  // "invisible"
+  Invalid
+};
+
+enum class Purpose {
+  Default,  // 0
+  Render,
+  Proxy,
+  Guide,
+  Invalid
+};
+
+enum class Kind { Model, Group, Assembly, Component, Subcomponent, Invalid };
+
+// Attribute interpolation
+enum class Interpolation {
+  Constant,     // "constant"
+  Uniform,      // "uniform"
+  Varying,      // "varying"
+  Vertex,       // "vertex"
+  FaceVarying,  // "faceVarying"
+  Invalid
+};
+
+enum class ListEditQual {
+  ResetToExplicit,  // "unqualified"(no qualifier)
+  Append,           // "append"
+  Add,              // "add"
+  Delete,           // "delete"
+  Prepend,          // "prepend"
+  Invalid
+};
+
+enum class Axis { X, Y, Z, Invalid };
+
+// For PrimSpec
+enum class Specifier {
+  Def,  // 0
+  Over,
+  Class,
+  Invalid
+};
+
+enum class Permission {
+  Public,  // 0
+  Private,
+  Invalid
+};
+
+enum class Variability {
+  Varying,  // 0
+  Uniform,
+  Config,
+  Invalid
+};
+
 // single or triple-quoted('"""') string
 struct StringData {
   std::string value;
@@ -45,6 +124,156 @@ struct StringData {
   // optional(for USDA)
   int line_row{0};
   int line_col{0};
+};
+
+// Variable class for Prim and Attribute Metadataum.
+// TODO: use `value::Value` to store variable.
+class MetaVariable {
+ public:
+  std::string type;  // Explicit name of type
+  std::string name;
+  bool custom{false};
+
+  // using Array = std::vector<Variable>;
+  using Object = std::map<std::string, MetaVariable>;
+
+  value::Value value;
+  // Array arr_value;
+  Object obj_value;
+  value::TimeSamples timeSamples;
+
+  MetaVariable &operator=(const MetaVariable &rhs) {
+    type = rhs.type;
+    name = rhs.name;
+    custom = rhs.custom;
+    value = rhs.value;
+    // arr_value = rhs.arr_value;
+    obj_value = rhs.obj_value;
+
+    return *this;
+  }
+
+  MetaVariable(const MetaVariable &rhs) {
+    type = rhs.type;
+    name = rhs.name;
+    custom = rhs.custom;
+    value = rhs.value;
+    obj_value = rhs.obj_value;
+  }
+
+  static std::string type_name(const MetaVariable &v) {
+    if (!v.type.empty()) {
+      return v.type;
+    }
+
+    // infer type from value content
+    if (v.IsObject()) {
+      return "dictionary";
+    } else if (v.IsTimeSamples()) {
+      std::string ts_type = "TODO: TimeSample typee";
+      // FIXME
+#if 0
+      auto ts_struct = v.as_timesamples();
+
+      for (const TimeSampleType &item : ts_struct->values) {
+        auto tname = value::type_name(item);
+        if (tname != "none") {
+          return tname;
+        }
+      }
+#endif
+
+      // ??? TimeSamples data contains all `None` values
+      return ts_type;
+
+    } else if (v.IsEmpty()) {
+      return "none";
+    } else {
+      return v.value.type_name();
+    }
+  }
+
+  // template <typename T>
+  // bool is() const {
+  //   return value.index() == ValueType::index_of<T>();
+  // }
+
+  // TODO
+  bool IsEmpty() const { return false; }
+  bool IsValue() const { return false; }
+  // bool IsArray() const {
+  // }
+
+  bool IsObject() const { return obj_value.size(); }
+
+  // TODO
+  bool IsTimeSamples() const { return false; }
+
+  // For Value
+#if 0
+  template <typename T>
+  const nonstd::optional<T> cast() const {
+    printf("cast\n");
+    if (IsValue()) {
+      std::cout << "type_name = " << Variable::type_name(*this) << "\n";
+      const T *p = nonstd::get_if<T>(&value);
+      printf("p = %p\n", static_cast<const void *>(p));
+      if (p) {
+        return *p;
+      } else {
+        return nonstd::nullopt;
+      }
+    }
+    return nonstd::nullopt;
+  }
+#endif
+
+  bool valid() const { return !IsEmpty(); }
+
+  MetaVariable() = default;
+  // Variable(std::string ty, std::string n) : type(ty), name(n) {}
+  // Variable(std::string ty) : type(ty) {}
+
+  // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
+  // friend std::ostream &operator<<(std::ostream &os, const MetaVariable &var);
+
+  // friend std::string str_object(const Object &obj, int indent = 0); // string
+  // representation of Object.
+};
+
+using CustomDataType = std::map<std::string, MetaVariable>;
+
+// Metadata for Prim
+struct PrimMeta {
+  nonstd::optional<Kind> kind;                  // 'kind'
+  nonstd::optional<CustomDataType> customData;  // `customData`
+
+  std::map<std::string, MetaVariable> meta;  // other meta values
+
+  // String only metadataum.
+  // TODO: Represent as `MetaVariable`?
+  std::vector<StringData> stringData;
+
+  bool authored() const { return (kind || customData || meta.size() || stringData.size()); }
+};
+
+// Metadata for Attribute
+struct AttrMeta {
+  // frequently used items
+  // nullopt = not specified in USD data
+  nonstd::optional<Interpolation> interpolation;  // 'interpolation'
+  nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
+  nonstd::optional<CustomDataType> customData;    // `customData`
+
+  std::map<std::string, MetaVariable> meta;  // other meta values
+
+  // String only metadataum.
+  // TODO: Represent as `MetaVariable`?
+  std::vector<StringData> stringData;
+
+  bool authored() const {
+    return (interpolation || elementSize || customData || meta.size() || stringData.size());
+  }
 };
 
 template <typename T>
@@ -118,6 +347,8 @@ class AttribWithFallback {
     }
     return false;
   }
+
+  AttrMeta meta;
 
  private:
   nonstd::optional<T> attrib;
@@ -244,84 +475,6 @@ struct ListOpHeader {
   uint8_t bits;
 };
 
-enum class SpecType {
-  Attribute,
-  Connection,
-  Expression,
-  Mapper,
-  MapperArg,
-  Prim,
-  PseudoRoot,
-  Relationship,
-  RelationshipTarget,
-  Variant,
-  VariantSet,
-  Invalid,
-};
-
-enum class Orientation {
-  RightHanded,  // 0
-  LeftHanded,
-  Invalid
-};
-
-enum class Visibility {
-  Inherited,  // "inherited" (default)
-  Invisible,  // "invisible"
-  Invalid
-};
-
-enum class Purpose {
-  Default,  // 0
-  Render,
-  Proxy,
-  Guide,
-  Invalid
-};
-
-enum class Kind { Model, Group, Assembly, Component, Subcomponent, Invalid };
-
-// Attribute interpolation
-enum class Interpolation {
-  Constant,     // "constant"
-  Uniform,      // "uniform"
-  Varying,      // "varying"
-  Vertex,       // "vertex"
-  FaceVarying,  // "faceVarying"
-  Invalid
-};
-
-enum class ListEditQual {
-  ResetToExplicit,  // "unqualified"(no qualifier)
-  Append,           // "append"
-  Add,              // "add"
-  Delete,           // "delete"
-  Prepend,          // "prepend"
-  Invalid
-};
-
-enum class Axis { X, Y, Z, Invalid };
-
-// For PrimSpec
-enum class Specifier {
-  Def,  // 0
-  Over,
-  Class,
-  Invalid
-};
-
-enum class Permission {
-  Public,  // 0
-  Private,
-  Invalid
-};
-
-enum class Variability {
-  Varying,  // 0
-  Uniform,
-  Config,
-  Invalid
-};
 
 ///
 /// Simlar to SdfPath.
@@ -743,155 +896,6 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-// Variable class for Prim and Attribute Metadataum.
-// TODO: use tiny-any
-class MetaVariable {
- public:
-  std::string type;  // Explicit name of type
-  std::string name;
-  bool custom{false};
-
-  // using Array = std::vector<Variable>;
-  using Object = std::map<std::string, MetaVariable>;
-
-  value::Value value;
-  // Array arr_value;
-  Object obj_value;
-  value::TimeSamples timeSamples;
-
-  MetaVariable &operator=(const MetaVariable &rhs) {
-    type = rhs.type;
-    name = rhs.name;
-    custom = rhs.custom;
-    value = rhs.value;
-    // arr_value = rhs.arr_value;
-    obj_value = rhs.obj_value;
-
-    return *this;
-  }
-
-  MetaVariable(const MetaVariable &rhs) {
-    type = rhs.type;
-    name = rhs.name;
-    custom = rhs.custom;
-    value = rhs.value;
-    obj_value = rhs.obj_value;
-  }
-
-  static std::string type_name(const MetaVariable &v) {
-    if (!v.type.empty()) {
-      return v.type;
-    }
-
-    // infer type from value content
-    if (v.IsObject()) {
-      return "dictionary";
-    } else if (v.IsTimeSamples()) {
-      std::string ts_type = "TODO: TimeSample typee";
-      // FIXME
-#if 0
-      auto ts_struct = v.as_timesamples();
-
-      for (const TimeSampleType &item : ts_struct->values) {
-        auto tname = value::type_name(item);
-        if (tname != "none") {
-          return tname;
-        }
-      }
-#endif
-
-      // ??? TimeSamples data contains all `None` values
-      return ts_type;
-
-    } else if (v.IsEmpty()) {
-      return "none";
-    } else {
-      return v.value.type_name();
-    }
-  }
-
-  // template <typename T>
-  // bool is() const {
-  //   return value.index() == ValueType::index_of<T>();
-  // }
-
-  // TODO
-  bool IsEmpty() const { return false; }
-  bool IsValue() const { return false; }
-  // bool IsArray() const {
-  // }
-
-  bool IsObject() const { return obj_value.size(); }
-
-  // TODO
-  bool IsTimeSamples() const { return false; }
-
-  // For Value
-#if 0
-  template <typename T>
-  const nonstd::optional<T> cast() const {
-    printf("cast\n");
-    if (IsValue()) {
-      std::cout << "type_name = " << Variable::type_name(*this) << "\n";
-      const T *p = nonstd::get_if<T>(&value);
-      printf("p = %p\n", static_cast<const void *>(p));
-      if (p) {
-        return *p;
-      } else {
-        return nonstd::nullopt;
-      }
-    }
-    return nonstd::nullopt;
-  }
-#endif
-
-  bool valid() const { return !IsEmpty(); }
-
-  MetaVariable() = default;
-  // Variable(std::string ty, std::string n) : type(ty), name(n) {}
-  // Variable(std::string ty) : type(ty) {}
-
-  // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
-  // friend std::ostream &operator<<(std::ostream &os, const MetaVariable &var);
-
-  // friend std::string str_object(const Object &obj, int indent = 0); // string
-  // representation of Object.
-};
-
-using CustomDataType = std::map<std::string, MetaVariable>;
-
-// Metadata for Prim
-struct PrimMeta {
-  nonstd::optional<Kind> kind;                  // 'kind'
-  nonstd::optional<CustomDataType> customData;  // `customData`
-
-  std::map<std::string, MetaVariable> meta;  // other meta values
-
-  // String only metadataum.
-  // TODO: Represent as `MetaVariable`?
-  std::vector<StringData> stringData;
-
-  bool authored() const { return (kind || customData || meta.size() || stringData.size()); }
-};
-
-// Metadata for Attribute
-struct AttrMeta {
-  // frequently used items
-  // nullopt = not specified in USD data
-  nonstd::optional<Interpolation> interpolation;  // 'interpolation'
-  nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
-  nonstd::optional<CustomDataType> customData;    // `customData`
-
-  std::map<std::string, MetaVariable> meta;  // other meta values
-
-  // String only metadataum.
-  // TODO: Represent as `MetaVariable`?
-  std::vector<StringData> stringData;
-
-  bool authored() const {
-    return (interpolation || elementSize || customData || meta.size() || stringData.size());
-  }
-};
 
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
@@ -937,9 +941,12 @@ class TypedAttribute {
 
   bool authored() const { return value.has_value(); }
 
+  bool set_define_only(bool onoff = true) { define_only = onoff; return define_only; }
+
   nonstd::optional<T> fallback;  // may have fallback
   AttrMeta meta;
   bool uniform{false};  // `uniform`
+  bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
 };
 
 // Attribute or Relation/Connection. And has this property is custom or not
