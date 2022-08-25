@@ -103,8 +103,8 @@ class AsciiParser {
     ///
     /// Predefined Stage metas
     ///
-    std::vector<std::string> subLayers; // 'subLayers'
-    std::string defaultPrim; // 'defaultPrim'
+    std::vector<value::token> subLayers; // 'subLayers'
+    value::token defaultPrim; // 'defaultPrim'
     StringData doc; // 'doc' 
     nonstd::optional<Axis> upAxis;  // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
