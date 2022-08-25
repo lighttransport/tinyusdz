@@ -49,8 +49,6 @@ struct GPrim {
 
   std::map<std::string, Property> props;
 
-  std::map<std::string, value::Value> args;
-
   bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
   bool active{true};
@@ -244,6 +242,14 @@ struct GeomMesh : GPrim {
   AttribWithFallback<InterpolateBoundary> interpolateBoundary{InterpolateBoundary::EdgeAndCorner};
   AttribWithFallback<SubdivisionScheme> subdivisionScheme{SubdivisionScheme::CatmullClark};
   AttribWithFallback<FacevaryingLinearInterpolation> facevaryingLinearInterpolation{FacevaryingLinearInterpolation::CornersPlus1};
+
+  //
+  // TODO: Make SkelBindingAPI property first citizen
+  // - int[] primvars:skel:jointIndices
+  // - float[] primvars:skel:jointWeights
+  // - uniform token[] skel:blendShapes
+  // - uniform token[] skel:blendShapeTargets
+  // - ListOp(usually prepend?) rel skel:skeleton
 
   //
   // GeomSubset
