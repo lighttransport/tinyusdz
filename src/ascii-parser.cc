@@ -192,8 +192,8 @@ static void RegisterStageMetas(
       AsciiParser::VariableDef(value::kDouble, "timeCodesPerSecond");
 
   metas["defaultPrim"] =
-      AsciiParser::VariableDef(value::kString, "defaultPrim");
-  metas["upAxis"] = AsciiParser::VariableDef(value::kString, "upAxis");
+      AsciiParser::VariableDef(value::kToken, "defaultPrim");
+  metas["upAxis"] = AsciiParser::VariableDef(value::kToken, "upAxis");
   metas["customLayerData"] =
       AsciiParser::VariableDef(value::kDictionary, "customLayerData");
 
@@ -314,6 +314,7 @@ static void RegisterPrimTypes(std::set<std::string> &d)
   d.insert("Capsule");
   d.insert("BasisCurves");
   d.insert("Mesh");
+  d.insert("GeomSubset");
   d.insert("Scope");
   d.insert("Material");
   d.insert("NodeGraph");
@@ -324,7 +325,8 @@ static void RegisterPrimTypes(std::set<std::string> &d)
   d.insert("Camera");
   d.insert("SkelRoot");
   d.insert("Skeleton");
-  d.insert("GeomSubset");
+  d.insert("SkelAnimation");
+  d.insert("BlendShape");
 
   d.insert("GPrim");
 
@@ -3047,14 +3049,14 @@ bool AsciiParser::ParseStageMetaOpt() {
   }
 
   if (varname == "defaultPrim" ) {
-    if (auto pv = var.value.get_value<std::string>()) {
+    if (auto pv = var.value.get_value<value::token>()) {
       DCOUT("defaultPrim = " << pv.value());
       _stage_metas.defaultPrim = pv.value();
     } else {
-      PUSH_ERROR_AND_RETURN("`defaultPrim` isn't a string value.");
+      PUSH_ERROR_AND_RETURN("`defaultPrim` isn't a token value.");
     }
   } else if (varname == "subLayers") {
-    if (auto pv = var.value.get_value<std::vector<std::string>>()) {
+    if (auto pv = var.value.get_value<std::vector<value::token>>()) {
       DCOUT("subLayers = " << pv.value());
       for (const auto &item : pv.value()) {
           _stage_metas.subLayers.push_back(item);
@@ -3063,9 +3065,9 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of string values.");
     }
   } else if (varname == "upAxis") {
-    if (auto pv = var.value.get_value<std::string>()) {
+    if (auto pv = var.value.get_value<value::token>()) {
       DCOUT("upAxis = " << pv.value());
-      const std::string s = pv.value();
+      const std::string s = pv.value().str();
       if (s == "X") {
         _stage_metas.upAxis = Axis::X;
       } else if (s == "Y") {
@@ -3076,7 +3078,7 @@ bool AsciiParser::ParseStageMetaOpt() {
         PUSH_ERROR_AND_RETURN("Invalid `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got \"" + s + "\"(Note: Case sensitive)");
       }
     } else {
-      PUSH_ERROR_AND_RETURN("`upAxis` isn't a string value.");
+      PUSH_ERROR_AND_RETURN("`upAxis` isn't a token value.");
     }
   } else if (varname == "doc") {
     if (auto pv = var.value.get_value<StringData>()) {

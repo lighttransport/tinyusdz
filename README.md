@@ -112,6 +112,8 @@ To limit a memory usage when loading USDZ file, Please set a value `max_memory_l
 
 TinyUSDZ source codes are also checked by Address Sanitizer, CodeQL and Fuzzer.
 
+If you need to deal with arbitrary USD files from unknown origin(e.g. from internet, NFT storage. Whose may contain malcious data), it is recommended to use TinyUSDZ in sandboxed environment(RunC, FlatPak, WASI(WASM)). Run in WASI is recommended at the moment. See [sandbox/wasi/](sandbox/wasi) for Building TinyUSDZ with WASI toolchain.
+
 ## Build
 
 ### Integrate to your app
