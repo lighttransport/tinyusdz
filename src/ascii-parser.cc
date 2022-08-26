@@ -339,7 +339,15 @@ static void RegisterAPISchemas(std::set<std::string> &d)
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
 
-  // TODO: usdPhysics API
+  // TODO:
+  //d.insett("PhysicsCollisionAPI");
+  //d.insett("PhysicsRigidBodyAPI");
+
+
+  // TODO: Support Multi-apply API(`CollectionAPI`)
+  //d.insett("PhysicsLimitAPI");
+  //d.insett("PhysicsDriveAPI");
+  //d.insett("CollectionAPI");
 }
 
 namespace {
