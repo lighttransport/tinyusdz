@@ -250,6 +250,78 @@ inline bool hasOutputs(const std::string &str) {
   return startsWith(str, "outputs:");
 }
 
+#if 1
+// Empty allowedTokens = allow all
+template <class E, size_t N>
+static nonstd::expected<bool, std::string> CheckAllowedTokens(
+    const std::array<std::pair<E, const char *>, N> &allowedTokens,
+    const std::string &tok) {
+  if (allowedTokens.empty()) {
+    return true;
+  }
+
+  for (size_t i = 0; i < N; i++) {
+    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
+      return true;
+    }
+  }
+
+  std::vector<std::string> toks;
+  for (size_t i = 0; i < N; i++) {
+    toks.push_back(std::get<1>(allowedTokens[i]));
+  }
+
+  std::string s = join(", ", tinyusdz::quote(toks));
+
+  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
+                                 quote(tok) + ".");
+};
+
+template <class E>
+static nonstd::expected<bool, std::string> CheckAllowedTokens(
+    const std::vector<std::pair<E, const char *>> &allowedTokens,
+    const std::string &tok) {
+  if (allowedTokens.empty()) {
+    return true;
+  }
+
+  for (size_t i = 0; i < allowedTokens.size(); i++) {
+    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
+      return true;
+    }
+  }
+
+  std::vector<std::string> toks;
+  for (size_t i = 0; i < allowedTokens.size(); i++) {
+    toks.push_back(std::get<1>(allowedTokens[i]));
+  }
+
+  std::string s = join(", ", tinyusdz::quote(toks));
+
+  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
+                                 quote(tok) + ".");
+};
+#endif
+
+template <typename T>
+nonstd::expected<T, std::string> EnumHandler(
+    const std::string &prop_name, const std::string &tok,
+    const std::vector<std::pair<T, const char *>> &enums) {
+  auto ret = CheckAllowedTokens<T>(enums, tok);
+  if (!ret) {
+    return nonstd::make_unexpected(ret.error());
+  }
+
+  for (auto &item : enums) {
+    if (tok == item.second) {
+      return item.first;
+    }
+  }
+  // Should never reach here, though.
+  return nonstd::make_unexpected(
+      quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
+}
+
 class USDAReader::Impl {
  private:
   Stage _stage;
@@ -560,13 +632,41 @@ class USDAReader::Impl {
 
   bool ReconstructPrimMeta(const ascii::AsciiParser::PrimMetaInput &in_meta,
                            PrimMeta *out) {
+
+    auto ApiSchemaHandler = [](const std::string &tok)
+        -> nonstd::expected<APISchemas::APIName, std::string> {
+      using EnumTy = std::pair<APISchemas::APIName, const char *>;
+      const std::vector<EnumTy> enums = {
+          std::make_pair(APISchemas::APIName::SkelBindingAPI, "SkelBindingAPI"),
+          std::make_pair(APISchemas::APIName::MaterialBindingAPI,
+                         "MaterialBindingAPI"),
+      };
+      return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
+    };
+
     DCOUT("ReconstructPrimMeta");
     for (const auto &meta : in_meta) {
       DCOUT("meta.name = " << meta.first);
 
+      const auto &listEditQual = std::get<0>(meta.second);
       const MetaVariable &var = std::get<1>(meta.second);
 
-      if (meta.first == "kind") {
+      if (meta.first == "active") {
+        DCOUT("active. type = " << var.type);
+        if (var.type == "bool") {
+          if (auto pv = var.value.get_value<bool>()) {
+            out->active = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "(Internal error?) `active` metadataum is not type `bool`.");
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `active` metadataum is not type `bool`. got `"
+              << var.type << "`.");
+        }
+           
+      } else if (meta.first == "kind") {
         // std::tuple<ListEditQual, MetaVariable>
         // TODO: list-edit qual
         DCOUT("kind. type = " << var.type);
@@ -607,7 +707,39 @@ class USDAReader::Impl {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `customData` metadataum is not type "
               "`dictionary`. got type `"
-              << var.type << "`\n");
+              << var.type << "`");
+        }
+      } else if (meta.first == "apiSchemas") {
+        DCOUT("apiSchemas. type = " << var.type);
+        if (var.type == "token[]") {
+          APISchemas apiSchemas;
+          if (listEditQual != ListEditQual::Prepend) {
+            PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be `prepend` in TinyUSDZ, but got `" << to_string(listEditQual) << "`");
+          }
+          apiSchemas.qual = listEditQual;
+
+          if (auto pv = var.value.get_value<std::vector<value::token>>()) {
+
+            for (const auto &item : pv.value()) {
+              // TODO: Multi-apply schema(instance name)
+              auto ret = ApiSchemaHandler(item.str());
+              if (ret) {
+                apiSchemas.names.push_back({ret.value(), /* instanceName */""});
+              } else {
+                PUSH_ERROR_AND_RETURN("(PrimMeta) " << ret.error());
+              }
+            }
+          } else {
+            PUSH_ERROR_AND_RETURN("(Internal error?) `apiSchemas` metadataum is not type "
+            "`token[]`. got type `"
+            << var.value.type_name() << "`");
+          }
+
+          out->apiSchemas = std::move(apiSchemas);
+        } else {
+          PUSH_ERROR_AND_RETURN("(Internal error?) `apiSchemas` metadataum is not type "
+          "`token[]`. got type `"
+          << var.type << "`");
         }
       } else {
         // string-only data?
@@ -734,58 +866,6 @@ class USDAReader::Impl {
 
 };  // namespace usda
 
-#if 1
-// Empty allowedTokens = allow all
-template <class E, size_t N>
-static nonstd::expected<bool, std::string> CheckAllowedTokens(
-    const std::array<std::pair<E, const char *>, N> &allowedTokens,
-    const std::string &tok) {
-  if (allowedTokens.empty()) {
-    return true;
-  }
-
-  for (size_t i = 0; i < N; i++) {
-    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
-      return true;
-    }
-  }
-
-  std::vector<std::string> toks;
-  for (size_t i = 0; i < N; i++) {
-    toks.push_back(std::get<1>(allowedTokens[i]));
-  }
-
-  std::string s = join(", ", quote(toks));
-
-  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
-                                 quote(tok) + ".");
-};
-
-template <class E>
-static nonstd::expected<bool, std::string> CheckAllowedTokens(
-    const std::vector<std::pair<E, const char *>> &allowedTokens,
-    const std::string &tok) {
-  if (allowedTokens.empty()) {
-    return true;
-  }
-
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
-      return true;
-    }
-  }
-
-  std::vector<std::string> toks;
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    toks.push_back(std::get<1>(allowedTokens[i]));
-  }
-
-  std::string s = join(", ", quote(toks));
-
-  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
-                                 quote(tok) + ".");
-};
-#endif
 
 ///
 /// -- Impl reconstruct
@@ -852,7 +932,7 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           // ok
           suffix.erase(0, 1);
         } else {
-          return nonstd::nullopt; 
+          return nonstd::nullopt;
         }
 
         return std::move(suffix);
@@ -1154,24 +1234,6 @@ bool USDAReader::Impl::ReconstructStage() {
   return true;
 }
 
-template <typename T>
-nonstd::expected<T, std::string> EnumHandler(
-    const std::string &prop_name, const std::string &tok,
-    const std::vector<std::pair<T, const char *>> &enums) {
-  auto ret = CheckAllowedTokens<T>(enums, tok);
-  if (!ret) {
-    return nonstd::make_unexpected(ret.error());
-  }
-
-  for (auto &item : enums) {
-    if (tok == item.second) {
-      return item.first;
-    }
-  }
-  // Should never reach here, though.
-  return nonstd::make_unexpected(
-      quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
-}
 
 template <typename T>
 struct AttribType;
@@ -2926,7 +2988,7 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
 
     // SkelBindingAPI
     if (prop.first == kSkelAnimationSource) {
-      
+
       // Must be relation of type Path.
       if (prop.second.IsRel() && prop.second.rel.IsPath()) {
         {
@@ -2946,7 +3008,7 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
     }
 
     //
-    
+
     PARSE_TYPED_PROPERTY(table, prop, "bindTransforms", Skeleton, skel->bindTransforms)
     PARSE_TYPED_PROPERTY(table, prop, "joints", Skeleton, skel->joints)
     PARSE_TYPED_PROPERTY(table, prop, "jointNames", Skeleton, skel->jointNames)

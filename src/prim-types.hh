@@ -243,18 +243,35 @@ class MetaVariable {
 
 using CustomDataType = std::map<std::string, MetaVariable>;
 
+struct APISchemas
+{
+  // TinyUSDZ does not allow user-supplied API schema for now
+  enum class APIName {
+    MaterialBindingAPI, // "MaterialBindingAPI"
+    SkelBindingAPI, // "SkelBindingAPI"
+  };
+
+  ListEditQual qual{ListEditQual::ResetToExplicit}; // must be 'prepend'
+
+  // std::get<1>: instance name. For Multi-apply API Schema e.g. `material:MainMaterial` for `CollectionAPI:material:MainMaterial`
+  std::vector<std::pair<APIName, std::string>> names;
+};
+
 // Metadata for Prim
 struct PrimMeta {
+  nonstd::optional<bool> active; // 'active'
   nonstd::optional<Kind> kind;                  // 'kind'
   nonstd::optional<CustomDataType> customData;  // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
+  nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
+
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authored() const { return (kind || customData || meta.size() || stringData.size()); }
+  bool authored() const { return (kind || customData || meta.size() || apiSchemas || stringData.size()); }
 };
 
 // Metadata for Attribute

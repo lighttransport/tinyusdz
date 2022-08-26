@@ -142,12 +142,40 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   std::stringstream ss;
 
+  if (meta.active) {
+    ss << pprint::Indent(indent) << "active = " << to_string(meta.active.value()) << "\n";
+  }
+
   if (meta.kind) {
     ss << pprint::Indent(indent) << "kind = " << quote(to_string(meta.kind.value())) << "\n";
   }
 
   if (meta.customData) {
     ss << print_customData(meta.customData.value(), indent+1);
+  }
+
+  if (meta.apiSchemas) {
+    auto schemas = meta.apiSchemas.value();
+
+    ss << pprint::Indent(indent) << to_string(schemas.qual) << " " << "apiSchemas = [";
+
+    for (size_t i = 0; i < schemas.names.size(); i++) {
+      if (i != 0) {
+        ss << ", ";
+      }
+ 
+      auto name = std::get<0>(schemas.names[i]);
+      ss << "\"" << to_string(name);
+
+      auto instanceName = std::get<1>(schemas.names[i]);
+      
+      if (!instanceName.empty()) {
+        ss << ":" << instanceName;
+      }
+
+      ss << "\"";
+    }
+    ss << "]\n";
   }
 
   for (const auto &item : meta.meta) {
@@ -432,6 +460,25 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
 
 
 } // namespace local
+
+std::string to_string(bool v) {
+  if (v) {
+    return "true";
+  } else {
+    return "false";
+  }
+}
+
+std::string to_string(const APISchemas::APIName &name) {
+  std::string s;
+
+  switch (name) {
+  case APISchemas::APIName::SkelBindingAPI: { s = "SkelBindingAPI"; break; }
+  case APISchemas::APIName::MaterialBindingAPI: { s = "MaterialBindingAPI"; break; }
+  }
+
+  return s;
+}
 
 std::string to_string(const StringData &s) {
   if (s.is_triple_quoted) {

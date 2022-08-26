@@ -27,12 +27,13 @@ std::string Indent(uint32_t level);
 
 //constexpr char kIndentString[] = "  ";
 
+std::string to_string(bool v);
 std::string to_string(Visibility v);
 std::string to_string(Orientation o);
 std::string to_string(Extent e);
 std::string to_string(Interpolation interp);
 std::string to_string(Axis axis);
-std::string to_string(ListEditQual axis);
+std::string to_string(ListEditQual qual);
 std::string to_string(Specifier specifier);
 std::string to_string(Purpose purpose);
 std::string to_string(Permission permission);
@@ -116,6 +117,8 @@ std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0, bool
 std::string to_string(const Material &material, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Shader &shader, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const APISchemas::APIName &name);
+
 #if 0
 std::string to_string(const UsdPreviewSurface &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdUVTexture &shader, const uint32_t indent = 0, bool closing_brace = true);
@@ -133,5 +136,6 @@ std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent 
 std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent);
+
 
 } // namespace tinyusdz
