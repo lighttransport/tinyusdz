@@ -833,22 +833,25 @@ std::string GetTypeName(uint32_t tyid);
 namespace tinyusdz {
 namespace value {
 
-// Handy, but may not efficient for large time samples(e.g. 1M samples or more)
+// Handy, but may not be efficient for large time samples(e.g. 1M samples or more)
 //
 // For the runtime speed, with "-O2 -g" optimization, adding 10M `double`
 // samples to linb::any takes roughly 1.8 ms on Threadripper 1950X, whereas
 // simple vector<double> push_back takes 390 us(roughly x4 times faster). (Build
 // benchmarks to see the numbers on your CPU)
 //
-// We assume having large time samples is rare situlation, but will do some C++
-// code optimization if required.
+// We assume having large time samples is rare situlation, and above benchmark speed is acceptable in general  usecases.
 //
 struct TimeSamples {
   std::vector<double> times;
   std::vector<linb::any> values;  // Could be an array of 'None' or Type T
 
-  bool Valid() {
-    if (times.size() > 0) {
+  bool IsScalar() const {
+    return (times.size() == 0) && (values.size() == 1);
+  }
+
+  bool ValidTimeSamples() const {
+    if ((times.size() > 0) && (times.size() == values.size())) {
       return true;
     }
     return false;

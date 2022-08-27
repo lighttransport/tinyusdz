@@ -604,6 +604,14 @@ class USDAReader::Impl {
                 metas.timeCodesPerSecond.value();
           }
 
+          if (metas.startTimeCode) {
+            _stage.stage_metas.startTimeCode = metas.startTimeCode.value();
+          }
+
+          if (metas.endTimeCode) {
+            _stage.stage_metas.endTimeCode = metas.endTimeCode.value();
+          }
+
           _stage.stage_metas.customLayerData = metas.customLayerData;
 
           _stage.stage_metas.stringData = metas.strings;
@@ -665,7 +673,7 @@ class USDAReader::Impl {
               "(Internal error?) `active` metadataum is not type `bool`. got `"
               << var.type << "`.");
         }
-           
+
       } else if (meta.first == "kind") {
         // std::tuple<ListEditQual, MetaVariable>
         // TODO: list-edit qual
@@ -1005,8 +1013,10 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::Transform;
           op.suffix = xfm.value();  // may contain nested namespaces
 
-          if (auto pvd = attr.var.get_value<value::matrix4d>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::matrix4d>()) {
+            op.set_scalar(pvd.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:transform` must be type `matrix4d`, but got type `" +
@@ -1017,10 +1027,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::Translate;
           op.suffix = tx.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:translate` must be type `double3` or `float3`, but "
@@ -1031,10 +1043,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::Scale;
           op.suffix = scale.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:scale` must be type `double3` or `float3`, but got "
@@ -1045,10 +1059,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateX;
           op.suffix = rotX.value();
 
-          if (auto pvd = attr.var.get_value<double>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<double>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<float>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateX` must be type `double` or `float`, but got "
@@ -1059,10 +1075,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateY;
           op.suffix = rotX.value();
 
-          if (auto pvd = attr.var.get_value<double>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<double>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<float>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateY` must be type `double` or `float`, but got "
@@ -1073,10 +1091,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateY;
           op.suffix = rotZ.value();
 
-          if (auto pvd = attr.var.get_value<double>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<double>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<float>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZ` must be type `double` or `float`, but got "
@@ -1087,10 +1107,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateXYZ;
           op.suffix = rotateXYZ.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
@@ -1101,10 +1123,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateXZY;
           op.suffix = rotateXZY.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
@@ -1115,10 +1139,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateYXZ;
           op.suffix = rotateYXZ.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
@@ -1129,10 +1155,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateYZX;
           op.suffix = rotateYZX.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
@@ -1143,10 +1171,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateZXY;
           op.suffix = rotateZXY.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
@@ -1157,10 +1187,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::RotateZYX;
           op.suffix = rotateZYX.value();
 
-          if (auto pvd = attr.var.get_value<value::double3>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::float3>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
@@ -1171,10 +1203,12 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
           op.op = XformOp::OpType::Orient;
           op.suffix = orient.value();
 
-          if (auto pvd = attr.var.get_value<value::quatf>()) {
-            op.value = pvd.value();
+          if (attr.var.is_timesample()) {
+            op.set_timesamples(attr.var.var);
+          } else if (auto pvd = attr.var.get_value<value::quatf>()) {
+            op.set_scalar(pvd.value());
           } else if (auto pvf = attr.var.get_value<value::quatd>()) {
-            op.value = pvf.value();
+            op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:orient` must be type `quatf` or `quatd`, but got "
@@ -1929,6 +1963,7 @@ bool USDAReader::Impl::ReconstructPrim(
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomSphere, sphere->radius)
+      ADD_PROPERY(table, prop, GeomSphere, sphere->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }

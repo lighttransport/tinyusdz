@@ -127,6 +127,14 @@ struct PrimVar {
     var.values.push_back(v);
   }
 
+  void set_timesamples(const value::TimeSamples &v) {
+    var = v;
+  }
+  
+  void set_timesamples(value::TimeSamples &&v) {
+    var = std::move(v);
+  }
+
 };
 
 
