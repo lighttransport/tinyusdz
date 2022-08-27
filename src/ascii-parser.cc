@@ -2,8 +2,8 @@
 // Copyright 2021 - Present, Syoyo Fujita.
 //
 // TODO:
-//   - [ ] Parse here document in Stage metadataum.
-//   - [ ] Pars document-only line in Stage metadatum.
+//   - [x] Parse here document in Stage metadataum.
+//   - [x] Pars document-only line in Stage metadatum.
 //   - [ ] List up more TODOs.
 
 #include <cstdio>
@@ -26,8 +26,8 @@
 #include <stack>
 #if defined(__wasi__)
 #else
-#include <thread>
 #include <mutex>
+#include <thread>
 #endif
 #include <vector>
 
@@ -49,9 +49,9 @@
 //#include "ryu/ryu_parse.h"
 
 #include "external/jsteemann/atoi.h"
+#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "fast_float/fast_float.h"
 #include "nonstd/expected.hpp"
-#include "external/simple_match/include/simple_match/simple_match.hpp"
 //#include "nonstd/optional.hpp"
 
 //
@@ -157,9 +157,8 @@ constexpr auto kTimeSamplesSuffix = ".timeSamples";
 constexpr auto kConnectSuffix = ".connect";
 
 // T = better-enum class
-template<typename T>
-std::string enum_join(const std::string &sep)
-{
+template <typename T>
+std::string enum_join(const std::string &sep) {
   std::ostringstream ss;
 
   // quote with "
@@ -191,8 +190,12 @@ static void RegisterStageMetas(
   metas["timeCodesPerSecond"] =
       AsciiParser::VariableDef(value::kDouble, "timeCodesPerSecond");
 
-  metas["defaultPrim"] =
-      AsciiParser::VariableDef(value::kToken, "defaultPrim");
+  metas["startTimeCode"] =
+      AsciiParser::VariableDef(value::kDouble, "startTimeCode");
+  metas["endTimeCode"] =
+      AsciiParser::VariableDef(value::kDouble, "endTimeCode");
+
+  metas["defaultPrim"] = AsciiParser::VariableDef(value::kToken, "defaultPrim");
   metas["upAxis"] = AsciiParser::VariableDef(value::kToken, "upAxis");
   metas["customLayerData"] =
       AsciiParser::VariableDef(value::kDictionary, "customLayerData");
@@ -227,7 +230,8 @@ static void RegisterPrimMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
-  //metas["kind"] = AsciiParser::VariableDef(value::kString, "kind", OneOf<Kind>());
+  // metas["kind"] = AsciiParser::VariableDef(value::kString, "kind",
+  // OneOf<Kind>());
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
 
   // Composition arcs
@@ -253,7 +257,7 @@ static void RegisterPrimMetas(
   // usdSkel
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
 
- // ListOp
+  // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
       value::Add1DArraySuffix(value::kToken), "apiSchemas");
 }
@@ -278,6 +282,15 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.insert(value::kDouble3);
   d.insert(value::kDouble4);
 
+  d.insert(value::kHalf);
+  d.insert(value::kHalf2);
+  d.insert(value::kHalf3);
+  d.insert(value::kHalf4);
+
+  d.insert(value::kQuath);
+  d.insert(value::kQuatf);
+  d.insert(value::kQuatd);
+
   d.insert(value::kNormal3f);
   d.insert(value::kPoint3f);
   d.insert(value::kTexCoord2f);
@@ -285,9 +298,9 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.insert(value::kColor3f);
 
   // It looks no `matrixNf` type for USDA
-  //d.insert(value::kMatrix2f);
-  //d.insert(value::kMatrix3f);
-  //d.insert(value::kMatrix4f);
+  // d.insert(value::kMatrix2f);
+  // d.insert(value::kMatrix3f);
+  // d.insert(value::kMatrix4f);
 
   d.insert(value::kMatrix2d);
   d.insert(value::kMatrix3d);
@@ -304,8 +317,7 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   // TODO: Add more types...
 }
 
-static void RegisterPrimTypes(std::set<std::string> &d)
-{
+static void RegisterPrimTypes(std::set<std::string> &d) {
   // TODO: Register Prim types from USDAReader.
   d.insert("Xform");
   d.insert("Sphere");
@@ -329,25 +341,23 @@ static void RegisterPrimTypes(std::set<std::string> &d)
   d.insert("BlendShape");
 
   d.insert("GPrim");
-
 }
 
 // TinyUSDZ does not allow user-defined API schema at the moment
-// (Primarily for security reason, secondary it requires re-design of Prim classes to support user-defined API schema)
-static void RegisterAPISchemas(std::set<std::string> &d)
-{
+// (Primarily for security reason, secondary it requires re-design of Prim
+// classes to support user-defined API schema)
+static void RegisterAPISchemas(std::set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
 
   // TODO:
-  //d.insett("PhysicsCollisionAPI");
-  //d.insett("PhysicsRigidBodyAPI");
-
+  // d.insett("PhysicsCollisionAPI");
+  // d.insett("PhysicsRigidBodyAPI");
 
   // TODO: Support Multi-apply API(`CollectionAPI`)
-  //d.insett("PhysicsLimitAPI");
-  //d.insett("PhysicsDriveAPI");
-  //d.insett("CollectionAPI");
+  // d.insett("PhysicsLimitAPI");
+  // d.insett("PhysicsDriveAPI");
+  // d.insett("CollectionAPI");
 }
 
 namespace {
@@ -539,7 +549,7 @@ std::string AsciiParser::GetError() {
   while (!err_stack.empty()) {
     ErrorDiagnositc diag = err_stack.top();
 
-    ss << "Near line " << diag.cursor.row << ", col " << diag.cursor.col
+    ss << "Near line " << (diag.cursor.row+1) << ", col " << (diag.cursor.col+1)
        << ": ";
     ss << diag.err << "\n";
 
@@ -558,7 +568,7 @@ std::string AsciiParser::GetWarning() {
   while (!warn_stack.empty()) {
     ErrorDiagnositc diag = warn_stack.top();
 
-    ss << "Near line " << diag.cursor.row << ", col " << diag.cursor.col
+    ss << "Near line " << (diag.cursor.row+1) << ", col " << (diag.cursor.col+1)
        << ": ";
     ss << diag.err << "\n";
 
@@ -759,7 +769,7 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix4d> *value) {
   return false;
 }
 
-#if 0 // No `matrixNf` in USDA?
+#if 0  // No `matrixNf` in USDA?
 template<>
 bool AsciiParser::ReadBasicType(value::matrix4f *value) {
   if (value) {
@@ -904,7 +914,6 @@ template <>
 bool AsciiParser::ReadBasicType(PathIdentifier *value) {
   return ReadPathIdentifier(value);
 }
-
 
 template <>
 bool AsciiParser::ReadBasicType(bool *value) {
@@ -1129,7 +1138,8 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   auto result = jsteemann::atoi<uint32_t>(
       ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
   DCOUT("sz = " << ss.str().size());
-  DCOUT("ss = " << ss.str() << ", retcode = " << retcode << ", result = " << result);
+  DCOUT("ss = " << ss.str() << ", retcode = " << retcode
+                << ", result = " << result);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1147,6 +1157,111 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   PushError("Invalid integer literal\n");
   return false;
 #endif
+}
+
+template <>
+bool AsciiParser::ReadBasicType(int64_t *value) {
+  std::stringstream ss;
+
+  // head character
+  bool has_sign = false;
+  bool negative = false;
+  {
+    char sc;
+    if (!Char1(&sc)) {
+      return false;
+    }
+    _curr_cursor.col++;
+
+    // sign or [0-9]
+    if (sc == '+') {
+      negative = false;
+      has_sign = true;
+    } else if (sc == '-') {
+      negative = true;
+      has_sign = true;
+    } else if ((sc >= '0') && (sc <= '9')) {
+      // ok
+    } else {
+      PushError("Sign or 0-9 expected, but got '" + std::to_string(sc) +
+                "'.\n");
+      return false;
+    }
+
+    ss << sc;
+  }
+
+  if (negative) {
+    PushError("Unsigned value expected but got '-' sign.");
+    return false;
+  }
+
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if ((c >= '0') && (c <= '9')) {
+      ss << c;
+    } else {
+      _sr->seek_from_current(-1);
+      break;
+    }
+  }
+
+  if (has_sign && (ss.str().size() == 1)) {
+    // sign only
+    PushError("Integer value expected but got sign character only.\n");
+    return false;
+  }
+
+  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+    PushError("Zero padded integer value is not allowed.\n");
+    return false;
+  }
+
+  // std::cout << "ReadInt token: " << ss.str() << "\n";
+
+  // TODO(syoyo): Use ryu parse.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+  try {
+    (*value) = std::stoull(ss.str());
+  } catch (const std::invalid_argument &e) {
+    (void)e;
+    PushError("Not an 64bit unsigned integer literal.\n");
+    return false;
+  } catch (const std::out_of_range &e) {
+    (void)e;
+    PushError("64bit unsigned integer value out of range.\n");
+    return false;
+  }
+
+  return true;
+#else
+  // use jsteemann/atoi
+  int retcode;
+  auto result = jsteemann::atoi<int64_t>(
+      ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
+  if (retcode == jsteemann::SUCCESS) {
+    (*value) = result;
+    return true;
+  } else if (retcode == jsteemann::INVALID_INPUT) {
+    PushError("Not an 32bit unsigned integer literal.\n");
+    return false;
+  } else if (retcode == jsteemann::INVALID_NEGATIVE_SIGN) {
+    PushError("Negative sign `-` specified for uint32 integer.\n");
+    return false;
+  } else if (retcode == jsteemann::VALUE_OVERFLOW) {
+    PushError("Integer value overflows.\n");
+    return false;
+  }
+
+  PushError("Invalid integer literal\n");
+  return false;
+#endif
+
+  // std::cout << "read int ok\n";
 }
 
 template <>
@@ -2000,6 +2115,51 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::texcoord2f> *value) {
 }
 
 template <>
+bool AsciiParser::ReadBasicType(value::texcoord3f *value) {
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<float> values;
+  if (!SepBy1BasicType<float>(',', &values)) {
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  if (values.size() != 3) {
+    std::string msg = "The number of tuple elements must be " +
+                      std::to_string(3) + ", but got " +
+                      std::to_string(values.size()) + "\n";
+    PUSH_ERROR_AND_RETURN(msg);
+  }
+
+  value->s = values[0];
+  value->t = values[1];
+  value->r = values[2];
+
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::texcoord3f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::texcoord3f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
 bool AsciiParser::ReadBasicType(nonstd::optional<value::float2> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
@@ -2288,6 +2448,38 @@ bool AsciiParser::ReadBasicType(nonstd::optional<uint32_t> *value) {
 }
 
 template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<int64_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  int64_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<uint64_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  uint64_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
 bool AsciiParser::ReadBasicType(float *value) {
   // -inf, inf, nan
   {
@@ -2363,6 +2555,212 @@ bool AsciiParser::ReadBasicType(nonstd::optional<double> *value) {
   }
 
   double v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::half *value) {
+  // Parse as float
+  float v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+
+  (*value) = float_to_half_full(v);
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::half> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::half v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::half2 *value) {
+  // Parse as float
+  value::float2 v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+
+  (*value)[0] = float_to_half_full(v[0]);
+  (*value)[1] = float_to_half_full(v[1]);
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::half2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::half2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::half3 *value) {
+  // Parse as float
+  value::float3 v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+
+  (*value)[0] = float_to_half_full(v[0]);
+  (*value)[1] = float_to_half_full(v[1]);
+  (*value)[2] = float_to_half_full(v[2]);
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::half3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::half3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::half4 *value) {
+  // Parse as float
+  value::float4 v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+
+  (*value)[0] = float_to_half_full(v[0]);
+  (*value)[1] = float_to_half_full(v[1]);
+  (*value)[2] = float_to_half_full(v[2]);
+  (*value)[3] = float_to_half_full(v[3]);
+  return true;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::half4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::half4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+
+template <>
+bool AsciiParser::ReadBasicType(value::quath *value) {
+  value::half4 v;
+  if (ReadBasicType(&v)) {
+    value->real = v[0];
+    value->imag[0] = v[1];
+    value->imag[1] = v[2];
+    value->imag[2] = v[3];
+    return true;
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::quath> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::quath v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::quatf *value) {
+  value::float4 v;
+  if (ReadBasicType(&v)) {
+    value->real = v[0];
+    value->imag[0] = v[1];
+    value->imag[1] = v[2];
+    value->imag[2] = v[3];
+    return true;
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::quatf> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::quatf v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(value::quatd *value) {
+  value::double4 v;
+  if (ReadBasicType(&v)) {
+    value->real = v[0];
+    value->imag[0] = v[1];
+    value->imag[1] = v[2];
+    value->imag[2] = v[3];
+    return true;
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::quatd> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::quatd v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -2672,7 +3070,6 @@ bool AsciiParser::IsSupportedPrimType(const std::string &ty) {
   return _supported_prim_types.count(ty);
 }
 
-
 bool AsciiParser::IsSupportedPrimAttrType(const std::string &ty) {
   return _supported_prim_attr_types.count(ty);
 }
@@ -2680,7 +3077,6 @@ bool AsciiParser::IsSupportedPrimAttrType(const std::string &ty) {
 bool AsciiParser::IsSupportedAPISchema(const std::string &ty) {
   return _supported_api_schemas.count(ty);
 }
-
 
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
   std::stringstream ss;
@@ -2706,8 +3102,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
     }
 
     if ((c == '\n') || (c == '\r')) {
-      PUSH_ERROR_AND_RETURN(
-          "New line in string literal.");
+      PUSH_ERROR_AND_RETURN("New line in string literal.");
     }
 
     if (c == '"') {
@@ -2779,7 +3174,8 @@ bool AsciiParser::MaybeString(StringData *str) {
     return false;
   }
 
-  DCOUT("Single quoted string found. col " << start_cursor.col << ", row " << start_cursor.row);
+  DCOUT("Single quoted string found. col " << start_cursor.col << ", row "
+                                           << start_cursor.row);
 
   str->value = ss.str();
   str->line_col = start_cursor.col;
@@ -2789,7 +3185,6 @@ bool AsciiParser::MaybeString(StringData *str) {
   _curr_cursor.col += int(str->value.size() + 2);  // +2 for quotation chars
 
   return true;
-
 }
 
 bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
@@ -2809,8 +3204,7 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
     return false;
   }
 
-  if (triple_quote[0] == '"' &&
-      triple_quote[1] == '"' &&
+  if (triple_quote[0] == '"' && triple_quote[1] == '"' &&
       triple_quote[2] == '"') {
     // ok
   } else {
@@ -2872,7 +3266,6 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
       // got '"""'
       break;
     }
-
   }
 
   if (quote_count != 3) {
@@ -2880,8 +3273,8 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
     return false;
   }
 
-
-  DCOUT("Triple quoted string found. col " << start_cursor.col << ", row " << start_cursor.row);
+  DCOUT("Triple quoted string found. col " << start_cursor.col << ", row "
+                                           << start_cursor.row);
 
   // remove last '"""'
   str->value = removeSuffix(str_buf.str(), "\"\"\"");
@@ -2994,7 +3387,7 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
       // ok
     } else if (!std::isalnum(int(c))) {
       _sr->seek_from_current(-1);
-      break; // end of identifier(e.g. ' ')
+      break;  // end of identifier(e.g. ' ')
     }
 
     _curr_cursor.col++;
@@ -3094,7 +3487,6 @@ bool AsciiParser::SkipUntilNewline() {
 //              |  var '=' value '\n'
 //
 bool AsciiParser::ParseStageMetaOpt() {
-
   // Maybe string
   {
     StringData str;
@@ -3106,7 +3498,6 @@ bool AsciiParser::ParseStageMetaOpt() {
       return true;
     }
   }
-
 
   std::string varname;
   if (!ReadIdentifier(&varname)) {
@@ -3137,7 +3528,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
 
-  if (varname == "defaultPrim" ) {
+  if (varname == "defaultPrim") {
     if (auto pv = var.value.get_value<value::token>()) {
       DCOUT("defaultPrim = " << pv.value());
       _stage_metas.defaultPrim = pv.value();
@@ -3148,7 +3539,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (auto pv = var.value.get_value<std::vector<value::token>>()) {
       DCOUT("subLayers = " << pv.value());
       for (const auto &item : pv.value()) {
-          _stage_metas.subLayers.push_back(item);
+        _stage_metas.subLayers.push_back(item);
       }
     } else {
       PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of string values.");
@@ -3164,7 +3555,10 @@ bool AsciiParser::ParseStageMetaOpt() {
       } else if (s == "Z") {
         _stage_metas.upAxis = Axis::Z;
       } else {
-        PUSH_ERROR_AND_RETURN("Invalid `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got \"" + s + "\"(Note: Case sensitive)");
+        PUSH_ERROR_AND_RETURN(
+            "Invalid `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got "
+            "\"" +
+            s + "\"(Note: Case sensitive)");
       }
     } else {
       PUSH_ERROR_AND_RETURN("`upAxis` isn't a token value.");
@@ -3196,7 +3590,24 @@ bool AsciiParser::ParseStageMetaOpt() {
       DCOUT("metersPerUnit = " << pvd.value());
       _stage_metas.timeCodesPerSecond = pvd.value();
     } else {
-      PUSH_ERROR_AND_RETURN("`timeCodesPerSecond` isn't a floating-point value.");
+      PUSH_ERROR_AND_RETURN(
+          "`timeCodesPerSecond` isn't a floating-point value.");
+    }
+  } else if (varname == "startTimeCode") {
+    if (auto pv = var.value.get_value<float>()) {
+      DCOUT("startTimeCode = " << pv.value());
+      _stage_metas.startTimeCode = double(pv.value());
+    } else if (auto pvd = var.value.get_value<double>()) {
+      DCOUT("startTimeCode = " << pvd.value());
+      _stage_metas.startTimeCode = pvd.value();
+    }
+  } else if (varname == "endTimeCode") {
+    if (auto pv = var.value.get_value<float>()) {
+      DCOUT("endTimeCode = " << pv.value());
+      _stage_metas.endTimeCode = double(pv.value());
+    } else if (auto pvd = var.value.get_value<double>()) {
+      DCOUT("endTimeCode = " << pvd.value());
+      _stage_metas.endTimeCode = pvd.value();
     }
   } else if (varname == "apiSchemas") {
     // TODO: ListEdit qualifer check
@@ -3205,7 +3616,9 @@ bool AsciiParser::ParseStageMetaOpt() {
         if (IsSupportedAPISchema(item.str())) {
           // OK
         } else {
-          PUSH_ERROR_AND_RETURN("\"" << item.str() << "\" is not supported(at the moment) for `apiSchemas` in TinyUSDZ.");
+          PUSH_ERROR_AND_RETURN("\"" << item.str()
+                                     << "\" is not supported(at the moment) "
+                                        "for `apiSchemas` in TinyUSDZ.");
         }
       }
     } else {
@@ -3222,8 +3635,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     PUSH_WARN("TODO: Stage meta: " << varname);
   }
 
-
-#if 0 // Load subLayers in usda-reader
+#if 0  // Load subLayers in usda-reader
   // Load subLayers
   if (sublayers.size()) {
     // Create another USDA parser.
@@ -3258,7 +3670,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   }
 #endif
 
-#if 0 // TODO
+#if 0  // TODO
     if (var.type == "string") {
       std::string value;
       std::cout << "read string literal\n";
@@ -3345,7 +3757,6 @@ bool AsciiParser::ParseStageMetaOpt() {
 // meta = ( metadata_opt )
 //      ;
 bool AsciiParser::ParseStageMetas() {
-
   if (!Expect('(')) {
     return false;
   }
@@ -3518,7 +3929,8 @@ bool AsciiParser::SkipWhitespace() {
   return true;
 }
 
-bool AsciiParser::SkipWhitespaceAndNewline() {
+bool AsciiParser::SkipWhitespaceAndNewline(bool allow_semicolon) {
+  // USDA also allow C-style ';' as a newline separator.
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -3529,6 +3941,9 @@ bool AsciiParser::SkipWhitespaceAndNewline() {
     // printf("sws c = %c\n", c);
 
     if ((c == ' ') || (c == '\t') || (c == '\f')) {
+      _curr_cursor.col++;
+      // continue
+    } else if (allow_semicolon && (c == ';')) {
       _curr_cursor.col++;
       // continue
     } else if (c == '\n') {
@@ -3657,14 +4072,255 @@ bool AsciiParser::Expect(char expect_c) {
 // -- impl ParseTimeSampleData
 //
 
-template<>
-value::TimeSamples AsciiParser::ConvertToTimeSamples(
-  const TimeSampleData<float> &ts) {
+// std::vector version
+// TODO: Unify code with TryParseTimeSamples()
+template <typename T>
+nonstd::optional<AsciiParser::TimeSampleData<std::vector<T>>>
+AsciiParser::TryParseTimeSamplesArray() {
+  // timeSamples = '{' (int : [T]), + '}'
 
+  TimeSampleData<std::vector<T>> data;
+
+  if (!Expect('{')) {
+    return nonstd::nullopt;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return nonstd::nullopt;
+  }
+
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return nonstd::nullopt;
+    }
+
+    if (c == '}') {
+      break;
+    }
+
+    Rewind(1);
+
+    double timeVal;
+    // -inf, inf and nan are handled.
+    if (!ReadBasicType(&timeVal)) {
+      PushError("Parse time value failed.");
+      return nonstd::nullopt;
+    }
+
+    if (!SkipWhitespace()) {
+      return nonstd::nullopt;
+    }
+
+    if (!Expect(':')) {
+      return nonstd::nullopt;
+    }
+
+    if (!SkipWhitespace()) {
+      return nonstd::nullopt;
+    }
+
+    std::vector<T> value;
+    bool isNone{false};
+
+    if (MaybeNone()) {
+      isNone = true;
+      (void)isNone;
+      // TODO: Attribute block(`None` value) in timeSamples
+    } else {
+      if (!ParseBasicTypeArray(&value)) {
+        return nonstd::nullopt;
+      }
+    }
+
+    {
+      // Semicolon ';' is not allowed as a separator for timeSamples array values.
+      if (!SkipWhitespace()) {
+        return nonstd::nullopt;
+      }
+
+      char sep;
+      if (!Char1(&sep)) {
+        return nonstd::nullopt;
+      }
+
+      DCOUT("sep = " << sep);
+      if (sep == '}') {
+        // End of item
+        data.push_back({timeVal, value});
+        break;
+      } else if (sep == ',') {
+        // ok
+      } else {
+
+        Rewind(1);
+
+        // Look ahead Newline + '}'
+        auto loc = CurrLoc();
+
+        if (SkipWhitespaceAndNewline()) {
+          char nc;
+          if (!Char1(&nc)) {
+            return nonstd::nullopt;
+          }
+
+          if (nc == '}') {
+            // End of item
+            data.push_back({timeVal, value});
+            break;
+          }
+        }
+
+        // Rewind and continue parsing.
+        SeekTo(loc);
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return nonstd::nullopt;
+    }
+
+    data.push_back({timeVal, value}); // TODO: Support `None`
+  }
+
+  DCOUT("Parse TimeSamples(array type) success. # of items = " << data.size());
+
+  return std::move(data);
+}
+
+template <typename T>
+nonstd::optional<AsciiParser::TimeSampleData<T>> AsciiParser::TryParseTimeSamples() {
+  // timeSamples = '{' ((int : T) sep)+ '}'
+  // sep = ','(may ok to omit for the last element.
+
+  TimeSampleData<T> data;
+
+  if (!Expect('{')) {
+    return nonstd::nullopt;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return nonstd::nullopt;
+  }
+
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return nonstd::nullopt;
+    }
+
+    if (c == '}') {
+      break;
+    }
+
+    Rewind(1);
+
+    double timeVal;
+    // -inf, inf and nan are handled.
+    if (!ReadBasicType(&timeVal)) {
+      PushError("Parse time value failed.");
+      return nonstd::nullopt;
+    }
+
+    if (!SkipWhitespace()) {
+      return nonstd::nullopt;
+    }
+
+    if (!Expect(':')) {
+      return nonstd::nullopt;
+    }
+
+    if (!SkipWhitespace()) {
+      return nonstd::nullopt;
+    }
+
+    nonstd::optional<T> value;
+    if (!ReadBasicType(&value)) {
+      return nonstd::nullopt;
+    }
+
+    // The last element may have separator ','
+    {
+      // Semicolon ';' is not allowed as a separator for timeSamples array values.
+      if (!SkipWhitespace()) {
+        return nonstd::nullopt;
+      }
+
+      char sep;
+      if (!Char1(&sep)) {
+        return nonstd::nullopt;
+      }
+
+      DCOUT("sep = " << sep);
+      if (sep == '}') {
+        // End of item
+        data.push_back({timeVal, value});
+        break;
+      } else if (sep == ',') {
+        // ok
+      } else {
+
+        Rewind(1);
+
+        // Look ahead Newline + '}'
+        auto loc = CurrLoc();
+
+        if (SkipWhitespaceAndNewline()) {
+          char nc;
+          if (!Char1(&nc)) {
+            return nonstd::nullopt;
+          }
+
+          if (nc == '}') {
+            // End of item
+            data.push_back({timeVal, value});
+            break;
+          }
+        }
+
+        // Rewind and continue parsing.
+        SeekTo(loc);
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return nonstd::nullopt;
+    }
+
+    data.push_back({timeVal, value});
+  }
+
+  DCOUT("Parse TimeSamples success. # of items = " << data.size());
+
+  return std::move(data);
+}
+
+
+template <typename T>
+value::TimeSamples AsciiParser::ConvertToTimeSamples(
+    const TimeSampleData<T> &ts) {
   value::TimeSamples dst;
 
   for (const auto &item : ts) {
+    dst.times.push_back(std::get<0>(item));
 
+    if (item.second) {
+      dst.values.push_back(item.second.value());
+    } else {
+      // Blocked.
+      dst.values.push_back(value::Block());
+    }
+  }
+
+  return dst;
+}
+
+template <typename T>
+value::TimeSamples AsciiParser::ConvertToTimeSamples(
+    const TimeSampleData<std::vector<T>> &ts) {
+  value::TimeSamples dst;
+
+  for (const auto &item : ts) {
     dst.times.push_back(std::get<0>(item));
 
     if (item.second) {
@@ -4100,8 +4756,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   return true;
 }
 
-bool AsciiParser::ParseMetaValue(const VariableDef &def,
-                                 MetaVariable *outvar) {
+bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   const std::string vartype = def.type;
   const std::string varname = def.name;
 
@@ -4117,7 +4772,6 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
 
     var.value = value;
   } else if (vartype == value::kToken) {
-
     value::token value;
     if (!ReadBasicType(&value)) {
       std::string msg = "Token expected for `" + varname + "`.\n";
@@ -4126,7 +4780,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
     }
     DCOUT("token = " << value);
 
-#if 0 // TODO
+#if 0  // TODO
     auto ret = def.post_parse_handler(value);
     if (!ret) {
       DCOUT("error = " << ret.error());
@@ -4136,7 +4790,6 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
 
     var.value = value;
   } else if (vartype == "token[]") {
-
     std::vector<value::token> value;
     if (!ParseBasicTypeArray(&value)) {
       std::string msg = "Token array expected for `" + varname + "`.\n";
@@ -4144,11 +4797,10 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def,
       return false;
     }
     // TODO
-    //DCOUT("token[] = " << to_string(value));
+    // DCOUT("token[] = " << to_string(value));
 
     var.value = value;
   } else if (vartype == value::kString) {
-
     StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
     } else {
@@ -4652,7 +5304,6 @@ nonstd::optional<AsciiParser::PrimMetas> AsciiParser::ReconstructPrimMetas(
 
 nonstd::optional<std::tuple<ListEditQual, MetaVariable>>
 AsciiParser::ParsePrimMeta() {
-
   if (!SkipCommentAndWhitespaceAndNewline()) {
     return nonstd::nullopt;
   }
@@ -4666,22 +5317,19 @@ AsciiParser::ParsePrimMeta() {
   {
     StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
-
       MetaVariable var;
-      var.name = ""; // empty
+      var.name = "";  // empty
       var.value = sdata;
 
       return std::make_tuple(qual, var);
-      
-    } else if (MaybeString(&sdata)) {
 
+    } else if (MaybeString(&sdata)) {
       MetaVariable var;
-      var.name = ""; // empty
+      var.name = "";  // empty
       var.value = sdata;
 
       return std::make_tuple(qual, var);
     }
-
   }
 
   if (!MaybeListEditQual(&qual)) {
@@ -4749,8 +5397,8 @@ bool AsciiParser::ParsePrimMetas(
       // ok
     } else {
       _sr->seek_from_current(-1);
-      //DCOUT("Unknown c");
-      //return false;
+      // DCOUT("Unknown c");
+      // return false;
     }
   }
 
@@ -4783,8 +5431,9 @@ bool AsciiParser::ParsePrimMetas(
 
     // ty = std::tuple<ListEditQual, MetaVariable>;
     if (auto m = ParsePrimMeta()) {
-      DCOUT("PrimMeta: list-edit qual = " << tinyusdz::to_string(std::get<0>(m.value()))
-                                     << ", name = " << std::get<1>(m.value()).name);
+      DCOUT("PrimMeta: list-edit qual = "
+            << tinyusdz::to_string(std::get<0>(m.value()))
+            << ", name = " << std::get<1>(m.value()).name);
 
       (*args)[std::get<1>(m.value()).name] = m.value();
     } else {
@@ -4871,7 +5520,9 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       if ((token != "interpolation") && (token != "customData") &&
           (token != "elementSize")) {
-        PUSH_ERROR_AND_RETURN("Currently only string-only data, `interpolation`, `elementSize` or `customData` "
+        PUSH_ERROR_AND_RETURN(
+            "Currently only string-only data, `interpolation`, `elementSize` "
+            "or `customData` "
             "is supported but "
             "got: " +
             token);
@@ -4952,7 +5603,6 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
 /// Parse rel string
 ///
 bool AsciiParser::ParseRelation(Relation *result) {
-
   char c;
   if (!LookChar1(&c)) {
     return false;
@@ -4981,7 +5631,8 @@ bool AsciiParser::ParseRelation(Relation *result) {
     }
     result->Set(value);
   } else {
-    PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) + "\" found. Expects string, Path or PathVector.");
+    PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
+                          "\" found. Expects string, Path or PathVector.");
   }
 
   if (!SkipWhitespaceAndNewline()) {
@@ -5005,7 +5656,8 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       std::vector<T> value;
       if (!ParseBasicTypeArray(&value)) {
         PUSH_ERROR_AND_RETURN("Failed to parse " +
-                  std::string(value::TypeTrait<T>::type_name()) + " array.");
+                              std::string(value::TypeTrait<T>::type_name()) +
+                              " array.");
         return false;
       }
 
@@ -5025,7 +5677,8 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse " + std::string(value::TypeTrait<T>::type_name()));
+      PUSH_ERROR_AND_RETURN("Failed to parse " +
+                            std::string(value::TypeTrait<T>::type_name()));
       return false;
     }
 
@@ -5111,7 +5764,6 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   if (type_name == kRel) {
     DCOUT("relation");
 
-
     // - prim_identifier
     // - prim_identifier, '(' metadataum ')'
     // - prim_identifier, '=', (None|string|path|pathvector)
@@ -5120,7 +5772,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     std::string attr_name;
 
     if (!ReadPrimAttrIdentifier(&attr_name)) {
-      PUSH_ERROR_AND_RETURN("Attribute name(Identifier) expected but got non-identifier.");
+      PUSH_ERROR_AND_RETURN(
+          "Attribute name(Identifier) expected but got non-identifier.");
     }
 
     if (!SkipWhitespace()) {
@@ -5138,7 +5791,6 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     }
 
     if (c != '=') {
-
       DCOUT("Relationship with no target: " << attr_name);
 
       // No targets.
@@ -5164,7 +5816,6 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       PUSH_ERROR_AND_RETURN("TODO: Support `None` for property.");
     }
 
-
     Relation rel;
     if (!ParseRelation(&rel)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `rel` property.");
@@ -5179,11 +5830,12 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     // TODO: Parse Meta.
     if (c == '(') {
-      PUSH_ERROR_AND_RETURN("TODO: Parse metadatum of property \"" + attr_name + "\"");
+      PUSH_ERROR_AND_RETURN("TODO: Parse metadatum of property \"" + attr_name +
+                            "\"");
     }
 
     DCOUT("Relationship with target: " << attr_name);
-    Property p(rel, /* isConnection */false, custom_qual);
+    Property p(rel, /* isConnection */ false, custom_qual);
     p.qual = qual;
 
     (*props)[attr_name] = p;
@@ -5305,7 +5957,6 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   }
 
   if (isConnection) {
-
     DCOUT("isConnection");
 
     // Target Must be Path
@@ -5328,74 +5979,84 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     //
     // TODO(syoyo): Refactror and implement value parser dispatcher.
     //
-      if (type_name == "float") {
-        if (auto pv = TryParseTimeSamples<float>()) {
-          value::TimeSamples ts = ConvertToTimeSamples<float>(pv.value());
+    DCOUT("timeSample data. type = " << type_name);
 
-          PUSH_ERROR_AND_RETURN("TODO");
-        }
+#define PARSE_TYPE(__type) \
+    if (type_name == value::TypeTrait<__type>::type_name()) { \
+      if (array_qual) { \
+        if (auto pv = TryParseTimeSamplesArray<__type>()) { \
+          ts = ConvertToTimeSamples<std::vector<__type>>(pv.value()); \
+        } else { \
+          PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `" << value::TypeTrait<__type>::type_name() << "[]`"); \
+        } \
+      } else { \
+        if (auto pv = TryParseTimeSamples<__type>()) { \
+          ts = ConvertToTimeSamples<__type>(pv.value()); \
+        } else { \
+          PUSH_ERROR_AND_RETURN( \
+              "Failed to parse timeSample data with type `" << value::TypeTrait<__type>::type_name() << "`");\
+        } \
+      } \
+    } else
 
-        // TODO: Implement
 
-        //Property prop;
-        //prop.attrib.timeSampledValue = values;
-        //std::cout << "timeSample float:" << primattr_name << " = " << to_string(values) << "\n";
-        //(*props)[primattr_name] = var;
+    value::TimeSamples ts;
 
-#if 0  // TODO
-      } else if (type_name == "double") {
-        TimeSampledDataDouble values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
+    // NOTE: `string` does not support multi-line string.
 
-        MetaVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
+    PARSE_TYPE(value::token)
+    PARSE_TYPE(std::string)
+    PARSE_TYPE(float)
+    PARSE_TYPE(int)
+    PARSE_TYPE(uint32_t)
+    PARSE_TYPE(int64_t)
+    PARSE_TYPE(uint64_t)
+    PARSE_TYPE(value::half)
+    PARSE_TYPE(value::half2)
+    PARSE_TYPE(value::half3)
+    PARSE_TYPE(value::half4)
+    PARSE_TYPE(float)
+    PARSE_TYPE(value::float2)
+    PARSE_TYPE(value::float3)
+    PARSE_TYPE(value::float4)
+    PARSE_TYPE(double)
+    PARSE_TYPE(value::double2)
+    PARSE_TYPE(value::double3)
+    PARSE_TYPE(value::double4)
+    PARSE_TYPE(value::quath)
+    PARSE_TYPE(value::quatf)
+    PARSE_TYPE(value::quatd)
+    PARSE_TYPE(value::color3f)
+    PARSE_TYPE(value::color4f)
+    PARSE_TYPE(value::color3d)
+    PARSE_TYPE(value::color4d)
+    PARSE_TYPE(value::vector3f)
+    PARSE_TYPE(value::normal3f)
+    PARSE_TYPE(value::point3f)
+    PARSE_TYPE(value::texcoord2f)
+    PARSE_TYPE(value::texcoord3f)
+    PARSE_TYPE(value::matrix4d)
+    {
+      PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + type_name);
+    }
 
-      } else if (type_name == "float3") {
-        TimeSampledDataFloat3 values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
+#undef PARSE_TYPE
 
-        MetaVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
-      } else if (type_name == "double3") {
-        TimeSampledDataDouble3 values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
+    std::string varname = removeSuffix(primattr_name, ".timeSamples");
+    PrimAttrib attr;
+    attr.uniform = false;
+    attr.name = varname;
+    attr.var.set_timesamples(ts);  // TODO: Use set_timesample() ?
 
-        MetaVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
-      } else if (type_name == "matrix4d") {
-        TimeSampledDatavalue::matrix4d values;
-        if (!ParseTimeSamples(&values)) {
-          return false;
-        }
+    DCOUT("timeSamples primattr: type = " << type_name
+                                          << ", name = " << varname);
 
-        MetaVariable var;
-        var.timeSampledValue = values;
-        (*props)[primattr_name] = var;
+    Property p(attr, custom_qual);
+    (*props)[varname] = p;
 
-      } else {
-        PushError(std::to_string(__LINE__) + " : TODO: timeSamples type " + type_name);
-        return false;
-      }
-#else
-      } else {
-        PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + type_name);
-      }
-#endif
-
-    PUSH_ERROR_AND_RETURN("TODO: timeSamples type " + type_name);
-    return false;
+    return true;
 
   } else {
-
     PrimAttrib attr;
 
     // TODO: Refactor.
@@ -5403,12 +6064,20 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
         return false;
       }
-    } else if (type_name == value::kFloat) {
-      if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
     } else if (type_name == value::kInt) {
       if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kUInt) {
+      if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kInt64) {
+      if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kUInt64) {
+      if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, &attr)) {
         return false;
       }
     } else if (type_name == value::kDouble) {
@@ -5421,6 +6090,26 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       }
     } else if (type_name == value::kToken) {
       if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kHalf) {
+      if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kHalf2) {
+      if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kHalf3) {
+      if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kHalf4) {
+      if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name, &attr)) {
+        return false;
+      }
+    } else if (type_name == value::kFloat) {
+      if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
         return false;
       }
     } else if (type_name == value::kFloat2) {
@@ -5454,10 +6143,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         return false;
       }
     } else if (type_name == value::kPoint3f) {
-      DCOUT("point3f, array_qual = " + std::to_string(array_qual));
       if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
                                               &attr)) {
-        DCOUT("Failed to parse point3f data.");
         return false;
       }
     } else if (type_name == value::kColor3f) {
@@ -5476,34 +6163,25 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         return false;
       }
     } else if (type_name == value::kNormal3f) {
-      DCOUT("normal3f, array_qual = " + std::to_string(array_qual));
       if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
                                                &attr)) {
-        DCOUT("Failed to parse normal3f data.");
         return false;
       }
-      DCOUT("Got it");
     } else if (type_name == value::kNormal3d) {
       if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
                                                &attr)) {
         return false;
       }
     } else if (type_name == value::kVector3f) {
-      DCOUT("vector3f, array_qual = " + std::to_string(array_qual));
       if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
                                                &attr)) {
-        DCOUT("Failed to parse vector3f data.");
         return false;
       }
-      DCOUT("Got it");
     } else if (type_name == value::kVector3d) {
-      DCOUT("vector3d, array_qual = " + std::to_string(array_qual));
       if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
                                                &attr)) {
-        DCOUT("Failed to parse vector3d data.");
         return false;
       }
-      DCOUT("Got it");
     } else if (type_name == value::kColor3d) {
       if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
                                               &attr)) {
@@ -5604,13 +6282,9 @@ std::string AsciiParser::GetCurrentPath() {
 // -- ctor, dtor
 //
 
-AsciiParser::AsciiParser() {
-  Setup();
-}
+AsciiParser::AsciiParser() { Setup(); }
 
-AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) {
-  Setup();
-}
+AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) { Setup(); }
 
 void AsciiParser::Setup() {
   RegisterStageMetas(_supported_stage_metas);
@@ -5635,7 +6309,9 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
 ///
 /// Parse `class` block.
 ///
-bool AsciiParser::ParseClassBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth) {
+bool AsciiParser::ParseClassBlock(const int64_t primIdx,
+                                  const int64_t parentPrimIdx,
+                                  const uint32_t depth) {
   if (!SkipWhitespaceAndNewline()) {
     return false;
   }
@@ -5721,8 +6397,9 @@ bool AsciiParser::ParseClassBlock(const int64_t primIdx, const int64_t parentPri
       if (tok == "def") {
         // recusive call
         int64_t idx = _prim_idx_assign_fun(primIdx);
-        DCOUT("Enter parseDef. primIdx = " << idx << ", parentPrimIdx = " << primIdx);
-        if (!ParseDefBlock(idx, primIdx, depth+1)) {
+        DCOUT("Enter parseDef. primIdx = " << idx
+                                           << ", parentPrimIdx = " << primIdx);
+        if (!ParseDefBlock(idx, primIdx, depth + 1)) {
           return false;
         }
       } else {
@@ -5755,7 +6432,9 @@ bool AsciiParser::ParseClassBlock(const int64_t primIdx, const int64_t parentPri
 ///
 /// Parse `over` block.
 ///
-bool AsciiParser::ParseOverBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth) {
+bool AsciiParser::ParseOverBlock(const int64_t primIdx,
+                                 const int64_t parentPrimIdx,
+                                 const uint32_t depth) {
   std::string tok;
 
   if (!SkipWhitespaceAndNewline()) {
@@ -5829,8 +6508,9 @@ bool AsciiParser::ParseOverBlock(const int64_t primIdx, const int64_t parentPrim
 /// TODO: Support `def` without type(i.e. actual definition is defined in
 /// another USD file or referenced USD)
 ///
-bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth) {
-
+bool AsciiParser::ParseDefBlock(const int64_t primIdx,
+                                const int64_t parentPrimIdx,
+                                const uint32_t depth) {
   DCOUT("ParseDefBlock");
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -5949,7 +6629,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
     // DCOUT("`references.size` = " + std::to_string(references.size()));
   }
 
-#if 0 // TODO
+#if 0  // TODO
   if (auto v = ReconstructPrimMetas(in_metas)) {
     DCOUT("TODO: ");
   } else {
@@ -5973,7 +6653,6 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
   //        | def_block
   //        | prim_attr+
   while (!Eof()) {
-
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
@@ -5998,10 +6677,12 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
 
         if (LookChar1(&c)) {
           if (c == ';') {
-            PUSH_ERROR_AND_RETURN("Semicolon is not allowd in `def` block statement.");
+            PUSH_ERROR_AND_RETURN(
+                "Semicolon is not allowd in `def` block statement.");
           }
         }
-        PUSH_ERROR_AND_RETURN("Failed to parse an identifier in `def` block statement.");
+        PUSH_ERROR_AND_RETURN(
+            "Failed to parse an identifier in `def` block statement.");
       }
 
       if (!Rewind(tok.size())) {
@@ -6009,7 +6690,6 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
       }
 
       if (tok == "def") {
-
         int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
         DCOUT("enter parseDef. idx = " << idx << ", rootIdx = " << primIdx);
 
@@ -6018,7 +6698,6 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
           PUSH_ERROR_AND_RETURN("`def` block parse failed.");
         }
       } else {
-
         DCOUT("Enter ParsePrimAttr.");
         // Assume PrimAttr
         if (!ParsePrimAttr(&props)) {
@@ -6141,21 +6820,21 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
       LOG_ERROR("TODO: unresolved node type\n");
     }
 #endif
-
   }
 
   if (_prim_construct_fun_map.count(pTy)) {
-
     auto construct_fun = _prim_construct_fun_map[pTy];
 
     Path fullpath(GetCurrentPath(), "");
     Path pname(prim_name, "");
-    nonstd::expected<bool, std::string> ret = construct_fun(fullpath, pname, primIdx, parentPrimIdx, props, references, in_metas);
+    nonstd::expected<bool, std::string> ret = construct_fun(
+        fullpath, pname, primIdx, parentPrimIdx, props, references, in_metas);
 
     if (!ret) {
       // construction failed.
-      PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy + "` failed: " + ret.error());
-     }
+      PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy +
+                            "` failed: " + ret.error());
+    }
   }
 
   PopPath();
@@ -6168,7 +6847,6 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx, const int64_t parentPrimI
 /// TODO: Refactor
 ///
 bool AsciiParser::Parse(LoadState state) {
-
   _sub_layered = (state == LoadState::SUBLAYER);
   _referenced = (state == LoadState::REFERENCE);
   _payloaded = (state == LoadState::PAYLOAD);
@@ -6232,24 +6910,27 @@ bool AsciiParser::Parse(LoadState state) {
 
     if (tok == "def") {
       int64_t primIdx = _prim_idx_assign_fun(-1);
-      DCOUT("Enter parseDef. primIdx = " << primIdx << ", parentPrimIdx = root(-1)");
-      bool block_ok = ParseDefBlock(primIdx, /* parent */-1);
+      DCOUT("Enter parseDef. primIdx = " << primIdx
+                                         << ", parentPrimIdx = root(-1)");
+      bool block_ok = ParseDefBlock(primIdx, /* parent */ -1);
       if (!block_ok) {
         PushError("Failed to parse `def` block.\n");
         return false;
       }
     } else if (tok == "over") {
       int64_t primIdx = _prim_idx_assign_fun(-1);
-      DCOUT("Enter parseOver. primIdx = " << primIdx << ", parentPrimIdx = root(-1)");
-      bool block_ok = ParseOverBlock(primIdx, /* parent */-1);
+      DCOUT("Enter parseOver. primIdx = " << primIdx
+                                          << ", parentPrimIdx = root(-1)");
+      bool block_ok = ParseOverBlock(primIdx, /* parent */ -1);
       if (!block_ok) {
         PushError("Failed to parse `over` block.\n");
         return false;
       }
     } else if (tok == "class") {
       int64_t primIdx = _prim_idx_assign_fun(-1);
-      DCOUT("Enter parseClass. primIdx = " << primIdx << ", parentPrimIdx = root(-1)");
-      bool block_ok = ParseClassBlock(primIdx, /* parent */-1);
+      DCOUT("Enter parseClass. primIdx = " << primIdx
+                                           << ", parentPrimIdx = root(-1)");
+      bool block_ok = ParseClassBlock(primIdx, /* parent */ -1);
       if (!block_ok) {
         PushError("Failed to parse `class` block.\n");
         return false;

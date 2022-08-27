@@ -1044,9 +1044,9 @@ class Property {
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `quath`, `matrix4f`
-using XformOpValueType =
-    tinyusdz::variant<float, value::float3, value::quatf, double,
-                      value::double3, value::quatd, value::matrix4d>;
+//using XformOpValueType =
+//    tinyusdz::variant<float, value::float3, value::quatf, double,
+//                      value::double3, value::quatd, value::matrix4d>;
 
 struct XformOp {
   enum class OpType {
@@ -1077,93 +1077,6 @@ struct XformOp {
     ResetXformStack,  // !resetXformStack!
   };
 
-#if 0
-  enum OpType {
-    // Matrix
-    TRANSFORM,
-
-    // 3D
-    TRANSLATE,
-    SCALE,
-
-    // 1D
-    ROTATE_X,
-    ROTATE_Y,
-    ROTATE_Z,
-
-    // 3D
-    ROTATE_XYZ,
-    ROTATE_XZY,
-    ROTATE_YXZ,
-    ROTATE_YZX,
-    ROTATE_ZXY,
-    ROTATE_ZYX,
-
-    // 4D
-    ORIENT
-
-  };
-
-  static std::string GetOpTypeName(OpType op) {
-    std::string str = "[[InvalidXformOp]]";
-    switch (op) {
-      case TRANSFORM: {
-        str = "xformOp:transform";
-        break;
-      }
-      case TRANSLATE: {
-        str = "xformOp:translate";
-        break;
-      }
-      case SCALE: {
-        str = "xformOp:scale";
-        break;
-      }
-      case ROTATE_X: {
-        str = "xformOp:rotateX";
-        break;
-      }
-      case ROTATE_Y: {
-        str = "xformOp:rotateY";
-        break;
-      }
-      case ROTATE_Z: {
-        str = "xformOp:rotateZ";
-        break;
-      }
-      case ROTATE_XYZ: {
-        str = "xformOp:rotateXYZ";
-        break;
-      }
-      case ROTATE_XZY: {
-        str = "xformOp:rotateXZY";
-        break;
-      }
-      case ROTATE_YXZ: {
-        str = "xformOp:rotateYXZ";
-        break;
-      }
-      case ROTATE_YZX: {
-        str = "xformOp:rotateYZX";
-        break;
-      }
-      case ROTATE_ZXY: {
-        str = "xformOp:rotateZXY";
-        break;
-      }
-      case ROTATE_ZYX: {
-        str = "xformOp:rotateZYX";
-        break;
-      }
-      case ORIENT: {
-        str = "xformOp:orient";
-        break;
-      }
-    }
-    return str;
-  }
-#endif
-
   // OpType op;
   OpType op;
   bool inverted{false};  // true when `!inverted!` prefix
@@ -1171,8 +1084,66 @@ struct XformOp {
       suffix;  // may contain nested namespaces. e.g. suffix will be
                // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
                // will be empty for "xformOp:translate"
-  XformOpValueType value;  // When you look up the value, select basic type
-                           // based on `precision`
+  //XformOpValueType value_type;  
+  std::string type_name;
+
+  value::TimeSamples var;
+
+  // TODO: Check if T is valid type.
+  template <class T>
+  void set_scalar(const T &v) {
+    var.times.clear();
+    var.values.clear();
+  
+    var.values.push_back(v);
+    type_name = value::TypeTrait<T>::type_name();
+  }
+
+  void set_timesamples(const value::TimeSamples &v) {
+    var = v;
+
+    if (var.values.size()) {
+      type_name = var.values[0].type_name();
+    }
+  }
+
+  void set_timesamples(value::TimeSamples &&v) {
+    var = std::move(v);
+    if (var.values.size()) {
+      type_name = var.values[0].type_name();
+    }
+  }
+
+  bool IsTimeSamples() const {
+    return (var.times.size() > 0) && (var.times.size() == var.values.size());
+  }
+
+  // Type-safe way to get concrete value.
+  template <class T>
+  nonstd::optional<T> get_scalar_value() const {
+
+    if (IsTimeSamples()) {
+      return nonstd::nullopt;
+    }
+
+    if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
+      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      auto pv = linb::any_cast<const T>(&var.values[0]);
+      if (pv) {
+        return (*pv);
+      }
+      return nonstd::nullopt;
+    } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      //return *reinterpret_cast<const T *>(var.values[0].value());
+
+      // TODO: strict type check.
+      return *linb::cast<const T>(&var.values[0]);
+    }
+    return nonstd::nullopt;
+  }
+
 };
 
 #if 0

@@ -236,29 +236,36 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
     value::matrix4d m;
     Identity(&m);
     (void)x;
+
+    if (x.IsTimeSamples()) {
+      // TODO:
+      DCOUT("TODO: xformOp property with timeSamples.");
+      return false;
+    }
+
     if (x.op == XformOp::OpType::ResetXformStack) {
       // Reset previous matrices
       // TODO: Check if !resetXformStack! is only appears at the first element of xformOps.
       Identity(out_matrix);
     } else if (x.op == XformOp::OpType::Scale) {
-      if (auto sxf = x.value.get<value::float3>()) {
+      if (auto sxf = x.get_scalar_value<value::float3>()) {
         m.m[0][0] = double(sxf.value()[0]);
         m.m[1][1] = double(sxf.value()[1]);
         m.m[2][2] = double(sxf.value()[2]);
-      } else if (auto sxd = x.value.get<value::double3>()) {
+      } else if (auto sxd = x.get_scalar_value<value::double3>()) {
         m.m[0][0] = sxd.value()[0];
         m.m[1][1] = sxd.value()[1];
         m.m[2][2] = sxd.value()[2];
       } else {
         return false;
       }
-    
+
     } else if (x.op == XformOp::OpType::Translate) {
-      if (auto txf = x.value.get<value::float3>()) {
+      if (auto txf = x.get_scalar_value<value::float3>()) {
         m.m[3][0] = double(txf.value()[0]);
         m.m[3][1] = double(txf.value()[1]);
         m.m[3][2] = double(txf.value()[2]);
-      } else if (auto txd = x.value.get<value::double3>()) {
+      } else if (auto txd = x.get_scalar_value<value::double3>()) {
         m.m[3][0] = txd.value()[0];
         m.m[3][1] = txd.value()[1];
         m.m[3][2] = txd.value()[2];
@@ -268,9 +275,9 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
       // FIXME: Validate ROTATE_X, _Y, _Z implementation
     } else if (x.op == XformOp::OpType::RotateX) {
       double theta;
-      if (auto rf = x.value.get<float>()) {
+      if (auto rf = x.get_scalar_value<float>()) {
         theta = double(rf.value());
-      } else if (auto rd = x.value.get<double>()) {
+      } else if (auto rd = x.get_scalar_value<double>()) {
         theta = rd.value();
       } else {
         return false;
@@ -282,9 +289,9 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
       m.m[2][2] = std::cos(theta);
     } else if (x.op == XformOp::OpType::RotateY) {
       double theta;
-      if (auto f = x.value.get<float>()) {
+      if (auto f = x.get_scalar_value<float>()) {
         theta = double(f.value());
-      } else if (auto d = x.value.get<double>()) {
+      } else if (auto d = x.get_scalar_value<double>()) {
         theta = d.value();
       } else {
         return false;
@@ -296,9 +303,9 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
       m.m[2][2] = std::cos(theta);
     } else if (x.op == XformOp::OpType::RotateZ) {
       double theta;
-      if (auto f = x.value.get<float>()) {
+      if (auto f = x.get_scalar_value<float>()) {
         theta = double(f.value());
-      } else if (auto d = x.value.get<double>()) {
+      } else if (auto d = x.get_scalar_value<double>()) {
         theta = d.value();
       } else {
         return false;
@@ -310,9 +317,9 @@ bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
       m.m[1][1] = std::cos(theta);
     } else if (x.op == XformOp::OpType::Orient) {
       // quat(w, x, y, z)
-      if (auto f = x.value.get<value::quatf>()) {
+      if (auto f = x.get_scalar_value<value::quatf>()) {
         m = to_matrix(f.value());
-      } else if (auto d = x.value.get<value::quatd>()) {
+      } else if (auto d = x.get_scalar_value<value::quatd>()) {
         m = to_matrix(d.value());
       } else {
         return false;

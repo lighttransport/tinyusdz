@@ -163,12 +163,12 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
       if (i != 0) {
         ss << ", ";
       }
- 
+
       auto name = std::get<0>(schemas.names[i]);
       ss << "\"" << to_string(name);
 
       auto instanceName = std::get<1>(schemas.names[i]);
-      
+
       if (!instanceName.empty()) {
         ss << ":" << instanceName;
       }
@@ -231,7 +231,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
     }
 
     // TODO: ListEdit qual.
-    
+
 
     if (auto v = attr.value.value().template get<T>()) {
       ss << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
@@ -286,6 +286,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   return ss.str();
 }
 
+// Print user-defined (custom) properties.
 std::string print_props(const std::map<std::string, Property> &props, uint32_t indent)
 {
   std::stringstream ss;
@@ -301,9 +302,12 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
     } else {
       const PrimAttrib &attr = item.second.attrib;
 
-      bool isUniform = attr.uniform;
 
-      if (isUniform) {
+      if (prop.HasCustom()) {
+        ss << "custom ";
+      }
+
+      if (attr.uniform) {
         ss << "uniform ";
       }
 
@@ -378,46 +382,27 @@ std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint3
   return ss.str();
 }
 
-std::string print_xform_value_type(const XformOpValueType &v) {
+
+std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent) {
   std::stringstream ss;
 
-  // TODO: Store type name in XformOpValueType
-  if (auto qf = v.get<value::quatf>()) {
-    ss << value::TypeTrait<value::quatf>::type_name();
-  } else if (auto qd = v.get<value::quatd>()) {
-    ss << value::TypeTrait<value::quatd>::type_name();
-  } else if (auto d = v.get<double>()) {
-    ss << value::TypeTrait<double>::type_name();
-  } else if (auto f = v.get<float>()) {
-    ss << value::TypeTrait<float>::type_name();
-  } else if (auto d3 = v.get<value::double3>()) {
-    ss << value::TypeTrait<value::double3>::type_name();
-  } else if (auto f3 = v.get<value::float3>()) {
-    ss << value::TypeTrait<value::float3>::type_name();
-  } else if (auto m = v.get<value::matrix4d>()) {
-    ss << value::TypeTrait<value::matrix4d>::type_name();
-  }
+  if (v.IsScalar()) {
+    ss << value::pprint_any(v.values[0]);
+  } else {
 
-  return ss.str();
-}
+    if (!v.ValidTimeSamples()) {
+      return "[Invalid TimeSamples data(internal error?)]";
+    } 
 
-std::string print_xform_value(const XformOpValueType &v) {
-  std::stringstream ss;
+    ss << "{\n";
 
-  if (auto qf = v.get<value::quatf>()) {
-    ss << qf.value();
-  } else if (auto qd = v.get<value::quatd>()) {
-    ss << qd.value();
-  } else if (auto d = v.get<double>()) {
-    ss << d.value();
-  } else if (auto f = v.get<float>()) {
-    ss << f.value();
-  } else if (auto d3 = v.get<value::double3>()) {
-    ss << d3.value();
-  } else if (auto f3 = v.get<value::float3>()) {
-    ss << f3.value();
-  } else if (auto m = v.get<value::matrix4d>()) {
-    ss << m.value();
+    for (size_t i = 0; i < v.times.size(); i++) {
+
+      ss << pprint::Indent(indent+1);
+      ss << v.times[i] << ": " << value::pprint_any(v.values[i]);
+      ss << ",\n"; // USDA allow ',' for the last item
+    }
+    ss << pprint::Indent(indent) << "}\n";
   }
 
   return ss.str();
@@ -439,14 +424,19 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
 
       ss << pprint::Indent(indent);
 
-      ss << print_xform_value_type(xformOp.value) << " " ;
+      // TODO: Check if `type_name` is set correctly.
+      ss << xformOp.type_name << " " ;
 
       ss << to_string(xformOp.op);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
 
-      ss << " = " << print_xform_value(xformOp.value);
+      if (xformOp.IsTimeSamples()) {
+        ss << ".timeSamples";
+      }
+
+      ss << " = " << print_timesamples(xformOp.var, indent);
 
       ss << "\n";
     }
@@ -889,6 +879,8 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   ss << print_typed_attr(sphere.radius, "radius", indent+1);
 
   ss << print_gprim_predefined(sphere, indent);
+
+  ss << print_props(sphere.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

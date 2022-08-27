@@ -430,6 +430,8 @@ struct StageMetas {
   value::token defaultPrim;           // prim node name
   AttribWithFallback<double> metersPerUnit{1.0};        // default [m]
   AttribWithFallback<double> timeCodesPerSecond {24.0};  // default 24 fps
+  AttribWithFallback<double> startTimeCode{0.0}; // FIXME: default = -inf?
+  AttribWithFallback<double> endTimeCode{std::numeric_limits<double>::infinity()};
   StringData doc; // `documentation`
 
   std::map<std::string, MetaVariable> customLayerData; // customLayerData

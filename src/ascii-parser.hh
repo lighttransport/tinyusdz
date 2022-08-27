@@ -105,10 +105,12 @@ class AsciiParser {
     ///
     std::vector<value::token> subLayers; // 'subLayers'
     value::token defaultPrim; // 'defaultPrim'
-    StringData doc; // 'doc' 
+    StringData doc; // 'doc'
     nonstd::optional<Axis> upAxis;  // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
+    nonstd::optional<double> startTimeCode;
+    nonstd::optional<double> endTimeCode;
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
     std::vector<StringData> strings; // String only unregistered metadata.
@@ -263,7 +265,7 @@ class AsciiParser {
 
   ///
   /// Callbacks called at closing `def` block.
-  /// 
+  ///
   using PostPrimConstructFunction = std::function<nonstd::expected<bool, std::string>(
           const Path &path, const int64_t primIdx, const int64_t parentPrimIdx)>;
   void RegisterPostPrimConstructFunction(const std::string &prim_type,
@@ -451,7 +453,10 @@ class AsciiParser {
   bool ParseMagicHeader();
 
   bool SkipWhitespace();
-  bool SkipWhitespaceAndNewline();
+
+  // skip_semicolon true: ';' can be used as a separator. this flag is for statement block.
+  bool SkipWhitespaceAndNewline(bool allow_semicolon = true);
+
   bool SkipCommentAndWhitespaceAndNewline();
   bool SkipUntilNewline();
 
@@ -532,6 +537,9 @@ class AsciiParser {
   template <typename T>
   using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
 
+  //template <typename T>
+  //using TimeSampleDataArray = std::vector<std::pair<double, nonstd::optional<std::vector<T>>>>;
+
   ///
   /// Convert TimeSampleData<T> to TimeSamples(type-erased TimeSample Sdata
   /// struct)
@@ -540,69 +548,15 @@ class AsciiParser {
   value::TimeSamples ConvertToTimeSamples(const TimeSampleData<T> &in);
 
   template <typename T>
-  nonstd::optional<TimeSampleData<T>> TryParseTimeSamples() {
-    // timeSamples = '{' (int : T), + '}'
+  value::TimeSamples ConvertToTimeSamples(const TimeSampleData<std::vector<T>> &in);
 
-    TimeSampleData<T> data;
+  // array version
+  template <typename T>
+  nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesArray();
 
-    if (!Expect('{')) {
-      return nonstd::nullopt;
-    }
+  template <typename T>
+  nonstd::optional<TimeSampleData<T>> TryParseTimeSamples();
 
-    if (!SkipWhitespaceAndNewline()) {
-      return nonstd::nullopt;
-    }
-
-    while (!Eof()) {
-      char c;
-      if (!Char1(&c)) {
-        return nonstd::nullopt;
-      }
-
-      if (c == '}') {
-        break;
-      }
-
-      Rewind(1);
-
-      double timeVal;
-      // -inf, inf and nan are handled.
-      if (!ReadBasicType(&timeVal)) {
-        PushError("Parse time value failed.");
-        return nonstd::nullopt;
-      }
-
-      if (!SkipWhitespace()) {
-        return nonstd::nullopt;
-      }
-
-      if (!Expect(':')) {
-        return nonstd::nullopt;
-      }
-
-      if (!SkipWhitespace()) {
-        return nonstd::nullopt;
-      }
-
-      nonstd::optional<T> value;
-      if (!ReadBasicType(&value)) {
-        return nonstd::nullopt;
-      }
-
-      // It looks the last item also requires ','
-      if (!Expect(',')) {
-        return nonstd::nullopt;
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return nonstd::nullopt;
-      }
-
-      data.push_back({timeVal, value});
-    }
-
-    return std::move(data);
-  }
 
   nonstd::optional<std::tuple<ListEditQual, MetaVariable>> ParsePrimMeta();
   bool ParsePrimAttr(std::map<std::string, Property> *props);
@@ -646,7 +600,7 @@ class AsciiParser {
   // Supported Prim types
   std::set<std::string> _supported_prim_types;
   std::set<std::string> _supported_prim_attr_types;
- 
+
   // Supported API schemas
   std::set<std::string> _supported_api_schemas;
 
