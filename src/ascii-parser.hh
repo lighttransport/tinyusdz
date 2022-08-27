@@ -307,6 +307,12 @@ class AsciiParser {
   bool ReadBasicType(T *value);
 
   template <typename T>
+  bool ReadBasicType(nonstd::optional<std::vector<T>> *value);
+
+  template <typename T>
+  bool ReadBasicType(std::vector<T> *value);
+
+  template <typename T>
   bool ParseMatrix(T *result);
 
   ///
@@ -550,10 +556,7 @@ class AsciiParser {
   template <typename T>
   value::TimeSamples ConvertToTimeSamples(const TimeSampleData<std::vector<T>> &in);
 
-  // array version
-  template <typename T>
-  nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesArray();
-
+  // T = scalar(e.g. `float`) or 1D(e.g. `float[]`)
   template <typename T>
   nonstd::optional<TimeSampleData<T>> TryParseTimeSamples();
 

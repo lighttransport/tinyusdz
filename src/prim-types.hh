@@ -913,6 +913,107 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
+// Typed TimeSamples(including scalar) value
+//
+// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
+//
+// in .usd, are represented as
+// 
+// time = [0, 1, 2]
+// sample = [1.0, undef, 3.0]
+// mask = [0, 1, 0]
+//
+// in TypedTimeSamples.
+
+template <typename T>
+class TypedTimeSamples {
+
+  struct Sample {
+    double time;
+    T value;
+    bool blocked;
+  };
+
+
+ public:
+
+  void clear() {
+    _samples.clear();
+  }
+
+  bool empty() {
+    return _samples.empty();
+  }
+
+  bool add_sample(const double t, const T &v) {
+
+    _samples.push_back({t, v, false});
+
+    _dirty = true;
+
+    return true;
+  }
+
+  bool Commit();
+
+  bool Get(double t);
+
+ private:
+  std::vector<Sample> _samples;
+  bool _dirty{true}; // true: need to sort by `times` before retrieving TimeSample data
+
+};
+
+template <typename T>
+struct Animatable {
+  T value; // scalar
+  TypedTimeSamples<T> ts;
+
+  bool IsTimeSampled() const {
+    return !ts.empty();
+  }
+
+#if 0  // TODO
+  T Get() const { return value; }
+
+  T Get(double t) {
+    if (IsTimeSampled()) {
+      // TODO: lookup value by t
+      return timeSamples.Get(t);
+    }
+    return value;
+  }
+#endif
+
+  bool valid() {
+    // scalar?
+    if (ts.times.empty() && ts.values.size() == 1) {
+      return true;
+    }
+  }
+
+
+  Animatable() {}
+
+  // Scalar
+  Animatable(const T &v) : value(v) {
+  }
+
+};
+
+// template<typename T>
+// using Animatable = nonstd::variant<T, TimeSampled<T>>;
+
+// Frequently used types
+using AnimatableFloat = Animatable<float>;
+using AnimatableDouble = Animatable<double>;
+using AnimatableExtent = Animatable<Extent>;
+using AnimatableVisibility = Animatable<Visibility>;
+using AnimatableVec3f = Animatable<value::float3>;
+using AnimatableVec3fArray = Animatable<std::vector<value::float3>>;
+using AnimatableFloatArray = Animatable<std::vector<float>>;
+
+
 
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
@@ -952,11 +1053,20 @@ class TypedAttribute {
   static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 
   // Empty(Define only), value or connection(`.connect`) target path
-  using value_type = tinyusdz::variant<tinyusdz::monostate, T, Path>;
+  //using value_type = tinyusdz::variant<tinyusdz::monostate, T, Path>;
 
-  nonstd::optional<value_type> value;
+  //nonstd::optional<value_type> value; 
+  Animatable<T> value; 
+  nonstd::optional<Path> target; // '.connect'
 
-  bool authored() const { return value.has_value(); }
+  bool authored() const { 
+    if (define_only) return true;
+    if (target || value.valid()) {
+      return true;
+    }
+
+    return false;
+  }
 
   bool set_define_only(bool onoff = true) { define_only = onoff; return define_only; }
 
@@ -1200,80 +1310,6 @@ struct TimeSamples {
   }
 };
 #endif
-
-// Animatable = run-time data structure(e.g. for GeomMesh)
-// TimeSample data is splitted into multiple ranges when it contains
-// `None`(Blocked)
-//
-// e.g.
-//
-// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
-//
-// in .usd, are splitted into two ranges:
-//
-// range[0, 1): 1.0
-// range[2, inf): 3.0
-//
-// for Animatable type.
-
-template <typename T>
-struct TypedTimeSamples {
-  std::vector<double> times;
-  std::vector<T> samples;
-
-  bool valid() const {
-    if (times.size() > 0) {
-      if (samples.size() == times.size()) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-};
-
-template <typename T>
-struct Animatable {
-  T value;  // scalar
-
-  // TODO: sort by timeframe
-  std::vector<TypedTimeSamples<T>> ranges;
-
-  bool IsTimeSampled() const {
-    if (ranges.size()) {
-      return ranges.begin()->valid();
-    }
-
-    return false;
-  }
-
-#if 0  // TODO
-  T Get() const { return value; }
-
-  T Get(double t) {
-    if (IsTimeSampled()) {
-      // TODO: lookup value by t
-      return timeSamples.Get(t);
-    }
-    return value;
-  }
-#endif
-
-  Animatable() {}
-  Animatable(T v) : value(v) {}
-};
-
-// template<typename T>
-// using Animatable = nonstd::variant<T, TimeSampled<T>>;
-
-// Frequently used types
-using AnimatableFloat = Animatable<float>;
-using AnimatableDouble = Animatable<double>;
-using AnimatableExtent = Animatable<Extent>;
-using AnimatableVisibility = Animatable<Visibility>;
-using AnimatableVec3f = Animatable<value::float3>;
-using AnimatableVec3fArray = Animatable<std::vector<value::float3>>;
-using AnimatableFloatArray = Animatable<std::vector<float>>;
 
 // `def` with no type.
 struct Model {

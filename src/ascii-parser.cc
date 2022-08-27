@@ -2769,6 +2769,29 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::quatd> *value) {
   return false;
 }
 
+// 1D array
+template <typename T>
+bool AsciiParser::ReadBasicType(std::vector<T> *value) {
+  return ParseBasicTypeArray(value);
+}
+
+template <typename T>
+bool AsciiParser::ReadBasicType(nonstd::optional<std::vector<T>> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  std::vector<T> v;
+  if (ParseBasicTypeArray(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 // -- end basic
 
 bool AsciiParser::ParseDictElement(std::string *out_key,
@@ -4072,121 +4095,6 @@ bool AsciiParser::Expect(char expect_c) {
 // -- impl ParseTimeSampleData
 //
 
-// std::vector version
-// TODO: Unify code with TryParseTimeSamples()
-template <typename T>
-nonstd::optional<AsciiParser::TimeSampleData<std::vector<T>>>
-AsciiParser::TryParseTimeSamplesArray() {
-  // timeSamples = '{' (int : [T]), + '}'
-
-  TimeSampleData<std::vector<T>> data;
-
-  if (!Expect('{')) {
-    return nonstd::nullopt;
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return nonstd::nullopt;
-  }
-
-  while (!Eof()) {
-    char c;
-    if (!Char1(&c)) {
-      return nonstd::nullopt;
-    }
-
-    if (c == '}') {
-      break;
-    }
-
-    Rewind(1);
-
-    double timeVal;
-    // -inf, inf and nan are handled.
-    if (!ReadBasicType(&timeVal)) {
-      PushError("Parse time value failed.");
-      return nonstd::nullopt;
-    }
-
-    if (!SkipWhitespace()) {
-      return nonstd::nullopt;
-    }
-
-    if (!Expect(':')) {
-      return nonstd::nullopt;
-    }
-
-    if (!SkipWhitespace()) {
-      return nonstd::nullopt;
-    }
-
-    std::vector<T> value;
-    bool isNone{false};
-
-    if (MaybeNone()) {
-      isNone = true;
-      (void)isNone;
-      // TODO: Attribute block(`None` value) in timeSamples
-    } else {
-      if (!ParseBasicTypeArray(&value)) {
-        return nonstd::nullopt;
-      }
-    }
-
-    {
-      // Semicolon ';' is not allowed as a separator for timeSamples array values.
-      if (!SkipWhitespace()) {
-        return nonstd::nullopt;
-      }
-
-      char sep;
-      if (!Char1(&sep)) {
-        return nonstd::nullopt;
-      }
-
-      DCOUT("sep = " << sep);
-      if (sep == '}') {
-        // End of item
-        data.push_back({timeVal, value});
-        break;
-      } else if (sep == ',') {
-        // ok
-      } else {
-
-        Rewind(1);
-
-        // Look ahead Newline + '}'
-        auto loc = CurrLoc();
-
-        if (SkipWhitespaceAndNewline()) {
-          char nc;
-          if (!Char1(&nc)) {
-            return nonstd::nullopt;
-          }
-
-          if (nc == '}') {
-            // End of item
-            data.push_back({timeVal, value});
-            break;
-          }
-        }
-
-        // Rewind and continue parsing.
-        SeekTo(loc);
-      }
-    }
-
-    if (!SkipWhitespaceAndNewline()) {
-      return nonstd::nullopt;
-    }
-
-    data.push_back({timeVal, value}); // TODO: Support `None`
-  }
-
-  DCOUT("Parse TimeSamples(array type) success. # of items = " << data.size());
-
-  return std::move(data);
-}
 
 template <typename T>
 nonstd::optional<AsciiParser::TimeSampleData<T>> AsciiParser::TryParseTimeSamples() {
@@ -5984,7 +5892,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 #define PARSE_TYPE(__type) \
     if (type_name == value::TypeTrait<__type>::type_name()) { \
       if (array_qual) { \
-        if (auto pv = TryParseTimeSamplesArray<__type>()) { \
+        if (auto pv = TryParseTimeSamples<std::vector<__type>>()) { \
           ts = ConvertToTimeSamples<std::vector<__type>>(pv.value()); \
         } else { \
           PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `" << value::TypeTrait<__type>::type_name() << "[]`"); \
