@@ -195,11 +195,12 @@ See `examples` directory for more examples.
 
 See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
 
-## Blender add-on(W.I.P)
+## Blender add-on(will be removed)
 
-Supprted Blender version
+We recommend to use Blender's native USD import/export.
 
-* 2.93 LTS(Python 3.9)
+https://builder.blender.org/download/experimental/
+
 
 ### Linux
 
