@@ -16,6 +16,7 @@
 #include "usdShade.hh"
 #include "usdLux.hh"
 
+
 namespace tinyusdz {
 
 namespace pprint {
@@ -133,9 +134,16 @@ std::string to_string(const UsdUVTexture::SourceColorSpace v);
 
 std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent = 0, bool closing_brace = true);
 
-std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent);
 
 
 } // namespace tinyusdz
+
+namespace std {
+
+std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v);
+std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v);
+
+} // namespace std

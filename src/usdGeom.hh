@@ -32,16 +32,16 @@ struct GPrim {
   // Gprim
 
   // nonstd::nullopt = not authorized.
-  nonstd::optional<AnimatableExtent> extent;  // bounding extent. When authorized, the extent is the bounding box of whole its children.
+  nonstd::optional<Animatable<Extent>> extent;  // bounding extent. When authorized, the extent is the bounding box of whole its children.
 
   AttribWithFallback<bool> doubleSided{false};
 
   AttribWithFallback<Orientation> orientation{Orientation::RightHanded};
-  AttribWithFallback<AnimatableVisibility> visibility{Visibility::Inherited};
+  AttribWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
   AttribWithFallback<Purpose> purpose{Purpose::Default};
 
-  nonstd::optional<AnimatableVec3fArray> displayColor;    // primvars:displayColor
-  nonstd::optional<AnimatableFloatArray> displayOpacity;  // primvars:displaOpacity
+  nonstd::optional<Animatable<value::color3f>> displayColor;    // primvars:displayColor
+  nonstd::optional<Animatable<float>> displayOpacity;  // primvars:displaOpacity
 
   nonstd::optional<Relation> proxyPrim;
   nonstd::optional<MaterialBindingAPI> materialBinding;

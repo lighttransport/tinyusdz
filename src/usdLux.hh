@@ -36,8 +36,8 @@ struct LuxSphereLight {
   //
   // Properties
   //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
+  Animatable<Extent> extent;  // bounding extent(in local coord?).
+  Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;
@@ -82,8 +82,8 @@ struct LuxDomeLight {
   //
   // Properties
   //
-  AnimatableExtent extent;  // bounding extent(in local coord?).
-  AnimatableVisibility visibility{Visibility::Inherited};
+  Animatable<Extent> extent;  // bounding extent(in local coord?).
+  Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
   std::vector<value::token> xformOpOrder;
 

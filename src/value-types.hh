@@ -661,7 +661,7 @@ struct texcoord3d {
   double s, t, r;
 };
 
-// Attribute Block(None)
+// Attribute Block(`None`)
 struct Block {};
 
 using double2 = std::array<double, 2>;
