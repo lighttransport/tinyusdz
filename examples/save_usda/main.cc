@@ -19,7 +19,7 @@ void DummyScene(tinyusdz::Stage *stage)
   translate[0] = 1.0;
   translate[1] = 2.0;
   translate[2] = 3.0;
-  op.value = translate;
+  op.set_scalar(translate);
 
   xform.xformOps.push_back(op);
 

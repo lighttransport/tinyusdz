@@ -98,6 +98,36 @@ struct PrimVar {
     return nonstd::nullopt;
   }
 
+  // Type-safe way to get concrete value.
+  template <class T>
+  nonstd::optional<T> get_ts_value(size_t idx) const {
+
+    if (is_timesample()) {
+      return nonstd::nullopt;
+    }
+
+    if (idx >= var.times.size()) {
+      return nonstd::nullopt;
+    }
+
+    if (value::TypeTrait<T>::type_id == var.values[idx].type_id()) {
+      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
+      auto pv = linb::any_cast<const T>(&var.values[idx]);
+      if (pv) {
+        return (*pv);
+      }
+      return nonstd::nullopt;
+    } else if (value::TypeTrait<T>::underlying_type_id == var.values[idx].underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      //return *reinterpret_cast<const T *>(var.values[0].value());
+      
+      // TODO: strict type check.
+      return *linb::cast<const T>(&var.values[idx]);
+    }
+    return nonstd::nullopt;
+  }
+
   // Returns nullptr when type-mismatch.
   template <class T>
   const T* as() const {

@@ -1305,6 +1305,145 @@ struct AttribType<AttribWithFallback<T>> {
   static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
 
+
+template<typename T>
+static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVar &var)
+{
+  Animatable<T> dst;
+
+  if (!var.is_valid()) {
+    return nonstd::nullopt;
+  }
+
+  if (var.is_scalar()) {
+
+    if (auto pv = var.get_value<T>()) {
+      dst.value = pv.value();
+      dst.blocked = false;
+
+      return dst;
+    }
+  } else if (var.is_timesample()) {
+    for (size_t i = 0; i < var.var.times.size(); i++) {
+      double t = var.var.times[i];
+
+      // Attribute Block?
+      if (auto pvb = var.get_ts_value<value::Block>(i)) {
+        dst.ts.AddBlockedSample(t);
+      } else if (auto pv = var.get_ts_value<T>(i)) {
+        dst.ts.AddSample(t, pv.value());
+      } else {
+        // Type mismatch
+        return nonstd::nullopt;
+      }
+    }
+
+    return dst;
+  }
+
+  return nonstd::nullopt;
+}
+
+struct ParseResult
+{
+  enum class ResultCode
+  {
+    Success,
+    Unmatched,
+    AlreadyProcessed,
+    TypeMismatch,
+    InternalError,
+  };
+
+  ResultCode code;
+  std::string err;
+};
+
+template<typename T>
+static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  TypedAttribute<T> &target) /* out */
+{
+  ParseResult ret;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (auto pv = prop.GetConnectionTarget()) {
+      target.target = pv.value();
+      target.uniform = prop.attrib.uniform;
+      target.meta = prop.attrib.meta;
+      table.insert(propname);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
+    }
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    const PrimAttrib &attr = prop.attrib;
+
+    // Type info is stored in Attribute::type_name
+    if (AttribType<T>::type_name() == attr.var.type_name()) {
+      if (prop.type == Property::Type::EmptyAttrib) {
+        target.define_only = true;
+        target.uniform = attr.uniform;
+        target.meta = attr.meta;
+        table.insert(name);
+      } else if (prop.type == Property::Type::Attrib) {
+        DCOUT("Adding prop: " << name);
+
+        Animatable<T> anim;
+
+        if (attr.blocked) {
+          anim.blocked = true;
+        } else {
+          if (auto av = ConvertToAnimatable<T>(attr.var)) {
+            anim = av.value();
+          } else {
+            // Conversion failed.
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+            return ret;
+          }
+        }
+
+        target.value = anim;
+        target.uniform = attr.uniform;
+        target.meta = attr.meta;
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        DCOUT("Invalid Property.type");
+        ret.err = "Invalid Property type(internal error)";
+        ret.code = ParseResult::ResultCode::InternalError;
+        return ret;
+      }
+    } else {
+      DCOUT("tyname = " << AttribType<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      std::stringstream ss;
+      ss  << "Property type mismatch. " << name << " expects type `"
+              << AttribType<T>::type_name()
+              << "` but defined as type `" << attr.var.type_name() << "`";
+      ret.err = ss.str();
+      return ret;
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
+
+
+
 // TODO(syoyo): TimeSamples, Reference
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)       \
   if (__prop.first.compare(__name) == 0) {                                     \
@@ -1327,6 +1466,7 @@ struct AttribType<AttribWithFallback<T>> {
     }                                                                          \
   } else
 
+#if 0
 // e.g. "float2 inputs:st"
 // Attribute type is EmptyAttrib, Attrib(fallback) or Connection(`target` is
 // Path)
@@ -1379,6 +1519,24 @@ struct AttribType<AttribWithFallback<T>> {
               << "` but defined as type `" << attr.type_name << "`");          \
     }                                                                          \
   } else
+#else
+
+#define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    continue; /* got it */\
+  } else if (ret.code == ParseResult::ResultCode::TypeMismatch) { \
+    PUSH_ERROR_AND_RETURN(                                                   \
+        "(" << value::TypeTrait<__klass>::type_name()                        \
+            << ") " << ret.err); \
+  } else if (ret.code == ParseResult::ResultCode::InternalError) { \
+    PUSH_ERROR_AND_RETURN("Internal error."); \
+  } else { \
+    /* go next */ \
+  } \
+}
+
+#endif
 
 // e.g. "float3 outputs:rgb"
 // Attribute type must be EmptyAttrib(No value or connection assigned)
@@ -3063,13 +3221,13 @@ bool USDAReader::Impl::ReconstructPrim<SkelAnimation>(
 
   std::set<std::string> table;
   for (auto &prop : properties) {
-    PARSE_TYPED_PROPERTY(table, prop, "joints", SkelAnimation, skelanim->joints)
-    PARSE_TYPED_PROPERTY(table, prop, "translations", SkelAnimation, skelanim->translations)
-    PARSE_TYPED_PROPERTY(table, prop, "rotations", SkelAnimation, skelanim->rotations)
-    PARSE_TYPED_PROPERTY(table, prop, "scales", SkelAnimation, skelanim->scales)
-    PARSE_TYPED_PROPERTY(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
-    PARSE_TYPED_PROPERTY(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
-    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "joints", SkelAnimation, skelanim->joints)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "translations", SkelAnimation, skelanim->translations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "rotations", SkelAnimation, skelanim->rotations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", SkelAnimation, skelanim->scales)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
+    //PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
