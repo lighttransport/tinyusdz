@@ -1,6 +1,6 @@
 # Tiny USDZ library 
 
-`TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need USD library!) USDZ/USDC/USDA library written in C++14.
+`TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
 ![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)
 
@@ -23,9 +23,8 @@ Initial working demo in 2022 Summer(August) planned after finishing implementing
     * See [doc/usdObj.md](doc/usdObj.md) for details.
   * [ ] MagicaVoxel vox for Volume?
   * [ ] VDBVolume support through TinyVDBIO? https://github.com/syoyo/tinyvdbio
-* [ ] USDA parser(W.I.P.)
+* [x] USDA parser
   * Initial USDA parser starting to work(see `src/ascii-parser.cc` and `src/usda-reader.cc`)
-  * Support Blender-exported USDA support in 2022 Fall planned.
 * [ ] Composition
   * [ ] subLayers
   * [ ] references
@@ -38,12 +37,13 @@ Initial working demo in 2022 Summer(August) planned after finishing implementing
 * [ ] Write iOS and Android example(2022 Fall expected)
 * [ ] USDZ(USDC, Crate) writer
   * `src/crate-writer.cc`
-* [ ] USDA writer
+* [x] USDA writer(`pprint` module)
 * [ ] USD <-> glTF converter example
 
 
 ### Tydra
 
+USD itself is a generic container of 3D scene data.
 Tydra is an interface to Renderers/Viewers and other DCCs.
 Tydra may be something like Tiny version of pxrUSD Hydra, but its API is completely different. See [src/tydra/README.md](src/tydra/README.md) for the background.
 
@@ -63,7 +63,7 @@ TinyUSDZ focuses on loading/writing USDA/USDC/USDZ functionalities.
 Example viewer is just for demo purpose.
 Currently TinyUSDZ project is run as personal project by `syoyo` and `syoyo` does not provide commercial support as an individual.
 
-If you need commercial support, eco-system development(e.g. plug-ins, authorization tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
+If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
 
 
 ## Other related projects
@@ -87,8 +87,10 @@ If you need commercial support, eco-system development(e.g. plug-ins, authorizat
 * [x] Windows 10 64bit or later
   * [ ] Windows ARM(should work)
 * [x] WebAssembly(through Emscripten)
-  * See `examples/sdlviewer/` example.
+  * See [examples/sdlviewer/](examples/sdlviewer) example.
   * Multithreading is not available due to Browser's restriction.
+* [x] WASI(through WASI toolchain)
+  * See [sandbox/wasi](sandbox/wasi)
 
 ## Requirements
 
@@ -160,7 +162,7 @@ For Windows native build, we assume `ninja.exe` is installed on your system(You 
   * OpenSubdiv code is included in TinyUSDZ repo. If you want to use external OpenSubdiv repo, specity the path to OpenSubdiv using `osd_DIR` cmake environment variable.
 * `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
 * `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture through TinyEXR.
-* `TINYUSDZ_WITH_PXR_COMPAT_API` : Build with pxr compatible API.
+* `TINYUSDZ_WITH_PXR_COMPAT_API` : Build with pxrUSD compatible API.
 
 #### clang-cl on Windows
 
@@ -189,7 +191,7 @@ $ ninja
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build : See [Readme](examples/sdlviewer/README.md)
 
-See `examples` directory for more examples.
+See [examples](examples) directory for more examples.
 
 ### Data format
 
@@ -229,9 +231,6 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 * [ ] Built-in usdObj(wavefront .obj mesh) support.
   * Through tinyobjloader.
 * [ ] Support Crate(binary) version 0.8.0(USD v20.11 default)
-* [ ] USDA(USD Ascii) support
-  * [ ] Write hand-written USDA parser(W.I.P). [`src/usda-parser.cc`](src/usda-parser.cc)
-  * [ ] USDA writer.
 * [ ] Animation
   * [ ] Skinning(usdSkel)
   * [ ] Blend shapes
