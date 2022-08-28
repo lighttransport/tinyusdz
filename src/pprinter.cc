@@ -102,37 +102,28 @@ std::string prefix(const Animatable<T> &v) {
   return "";
 }
 
-#if 0 // TODO
 template<typename T>
-std::string print_timesampled(const TypedTimeSamples<T> &v, const uint32_t indent) {
+std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t indent = 0) {
   std::stringstream ss;
 
   ss << "{\n";
 
-  for (size_t i = 0; i < v.times.size(); i++) {
-    ss << Indent(indent+2) << v.times[i] << " : " << to_string(v.values[i]) << ",\n";
+  const auto &samples = v.GetSamples(); 
+
+  for (size_t i = 0; i < samples.size(); i++) {
+    ss << pprint::Indent(indent+1) << samples[i].t << ": ";
+    if (samples[i].blocked) {
+      ss << "None";
+    } else {
+      ss << samples[i].value;
+    }
+    ss << ",\n";
   }
 
-  ss << Indent(indent+1) << "}";
+  ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
-
-template<typename T>
-std::string print_timesampled(const TypedTimeSamples<T> &v, const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << "{\n";
-
-  for (size_t i = 0; i < v.times.size(); i++) {
-    ss << Indent(indent+2) << v.times[i] << " : " << to_string(v.values[i]) << ",\n";
-  }
-
-  ss << Indent(indent+1) << "}";
-
-  return ss.str();
-}
-#endif
 
 template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) {
@@ -141,7 +132,7 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
   ss << pprint::Indent(indent);
 
   if (v.IsTimeSampled()) {
-    ss << "[TODO: TimeSample]";
+    ss << print_typed_timesamples(v.ts, indent);
   } else if (v.IsBlocked()) {
     ss << "None";
   } else if (v.IsScalar()) {
@@ -271,7 +262,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
     } else if (!attr.define_only) {
       ss << " = ";
       if (attr.value.value().IsTimeSampled()) {
-        ss << "[TODO: TimeSamples]";
+        ss << print_typed_timesamples(attr.value.value().ts, indent+1);
       } else {
         ss << attr.value.value().value;
       }
@@ -302,11 +293,11 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
 
 
   if (gprim.extent) {
-    ss << pprint::Indent(indent) << "float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value()) << "\n";
+    ss << pprint::Indent(indent) << "float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value(), indent+1) << "\n";
   }
 
   if (gprim.visibility.authored()) {
-    ss << pprint::Indent(indent) << "token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get()) << "\n";
+    ss << pprint::Indent(indent) << "token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent+1) << "\n";
   }
 
   if (gprim.materialBinding) {
@@ -318,7 +309,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
 
   // primvars
   if (gprim.displayColor) {
-    ss << pprint::Indent(indent) << "float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value()) << "\n";
+    ss << pprint::Indent(indent) << "float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value(), indent+1) << "\n";
   }
 
   return ss.str();
@@ -840,7 +831,7 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   // TODO:
 
   if (gprim.visibility.authored()) {
-    ss << pprint::Indent(indent+1) << "visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get())
+    ss << pprint::Indent(indent+1) << "visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent+1)
        << "\n";
   }
 
@@ -865,7 +856,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   // TODO: Generic properties
 
   if (xform.visibility.authored()) {
-    ss << pprint::Indent(indent+1) << "visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get())
+    ss << pprint::Indent(indent+1) << "visibility" << prefix(xform.visibility.get()) << " = " << print_animatable(xform.visibility.get(), indent+1)
      << "\n";
   }
 
