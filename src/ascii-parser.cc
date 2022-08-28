@@ -5923,6 +5923,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
                                           << ", name = " << varname);
 
     Property p(attr, custom_qual);
+    p.type = Property::Type::Attrib;
     (*props)[varname] = p;
 
     return true;

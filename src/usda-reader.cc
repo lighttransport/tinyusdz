@@ -1312,6 +1312,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
   Animatable<T> dst;
 
   if (!var.is_valid()) {
+    DCOUT("is_valid failed");
     return nonstd::nullopt;
   }
 
@@ -1334,6 +1335,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
         dst.ts.AddSample(t, pv.value());
       } else {
         // Type mismatch
+        DCOUT(i << "/" << var.var.times.size() << " type mismatch.");
         return nonstd::nullopt;
       }
     }
@@ -1341,6 +1343,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
     return dst;
   }
 
+  DCOUT("???");
   return nonstd::nullopt;
 }
 
@@ -1389,6 +1392,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
+    DCOUT("attrib.type = " << AttribType<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
+
     // Type info is stored in Attribute::type_name
     if (AttribType<T>::type_name() == attr.var.type_name()) {
       if (prop.type == Property::Type::EmptyAttrib) {
@@ -1408,6 +1413,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             anim = av.value();
           } else {
             // Conversion failed.
+            DCOUT("ConvertToAnimatable failed.");
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
             return ret;
@@ -1530,7 +1536,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         "(" << value::TypeTrait<__klass>::type_name()                        \
             << ") " << ret.err); \
   } else if (ret.code == ParseResult::ResultCode::InternalError) { \
-    PUSH_ERROR_AND_RETURN("Internal error."); \
+    PUSH_ERROR_AND_RETURN("Internal error: " + ret.err); \
   } else { \
     /* go next */ \
   } \
@@ -1650,70 +1656,6 @@ bool USDAReader::Impl::ReconstructPrim(
     Xform *xform) {
   (void)xform;
 
-#if 0
-  auto CheckAllowedTypeOfXformOp =
-      [](const PrimAttrib &attr,
-         const std::vector<value::TypeId> &allowed_type_ids)
-      -> nonstd::expected<bool, std::string> {
-    for (size_t i = 0; i < allowed_type_ids.size(); i++) {
-      if (attr.var.type_id() == allowed_type_ids[i]) {
-        return true;
-      }
-    }
-
-    std::stringstream ss;
-
-    ss << "Allowed type for \"" << attr.name << "\"";
-    if (allowed_type_ids.size() > 1) {
-      ss << " are ";
-    } else {
-      ss << " is ";
-    }
-
-    for (size_t i = 0; i < allowed_type_ids.size(); i++) {
-      ss << value::GetTypeName(allowed_type_ids[i]);
-      if (i < (allowed_type_ids.size() - 1)) {
-        ss << ", ";
-      } else if (i == (allowed_type_ids.size() - 1)) {
-        ss << " or ";
-      }
-    }
-    ss << ", but got " << value::GetTypeName(attr.var.type_id());
-
-    return nonstd::make_unexpected(ss.str());
-  };
-#endif
-
-#if 0
-  // ret = (basename, suffix, isTimeSampled?)
-  auto Split =
-      [](const std::string &str) -> std::tuple<std::string, std::string, bool> {
-    bool isTimeSampled{false};
-
-    std::string s = str;
-
-    const std::string tsSuffix = ".timeSamples";
-
-    if (endsWith(s, tsSuffix)) {
-      isTimeSampled = true;
-      // rtrim
-      s = s.substr(0, s.size() - tsSuffix.size());
-    }
-
-    // TODO: Support multiple namespace(e.g. xformOp:translate:pivot)
-    std::string suffix;
-    if (s.find_last_of(':') != std::string::npos) {
-      suffix = s.substr(s.find_last_of(':') + 1);
-    }
-
-    std::string basename = s;
-    if (s.find_last_of(':') != std::string::npos) {
-      basename = s.substr(0, s.find_last_of(':'));
-    }
-
-    return std::make_tuple(basename, suffix, isTimeSampled);
-  };
-#endif
 
   //
   // Resolve prepend references

@@ -102,7 +102,7 @@ struct PrimVar {
   template <class T>
   nonstd::optional<T> get_ts_value(size_t idx) const {
 
-    if (is_timesample()) {
+    if (!is_timesample()) {
       return nonstd::nullopt;
     }
 
