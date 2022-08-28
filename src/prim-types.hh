@@ -24,7 +24,6 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/better-enums/enum.h"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
@@ -913,64 +912,94 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-// Typed TimeSamples(including scalar) value
+// Typed TimeSamples value
 //
 // double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
 //
 // in .usd, are represented as
 // 
-// time = [0, 1, 2]
-// sample = [1.0, undef, 3.0]
-// mask = [0, 1, 0]
+// 0: (1.0, false)
+// 1: (2.0, true)
+// 2: (3.0, false)
 //
-// in TypedTimeSamples.
 
 template <typename T>
-class TypedTimeSamples {
+struct TypedTimeSamples {
 
   struct Sample {
-    double time;
+    double t;
     T value;
-    bool blocked;
+    bool blocked{false};
   };
-
 
  public:
 
-  void clear() {
-    _samples.clear();
-  }
-
-  bool empty() {
+  bool empty() const {
     return _samples.empty();
   }
 
-  bool add_sample(const double t, const T &v) {
+  // TODO: Implement.
+  nonstd::optional<T> TryGet(double t = 0.0) const;
+#if 0
+    if (empty()) {
+      return nonstd::nullopt;
+    }
 
-    _samples.push_back({t, v, false});
+    if (_dirty) {
+      // TODO: Sort by time
+      _dirty = false;
+    }
 
+    // TODO: Fetch value then lineary interpolate value.
+    return nonstd::nullopt;
+  }
+#endif
+
+  void AddSample(const Sample &s) {
+    _samples.push_back(s);
     _dirty = true;
-
-    return true;
   }
 
-  bool Commit();
+  void AddSample(const double t, T &v) {
+    _samples.push_back({t, v, false});
+    _dirty = true;
+  }
 
-  bool Get(double t);
+  void AddBlockedSample(const double t) {
+    _samples.push_back({t, T(), true});
+    _dirty = true;
+  }
+
+  const std::vector<Sample> &GetSamples() const {
+    return _samples;
+  }
 
  private:
   std::vector<Sample> _samples;
-  bool _dirty{true}; // true: need to sort by `times` before retrieving TimeSample data
+  bool _dirty{false};
 
 };
 
 template <typename T>
 struct Animatable {
-  T value; // scalar
+  // scalar
+  T value;  
+  bool blocked{false};
+
+  // timesamples
   TypedTimeSamples<T> ts;
 
   bool IsTimeSampled() const {
     return !ts.empty();
+  }
+
+  bool IsScalar() const {
+    return ts.empty();
+  }
+
+  // Scalar
+  bool IsBlocked() const {
+    return blocked;
   }
 
 #if 0  // TODO
@@ -985,35 +1014,9 @@ struct Animatable {
   }
 #endif
 
-  bool valid() {
-    // scalar?
-    if (ts.times.empty() && ts.values.size() == 1) {
-      return true;
-    }
-  }
-
-
   Animatable() {}
-
-  // Scalar
-  Animatable(const T &v) : value(v) {
-  }
-
+  Animatable(const T &v) : value(v) {}
 };
-
-// template<typename T>
-// using Animatable = nonstd::variant<T, TimeSampled<T>>;
-
-// Frequently used types
-using AnimatableFloat = Animatable<float>;
-using AnimatableDouble = Animatable<double>;
-using AnimatableExtent = Animatable<Extent>;
-using AnimatableVisibility = Animatable<Visibility>;
-using AnimatableVec3f = Animatable<value::float3>;
-using AnimatableVec3fArray = Animatable<std::vector<value::float3>>;
-using AnimatableFloatArray = Animatable<std::vector<float>>;
-
-
 
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
@@ -1034,11 +1037,12 @@ struct PrimAttrib {
   //
   bool uniform{false};  // `uniform`
 
+  bool blocked{false}; // Attribute Block('None')
   primvar::PrimVar var;
 };
 
 ///
-/// Typed version of PrimAttrib(e.g. for `points`, `normals`,
+/// Typed version of PrimAttrib(e.g. for `points`, `normals`, `velocities.timeSamples`
 /// `inputs:st.connect`)
 ///
 template <typename T>
@@ -1052,20 +1056,16 @@ class TypedAttribute {
 
   static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 
-  // Empty(Define only), value or connection(`.connect`) target path
-  //using value_type = tinyusdz::variant<tinyusdz::monostate, T, Path>;
+  // TODO: Use variant?
+  nonstd::optional<Animatable<T>> value; // T or TimeSamples<T>
+  nonstd::optional<Path> target;
 
-  //nonstd::optional<value_type> value; 
-  Animatable<T> value; 
-  nonstd::optional<Path> target; // '.connect'
-
-  bool authored() const { 
-    if (define_only) return true;
-    if (target || value.valid()) {
+  bool authored() const {
+    if (define_only) {
       return true;
     }
 
-    return false;
+    return (target || value);
   }
 
   bool set_define_only(bool onoff = true) { define_only = onoff; return define_only; }
@@ -1074,6 +1074,7 @@ class TypedAttribute {
   AttrMeta meta;
   bool uniform{false};  // `uniform`
   bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
+  ListEditQual qual{ListEditQual::ResetToExplicit}; // default = "unqualified"
 };
 
 // Attribute or Relation/Connection. And has this property is custom or not
@@ -1311,6 +1312,7 @@ struct TimeSamples {
 };
 #endif
 
+
 // `def` with no type.
 struct Model {
   std::string name;
@@ -1478,7 +1480,7 @@ struct Scope {
 
   PrimMeta meta;
 
-  AnimatableVisibility visibility{Visibility::Inherited};
+  Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;

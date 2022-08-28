@@ -156,20 +156,6 @@ constexpr auto kRel = "rel";
 constexpr auto kTimeSamplesSuffix = ".timeSamples";
 constexpr auto kConnectSuffix = ".connect";
 
-// T = better-enum class
-template <typename T>
-std::string enum_join(const std::string &sep) {
-  std::ostringstream ss;
-
-  // quote with "
-  ss << quote(T::_names()[0], "\"");
-
-  for (size_t i = 1; i < T::_size(); i++) {
-    ss << sep << quote(T::_names()[i], "\"");
-  }
-
-  return ss.str();
-}
 
 struct Identifier : std::string {
   // using std::string;
@@ -205,33 +191,10 @@ static void RegisterStageMetas(
   metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers");
 }
 
-#if 0
-// T = better-enums
-template<class T>
-class OneOf
-{
- public:
-  nonstd::expected<bool, std::string> operator()(const std::string &name) {
-    // strip double quotation.
-    std::string identifier = unwrap(name);
-
-    if (auto p = T::_from_string_nothrow(identifier.c_str())) {
-      return true;
-    }
-
-    std::string err_msg = "Must be one of " + enum_join<T>(", ") + " but got \"" + name + "\"";
-
-    return nonstd::make_unexpected(err_msg);
-  }
-};
-#endif
-
 static void RegisterPrimMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
-  // metas["kind"] = AsciiParser::VariableDef(value::kString, "kind",
-  // OneOf<Kind>());
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
 
   // Composition arcs

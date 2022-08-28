@@ -34,7 +34,7 @@ struct BlendShape {
 struct Skeleton {
   std::string name;
 
-  AnimatableExtent extent;
+  Animatable<Extent> extent;
 
   TypedAttribute<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
 
@@ -52,7 +52,7 @@ struct Skeleton {
   
 
   Purpose purpose{Purpose::Default};
-  AnimatableVisibility visibility{Visibility::Inherited};
+  Animatable<Visibility> visibility{Visibility::Inherited};
 
   std::map<std::string, Property> props;
   std::vector<value::token> xformOpOrder;
@@ -64,9 +64,9 @@ struct SkelRoot {
   std::string name;
   int64_t parent_id{-1};
 
-  AnimatableExtent extent;
+  Animatable<Extent> extent;
   Purpose purpose{Purpose::Default};
-  AnimatableVisibility visibility{Visibility::Inherited};
+  Animatable<Visibility> visibility{Visibility::Inherited};
 
   // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
 

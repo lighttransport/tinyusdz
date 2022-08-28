@@ -7,6 +7,22 @@
 #include "str-util.hh"
 
 
+namespace std {
+
+std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v) {
+  ofs << to_string(v);
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v) {
+  ofs << to_string(v);
+
+  return ofs;
+}
+
+} // namespace std
+
+
 namespace tinyusdz {
 
 namespace pprint {
@@ -59,6 +75,7 @@ std::string to_string(const double &v) {
   return ss.str();
 }
 
+#if 0
 template<typename T>
 std::string to_string(const std::vector<T> &v) {
   std::stringstream ss;
@@ -74,6 +91,7 @@ std::string to_string(const std::vector<T> &v) {
 
   return ss.str();
 }
+#endif
 
 
 template<typename T>
@@ -118,12 +136,21 @@ std::string print_timesampled(const TypedTimeSamples<T> &v, const uint32_t inden
 
 template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent);
+
   if (v.IsTimeSampled()) {
-    // TODO: print all ranges
-    return "TODO"; //print_timesampled(v.ranges.[0], indent);
+    ss << "[TODO: TimeSample]";
+  } else if (v.IsBlocked()) {
+    ss << "None";
+  } else if (v.IsScalar()) {
+    ss << v.value;
   } else {
-    return pprint::Indent(indent) + to_string(v.value);
+    return "[FIXME: Invalid Animatable]";
   }
+
+  return ss.str();
 }
 
 std::string print_customData(const CustomDataType &customData, const uint32_t indent) {
@@ -231,12 +258,23 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
     }
 
     // TODO: ListEdit qual.
+    ss << value::TypeTrait<T>::type_name() << " " << name;
 
+    if (attr.value) {
+      if (attr.value.value().IsTimeSampled()) {
+        ss << ".timeSamples";
+      }
+    }
 
-    if (auto v = attr.value.value().template get<T>()) {
-      ss << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
-    } else if (auto empty = attr.value.value().template get<tinyusdz::monostate>()) { // define only
-      ss << value::TypeTrait<T>::type_name();
+    if (attr.value.value().IsBlocked()) {
+      ss << " = None";
+    } else if (!attr.define_only) {
+      ss << " = ";
+      if (attr.value.value().IsTimeSampled()) {
+        ss << "[TODO: TimeSamples]";
+      } else {
+        ss << attr.value.value().value;
+      }
     }
 
     if (attr.meta.authored()) {
@@ -392,7 +430,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
 
     if (!v.ValidTimeSamples()) {
       return "[Invalid TimeSamples data(internal error?)]";
-    } 
+    }
 
     ss << "{\n";
 
@@ -581,7 +619,7 @@ std::string to_string(tinyusdz::Orientation o) {
 
 std::string to_string(tinyusdz::ListEditQual v) {
   if (v == tinyusdz::ListEditQual::ResetToExplicit) {
-    return "unqualified";
+    return ""; // unqualified
   } else if (v == tinyusdz::ListEditQual::Append) {
     return "append";
   } else if (v == tinyusdz::ListEditQual::Add) {
@@ -1542,3 +1580,4 @@ std::string to_string(const XformOp::OpType &op) {
 
 
 } // tinyusdz
+

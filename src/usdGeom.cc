@@ -30,15 +30,28 @@ std::vector<value::normal3f> GeomMesh::GetNormals() const {
       return dst;
     }
 
+    if (prop.attrib.var.is_timesample()) {
+      // TODO:
+      return dst;
+    }
+
     if (prop.attrib.var.type_name() == "normal3f[]") {
       if (auto pv = prop.attrib.var.get_value<std::vector<value::normal3f>>()) {
         dst = pv.value();
       }
     }
   } else if (normals.value) {
-    if (auto pv = normals.value.value().get<std::vector<value::normal3f>>()) {
-      dst = pv.value();
+
+    if (normals.value.value().IsTimeSampled()) {
+      // TODO
+      return dst;
     }
+
+    if (normals.value.value().IsBlocked()) {
+      return dst;
+    }
+
+    dst = normals.value.value().value;
   }
 
   return dst;
@@ -159,30 +172,27 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     return nonstd::make_unexpected(ss.str());
   }
 
-  if (auto pfv = faceVertexCounts.value.value().get<std::vector<int>>()) {
-
-    size_t n = pfv.value().size();
-
-    // Currently we only check if face ids are valid.
-    for (size_t i = 0; i < geom_subset_children.size(); i++) {
-      const GeomSubset &subset = geom_subset_children[i];
-
-      if (!CheckFaceIds(n, subset.indices)) {
-        ss << "Face index out-of-range.\n";
-        return nonstd::make_unexpected(ss.str());
-      }
-    }
-
-    // TODO
-    return nonstd::make_unexpected(
-        "TODO: Implent GeomMesh::ValidateGeomSubset\n");
-  } else if (auto pfvp = faceVertexCounts.value.value().get<Path>()) {
+  if (faceVertexCounts.target) {
     return nonstd::make_unexpected(
         "TODO: Support faceVertexCounts.connect\n");
-  } else {
-    return false;
   }
 
+  const auto &fv = faceVertexCounts.value.value().value;
+  size_t n = fv.size();
+
+  // Currently we only check if face ids are valid.
+  for (size_t i = 0; i < geom_subset_children.size(); i++) {
+    const GeomSubset &subset = geom_subset_children[i];
+
+    if (!CheckFaceIds(n, subset.indices)) {
+      ss << "Face index out-of-range.\n";
+      return nonstd::make_unexpected(ss.str());
+    }
+  }
+
+  // TODO
+  return nonstd::make_unexpected(
+      "TODO: Implent GeomMesh::ValidateGeomSubset\n");
 }
 
 namespace {
