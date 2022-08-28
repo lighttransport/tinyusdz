@@ -231,12 +231,23 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
     }
 
     // TODO: ListEdit qual.
+    ss << value::TypeTrait<T>::type_name() << " " << name;
 
+    if (attr.value) {
+      if (attr.value.value().IsTimeSampled()) {
+        ss << ".timeSamples";
+      }
+    }
 
-    if (auto v = attr.value.value().template get<T>()) {
-      ss << value::TypeTrait<T>::type_name() << " " << name << " = " << v.value();
-    } else if (auto empty = attr.value.value().template get<tinyusdz::monostate>()) { // define only
-      ss << value::TypeTrait<T>::type_name();
+    if (attr.value.value().IsBlocked()) {
+      ss << " = None";
+    } else if (!attr.define_only) {
+      ss << " = ";
+      if (attr.value.value().IsTimeSampled()) {
+        ss << "[TODO: TimeSamples]";
+      } else {
+        ss << attr.value.value().value;
+      }
     }
 
     if (attr.meta.authored()) {
@@ -392,7 +403,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
 
     if (!v.ValidTimeSamples()) {
       return "[Invalid TimeSamples data(internal error?)]";
-    } 
+    }
 
     ss << "{\n";
 
@@ -581,7 +592,7 @@ std::string to_string(tinyusdz::Orientation o) {
 
 std::string to_string(tinyusdz::ListEditQual v) {
   if (v == tinyusdz::ListEditQual::ResetToExplicit) {
-    return "unqualified";
+    return ""; // unqualified
   } else if (v == tinyusdz::ListEditQual::Append) {
     return "append";
   } else if (v == tinyusdz::ListEditQual::Add) {

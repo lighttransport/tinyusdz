@@ -24,7 +24,6 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/better-enums/enum.h"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
@@ -913,6 +912,124 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
+//
+// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
+//
+// in .usd, are represented as
+//
+// 0: (1.0, false)
+// 1: (2.0, true)
+// 2: (3.0, false)
+//
+// for TypedTimeSamples.
+
+template <typename T>
+struct TypedTimeSamples {
+
+  struct Sample {
+    double t;
+    T value;
+    bool blocked{false};
+  };
+
+ public:
+
+  bool empty() const {
+    return _samples.empty();
+  }
+
+  // TODO: Implement.
+  nonstd::optional<T> TryGet(double t = 0.0) const;
+#if 0
+    if (empty()) {
+      return nonstd::nullopt;
+    }
+
+    if (_dirty) {
+      // TODO: Sort by time
+      _dirty = false;
+    }
+
+    // TODO: Fetch value then lineary interpolate value.
+    return nonstd::nullopt;
+  }
+#endif
+
+  void AddSample(const Sample &s) {
+    _samples.push_back(s);
+    _dirty = true;
+  }
+
+  void AddSample(const double t, T &v) {
+    _samples.push_back({t, v, false});
+    _dirty = true;
+  }
+
+  void AddBlockedSample(const double t) {
+    _samples.push_back({t, T(), true});
+    _dirty = true;
+  }
+
+  const std::vector<Sample> &GetSamples() const {
+    return _samples;
+  }
+
+ private:
+  std::vector<Sample> _samples;
+  bool _dirty{false};
+
+};
+
+template <typename T>
+struct Animatable {
+  // scalar
+  T value;  
+  bool blocked{false};
+
+  // timesamples
+  TypedTimeSamples<T> ts;
+
+  bool IsTimeSampled() const {
+    return !ts.empty();
+  }
+
+  bool IsScalar() const {
+    return ts.empty();
+  }
+
+  // Scalar
+  bool IsBlocked() const {
+    return blocked;
+  }
+
+#if 0  // TODO
+  T Get() const { return value; }
+
+  T Get(double t) {
+    if (IsTimeSampled()) {
+      // TODO: lookup value by t
+      return timeSamples.Get(t);
+    }
+    return value;
+  }
+#endif
+
+  Animatable() {}
+  Animatable(T v) : value(v) {}
+};
+
+// template<typename T>
+// using Animatable = nonstd::variant<T, TimeSampled<T>>;
+
+// Frequently used types
+using AnimatableFloat = Animatable<float>;
+using AnimatableDouble = Animatable<double>;
+using AnimatableExtent = Animatable<Extent>;
+using AnimatableVisibility = Animatable<Visibility>;
+using AnimatableVec3f = Animatable<value::float3>;
+using AnimatableVec3fArray = Animatable<std::vector<value::float3>>;
+using AnimatableFloatArray = Animatable<std::vector<float>>;
+
 
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
@@ -933,11 +1050,12 @@ struct PrimAttrib {
   //
   bool uniform{false};  // `uniform`
 
+  bool blocked{false}; // Attribute Block('None')
   primvar::PrimVar var;
 };
 
 ///
-/// Typed version of PrimAttrib(e.g. for `points`, `normals`,
+/// Typed version of PrimAttrib(e.g. for `points`, `normals`, `velocities.timeSamples`
 /// `inputs:st.connect`)
 ///
 template <typename T>
@@ -951,12 +1069,17 @@ class TypedAttribute {
 
   static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 
-  // Empty(Define only), value or connection(`.connect`) target path
-  using value_type = tinyusdz::variant<tinyusdz::monostate, T, Path>;
+  // TODO: Use variant?
+  nonstd::optional<Animatable<T>> value; // T or TimeSamples<T>
+  nonstd::optional<Path> target;
 
-  nonstd::optional<value_type> value;
+  bool authored() const {
+    if (define_only) {
+      return true;
+    }
 
-  bool authored() const { return value.has_value(); }
+    return (target || value);
+  }
 
   bool set_define_only(bool onoff = true) { define_only = onoff; return define_only; }
 
@@ -964,6 +1087,7 @@ class TypedAttribute {
   AttrMeta meta;
   bool uniform{false};  // `uniform`
   bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
+  ListEditQual qual{ListEditQual::ResetToExplicit}; // default = "unqualified"
 };
 
 // Attribute or Relation/Connection. And has this property is custom or not
@@ -1201,79 +1325,6 @@ struct TimeSamples {
 };
 #endif
 
-// Animatable = run-time data structure(e.g. for GeomMesh)
-// TimeSample data is splitted into multiple ranges when it contains
-// `None`(Blocked)
-//
-// e.g.
-//
-// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
-//
-// in .usd, are splitted into two ranges:
-//
-// range[0, 1): 1.0
-// range[2, inf): 3.0
-//
-// for Animatable type.
-
-template <typename T>
-struct TypedTimeSamples {
-  std::vector<double> times;
-  std::vector<T> samples;
-
-  bool valid() const {
-    if (times.size() > 0) {
-      if (samples.size() == times.size()) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-};
-
-template <typename T>
-struct Animatable {
-  T value;  // scalar
-
-  // TODO: sort by timeframe
-  std::vector<TypedTimeSamples<T>> ranges;
-
-  bool IsTimeSampled() const {
-    if (ranges.size()) {
-      return ranges.begin()->valid();
-    }
-
-    return false;
-  }
-
-#if 0  // TODO
-  T Get() const { return value; }
-
-  T Get(double t) {
-    if (IsTimeSampled()) {
-      // TODO: lookup value by t
-      return timeSamples.Get(t);
-    }
-    return value;
-  }
-#endif
-
-  Animatable() {}
-  Animatable(T v) : value(v) {}
-};
-
-// template<typename T>
-// using Animatable = nonstd::variant<T, TimeSampled<T>>;
-
-// Frequently used types
-using AnimatableFloat = Animatable<float>;
-using AnimatableDouble = Animatable<double>;
-using AnimatableExtent = Animatable<Extent>;
-using AnimatableVisibility = Animatable<Visibility>;
-using AnimatableVec3f = Animatable<value::float3>;
-using AnimatableVec3fArray = Animatable<std::vector<value::float3>>;
-using AnimatableFloatArray = Animatable<std::vector<float>>;
 
 // `def` with no type.
 struct Model {
