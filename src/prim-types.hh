@@ -230,14 +230,7 @@ class MetaVariable {
   bool valid() const { return !IsEmpty(); }
 
   MetaVariable() = default;
-  // Variable(std::string ty, std::string n) : type(ty), name(n) {}
-  // Variable(std::string ty) : type(ty) {}
 
-  // friend std::ostream &operator<<(std::ostream &os, const Object &obj);
-  // friend std::ostream &operator<<(std::ostream &os, const MetaVariable &var);
-
-  // friend std::string str_object(const Object &obj, int indent = 0); // string
-  // representation of Object.
 };
 
 using CustomDataType = std::map<std::string, MetaVariable>;
@@ -1536,6 +1529,8 @@ DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 
 DEFINE_TYPE_TRAIT(StringData, "String", TYPE_ID_SCOPE, 1);
+
+DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA, 1); // TODO: Unify with `dict`?
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

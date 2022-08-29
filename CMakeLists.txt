@@ -595,6 +595,14 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
 endif()
 
+if(TINYUSDZ_WITH_JSON)
+  add_executable(to_json
+                 ${CMAKE_CURRENT_SOURCE_DIR}/examples/to_json/to_json-main.cc)
+  add_sanitizers(to_json)
+  target_include_directories(to_json PRIVATE ${PROJECT_SOURCE_DIR}/src/)
+  target_link_libraries(to_json PRIVATE ${TINYUSDZ_TARGET_STATIC})
+endif()
+
 if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
   add_executable(usda_parser
                  ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
