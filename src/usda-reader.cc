@@ -71,34 +71,6 @@
 #include "value-pprint.hh"
 #include "value-types.hh"
 
-#if 0
-#define PUSH_PARSER_ERROR_AND_RETURN() \
-  do {                                 \
-    std::ostringstream ss;             \
-    ss << _parser.GetError();          \
-    _err += ss.str();                  \
-    return false;                      \
-  } while (0)
-#endif
-
-// s = std::string
-#define PUSH_ERROR_AND_RETURN(s)                                   \
-  do {                                                             \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s << "\n";                                               \
-    _err += ss.str();                                              \
-    return false;                                                  \
-  } while (0)
-
-#define PUSH_WARN(s)                                               \
-  do {                                                             \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s << "\n";                                               \
-    _err += ss.str();                                              \
-  } while (0)
-
 #include "common-macros.inc"
 
 namespace tinyusdz {
@@ -361,6 +333,14 @@ class USDAReader::Impl {
     if (!_path_stack.empty()) {
       _path_stack.pop();
     }
+  }
+
+  void PushError(const std::string &s) {
+    _err += s;
+  }
+
+  void PushWarn(const std::string &s) {
+    _err += s;
   }
 
 #if 0  // TODO: remove
@@ -2806,15 +2786,6 @@ bool USDAReader::Impl::ReconstructPrim(
 
         {
           const Relation &rel = prop.second.rel;
-#if 0
-          if (auto pv = rel.targets.get<Path>()) {
-            MaterialBindingAPI m;
-            m.binding = pv.value();
-            mesh->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN("`material:binding` target must be Path.");
-          }
-#else
           if (rel.IsPath()) {
             DCOUT("materialBinding");
             MaterialBindingAPI m;
@@ -2823,7 +2794,22 @@ bool USDAReader::Impl::ReconstructPrim(
           } else {
             PUSH_ERROR_AND_RETURN("`material:binding` target must be Path.");
           }
-#endif
+        }
+      } else if (prop.first == "skel:skeleton") {
+        // Must be relation of type Path.
+        if (prop.second.IsRel() && prop.second.IsEmpty()) {
+          PUSH_ERROR_AND_RETURN(
+              "`skel:skeleton` must be a Relation with Path target.");
+        }
+
+        {
+          const Relation &rel = prop.second.rel;
+          if (rel.IsPath()) {
+            DCOUT("skelBinding");
+            mesh->skeleton = rel.targetPath;
+          } else {
+            PUSH_ERROR_AND_RETURN("`skel:skeleton` target must be Path.");
+          }
         }
 
       } else {

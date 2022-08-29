@@ -425,13 +425,16 @@ struct Node {
 };
 
 struct StageMetas {
+  // TODO: Support more predefined properties: reference = <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp
   // Scene global setting
   AttribWithFallback<Axis> upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
   value::token defaultPrim;           // prim node name
   AttribWithFallback<double> metersPerUnit{1.0};        // default [m]
   AttribWithFallback<double> timeCodesPerSecond {24.0};  // default 24 fps
+  AttribWithFallback<double> framesPerSecond {24.0};  // FIXME: default 24 fps
   AttribWithFallback<double> startTimeCode{0.0}; // FIXME: default = -inf?
   AttribWithFallback<double> endTimeCode{std::numeric_limits<double>::infinity()};
+  StringData comment; // 'comment'
   StringData doc; // `documentation`
 
   std::map<std::string, MetaVariable> customLayerData; // customLayerData

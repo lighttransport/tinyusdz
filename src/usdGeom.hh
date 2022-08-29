@@ -197,6 +197,9 @@ struct GeomMesh : GPrim {
   TypedAttribute<std::vector<int32_t>> faceVertexCounts;
   TypedAttribute<std::vector<int32_t>> faceVertexIndices;
 
+  // Make SkelBindingAPI first citizen.
+  nonstd::optional<Path> skeleton; // rel skel:skeleton
+
   //
   // Utility functions
   //

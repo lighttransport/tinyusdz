@@ -54,51 +54,6 @@
 #endif
 
 //
-
-#ifdef TINYUSDZ_PRODUCTION_BUILD
-// Do not include full filepath for privacy.
-#define PUSH_ERROR(s)                                               \
-  {                                                                 \
-    std::ostringstream ss;                                          \
-    ss << "[usdc-parser] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    _err += ss.str() + "\n";                                        \
-  }                                                                 \
-  while (0)
-
-#define PUSH_WARN(s)                                                \
-  {                                                                 \
-    std::ostringstream ss;                                          \
-    ss << "[usdc-parser] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    _warn += ss.str() + "\n";                                       \
-  }                                                                 \
-  while (0)
-
-#else
-
-#if 0
-#define PUSH_ERROR(s)                                              \
-  {                                                                \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    _err += ss.str() + "\n";                                       \
-  }                                                                \
-  while (0)
-
-#define PUSH_WARN(s)                                               \
-  {                                                                \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    _warn += ss.str() + "\n";                                      \
-  }                                                                \
-  while (0)
-#endif
-
-#endif
-
 #include "common-macros.inc"
 
 namespace tinyusdz {
@@ -205,6 +160,14 @@ class USDCReader::Impl {
   ///
   /// --------------------------------------------------
   ///
+
+  void PushError(const std::string &s) {
+    _err += s;
+  }
+
+  void PushWarn(const std::string &s) {
+    _warn += s;
+  }
 
   std::string GetError() { return _err; }
 
@@ -1713,11 +1676,14 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
 bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   (void)stage;
 
-#if 0 // TODO
-  if (_nodes.empty()) {
+  DCOUT("# of Paths = " << crate_reader->NumPaths());
+
+  if (crate_reader->NumNodes() == 0) {
     PUSH_WARN("Empty scene.");
     return true;
   }
+
+#if 0 // TODO
 
   std::unordered_map<uint32_t, uint32_t>
       path_index_to_spec_index_map;  // path_index -> spec_index
@@ -1746,9 +1712,9 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   }
 
   return true;
-#else
-  return false;
 #endif
+
+  PUSH_ERROR_AND_RETURN("TODO");
 }
 
 
@@ -1825,7 +1791,6 @@ bool USDCReader::Impl::ReadUSDC() {
 
   DCOUT("Read Crate.\n");
 
-  // TODO
   return true;
 
 }
