@@ -601,11 +601,21 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
       return false;
     }
   }
-  // TODO: Reconstruct Scene
-    if (err) {
-      (*err) += "USDA parsing success, but reconstructing Scene is TODO.\n";
+
+  {
+    bool ret = reader.ReconstructStage();
+    if (!ret) {
+      if (err) {
+        (*err) += "Failed to reconstruct Stage from USDA:\n";
+        (*err) += reader.GetError() + "\n";
+      }
+      return false;
     }
-  return false;
+  }
+        
+  (*stage) = reader.GetStage();
+
+  return true;
 }
 
 bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,

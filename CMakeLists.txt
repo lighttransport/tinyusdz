@@ -597,7 +597,7 @@ endif()
 
 if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
   add_executable(usda_parser
-                 ${CMAKE_CURRENT_SOURCE_DIR}/sandbox/usda/parser-main.cc)
+                 ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
   add_sanitizers(usda_parser)
   target_include_directories(usda_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
   target_link_libraries(usda_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
