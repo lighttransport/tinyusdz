@@ -55,6 +55,8 @@ constexpr auto kTypeName = "typeName";
 constexpr auto kToken = "Token";
 constexpr auto kDefault = "default";
 
+#define kCrateTag "[Crate]"
+
 namespace {
 
 template <class Int>
@@ -108,22 +110,26 @@ static inline bool ReadIndices(const StreamReader *sr,
 //
 // --
 //
-CrateReader::CrateReader(StreamReader *sr, int num_threads) : _sr(sr) {
-  if (num_threads == -1) {
+CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr) {
+  _config = config;
+  if (_config.numThreads == -1) {
 #if defined(__wasi__)
 #else
-    num_threads = (std::max)(1, int(std::thread::hardware_concurrency()));
-    PUSH_WARN("# of thread to use: " << std::to_string(num_threads));
+    _config.numThreads = (std::max)(1, int(std::thread::hardware_concurrency()));
+    PUSH_WARN("# of thread to use: " << std::to_string(_config.numThreads));
 #endif
   }
 
+
 #if defined(__wasi__)
   PUSH_WARN("Threading is disabled for WASI build.");
-  num_threads = 1;
-#endif
+  _config.numThreads = 1;
+#else
 
   // Limit to 1024 threads.
-  _num_threads = (std::min)(1024, num_threads);
+  _config.numThreads = (std::min)(1024, _config.numThreads);
+#endif
+
 }
 
 CrateReader::~CrateReader() {}
@@ -1081,12 +1087,16 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
-bool CrateReader::ReadDictionary(crate::CrateValue::Dictionary *d) {
-  crate::CrateValue::Dictionary dict;
+bool CrateReader::ReadCustomData(CustomDataType *d) {
+  CustomDataType dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
     _err += "Failed to read the number of elements for Dictionary data.\n";
     return false;
+  }
+
+  if (sz > _config.maxDictElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "The number of elements for Dictionary data is too large. Max = " << std::to_string(_config.maxDictElements) << ", but got " << std::to_string(sz));
   }
 
   DCOUT("# o elements in dict" << sz);
@@ -1096,32 +1106,26 @@ bool CrateReader::ReadDictionary(crate::CrateValue::Dictionary *d) {
     std::string key;
 
     if (!ReadString(&key)) {
-      _err += "Failed to read key string for Dictionary element.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read key string for Dictionary element.");
     }
 
     // 8byte for the offset for recursive value. See RecursiveRead() in
     // crateFile.cpp for details.
     int64_t offset{0};
     if (!_sr->read8(&offset)) {
-      _err += "Failed to read the offset for value in Dictionary.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read the offset for value in Dictionary.");
     }
 
     // -8 to compensate sizeof(offset)
     if (!_sr->seek_from_current(offset - 8)) {
-      _err +=
-          "Failed to seek. Invalid offset value: " + std::to_string(offset) +
-          "\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
     }
 
     DCOUT("key = " << key);
 
     crate::ValueRep rep{0};
     if (!ReadValueRep(&rep)) {
-      _err += "Failed to read value for Dictionary element.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read value for Dictionary element.");
     }
 
     DCOUT("vrep =" << crate::GetCrateDataTypeName(rep.GetType()));
@@ -1130,15 +1134,24 @@ bool CrateReader::ReadDictionary(crate::CrateValue::Dictionary *d) {
 
     crate::CrateValue value;
     if (!UnpackValueRep(rep, &value)) {
-      _err += "Failed to unpack value of Dictionary element.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to unpack value of Dictionary element.");
     }
 
-    dict[key] = value;
+    if (dict.count(key)) {
+      // Duplicated key. maybe ok?
+    }
+    // CrateValue -> MetaVariable
+    MetaVariable var;
+
+    var.value = value.get_raw();
+    var.type = value.type_name();
+    var.name = key;
+    //var.custom = TODO
+    
+    dict[key] = var;
 
     if (!_sr->seek_set(saved_position)) {
-      _err += "Failed to set seek in ReadDict\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to set seek.");
     }
   }
 
@@ -1520,7 +1533,8 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY: {
       // empty dict is allowed
       // TODO: empty(zero value) check?
-      crate::CrateValue::Dictionary dict;
+      //crate::CrateValue::Dictionary dict;
+      CustomDataType dict; // use CustomDataType for Dict 
       value->Set(dict);
       return true;
     }
@@ -2600,9 +2614,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
       ARRAY_UNSUPPORTED_CHECK(dty)
 
-      crate::CrateValue::Dictionary dict;
+      //crate::CrateValue::Dictionary dict;
+      CustomDataType dict;
 
-      if (!ReadDictionary(&dict)) {
+      if (!ReadCustomData(&dict)) {
         _err += "Failed to read Dictionary value\n";
         return false;
       }

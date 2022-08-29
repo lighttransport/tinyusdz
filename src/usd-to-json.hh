@@ -12,9 +12,11 @@
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusd {
+#include "tinyusdz.hh"
 
-nonstd::expected<std::string, std::string> ToJSON();
+namespace tinyusdz {
+
+nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage);
 
 
 } // namespace tinyusd

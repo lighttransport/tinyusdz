@@ -12,11 +12,21 @@
 namespace tinyusdz {
 namespace crate {
 
+struct CrateReaderConfig {
+  int numThreads = -1;
+
+  // For malcious Crate data.
+  // Set limits to prevent infinite-loop, buffer-overrun, etc.
+  size_t maxDictElements = 4096;
+  size_t maxArrayElements = 1024*1024*1024; // 1M
+};
+
 ///
 /// Crate(binary data) reader
 ///
 class CrateReader {
  public:
+
   ///
   /// Intermediate Node data structure.
   /// This does not contain leaf node inormation.
@@ -84,7 +94,7 @@ class CrateReader {
   CrateReader() = delete;
 
  public:
-  CrateReader(StreamReader *sr, int num_threads = -1);
+  CrateReader(StreamReader *sr, const CrateReaderConfig &config = CrateReaderConfig());
   ~CrateReader();
 
   bool ReadBootStrap();
@@ -231,8 +241,8 @@ class CrateReader {
   bool ReadPathArray(std::vector<Path> *d);
   bool ReadStringArray(std::vector<std::string> *d);
 
-  // Dictionary
-  bool ReadDictionary(crate::CrateValue::Dictionary *d);
+  // customData(Dictionary)
+  bool ReadCustomData(CustomDataType *d);
 
   bool ReadTimeSamples(value::TimeSamples *d);
 
@@ -296,7 +306,7 @@ class CrateReader {
   mutable std::string _err;
   mutable std::string _warn;
 
-  int _num_threads{1};
+  CrateReaderConfig _config;
 };
 
 }  // namespace crate

@@ -16,14 +16,19 @@
 #pragma clang diagnostic pop
 #endif
 
+#include "pprinter.hh"
+#include "common-macros.inc"
+
 using namespace nlohmann;
 
-namespace tinyusd {
+namespace tinyusdz {
 
 namespace {
 
 json ToJSON(tinyusdz::GeomMesh& mesh) {
   json j;
+
+#if 0
 
   if (mesh.points.size()) {
     j["points"] = mesh.points;
@@ -99,6 +104,7 @@ json ToJSON(tinyusdz::GeomMesh& mesh) {
 
   }
 
+#endif
 
   return j;
 }
@@ -106,18 +112,32 @@ json ToJSON(tinyusdz::GeomMesh& mesh) {
 json ToJSON(tinyusdz::GeomBasisCurves& curves) {
   json j;
 
-  if (curves.points.size()) {
-    j["points"] = curves.points;
-  }
+  return j;
+}
 
-  j["purpose"] = curves.purpose;
+nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
+  json j;
+
+  if (metas.upAxis.authored()) {
+    j["upAxis"] = to_string(metas.upAxis.get());
+  }
 
   return j;
 }
 
 }  // namespace
 
-nonstd::expected<std::string, std::string> ToJSON() {
+nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage) {
+  json j; // root
+
+  auto jstageMetas = ToJSON(stage.stage_metas);
+  if (!jstageMetas) {
+    return nonstd::make_unexpected(jstageMetas.error());
+  }
+  j["stageMeta"] = *jstageMetas;
+
+  j["version"] = 1.0;
+
   tinyusdz::GeomMesh mesh;
   json jmesh = ToJSON(mesh);
 
@@ -128,7 +148,9 @@ nonstd::expected<std::string, std::string> ToJSON() {
 
   (void)jcurves;
 
-  return nonstd::make_unexpected("TODO");
+  std::string str = j.dump(/* indent*/2);
+
+  return str;
 }
 
 }  // namespace tinyusd

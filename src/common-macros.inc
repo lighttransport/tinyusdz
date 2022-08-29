@@ -7,72 +7,81 @@
 #if defined(TINYUSDZ_PRODUCTION_BUILD)
 // Do not include full filepath for privacy.
 
-#define PUSH_ERROR_AND_RETURN(s)                  \
-  do {                                                 \
+#define PUSH_ERROR_AND_RETURN(s)                         \
+  do {                                                   \
     std::ostringstream ss_e;                             \
     ss_e << "[error]"                                    \
-       << ":" << __func__ << "():" << __LINE__ << " "; \
+         << ":" << __func__ << "():" << __LINE__ << " "; \
     ss_e << s << "\n";                                   \
-    PushError(ss_e.str());                                           \
-    return false;                                      \
+    PushError(ss_e.str());                               \
+    return false;                                        \
   } while (0)
 
-#define PUSH_ERROR_AND_RETURN_TAG(tag, s)                  \
-  do {                                                 \
+#define PUSH_ERROR_AND_RETURN_TAG(tag, s)                                    \
+  do {                                                                       \
+    std::ostringstream ss_e;                                                 \
+    ss_e << "[error]" << tag << ":" << __func__ << "():" << __LINE__ << " "; \
+    ss_e << s << "\n";                                                       \
+    PushError(ss_e.str());                                                   \
+    return false;                                                            \
+  } while (0)
+
+#define PUSH_ERROR(s)                                    \
+  do {                                                   \
     std::ostringstream ss_e;                             \
-    ss_e << "[error]" << tag                                   \
-       << ":" << __func__ << "():" << __LINE__ << " "; \
+    ss_e << "[error]"                                    \
+         << ":" << __func__ << "():" << __LINE__ << " "; \
     ss_e << s << "\n";                                   \
-    PushError(ss_e.str());                                           \
-    return false;                                      \
+    PushError(ss_w.str());                               \
   } while (0)
 
-
-#define PUSH_ERROR(s)                             \
-  do {                                                 \
-    std::ostringstream ss_e;                             \
-    ss_e << "[error]"                                     \
-       << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_e << s << "\n";                                   \
-    PushError(ss_w.str());                                  \
-  } while (0)
-
-#define PUSH_WARN(s)                             \
-  do {                                                 \
+#define PUSH_WARN(s)                                     \
+  do {                                                   \
     std::ostringstream ss_w;                             \
     ss_w << "[warn]"                                     \
-       << ":" << __func__ << "():" << __LINE__ << " "; \
+         << ":" << __func__ << "():" << __LINE__ << " "; \
     ss_w << s << "\n";                                   \
-    PushWarn(ss_w.str());                                  \
+    PushWarn(ss_w.str());                                \
   } while (0)
 
 #else  // TINYUSDZ_PRODUCTION_BUILD
 
-#define PUSH_ERROR_AND_RETURN(s)                                   \
-  do {                                                                  \
+#define PUSH_ERROR_AND_RETURN(s)                                          \
+  do {                                                                    \
     std::ostringstream ss_e;                                              \
     ss_e << "[error]" << __FILE__ << ":" << __func__ << "():" << __LINE__ \
-       << " ";                                                          \
+         << " ";                                                          \
     ss_e << s << "\n";                                                    \
-    PushError(ss_e.str());                                           \
-    return false;                                                       \
+    PushError(ss_e.str());                                                \
+    return false;                                                         \
   } while (0)
 
-#define PUSH_ERROR(s)                                   \
-  do {                                                                  \
+#define PUSH_ERROR_AND_RETURN_TAG(tag, s)                   \
+  do {                                                      \
+    std::ostringstream ss_e;                                \
+    ss_e << "[error]" << __FILE__ << tag << ":" << __func__ \
+         << "():" << __LINE__ << " ";                       \
+    ss_e << s << "\n";                                      \
+    PushError(ss_e.str());                                  \
+    return false;                                           \
+  } while (0)
+
+#define PUSH_ERROR(s)                                                     \
+  do {                                                                    \
     std::ostringstream ss_e;                                              \
     ss_e << "[error]" << __FILE__ << ":" << __func__ << "():" << __LINE__ \
-       << " ";                                                          \
+         << " ";                                                          \
     ss_e << s << "\n";                                                    \
-    PushError(ss_e.str());                                           \
+    PushError(ss_e.str());                                                \
   } while (0)
 
 #define PUSH_WARN(s)                                                     \
-  do {                                                                         \
-    std::ostringstream ss_w;                                                     \
-    ss_w << "[warn]" << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_w << s << "\n";                                                           \
-    PushWarn(ss_w.str());                                  \
+  do {                                                                   \
+    std::ostringstream ss_w;                                             \
+    ss_w << "[warn]" << __FILE__ << ":" << __func__ << "():" << __LINE__ \
+         << " ";                                                         \
+    ss_w << s << "\n";                                                   \
+    PushWarn(ss_w.str());                                                \
   } while (0)
 
 #endif  // TINYUSDZ_PRODUCTION_BUILD
