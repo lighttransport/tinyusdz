@@ -1257,6 +1257,14 @@ struct XformOp {
 
 };
 
+// Interpolator for TimeSample data
+enum class TimeSampleInterpolation
+{
+  Nearest,  // nearest neighbor
+  Linear, // lerp 
+  // TODO: more to support...
+};
+
 #if 0
 template <typename T>
 inline T lerp(const T a, const T b, const double t) {

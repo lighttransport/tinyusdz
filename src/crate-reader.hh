@@ -16,6 +16,7 @@ namespace crate {
 /// Crate(binary data) reader
 ///
 class CrateReader {
+ public:
   ///
   /// Intermediate Node data structure.
   /// This does not contain leaf node inormation.
@@ -78,9 +79,6 @@ class CrateReader {
   };
 
  public:
-  // In-memory storage for a single "spec" -- prim, property, etc.
-  using FieldValuePair = std::pair<std::string, crate::CrateValue>;
-  using FieldValuePairVector = std::vector<FieldValuePair>;
 
  private:
   CrateReader() = delete;
@@ -120,6 +118,48 @@ class CrateReader {
     return _nodes.size();
   }
 
+  const std::vector<Node> GetNodes() const {
+    return _nodes;
+  }
+
+  const std::vector<value::token> GetTokens() const {
+    return _tokens;
+  }
+
+  const std::vector<crate::Index> GetStringIndices() const {
+    return _string_indices;
+  }
+
+  const std::vector<crate::Field> &GetFields() const {
+    return _fields;
+  }
+
+  const std::vector<crate::Index> &GetFieldsetIndices() const {
+    return _fieldset_indices;
+  }
+
+  const std::vector<Path> &GetPaths() const {
+    return _paths;
+  }
+
+  const std::vector<crate::Spec> &GetSpecs() const {
+    return _specs;
+  }
+
+  
+  const std::map<crate::Index, FieldValuePairVector> &GetLiveFieldSets() const {
+    return _live_fieldsets;
+  }
+
+#if 0
+  // FIXME: May not need this
+  const std::vector<Path> &GetPaths() const {
+    return _paths;
+  }
+#endif
+
+
+
   const nonstd::optional<value::token> GetToken(crate::Index token_index) const;
   const nonstd::optional<value::token> GetStringToken(
       crate::Index string_index) const;
@@ -135,6 +175,8 @@ class CrateReader {
 
   nonstd::optional<Path> GetPath(crate::Index index) const;
   nonstd::optional<std::string> GetPathString(crate::Index index) const;
+
+
 
   ///
   /// Find if a field with (`name`, `tyname`) exists in FieldValuePairVector.
