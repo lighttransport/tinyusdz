@@ -1811,9 +1811,11 @@ bool USDCReader::Impl::ReadUSDC() {
 
   // TODO(syoyo): Read unknown sections
 
+
   ///
   /// Reconstruct C++ representation of USD scene graph.
   ///
+  DCOUT("BuildLiveFieldSets\n");
   if (!crate_reader->BuildLiveFieldSets()) {
     _warn = crate_reader->GetWarning();
     _err = crate_reader->GetError();
@@ -1821,8 +1823,10 @@ bool USDCReader::Impl::ReadUSDC() {
     return false;
   }
 
+  DCOUT("Read Crate.\n");
+
   // TODO
-  return false;
+  return true;
 
 }
 
