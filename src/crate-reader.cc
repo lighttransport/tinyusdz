@@ -3781,6 +3781,7 @@ bool CrateReader::ReadTOC() {
     }
   }
 
+  DCOUT("TOC read success");
   return true;
 }
 
