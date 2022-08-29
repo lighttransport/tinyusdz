@@ -192,9 +192,8 @@ std::string GetCrateDataTypeName(CrateDataTypeId did) {
   return GetCrateDataTypeName(static_cast<int32_t>(did));
 }
 
-std::string CrateValue::GetTypeName() const { return value_.type_name(); }
-
-uint32_t CrateValue::GetTypeId() const { return value_.type_id(); }
+//std::string CrateValue::GetTypeName() const { return value_.type_name(); }
+//uint32_t CrateValue::GetTypeId() const { return value_.type_id(); }
 
 }  // namespace crate
 }  // namespace tinyusdz

@@ -362,12 +362,13 @@ nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id);
 std::string GetCrateDataTypeName(int32_t type_id);
 std::string GetCrateDataTypeName(CrateDataTypeId type_id);
 
+// TODO: Use PrimVar?
 class CrateValue {
  public:
   typedef std::map<std::string, CrateValue> Dictionary;
 
-  std::string GetTypeName() const;
-  uint32_t GetTypeId() const;
+  //std::string GetTypeName() const;
+  //uint32_t GetTypeId() const;
 
 #define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; }
 #define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &v) { value_ = v; }
@@ -452,9 +453,15 @@ class CrateValue {
     } else if (value::TypeTrait<T>::underlying_type_id == value_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
-      return std::move(value<T>());
+
+      // TODO: Type check(any_cast is not available for underlying_type_id)
+      return *linb::cast<const T>(&value_);
     }
     return nonstd::nullopt;
+  }
+
+  std::string type_name() const {
+    return value_.type_name();
   }
 
  private:
@@ -462,7 +469,9 @@ class CrateValue {
   linb::any value_;
 };
 
-
+// In-memory storage for a single "spec" -- prim, property, etc.
+using FieldValuePair = std::pair<std::string, crate::CrateValue>;
+using FieldValuePairVector = std::vector<FieldValuePair>;
 
 struct StdHashWrapper {
     template <class T>
