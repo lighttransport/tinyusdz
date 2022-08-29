@@ -735,7 +735,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 
   // must be an array of double.
-  DCOUT("TimeSample times:" << value.GetTypeName());
+  DCOUT("TimeSample times:" << value.type_name());
   DCOUT("TODO: Parse TimeSample values");
 
   //
@@ -3753,7 +3753,7 @@ bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
                                     const std::string &name,
                                     const std::string &tyname) {
   for (const auto &fv : fvs) {
-    if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
+    if ((fv.first == name) && (fv.second.type_name() == tyname)) {
       return true;
     }
   }
@@ -3776,12 +3776,12 @@ bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
   return false;
 }
 
-nonstd::expected<CrateReader::FieldValuePair, std::string>
+nonstd::expected<FieldValuePair, std::string>
 CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
                                const std::string &name,
                                const std::string &tyname) {
   for (const auto &fv : fvs) {
-    if ((fv.first == name) && (fv.second.GetTypeName() == tyname)) {
+    if ((fv.first == name) && (fv.second.type_name() == tyname)) {
       return fv;
     }
   }
@@ -3791,7 +3791,7 @@ CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
                                  "`");
 }
 
-nonstd::expected<CrateReader::FieldValuePair, std::string>
+nonstd::expected<FieldValuePair, std::string>
 CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
                                const std::string &name) {
   for (const auto &fv : fvs) {
@@ -3833,8 +3833,8 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
   //
   for (const auto &fv : fvs) {
     DCOUT("===  fvs.first " << fv.first
-                            << ", second: " << fv.second.GetTypeName());
-    if ((fv.first == "typeName") && (fv.second.GetTypeName() == "Token")) {
+                            << ", second: " << fv.second.type_name());
+    if ((fv.first == "typeName") && (fv.second.type_name() == "Token")) {
       attr->type_name = fv.second.value<value::token>().str();
       DCOUT("typeName: " << attr->type_name);
     } else if (fv.first == "default") {
@@ -3882,15 +3882,15 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         return false;
       }
     } else if ((fv.first == "variablity") &&
-               (fv.second.GetTypeName() == "Variability")) {
+               (fv.second.type_name() == "Variability")) {
       variability = fv.second.value<Variability>();
     } else if ((fv.first == "interpolation") &&
-               (fv.second.GetTypeName() == "Token")) {
+               (fv.second.type_name() == "Token")) {
       interpolation =
           InterpolationFromString(fv.second.value<value::token>().str());
     } else {
       DCOUT("TODO: name: " << fv.first
-                           << ", type: " << fv.second.GetTypeName());
+                           << ", type: " << fv.second.type_name());
     }
   }
 
@@ -3916,11 +3916,11 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
     if (fv.first == "default") {
       attr->name = prop_name;
 
-      DCOUT("fv.second.GetTypeName = " << fv.second.GetTypeName());
+      DCOUT("fv.second.type_name = " << fv.second.type_name());
 
 #define PROC_SCALAR(__tyname, __ty)                             \
   }                                                             \
-  else if (fv.second.GetTypeName() == __tyname) {               \
+  else if (fv.second.type_name() == __tyname) {               \
     auto ret = fv.second.get_value<__ty>();                     \
     if (!ret) {                                                 \
       PUSH_ERROR("Failed to decode " << __tyname << " value."); \
@@ -3931,7 +3931,7 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
 
 #define PROC_ARRAY(__tyname, __ty)                                  \
   }                                                                 \
-  else if (fv.second.GetTypeName() == add1DArraySuffix(__tyname)) { \
+  else if (fv.second.type_name() == add1DArraySuffix(__tyname)) { \
     auto ret = fv.second.get_value<std::vector<__ty>>();            \
     if (!ret) {                                                     \
       PUSH_ERROR("Failed to decode " << __tyname << "[] value.");   \
@@ -3993,7 +3993,7 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         // PROC_ARRAY(kTokenArray, value::token)
 
       } else {
-        PUSH_ERROR("TODO: " + fv.second.GetTypeName());
+        PUSH_ERROR("TODO: " + fv.second.type_name());
       }
     }
   }

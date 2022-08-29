@@ -59,7 +59,6 @@
 namespace tinyusdz {
 namespace usdc {
 
-
 class USDCReader::Impl {
  public:
   Impl(StreamReader *sr, int num_threads) : _sr(sr) {
@@ -149,11 +148,12 @@ class USDCReader::Impl {
                                &path_index_to_spec_index_map,
                            Skeleton *skeleton);
 
-  bool ReconstructSceneRecursively(int parent_id, int level,
-                                   const std::unordered_map<uint32_t, uint32_t>
-                                       &path_index_to_spec_index_map,
-                                   Scene *scene);
 #endif
+
+  bool ReconstructPrimRecursively(int parent_id, int level,
+                                  const std::unordered_map<uint32_t, uint32_t>
+                                      &path_index_to_spec_index_map,
+                                  Stage *stage);
 
   bool ReconstructStage(Stage *stage);
 
@@ -161,13 +161,9 @@ class USDCReader::Impl {
   /// --------------------------------------------------
   ///
 
-  void PushError(const std::string &s) {
-    _err += s;
-  }
+  void PushError(const std::string &s) { _err += s; }
 
-  void PushWarn(const std::string &s) {
-    _warn += s;
-  }
+  void PushWarn(const std::string &s) { _warn += s; }
 
   std::string GetError() { return _err; }
 
@@ -176,14 +172,10 @@ class USDCReader::Impl {
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
 
-  //
-  // APIs valid after successfull Parse()
-  //
-
-  //size_t NumPaths() const { return _paths.size(); }
-
  private:
-  //bool ReadCompressedPaths(const uint64_t ref_num_paths);
+
+  bool ReconstrcutStageMeta(const crate::FieldValuePairVector &fvs,
+                            StageMetas *out);
 
   crate::CrateReader *crate_reader{nullptr};
 
@@ -197,6 +189,15 @@ class USDCReader::Impl {
   // done by manually, so not all memory consumption could be tracked)
   size_t memory_used{0};  // in bytes.
 
+  std::vector<crate::CrateReader::Node> _nodes;
+  std::vector<crate::Spec> _specs;
+  std::vector<crate::Field> _fields;
+  std::vector<crate::Index> _fieldset_indices;
+  std::vector<crate::Index> _string_indices;
+  std::vector<Path> _paths;
+
+  std::map<crate::Index, crate::FieldValuePairVector>
+      _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 };
 
 //
@@ -205,14 +206,16 @@ class USDCReader::Impl {
 
 #if 0
 
-#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type) { \
-  if (__fv.first == __name) { \
-    if (__fv.second.GetTypeName() != __req_type) { \
-      PUSH_ERROR("`" << __name << "` attribute must be " << __req_type << " type, but got " << __fv.second.GetTypeName()); \
-      return false; \
-    } \
-  } \
-}
+#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type)                \
+  {                                                                        \
+    if (__fv.first == __name) {                                            \
+      if (__fv.second.GetTypeName() != __req_type) {                       \
+        PUSH_ERROR("`" << __name << "` attribute must be " << __req_type   \
+                       << " type, but got " << __fv.second.GetTypeName()); \
+        return false;                                                      \
+      }                                                                    \
+    }                                                                      \
+  }
 
 bool USDCReader::Impl::ReconstructXform(
     uint64_t node_idx,
@@ -1317,12 +1320,135 @@ bool USDCReader::Impl::ReconstructSkeleton(
   return true;
 }
 
-bool USDCReader::Impl::ReconstructSceneRecursively(
+#endif
+
+namespace {}
+
+bool USDCReader::Impl::ReconstrcutStageMeta(
+    const crate::FieldValuePairVector &fvs, StageMetas *metas) {
+  for (const auto &fv : fvs) {
+    if (fv.first == "upAxis") {
+      auto vt = fv.second.get_value<value::token>();
+      if (!vt) {
+        PUSH_ERROR_AND_RETURN("`upAxis` must be `token` type.");
+      }
+
+      std::string v = vt.value().str();
+      if (v == "Y") {
+        metas->upAxis = Axis::Y;
+      } else if (v == "Z") {
+        metas->upAxis = Axis::Z;
+      } else if (v == "X") {
+        metas->upAxis = Axis::X;
+      } else {
+        PUSH_ERROR_AND_RETURN("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v +
+                              "'(note: Case sensitive)");
+      }
+      DCOUT("upAxis = " << to_string(metas->upAxis.get()));
+
+    } else if (fv.first == "metersPerUnit") {
+      if (auto vf = fv.second.get_value<float>()) {
+        metas->metersPerUnit = double(vf.value());
+      } else if (auto vd = fv.second.get_value<double>()) {
+        metas->metersPerUnit = vd.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`metersPerUnit` value must be double or float type, but got '" +
+            fv.second.type_name() + "'");
+      }
+      DCOUT("metersPerUnit = " << metas->metersPerUnit.get());
+    } else if (fv.first == "timeCodesPerSecond") {
+      if (auto vf = fv.second.get_value<float>()) {
+        metas->timeCodesPerSecond = double(vf.value());
+      } else if (auto vd = fv.second.get_value<double>()) {
+        metas->timeCodesPerSecond = vd.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`timeCodesPerSecond` value must be double or float "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
+      DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.get());
+    } else if (fv.first == "startTimeCode") {
+      if (auto vf = fv.second.get_value<float>()) {
+        metas->startTimeCode = double(vf.value());
+      } else if (auto vd = fv.second.get_value<double>()) {
+        metas->startTimeCode = vd.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`startTimeCode` value must be double or float "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
+      DCOUT("startimeCode = " << metas->startTimeCode.get());
+    } else if (fv.first == "endTimeCode") {
+      if (auto vf = fv.second.get_value<float>()) {
+        metas->startTimeCode = double(vf.value());
+      } else if (auto vd = fv.second.get_value<double>()) {
+        metas->startTimeCode = vd.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`endTimeCode` value must be double or float "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
+      DCOUT("endTimeCode = " << metas->endTimeCode.get());
+    } else if ((fv.first == "defaultPrim")) {
+      auto v = fv.second.get_value<value::token>();
+      if (!v) {
+        PUSH_ERROR_AND_RETURN("`defaultPrim` must be `token` type.");
+      }
+
+      metas->defaultPrim = v.value();
+      DCOUT("defaultPrim = " << metas->defaultPrim.str());
+    } else if (fv.first == "customLayerData") {
+      if (auto v = fv.second.get_value<crate::CrateValue::Dictionary>()) {
+        // TODO: Convert to map<std::string, MetaVariable>
+        PUSH_WARN("TODO: Store customLayerData.");
+        // scene->customLayerData = fv.second.GetDictionary();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "customLayerData must be `dictionary` type, but got type `" +
+            fv.second.type_name());
+      }
+#if 0
+      } else if (fv.first == "primChildren") {
+        auto v = fv.second.get_value<std::vector<value::token>>();
+        if (!v) {
+          PUSH_ERROR("Type must be `token[]` for `primChildren`, but got " +
+                     fv.second.type_name() + "\n");
+          return false;
+        }
+
+        metas->primChildren = v.value();
+        DCOUT("primChildren = " << metas->children);
+#endif
+    } else if (fv.first == "documentation") {  // 'doc'
+      auto v = fv.second.get_value<std::string>();
+      if (!v) {
+        PUSH_ERROR("Type must be `string` for `documentation`, but got " +
+                   fv.second.type_name() + "\n");
+        return false;
+      }
+      StringData sdata;
+      sdata.value = v.value();
+      sdata.is_triple_quoted = false;
+      metas->doc = sdata;
+      DCOUT("doc = " << metas->doc.value);
+    } else {
+      PUSH_WARN("[StageMeta] TODO: " + fv.first + "\n");
+    }
+  }
+
+  return true;
+}
+
+bool USDCReader::Impl::ReconstructPrimRecursively(
     int parent, int level,
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    Scene *scene) {
-
-  DCOUT("ReconstructSceneRecursively: parent = " << std::to_string(parent) << ", level = " << std::to_string(level));
+    Stage *stage) {
+  DCOUT("ReconstructPrimRecursively: parent = "
+        << std::to_string(parent) << ", level = " << std::to_string(level));
 
   if ((parent < 0) || (parent >= int(_nodes.size()))) {
     PUSH_ERROR("Invalid parent node id: " + std::to_string(parent) +
@@ -1330,20 +1456,13 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
     return false;
   }
 
-  const Node &node = _nodes[size_t(parent)];
+  const crate::CrateReader::Node &node = _nodes[size_t(parent)];
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  auto IndentStr = [](int l) -> std::string {
-    std::string indent;
-    for (size_t i = 0; i < size_t(l); i++) {
-      indent += "  ";
-    }
-
-    return indent;
-  };
-  std::cout << IndentStr(level) << "lv[" << level << "] node_index[" << parent
-            << "] " << node.GetLocalPath() << " ==\n";
-  std::cout << IndentStr(level) << " childs = [";
+  std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
+            << "] node_index[" << parent << "] " << node.GetLocalPath()
+            << " ==\n";
+  std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     std::cout << node.GetChildren()[i];
     if (i != (node.GetChildren().size() - 1)) {
@@ -1368,8 +1487,9 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
 
   const crate::Spec &spec = _specs[spec_index];
 
-  DCOUT(Indent(uint32_t(level)) << "  specTy = " << to_string(spec.spec_type));
-  DCOUT(Indent(uint32_t(level))
+  DCOUT(pprint::Indent(uint32_t(level))
+        << "  specTy = " << to_string(spec.spec_type));
+  DCOUT(pprint::Indent(uint32_t(level))
         << "  fieldSetIndex = " << spec.fieldset_index.value);
 
   if (!_live_fieldsets.count(spec.fieldset_index)) {
@@ -1378,110 +1498,31 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
     return false;
   }
 
-  const FieldValuePairVector &fields = _live_fieldsets.at(spec.fieldset_index);
+  const crate::FieldValuePairVector &fields =
+      _live_fieldsets.at(spec.fieldset_index);
 
-  // root only attributes.
+  // StageMeta = root only attributes.
+  // TODO: Unify reconstrction code with USDAReder?
   if (parent == 0) {
-    for (const auto &fv : fields) {
-      if (fv.first == "upAxis") {
-        auto vt = fv.second.get_value<value::token>();
-        if (!vt) {
-          PUSH_ERROR("`upAxis` must be `token` type.");
-          return false;
-        }
-
-        std::string v = vt.value().str();
-        if ((v != "Y") && (v != "Z") && (v != "X")) {
-          PUSH_ERROR("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v + "'");
-          return false;
-        }
-        DCOUT("upAxis = " << v);
-        scene->upAxis = std::move(v);
-
-      } else if (fv.first == "metersPerUnit") {
-        if (auto vf = fv.second.get_value<float>()) {
-          scene->metersPerUnit = double(vf.value());
-        } else if (auto vd = fv.second.get_value<double>()) {
-          scene->metersPerUnit = vd.value();
-        } else {
-          PUSH_ERROR(
-              "`metersPerUnit` value must be double or float type, but got '" +
-              fv.second.GetTypeName() + "'");
-          return false;
-        }
-        DCOUT("metersPerUnit = " << scene->metersPerUnit);
-      } else if (fv.first == "timeCodesPerSecond") {
-        if (auto vf = fv.second.get_value<float>()) {
-          scene->timeCodesPerSecond = double(vf.value());
-        } else if (auto vd = fv.second.get_value<double>()) {
-          scene->timeCodesPerSecond = vd.value();
-        } else {
-          PUSH_ERROR(
-              "`timeCodesPerSecond` value must be double or float "
-              "type, but got '" +
-              fv.second.GetTypeName() + "'");
-          return false;
-        }
-        DCOUT("timeCodesPerSecond = " << scene->timeCodesPerSecond);
-      } else if ((fv.first == "defaultPrim")) {
-        auto v = fv.second.get_value<value::token>();
-        if (!v) {
-          PUSH_ERROR("`defaultPrim` must be `token` type.");
-          return false;
-        }
-
-        scene->defaultPrim = v.value().str();
-        DCOUT("defaultPrim = " << scene->defaultPrim);
-      } else if (fv.first == "customLayerData") {
-        if (auto v = fv.second.get_value<crate::CrateValue::Dictionary>()) {
-          auto dict = v.value();
-          (void)dict;
-          PUSH_WARN("TODO: Store customLayerData.");
-          // scene->customLayerData = fv.second.GetDictionary();
-        } else {
-          PUSH_ERROR("customLayerData must be `dict` type.");
-          return false;
-        }
-      } else if (fv.first == "primChildren") {
-        auto v = fv.second.get_value<std::vector<value::token>>();
-        if (!v) {
-          PUSH_ERROR("Type must be TokenArray for `primChildren`, but got " +
-                     fv.second.GetTypeName() + "\n");
-          return false;
-        }
-
-        // convert to string.
-        std::vector<std::string> children;
-        for (const auto &item : v.value()) {
-          children.push_back(item.str());
-        }
-        scene->primChildren = children;
-        DCOUT("primChildren = " << children);
-      } else if (fv.first == "documentation") {  // 'doc'
-
-        auto v = fv.second.get_value<std::string>();
-        if (!v) {
-          PUSH_ERROR("Type must be String for `documentation`, but got " +
-                     fv.second.GetTypeName() + "\n");
-          return false;
-        }
-        scene->doc = v.value();
-        DCOUT("doc = " << v.value());
-      } else {
-        PUSH_WARN("TODO: " + fv.first + "\n");
-        //_err += "TODO: " + fv.first + "\n";
-        return false;
-        // TODO(syoyo):
-      }
+    if (!ReconstrcutStageMeta(fields, &stage->stage_metas)) {
+      PUSH_ERROR_AND_RETURN("Failed to reconstruct StageMeta.");
     }
   }
-
+ 
   std::string node_type;
   crate::CrateValue::Dictionary assetInfo;
 
-  auto GetTypeName = [](const FieldValuePairVector &fvs) -> nonstd::optional<std::string> {
+  ///
+  /// Prim Attribute fieldSet example.
+  /// - typeName(token) : type name of attribute(e.g. `float`)
+  /// - default : Default(fallback) value.
+  /// - ...
+
+  auto GetTypeName =
+      [](const crate::FieldValuePairVector &fvs) -> nonstd::optional<std::string> {
     for (const auto &fv : fvs) {
-      DCOUT(" fv.first = " << fv.first << ", type = " << fv.second.GetTypeName());
+      DCOUT(" fv.first = " << fv.first
+                           << ", type = " << fv.second.type_name());
       if (fv.first == "typeName") {
         auto v = fv.second.get_value<value::token>();
         if (v) {
@@ -1530,21 +1571,6 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
         (void)str;
         DCOUT(IndentStr(level + 2) << str);
       }
-    } else if ((fv.first == "customLayerData") &&
-               (fv.second.GetTypeName() == "Dictionary")) {
-      const auto &dict = fv.second.GetDictionary();
-
-      for (const auto &item : dict) {
-        if (item.second.GetTypeName() == "String") {
-          scene->customLayerData[item.first] = item.second.GetString();
-        } else if (item.second.GetTypeName() == "IntArray") {
-          const auto arr = item.second.GetIntArray();
-          scene->customLayerData[item.first] = arr;
-        } else {
-          PUSH_WARN("TODO(customLayerData): name " + item.first + ", type " +
-                    item.second.GetTypeName());
-        }
-      }
 
     } else if (fv.second.GetTypeName() == "TokenListOp") {
       PUSH_WARN("TODO: name " + fv.first + ", type TokenListOp.");
@@ -1567,7 +1593,7 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
 
   DCOUT("node_type = " << node_type);
 
-
+#if 0
   if (node_type == "Xform") {
     Xform xform;
     if (!ReconstructXform(node, fields, path_index_to_spec_index_map, &xform)) {
@@ -1659,19 +1685,23 @@ bool USDCReader::Impl::ReconstructSceneRecursively(
       DCOUT("TODO or we can ignore this node: node_type: " << node_type);
     }
   }
+#endif
+
+  if (!node_type.empty()) {
+    DCOUT("TODO or we may ignore this node: node_type: " << node_type);
+  }
 
   DCOUT("Children.size = " << node.GetChildren().size());
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    if (!ReconstructSceneRecursively(int(node.GetChildren()[i]), level + 1,
-                                     path_index_to_spec_index_map, scene)) {
+    if (!ReconstructPrimRecursively(int(node.GetChildren()[i]), level + 1,
+                                    path_index_to_spec_index_map, stage)) {
       return false;
     }
   }
 
   return true;
 }
-#endif
 
 bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   (void)stage;
@@ -1683,7 +1713,12 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
     return true;
   }
 
-#if 0 // TODO
+  _nodes = crate_reader->GetNodes();
+  _specs = crate_reader->GetSpecs();
+  _fields = crate_reader->GetFields();
+  _fieldset_indices = crate_reader->GetFieldsetIndices();
+  _paths = crate_reader->GetPaths();
+  _live_fieldsets = crate_reader->GetLiveFieldSets();
 
   std::unordered_map<uint32_t, uint32_t>
       path_index_to_spec_index_map;  // path_index -> spec_index
@@ -1695,28 +1730,24 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
       }
 
       // path_index should be unique.
-      assert(path_index_to_spec_index_map.count(_specs[i].path_index.value) ==
-             0);
+      if (path_index_to_spec_index_map.count(_specs[i].path_index.value) != 0) {
+        PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
+      }
+
       path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
     }
   }
 
   int root_node_id = 0;
-
-  bool ret = ReconstructSceneRecursively(root_node_id, /* level */ 0,
-                                         path_index_to_spec_index_map, scene);
+  bool ret = ReconstructPrimRecursively(root_node_id, /* level */ 0,
+                                        path_index_to_spec_index_map, stage);
 
   if (!ret) {
-    _err += "Failed to reconstruct scene.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage(Prim hierarchy)");
   }
 
   return true;
-#endif
-
-  PUSH_ERROR_AND_RETURN("TODO");
 }
-
 
 bool USDCReader::Impl::ReadUSDC() {
   if (crate_reader) {
@@ -1777,7 +1808,6 @@ bool USDCReader::Impl::ReadUSDC() {
 
   // TODO(syoyo): Read unknown sections
 
-
   ///
   /// Reconstruct C++ representation of USD scene graph.
   ///
@@ -1792,7 +1822,6 @@ bool USDCReader::Impl::ReadUSDC() {
   DCOUT("Read Crate.\n");
 
   return true;
-
 }
 
 //
@@ -1816,13 +1845,10 @@ std::string USDCReader::GetError() { return impl_->GetError(); }
 
 std::string USDCReader::GetWarning() { return impl_->GetWarning(); }
 
-bool USDCReader::ReadUSDC() {
-  return impl_->ReadUSDC();
-}
+bool USDCReader::ReadUSDC() { return impl_->ReadUSDC(); }
 
 }  // namespace usdc
 }  // namespace tinyusdz
-
 
 #else
 
@@ -1837,12 +1863,11 @@ USDCReader::USDCReader(StreamReader *sr, int num_threads) {
   (void)num_threads;
 }
 
-USDCReader::~USDCReader() {
-}
+USDCReader::~USDCReader() {}
 
-bool USDCReader::ReconstructScene(Scene *scene) {
+bool USDCReader::ReconstructStage(Stage *stage) {
   (void)scene;
-  DCOUT("Reconstruct Scene.");
+  DCOUT("Reconstruct Stage.");
   return false;
 }
 
