@@ -76,6 +76,7 @@
 #include "value-pprint.hh"
 #include "value-types.hh"
 
+#if 0
 // s = std::string
 #define PUSH_ERROR_AND_RETURN(s)                                     \
   do {                                                               \
@@ -86,7 +87,6 @@
     return false;                                                    \
   } while (0)
 
-#if 1
 #define PUSH_WARN(s)                                                 \
   do {                                                               \
     std::ostringstream ss_w;                                         \
@@ -96,55 +96,6 @@
   } while (0)
 #endif
 
-#if 0
-#define SLOG_INFO                                                         \
-  do {                                                                    \
-    std::cout << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-  } while (0);                                                            \
-  std::cout
-
-#define LOG_DEBUG(s)                                                     \
-  do {                                                                   \
-    std::ostringstream ss;                                               \
-    ss << "[debug] " << __FILE__ << ":" << __func__ << "():" << __LINE__ \
-       << " ";                                                           \
-    ss << s;                                                             \
-    std::cout << ss.str() << "\n";                                       \
-  } while (0)
-
-#define LOG_INFO(s)                                                     \
-  do {                                                                  \
-    std::ostringstream ss;                                              \
-    ss << "[info] " << __FILE__ << ":" << __func__ << "():" << __LINE__ \
-       << " ";                                                          \
-    ss << s;                                                            \
-    std::cout << ss.str() << "\n";                                      \
-  } while (0)
-
-#define LOG_WARN(s)                                                     \
-  do {                                                                  \
-    std::ostringstream ss;                                              \
-    ss << "[warn] " << __FILE__ << ":" << __func__ << "():" << __LINE__ \
-       << " ";                                                          \
-    std::cout << ss.str() << "\n";                                      \
-  } while (0)
-
-#define LOG_ERROR(s)                                                     \
-  do {                                                                   \
-    std::ostringstream ss;                                               \
-    ss << "[error] " << __FILE__ << ":" << __func__ << "():" << __LINE__ \
-       << " ";                                                           \
-    std::cerr << s;                                                      \
-  } while (0)
-
-#define LOG_FATAL(s)                                               \
-  do {                                                             \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    std::cerr << s;                                                \
-    std::exit(-1);                                                 \
-  } while (0)
-#endif
 
 #include "common-macros.inc"
 

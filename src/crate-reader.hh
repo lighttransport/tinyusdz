@@ -116,6 +116,9 @@ class CrateReader {
   /// -------------------------------------
   /// Following Methods are valid after successfull parsing of Crate data.
   ///
+  size_t NumNodes() const {
+    return _nodes.size();
+  }
 
   const nonstd::optional<value::token> GetToken(crate::Index token_index) const;
   const nonstd::optional<value::token> GetStringToken(
@@ -126,7 +129,10 @@ class CrateReader {
   nonstd::optional<std::string> GetFieldString(crate::Index index) const;
   nonstd::optional<std::string> GetSpecString(crate::Index index) const;
 
-  size_t NumPaths();
+  size_t NumPaths() const {
+    return _paths.size();
+  }
+
   nonstd::optional<Path> GetPath(crate::Index index) const;
   nonstd::optional<std::string> GetPathString(crate::Index index) const;
 
@@ -155,6 +161,8 @@ class CrateReader {
                                     const std::string &prop_name);
 
  private:
+
+
   bool BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
@@ -236,6 +244,13 @@ class CrateReader {
   // Impl *_impl;
 
   const StreamReader *_sr{};
+
+  void PushError(const std::string &s) const {
+    _err += s;
+  }
+  void PushWarn(const std::string &s) const {
+    _warn += s;
+  }
   mutable std::string _err;
   mutable std::string _warn;
 
