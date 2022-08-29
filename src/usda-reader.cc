@@ -1302,7 +1302,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       dst.value = pv.value();
       dst.blocked = false;
 
-      return dst;
+      return std::move(dst);
     }
   } else if (var.is_timesample()) {
     for (size_t i = 0; i < var.var.times.size(); i++) {
@@ -1320,7 +1320,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       }
     }
 
-    return dst;
+    return std::move(dst);
   }
 
   DCOUT("???");
