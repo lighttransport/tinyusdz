@@ -46,45 +46,6 @@
 
 //
 
-#ifdef TINYUSDZ_PRODUCTION_BUILD
-// Do not include full filepath for privacy.
-#define PUSH_ERROR(s)                                                \
-  {                                                                  \
-    std::ostringstream ss;                                           \
-    ss << "[crate-reader] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                         \
-    _err += ss.str() + "\n";                                         \
-  }                                                                  \
-  while (0)
-
-#define PUSH_WARN(s)                                                 \
-  {                                                                  \
-    std::ostringstream ss;                                           \
-    ss << "[crate-reader] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                         \
-    _warn += ss.str() + "\n";                                        \
-  }                                                                  \
-  while (0)
-#else
-#define PUSH_ERROR(s)                                              \
-  {                                                                \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    _err += ss.str() + "\n";                                       \
-  }                                                                \
-  while (0)
-
-#define PUSH_WARN(s)                                               \
-  {                                                                \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    _warn += ss.str() + "\n";                                      \
-  }                                                                \
-  while (0)
-#endif
-
 #include "common-macros.inc"
 
 namespace tinyusdz {

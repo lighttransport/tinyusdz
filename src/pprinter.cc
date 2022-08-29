@@ -940,6 +940,10 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
     ss << pprint::Indent(indent+1) << "rel material:binding = " << pquote(mesh.materialBinding.value().binding) << "\n";
   }
 
+  if (mesh.skeleton) {
+    ss << pprint::Indent(indent+1) << "rel skel:skeleton = " << pquote(mesh.skeleton.value()) << "\n";
+  }
+
   // subdiv
   ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
   ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
@@ -1237,6 +1241,10 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
   ss << print_typed_attr(skel.joints, "joints", indent+1);
   ss << print_typed_attr(skel.restTransforms, "restTransforms", indent+1);
 
+  if (skel.animationSource) {
+    ss << pprint::Indent(indent+1) << "rel skel:animationSource = " << pquote(skel.animationSource.value()) << "\n";
+  }
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
@@ -1253,12 +1261,12 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_attr(skelanim.blendShapes, "skel:blendShapes", indent+1);
-  ss << print_typed_attr(skelanim.blendShapeWeights, "skel:blendShapeWeights", indent+1);
-  ss << print_typed_attr(skelanim.joints, "skel:joints", indent+1);
-  ss << print_typed_attr(skelanim.rotations, "skel:rotations", indent+1);
-  ss << print_typed_attr(skelanim.scales, "skel:scales", indent+1);
-  ss << print_typed_attr(skelanim.translations, "skel:translations", indent+1);
+  ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent+1);
+  ss << print_typed_attr(skelanim.blendShapeWeights, "blendShapeWeights", indent+1);
+  ss << print_typed_attr(skelanim.joints, "joints", indent+1);
+  ss << print_typed_attr(skelanim.rotations, "rotations", indent+1);
+  ss << print_typed_attr(skelanim.scales, "scales", indent+1);
+  ss << print_typed_attr(skelanim.translations, "translations", indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

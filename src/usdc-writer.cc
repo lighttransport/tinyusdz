@@ -31,49 +31,6 @@
 #include "lz4-compression.hh"
 #include "token-type.hh"
 
-#ifdef TINYUSDZ_PRODUCTION_BUILD
-// Do not include full filepath for privacy.
-#define PUSH_ERROR(s)                                               \
-  {                                                                 \
-    std::ostringstream ss;                                          \
-    ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    err_ += ss.str() + "\n";                                        \
-  }                                                                 \
-  while (0)
-
-#if 0
-#define PUSH_WARN(s)                                                \
-  {                                                                 \
-    std::ostringstream ss;                                          \
-    ss << "[usdc-writer] " << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                        \
-    warn_ += ss.str() + "\n";                                       \
-  }                                                                 \
-  while (0)
-#endif
-#else
-#define PUSH_ERROR(s)                                              \
-  {                                                                \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    err_ += ss.str() + "\n";                                       \
-  }                                                                \
-  while (0)
-
-#if 0
-#define PUSH_WARN(s)                                               \
-  {                                                                \
-    std::ostringstream ss;                                         \
-    ss << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss << s;                                                       \
-    warn_ += ss.str() + "\n";                                      \
-  }                                                                \
-  while (0)
-#endif
-#endif
-
 #include "common-macros.inc"
 
 namespace tinyusdz {
@@ -309,7 +266,16 @@ class Writer {
 
   const Stage &stage_;
 
-  const std::string &Error() const { return err_; }
+  const std::string &GetError() const { return err_; }
+  const std::string &GetWarning() const { return warn_; }
+
+  void PushError(const std::string &s) {
+    err_ += s;
+  }
+
+  void PushWarn(const std::string &s) {
+    warn_ += s;
+  }
 
   bool WriteHeader() {
     char magic[8];
@@ -497,6 +463,7 @@ class Writer {
   std::ostringstream oss_;
 
   std::string err_;
+  std::string warn_;
 };
 
 }  // namespace

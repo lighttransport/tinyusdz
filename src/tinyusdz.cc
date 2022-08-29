@@ -192,102 +192,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
     return false;
   }
 
-#if 0
-  if (!parser.ReadTOC()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
-  // Read known sections
-
-  if (!parser.ReadTokens()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
-  if (!parser.ReadStrings()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
-  if (!parser.ReadFields()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
-  if (!parser.ReadFieldSets()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
-  if (!parser.ReadPaths()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
-  if (!parser.ReadSpecs()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-    return false;
-  }
-
-  // TODO(syoyo): Read unknown sections
-
-  ///
-  /// Reconstruct C++ representation of USD scene graph.
-  ///
-  if (!parser.BuildLiveFieldSets()) {
-    if (warn) {
-      (*warn) = parser.GetWarning();
-    }
-
-    if (err) {
-      (*err) = parser.GetError();
-    }
-  }
-#endif
-
+  //DCOUT("# of paths: " << reader.NumPaths());
   //DCOUT("num_paths: " << std::to_string(parser.NumPaths()));
 
   //for (size_t i = 0; i < parser.NumPaths(); i++) {
@@ -295,12 +200,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
     //DCOUT("path[" << i << "].name = " << path.full_path_name());
   //}
 
-  std::cout << "dbg: 1\n";
-
   // Create `Stage` object
   // std::cout << "reconstruct scene:\n";
   {
     if (!reader.ReconstructStage(stage)) {
+      DCOUT("Failed to reconstruct Stage from Crate.");
       if (warn) {
         (*warn) = reader.GetWarning();
       }
@@ -316,9 +220,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
     (*warn) = reader.GetWarning();
   }
 
-  // TODO(syoyo): Return false?
+  // Reconstruct OK but may have some error.
+  // TODO(syoyo): Return false in strict mode.
   if (err) {
-    std::cout << "err msg = " << reader.GetError() << "\n";
+    DCOUT(reader.GetError());
     (*err) = reader.GetError();
   }
 
@@ -422,8 +327,6 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     memcpy(&varname[0], data.data() + offset, name_len);
 
     offset += name_len;
-
-    // std::cout << "varname = " << varname << "\n";
 
     // read in the extra field
     uint16_t extra_field_len;
@@ -796,6 +699,14 @@ std::string Stage::ExportToString() const {
 
   if (stage_metas.timeCodesPerSecond.authored()) {
     ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.get() << "\n";
+  }
+
+  if (stage_metas.startTimeCode.authored()) {
+    ss << "  startTimeCode = " << stage_metas.startTimeCode.get() << "\n";
+  }
+
+  if (stage_metas.endTimeCode.authored()) {
+    ss << "  endTimeCode = " << stage_metas.endTimeCode.get() << "\n";
   }
 
   if (stage_metas.defaultPrim.str().size()) {
