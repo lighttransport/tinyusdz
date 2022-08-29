@@ -1402,7 +1402,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       metas->defaultPrim = v.value();
       DCOUT("defaultPrim = " << metas->defaultPrim.str());
     } else if (fv.first == "customLayerData") {
-      if (auto v = fv.second.get_value<crate::CrateValue::Dictionary>()) {
+      if (auto v = fv.second.get_value<CustomDataType>()) {
         // TODO: Convert to map<std::string, MetaVariable>
         PUSH_WARN("TODO: Store customLayerData.");
         // scene->customLayerData = fv.second.GetDictionary();
@@ -1510,7 +1510,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   }
  
   std::string node_type;
-  crate::CrateValue::Dictionary assetInfo;
+  //crate::CrateValue::Dictionary assetInfo;
+  CustomDataType assetInfo;
 
   ///
   /// Prim Attribute fieldSet example.
@@ -1754,7 +1755,11 @@ bool USDCReader::Impl::ReadUSDC() {
     delete crate_reader;
   }
 
-  crate_reader = new crate::CrateReader(_sr, _num_threads);
+  // TODO: Setup CrateReaderConfig.
+  crate::CrateReaderConfig config;
+  config.numThreads = _num_threads;
+
+  crate_reader = new crate::CrateReader(_sr, config);
 
   if (!crate_reader->ReadBootStrap()) {
     _warn = crate_reader->GetWarning();

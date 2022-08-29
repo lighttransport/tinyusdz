@@ -599,7 +599,8 @@ inline ValueType* any_cast(any* operand) noexcept
 #ifndef ANY_IMPL_NO_RTTI
     if (operand && operand->is_typed(typeid(T)))
 #else
-    if (operand && operand->vtable == any::vtable_for_type<T>())
+    //if (operand && operand->vtable == any::vtable_for_type<T>())
+    if (operand && operand->type_id() == tinyusdz::value::TypeTrait<T>::type_id)
 #endif
         return operand->cast<ValueType>();
     else

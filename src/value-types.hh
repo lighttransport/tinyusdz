@@ -269,7 +269,8 @@ enum TypeId {
   TYPE_ID_TIMECODE,
   // TYPE_ID_TIMESAMPLE,
 
-  TYPE_ID_DICT,
+  TYPE_ID_DICT, // Generic dict type.
+  TYPE_ID_CUSTOMDATA, // similar to `dictionary`, but limited types are allowed to use. for metadatum(e.g. `customData` in Prim Meta)
 
   // TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
@@ -926,6 +927,7 @@ struct AnimatableValue {
 
 ///
 /// Generic Value class using any
+/// TODO: Type-check when casting with underlying_type(Need to modify linb::any class) 
 ///
 class Value {
  public:
@@ -976,7 +978,9 @@ class Value {
     } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
-      return std::move(value<T>());
+      // Use force cast
+      // TODO: type-check
+      return std::move(*linb::cast<const T>(&v_));
     }
     return nonstd::nullopt;
   }
@@ -987,14 +991,6 @@ class Value {
     return (*this);
   }
 
-  //bool is_array() const { return v_.ndim() > 0; }
-  //int32_t ndim() const { return v_.ndim(); }
-
-  //uint32_t ncomp() const { return v_.ncomp(); }
-
-  //bool is_vector_type() const { return v_.ncomp() > 1; }
-
-  // friend std::ostream &operator<<(std::ostream &os, const Value &v);
   //const any_value &get_raw() const { return v_; }
 
  private:

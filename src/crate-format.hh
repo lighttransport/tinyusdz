@@ -365,7 +365,7 @@ std::string GetCrateDataTypeName(CrateDataTypeId type_id);
 // TODO: Use PrimVar?
 class CrateValue {
  public:
-  typedef std::map<std::string, CrateValue> Dictionary;
+  //typedef std::map<std::string, CrateValue> Dictionary;
 
   //std::string GetTypeName() const;
   //uint32_t GetTypeId() const;
@@ -429,7 +429,7 @@ class CrateValue {
   SET_TYPE_SCALAR(std::vector<LayerOffset>)
 
   SET_TYPE_SCALAR(value::TimeSamples)
-  SET_TYPE_SCALAR(Dictionary)
+  SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist 
 
   SET_TYPE_LIST(SET_TYPE_SCALAR)
 
@@ -442,31 +442,28 @@ class CrateValue {
   template <class T>
   const T value() const {
     //return (*reinterpret_cast<const T *>(value_.value()));
-    return linb::any_cast<const T>(value_);
+    //return linb::any_cast<const T>(value_);
+    return value_.value<T>();
   }
 
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
-    if (value::TypeTrait<T>::type_id == value_.type_id()) {
-      return std::move(value<T>());
-    } else if (value::TypeTrait<T>::underlying_type_id == value_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-
-      // TODO: Type check(any_cast is not available for underlying_type_id)
-      return *linb::cast<const T>(&value_);
-    }
-    return nonstd::nullopt;
+    return value_.get_value<T>();
   }
 
   std::string type_name() const {
     return value_.type_name();
   }
 
+  const value::Value &get_raw() const {
+    return value_;
+  }
+
  private:
   // TODO: Use value::Value?
-  linb::any value_;
+  //linb::any value_;
+  value::Value value_;
 };
 
 // In-memory storage for a single "spec" -- prim, property, etc.
@@ -488,7 +485,7 @@ namespace value {
 #include "define-type-trait.inc"
 
 // synonym to `value::dict`
-DEFINE_TYPE_TRAIT(crate::CrateValue::Dictionary, "dict", TYPE_ID_DICT, 1);
+//DEFINE_TYPE_TRAIT(crate::CrateValue::Dictionary, "dict", TYPE_ID_DICT, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
