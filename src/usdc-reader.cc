@@ -1501,7 +1501,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
   if (parent == 0) {
-    if (!ReconstrcutStageMeta(fields, &stage->stage_metas)) {
+    if (!ReconstrcutStageMeta(fields, &stage->GetMetas())) {
       PUSH_ERROR_AND_RETURN("Failed to reconstruct StageMeta.");
     }
   }

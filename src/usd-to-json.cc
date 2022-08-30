@@ -16,14 +16,34 @@
 #pragma clang diagnostic pop
 #endif
 
-#include "pprinter.hh"
 #include "common-macros.inc"
+#include "pprinter.hh"
 
 using namespace nlohmann;
 
 namespace tinyusdz {
 
 namespace {
+
+json ToJSON(tinyusdz::Xform& xform) {
+  json j;
+
+  j["name"] = xform.name;
+  j["typeName"] = "Xform";
+
+  if (xform.xformOps.size()) {
+    json jxformOpOrder;
+
+    std::vector<std::string> ops;
+    for (const auto &xformOp : xform.xformOps) {
+      ops.push_back(xformOp.suffix);
+    }
+
+    j["xformOpOrder"] = ops;
+  }
+
+  return j;
+}
 
 json ToJSON(tinyusdz::GeomMesh& mesh) {
   json j;
@@ -115,6 +135,17 @@ json ToJSON(tinyusdz::GeomBasisCurves& curves) {
   return j;
 }
 
+json ToJSON(const tinyusdz::value::Value &v) {
+  if (auto pv = v.get_value<tinyusdz::Xform>()) {
+    return ToJSON(pv.value());
+  } 
+
+  
+  return json();
+
+  
+}
+
 nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
   json j;
 
@@ -125,18 +156,55 @@ nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
   return j;
 }
 
+bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
+  json j = ToJSON(prim.data);
+
+
+  json jchildren = json::object();
+
+  for (const auto &child : prim.children) {
+    json cj;
+    if (!PrimToJSONRec(cj, child, depth+1)) {
+      return false;
+    }
+    std::string cname = child.path.full_path_name();
+    jchildren[cname] = cj;
+  }
+
+  if (jchildren.size()) {
+    j["primChildren"] = jchildren;
+  }
+
+  root[prim.path.full_path_name()] = j;
+
+  return true;
+}
+
 }  // namespace
 
-nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage) {
-  json j; // root
 
-  auto jstageMetas = ToJSON(stage.stage_metas);
+nonstd::expected<std::string, std::string> ToJSON(
+    const tinyusdz::Stage& stage) {
+  json j;  // root
+
+  auto jstageMetas = ToJSON(stage.GetMetas());
   if (!jstageMetas) {
     return nonstd::make_unexpected(jstageMetas.error());
   }
-  j["stageMeta"] = *jstageMetas;
+  if (!jstageMetas->is_null()) {
+    j["stageMeta"] = *jstageMetas;
+  }
 
   j["version"] = 1.0;
+
+  json cj;
+  for (const auto& item : stage.GetRootPrims()) {
+    if (!PrimToJSONRec(cj, item, 0)) {
+      return nonstd::make_unexpected("Failed to convert Prim to JSON.");
+    }
+  }
+
+  j["primChildren"] = cj;
 
   tinyusdz::GeomMesh mesh;
   json jmesh = ToJSON(mesh);
@@ -148,9 +216,9 @@ nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage) 
 
   (void)jcurves;
 
-  std::string str = j.dump(/* indent*/2);
+  std::string str = j.dump(/* indent*/ 2);
 
   return str;
 }
 
-}  // namespace tinyusd
+}  // namespace tinyusdz
