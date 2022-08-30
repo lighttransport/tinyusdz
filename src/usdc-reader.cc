@@ -40,6 +40,7 @@
 #include "pprinter.hh"
 #include "stream-reader.hh"
 #include "value-pprint.hh"
+#include "str-util.hh"
 
 //
 #ifdef __clang__
@@ -1428,7 +1429,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       }
       StringData sdata;
       sdata.value = v.value();
-      sdata.is_triple_quoted = false;
+      sdata.is_triple_quoted = hasNewline(sdata.value);
       metas->doc = sdata;
       DCOUT("doc = " << metas->doc.value);
     } else {
