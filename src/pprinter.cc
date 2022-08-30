@@ -3,6 +3,7 @@
 
 //
 #include "pprinter.hh"
+#include "prim-types.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
 
@@ -108,7 +109,7 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t
 
   ss << "{\n";
 
-  const auto &samples = v.GetSamples(); 
+  const auto &samples = v.GetSamples();
 
   for (size_t i = 0; i < samples.size(); i++) {
     ss << pprint::Indent(indent+1) << samples[i].t << ": ";
@@ -144,17 +145,6 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
   return ss.str();
 }
 
-std::string print_customData(const CustomDataType &customData, const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "customData = {\n";
-  for (const auto &item : customData) {
-    ss << print_meta(item.second, indent+1);
-  }
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
 
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
@@ -507,20 +497,32 @@ std::string to_string(const StringData &s) {
   }
 }
 
+std::string print_customData(const CustomDataType &customData, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "customData = {\n";
+  for (const auto &item : customData) {
+    ss << print_meta(item.second, indent+1);
+  }
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
   std::stringstream ss;
 
   //ss << "TODO: isObject " << meta.IsObject() << ", isValue " << meta.IsValue() << "\n";
 
-  if (meta.IsObject()) {
+  if (auto pv = meta.Get<CustomDataType>()) {
     // dict
     ss << pprint::Indent(indent) << "dictionary " << meta.name << " {\n";
-    for (const auto &item : meta.obj_value) {
+    for (const auto &item : pv.value()) {
       ss << print_meta(item.second, indent+1);
     }
     ss << pprint::Indent(indent) << "}\n";
   } else {
-    ss << pprint::Indent(indent) << meta.type << " " << meta.name << " = " << pprint_value(meta.value) << "\n";
+    ss << pprint::Indent(indent) << meta.type << " " << meta.name << " = " << pprint_value(meta.get_raw()) << "\n";
   }
 
   return ss.str();
@@ -1575,8 +1577,6 @@ std::string to_string(const XformOp::OpType &op) {
 
   return ss;
 }
-
-
 
 } // tinyusdz
 

@@ -530,4 +530,9 @@ Path Path::GetParentPrim() const {
   return Path(prim_part.substr(0, n), "");
 }
 
+bool MetaVariable::IsObject() const
+ {
+    return (value.type_id() == value::TypeTrait<tinyusdz::CustomDataType>::type_id);
+  }
+
 }  // namespace tinyusdz

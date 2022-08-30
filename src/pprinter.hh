@@ -52,6 +52,7 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
 
 std::string to_string(const StringData &s);
 
+
 template<typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
   std::stringstream ss;
@@ -137,6 +138,7 @@ std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent 
 std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent);
+std::string print_customData(const CustomDataType &customData, const uint32_t indent);
 
 
 } // namespace tinyusdz

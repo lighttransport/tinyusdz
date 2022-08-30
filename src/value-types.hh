@@ -941,8 +941,8 @@ class Value {
   // template <class T>
   // Value(T &&v) : v_(v) {}
 
-  std::string type_name() const { return v_.type_name(); }
-  std::string underlying_type_name() const { return v_.underlying_type_name(); }
+  const std::string type_name() const { return v_.type_name(); }
+  const std::string underlying_type_name() const { return v_.underlying_type_name(); }
 
   uint32_t type_id() const { return v_.type_id(); }
   uint32_t underlying_type_id() const { return v_.underlying_type_id(); }

@@ -714,11 +714,7 @@ std::string Stage::ExportToString() const {
   }
 
   if (stage_metas.customLayerData.size()) {
-    ss << "  customLayerData = {\n";
-    for (const auto &item : stage_metas.customLayerData) {
-      ss << print_meta(item.second, /* indent */1);
-    }
-    ss << "  }\n";
+    ss << print_customData(stage_metas.customLayerData, /* indent */1);
   }
 
   // TODO: Sort by line_no?(preserve appearance in read USDA)

@@ -1403,26 +1403,22 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       DCOUT("defaultPrim = " << metas->defaultPrim.str());
     } else if (fv.first == "customLayerData") {
       if (auto v = fv.second.get_value<CustomDataType>()) {
-        // TODO: Convert to map<std::string, MetaVariable>
-        PUSH_WARN("TODO: Store customLayerData.");
-        // scene->customLayerData = fv.second.GetDictionary();
+        metas->customLayerData = v.value();
       } else {
         PUSH_ERROR_AND_RETURN(
             "customLayerData must be `dictionary` type, but got type `" +
             fv.second.type_name());
       }
-#if 0
-      } else if (fv.first == "primChildren") {
-        auto v = fv.second.get_value<std::vector<value::token>>();
-        if (!v) {
-          PUSH_ERROR("Type must be `token[]` for `primChildren`, but got " +
-                     fv.second.type_name() + "\n");
-          return false;
-        }
+    } else if (fv.first == "primChildren") { // it looks only appears in USDC.
+      auto v = fv.second.get_value<std::vector<value::token>>();
+      if (!v) {
+        PUSH_ERROR("Type must be `token[]` for `primChildren`, but got " +
+                   fv.second.type_name() + "\n");
+        return false;
+      }
 
-        metas->primChildren = v.value();
-        DCOUT("primChildren = " << metas->children);
-#endif
+      metas->primChildren = v.value();
+      DCOUT("primChildren = " << metas->primChildren);
     } else if (fv.first == "documentation") {  // 'doc'
       auto v = fv.second.get_value<std::string>();
       if (!v) {
@@ -1508,7 +1504,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct StageMeta.");
     }
   }
- 
+
   std::string node_type;
   //crate::CrateValue::Dictionary assetInfo;
   CustomDataType assetInfo;

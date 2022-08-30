@@ -41,7 +41,6 @@
 
 // external
 
-#include "fast_float/fast_float.h"
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
@@ -75,6 +74,8 @@
 
 namespace tinyusdz {
 namespace usda {
+
+constexpr auto kTag = "[USDA]";
 
 namespace {
 
@@ -642,7 +643,7 @@ class USDAReader::Impl {
       if (meta.first == "active") {
         DCOUT("active. type = " << var.type);
         if (var.type == "bool") {
-          if (auto pv = var.value.get_value<bool>()) {
+          if (auto pv = var.Get<bool>()) {
             out->active = pv.value();
           } else {
             PUSH_ERROR_AND_RETURN(
@@ -659,7 +660,7 @@ class USDAReader::Impl {
         // TODO: list-edit qual
         DCOUT("kind. type = " << var.type);
         if (var.type == "token") {
-          if (auto pv = var.value.get_value<value::token>()) {
+          if (auto pv = var.Get<value::token>()) {
             const value::token tok = pv.value();
             if (tok.str() == "subcomponent") {
               out->kind = Kind::Subcomponent;
@@ -687,10 +688,15 @@ class USDAReader::Impl {
       } else if (meta.first == "customData") {
         DCOUT("customData. type = " << var.type);
         if (var.type == "dictionary") {
-          CustomDataType customData;
-          customData = var.obj_value;
-          DCOUT("dict size = " << var.obj_value.size());
-          out->customData = customData;
+          if (auto pv = var.Get<CustomDataType>()) {
+            out->customData = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN_TAG(kTag,
+                "(Internal error?) `customData` metadataum is not type "
+                "`dictionary`. got type `"
+                << var.type << "`");
+          }
+
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `customData` metadataum is not type "
@@ -706,7 +712,7 @@ class USDAReader::Impl {
           }
           apiSchemas.qual = listEditQual;
 
-          if (auto pv = var.value.get_value<std::vector<value::token>>()) {
+          if (auto pv = var.Get<std::vector<value::token>>()) {
 
             for (const auto &item : pv.value()) {
               // TODO: Multi-apply schema(instance name)
@@ -718,20 +724,20 @@ class USDAReader::Impl {
               }
             }
           } else {
-            PUSH_ERROR_AND_RETURN("(Internal error?) `apiSchemas` metadataum is not type "
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
             "`token[]`. got type `"
-            << var.value.type_name() << "`");
+            << var.TypeName() << "`");
           }
 
           out->apiSchemas = std::move(apiSchemas);
         } else {
-          PUSH_ERROR_AND_RETURN("(Internal error?) `apiSchemas` metadataum is not type "
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
           << var.type << "`");
         }
       } else {
         // string-only data?
-        if (auto pv = var.value.get_value<StringData>()) {
+        if (auto pv = var.Get<StringData>()) {
           out->stringData.push_back(pv.value());
         } else {
           PUSH_WARN("TODO: Prim metadataum : " << meta.first);
