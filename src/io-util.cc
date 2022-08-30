@@ -52,8 +52,10 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#if !defined(__wasi__)
 #include "external/filesystem/include/ghc/filesystem.hpp"
 #include "external/glob/single_include/glob/glob.hpp"
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic pop
