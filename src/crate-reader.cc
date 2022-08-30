@@ -1143,11 +1143,11 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     // CrateValue -> MetaVariable
     MetaVariable var;
 
-    var.value = value.get_raw();
+    var.Set(value.get_raw());
     var.type = value.type_name();
     var.name = key;
     //var.custom = TODO
-    
+
     dict[key] = var;
 
     if (!_sr->seek_set(saved_position)) {
@@ -1534,7 +1534,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       // empty dict is allowed
       // TODO: empty(zero value) check?
       //crate::CrateValue::Dictionary dict;
-      CustomDataType dict; // use CustomDataType for Dict 
+      CustomDataType dict; // use CustomDataType for Dict
       value->Set(dict);
       return true;
     }
