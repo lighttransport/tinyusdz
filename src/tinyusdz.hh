@@ -448,14 +448,8 @@ struct StageMetas {
 class PrimRange;
 
 // Similar to UsdStage, but much more something like a Scene(scene graph)
-struct Stage {
-  std::string name;       // Scene name
-  int64_t default_root_node{-1};  // index to default root node
-
-  StageMetas stage_metas;
-
-  // Root nodes
-  std::vector<Prim> root_nodes;
+class Stage {
+ public:
   
   static Stage CreateInMemory() {
     return Stage();
@@ -479,7 +473,31 @@ struct Stage {
   std::string ExportToString() const;
 
 
+  const std::vector<Prim> &GetRootPrims() const {
+    return root_nodes;
+  }
+
+  std::vector<Prim> &GetRootPrims() {
+    return root_nodes;
+  }
+
+  const StageMetas &GetMetas() const {
+    return stage_metas;
+  }
+
+  StageMetas &GetMetas() {
+    return stage_metas;
+  }
+
  private:
+  // Root nodes
+  std::vector<Prim> root_nodes;
+
+  std::string name;       // Scene name
+  int64_t default_root_node{-1};  // index to default root node
+
+  StageMetas stage_metas;
+
   mutable std::string _err;
   mutable std::string _warn;
 
