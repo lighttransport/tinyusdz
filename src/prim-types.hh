@@ -125,29 +125,24 @@ struct StringData {
   int line_col{0};
 };
 
+class MetaVariable;
+
+using CustomDataType = std::map<std::string, MetaVariable>;
+
 // Variable class for Prim and Attribute Metadataum.
-// TODO: use `value::Value` to store variable.
+// TODO: Use unify with PrimVar?
 class MetaVariable {
  public:
   std::string type;  // Explicit name of type
   std::string name;
   bool custom{false};
 
-  // using Array = std::vector<Variable>;
-  using Object = std::map<std::string, MetaVariable>;
-
-  value::Value value;
-  // Array arr_value;
-  Object obj_value;
-  value::TimeSamples timeSamples;
 
   MetaVariable &operator=(const MetaVariable &rhs) {
     type = rhs.type;
     name = rhs.name;
     custom = rhs.custom;
     value = rhs.value;
-    // arr_value = rhs.arr_value;
-    obj_value = rhs.obj_value;
 
     return *this;
   }
@@ -157,7 +152,6 @@ class MetaVariable {
     name = rhs.name;
     custom = rhs.custom;
     value = rhs.value;
-    obj_value = rhs.obj_value;
   }
 
   static std::string type_name(const MetaVariable &v) {
@@ -169,7 +163,7 @@ class MetaVariable {
     if (v.IsObject()) {
       return "dictionary";
     } else if (v.IsTimeSamples()) {
-      std::string ts_type = "TODO: TimeSample typee";
+      std::string ts_type = "TODO: TimeSample type";
       // FIXME
 #if 0
       auto ts_struct = v.as_timesamples();
@@ -185,8 +179,6 @@ class MetaVariable {
       // ??? TimeSamples data contains all `None` values
       return ts_type;
 
-    } else if (v.IsEmpty()) {
-      return "none";
     } else {
       return v.value.type_name();
     }
@@ -197,43 +189,39 @@ class MetaVariable {
   //   return value.index() == ValueType::index_of<T>();
   // }
 
-  // TODO
-  bool IsEmpty() const { return false; }
-  bool IsValue() const { return false; }
-  // bool IsArray() const {
-  // }
+  bool Valid() const {
+    return value.type_id() != value::TypeTrait<std::nullptr_t>::type_id;
+  }
 
-  bool IsObject() const { return obj_value.size(); }
+  bool IsObject() const;
 
   // TODO
   bool IsTimeSamples() const { return false; }
 
-  // For Value
-#if 0
-  template <typename T>
-  const nonstd::optional<T> cast() const {
-    printf("cast\n");
-    if (IsValue()) {
-      std::cout << "type_name = " << Variable::type_name(*this) << "\n";
-      const T *p = nonstd::get_if<T>(&value);
-      printf("p = %p\n", static_cast<const void *>(p));
-      if (p) {
-        return *p;
-      } else {
-        return nonstd::nullopt;
-      }
-    }
-    return nonstd::nullopt;
-  }
-#endif
-
-  bool valid() const { return !IsEmpty(); }
-
   MetaVariable() = default;
 
-};
+  template<typename T>
+  void Set(const T& v) {
+    value = v;
+  }
 
-using CustomDataType = std::map<std::string, MetaVariable>;
+  template<typename T>
+  nonstd::optional<T> Get() const {
+    return value.get_value<T>();
+  }
+
+  const value::Value &get_raw() const {
+    return value;
+  }
+
+  const std::string TypeName() const {
+    return type_name(*this);
+  }
+
+ private:
+  value::Value value{nullptr};
+
+};
 
 struct APISchemas
 {
@@ -910,7 +898,7 @@ class Connection {
 // double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
 //
 // in .usd, are represented as
-// 
+//
 // 0: (1.0, false)
 // 1: (2.0, true)
 // 2: (3.0, false)
@@ -976,7 +964,7 @@ struct TypedTimeSamples {
 template <typename T>
 struct Animatable {
   // scalar
-  T value;  
+  T value;
   bool blocked{false};
 
   // timesamples
@@ -1188,7 +1176,7 @@ struct XformOp {
       suffix;  // may contain nested namespaces. e.g. suffix will be
                // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
                // will be empty for "xformOp:translate"
-  //XformOpValueType value_type;  
+  //XformOpValueType value_type;
   std::string type_name;
 
   value::TimeSamples var;
@@ -1198,7 +1186,7 @@ struct XformOp {
   void set_scalar(const T &v) {
     var.times.clear();
     var.values.clear();
-  
+
     var.values.push_back(v);
     type_name = value::TypeTrait<T>::type_name();
   }
@@ -1254,7 +1242,7 @@ struct XformOp {
 enum class TimeSampleInterpolation
 {
   Nearest,  // nearest neighbor
-  Linear, // lerp 
+  Linear, // lerp
   // TODO: more to support...
 };
 
