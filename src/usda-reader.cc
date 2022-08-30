@@ -570,32 +570,32 @@ class USDAReader::Impl {
         [&](const ascii::AsciiParser::StageMetas &metas) {
           DCOUT("StageMeta CB:");
 
-          _stage.stage_metas.doc = metas.doc;
+          _stage.GetMetas().doc = metas.doc;
           if (metas.upAxis) {
-            _stage.stage_metas.upAxis = metas.upAxis.value();
+            _stage.GetMetas().upAxis = metas.upAxis.value();
           }
 
-          _stage.stage_metas.defaultPrim = metas.defaultPrim;
+          _stage.GetMetas().defaultPrim = metas.defaultPrim;
           if (metas.metersPerUnit) {
-            _stage.stage_metas.metersPerUnit = metas.metersPerUnit.value();
+            _stage.GetMetas().metersPerUnit = metas.metersPerUnit.value();
           }
 
           if (metas.timeCodesPerSecond) {
-            _stage.stage_metas.timeCodesPerSecond =
+            _stage.GetMetas().timeCodesPerSecond =
                 metas.timeCodesPerSecond.value();
           }
 
           if (metas.startTimeCode) {
-            _stage.stage_metas.startTimeCode = metas.startTimeCode.value();
+            _stage.GetMetas().startTimeCode = metas.startTimeCode.value();
           }
 
           if (metas.endTimeCode) {
-            _stage.stage_metas.endTimeCode = metas.endTimeCode.value();
+            _stage.GetMetas().endTimeCode = metas.endTimeCode.value();
           }
 
-          _stage.stage_metas.customLayerData = metas.customLayerData;
+          _stage.GetMetas().customLayerData = metas.customLayerData;
 
-          _stage.stage_metas.stringData = metas.strings;
+          _stage.GetMetas().stringData = metas.strings;
 
           return true;  // ok
         });
@@ -1222,7 +1222,7 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
 
 
 bool USDAReader::Impl::ReconstructStage() {
-  _stage.root_nodes.clear();
+  _stage.GetRootPrims().clear();
 
   for (const auto &idx : _toplevel_prims) {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
@@ -1245,10 +1245,10 @@ bool USDAReader::Impl::ReconstructStage() {
 
     DCOUT("prim[" << idx << "].num_children = " << prim.children.size());
 
-    size_t sz = _stage.root_nodes.size();
-    _stage.root_nodes.emplace_back(std::move(prim));
+    size_t sz = _stage.GetRootPrims().size();
+    _stage.GetRootPrims().emplace_back(std::move(prim));
 
-    DCOUT("num_children = " << _stage.root_nodes[sz].children.size());
+    DCOUT("num_children = " << _stage.GetRootPrims()[sz].children.size());
   }
 
   return true;

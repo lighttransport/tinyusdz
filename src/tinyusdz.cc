@@ -550,6 +550,8 @@ nonstd::optional<Path> GetPath(const value::Value &v)
   //
   // TODO: Find a better C++ way... use a std::function?
   //
+  if (auto pv = v.get_value<Model>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<Scope>()) { return Path(pv.value().name, ""); }
   if (auto pv = v.get_value<Xform>()) { return Path(pv.value().name, ""); }
   if (auto pv = v.get_value<GPrim>()) { return Path(pv.value().name, ""); }
   if (auto pv = v.get_value<GeomMesh>()) { return Path(pv.value().name, ""); }
