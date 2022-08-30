@@ -8,6 +8,16 @@
 
 namespace tinyusdz {
 
+inline bool hasNewline(const std::string &str) {
+  for (size_t i = 0; i < str.size(); i++) {
+    if ((str[i] == '\r') || (str[i] == '\n')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 inline bool startsWith(const std::string &str, const std::string &t) {
   return (str.size() >= t.size()) &&
          std::equal(std::begin(t), std::end(t), std::begin(str));
