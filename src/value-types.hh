@@ -834,6 +834,78 @@ std::string GetTypeName(uint32_t tyid);
 namespace tinyusdz {
 namespace value {
 
+///
+/// Generic Value class using any
+/// TODO: Type-check when casting with underlying_type(Need to modify linb::any class) 
+///
+class Value {
+ public:
+
+  Value() = default;
+
+  template <class T>
+  Value(const T &v) : v_(v) {}
+
+  // template <class T>
+  // Value(T &&v) : v_(v) {}
+
+  const std::string type_name() const { return v_.type_name(); }
+  const std::string underlying_type_name() const { return v_.underlying_type_name(); }
+
+  uint32_t type_id() const { return v_.type_id(); }
+  uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
+
+  // Return nullptr when type conversion failed.
+  template <class T>
+  const T *as() const {
+    if (TypeTrait<T>::type_id == v_.type_id()) {
+      return linb::any_cast<const T>(&v_);
+    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      return linb::any_cast<const T>(&v_);
+    } else {
+      return nullptr;
+    }
+  }
+
+  // Useful function to retrieve concrete value with type T.
+  // Undefined behavior(usually will triger segmentation fault) when
+  // type-mismatch. (We don't throw exception)
+  template <class T>
+  const T value() const {
+    //return (*reinterpret_cast<const T *>(v_.value()));
+    return linb::any_cast<const T>(v_);
+  }
+
+  // Type-safe way to get concrete value.
+  template <class T>
+  nonstd::optional<T> get_value() const {
+    if (TypeTrait<T>::type_id == v_.type_id()) {
+      return std::move(value<T>());
+    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      // Use force cast
+      // TODO: type-check
+      return std::move(*linb::cast<const T>(&v_));
+    }
+    return nonstd::nullopt;
+  }
+
+  template <class T>
+  Value &operator=(const T &v) {
+    v_ = v;
+    return (*this);
+  }
+
+  const linb::any &get_raw() const { return v_; }
+
+ private:
+  //any_value v_;
+  linb::any v_;
+};
+
 // Handy, but may not be efficient for large time samples(e.g. 1M samples or more)
 //
 // For the runtime speed, with "-O2 -g" optimization, adding 10M `double`
@@ -845,7 +917,8 @@ namespace value {
 //
 struct TimeSamples {
   std::vector<double> times;
-  std::vector<linb::any> values;  // Could be an array of 'None' or Type T
+  //std::vector<linb::any> values;  // Could be an array of 'None' or Type T
+  std::vector<value::Value> values;  // Could be an array of 'None' or Type T
 
   bool IsScalar() const {
     return (times.size() == 0) && (values.size() == 1);
@@ -925,91 +998,8 @@ struct AnimatableValue {
   }
 };
 
-///
-/// Generic Value class using any
-/// TODO: Type-check when casting with underlying_type(Need to modify linb::any class) 
-///
-class Value {
- public:
-  // using Dict = std::map<std::string, Value>;
 
-  Value() = default;
 
-  template <class T>
-  Value(const T &v) : v_(v) {}
-
-  // template <class T>
-  // Value(T &&v) : v_(v) {}
-
-  const std::string type_name() const { return v_.type_name(); }
-  const std::string underlying_type_name() const { return v_.underlying_type_name(); }
-
-  uint32_t type_id() const { return v_.type_id(); }
-  uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
-
-  // Return nullptr when type conversion failed.
-  template <class T>
-  const T *as() const {
-    if (TypeTrait<T>::type_id == v_.type_id()) {
-      return linb::any_cast<const T>(&v_);
-    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      return linb::any_cast<const T>(&v_);
-    } else {
-      return nullptr;
-    }
-  }
-
-  // Useful function to retrieve concrete value with type T.
-  // Undefined behavior(usually will triger segmentation fault) when
-  // type-mismatch. (We don't throw exception)
-  template <class T>
-  const T value() const {
-    //return (*reinterpret_cast<const T *>(v_.value()));
-    return linb::any_cast<const T>(v_);
-  }
-
-  // Type-safe way to get concrete value.
-  template <class T>
-  nonstd::optional<T> get_value() const {
-    if (TypeTrait<T>::type_id == v_.type_id()) {
-      return std::move(value<T>());
-    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      // Use force cast
-      // TODO: type-check
-      return std::move(*linb::cast<const T>(&v_));
-    }
-    return nonstd::nullopt;
-  }
-
-  template <class T>
-  Value &operator=(const T &v) {
-    v_ = v;
-    return (*this);
-  }
-
-  //const any_value &get_raw() const { return v_; }
-
- private:
-  //any_value v_;
-  linb::any v_;
-};
-
-//bool is_float(const any_value &v);
-//bool is_double(const any_value &v);
-
-// Frequently-used utility function
-bool is_float(const Value &v);
-bool is_float2(const Value &v);
-bool is_float3(const Value &v);
-bool is_float4(const Value &v);
-bool is_double(const Value &v);
-bool is_double2(const Value &v);
-bool is_double3(const Value &v);
-bool is_double4(const Value &v);
 
 #if 0 // TODO: Remove? since not used so frequently at the moment.
 //

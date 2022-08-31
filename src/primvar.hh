@@ -80,6 +80,7 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
+#if 0
     if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
       //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
       auto pv = linb::any_cast<const T>(&var.values[0]);
@@ -96,6 +97,9 @@ struct PrimVar {
       return *linb::cast<const T>(&var.values[0]);
     }
     return nonstd::nullopt;
+#else
+    return var.values[0].get_value<T>();
+#endif
   }
 
   // Type-safe way to get concrete value.
@@ -110,6 +114,7 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
+#if 0
     if (value::TypeTrait<T>::type_id == var.values[idx].type_id()) {
       //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
       auto pv = linb::any_cast<const T>(&var.values[idx]);
@@ -126,6 +131,9 @@ struct PrimVar {
       return *linb::cast<const T>(&var.values[idx]);
     }
     return nonstd::nullopt;
+#else
+    return var.values[idx].get_value<T>();
+#endif
   }
 
   // Returns nullptr when type-mismatch.
@@ -136,6 +144,7 @@ struct PrimVar {
       return nullptr;
     }
 
+#if 0
     if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
       //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
       return linb::any_cast<const T>(&var.values[0]);
@@ -145,6 +154,9 @@ struct PrimVar {
       // TODO: strict type check.
       return *linb::cast<const T>(&var.values[0]);
     }
+#else
+    return var.values[0].as<T>();
+#endif
 
     return nullptr;
   }
