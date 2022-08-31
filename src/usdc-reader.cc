@@ -96,17 +96,6 @@ class USDCReader::Impl {
   using PathIndexToSpecIndexMap = std::unordered_map<uint32_t, uint32_t>;
 
 #if 0
-  ///
-  /// Parse node's attribute from FieldValuePairVector.
-  ///
-  bool ParseAttribute(const FieldValuePairVector &fvs, PrimAttrib *attr,
-                      const std::string &prop_name);
-
-  bool ReconstructXform(const Node &node, const FieldValuePairVector &fields,
-                        const std::unordered_map<uint32_t, uint32_t>
-                            &path_index_to_spec_index_map,
-                        Xform *xform);
-
   bool ReconstructGeomSubset(const Node &node,
                              const FieldValuePairVector &fields,
                              const std::unordered_map<uint32_t, uint32_t>
@@ -163,6 +152,13 @@ class USDCReader::Impl {
                            Skeleton *skeleton);
 
 #endif
+
+  ///
+  /// Construct Property(Attribute, Relationship/Connection) from FieldValuePairs
+  ///
+  bool ParseProperty(
+    const crate::FieldValuePairVector &fvs,
+    Property *prop);
 
   // For simple, non animatable and non `.connect` types. e.g. "token[]"
   template<typename T>
@@ -453,7 +449,7 @@ bool USDCReader::Impl::ReconstructGeomSubset(
     const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
     GeomSubset *geom_subset) {
 
-  DCOUT("Reconstruct Xform");
+  DCOUT("Reconstruct GeomSubset");
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
@@ -566,7 +562,7 @@ bool USDCReader::Impl::ReconstructGeomMesh(
     GeomMesh *mesh) {
   bool has_position{false};
 
-  DCOUT("Reconstruct Xform");
+  DCOUT("Reconstruct GeomMesh");
 
   for (const auto &fv : fields) {
     if (fv.first == "properties") {
@@ -1203,6 +1199,67 @@ bool USDCReader::Impl::ReconstructSkelRoot(
 
 namespace {}
 
+bool USDCReader::Impl::ParseProperty(
+  const crate::FieldValuePairVector &fvs,
+  Property *prop) {
+  if (fvs.size() > _config.kMaxFieldValuePairs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
+  }
+
+  bool custom{false};
+  nonstd::optional<value::token> typeName;
+  Property::Type propType{Property::Type::EmptyAttrib};
+  PrimAttrib attr;
+
+  // TODO: Rel, TimeSamples, Connection
+  
+  for (auto &fv : fvs) {
+
+    DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
+
+    if (fv.first == "custom") {
+      if (auto pv = fv.second.get_value<bool>()) {
+        custom = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
+      }
+    } else if (fv.first == "variability") {
+      if (auto pv = fv.second.get_value<Variability>()) {
+        attr.variability = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`variability` field is not `varibility` type.");
+      }
+    } else if (fv.first == "typeName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        DCOUT("typeName = " << pv.value().str());
+        typeName = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is not `token` type.");
+      }
+    } else if (fv.first == "default") {
+      propType = Property::Type::Attrib;
+
+      // Set scalar
+      // TODO: Easier CrateValue to PrimAttrib.var conversion
+      attr.var.var.values.push_back(fv.second.get_raw());
+      
+    } else {
+      PUSH_WARN("TODO: " << fv.first);
+      DCOUT("TODO: " << fv.first);
+    }
+  }
+
+  if (propType == Property::Type::EmptyAttrib) {
+    (*prop) = Property(custom);
+  } else if (propType == Property::Type::Attrib) {
+    (*prop) = Property(attr, custom);
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
+  }
+
+  return true;
+}
+
 template<typename T>
 bool USDCReader::Impl::ReconstructSimpleAttribute(
   int parent, 
@@ -1341,22 +1398,15 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
   //  * [ ] !resetXformStack! suffix
 
   (void)xform;
+  (void)fvs;
 
   DCOUT("Reconstruct Xform ====");
 
+  std::map<std::string, Property> props;
 
-  for (const auto &fv : fvs) {
-    DCOUT("field = " << fv.first << ", type = " << fv.second.type_name());
-
-    FIELDVALUE_DATATYPE_CHECK(fv, "properties", std::vector<value::token>)
-
-  }
-
+  // First construct Property, then do Xform specific thing.
+  
   // Properties are stored in Children node
-
-  //
-  // NOTE: Currently we assume one deeper node has Xform's attribute
-  //
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
@@ -1411,30 +1461,36 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
     {
       std::string prop_name = path.value().GetPropPart();
 
-      DCOUT("prop.name = " << prop_name);
-      (void)child_fvs; 
-#if 0
-      PrimAttrib attr;
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("Xform: prop: " << prop_name << ", ret = " << ret);
-      if (ret) {
-        // TODO(syoyo): Implement
-        PUSH_ERROR("TODO: Implemen Xform prop: " + prop_name);
+      Property prop;
+      if (!ParseProperty(child_fvs, &prop)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to construct Property from FieldValuePairVector.");
       }
-#endif
 
-      if (prop_name == "xformOpOrder") {
-        DCOUT("Reconstruct xformOpOrder");
-        std::vector<value::token> toks;
-        if (!ReconstructSimpleAttribute(child_index, child_fvs, &toks)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to reconstruct Property.");
-        }
-        DCOUT("Reconstructed `xformOpOrder`" << toks);
-      }
+      props.emplace(prop_name, prop);
+      DCOUT("Add property : " << prop_name);
+
     }
   }
 
-  // xformOpOrder
+  //
+  // Process Xform's specific prop
+  // 
+  
+  constexpr auto kXformOpOrder = "xformOpOrder";
+
+  auto xformOpOrder = props.find(kXformOpOrder);
+  if (xformOpOrder != props.end()) {
+    std::vector<value::token> xformOpTokens;
+    if (xformOpOrder->second.IsAttrib()) {
+      if (auto pv = xformOpOrder->second.attrib.var.get_value<decltype(xformOpTokens)>()) {
+        xformOpTokens = pv.value();
+      }
+    }
+
+    for (const auto &xformOp : xformOpTokens) {
+      DCOUT("xformOp tok = " << xformOp);
+    }
+  }
 
   DCOUT("End Reconstruct Xform ====");
 
