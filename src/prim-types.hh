@@ -1219,6 +1219,7 @@ struct XformOp {
       return nonstd::nullopt;
     }
 
+#if 0
     if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
       //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
       auto pv = linb::any_cast<const T>(&var.values[0]);
@@ -1235,6 +1236,9 @@ struct XformOp {
       return *linb::cast<const T>(&var.values[0]);
     }
     return nonstd::nullopt;
+#else
+    return var.values[0].get_value<T>();
+#endif
   }
 
 };

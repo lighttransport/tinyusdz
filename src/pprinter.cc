@@ -358,7 +358,7 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
           ss << "[TODO: TimeSamples]";
         } else {
           // is_scalar
-          ss << value::pprint_any(attr.var.var.values[0]);
+          ss << value::pprint_value(attr.var.var.values[0]);
         }
       }
     }
@@ -406,7 +406,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
   std::stringstream ss;
 
   if (v.IsScalar()) {
-    ss << value::pprint_any(v.values[0]);
+    ss << value::pprint_value(v.values[0]);
   } else {
 
     if (!v.ValidTimeSamples()) {
@@ -418,7 +418,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
     for (size_t i = 0; i < v.times.size(); i++) {
 
       ss << pprint::Indent(indent+1);
-      ss << v.times[i] << ": " << value::pprint_any(v.values[i]);
+      ss << v.times[i] << ": " << value::pprint_value(v.values[i]);
       ss << ",\n"; // USDA allow ',' for the last item
     }
     ss << pprint::Indent(indent) << "}\n";

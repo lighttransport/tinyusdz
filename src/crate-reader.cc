@@ -55,7 +55,7 @@ constexpr auto kTypeName = "typeName";
 constexpr auto kToken = "Token";
 constexpr auto kDefault = "default";
 
-#define kCrateTag "[Crate]"
+#define kTag "[Crate]"
 
 namespace {
 
@@ -709,7 +709,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // crateFile.cpp for details.
   int64_t offset{0};
   if (!_sr->read8(&offset)) {
-    _err += "Failed to read the offset for value in Dictionary.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
     return false;
   }
 
@@ -718,8 +718,8 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // -8 to compensate sizeof(offset)
   if (!_sr->seek_from_current(offset - 8)) {
-    _err += "Failed to seek to TimeSample times. Invalid offset value: " +
-            std::to_string(offset) + "\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSample times. Invalid offset value: " +
+            std::to_string(offset));
     return false;
   }
 
@@ -751,14 +751,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // seek position will be changed in `_UnpackValueRep`, so revert it.
   if (!_sr->seek_set(values_offset)) {
-    _err += "Failed to seek to TimeSamples values.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSamples values.");
   }
 
   // 8byte for the offset for recursive value. See RecursiveRead() in
   // crateFile.cpp for details.
   if (!_sr->read8(&offset)) {
-    _err += "Failed to read the offset for value in TimeSamples.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in TimeSamples.");
     return false;
   }
 
@@ -767,26 +766,23 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // -8 to compensate sizeof(offset)
   if (!_sr->seek_from_current(offset - 8)) {
-    _err += "Failed to seek to TimeSample values. Invalid offset value: " +
-            std::to_string(offset) + "\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSample values. Invalid offset value: " + std::to_string(offset));
   }
 
   uint64_t num_values{0};
   if (!_sr->read8(&num_values)) {
-    _err += "Failed to read the number of values from TimeSamples.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of values from TimeSamples.");
     return false;
   }
 
   DCOUT("Number of values = " << num_values);
 
-  _warn += "TODO: Decode TimeSample's values\n";
+  PUSH_WARN("TODO: Decode TimeSample's values");
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
   if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
-    _err += "Failed to seek over TimeSamples's values.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek over TimeSamples's values.");
   }
 
   return true;
@@ -1096,7 +1092,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
   }
 
   if (sz > _config.maxDictElements) {
-    PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "The number of elements for Dictionary data is too large. Max = " << std::to_string(_config.maxDictElements) << ", but got " << std::to_string(sz));
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "The number of elements for Dictionary data is too large. Max = " << std::to_string(_config.maxDictElements) << ", but got " << std::to_string(sz));
   }
 
   DCOUT("# o elements in dict" << sz);
@@ -1106,26 +1102,26 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     std::string key;
 
     if (!ReadString(&key)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read key string for Dictionary element.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read key string for Dictionary element.");
     }
 
     // 8byte for the offset for recursive value. See RecursiveRead() in
     // crateFile.cpp for details.
     int64_t offset{0};
     if (!_sr->read8(&offset)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read the offset for value in Dictionary.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
     }
 
     // -8 to compensate sizeof(offset)
     if (!_sr->seek_from_current(offset - 8)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
     }
 
     DCOUT("key = " << key);
 
     crate::ValueRep rep{0};
     if (!ReadValueRep(&rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read value for Dictionary element.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read value for Dictionary element.");
     }
 
     DCOUT("vrep =" << crate::GetCrateDataTypeName(rep.GetType()));
@@ -1134,7 +1130,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
 
     crate::CrateValue value;
     if (!UnpackValueRep(rep, &value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to unpack value of Dictionary element.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of Dictionary element.");
     }
 
     if (dict.count(key)) {
@@ -1151,7 +1147,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     dict[key] = var;
 
     if (!_sr->seek_set(saved_position)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to set seek.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
     }
   }
 
@@ -2709,8 +2705,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       value::TimeSamples ts;
       if (!ReadTimeSamples(&ts)) {
-        _err += "Failed to read TimeSamples data\n";
-        return false;
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read TimeSamples data");
       }
 
       value->Set(ts);
