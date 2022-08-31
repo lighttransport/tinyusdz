@@ -60,19 +60,30 @@
 namespace tinyusdz {
 namespace usdc {
 
+constexpr auto kTag = "[USDC]";
+
+struct PrimNode {
+  value::Value prim;
+
+  int64_t parent{-1};            // -1 = root node
+  std::vector<size_t> children;  // index to USDCReader::Impl::._prim_nodes[]
+};
+
 class USDCReader::Impl {
  public:
-  Impl(StreamReader *sr, int num_threads) : _sr(sr) {
-    if (num_threads == -1) {
+  Impl(StreamReader *sr, const USDCReaderConfig &config) : _sr(sr) {
+    _config = config;
+
 #if defined(__wasi__)
-      num_threads = 1;
+    _config.numThreads = 1;
 #else
-      num_threads = (std::max)(1, int(std::thread::hardware_concurrency()));
+    if (_config.numThreads == -1) {
+      _config.numThreads = (std::max)(1, int(std::thread::hardware_concurrency()));
 #endif
     }
 
     // Limit to 1024 threads.
-    _num_threads = (std::min)(1024, num_threads);
+    _config.numThreads = (std::min)(1024, _config.numThreads);
   }
 
   ~Impl() {
@@ -81,6 +92,8 @@ class USDCReader::Impl {
   }
 
   bool ReadUSDC();
+
+  using PathIndexToSpecIndexMap = std::unordered_map<uint32_t, uint32_t>;
 
 #if 0
   ///
@@ -151,9 +164,29 @@ class USDCReader::Impl {
 
 #endif
 
-  bool ReconstructPrimRecursively(int parent_id, int level,
-                                  const std::unordered_map<uint32_t, uint32_t>
-                                      &path_index_to_spec_index_map,
+  // For simple, non animatable and non `.connect` types. e.g. "token[]"
+  template<typename T>
+  bool ReconstructSimpleAttribute(
+    int parent,
+    const crate::FieldValuePairVector &fvs,
+    T *attr,
+    bool *custom_out = nullptr,
+    Variability *variability_out = nullptr);
+
+  // For attribute which maybe a value, connection or TimeSamples.
+  template<typename T>
+  bool ReconstructTypedAttribute(
+    int parent,
+    const crate::FieldValuePairVector &fvs,
+    TypedAttribute<T> *attr);
+
+  template<typename T>
+  bool ReconstructPrim(const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap,
+    T *prim);
+
+  bool ReconstructPrimRecursively(int parent_id, int current_id, int level,
+                                  const PathIndexToSpecIndexMap &psmap,
                                   Stage *stage);
 
   bool ReconstructStage(Stage *stage);
@@ -176,7 +209,8 @@ class USDCReader::Impl {
  private:
 
   bool ReconstrcutStageMeta(const crate::FieldValuePairVector &fvs,
-                            StageMetas *out);
+                            StageMetas *out,
+                            std::vector<value::token> *primChildren);
 
   crate::CrateReader *crate_reader{nullptr};
 
@@ -184,11 +218,20 @@ class USDCReader::Impl {
   std::string _err;
   std::string _warn;
 
-  int _num_threads{1};
+  USDCReaderConfig _config;
 
   // Tracks the memory used(In advisorily manner since counting memory usage is
   // done by manually, so not all memory consumption could be tracked)
   size_t memory_used{0};  // in bytes.
+
+
+  nonstd::optional<Path> GetPath(crate::Index index) const {
+    if (index.value <= _paths.size()) {
+      return _paths[index.value];
+    }
+
+    return nonstd::nullopt;
+  }
 
   std::vector<crate::CrateReader::Node> _nodes;
   std::vector<crate::Spec> _specs;
@@ -199,6 +242,12 @@ class USDCReader::Impl {
 
   std::map<crate::Index, crate::FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
+
+
+  std::vector<PrimNode> _prim_nodes;
+
+  // Check if given node_id is a prim node.
+  std::set<int32_t> _prim_table;
 };
 
 //
@@ -207,95 +256,7 @@ class USDCReader::Impl {
 
 #if 0
 
-#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type)                \
-  {                                                                        \
-    if (__fv.first == __name) {                                            \
-      if (__fv.second.GetTypeName() != __req_type) {                       \
-        PUSH_ERROR("`" << __name << "` attribute must be " << __req_type   \
-                       << " type, but got " << __fv.second.GetTypeName()); \
-        return false;                                                      \
-      }                                                                    \
-    }                                                                      \
-  }
 
-bool USDCReader::Impl::ReconstructXform(
-    uint64_t node_idx,
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    Xform *xform) {
-  // TODO:
-  //  * [ ] !invert! suffix
-  //  * [ ] !resetXformStack! suffix
-  //  * [ ] maya:pivot support?
-
-  (void)xform;
-
-  DCOUT("Reconstruct Xform");
-
-  for (const auto &fv : fields) {
-    DCOUT("field = " << fv.first << ", type = " << fv.second.GetTypeName());
-
-    FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-  }
-
-  //
-  // NOTE: Currently we assume one deeper node has Xform's attribute
-  //
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
-      return false;
-    }
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      // Should we report an error?
-      continue;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    Path path = GetPath(spec.path_index);
-
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.");
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.GetPropPart();
-
-      PrimAttrib attr;
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("Xform: prop: " << prop_name << ", ret = " << ret);
-      if (ret) {
-        // TODO(syoyo): Implement
-        PUSH_ERROR("TODO: Implemen Xform prop: " + prop_name);
-      }
-    }
-  }
-
-  return true;
-}
 
 bool USDCReader::Impl::ReconstructGeomBasisCurves(
     const Node &node, const FieldValuePairVector &fields,
@@ -1237,22 +1198,358 @@ bool USDCReader::Impl::ReconstructSkelRoot(
   return true;
 }
 
-bool USDCReader::Impl::ReconstructSkeleton(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+
+#endif
+
+namespace {}
+
+template<typename T>
+bool USDCReader::Impl::ReconstructSimpleAttribute(
+  int parent, 
+  const crate::FieldValuePairVector &fvs,
+  T *attr,
+  bool *custom_out,
+  Variability *variability_out)
+{
+  (void)attr;
+
+  if (fvs.size() > _config.kMaxFieldValuePairs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
+  }
+
+  bool valid{false};
+
+  for (auto &fv : fvs) {
+    // Some predefined fields
+    if (fv.first == "custom") {
+      if (auto pv = fv.second.get_value<bool>()) {
+        if (custom_out) {
+          (*custom_out) = pv.value();
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
+      }
+    } else if (fv.first == "variability") {
+      if (auto pv = fv.second.get_value<Variability>()) {
+        if (variability_out) {
+          (*variability_out) = pv.value();
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`variability` field is not `varibility` type.");
+      }
+    } else if (fv.first == "typeName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        DCOUT("typeName = " << pv.value().str());
+        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << pv.value().str() << "`.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is not `token` type.");
+      }
+    } else if (fv.first == "default") {
+      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << fv.second.type_name() << "`.");
+      }
+
+      if (auto pv = fv.second.get_value<T>()) {
+        (*attr) = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Type mismatch. Internal error.");
+      }
+      valid = true;
+    } 
+
+    DCOUT("parent[" << parent << "] fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
+  }
+
+  if (!valid) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "`default` field not found.");
+  }
+
+  return true;
+}
+
+template<typename T>
+bool USDCReader::Impl::ReconstructTypedAttribute(
+  int parent, 
+  const crate::FieldValuePairVector &fvs,
+  TypedAttribute<T> *attr)
+{
+  (void)attr;
+
+  if (fvs.size() > _config.kMaxFieldValuePairs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
+  }
+
+  for (auto &fv : fvs) {
+    // Some predefined fields
+    if (fv.first == "custom") {
+      if (auto pv = fv.second.get_value<bool>()) {
+        attr->custom = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
+      }
+    } else if (fv.first == "typeName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        DCOUT("typeName = " << pv.value().str());
+        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << pv.value().str() << "`.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is not `token` type.");
+      }
+    } else if (fv.first == "default") {
+      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << fv.second.type_name() << "`.");
+      }
+
+      if (auto pv = fv.second.get_value<T>()) {
+        Animatable<T> anim;
+        anim.value = pv.value();
+        attr->value = anim;
+      }
+    }
+
+    DCOUT("parent[" << parent << "] fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
+  }
+
+  return true;
+}
+  
+
+//
+// -- specialization of ReconstructPrim
+//
+#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type)                \
+  {                                                                        \
+    if (__fv.first == __name) {                                            \
+      if (__fv.second.type_id() != value::TypeTrait<__req_type>::type_id) {                       \
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`" << __name << "` attribute must be " << value::TypeTrait<__req_type>::type_name()   \
+                       << " type, but got " << __fv.second.type_name()); \
+      }                                                                    \
+    }                                                                      \
+  }
+
+template<>
+bool USDCReader::Impl::ReconstructPrim<Xform>(
+    const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap,
+    Xform *xform) {
+
+  // TODO:
+  //  * [ ] !invert! suffix
+  //  * [ ] !resetXformStack! suffix
+
+  (void)xform;
+
+  DCOUT("Reconstruct Xform ====");
+
+
+  for (const auto &fv : fvs) {
+    DCOUT("field = " << fv.first << ", type = " << fv.second.type_name());
+
+    FIELDVALUE_DATATYPE_CHECK(fv, "properties", std::vector<value::token>)
+
+  }
+
+  // Properties are stored in Children node
+
+  //
+  // NOTE: Currently we assume one deeper node has Xform's attribute
+  //
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
+      return false;
+    }
+
+    if (!psmap.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      // Should we report an error?
+      continue;
+    }
+
+    uint32_t spec_index =
+        psmap.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
+      return false;
+    }
+
+    const crate::Spec &spec = _specs[spec_index];
+
+    // Property must be Connection or RelationshipTarget
+    if ((spec.spec_type == SpecType::Connection) ||
+        (spec.spec_type == SpecType::RelationshipTarget)) {
+      // OK
+    } else {
+      continue;
+    }
+
+    nonstd::optional<Path> path = GetPath(spec.path_index);
+
+    if (!path) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
+    }
+
+    DCOUT("Path prim part: " << path.value().GetPrimPart()
+                             << ", prop part: " << path.value().GetPropPart()
+                             << ", spec_index = " << spec_index);
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
+      return false;
+    }
+
+    const crate::FieldValuePairVector &child_fvs =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.value().GetPropPart();
+
+      DCOUT("prop.name = " << prop_name);
+      (void)child_fvs; 
+#if 0
+      PrimAttrib attr;
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
+      DCOUT("Xform: prop: " << prop_name << ", ret = " << ret);
+      if (ret) {
+        // TODO(syoyo): Implement
+        PUSH_ERROR("TODO: Implemen Xform prop: " + prop_name);
+      }
+#endif
+
+      if (prop_name == "xformOpOrder") {
+        DCOUT("Reconstruct xformOpOrder");
+        std::vector<value::token> toks;
+        if (!ReconstructSimpleAttribute(child_index, child_fvs, &toks)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to reconstruct Property.");
+        }
+        DCOUT("Reconstructed `xformOpOrder`" << toks);
+      }
+    }
+  }
+
+  // xformOpOrder
+
+  DCOUT("End Reconstruct Xform ====");
+
+  return true;
+}
+
+template<>
+bool USDCReader::Impl::ReconstructPrim<Scope>(
+    const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap,
+    Scope *scope) {
+
+  (void)scope;
+
+  DCOUT("Reconstruct Scope ====");
+
+  for (const auto &fv : fvs) {
+    DCOUT("field = " << fv.first << ", type = " << fv.second.type_name());
+
+    FIELDVALUE_DATATYPE_CHECK(fv, "properties", std::vector<value::token>)
+
+  }
+
+  // Properties are stored in Children node
+
+  //
+  // NOTE: Currently we assume one deeper node has Xform's attribute
+  //
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
+      return false;
+    }
+
+    if (!psmap.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      // Should we report an error?
+      continue;
+    }
+
+    uint32_t spec_index =
+        psmap.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
+      return false;
+    }
+
+    const crate::Spec &spec = _specs[spec_index];
+
+    nonstd::optional<Path> path = GetPath(spec.path_index);
+
+    if (!path) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
+    }
+
+    DCOUT("Path prim part: " << path.value().GetPrimPart()
+                             << ", prop part: " << path.value().GetPropPart()
+                             << ", spec_index = " << spec_index);
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+              " must exist in live fieldsets.");
+      return false;
+    }
+
+    const crate::FieldValuePairVector &child_fvs =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.value().GetPropPart();
+
+      DCOUT("prop.name = " << prop_name);
+      (void)child_fvs; 
+#if 0
+      PrimAttrib attr;
+      bool ret = ParseAttribute(child_fields, &attr, prop_name);
+      DCOUT("Xform: prop: " << prop_name << ", ret = " << ret);
+      if (ret) {
+        // TODO(syoyo): Implement
+        PUSH_ERROR("TODO: Implemen Xform prop: " + prop_name);
+      }
+#endif
+    }
+  }
+
+  DCOUT("End Reconstruct Scope ====");
+
+  return true;
+}
+
+template<>
+bool USDCReader::Impl::ReconstructPrim<Skeleton>(
+    const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap,
     Skeleton *skeleton) {
   DCOUT("Parse skeleton");
   (void)skeleton;
+  (void)node;
+  (void)psmap;
 
-  for (const auto &fv : fields) {
+
+  for (const auto &fv : fvs) {
+    DCOUT("field: " << fv.first);
     if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
+      FIELDVALUE_DATATYPE_CHECK(fv, "properties", std::vector<value::token>)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
       // }
     }
   }
 
+#if 0
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
@@ -1317,16 +1614,29 @@ bool USDCReader::Impl::ReconstructSkeleton(
       }
     }
   }
+#endif
 
   return true;
 }
 
-#endif
-
-namespace {}
-
 bool USDCReader::Impl::ReconstrcutStageMeta(
-    const crate::FieldValuePairVector &fvs, StageMetas *metas) {
+    const crate::FieldValuePairVector &fvs,
+    StageMetas *metas,
+    std::vector<value::token> *primChildren)
+{
+  /// Stage(toplevel layer) Meta fieldSet example.
+  ///
+  ///   specTy = SpecTypeRelationship
+  ///
+  ///     - customLayerData(dict)
+  ///     - defaultPrim(token)
+  ///     - metersPerUnit(double)
+  ///     - timeCodesPerSecond(double)
+  ///     - upAxis(token)
+  ///     - primChildren(token[]) : Crate only. List of root prims
+  ///     - documentation(string) : `doc`
+  ///     - comment(string) : comment
+
   for (const auto &fv : fvs) {
     if (fv.first == "upAxis") {
       auto vt = fv.second.get_value<value::token>();
@@ -1418,8 +1728,10 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         return false;
       }
 
-      metas->primChildren = v.value();
-      DCOUT("primChildren = " << metas->primChildren);
+      if (primChildren) {
+        (*primChildren) = v.value();
+        DCOUT("primChildren = " << (*primChildren));
+      }
     } else if (fv.first == "documentation") {  // 'doc'
       auto v = fv.second.get_value<std::string>();
       if (!v) {
@@ -1440,24 +1752,26 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   return true;
 }
 
+
+
 bool USDCReader::Impl::ReconstructPrimRecursively(
-    int parent, int level,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
+    int parent, int current, int level,
+    const PathIndexToSpecIndexMap &psmap,
     Stage *stage) {
   DCOUT("ReconstructPrimRecursively: parent = "
-        << std::to_string(parent) << ", level = " << std::to_string(level));
+        << std::to_string(current) << ", level = " << std::to_string(level));
 
-  if ((parent < 0) || (parent >= int(_nodes.size()))) {
-    PUSH_ERROR("Invalid parent node id: " + std::to_string(parent) +
+  if ((current < 0) || (current >= int(_nodes.size()))) {
+    PUSH_ERROR("Invalid current node id: " + std::to_string(current) +
                ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
     return false;
   }
 
-  const crate::CrateReader::Node &node = _nodes[size_t(parent)];
+  const crate::CrateReader::Node &node = _nodes[size_t(current)];
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
-            << "] node_index[" << parent << "] " << node.GetLocalPath()
+            << "] node_index[" << current << "] " << node.GetLocalPath()
             << " ==\n";
   std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
@@ -1469,13 +1783,13 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   std::cout << "]\n";
 #endif
 
-  if (!path_index_to_spec_index_map.count(uint32_t(parent))) {
+  if (!psmap.count(uint32_t(current))) {
     // No specifier assigned to this node.
-    DCOUT("No specifier assigned to this node: " << parent);
+    DCOUT("No specifier assigned to this node: " << current);
     return true;  // would be OK.
   }
 
-  uint32_t spec_index = path_index_to_spec_index_map.at(uint32_t(parent));
+  uint32_t spec_index = psmap.at(uint32_t(current));
   if (spec_index >= _specs.size()) {
     PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
                ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
@@ -1489,212 +1803,159 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   DCOUT(pprint::Indent(uint32_t(level))
         << "  fieldSetIndex = " << spec.fieldset_index.value);
 
+  if ((spec.spec_type == SpecType::Connection) || (spec.spec_type == SpecType::RelationshipTarget)) {
+    if (_prim_table.count(parent)) {
+      // This node is a Properties node. These are processed in ReconstructPrim(), so nothing to do here.
+      return true;
+    }
+  }
+
+
   if (!_live_fieldsets.count(spec.fieldset_index)) {
     PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
                " must exist in live fieldsets.");
     return false;
   }
 
-  const crate::FieldValuePairVector &fields =
+  const crate::FieldValuePairVector &fvs =
       _live_fieldsets.at(spec.fieldset_index);
+
+  if (fvs.size() > _config.kMaxFieldValuePairs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
+  }
+
+  // DBG
+  for (auto &fv : fvs) {
+    DCOUT("parent[" << current << "] level [" << level << "] fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
+  }
+
+  std::vector<value::token> primChildren;
 
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
-  if (parent == 0) {
-    if (!ReconstrcutStageMeta(fields, &stage->GetMetas())) {
+  if (current == 0) {
+
+    // Root layer(Stage) is Relationship for some reaon.
+    if (spec.spec_type != SpecType::Relationship) {
+      PUSH_ERROR_AND_RETURN("SpecTypeRelationship expected for root layer(Stage) element.");
+    }
+
+    if (!ReconstrcutStageMeta(fvs, &stage->GetMetas(), &primChildren)) {
       PUSH_ERROR_AND_RETURN("Failed to reconstruct StageMeta.");
     }
-  }
 
-  std::string node_type;
-  //crate::CrateValue::Dictionary assetInfo;
-  CustomDataType assetInfo;
+    _prim_table.insert(current);
 
-  ///
-  /// Prim Attribute fieldSet example.
-  /// - typeName(token) : type name of attribute(e.g. `float`)
-  /// - default : Default(fallback) value.
-  /// - ...
-
-  auto GetTypeName =
-      [](const crate::FieldValuePairVector &fvs) -> nonstd::optional<std::string> {
-    for (const auto &fv : fvs) {
-      DCOUT(" fv.first = " << fv.first
-                           << ", type = " << fv.second.type_name());
-      if (fv.first == "typeName") {
-        auto v = fv.second.get_value<value::token>();
-        if (v) {
-          return v.value().str();
-        }
-      }
-    }
-
-    return nonstd::nullopt;
-  };
-
-  DCOUT("---");
-
-  if (auto v = GetTypeName(fields)) {
-    node_type = v.value();
-  }
-
-  DCOUT("===");
-
-#if 0  // TODO: Refactor)
-  for (const auto &fv : fields) {
-    DCOUT(IndentStr(level) << "  \"" << fv.first
-                           << "\" : ty = " << fv.second.GetTypeName());
-
-    if (fv.second.GetTypeId() == VALUE_TYPE_SPECIFIER) {
-      DCOUT(IndentStr(level)
-            << "    specifier = " << to_string(fv.second.GetSpecifier()));
-    } else if ((fv.first == "primChildren") &&
-               (fv.second.GetTypeName() == "TokenArray")) {
-      // Check if TokenArray contains known child nodes
-      const auto &tokens = fv.second.GetStringArray();
-
-      // bool valid = true;
-      for (const auto &token : tokens) {
-        if (!node.GetPrimChildren().count(token)) {
-          _err += "primChild '" + token + "' not found in node '" +
-                  node.GetPath().full_path_name() + "'\n";
-          // valid = false;
-          break;
-        }
-      }
-    } else if (fv.second.GetTypeName() == "TokenArray") {
-      assert(fv.second.IsArray());
-      const auto &strs = fv.second.GetStringArray();
-      for (const auto &str : strs) {
-        (void)str;
-        DCOUT(IndentStr(level + 2) << str);
-      }
-
-    } else if (fv.second.GetTypeName() == "TokenListOp") {
-      PUSH_WARN("TODO: name " + fv.first + ", type TokenListOp.");
-    } else if (fv.second.GetTypeName() == "Vec3fArray") {
-      PUSH_WARN("TODO: name: " + fv.first +
-                ", type: " + fv.second.GetTypeName());
-
-    } else if ((fv.first == "assetInfo") &&
-               (fv.second.GetTypeName() == "Dictionary")) {
-      node_type = "assetInfo";
-      assetInfo = fv.second.GetDictionary();
-
-    } else {
-      PUSH_WARN("TODO: name: " + fv.first +
-                ", type: " + fv.second.GetTypeName());
-      // return false;
-    }
-  }
-#endif
-
-  DCOUT("node_type = " << node_type);
-
-#if 0
-  if (node_type == "Xform") {
-    Xform xform;
-    if (!ReconstructXform(node, fields, path_index_to_spec_index_map, &xform)) {
-      _err += "Failed to reconstruct Xform.\n";
-      return false;
-    }
-    scene->xforms.push_back(xform);
-  } else if (node_type == "BasisCurves") {
-    GeomBasisCurves curves;
-    if (!ReconstructGeomBasisCurves(node, fields, path_index_to_spec_index_map,
-                                    &curves)) {
-      _err += "Failed to reconstruct GeomBasisCurves.\n";
-      return false;
-    }
-    curves.name = node.GetLocalPath();  // FIXME
-    scene->geom_basis_curves.push_back(curves);
-  } else if (node_type == "GeomSubset") {
-    GeomSubset geom_subset;
-    // TODO(syoyo): Pass Parent 'Geom' node.
-    if (!ReconstructGeomSubset(node, fields, path_index_to_spec_index_map,
-                               &geom_subset)) {
-      _err += "Failed to reconstruct GeomSubset.\n";
-      return false;
-    }
-    geom_subset.name = node.GetLocalPath();  // FIXME
-    // TODO(syoyo): add GeomSubset to parent `Mesh`.
-    _err += "TODO: Add GeomSubset to Mesh.\n";
-    return false;
-
-  } else if (node_type == "Mesh") {
-    GeomMesh mesh;
-    if (!ReconstructGeomMesh(node, fields, path_index_to_spec_index_map,
-                             &mesh)) {
-      PUSH_ERROR("Failed to reconstruct GeomMesh.");
-      return false;
-    }
-    mesh.name = node.GetLocalPath();  // FIXME
-    scene->geom_meshes.push_back(mesh);
-  } else if (node_type == "Material") {
-    Material material;
-    if (!ReconstructMaterial(node, fields, path_index_to_spec_index_map,
-                             &material)) {
-      PUSH_ERROR("Failed to reconstruct Material.");
-      return false;
-    }
-    material.name = node.GetLocalPath();  // FIXME
-    scene->materials.push_back(material);
-  } else if (node_type == "Shader") {
-    Shader shader;
-    if (!ReconstructShader(node, fields, path_index_to_spec_index_map,
-                           &shader)) {
-      PUSH_ERROR("Failed to reconstruct PreviewSurface(Shader).");
-      return false;
-    }
-
-    shader.name = node.GetLocalPath();  // FIXME
-
-    scene->shaders.push_back(shader);
-  } else if (node_type == "Scope") {
-    std::cout << "TODO: Scope\n";
-  } else if (node_type == "assetInfo") {
-    PUSH_WARN("TODO: Reconstruct dictionary value of `assetInfo`");
-    //_nodes[size_t(parent)].SetAssetInfo(assetInfo);
-  } else if (node_type == "Skeleton") {
-    Skeleton skeleton;
-    if (!ReconstructSkeleton(node, fields, path_index_to_spec_index_map,
-                             &skeleton)) {
-      PUSH_ERROR("Failed to reconstruct Skeleton.");
-      return false;
-    }
-
-    skeleton.name = node.GetLocalPath();  // FIXME
-
-    scene->skeletons.push_back(skeleton);
-
-  } else if (node_type == "SkelRoot") {
-    SkelRoot skelRoot;
-    if (!ReconstructSkelRoot(node, fields, path_index_to_spec_index_map,
-                             &skelRoot)) {
-      PUSH_ERROR("Failed to reconstruct SkelRoot.");
-      return false;
-    }
-
-    skelRoot.name = node.GetLocalPath();  // FIXME
-
-    scene->skel_roots.push_back(skelRoot);
   } else {
-    if (!node_type.empty()) {
-      DCOUT("TODO or we can ignore this node: node_type: " << node_type);
+
+    nonstd::optional<std::string> typeName;
+    nonstd::optional<Specifier> specifier;
+    std::vector<value::token> properties;
+
+    ///
+    ///
+    /// Prim(Model) fieldSet example.
+    ///
+    ///
+    ///   specTy = SpecTypePseudoRoot
+    ///
+    ///     - specifier(specifier) : e.g. `def`, `over`, ...
+    ///     - kind(token) : kind metadataum
+    ///     - optional: typeName(token) : type name of Prim(e.g. `Xform`). No typeName = `def "mynode"`
+    ///     - properties(token[]) : List of name of Prim properties(attributes)
+    ///     - optional: primChildren(token[]): List of child prims.
+    ///
+    ///
+
+    /// Attrib fieldSet example
+    ///
+    ///   specTyppe = SpecTypeConnection
+    ///
+    ///     - typeName(token) : type name of Attribute(e.g. `float`)
+    ///     - custom(bool) : `custom` qualifier
+    ///     - variability(variability) : Variability(meta?)
+    ///     <value>
+    ///       - default : Default(fallback) value.
+    ///       - timeSample(TimeSamples) : `.timeSamples` data.
+    ///       - connectionPaths(type = ListOpPath) : `.connect`
+    ///       - (Empty) : Define only(Neiher connection nor value assigned. e.g. "float outputs:rgb")
+
+    DCOUT("---");
+
+    for (const auto &fv : fvs) {
+      if (fv.first == "typeName") {
+        if (auto pv =  fv.second.get_value<value::token>()) {
+          typeName = pv.value().str();
+          DCOUT("typeName = " << typeName.value());
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` must be type `token`, but got type `" << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "specifier") {
+        if (auto pv = fv.second.get_value<Specifier>()) {
+          specifier = pv.value();
+          DCOUT("specifier = " << to_string(specifier.value()));
+        }
+      } else if (fv.first == "properties") {
+        if (auto pv = fv.second.get_value<std::vector<value::token>>()) {
+          properties = pv.value();
+          DCOUT("properties = " << properties);
+        }
+      }
+    }
+
+    DCOUT("===");
+
+#define RECONSTRUCT_PRIM(__primty, __node_ty) \
+    if (__node_ty == value::TypeTrait<__primty>::type_name()) { \
+      __primty prim; \
+      if (!ReconstructPrim(node, fvs, psmap, &prim)) { \
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to reconstruct Prim " << __node_ty); \
+      } \
+      PrimNode pnode; \
+      pnode.prim = prim; \
+      _prim_nodes.push_back(pnode); \
+    } else
+
+    if (spec.spec_type == SpecType::PseudoRoot) {
+      // Prim
+
+      // Sanity check
+      if (specifier) {
+        if (specifier.value() != Specifier::Def) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Currently TinyUSDZ only supports `def` for `specifier`.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`specifier` field is missing for FieldSets with SpecType::PseudoRoot.");
+      }
+
+      if (!typeName) {
+        PUSH_WARN("Treat this node as Model(where `typeName` is missing.");
+        typeName = "Model";
+      }
+        
+      if (typeName) {
+        RECONSTRUCT_PRIM(Xform, typeName.value())
+        RECONSTRUCT_PRIM(Scope, typeName.value())
+        {
+          PUSH_WARN("TODO or we can ignore this typeName: " << typeName.value());
+        }
+        
+      }
+
+      _prim_table.insert(current);
+    }  else {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: specTy = " << to_string(spec.spec_type));
     }
   }
-#endif
 
-  if (!node_type.empty()) {
-    DCOUT("TODO or we may ignore this node: node_type: " << node_type);
-  }
 
-  DCOUT("Children.size = " << node.GetChildren().size());
-
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    if (!ReconstructPrimRecursively(int(node.GetChildren()[i]), level + 1,
-                                    path_index_to_spec_index_map, stage)) {
-      return false;
+  {
+    DCOUT("node.Children.size = " << node.GetChildren().size());
+    for (size_t i = 0; i < node.GetChildren().size(); i++) {
+      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]), level + 1,
+                                      psmap, stage)) {
+        return false;
+      }
     }
   }
 
@@ -1718,7 +1979,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   _paths = crate_reader->GetPaths();
   _live_fieldsets = crate_reader->GetLiveFieldSets();
 
-  std::unordered_map<uint32_t, uint32_t>
+  PathIndexToSpecIndexMap
       path_index_to_spec_index_map;  // path_index -> spec_index
 
   {
@@ -1737,7 +1998,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   }
 
   int root_node_id = 0;
-  bool ret = ReconstructPrimRecursively(root_node_id, /* level */ 0,
+  bool ret = ReconstructPrimRecursively(/* no further root for root_node */-1, root_node_id, /* level */ 0,
                                         path_index_to_spec_index_map, stage);
 
   if (!ret) {
@@ -1754,7 +2015,7 @@ bool USDCReader::Impl::ReadUSDC() {
 
   // TODO: Setup CrateReaderConfig.
   crate::CrateReaderConfig config;
-  config.numThreads = _num_threads;
+  config.numThreads = _config.numThreads;
 
   crate_reader = new crate::CrateReader(_sr, config);
 
@@ -1829,8 +2090,8 @@ bool USDCReader::Impl::ReadUSDC() {
 //
 // -- Interface --
 //
-USDCReader::USDCReader(StreamReader *sr, int num_threads) {
-  impl_ = new USDCReader::Impl(sr, num_threads);
+USDCReader::USDCReader(StreamReader *sr, const USDCReaderConfig &config) {
+  impl_ = new USDCReader::Impl(sr, config);
 }
 
 USDCReader::~USDCReader() {
@@ -1860,9 +2121,9 @@ namespace usdc {
 //
 // -- Interface --
 //
-USDCReader::USDCReader(StreamReader *sr, int num_threads) {
+USDCReader::USDCReader(StreamReader *sr, USDCReaderConfig &config) {
   (void)sr;
-  (void)num_threads;
+  (void)config;
 }
 
 USDCReader::~USDCReader() {}

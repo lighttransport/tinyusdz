@@ -179,7 +179,9 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
 
   StreamReader sr(addr, length, swap_endian);
 
-  usdc::USDCReader reader(&sr, options.num_threads);
+  usdc::USDCReaderConfig config;
+  config.numThreads = options.num_threads;
+  usdc::USDCReader reader(&sr, config);
 
   if (!reader.ReadUSDC()) {
     if (warn) {
@@ -515,7 +517,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
       return false;
     }
   }
-        
+
   (*stage) = reader.GetStage();
 
   return true;

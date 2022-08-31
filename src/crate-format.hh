@@ -456,6 +456,10 @@ class CrateValue {
     return value_.type_name();
   }
 
+  uint32_t type_id() const {
+    return value_.type_id();
+  }
+
   const value::Value &get_raw() const {
     return value_;
   }
