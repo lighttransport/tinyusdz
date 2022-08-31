@@ -1053,6 +1053,7 @@ class TypedAttribute {
 
   nonstd::optional<T> fallback;  // may have fallback
   AttrMeta meta;
+  bool custom{false}; // `custom`
   bool uniform{false};  // `uniform`
   bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
   ListEditQual qual{ListEditQual::ResetToExplicit}; // default = "unqualified"

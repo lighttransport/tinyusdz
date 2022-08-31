@@ -652,7 +652,7 @@ std::string to_string(tinyusdz::SpecType ty) {
   if (SpecType::Attribute == ty) {
     return "SpecTypeAttribute";
   } else if (SpecType::Connection == ty) {
-    return "SpecTypeConection";
+    return "SpecTypeConnection";
   } else if (SpecType::Expression == ty) {
     return "SpecTypeExpression";
   } else if (SpecType::Mapper == ty) {
