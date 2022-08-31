@@ -18,6 +18,7 @@ namespace crate {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
 #endif
+// TODO: Use value::TypeTrait<T>::type_name() and Remove this function
 nonstd::expected<CrateDataType, std::string> GetCrateDataType(int32_t type_id) {
   static std::map<uint32_t, CrateDataType> table;
   DCOUT("type_id = " << type_id);

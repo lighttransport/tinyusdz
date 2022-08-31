@@ -3,8 +3,6 @@
 //
 #pragma once
 
-//#include "prim-types.hh"
-//#include "crate-format.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
@@ -14,9 +12,16 @@ namespace usdc {
 ///
 /// USDC(Crate) reader
 ///
+
+struct USDCReaderConfig {
+  int32_t numThreads = -1; // -1 = use system's # of threads
+  uint32_t kMaxFieldValuePairs = 4096;
+};
+
 class USDCReader {
  public:
-  USDCReader(StreamReader *sr, int num_threads = -1);
+  USDCReader(StreamReader *sr,
+             const USDCReaderConfig &config = USDCReaderConfig());
   ~USDCReader();
 
   bool ReadUSDC();

@@ -438,7 +438,6 @@ struct StageMetas {
   StringData doc; // `documentation`
 
   CustomDataType customLayerData; // customLayerData
-  std::vector<value::token> primChildren; // only in USDC?
 
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
