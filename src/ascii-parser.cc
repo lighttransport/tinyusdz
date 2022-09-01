@@ -5696,7 +5696,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     // Empty Attribute. type info only
     p.attrib.type_name = type_name;
-    p.attrib.uniform = uniform_qual;
+    if (uniform_qual) {
+      p.attrib.variability = Variability::Uniform;
+    }
 
     (*props)[primattr_name] = p;
 
@@ -5796,7 +5798,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     std::string varname = removeSuffix(primattr_name, ".timeSamples");
     PrimAttrib attr;
-    attr.uniform = false;
+    //attr.uniform = false;
     attr.name = varname;
     attr.var.set_timesamples(ts);  // TODO: Use set_timesample() ?
 
@@ -5981,7 +5983,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
     }
 
-    attr.uniform = uniform_qual;
+    if (uniform_qual) {
+      attr.variability = Variability::Uniform;
+    }
     attr.name = primattr_name;
 
     DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);
