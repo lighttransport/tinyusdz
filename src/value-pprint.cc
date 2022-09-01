@@ -506,7 +506,6 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       os << quote(vs);
       break;                                           
     }
-
     // TODO: List-up all case and remove `default` clause.
     default: {
       os << "PPRINT: TODO: (type: " << v.type_name() << ") ";

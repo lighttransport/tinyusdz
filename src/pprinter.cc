@@ -234,7 +234,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
 
     ss << pprint::Indent(indent);
 
-    if (attr.uniform) {
+    if (attr.variability == Variability::Uniform) {
       ss << "uniform ";
     }
 
@@ -326,7 +326,7 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
         ss << "custom ";
       }
 
-      if (attr.uniform) {
+      if (attr.variability == Variability::Uniform) {
         ss << "uniform ";
       }
 

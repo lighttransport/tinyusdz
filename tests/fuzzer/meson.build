@@ -8,6 +8,7 @@ tinyusdz_sources=[
   '../../src/io-util.cc',
   '../../src/pprinter.cc',
   '../../src/prim-types.cc',
+  '../../src/prim-reconstruct.cc',
   '../../src/usdGeom.cc',
   '../../src/usdShade.cc',
   '../../src/usdSkel.cc',

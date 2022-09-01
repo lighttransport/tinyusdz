@@ -61,6 +61,7 @@
 #include "math-util.inc"
 #include "pprinter.hh"
 #include "prim-types.hh"
+#include "prim-reconstruct.hh"
 #include "primvar.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
@@ -444,6 +445,7 @@ class USDAReader::Impl {
   }
 #endif
 
+#if 0 // TODO: Remove
   ///
   /// Reconstruct properties with `xformOp:***` namespace by looking up
   /// tokens in `xformOpOrder` property.
@@ -453,6 +455,7 @@ class USDAReader::Impl {
     std::set<std::string> &table, /* inout */
     const std::map<std::string, Property> &properties,
     std::vector<XformOp> *xformOps);
+#endif
 
   template <typename T>
   bool ReconstructPrim(
@@ -883,6 +886,7 @@ void ReconstructNodeRec(const size_t idx,
 
 }  // namespace
 
+#if 0 // TODO: Remove
 bool USDAReader::Impl::ReconstructXformOpProperties(
   std::set<std::string> &table, /* inout */
   const std::map<std::string, Property> &properties,
@@ -1219,6 +1223,7 @@ bool USDAReader::Impl::ReconstructXformOpProperties(
 
   return true;
 }
+#endif
 
 
 bool USDAReader::Impl::ReconstructStage() {
@@ -1365,7 +1370,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     if (auto pv = prop.GetConnectionTarget()) {
       target.target = pv.value();
-      target.uniform = prop.attrib.uniform;
+      target.variability = prop.attrib.variability;
       target.meta = prop.attrib.meta;
       table.insert(propname);
       ret.code = ParseResult::ResultCode::Success;
@@ -1384,7 +1389,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     if (AttribType<T>::type_name() == attr.var.type_name()) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.define_only = true;
-        target.uniform = attr.uniform;
+        target.variability = attr.variability;
         target.meta = attr.meta;
         table.insert(name);
       } else if (prop.type == Property::Type::Attrib) {
@@ -1407,7 +1412,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
 
         target.value = anim;
-        target.uniform = attr.uniform;
+        target.variability = attr.variability;
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
@@ -1446,7 +1451,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     if (auto v = attr.var.get_value<AttribType<decltype(__target)>::type>()) { \
       DCOUT("Add prop: " << __name);                                           \
       __target.value = v.value();                                              \
-      __target.uniform = attr.uniform; \
+      __target.variability = attr.variability; \
       __target.meta = attr.meta;                                               \
       __table.insert(__name);                                                  \
     } else {                                                                   \
@@ -1457,61 +1462,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
               << "` but defined as type `" << attr.var.type_name() << "`");    \
     }                                                                          \
   } else
-
-#if 0
-// e.g. "float2 inputs:st"
-// Attribute type is EmptyAttrib, Attrib(fallback) or Connection(`target` is
-// Path)
-#define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target)      \
-  if (__prop.first.compare(__name ".connect") == 0) {                          \
-    std::string propname = removeSuffix(__name, ".connect");                   \
-    if (__table.count(propname)) { \
-      continue; \
-    } \
-    const Property &p = __prop.second;                                         \
-    if (auto pv = p.GetConnectionTarget()) {                                   \
-      __target.value = pv.value();                                             \
-      __target.uniform = p.attrib.uniform; \
-      __target.meta = p.attrib.meta;                             \
-      __table.insert(propname);                                                \
-    } else {                                                                   \
-      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()      \
-                                << ") No connection target or invalid syntax " \
-                                   "of connection target for attribute `"      \
-                                << propname << "`.");                          \
-    }                                                                          \
-  } else if (__prop.first == __name) {                                         \
-    if (__table.count(__name)) { \
-      continue; \
-    } \
-    const Property &p = __prop.second;                                         \
-    const PrimAttrib &attr = p.attrib;                                         \
-    /* Type info is stored in attrib.type_name */                              \
-    if (AttribType<decltype(__target)>::type_name() == attr.type_name) {       \
-      if (auto pv = p.GetConnectionTarget()) {                                 \
-        __target.value = pv.value();                                           \
-        __target.uniform = attr.uniform; \
-        __target.meta = attr.meta;                                             \
-        __table.insert(__name);                                                \
-      } else if (p.type == Property::Type::EmptyAttrib) {                      \
-        __target.value = tinyusdz::monostate();                                \
-        __target.uniform = attr.uniform; \
-        __target.meta = attr.meta;                                             \
-        __table.insert(__name);                                                \
-      } else {                                                                 \
-        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()    \
-                                  << ") TODO: Connection Property `" << __name \
-                                  << "` must not be value assigned.");         \
-      }                                                                        \
-    } else {                                                                   \
-      PUSH_ERROR_AND_RETURN(                                                   \
-          "(" << value::TypeTrait<__klass>::type_name()                        \
-              << ") Property type mismatch. " << __name << " expects type `"   \
-              << AttribType<decltype(__target)>::type_name()                   \
-              << "` but defined as type `" << attr.type_name << "`");          \
-    }                                                                          \
-  } else
-#else
 
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
@@ -1528,8 +1478,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   } \
 }
 
-#endif
-
 // e.g. "float3 outputs:rgb"
 // Attribute type must be EmptyAttrib(No value or connection assigned)
 #define PARSE_TYPED_OUTPUT_ATTRIBUTE(__table, __prop, __name, __klass,      \
@@ -1544,6 +1492,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     if (AttribType<decltype(__target)>::type_name() == attr.type_name) {     \
       if (p.type == Property::Type::EmptyAttrib) {                    \
         __target.meta = attr.meta; \
+        __target.variability = attr.variability; \
         __target.set_define_only(); \
         __table.insert(__name);                                              \
       } else {                                                               \
@@ -1577,18 +1526,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
               << "` but defined as type `" << attr.var.type_name() << "`");    \
     }                                                                          \
   } else
-
-//#define PARSE_TOKEN_PROPETY(__prop, __name, __ty, __allowed_tokens, __target)             \
-//  if (__prop.first == __name) {                               \
-//    const PrimAttrib &attr = __prop.second.attrib;                 \
-//    if (auto v = attr.var.get_value<__ty>()) {                     \
-//      __target = v.value();                                        \
-//    } else {                                                       \
-//      PUSH_ERROR_AND_RETURN("Type mismatch. "                      \
-//                            << __name << " expects "               \
-//                            << value::TypeTrait<__ty>::type_name()); \
-//    } \
-//  } else
 
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target)                                         \
@@ -1652,11 +1589,17 @@ bool USDAReader::Impl::ReconstructPrim(
   }
 
   std::set<std::string> table;
-
+#if 0
   if (!ReconstructXformOpProperties(table, properties, &xform->xformOps)) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOps.");
     return false;
   }
+#else
+  std::string err;
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &xform->xformOps, &err)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data: " << err);
+  }
+#endif
 
   //
   // Resolve append references
@@ -1854,7 +1797,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
                   "`elementType` property as Relation is not supported.");
             }
             if (auto pv = item.second.attrib.var.get_value<value::token>()) {
-              if (item.second.attrib.uniform) {
+              if (item.second.attrib.variability == Variability::Uniform) {
                 auto e = subset.SetElementType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());
@@ -1871,7 +1814,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
             }
 
             if (auto pv = item.second.attrib.var.get_value<value::token>()) {
-              if (item.second.attrib.uniform) {
+              if (item.second.attrib.variability == Variability::Uniform) {
                 auto e = subset.SetFamilyType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());
@@ -3085,9 +3028,16 @@ bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
 
 
   std::set<std::string> table;
+  std::string err;
+#if 0
   if (!ReconstructXformOpProperties(table, properties, &root->xformOps)) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data.");
   }
+#else
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &root->xformOps, &err)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data: " << err);
+  }
+#endif
 
   // SkelRoot is something like a grouping node, having 1 Skeleton and possibly?
   // multiple Prim hierarchy containing GeomMesh.

@@ -9,6 +9,7 @@
 
 namespace tinyusdz {
 
+// From schema definition.
 constexpr auto kGPrim = "GPrim";
 constexpr auto kGeomCube = "Cube";
 constexpr auto kGeomXform = "Xform";

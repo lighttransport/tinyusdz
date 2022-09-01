@@ -1007,18 +1007,17 @@ struct PrimAttrib {
 
   //ListEditQual list_edit{ListEditQual::ResetToExplicit}; // moved to Property
 
-  Variability variability;
+  Variability variability{Variability::Varying}; // 'uniform` qualifier is handled with `variability=uniform`
 
   // Interpolation interpolation{Interpolation::Invalid};
 
   AttrMeta meta;
 
-  //
-  // Qualifiers
-  //
-  bool uniform{false};  // `uniform`
-
   bool blocked{false}; // Attribute Block('None')
+
+  //
+  // Conent
+  //
   primvar::PrimVar var;
 };
 
@@ -1054,7 +1053,9 @@ class TypedAttribute {
   nonstd::optional<T> fallback;  // may have fallback
   AttrMeta meta;
   bool custom{false}; // `custom`
-  bool uniform{false};  // `uniform`
+  Variability variability{Variability::Varying}; // `uniform`, `varying` 
+
+  // TODO: Other variability
   bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
   ListEditQual qual{ListEditQual::ResetToExplicit}; // default = "unqualified"
 };
