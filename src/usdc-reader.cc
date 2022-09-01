@@ -41,6 +41,7 @@
 #include "stream-reader.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
+#include "prim-reconstruct.hh"
 
 //
 #ifdef __clang__
@@ -1220,18 +1221,20 @@ bool USDCReader::Impl::ParseProperty(
     if (fv.first == "custom") {
       if (auto pv = fv.second.get_value<bool>()) {
         custom = pv.value();
+        DCOUT("  custom = " << pv.value());
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
       }
     } else if (fv.first == "variability") {
       if (auto pv = fv.second.get_value<Variability>()) {
         attr.variability = pv.value();
+        DCOUT("  variability = " << to_string(attr.variability));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`variability` field is not `varibility` type.");
       }
     } else if (fv.first == "typeName") {
       if (auto pv = fv.second.get_value<value::token>()) {
-        DCOUT("typeName = " << pv.value().str());
+        DCOUT("  typeName = " << pv.value().str());
         typeName = pv.value();
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is not `token` type.");
@@ -1402,7 +1405,7 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
 
   DCOUT("Reconstruct Xform ====");
 
-  std::map<std::string, Property> props;
+  std::map<std::string, Property> properties;
 
   // First construct Property, then do Xform specific thing.
   
@@ -1466,7 +1469,7 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to construct Property from FieldValuePairVector.");
       }
 
-      props.emplace(prop_name, prop);
+      properties.emplace(prop_name, prop);
       DCOUT("Add property : " << prop_name);
 
     }
@@ -1475,21 +1478,10 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
   //
   // Process Xform's specific prop
   // 
-  
-  constexpr auto kXformOpOrder = "xformOpOrder";
-
-  auto xformOpOrder = props.find(kXformOpOrder);
-  if (xformOpOrder != props.end()) {
-    std::vector<value::token> xformOpTokens;
-    if (xformOpOrder->second.IsAttrib()) {
-      if (auto pv = xformOpOrder->second.attrib.var.get_value<decltype(xformOpTokens)>()) {
-        xformOpTokens = pv.value();
-      }
-    }
-
-    for (const auto &xformOp : xformOpTokens) {
-      DCOUT("xformOp tok = " << xformOp);
-    }
+  std::set<std::string> table;
+  std::string err;
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &xform->xformOps, &err)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data: " << err);
   }
 
   DCOUT("End Reconstruct Xform ====");
@@ -1885,6 +1877,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     DCOUT("parent[" << current << "] level [" << level << "] fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
   }
 
+  nonstd::optional<Prim> prim;
   std::vector<value::token> primChildren;
 
   // StageMeta = root only attributes.
@@ -1961,16 +1954,20 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     DCOUT("===");
 
+
 #define RECONSTRUCT_PRIM(__primty, __node_ty) \
     if (__node_ty == value::TypeTrait<__primty>::type_name()) { \
-      __primty prim; \
-      if (!ReconstructPrim(node, fvs, psmap, &prim)) { \
+      __primty typed_prim; \
+      if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) { \
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to reconstruct Prim " << __node_ty); \
       } \
-      PrimNode pnode; \
-      pnode.prim = prim; \
-      _prim_nodes.push_back(pnode); \
+      value::Value primdata = typed_prim; \
+      prim = Prim(primdata); \
+      /* PrimNode pnode; */ \
+      /* pnode.prim = prim; */ \
+      /* _prim_nodes.push_back(pnode); */ \
     } else
+
 
     if (spec.spec_type == SpecType::PseudoRoot) {
       // Prim
@@ -1991,6 +1988,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         
       if (typeName) {
         RECONSTRUCT_PRIM(Xform, typeName.value())
+        //RECONSTRUCT_PRIM(GeomMesh, typeName.value())
         RECONSTRUCT_PRIM(Scope, typeName.value())
         {
           PUSH_WARN("TODO or we can ignore this typeName: " << typeName.value());
@@ -2014,6 +2012,13 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       }
     }
   }
+
+  if (parent == 0) { // root prim
+    if (prim) {
+      stage->GetRootPrims().emplace_back(std::move(prim.value()));
+    }
+  }
+
 
   return true;
 }
@@ -2052,6 +2057,8 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
       path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
     }
   }
+
+  stage->GetRootPrims().clear();
 
   int root_node_id = 0;
   bool ret = ReconstructPrimRecursively(/* no further root for root_node */-1, root_node_id, /* level */ 0,
