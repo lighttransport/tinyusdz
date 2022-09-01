@@ -13,6 +13,9 @@
 namespace tinyusdz {
 namespace prim {
 
+using PropertyMap = std::map<std::string, Property>;
+
+
 ///
 /// Reconstruct property with `xformOp:***` namespace in `properties` to `XformOp` class.
 /// Corresponding property are looked up from names in `xformOpOrder`(`token[]`) property.
@@ -20,7 +23,7 @@ namespace prim {
 ///
 bool ReconstructXformOpsFromProperties(
       std::set<std::string> &table, /* inout */
-      const std::map<std::string, Property> &properties,
+      const PropertyMap &properties,
       std::vector<XformOp> *xformOps,
       std::string *err);
 
