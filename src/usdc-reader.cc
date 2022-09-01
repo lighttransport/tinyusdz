@@ -38,10 +38,10 @@
 #include "lz4-compression.hh"
 #include "path-util.hh"
 #include "pprinter.hh"
+#include "prim-reconstruct.hh"
+#include "str-util.hh"
 #include "stream-reader.hh"
 #include "value-pprint.hh"
-#include "str-util.hh"
-#include "prim-reconstruct.hh"
 
 //
 #ifdef __clang__
@@ -79,12 +79,12 @@ class USDCReader::Impl {
     _config.numThreads = 1;
 #else
     if (_config.numThreads == -1) {
-      _config.numThreads = (std::max)(1, int(std::thread::hardware_concurrency()));
-#endif
+      _config.numThreads =
+          (std::max)(1, int(std::thread::hardware_concurrency()));
     }
-
     // Limit to 1024 threads.
     _config.numThreads = (std::min)(1024, _config.numThreads);
+#endif
   }
 
   ~Impl() {
@@ -155,32 +155,28 @@ class USDCReader::Impl {
 #endif
 
   ///
-  /// Construct Property(Attribute, Relationship/Connection) from FieldValuePairs
+  /// Construct Property(Attribute, Relationship/Connection) from
+  /// FieldValuePairs
   ///
-  bool ParseProperty(
-    const crate::FieldValuePairVector &fvs,
-    Property *prop);
+  bool ParseProperty(const crate::FieldValuePairVector &fvs, Property *prop);
 
   // For simple, non animatable and non `.connect` types. e.g. "token[]"
-  template<typename T>
-  bool ReconstructSimpleAttribute(
-    int parent,
-    const crate::FieldValuePairVector &fvs,
-    T *attr,
-    bool *custom_out = nullptr,
-    Variability *variability_out = nullptr);
+  template <typename T>
+  bool ReconstructSimpleAttribute(int parent,
+                                  const crate::FieldValuePairVector &fvs,
+                                  T *attr, bool *custom_out = nullptr,
+                                  Variability *variability_out = nullptr);
 
   // For attribute which maybe a value, connection or TimeSamples.
-  template<typename T>
-  bool ReconstructTypedAttribute(
-    int parent,
-    const crate::FieldValuePairVector &fvs,
-    TypedAttribute<T> *attr);
+  template <typename T>
+  bool ReconstructTypedAttribute(int parent,
+                                 const crate::FieldValuePairVector &fvs,
+                                 TypedAttribute<T> *attr);
 
-  template<typename T>
-  bool ReconstructPrim(const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
-    const PathIndexToSpecIndexMap &psmap,
-    T *prim);
+  template <typename T>
+  bool ReconstructPrim(const crate::CrateReader::Node &node,
+                       const crate::FieldValuePairVector &fvs,
+                       const PathIndexToSpecIndexMap &psmap, T *prim);
 
   bool ReconstructPrimRecursively(int parent_id, int current_id, int level,
                                   const PathIndexToSpecIndexMap &psmap,
@@ -204,10 +200,17 @@ class USDCReader::Impl {
   size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
 
  private:
+  ///
+  /// Builds std::map<std::string, Property> from the list of Path(Spec)
+  /// indices.
+  ///
+  bool BuildPropertyMap(const std::vector<size_t> &pathIndices,
+                        const PathIndexToSpecIndexMap &psmap,
+                        prim::PropertyMap *props);
 
   bool ReconstrcutStageMeta(const crate::FieldValuePairVector &fvs,
                             StageMetas *out,
-                            std::vector<value::token> *primChildren);
+                            std::vector<value::token> *primChildrenOut);
 
   crate::CrateReader *crate_reader{nullptr};
 
@@ -220,7 +223,6 @@ class USDCReader::Impl {
   // Tracks the memory used(In advisorily manner since counting memory usage is
   // done by manually, so not all memory consumption could be tracked)
   size_t memory_used{0};  // in bytes.
-
 
   nonstd::optional<Path> GetPath(crate::Index index) const {
     if (index.value <= _paths.size()) {
@@ -239,7 +241,6 @@ class USDCReader::Impl {
 
   std::map<crate::Index, crate::FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
-
 
   std::vector<PrimNode> _prim_nodes;
 
@@ -1195,226 +1196,20 @@ bool USDCReader::Impl::ReconstructSkelRoot(
   return true;
 }
 
-
 #endif
 
 namespace {}
 
-bool USDCReader::Impl::ParseProperty(
-  const crate::FieldValuePairVector &fvs,
-  Property *prop) {
-  if (fvs.size() > _config.kMaxFieldValuePairs) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
-  }
+bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
+                      const PathIndexToSpecIndexMap &psmap,
+                      prim::PropertyMap *props) {
 
-  bool custom{false};
-  nonstd::optional<value::token> typeName;
-  Property::Type propType{Property::Type::EmptyAttrib};
-  PrimAttrib attr;
-
-  // TODO: Rel, TimeSamples, Connection
-  
-  for (auto &fv : fvs) {
-
-    DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
-
-    if (fv.first == "custom") {
-      if (auto pv = fv.second.get_value<bool>()) {
-        custom = pv.value();
-        DCOUT("  custom = " << pv.value());
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
-      }
-    } else if (fv.first == "variability") {
-      if (auto pv = fv.second.get_value<Variability>()) {
-        attr.variability = pv.value();
-        DCOUT("  variability = " << to_string(attr.variability));
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`variability` field is not `varibility` type.");
-      }
-    } else if (fv.first == "typeName") {
-      if (auto pv = fv.second.get_value<value::token>()) {
-        DCOUT("  typeName = " << pv.value().str());
-        typeName = pv.value();
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is not `token` type.");
-      }
-    } else if (fv.first == "default") {
-      propType = Property::Type::Attrib;
-
-      // Set scalar
-      // TODO: Easier CrateValue to PrimAttrib.var conversion
-      attr.var.var.values.push_back(fv.second.get_raw());
-      
-    } else {
-      PUSH_WARN("TODO: " << fv.first);
-      DCOUT("TODO: " << fv.first);
-    }
-  }
-
-  if (propType == Property::Type::EmptyAttrib) {
-    (*prop) = Property(custom);
-  } else if (propType == Property::Type::Attrib) {
-    (*prop) = Property(attr, custom);
-  } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
-  }
-
-  return true;
-}
-
-template<typename T>
-bool USDCReader::Impl::ReconstructSimpleAttribute(
-  int parent, 
-  const crate::FieldValuePairVector &fvs,
-  T *attr,
-  bool *custom_out,
-  Variability *variability_out)
-{
-  (void)attr;
-
-  if (fvs.size() > _config.kMaxFieldValuePairs) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
-  }
-
-  bool valid{false};
-
-  for (auto &fv : fvs) {
-    // Some predefined fields
-    if (fv.first == "custom") {
-      if (auto pv = fv.second.get_value<bool>()) {
-        if (custom_out) {
-          (*custom_out) = pv.value();
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
-      }
-    } else if (fv.first == "variability") {
-      if (auto pv = fv.second.get_value<Variability>()) {
-        if (variability_out) {
-          (*variability_out) = pv.value();
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`variability` field is not `varibility` type.");
-      }
-    } else if (fv.first == "typeName") {
-      if (auto pv = fv.second.get_value<value::token>()) {
-        DCOUT("typeName = " << pv.value().str());
-        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << pv.value().str() << "`.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is not `token` type.");
-      }
-    } else if (fv.first == "default") {
-      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << fv.second.type_name() << "`.");
-      }
-
-      if (auto pv = fv.second.get_value<T>()) {
-        (*attr) = pv.value();
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Type mismatch. Internal error.");
-      }
-      valid = true;
-    } 
-
-    DCOUT("parent[" << parent << "] fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
-  }
-
-  if (!valid) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "`default` field not found.");
-  }
-
-  return true;
-}
-
-template<typename T>
-bool USDCReader::Impl::ReconstructTypedAttribute(
-  int parent, 
-  const crate::FieldValuePairVector &fvs,
-  TypedAttribute<T> *attr)
-{
-  (void)attr;
-
-  if (fvs.size() > _config.kMaxFieldValuePairs) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
-  }
-
-  for (auto &fv : fvs) {
-    // Some predefined fields
-    if (fv.first == "custom") {
-      if (auto pv = fv.second.get_value<bool>()) {
-        attr->custom = pv.value();
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
-      }
-    } else if (fv.first == "typeName") {
-      if (auto pv = fv.second.get_value<value::token>()) {
-        DCOUT("typeName = " << pv.value().str());
-        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << pv.value().str() << "`.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is not `token` type.");
-      }
-    } else if (fv.first == "default") {
-      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `" << value::TypeTrait<T>::type_name() << "` expected but got `" << fv.second.type_name() << "`.");
-      }
-
-      if (auto pv = fv.second.get_value<T>()) {
-        Animatable<T> anim;
-        anim.value = pv.value();
-        attr->value = anim;
-      }
-    }
-
-    DCOUT("parent[" << parent << "] fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
-  }
-
-  return true;
-}
-  
-
-//
-// -- specialization of ReconstructPrim
-//
-#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type)                \
-  {                                                                        \
-    if (__fv.first == __name) {                                            \
-      if (__fv.second.type_id() != value::TypeTrait<__req_type>::type_id) {                       \
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`" << __name << "` attribute must be " << value::TypeTrait<__req_type>::type_name()   \
-                       << " type, but got " << __fv.second.type_name()); \
-      }                                                                    \
-    }                                                                      \
-  }
-
-template<>
-bool USDCReader::Impl::ReconstructPrim<Xform>(
-    const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
-    const PathIndexToSpecIndexMap &psmap,
-    Xform *xform) {
-
-  // TODO:
-  //  * [ ] !invert! suffix
-  //  * [ ] !resetXformStack! suffix
-
-  (void)xform;
-  (void)fvs;
-
-  DCOUT("Reconstruct Xform ====");
-
-  std::map<std::string, Property> properties;
-
-  // First construct Property, then do Xform specific thing.
-  
-  // Properties are stored in Children node
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
+  for (size_t i = 0; i < pathIndices.size(); i++) {
+    int child_index = int(pathIndices[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
       PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
+                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
+                 ")");
       return false;
     }
 
@@ -1424,11 +1219,11 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
       continue;
     }
 
-    uint32_t spec_index =
-        psmap.at(uint32_t(child_index));
+    uint32_t spec_index = psmap.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
       PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
+                 ". Must be in range [0, " + std::to_string(_specs.size()) +
+                 ")");
       return false;
     }
 
@@ -1454,7 +1249,7 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
       PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.");
+                 " must exist in live fieldsets.");
       return false;
     }
 
@@ -1466,21 +1261,319 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
 
       Property prop;
       if (!ParseProperty(child_fvs, &prop)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to construct Property from FieldValuePairVector.");
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "Failed to construct Property from FieldValuePairVector.");
+      }
+
+      props->emplace(prop_name, prop);
+      DCOUT("Add property : " << prop_name);
+    }
+  }
+
+  return true;
+}
+
+bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
+                                     Property *prop) {
+  if (fvs.size() > _config.kMaxFieldValuePairs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
+  }
+
+  bool custom{false};
+  nonstd::optional<value::token> typeName;
+  Property::Type propType{Property::Type::EmptyAttrib};
+  PrimAttrib attr;
+
+  // TODO: Rel, TimeSamples, Connection
+
+  for (auto &fv : fvs) {
+    DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
+                      << ")");
+
+    if (fv.first == "custom") {
+      if (auto pv = fv.second.get_value<bool>()) {
+        custom = pv.value();
+        DCOUT("  custom = " << pv.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
+      }
+    } else if (fv.first == "variability") {
+      if (auto pv = fv.second.get_value<Variability>()) {
+        attr.variability = pv.value();
+        DCOUT("  variability = " << to_string(attr.variability));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`variability` field is not `varibility` type.");
+      }
+    } else if (fv.first == "typeName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        DCOUT("  typeName = " << pv.value().str());
+        typeName = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`typeName` field is not `token` type.");
+      }
+    } else if (fv.first == "default") {
+      propType = Property::Type::Attrib;
+
+      // Set scalar
+      // TODO: Easier CrateValue to PrimAttrib.var conversion
+      attr.var.var.values.push_back(fv.second.get_raw());
+
+    } else {
+      PUSH_WARN("TODO: " << fv.first);
+      DCOUT("TODO: " << fv.first);
+    }
+  }
+
+  if (propType == Property::Type::EmptyAttrib) {
+    (*prop) = Property(custom);
+  } else if (propType == Property::Type::Attrib) {
+    (*prop) = Property(attr, custom);
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
+  }
+
+  return true;
+}
+
+template <typename T>
+bool USDCReader::Impl::ReconstructSimpleAttribute(
+    int parent, const crate::FieldValuePairVector &fvs, T *attr,
+    bool *custom_out, Variability *variability_out) {
+  (void)attr;
+
+  if (fvs.size() > _config.kMaxFieldValuePairs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
+  }
+
+  bool valid{false};
+
+  for (auto &fv : fvs) {
+    // Some predefined fields
+    if (fv.first == "custom") {
+      if (auto pv = fv.second.get_value<bool>()) {
+        if (custom_out) {
+          (*custom_out) = pv.value();
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
+      }
+    } else if (fv.first == "variability") {
+      if (auto pv = fv.second.get_value<Variability>()) {
+        if (variability_out) {
+          (*variability_out) = pv.value();
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`variability` field is not `varibility` type.");
+      }
+    } else if (fv.first == "typeName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        DCOUT("typeName = " << pv.value().str());
+        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "Property type mismatch. `"
+                        << value::TypeTrait<T>::type_name()
+                        << "` expected but got `" << pv.value().str() << "`.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`typeName` field is not `token` type.");
+      }
+    } else if (fv.first == "default") {
+      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `"
+                                            << value::TypeTrait<T>::type_name()
+                                            << "` expected but got `"
+                                            << fv.second.type_name() << "`.");
+      }
+
+      if (auto pv = fv.second.get_value<T>()) {
+        (*attr) = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Type mismatch. Internal error.");
+      }
+      valid = true;
+    }
+
+    DCOUT("parent[" << parent << "] fv name " << fv.first
+                    << "(type = " << fv.second.type_name() << ")");
+  }
+
+  if (!valid) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "`default` field not found.");
+  }
+
+  return true;
+}
+
+template <typename T>
+bool USDCReader::Impl::ReconstructTypedAttribute(
+    int parent, const crate::FieldValuePairVector &fvs,
+    TypedAttribute<T> *attr) {
+  (void)attr;
+
+  if (fvs.size() > _config.kMaxFieldValuePairs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
+  }
+
+  for (auto &fv : fvs) {
+    // Some predefined fields
+    if (fv.first == "custom") {
+      if (auto pv = fv.second.get_value<bool>()) {
+        attr->custom = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
+      }
+    } else if (fv.first == "typeName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        DCOUT("typeName = " << pv.value().str());
+        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "Property type mismatch. `"
+                        << value::TypeTrait<T>::type_name()
+                        << "` expected but got `" << pv.value().str() << "`.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`typeName` field is not `token` type.");
+      }
+    } else if (fv.first == "default") {
+      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `"
+                                            << value::TypeTrait<T>::type_name()
+                                            << "` expected but got `"
+                                            << fv.second.type_name() << "`.");
+      }
+
+      if (auto pv = fv.second.get_value<T>()) {
+        Animatable<T> anim;
+        anim.value = pv.value();
+        attr->value = anim;
+      }
+    }
+
+    DCOUT("parent[" << parent << "] fv name " << fv.first
+                    << "(type = " << fv.second.type_name() << ")");
+  }
+
+  return true;
+}
+
+//
+// -- specialization of ReconstructPrim
+//
+#define FIELDVALUE_DATATYPE_CHECK(__fv, __name, __req_type)                 \
+  {                                                                         \
+    if (__fv.first == __name) {                                             \
+      if (__fv.second.type_id() != value::TypeTrait<__req_type>::type_id) { \
+        PUSH_ERROR_AND_RETURN_TAG(                                          \
+            kTag, "`" << __name << "` attribute must be "                   \
+                      << value::TypeTrait<__req_type>::type_name()          \
+                      << " type, but got " << __fv.second.type_name());     \
+      }                                                                     \
+    }                                                                       \
+  }
+
+template <>
+bool USDCReader::Impl::ReconstructPrim<Xform>(
+    const crate::CrateReader::Node &node,
+    const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap, Xform *xform) {
+  // TODO:
+  //  * [ ] !invert! suffix
+  //  * [ ] !resetXformStack! suffix
+
+  (void)xform;
+  (void)fvs;
+
+  DCOUT("Reconstruct Xform ====");
+
+  std::map<std::string, Property> properties;
+
+  // First construct Property, then do Xform specific thing.
+
+#if 0
+  // Properties are stored in Children node
+  for (size_t i = 0; i < node.GetChildren().size(); i++) {
+    int child_index = int(node.GetChildren()[i]);
+    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
+                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
+                 ")");
+      return false;
+    }
+
+    if (!psmap.count(uint32_t(child_index))) {
+      // No specifier assigned to this child node.
+      // Should we report an error?
+      continue;
+    }
+
+    uint32_t spec_index = psmap.at(uint32_t(child_index));
+    if (spec_index >= _specs.size()) {
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+                 ". Must be in range [0, " + std::to_string(_specs.size()) +
+                 ")");
+      return false;
+    }
+
+    const crate::Spec &spec = _specs[spec_index];
+
+    // Property must be Connection or RelationshipTarget
+    if ((spec.spec_type == SpecType::Connection) ||
+        (spec.spec_type == SpecType::RelationshipTarget)) {
+      // OK
+    } else {
+      continue;
+    }
+
+    nonstd::optional<Path> path = GetPath(spec.path_index);
+
+    if (!path) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
+    }
+
+    DCOUT("Path prim part: " << path.value().GetPrimPart()
+                             << ", prop part: " << path.value().GetPropPart()
+                             << ", spec_index = " << spec_index);
+
+    if (!_live_fieldsets.count(spec.fieldset_index)) {
+      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+                 " must exist in live fieldsets.");
+      return false;
+    }
+
+    const crate::FieldValuePairVector &child_fvs =
+        _live_fieldsets.at(spec.fieldset_index);
+
+    {
+      std::string prop_name = path.value().GetPropPart();
+
+      Property prop;
+      if (!ParseProperty(child_fvs, &prop)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "Failed to construct Property from FieldValuePairVector.");
       }
 
       properties.emplace(prop_name, prop);
       DCOUT("Add property : " << prop_name);
-
     }
   }
+#else
+  if (!BuildPropertyMap(node.GetChildren(), psmap, &properties)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
+  }
+#endif
 
   //
   // Process Xform's specific prop
-  // 
+  //
   std::set<std::string> table;
   std::string err;
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &xform->xformOps, &err)) {
+  if (!prim::ReconstructXformOpsFromProperties(table, properties,
+                                               &xform->xformOps, &err)) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data: " << err);
   }
 
@@ -1489,12 +1582,11 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
   return true;
 }
 
-template<>
+template <>
 bool USDCReader::Impl::ReconstructPrim<Scope>(
-    const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
-    const PathIndexToSpecIndexMap &psmap,
-    Scope *scope) {
-
+    const crate::CrateReader::Node &node,
+    const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap, Scope *scope) {
   (void)scope;
 
   DCOUT("Reconstruct Scope ====");
@@ -1503,7 +1595,6 @@ bool USDCReader::Impl::ReconstructPrim<Scope>(
     DCOUT("field = " << fv.first << ", type = " << fv.second.type_name());
 
     FIELDVALUE_DATATYPE_CHECK(fv, "properties", std::vector<value::token>)
-
   }
 
   // Properties are stored in Children node
@@ -1515,7 +1606,8 @@ bool USDCReader::Impl::ReconstructPrim<Scope>(
     int child_index = int(node.GetChildren()[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
       PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-              ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
+                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
+                 ")");
       return false;
     }
 
@@ -1525,11 +1617,11 @@ bool USDCReader::Impl::ReconstructPrim<Scope>(
       continue;
     }
 
-    uint32_t spec_index =
-        psmap.at(uint32_t(child_index));
+    uint32_t spec_index = psmap.at(uint32_t(child_index));
     if (spec_index >= _specs.size()) {
       PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-              ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
+                 ". Must be in range [0, " + std::to_string(_specs.size()) +
+                 ")");
       return false;
     }
 
@@ -1547,7 +1639,7 @@ bool USDCReader::Impl::ReconstructPrim<Scope>(
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
       PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.");
+                 " must exist in live fieldsets.");
       return false;
     }
 
@@ -1558,7 +1650,7 @@ bool USDCReader::Impl::ReconstructPrim<Scope>(
       std::string prop_name = path.value().GetPropPart();
 
       DCOUT("prop.name = " << prop_name);
-      (void)child_fvs; 
+      (void)child_fvs;
 #if 0
       PrimAttrib attr;
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
@@ -1576,16 +1668,15 @@ bool USDCReader::Impl::ReconstructPrim<Scope>(
   return true;
 }
 
-template<>
+template <>
 bool USDCReader::Impl::ReconstructPrim<Skeleton>(
-    const crate::CrateReader::Node &node, const crate::FieldValuePairVector &fvs,
-    const PathIndexToSpecIndexMap &psmap,
-    Skeleton *skeleton) {
+    const crate::CrateReader::Node &node,
+    const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap, Skeleton *skeleton) {
   DCOUT("Parse skeleton");
   (void)skeleton;
   (void)node;
   (void)psmap;
-
 
   for (const auto &fv : fvs) {
     DCOUT("field: " << fv.first);
@@ -1668,10 +1759,8 @@ bool USDCReader::Impl::ReconstructPrim<Skeleton>(
 }
 
 bool USDCReader::Impl::ReconstrcutStageMeta(
-    const crate::FieldValuePairVector &fvs,
-    StageMetas *metas,
-    std::vector<value::token> *primChildren)
-{
+    const crate::FieldValuePairVector &fvs, StageMetas *metas,
+    std::vector<value::token> *primChildren) {
   /// Stage(toplevel layer) Meta fieldSet example.
   ///
   ///   specTy = SpecTypeRelationship
@@ -1768,7 +1857,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "customLayerData must be `dictionary` type, but got type `" +
             fv.second.type_name());
       }
-    } else if (fv.first == "primChildren") { // it looks only appears in USDC.
+    } else if (fv.first == "primChildren") {  // it looks only appears in USDC.
       auto v = fv.second.get_value<std::vector<value::token>>();
       if (!v) {
         PUSH_ERROR("Type must be `token[]` for `primChildren`, but got " +
@@ -1800,11 +1889,8 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   return true;
 }
 
-
-
 bool USDCReader::Impl::ReconstructPrimRecursively(
-    int parent, int current, int level,
-    const PathIndexToSpecIndexMap &psmap,
+    int parent, int current, int level, const PathIndexToSpecIndexMap &psmap,
     Stage *stage) {
   DCOUT("ReconstructPrimRecursively: parent = "
         << std::to_string(current) << ", level = " << std::to_string(level));
@@ -1851,13 +1937,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   DCOUT(pprint::Indent(uint32_t(level))
         << "  fieldSetIndex = " << spec.fieldset_index.value);
 
-  if ((spec.spec_type == SpecType::Connection) || (spec.spec_type == SpecType::RelationshipTarget)) {
+  if ((spec.spec_type == SpecType::Connection) ||
+      (spec.spec_type == SpecType::RelationshipTarget)) {
     if (_prim_table.count(parent)) {
-      // This node is a Properties node. These are processed in ReconstructPrim(), so nothing to do here.
+      // This node is a Properties node. These are processed in
+      // ReconstructPrim(), so nothing to do here.
       return true;
     }
   }
-
 
   if (!_live_fieldsets.count(spec.fieldset_index)) {
     PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
@@ -1874,7 +1961,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
   // DBG
   for (auto &fv : fvs) {
-    DCOUT("parent[" << current << "] level [" << level << "] fv name " << fv.first << "(type = " << fv.second.type_name() << ")");
+    DCOUT("parent[" << current << "] level [" << level << "] fv name "
+                    << fv.first << "(type = " << fv.second.type_name() << ")");
   }
 
   nonstd::optional<Prim> prim;
@@ -1883,10 +1971,10 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
   if (current == 0) {
-
     // Root layer(Stage) is Relationship for some reaon.
     if (spec.spec_type != SpecType::Relationship) {
-      PUSH_ERROR_AND_RETURN("SpecTypeRelationship expected for root layer(Stage) element.");
+      PUSH_ERROR_AND_RETURN(
+          "SpecTypeRelationship expected for root layer(Stage) element.");
     }
 
     if (!ReconstrcutStageMeta(fvs, &stage->GetMetas(), &primChildren)) {
@@ -1896,7 +1984,6 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     _prim_table.insert(current);
 
   } else {
-
     nonstd::optional<std::string> typeName;
     nonstd::optional<Specifier> specifier;
     std::vector<value::token> properties;
@@ -1910,7 +1997,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     ///
     ///     - specifier(specifier) : e.g. `def`, `over`, ...
     ///     - kind(token) : kind metadataum
-    ///     - optional: typeName(token) : type name of Prim(e.g. `Xform`). No typeName = `def "mynode"`
+    ///     - optional: typeName(token) : type name of Prim(e.g. `Xform`). No
+    ///     typeName = `def "mynode"`
     ///     - properties(token[]) : List of name of Prim properties(attributes)
     ///     - optional: primChildren(token[]): List of child prims.
     ///
@@ -1927,17 +2015,20 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     ///       - default : Default(fallback) value.
     ///       - timeSample(TimeSamples) : `.timeSamples` data.
     ///       - connectionPaths(type = ListOpPath) : `.connect`
-    ///       - (Empty) : Define only(Neiher connection nor value assigned. e.g. "float outputs:rgb")
+    ///       - (Empty) : Define only(Neiher connection nor value assigned. e.g.
+    ///       "float outputs:rgb")
 
     DCOUT("---");
 
     for (const auto &fv : fvs) {
       if (fv.first == "typeName") {
-        if (auto pv =  fv.second.get_value<value::token>()) {
+        if (auto pv = fv.second.get_value<value::token>()) {
           typeName = pv.value().str();
           DCOUT("typeName = " << typeName.value());
         } else {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` must be type `token`, but got type `" << fv.second.type_name() << "`");
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`typeName` must be type `token`, but got type `"
+                        << fv.second.type_name() << "`");
         }
       } else if (fv.first == "specifier") {
         if (auto pv = fv.second.get_value<Specifier>()) {
@@ -1954,20 +2045,19 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     DCOUT("===");
 
-
-#define RECONSTRUCT_PRIM(__primty, __node_ty) \
-    if (__node_ty == value::TypeTrait<__primty>::type_name()) { \
-      __primty typed_prim; \
-      if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) { \
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to reconstruct Prim " << __node_ty); \
-      } \
-      value::Value primdata = typed_prim; \
-      prim = Prim(primdata); \
-      /* PrimNode pnode; */ \
-      /* pnode.prim = prim; */ \
-      /* _prim_nodes.push_back(pnode); */ \
-    } else
-
+#define RECONSTRUCT_PRIM(__primty, __node_ty)                                \
+  if (__node_ty == value::TypeTrait<__primty>::type_name()) {                \
+    __primty typed_prim;                                                     \
+    if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {                   \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                        \
+                                "Failed to reconstruct Prim " << __node_ty); \
+    }                                                                        \
+    value::Value primdata = typed_prim;                                      \
+    prim = Prim(primdata);                                                   \
+    /* PrimNode pnode; */                                                    \
+    /* pnode.prim = prim; */                                                 \
+    /* _prim_nodes.push_back(pnode); */                                      \
+  } else
 
     if (spec.spec_type == SpecType::PseudoRoot) {
       // Prim
@@ -1975,50 +2065,51 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       // Sanity check
       if (specifier) {
         if (specifier.value() != Specifier::Def) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Currently TinyUSDZ only supports `def` for `specifier`.");
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "Currently TinyUSDZ only supports `def` for `specifier`.");
         }
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "`specifier` field is missing for FieldSets with SpecType::PseudoRoot.");
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`specifier` field is missing for FieldSets "
+                                  "with SpecType::PseudoRoot.");
       }
 
       if (!typeName) {
         PUSH_WARN("Treat this node as Model(where `typeName` is missing.");
         typeName = "Model";
       }
-        
+
       if (typeName) {
         RECONSTRUCT_PRIM(Xform, typeName.value())
-        //RECONSTRUCT_PRIM(GeomMesh, typeName.value())
-        RECONSTRUCT_PRIM(Scope, typeName.value())
-        {
-          PUSH_WARN("TODO or we can ignore this typeName: " << typeName.value());
+        // RECONSTRUCT_PRIM(GeomMesh, typeName.value())
+        RECONSTRUCT_PRIM(Scope, typeName.value()) {
+          PUSH_WARN(
+              "TODO or we can ignore this typeName: " << typeName.value());
         }
-        
       }
 
       _prim_table.insert(current);
-    }  else {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: specTy = " << to_string(spec.spec_type));
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "TODO: specTy = " << to_string(spec.spec_type));
     }
   }
-
 
   {
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
-      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]), level + 1,
-                                      psmap, stage)) {
+      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]),
+                                      level + 1, psmap, stage)) {
         return false;
       }
     }
   }
 
-  if (parent == 0) { // root prim
+  if (parent == 0) {  // root prim
     if (prim) {
       stage->GetRootPrims().emplace_back(std::move(prim.value()));
     }
   }
-
 
   return true;
 }
@@ -2061,7 +2152,8 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   stage->GetRootPrims().clear();
 
   int root_node_id = 0;
-  bool ret = ReconstructPrimRecursively(/* no further root for root_node */-1, root_node_id, /* level */ 0,
+  bool ret = ReconstructPrimRecursively(/* no further root for root_node */ -1,
+                                        root_node_id, /* level */ 0,
                                         path_index_to_spec_index_map, stage);
 
   if (!ret) {
