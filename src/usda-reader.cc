@@ -74,6 +74,19 @@
 #include "common-macros.inc"
 
 namespace tinyusdz {
+
+namespace prim {
+
+// template specialization forward decls.
+// implimentations will be located in prim-reconstruct.cc
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *)
+
+RECONSTRUCT_PRIM_DECL(Xform);
+
+#undef RECONSTRUCT_PRIM_DECL
+
+} // namespace prim
+
 namespace usda {
 
 constexpr auto kTag = "[USDA]";
@@ -1227,9 +1240,9 @@ bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Xform *xform) {
-  (void)xform;
 
 
+#if 0
   //
   // Resolve prepend references
   //
@@ -1254,6 +1267,13 @@ bool USDAReader::Impl::ReconstructPrim(
   }
 
   return true;
+#else
+  std::string err;
+  if (!prim::ReconstructPrim(properties, references, xform, &err)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct Xform Prim: " << err);
+  }
+  return true;
+#endif
 }
 
 ///

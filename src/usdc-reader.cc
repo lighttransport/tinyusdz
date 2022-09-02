@@ -59,7 +59,21 @@
 //
 #include "common-macros.inc"
 
+
 namespace tinyusdz {
+
+namespace prim {
+
+// template specialization forward decls.
+// implimentations will be located in prim-reconstruct.cc
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *)
+
+RECONSTRUCT_PRIM_DECL(Xform);
+
+#undef RECONSTRUCT_PRIM_DECL
+
+} // namespace prim
+
 namespace usdc {
 
 constexpr auto kTag = "[USDC]";
@@ -1489,85 +1503,22 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
   (void)xform;
   (void)fvs;
 
-  DCOUT("Reconstruct Xform ====");
-
-  std::map<std::string, Property> properties;
-
-  // First construct Property, then do Xform specific thing.
-
-#if 0
-  // Properties are stored in Children node
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
-                 ")");
-      return false;
-    }
-
-    if (!psmap.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      // Should we report an error?
-      continue;
-    }
-
-    uint32_t spec_index = psmap.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = _specs[spec_index];
-
-    // Property must be Connection or RelationshipTarget
-    if ((spec.spec_type == SpecType::Connection) ||
-        (spec.spec_type == SpecType::RelationshipTarget)) {
-      // OK
-    } else {
-      continue;
-    }
-
-    nonstd::optional<Path> path = GetPath(spec.path_index);
-
-    if (!path) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
-    }
-
-    DCOUT("Path prim part: " << path.value().GetPrimPart()
-                             << ", prop part: " << path.value().GetPropPart()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-                 " must exist in live fieldsets.");
-      return false;
-    }
-
-    const crate::FieldValuePairVector &child_fvs =
-        _live_fieldsets.at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.value().GetPropPart();
-
-      Property prop;
-      if (!ParseProperty(child_fvs, &prop)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "Failed to construct Property from FieldValuePairVector.");
-      }
-
-      properties.emplace(prop_name, prop);
-      DCOUT("Add property : " << prop_name);
-    }
-  }
-#else
+  prim::PropertyMap properties;
   if (!BuildPropertyMap(node.GetChildren(), psmap, &properties)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
   }
-#endif
 
+  prim::ReferenceList refs; // TODO:
+  std::string err;
+
+  DCOUT("Reconstruct Xform ====");
+
+  if (!prim::ReconstructPrim<Xform>(properties, refs, xform, &err)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, err);
+  }
+
+
+#if 0
   //
   // Process Xform's specific prop
   //
@@ -1577,6 +1528,7 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
                                                &xform->xformOps, &err)) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data: " << err);
   }
+#endif
 
   DCOUT("End Reconstruct Xform ====");
 
