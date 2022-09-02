@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-// Copyright 2020-Present Syoyo Fujita.
+// Copyright 2022-Present Syoyo Fujita.
 
 ///
-/// Simple Python-like format print utility. Only supports "{}".
+/// Simple Python-like format print utility in C++11 or later. Only supports
+/// "{}".
 ///
 #pragma once
 
@@ -19,8 +20,8 @@ namespace detail {
 
 template <class T>
 std::ostringstream &format_sv_rec(std::ostringstream &ss,
-                               const std::vector<std::string> &sv, size_t idx,
-                               T const &v) {
+                                  const std::vector<std::string> &sv,
+                                  size_t idx, T const &v) {
   if (idx >= sv.size()) {
     return ss;
   }
@@ -75,9 +76,10 @@ std::ostringstream &format_sv(std::ostringstream &ss,
 std::ostringstream &format_sv(std::ostringstream &ss,
                               const std::vector<std::string> &sv);
 
-nonstd::expected<std::vector<std::string>, std::string> tokenize(const std::string &s);
+nonstd::expected<std::vector<std::string>, std::string> tokenize(
+    const std::string &s);
 
-} // namespace detail
+}  // namespace detail
 
 template <class... Args>
 std::string format(const std::string &in, Args const &...args) {
@@ -94,7 +96,5 @@ std::string format(const std::string &in, Args const &...args) {
 
 std::string format(const std::string &in);
 
-
-} // namespace fmt
-} // namespace tinyusdz
-
+}  // namespace fmt
+}  // namespace tinyusdz
