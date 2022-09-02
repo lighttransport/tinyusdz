@@ -2,6 +2,8 @@
 
 #include "str-util.hh"
 
+#include "usdGeom.hh"
+
 #include "common-macros.inc"
 
 // For PUSH_ERROR_AND_RETURN
@@ -349,6 +351,38 @@ bool ReconstructXformOpsFromProperties(
       PUSH_ERROR_AND_RETURN(
           "`xformOpOrder` must be type `token[]` but got type `"
           << prop.attrib.var.type_name() << "`.");
+    }
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    Xform *xform,
+    std::string *err) {
+
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+    }
+  }
+
+  std::set<std::string> table;
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &xform->xformOps, err)) {
+    return false;
+  }
+
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
     }
   }
 
