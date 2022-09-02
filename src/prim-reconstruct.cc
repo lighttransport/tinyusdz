@@ -4,6 +4,10 @@
 
 #include "common-macros.inc"
 
+// For PUSH_ERROR_AND_RETURN
+#define PushError(s) if (err) { (*err) += s; }
+   
+
 namespace tinyusdz {
 namespace prim {
 
@@ -27,13 +31,6 @@ bool ReconstructXformOpsFromProperties(
   constexpr auto kRotateZXY = "xformOp:rotateZXY";
   constexpr auto kRotateZYX = "xformOp:rotateZYX";
   constexpr auto kOrient = "xformOp:orient";
-
-  // For PUSH_ERROR_AND_RETURN
-  auto PushError = [&err](const std::string &s) {
-    if (err) {
-      (*err) += s + "\n";
-    }
-  };
 
   // false : no prefix found.
   // true : return suffix(first namespace ':' is ommited.).

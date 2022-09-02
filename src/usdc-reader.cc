@@ -42,6 +42,7 @@
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "value-pprint.hh"
+#include "tiny-format.hh"
 
 //
 #ifdef __clang__
@@ -2117,7 +2118,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   (void)stage;
 
-  DCOUT("# of Paths = " << crate_reader->NumPaths());
+  // format test
+  DCOUT(fmt::format("# of Paths = {}", crate_reader->NumPaths()));
 
   if (crate_reader->NumNodes() == 0) {
     PUSH_WARN("Empty scene.");
