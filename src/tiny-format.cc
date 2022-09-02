@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright 2020-Present Syoyo Fujita.
+// Copyright 2022-Present Syoyo Fujita.
 #include "tiny-format.hh"
 
 namespace tinyusdz {
@@ -28,7 +28,8 @@ nonstd::expected<std::vector<std::string>, std::string> tokenize(
       if (si >= i) {  // previous char is '}'
         // do nothing
       } else {
-        toks.push_back(std::string(s.begin() + ssize_t(si), s.begin() + ssize_t(i)));
+        toks.push_back(
+            std::string(s.begin() + ssize_t(si), s.begin() + ssize_t(i)));
 
         si = i;
       }
@@ -55,7 +56,8 @@ nonstd::expected<std::vector<std::string>, std::string> tokenize(
   }
 
   if (si < n) {
-    toks.push_back(std::string(s.begin() + ssize_t(si), s.begin() + ssize_t(n)));
+    toks.push_back(
+        std::string(s.begin() + ssize_t(si), s.begin() + ssize_t(n)));
   }
 
   return std::move(toks);
@@ -74,15 +76,12 @@ std::ostringstream &format_sv(std::ostringstream &ss,
   return ss;
 }
 
-} // namespace detail
+}  // namespace detail
 
+std::string format(const std::string &in) { return in; }
 
-std::string format(const std::string &in) {
-  return in;
-}
-
-} // namespace fmt
-} // namespace tinyusdz
+}  // namespace fmt
+}  // namespace tinyusdz
 
 #if 0
 void test(const std::string &in) {
