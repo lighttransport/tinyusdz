@@ -14,6 +14,7 @@ namespace tinyusdz {
 namespace prim {
 
 using PropertyMap = std::map<std::string, Property>;
+using ReferenceList = std::vector<std::pair<ListEditQual, Reference>>;
 
 
 ///
@@ -26,6 +27,16 @@ bool ReconstructXformOpsFromProperties(
       const PropertyMap &properties,
       std::vector<XformOp> *xformOps,
       std::string *err);
+
+///
+/// Reconstruct Prim(e.g. Xform, GeomMesh) from `properties`.
+///
+template <typename T>
+bool ReconstructPrim(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    T *out,
+    std::string *err);
 
 
 } // namespace prim
