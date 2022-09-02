@@ -28,7 +28,7 @@ nonstd::expected<std::vector<std::string>, std::string> tokenize(
       if (si >= i) {  // previous char is '}'
         // do nothing
       } else {
-        toks.push_back(std::string(s.begin() + ssize_t(si), s.begin() + ssize_t(i)));
+        toks.push_back(std::string(s.begin() + std::string::size_type(si), s.begin() + std::string::size_type(i)));
 
         si = i;
       }
@@ -55,7 +55,7 @@ nonstd::expected<std::vector<std::string>, std::string> tokenize(
   }
 
   if (si < n) {
-    toks.push_back(std::string(s.begin() + ssize_t(si), s.begin() + ssize_t(n)));
+    toks.push_back(std::string(s.begin() + std::string::size_type(si), s.begin() + std::string::size_type(n)));
   }
 
   return std::move(toks);
