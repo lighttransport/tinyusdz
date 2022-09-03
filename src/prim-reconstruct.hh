@@ -36,6 +36,7 @@ bool ReconstructPrim(
     const PropertyMap &properties,
     const ReferenceList &references,
     T *out,
+    std::string *warn,
     std::string *err);
 
 
