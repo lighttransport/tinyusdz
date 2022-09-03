@@ -420,11 +420,14 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
       os << quote(vs);
       break;                                           
     }
-    
+    case TypeTrait<value::ValueBlock>::type_id: {                
+      os << "None";
+      break;
+    }
 
     // TODO: List-up all case and remove `default` clause.
     default: {
-      os << "VALUE_PPRINT: TODO: (type: " << v.type_name() << ") ";
+      os << "ANY_PPRINT: TODO: (type: " << v.type_name() << ") ";
     }
   }
 
@@ -505,6 +508,10 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       const std::vector<std::string> &vs = v.value<std::vector<std::string>>();
       os << quote(vs);
       break;                                           
+    }
+    case TypeTrait<value::ValueBlock>::type_id: {                
+      os << "None";
+      break;
     }
     // TODO: List-up all case and remove `default` clause.
     default: {

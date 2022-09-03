@@ -1335,6 +1335,16 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
       // TODO: Easier CrateValue to PrimAttrib.var conversion
       attr.var.var.values.push_back(fv.second.get_raw());
 
+    } else if (fv.first == "timeSamples") {
+
+      propType = Property::Type::Attrib;
+
+      if (auto pv = fv.second.get_value<value::TimeSamples>()) {
+        attr.var.var = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`timeSamples` is not TimeSamples data.");
+      }
     } else {
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);

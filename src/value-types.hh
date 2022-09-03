@@ -186,7 +186,7 @@ enum TypeId {
   TYPE_ID_NULL,
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
-  TYPE_ID_BLOCK,  // None as type
+  TYPE_ID_VALUEBLOCK,  // Value block. `None` in ascii.
 
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
@@ -662,8 +662,8 @@ struct texcoord3d {
   double s, t, r;
 };
 
-// Attribute Block(`None`)
-struct Block {};
+// Attribute value Block(`None`)
+struct ValueBlock {};
 
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
@@ -695,7 +695,7 @@ struct TypeTrait<void> {
 
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 //DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
-DEFINE_TYPE_TRAIT(Block, "none", TYPE_ID_BLOCK, 1);
+DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
@@ -915,10 +915,11 @@ class Value {
 //
 // We assume having large time samples is rare situlation, and above benchmark speed is acceptable in general  usecases.
 //
+// `None`(ValueBlock) is represented as `value::ValueBlock`
+//
 struct TimeSamples {
   std::vector<double> times;
-  //std::vector<linb::any> values;  // Could be an array of 'None' or Type T
-  std::vector<value::Value> values;  // Could be an array of 'None' or Type T
+  std::vector<value::Value> values;  // Could have arbitrary type, but usually an array of 'None'(ValueBlock) or Type T
 
   bool IsScalar() const {
     return (times.size() == 0) && (values.size() == 1);

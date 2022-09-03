@@ -4131,7 +4131,7 @@ value::TimeSamples AsciiParser::ConvertToTimeSamples(
       dst.values.push_back(item.second.value());
     } else {
       // Blocked.
-      dst.values.push_back(value::Block());
+      dst.values.push_back(value::ValueBlock());
     }
   }
 
@@ -4150,7 +4150,7 @@ value::TimeSamples AsciiParser::ConvertToTimeSamples(
       dst.values.push_back(item.second.value());
     } else {
       // Blocked.
-      dst.values.push_back(value::Block());
+      dst.values.push_back(value::ValueBlock());
     }
   }
 
