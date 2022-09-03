@@ -247,12 +247,22 @@ class USDCReader::Impl {
     return nonstd::nullopt;
   }
 
+  nonstd::optional<Path> GetElemPath(crate::Index index) const {
+    if (index.value <= _elemPaths.size()) {
+      return _elemPaths[index.value];
+    }
+
+    return nonstd::nullopt;
+  }
+
+  // TODO: Do not copy data from crate_reader.
   std::vector<crate::CrateReader::Node> _nodes;
   std::vector<crate::Spec> _specs;
   std::vector<crate::Field> _fields;
   std::vector<crate::Index> _fieldset_indices;
   std::vector<crate::Index> _string_indices;
   std::vector<Path> _paths;
+  std::vector<Path> _elemPaths;
 
   std::map<crate::Index, crate::FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
@@ -1288,6 +1298,91 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
   return true;
 }
 
+// TODO: Use template and move code to `value-types.hh`
+static bool UpcastType(
+  const std::string &reqType,
+  value::Value &inout)
+{ 
+  
+  if (reqType == "float") {
+    float dst;
+    if (auto pv = inout.get_value<value::half>()) {
+      dst = half_to_float(pv.value());
+      inout = dst;
+      return true;
+    }
+  } else if (reqType == "float2") {
+    value::float2 dst;
+    if (auto pv = inout.get_value<value::half2>()) {
+      value::half2 v = pv.value();
+      dst[0] = half_to_float(v[0]);
+      dst[1] = half_to_float(v[1]);
+      inout = dst;
+      return true;
+    }
+  } else if (reqType == "float3") {
+    value::float3 dst;
+    if (auto pv = inout.get_value<value::half3>()) {
+      value::half3 v = pv.value();
+      dst[0] = half_to_float(v[0]);
+      dst[1] = half_to_float(v[1]);
+      dst[2] = half_to_float(v[2]);
+      inout = dst;
+      return true;
+    }
+  } else if (reqType == "float4") {
+    value::float4 dst;
+    if (auto pv = inout.get_value<value::half4>()) {
+      value::half4 v = pv.value();
+      dst[0] = half_to_float(v[0]);
+      dst[1] = half_to_float(v[1]);
+      dst[2] = half_to_float(v[2]);
+      dst[3] = half_to_float(v[3]);
+      inout = dst;
+      return true;
+    }
+  } else if (reqType == "double") {
+    double dst;
+    if (auto pv = inout.get_value<value::half>()) {
+      dst = double(half_to_float(pv.value()));
+      inout = dst;
+      return true;
+    }
+  } else if (reqType == "double2") {
+    value::double2 dst;
+    if (auto pv = inout.get_value<value::half2>()) {
+      value::half2 v = pv.value();
+      dst[0] = double(half_to_float(v[0]));
+      dst[1] = double(half_to_float(v[1]));
+      inout = dst;
+      return true;
+    }
+  } else if (reqType == "double3") {
+    value::double3 dst;
+    if (auto pv = inout.get_value<value::half3>()) {
+      value::half3 v = pv.value();
+      dst[0] = double(half_to_float(v[0]));
+      dst[1] = double(half_to_float(v[1]));
+      dst[2] = double(half_to_float(v[2]));
+      inout = dst;
+      return true;
+    }
+  } else if (reqType == "double4") {
+    value::double4 dst;
+    if (auto pv = inout.get_value<value::half4>()) {
+      value::half4 v = pv.value();
+      dst[0] = double(half_to_float(v[0]));
+      dst[1] = double(half_to_float(v[1]));
+      dst[2] = double(half_to_float(v[2]));
+      dst[3] = double(half_to_float(v[3]));
+      inout = dst;
+      return true;
+    }
+  }
+
+  return false;
+}
+
 bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
                                      Property *prop) {
   if (fvs.size() > _config.kMaxFieldValuePairs) {
@@ -1298,6 +1393,9 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
   nonstd::optional<value::token> typeName;
   Property::Type propType{Property::Type::EmptyAttrib};
   PrimAttrib attr;
+
+  bool is_scalar{false};
+  value::Value scalar;
 
   // TODO: Rel, TimeSamples, Connection
 
@@ -1333,7 +1431,8 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
 
       // Set scalar
       // TODO: Easier CrateValue to PrimAttrib.var conversion
-      attr.var.var.values.push_back(fv.second.get_raw());
+      scalar = fv.second.get_raw();
+      is_scalar = true;
 
     } else if (fv.first == "timeSamples") {
 
@@ -1349,6 +1448,23 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);
     }
+  }
+
+  if (is_scalar) {
+    if (typeName) {
+      // Some inlined? value uses less accuracy type(e.g. `half3`) than typeName(e.g. `float3`)
+      // Use type specified in `typeName` as much as possible.
+      std::string reqTy = typeName.value().str();
+      std::string scalarTy = scalar.type_name();
+
+      if (reqTy.compare(scalarTy) != 0) {
+        bool ret = UpcastType(reqTy, scalar);
+        if (ret) {
+          DCOUT(fmt::format("Upcast type from {} to {}.", scalarTy, reqTy));
+        }
+      }
+    }
+    attr.var.var.values.push_back(scalar);
   }
 
   if (propType == Property::Type::EmptyAttrib) {
@@ -1930,10 +2046,20 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
   nonstd::optional<Prim> prim;
   std::vector<value::token> primChildren;
+  Path elemPath;
 
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
   if (current == 0) {
+
+    if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
+      DCOUT("Root element path: " << pv.value().full_path_name());
+    } else {
+      PUSH_ERROR_AND_RETURN(
+          "(Internal error). Root Element Path not found.");
+    }
+
+
     // Root layer(Stage) is Relationship for some reaon.
     if (spec.spec_type != SpecType::Relationship) {
       PUSH_ERROR_AND_RETURN(
@@ -2008,13 +2134,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     DCOUT("===");
 
-#define RECONSTRUCT_PRIM(__primty, __node_ty)                                \
+#define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name)                   \
   if (__node_ty == value::TypeTrait<__primty>::type_name()) {                \
     __primty typed_prim;                                                     \
     if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {                   \
       PUSH_ERROR_AND_RETURN_TAG(kTag,                                        \
                                 "Failed to reconstruct Prim " << __node_ty); \
     }                                                                        \
+    typed_prim.name = __prim_name; \
     value::Value primdata = typed_prim;                                      \
     prim = Prim(primdata);                                                   \
     /* PrimNode pnode; */                                                    \
@@ -2024,6 +2151,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     if (spec.spec_type == SpecType::PseudoRoot) {
       // Prim
+
+      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
+        elemPath = pv.value();
+        DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal errror) Element path not found.");
+      }
+
 
       // Sanity check
       if (specifier) {
@@ -2043,11 +2178,17 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       }
 
       if (typeName) {
-        RECONSTRUCT_PRIM(Xform, typeName.value())
-        // RECONSTRUCT_PRIM(GeomMesh, typeName.value())
-        RECONSTRUCT_PRIM(Scope, typeName.value()) {
+        std::string prim_name = elemPath.GetPrimPart();
+
+        RECONSTRUCT_PRIM(Xform, typeName.value(), prim_name)
+        // RECONSTRUCT_PRIM(GeomMesh, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(Scope, typeName.value(), prim_name) {
           PUSH_WARN(
               "TODO or we can ignore this typeName: " << typeName.value());
+        }
+
+        if (prim) {
+          prim.value().elementPath = elemPath;
         }
       }
 
@@ -2088,11 +2229,13 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
     return true;
   }
 
+  // TODO: Directly access data in crate_reader.
   _nodes = crate_reader->GetNodes();
   _specs = crate_reader->GetSpecs();
   _fields = crate_reader->GetFields();
   _fieldset_indices = crate_reader->GetFieldsetIndices();
   _paths = crate_reader->GetPaths();
+  _elemPaths = crate_reader->GetElemPaths();
   _live_fieldsets = crate_reader->GetLiveFieldSets();
 
   PathIndexToSpecIndexMap

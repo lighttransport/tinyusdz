@@ -80,10 +80,12 @@ class CrateReader {
       }
     }
 
+    // Element path(e.g. `geom0`)
     const Path &GetElementPath() const  {
       return _elemPath;
     }
 
+    // Full path(e.g. `/root/geom0`
     const Path &GetPath() const { return _path; }
 
     // crate::CrateDataType GetNodeDataType() const { return _node_type; }
@@ -174,6 +176,10 @@ class CrateReader {
     return _paths;
   }
 
+  const std::vector<Path> &GetElemPaths() const {
+    return _elemPaths;
+  }
+
   const std::vector<crate::Spec> &GetSpecs() const {
     return _specs;
   }
@@ -206,6 +212,7 @@ class CrateReader {
   }
 
   nonstd::optional<Path> GetPath(crate::Index index) const;
+  nonstd::optional<Path> GetElementPath(crate::Index index) const;
   nonstd::optional<std::string> GetPathString(crate::Index index) const;
 
 
