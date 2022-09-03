@@ -191,6 +191,16 @@ nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
   return _paths[index.value];
 }
 
+nonstd::optional<Path> CrateReader::GetElementPath(crate::Index index) const {
+  if (index.value <= _elemPaths.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
+  }
+
+  return _elemPaths[index.value];
+}
+
 nonstd::optional<std::string> CrateReader::GetPathString(
     crate::Index index) const {
   if (index.value <= _paths.size()) {
