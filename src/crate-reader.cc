@@ -31,6 +31,7 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
+#include "tiny-format.hh"
 
 //
 #ifdef __clang__
@@ -699,14 +700,20 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 }
 
 bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
-  (void)d;
 
-  // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
+  // Layout
+  //
+  // - `times`(double[])
+  // - NumValueReps(int64)
+  // - ArrayOfValueRep
+  //
+
+  // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation for details)
 
   DCOUT("ReadTimeSamples: offt before tell = " << _sr->tell());
 
   // 8byte for the offset for recursive value. See RecursiveRead() in
-  // crateFile.cpp for details.
+  // https://github.com/PixarAnimationStudios/USD/blob/release/pxr/usd/usd/crateFile.cpp for details.
   int64_t offset{0};
   if (!_sr->read8(&offset)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
@@ -720,33 +727,35 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   if (!_sr->seek_from_current(offset - 8)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSample times. Invalid offset value: " +
             std::to_string(offset));
-    return false;
   }
 
   // TODO(syoyo): Deduplicate times?
 
-  crate::ValueRep rep{0};
-  if (!ReadValueRep(&rep)) {
-    _err += "Failed to read ValueRep for TimeSample' times element.\n";
-    return false;
+  crate::ValueRep times_rep{0};
+  if (!ReadValueRep(&times_rep)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' `times` element.");
   }
 
   // Save offset
   size_t values_offset = _sr->tell();
 
-  crate::CrateValue value;
-  if (!UnpackValueRep(rep, &value)) {
-    _err += "Failed to unpack value of TimeSample's times element.\n";
-    return false;
+  crate::CrateValue times_value;
+  if (!UnpackValueRep(times_rep, &times_value)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's `times` element.");
   }
 
   // must be an array of double.
-  DCOUT("TimeSample times:" << value.type_name());
-  DCOUT("TODO: Parse TimeSample values");
+  DCOUT("TimeSample times:" << times_value.type_name());
+  
+  if (auto pv = times_value.get_value<std::vector<double>>()) {
+    d->times = pv.value();
+    DCOUT("`times` = " << d->times);
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`times` in TimeSamples must be type `double[]`, but got type `{}`", times_value.type_name()));
+  }
 
   //
-  // Parse values for TimeSamples.
-  // TODO(syoyo): Delayed loading of values.
+  // Parse values(elements) of TimeSamples.
   //
 
   // seek position will be changed in `_UnpackValueRep`, so revert it.
@@ -777,13 +786,33 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   DCOUT("Number of values = " << num_values);
 
-  PUSH_WARN("TODO: Decode TimeSample's values");
+  if (d->times.size() != num_values) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of `times` elements and # of values in Crate differs."); 
+  }
+  
+  for (size_t i = 0; i < num_values; i++) {
+    crate::ValueRep rep;
+    if (!ReadValueRep(&rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' value element.");
+    }
+
+    ///
+    /// Type check of the content of `value` will be done at ReconstructPrim() in usdc-reader.cc.
+    ///
+    crate::CrateValue value;
+    if (!UnpackValueRep(rep, &value)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's value element.");
+    }
+
+    d->values.emplace_back(std::move(value.get_raw()));
+  }
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
   if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek over TimeSamples's values.");
   }
+
 
   return true;
 }
@@ -1534,6 +1563,12 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       value->Set(dict);
       return true;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK: {
+      // Guess No content for ValueBlock
+      value::ValueBlock block;
+      value->Set(block);
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
@@ -1550,7 +1585,6 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:

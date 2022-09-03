@@ -983,7 +983,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       double t = var.var.times[i];
 
       // Attribute Block?
-      if (auto pvb = var.get_ts_value<value::Block>(i)) {
+      if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
         dst.ts.AddBlockedSample(t);
       } else if (auto pv = var.get_ts_value<T>(i)) {
         dst.ts.AddSample(t, pv.value());
