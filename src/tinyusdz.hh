@@ -396,6 +396,7 @@ struct StringAndIdMap {
 class Prim {
  public:
   Path path;
+  Path elementPath;
 
   Prim(const value::Value &rhs);
 
