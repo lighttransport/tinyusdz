@@ -20,6 +20,7 @@
 
 #include "ascii-parser.hh"
 #include "usdGeom.hh"
+#include "usdSkel.hh"
 #if defined(__wasi__)
 #else
 #include <mutex>
@@ -79,9 +80,17 @@ namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *)
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *)
 
 RECONSTRUCT_PRIM_DECL(Xform);
+RECONSTRUCT_PRIM_DECL(Model);
+RECONSTRUCT_PRIM_DECL(Scope);
+RECONSTRUCT_PRIM_DECL(Skeleton);
+RECONSTRUCT_PRIM_DECL(SkelRoot);
+RECONSTRUCT_PRIM_DECL(SkelAnimation);
+RECONSTRUCT_PRIM_DECL(BlendShape);
+RECONSTRUCT_PRIM_DECL(LuxDomeLight);
+RECONSTRUCT_PRIM_DECL(LuxSphereLight);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -1240,40 +1249,12 @@ bool USDAReader::Impl::ReconstructPrim(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Xform *xform) {
-
-
-#if 0
-  //
-  // Resolve prepend references
-  //
-  for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
-    }
-  }
-
-  std::set<std::string> table;
+  
   std::string err;
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &xform->xformOps, &err)) {
-    PUSH_ERROR_AND_RETURN("Failed to reconstruct xformOp data: " << err);
-  }
-
-  //
-  // Resolve append references
-  // (Overwrite variables with the referenced one).
-  //
-  for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
-    }
-  }
-
-  return true;
-#else
-  std::string err;
-  if (!prim::ReconstructPrim(properties, references, xform, &err)) {
+  if (!prim::ReconstructPrim(properties, references, xform, &_warn, &err)) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Xform Prim: " << err);
   }
   return true;
-#endif
 }
 
 ///
@@ -2610,6 +2591,7 @@ bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxSphereLight *light) {
+#if 0
   std::set<std::string> table;
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
@@ -2622,6 +2604,13 @@ bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, light, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
@@ -2629,6 +2618,7 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     LuxDomeLight *light) {
+#if 0
   std::set<std::string> table;
 
   for (const auto &prop : properties) {
@@ -2647,6 +2637,13 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
 
   DCOUT("Implement DomeLight");
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, light, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
@@ -2654,12 +2651,10 @@ bool USDAReader::Impl::ReconstructPrim<Model>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Model *model) {
-  DCOUT("Model(`def` with no type)");
 
-  std::set<std::string> table;
-  for (const auto &prop : properties) {
-    ADD_PROPERY(table, prop, Model, model->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  std::string err;
+  if (!prim::ReconstructPrim(properties, references, model, &_warn, &err)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct Model Prim: " << err);
   }
 
   return true;
@@ -2670,13 +2665,10 @@ bool USDAReader::Impl::ReconstructPrim<Scope>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Scope *scope) {
-  // `Scope` is just a namespace in scene graph(no node xform)
 
-  DCOUT("Scope");
-  std::set<std::string> table;
-  for (const auto &prop : properties) {
-    ADD_PROPERY(table, prop, Scope, scope->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  std::string err;
+  if (!prim::ReconstructPrim(properties, references, scope, &_warn, &err)) {
+    PUSH_ERROR_AND_RETURN("Failed to reconstruct Scope Prim: " << err);
   }
 
   return true;
@@ -2687,6 +2679,7 @@ bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     SkelRoot *root) {
+#if 0
   (void)root;
 
 
@@ -2707,6 +2700,13 @@ bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, root, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
@@ -2715,6 +2715,7 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     Skeleton *skel) {
 
+#if 0
   constexpr auto kSkelAnimationSource = "skel:animationSource";
 
   std::set<std::string> table;
@@ -2751,6 +2752,13 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, skel, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
@@ -2758,6 +2766,7 @@ bool USDAReader::Impl::ReconstructPrim<SkelAnimation>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     SkelAnimation *skelanim) {
+#if 0
 
 
   std::set<std::string> table;
@@ -2772,6 +2781,13 @@ bool USDAReader::Impl::ReconstructPrim<SkelAnimation>(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, skelanim, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
@@ -2779,6 +2795,7 @@ bool USDAReader::Impl::ReconstructPrim<BlendShape>(
     const std::map<std::string, Property> &properties,
     const std::vector<std::pair<ListEditQual, Reference>> &references,
     BlendShape *bs) {
+#if 0
 
   constexpr auto kOffsets = "offsets";
   constexpr auto kNormalOffsets = "normalOffsets";
@@ -2801,6 +2818,13 @@ bool USDAReader::Impl::ReconstructPrim<BlendShape>(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, bs, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>

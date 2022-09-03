@@ -6,8 +6,6 @@
 // TODO:
 //
 // - [ ] Refactor Reconstruct*** function
-// - [ ] Set `custom` in property by looking up schema.
-// - [ ] And more...
 //
 
 #ifdef _MSC_VER
@@ -66,9 +64,12 @@ namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *)
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *)
 
 RECONSTRUCT_PRIM_DECL(Xform);
+RECONSTRUCT_PRIM_DECL(Model);
+RECONSTRUCT_PRIM_DECL(Scope);
+RECONSTRUCT_PRIM_DECL(GeomMesh);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -1639,7 +1640,7 @@ bool USDCReader::Impl::ReconstructPrim<Xform>(
 
   DCOUT("Reconstruct Xform ====");
 
-  if (!prim::ReconstructPrim<Xform>(properties, refs, xform, &err)) {
+  if (!prim::ReconstructPrim<Xform>(properties, refs, xform, &_warn, &err)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, err);
   }
 
