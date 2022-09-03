@@ -413,6 +413,8 @@ class CrateValue {
   SET_TYPE_SCALAR(Variability)
   SET_TYPE_SCALAR(value::dict)
 
+  SET_TYPE_SCALAR(value::ValueBlock)
+
   SET_TYPE_SCALAR(ListOp<value::token>)
   SET_TYPE_SCALAR(ListOp<std::string>)
   SET_TYPE_SCALAR(ListOp<Path>)
