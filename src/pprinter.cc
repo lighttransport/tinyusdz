@@ -1486,10 +1486,10 @@ std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool c
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "color3f inputs:color = " << light.color << "\n";
-  ss << pprint::Indent(indent+1) << "float inputs:intensity = " << light.intensity << "\n";
-  ss << pprint::Indent(indent+1) << "float inputs:radius = " << light.radius << "\n";
-  ss << pprint::Indent(indent+1) << "float inputs:specular = " << light.specular << "\n";
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1508,8 +1508,8 @@ std::string to_string(const LuxDomeLight &light, const uint32_t indent, bool clo
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "color3f inputs:color = " << light.color << "\n";
-  ss << pprint::Indent(indent+1) << "float inputs:intensity = " << light.intensity << "\n";
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
