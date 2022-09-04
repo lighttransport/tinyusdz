@@ -19,10 +19,10 @@ constexpr auto kBlendShape = "BlendShape";
 struct BlendShape {
   std::string name;
 
-  TypedAttribute<std::vector<value::vector3f>> offsets;        // uniform vector3f[]. required property
-  TypedAttribute<std::vector<value::vector3f>> normalOffsets;  // uniform vector3f[]. required property
+  TypedProperty<std::vector<value::vector3f>> offsets;        // uniform vector3f[]. required property
+  TypedProperty<std::vector<value::vector3f>> normalOffsets;  // uniform vector3f[]. required property
 
-  TypedAttribute<std::vector<int>>
+  TypedProperty<std::vector<int>>
       pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
                      // values in `offsets` and `normalOffsets`.
                     
@@ -36,12 +36,12 @@ struct Skeleton {
 
   Animatable<Extent> extent;
 
-  TypedAttribute<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
+  TypedProperty<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
 
-  TypedAttribute<std::vector<value::token>> jointNames; // uniform token[]
-  TypedAttribute<std::vector<value::token>> joints; // uniform token[]
+  TypedProperty<std::vector<value::token>> jointNames; // uniform token[]
+  TypedProperty<std::vector<value::token>> joints; // uniform token[]
 
-  TypedAttribute<std::vector<value::matrix4d>> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
+  TypedProperty<std::vector<value::matrix4d>> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                                                 // joint in local coordinate.
 
   // rel proxyPrim
@@ -83,13 +83,13 @@ struct SkelRoot {
 struct SkelAnimation {
   std::string name;
 
-  TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[]
-  TypedAttribute<std::vector<float>> blendShapeWeights; // float[]
-  TypedAttribute<std::vector<value::token>> joints; // uniform token[]
-  TypedAttribute<std::vector<value::quatf>> rotations;  // quatf[] Joint-local unit quaternion rotations
-  TypedAttribute<std::vector<value::half3>>
+  TypedProperty<std::vector<value::token>> blendShapes; // uniform token[]
+  TypedProperty<std::vector<float>> blendShapeWeights; // float[]
+  TypedProperty<std::vector<value::token>> joints; // uniform token[]
+  TypedProperty<std::vector<value::quatf>> rotations;  // quatf[] Joint-local unit quaternion rotations
+  TypedProperty<std::vector<value::half3>>
       scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
-  TypedAttribute<std::vector<value::float3>> translations;  // float3[] Joint-local translation.
+  TypedProperty<std::vector<value::float3>> translations;  // float3[] Joint-local translation.
 
   std::map<std::string, Property> props;
   PrimMeta meta;
