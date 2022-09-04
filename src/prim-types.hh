@@ -273,11 +273,116 @@ struct AttrMeta {
   }
 };
 
+// Typed TimeSamples value
+//
+// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
+//
+// in .usd, are represented as
+//
+// 0: (1.0, false)
+// 1: (2.0, true)
+// 2: (3.0, false)
+//
+
 template <typename T>
-class AttribWithFallback;
+struct TypedTimeSamples {
+
+  struct Sample {
+    double t;
+    T value;
+    bool blocked{false};
+  };
+
+ public:
+
+  bool empty() const {
+    return _samples.empty();
+  }
+
+  // TODO: Implement.
+  nonstd::optional<T> TryGet(double t = 0.0) const;
+#if 0
+    if (empty()) {
+      return nonstd::nullopt;
+    }
+
+    if (_dirty) {
+      // TODO: Sort by time
+      _dirty = false;
+    }
+
+    // TODO: Fetch value then lineary interpolate value.
+    return nonstd::nullopt;
+  }
+#endif
+
+  void AddSample(const Sample &s) {
+    _samples.push_back(s);
+    _dirty = true;
+  }
+
+  void AddSample(const double t, T &v) {
+    _samples.push_back({t, v, false});
+    _dirty = true;
+  }
+
+  void AddBlockedSample(const double t) {
+    _samples.push_back({t, T(), true});
+    _dirty = true;
+  }
+
+  const std::vector<Sample> &GetSamples() const {
+    return _samples;
+  }
+
+ private:
+  std::vector<Sample> _samples;
+  bool _dirty{false};
+
+};
+
+
+template <typename T>
+struct Animatable {
+  // scalar
+  T value;
+  bool blocked{false};
+
+  // timesamples
+  TypedTimeSamples<T> ts;
+
+  bool IsTimeSampled() const {
+    return !ts.empty();
+  }
+
+  bool IsScalar() const {
+    return ts.empty();
+  }
+
+  // Scalar
+  bool IsBlocked() const {
+    return blocked;
+  }
+
+#if 0  // TODO
+  T Get() const { return value; }
+
+  T Get(double t) {
+    if (IsTimeSampled()) {
+      // TODO: lookup value by t
+      return timeSamples.Get(t);
+    }
+    return value;
+  }
+#endif
+
+  Animatable() {}
+  Animatable(const T &v) : value(v) {}
+};
 
 ///
-/// Attribute with fallback(default) value
+/// Tyeped Attribute without fallback(default) value.
+/// For attribute with `uniform` qualifier or TimeSamples, but don't have `.connect`(Connection)
 ///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
@@ -285,16 +390,66 @@ class AttribWithFallback;
 /// in USD). If you call `get()`, fallback value is returned.
 ///
 template <typename T>
-class AttribWithFallback {
+class TypedAttribute {
  public:
-  AttribWithFallback() = delete;
+
+  void set(const T &v) { attrib = v; }
+
+  const nonstd::optional<T> &get() const {
+    if (attrib) {
+      return attrib.value();
+    }
+    return nonstd::nullopt;
+  }
+
+  // TODO: Animation data.
+  bool IsBlocked() const {
+    return blocked;
+  }
+
+  // for `uniform` attribute only
+  void SetBlock(bool onoff) {
+    blocked = onoff;
+  }
+
+  // value set?
+  bool authored() const {
+    if (attrib) {
+      return true;
+    }
+    return false;
+  }
+
+  AttrMeta meta;
+
+ private:
+  nonstd::optional<T> attrib;
+  bool blocked{false}; // for `uniform` attribute. 
+};
+
+template <typename T>
+class TypedAttributeWithFallback;
+
+///
+/// Attribute with fallback(default) value.
+/// For attribute with `uniform` qualifier or TimeSamples, but don't have `.connect`(Connection)
+///
+/// - `authored() = true` : Attribute value is authored(attribute is
+/// described in USDA/USDC)
+/// - `authored() = false` : Attribute value is not authored(not described
+/// in USD). If you call `get()`, fallback value is returned.
+///
+template <typename T>
+class TypedAttributeWithFallback {
+ public:
+  TypedAttributeWithFallback() = delete;
 
   ///
   /// Init with fallback value;
   ///
-  AttribWithFallback(const T &fallback_) : fallback(fallback_) {}
+  TypedAttributeWithFallback(const T &fallback_) : fallback(fallback_) {}
 
-  AttribWithFallback &operator=(const T &value) {
+  TypedAttributeWithFallback &operator=(const T &value) {
     attrib = value;
 
     // fallback Value should be already set with `AttribWithFallback(const T&
@@ -330,11 +485,23 @@ class AttribWithFallback {
 
   void set(const T &v) { attrib = v; }
 
+
+  // TODO: Animation data.
   const T &get() const {
     if (attrib) {
       return attrib.value();
     }
     return fallback;
+  }
+
+  // TODO: Animation data.
+  bool IsBlocked() const {
+    return blocked;
+  }
+
+  // for `uniform` attribute only
+  void SetBlock(bool onoff) {
+    blocked = onoff;
   }
 
   // value set?
@@ -350,7 +517,9 @@ class AttribWithFallback {
  private:
   nonstd::optional<T> attrib;
   T fallback;
+  bool blocked{false}; // for `uniform` attribute. 
 };
+
 
 class PrimNode;
 
@@ -893,111 +1062,6 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-// Typed TimeSamples value
-//
-// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
-//
-// in .usd, are represented as
-//
-// 0: (1.0, false)
-// 1: (2.0, true)
-// 2: (3.0, false)
-//
-
-template <typename T>
-struct TypedTimeSamples {
-
-  struct Sample {
-    double t;
-    T value;
-    bool blocked{false};
-  };
-
- public:
-
-  bool empty() const {
-    return _samples.empty();
-  }
-
-  // TODO: Implement.
-  nonstd::optional<T> TryGet(double t = 0.0) const;
-#if 0
-    if (empty()) {
-      return nonstd::nullopt;
-    }
-
-    if (_dirty) {
-      // TODO: Sort by time
-      _dirty = false;
-    }
-
-    // TODO: Fetch value then lineary interpolate value.
-    return nonstd::nullopt;
-  }
-#endif
-
-  void AddSample(const Sample &s) {
-    _samples.push_back(s);
-    _dirty = true;
-  }
-
-  void AddSample(const double t, T &v) {
-    _samples.push_back({t, v, false});
-    _dirty = true;
-  }
-
-  void AddBlockedSample(const double t) {
-    _samples.push_back({t, T(), true});
-    _dirty = true;
-  }
-
-  const std::vector<Sample> &GetSamples() const {
-    return _samples;
-  }
-
- private:
-  std::vector<Sample> _samples;
-  bool _dirty{false};
-
-};
-
-template <typename T>
-struct Animatable {
-  // scalar
-  T value;
-  bool blocked{false};
-
-  // timesamples
-  TypedTimeSamples<T> ts;
-
-  bool IsTimeSampled() const {
-    return !ts.empty();
-  }
-
-  bool IsScalar() const {
-    return ts.empty();
-  }
-
-  // Scalar
-  bool IsBlocked() const {
-    return blocked;
-  }
-
-#if 0  // TODO
-  T Get() const { return value; }
-
-  T Get(double t) {
-    if (IsTimeSampled()) {
-      // TODO: lookup value by t
-      return timeSamples.Get(t);
-    }
-    return value;
-  }
-#endif
-
-  Animatable() {}
-  Animatable(const T &v) : value(v) {}
-};
 
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
@@ -1022,15 +1086,14 @@ struct PrimAttrib {
 };
 
 ///
-/// Typed version of PrimAttrib(e.g. for `points`, `normals`, `velocities.timeSamples`
-/// `inputs:st.connect`)
+/// Typed version of Property(e.g. for `points`, `normals`, `velocities.timeSamples`, `inputs:st.connect`)
 ///
 template <typename T>
-class TypedAttribute {
+class TypedProperty {
  public:
-  TypedAttribute() = default;
+  TypedProperty() = default;
 
-  explicit TypedAttribute(const T &fv) : fallback(fv) {}
+  explicit TypedProperty(const T &fv) : fallback(fv) {}
 
   using type = typename value::TypeTrait<T>::value_type;
 
@@ -1060,7 +1123,7 @@ class TypedAttribute {
   ListEditQual qual{ListEditQual::ResetToExplicit}; // default = "unqualified"
 };
 
-// Attribute or Relation/Connection. And has this property is custom or not
+// Generic container for Attribute or Relation/Connection. And has this property is custom or not
 // (Need to lookup schema if the property is custom or not for Crate data)
 class Property {
  public:
