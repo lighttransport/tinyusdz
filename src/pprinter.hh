@@ -133,7 +133,8 @@ std::string to_string(const UsdPrimvarReader_int &shader, const uint32_t indent 
 
 std::string to_string(const UsdUVTexture::SourceColorSpace v);
 
-std::string to_string(const GeomCamera::Projection &proj, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomCamera::Projection &proj);
+std::string to_string(const GeomCamera::StereoRole &role);
 
 std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t indent = 0, bool closing_brace = true);
 
