@@ -351,7 +351,7 @@ struct Animatable {
   // timesamples
   TypedTimeSamples<T> ts;
 
-  bool IsTimeSampled() const {
+  bool IsTimeSamples() const {
     return !ts.empty();
   }
 
@@ -395,7 +395,7 @@ class TypedAttribute {
 
   void set(const T &v) { attrib = v; }
 
-  const nonstd::optional<T> &get() const {
+  const nonstd::optional<T> get() const {
     if (attrib) {
       return attrib.value();
     }
@@ -520,6 +520,8 @@ class TypedAttributeWithFallback {
   bool blocked{false}; // for `uniform` attribute. 
 };
 
+template<typename T>
+using TypedAnimatableAttributeWithFallback = TypedAttributeWithFallback<Animatable<T>>;
 
 class PrimNode;
 

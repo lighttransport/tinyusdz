@@ -42,7 +42,7 @@ struct UsdPrimvarReader {
 
   nonstd::optional<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
 
-  TypedProperty<T> result; // "T outputs:result"
+  nonstd::optional<T> result; // "T outputs:result"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -97,12 +97,14 @@ struct UsdUVTexture {
 
   ///
   /// Outputs
+  /// 
+  /// Terminal attribute. No value assign(e.g. `float outputs:r = 1.2`)
   ///
-  TypedProperty<float> outputsR; // "float outputs:r"
-  TypedProperty<float> outputsG; // "float outputs:g"
-  TypedProperty<float> outputsB; // "float outputs:b"
-  TypedProperty<float> outputsA; // "float outputs:a"
-  TypedProperty<value::float3> outputsRGB; // "float3 outputs:rgb"
+  nonstd::optional<float> outputsR; // "float outputs:r"
+  nonstd::optional<float> outputsG; // "float outputs:g"
+  nonstd::optional<float> outputsB; // "float outputs:b"
+  nonstd::optional<float> outputsA; // "float outputs:a"
+  nonstd::optional<value::float3> outputsRGB; // "float3 outputs:rgb"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -146,9 +148,11 @@ struct UsdPreviewSurface {
   TypedProperty<float> displacement{0.0f}; // "inputs:displacement"
   TypedProperty<float> occlusion{0.0f}; // "inputs:occlusion"
 
-  //
-  // Outputs
-  //
+  ///
+  /// Outputs
+  ///
+  /// Terminal attribute(No value assigned or `.connect` only)
+  ///
   nonstd::optional<Relation> outputsSurface; // "token outputs:surface", "outputs:surface.connect"
   nonstd::optional<Relation> outputsDisplacement; // "token outputs:displacement", "outputs:displacement.connect"
 

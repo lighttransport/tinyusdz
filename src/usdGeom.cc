@@ -42,7 +42,7 @@ std::vector<value::normal3f> GeomMesh::GetNormals() const {
     }
   } else if (normals.value) {
 
-    if (normals.value.value().IsTimeSampled()) {
+    if (normals.value.value().IsTimeSamples()) {
       // TODO
       return dst;
     }
