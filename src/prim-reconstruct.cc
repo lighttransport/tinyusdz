@@ -16,6 +16,14 @@
 #define PushError(s) if (err) { (*err) += s; }
 #define PushWarn(s) if (warn) { (*warn) += s; }
 
+//
+// NOTE:
+// 
+// There are 3 variant of Primtive property(attribute)
+//
+// - TypedAttribute<T> : Uniform only. `uniform T`
+// - TypedAttribute<Animatable<T>> : Scalar only. `uniform T` or `T value.timeSamples`
+// - TypedProperty<T> : Generic typed property. `uniform T`, `T value.timeSamples` or `T value.connect`(Connection)
 
 namespace tinyusdz {
 namespace prim {
@@ -254,7 +262,100 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   return ret;
 }
 
-// TODO: Unify code with TypedAttrib<Animatable<T>> variant
+// For animatable attribute(`varying`)
+template<typename T>
+static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  TypedAttribute<Animatable<T>> &target) /* out */
+{
+  ParseResult ret;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
+    ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
+    return ret;
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    const PrimAttrib &attr = prop.attrib;
+
+    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
+
+    // Type info is stored in Attribute::type_name
+    if (value::TypeTrait<T>::type_name() == attr.var.type_name()) {
+      if (prop.type == Property::Type::EmptyAttrib) {
+        target.meta = attr.meta;
+        table.insert(name);
+      } else if (prop.type == Property::Type::Attrib) {
+
+        DCOUT("Adding prop: " << name);
+
+        if (attr.blocked) {
+          // e.g. "float radius = None"
+          target.SetBlock(true);
+        } else if (attr.variability == Variability::Uniform) {
+          // e.g. "float radius = 1.2"
+          if (!attr.var.is_scalar()) {
+            ret.code = ParseResult::ResultCode::VariabilityMismatch;
+            ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
+            return ret;
+          }
+
+          if (auto pv = attr.var.get_value<T>()) {
+            target.set(pv.value());
+          } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = fmt::format("Failed to retrieve value with requested type.");
+            return ret;
+          }
+
+        } else if (attr.var.is_timesample()) {
+          // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
+
+          Animatable<T> anim;
+          if (auto av = ConvertToAnimatable<T>(attr.var)) {
+            anim = av.value();
+            target.set(anim);
+          } else {
+            // Conversion failed.
+            DCOUT("ConvertToAnimatable failed.");
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+            return ret;
+          }
+        }
+
+        target.meta = attr.meta;
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        DCOUT("Invalid Property.type");
+        ret.err = "Invalid Property type(internal error)";
+        ret.code = ParseResult::ResultCode::InternalError;
+        return ret;
+      }
+    } else {
+      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      std::stringstream ss;
+      ss  << "Property type mismatch. " << name << " expects type `"
+              << value::TypeTrait<T>::type_name()
+              << "` but defined as type `" << attr.var.type_name() << "`";
+      ret.err = ss.str();
+      return ret;
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
+
+// TODO: Unify code with TypedAttribute<Animatable<T>> variant
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
@@ -1164,10 +1265,10 @@ bool ReconstructPrim<Skeleton>(
 
     //
 
-    PARSE_TYPED_PROPERTY(table, prop, "bindTransforms", Skeleton, skel->bindTransforms)
-    PARSE_TYPED_PROPERTY(table, prop, "joints", Skeleton, skel->joints)
-    PARSE_TYPED_PROPERTY(table, prop, "jointNames", Skeleton, skel->jointNames)
-    PARSE_TYPED_PROPERTY(table, prop, "restTransforms", Skeleton, skel->restTransforms)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "bindTransforms", Skeleton, skel->bindTransforms)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "joints", Skeleton, skel->joints)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "jointNames", Skeleton, skel->jointNames)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -1186,12 +1287,12 @@ bool ReconstructPrim<SkelAnimation>(
   (void)references;
   std::set<std::string> table;
   for (auto &prop : properties) {
-    PARSE_TYPED_PROPERTY(table, prop, "joints", SkelAnimation, skelanim->joints)
-    PARSE_TYPED_PROPERTY(table, prop, "translations", SkelAnimation, skelanim->translations)
-    PARSE_TYPED_PROPERTY(table, prop, "rotations", SkelAnimation, skelanim->rotations)
-    PARSE_TYPED_PROPERTY(table, prop, "scales", SkelAnimation, skelanim->scales)
-    PARSE_TYPED_PROPERTY(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
-    PARSE_TYPED_PROPERTY(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "joints", SkelAnimation, skelanim->joints)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "translations", SkelAnimation, skelanim->translations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "rotations", SkelAnimation, skelanim->rotations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", SkelAnimation, skelanim->scales)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -1214,9 +1315,9 @@ bool ReconstructPrim<BlendShape>(
 
   std::set<std::string> table;
   for (auto &prop : properties) {
-    PARSE_TYPED_PROPERTY(table, prop, kOffsets, BlendShape, bs->offsets)
-    PARSE_TYPED_PROPERTY(table, prop, kNormalOffsets, BlendShape, bs->normalOffsets)
-    PARSE_TYPED_PROPERTY(table, prop, kPointIndices, BlendShape, bs->pointIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, kOffsets, BlendShape, bs->offsets)
+    PARSE_TYPED_ATTRIBUTE(table, prop, kNormalOffsets, BlendShape, bs->normalOffsets)
+    PARSE_TYPED_ATTRIBUTE(table, prop, kPointIndices, BlendShape, bs->pointIndices)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
