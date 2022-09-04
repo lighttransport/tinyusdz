@@ -226,7 +226,7 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 }
 
 template<typename T>
-std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &name, const uint32_t indent) {
+std::string print_typed_attr(const TypedAttrbute<T> &attr, const std::string &name, const uint32_t indent) {
 
   std::stringstream ss;
 
@@ -234,32 +234,66 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
 
     ss << pprint::Indent(indent);
 
-    if (attr.variability == Variability::Uniform) {
+    ss << "uniform ";
+
+    // TODO: ListEdit qual.
+    ss << value::TypeTrait<T>::type_name() << " " << name;
+
+    if (attr.IsBlocked()) {
+      ss << " = None";
+    } else if (!attr.define_only) {
+      ss << " = ";
+      if (prop.value.value().IsTimeSampled()) {
+        ss << print_typed_timesamples(prop.value.value().ts, indent+1);
+      } else {
+        ss << prop.value.value().value;
+      }
+    }
+
+    if (prop.meta.authored()) {
+      ss << " (\n" << print_attr_metas(prop.meta, indent + 1) << pprint::Indent(indent) << ")";
+    }
+    ss << "\n";
+  }
+
+  return ss.str();
+}
+
+template<typename T>
+std::string print_typed_prop(const TypedProperty<T> &prop, const std::string &name, const uint32_t indent) {
+
+  std::stringstream ss;
+
+  if (prop.value) {
+
+    ss << pprint::Indent(indent);
+
+    if (prop.variability == Variability::Uniform) {
       ss << "uniform ";
     }
 
     // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
-    if (attr.value) {
-      if (attr.value.value().IsTimeSampled()) {
+    if (prop.value) {
+      if (prop.value.value().IsTimeSampled()) {
         ss << ".timeSamples";
       }
     }
 
-    if (attr.value.value().IsBlocked()) {
+    if (prop.value.value().IsBlocked()) {
       ss << " = None";
-    } else if (!attr.define_only) {
+    } else if (!prop.define_only) {
       ss << " = ";
-      if (attr.value.value().IsTimeSampled()) {
-        ss << print_typed_timesamples(attr.value.value().ts, indent+1);
+      if (prop.value.value().IsTimeSampled()) {
+        ss << print_typed_timesamples(prop.value.value().ts, indent+1);
       } else {
-        ss << attr.value.value().value;
+        ss << prop.value.value().value;
       }
     }
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (prop.meta.authored()) {
+      ss << " (\n" << print_attr_metas(prop.meta, indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -879,6 +913,12 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
   ss << pprint::Indent(indent) << "{\n";
 
   // members
+  ss << print_typed_prop(camera.clippingRange, "clippingRange", indent+1);
+  ss << print_typed_prop(camera.clippingPlanes, "clippingPlanes", indent+1);
+  ss << print_typed_prop(camera.focalLength, "focalLength", indent+1);
+  ss << print_typed_prop(camera.horizontalAperture, "horizontalAperture", indent+1);
+  ss << print_typed_prop(camera.horizontalApertureOffset, "horizontalApertureOffset", indent+1);
+
   ss << pprint::Indent(indent+1) << "float2 clippingRange = " << camera.clippingRange << "\n";
   ss << pprint::Indent(indent+1) << "float focalLength = " << camera.focalLength << "\n";
   ss << pprint::Indent(indent+1) << "float horizontalAperture = " << camera.horizontalAperture << "\n";

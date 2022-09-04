@@ -92,7 +92,7 @@ struct PrimVar {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       //return *reinterpret_cast<const T *>(var.values[0].value());
-      
+
       // TODO: strict type check.
       return *linb::cast<const T>(&var.values[0]);
     }
@@ -100,6 +100,19 @@ struct PrimVar {
 #else
     return var.values[0].get_value<T>();
 #endif
+  }
+
+  nonstd::optional<double> get_ts_time(size_t idx) const {
+
+    if (!is_timesample()) {
+      return nonstd::nullopt;
+    }
+
+    if (idx >= var.times.size()) {
+      return nonstd::nullopt;
+    }
+
+    return var.times[idx];
   }
 
   // Type-safe way to get concrete value.
@@ -126,7 +139,7 @@ struct PrimVar {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       //return *reinterpret_cast<const T *>(var.values[0].value());
-      
+
       // TODO: strict type check.
       return *linb::cast<const T>(&var.values[idx]);
     }
@@ -134,6 +147,24 @@ struct PrimVar {
 #else
     return var.values[idx].get_value<T>();
 #endif
+  }
+
+  // Check if specific a TimeSample value for a specified index is ValueBlock or not.
+  nonstd::optional<bool> is_ts_value_blocked(size_t idx) const {
+
+    if (!is_timesample()) {
+      return nonstd::nullopt;
+    }
+
+    if (idx >= var.times.size()) {
+      return nonstd::nullopt;
+    }
+
+    if (auto pv = var.values[idx].get_value<value::ValueBlock>()) {
+      return true;
+    }
+
+    return false;
   }
 
   // Returns nullptr when type-mismatch.
@@ -172,9 +203,16 @@ struct PrimVar {
   void set_timesamples(const value::TimeSamples &v) {
     var = v;
   }
-  
+
   void set_timesamples(value::TimeSamples &&v) {
     var = std::move(v);
+  }
+
+  size_t num_timesamples() const {
+    if (is_timesample()) {
+      return var.times.size();
+    }
+    return 0;
   }
 
 };

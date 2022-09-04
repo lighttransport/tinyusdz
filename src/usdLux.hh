@@ -21,17 +21,17 @@ struct LuxSphereLight {
   //
 
   // Light API
-  TypedAttribute<value::color3f> color{{1.0f, 1.0f, 1.0f}}; // inputs.color Light energy in linear color space.
-  TypedAttribute<float> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttribute<float> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttribute<bool> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttribute<float> exposure{0.0f}; // inputs:exposure EV
-  TypedAttribute<float> intensity{1.0f}; // inputs:intensity
-  TypedAttribute<bool> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttribute<float> specular{1.0f}; // inputs:specular specular multiplier
+  TypedProperty<value::color3f> color{{1.0f, 1.0f, 1.0f}}; // inputs.color Light energy in linear color space.
+  TypedProperty<float> colorTemperature{6500.0f};  // inputs:colorTemperature
+  TypedProperty<float> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
+  TypedProperty<bool> enableColorTemperature{false}; // inputs:enableColorTemperature
+  TypedProperty<float> exposure{0.0f}; // inputs:exposure EV
+  TypedProperty<float> intensity{1.0f}; // inputs:intensity
+  TypedProperty<bool> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
+  TypedProperty<float> specular{1.0f}; // inputs:specular specular multiplier
   // rel light:filters
 
-  TypedAttribute<float> radius{0.5f}; // inputs:radius
+  TypedProperty<float> radius{0.5f}; // inputs:radius
 
   //
   // Properties
@@ -61,19 +61,19 @@ struct LuxDomeLight {
   // TODO: Support texture
 
   // Light API
-  TypedAttribute<value::color3f> color{{1.0f, 1.0f, 1.0f}}; // inputs.color Light energy in linear color space.
-  TypedAttribute<float> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttribute<float> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttribute<bool> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttribute<float> exposure{0.0f}; // inputs:exposure EV
-  TypedAttribute<float> intensity{1.0f}; // inputs:intensity
-  TypedAttribute<bool> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttribute<float> specular{1.0f}; // inputs:specular specular multiplier
+  TypedProperty<value::color3f> color{{1.0f, 1.0f, 1.0f}}; // inputs.color Light energy in linear color space.
+  TypedProperty<float> colorTemperature{6500.0f};  // inputs:colorTemperature
+  TypedProperty<float> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
+  TypedProperty<bool> enableColorTemperature{false}; // inputs:enableColorTemperature
+  TypedProperty<float> exposure{0.0f}; // inputs:exposure EV
+  TypedProperty<float> intensity{1.0f}; // inputs:intensity
+  TypedProperty<bool> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
+  TypedProperty<float> specular{1.0f}; // inputs:specular specular multiplier
   // rel light:filters
 
 
   // DomeLight specific
-  TypedAttribute<float> guideRadius{1.0e5f};
+  TypedProperty<float> guideRadius{1.0e5f};
   // asset inputs:texture:file
   TextureFormat textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
   // rel portals

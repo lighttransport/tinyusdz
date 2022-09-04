@@ -185,9 +185,9 @@ class USDCReader::Impl {
 
   // For attribute which maybe a value, connection or TimeSamples.
   template <typename T>
-  bool ReconstructTypedAttribute(int parent,
+  bool ReconstructTypedProperty(int parent,
                                  const crate::FieldValuePairVector &fvs,
-                                 TypedAttribute<T> *attr);
+                                 TypedProperty<T> *attr);
 
   template <typename T>
   bool ReconstructPrim(const crate::CrateReader::Node &node,
@@ -1303,8 +1303,8 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 static bool UpcastType(
   const std::string &reqType,
   value::Value &inout)
-{ 
-  
+{
+
   if (reqType == "float") {
     float dst;
     if (auto pv = inout.get_value<value::half>()) {
@@ -1551,9 +1551,9 @@ bool USDCReader::Impl::ReconstructSimpleAttribute(
 }
 
 template <typename T>
-bool USDCReader::Impl::ReconstructTypedAttribute(
+bool USDCReader::Impl::ReconstructTypedProperty(
     int parent, const crate::FieldValuePairVector &fvs,
-    TypedAttribute<T> *attr) {
+    TypedProperty<T> *attr) {
   (void)attr;
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {

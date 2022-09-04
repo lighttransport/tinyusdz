@@ -71,6 +71,7 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
+#include "tiny-format.hh"
 
 #include "common-macros.inc"
 
@@ -91,6 +92,17 @@ RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(BlendShape);
 RECONSTRUCT_PRIM_DECL(LuxDomeLight);
 RECONSTRUCT_PRIM_DECL(LuxSphereLight);
+RECONSTRUCT_PRIM_DECL(GeomMesh);
+RECONSTRUCT_PRIM_DECL(GeomSphere);
+RECONSTRUCT_PRIM_DECL(GeomCone);
+RECONSTRUCT_PRIM_DECL(GeomPoints);
+RECONSTRUCT_PRIM_DECL(GeomCube);
+RECONSTRUCT_PRIM_DECL(GeomCylinder);
+RECONSTRUCT_PRIM_DECL(GeomCapsule);
+RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
+RECONSTRUCT_PRIM_DECL(GeomCamera);
+RECONSTRUCT_PRIM_DECL(Material);
+RECONSTRUCT_PRIM_DECL(Shader);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -246,7 +258,7 @@ inline bool hasOutputs(const std::string &str) {
   return startsWith(str, "outputs:");
 }
 
-#if 1
+#if 0
 // Empty allowedTokens = allow all
 template <class E, size_t N>
 static nonstd::expected<bool, std::string> CheckAllowedTokens(
@@ -272,6 +284,7 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
   return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
                                  quote(tok) + ".");
 };
+#endif
 
 template <class E>
 static nonstd::expected<bool, std::string> CheckAllowedTokens(
@@ -297,7 +310,6 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
   return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
                                  quote(tok) + ".");
 };
-#endif
 
 template <typename T>
 nonstd::expected<T, std::string> EnumHandler(
@@ -469,8 +481,8 @@ class USDAReader::Impl {
 
   template <typename T>
   bool ReconstructPrim(
-      const std::map<std::string, Property> &properties,
-      const std::vector<std::pair<ListEditQual, Reference>> &references,
+      const prim::PropertyMap &properties,
+      const ReferenceList &references,
       T *out);
 
   ///
@@ -479,8 +491,8 @@ class USDAReader::Impl {
   ///
   template <typename T>
   bool ReconstructShader(
-      const std::map<std::string, Property> &properties,
-      const std::vector<std::pair<ListEditQual, Reference>> &references,
+      const prim::PropertyMap &properties,
+      const ReferenceList &references,
       T *out);
 
   // T = Prim class(e.g. Xform)
@@ -490,8 +502,8 @@ class USDAReader::Impl {
         PrimTypeTrait<T>::prim_type_name,
         [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
-            const std::map<std::string, Property> &properties,
-            const std::vector<std::pair<ListEditQual, Reference>> &references,
+            const prim::PropertyMap &properties,
+            const ReferenceList &references,
             const ascii::AsciiParser::PrimMetaInput &in_meta)
             -> nonstd::expected<bool, std::string> {
           if (!prim_name.IsValid()) {
@@ -931,7 +943,7 @@ bool USDAReader::Impl::ReconstructStage() {
   return true;
 }
 
-
+#if 0
 template <typename T>
 struct AttribType;
 
@@ -956,19 +968,21 @@ struct AttribType<nonstd::optional<T>> {
 };
 
 template <typename T>
-struct AttribType<TypedAttribute<T>> {
+struct AttribType<TypedProperty<T>> {
   using type = T;
   static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
 
 // `AttribWithFallback<T>` -> T
 template <typename T>
-struct AttribType<AttribWithFallback<T>> {
+struct AttribType<TypedAttribWithFallback<T>> {
   using type = T;
   static std::string type_name() { return value::TypeTrait<T>::type_name(); }
 };
+#endif
 
 
+#if 0
 template<typename T>
 static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVar &var)
 {
@@ -1018,6 +1032,8 @@ struct ParseResult
     Unmatched,
     AlreadyProcessed,
     TypeMismatch,
+    VariabilityMismatch,
+    ConnectionNotAllowed,
     InternalError,
   };
 
@@ -1025,12 +1041,173 @@ struct ParseResult
   std::string err;
 };
 
+// For animatable attribute(`varying`)
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   const Property &prop,
   const std::string &name,
-  TypedAttribute<T> &target) /* out */
+  TypedAttribWithFallback<Animatable<T>> &target) /* out */
+{
+  ParseResult ret;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
+    ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
+    return ret;
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    const PrimAttrib &attr = prop.attrib;
+
+    DCOUT("attrib.type = " << AttribType<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
+
+    // Type info is stored in Attribute::type_name
+    if (AttribType<T>::type_name() == attr.var.type_name()) {
+      if (prop.type == Property::Type::EmptyAttrib) {
+        target.define_only = true;
+        target.variability = attr.variability;
+        target.meta = attr.meta;
+        table.insert(name);
+      } else if (prop.type == Property::Type::Attrib) {
+        DCOUT("Adding prop: " << name);
+
+        Animatable<T> anim;
+
+        if (attr.blocked) {
+          //anim.blocked = true;
+          target.SetBlock(true);
+        } else {
+          if (auto av = ConvertToAnimatable<T>(attr.var)) {
+            anim = av.value();
+          } else {
+            // Conversion failed.
+            DCOUT("ConvertToAnimatable failed.");
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+            return ret;
+          }
+        }
+
+        target.value = anim;
+        target.variability = attr.variability;
+        target.meta = attr.meta;
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        DCOUT("Invalid Property.type");
+        ret.err = "Invalid Property type(internal error)";
+        ret.code = ParseResult::ResultCode::InternalError;
+        return ret;
+      }
+    } else {
+      DCOUT("tyname = " << AttribType<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      std::stringstream ss;
+      ss  << "Property type mismatch. " << name << " expects type `"
+              << AttribType<T>::type_name()
+              << "` but defined as type `" << attr.var.type_name() << "`";
+      ret.err = ss.str();
+      return ret;
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
+
+// For 'uniform' attribute
+template<typename T>
+static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  TypedAttribWithFallback<T> &target) /* out */
+{
+  ParseResult ret;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
+    ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
+    return ret;
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    const PrimAttrib &attr = prop.attrib;
+
+    DCOUT("attrib.type = " << AttribType<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
+
+    // Type info is stored in Attribute::type_name
+    if (AttribType<T>::type_name() == attr.var.type_name()) {
+      if (prop.type == Property::Type::EmptyAttrib) {
+        target.define_only = true;
+        target.variability = attr.variability;
+        target.meta = attr.meta;
+        table.insert(name);
+      } else if (prop.type == Property::Type::Attrib) {
+        DCOUT("Adding prop: " << name);
+
+        if (prop.attrib.variability != Variability::Uniform) {
+          ret.code = ParseResult::ResultCode::VariabilityMismatch;
+          ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
+          return ret;
+        }
+
+        Animatable<T> anim;
+
+        if (attr.blocked) {
+          anim.blocked = true;
+        } else {
+          if (auto av = ConvertToAnimatable<T>(attr.var)) {
+            anim = av.value();
+          } else {
+            // Conversion failed.
+            DCOUT("ConvertToAnimatable failed.");
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+            return ret;
+          }
+        }
+
+        target.value = anim;
+        target.variability = attr.variability;
+        target.meta = attr.meta;
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        DCOUT("Invalid Property.type");
+        ret.err = "Invalid Property type(internal error)";
+        ret.code = ParseResult::ResultCode::InternalError;
+        return ret;
+      }
+    } else {
+      DCOUT("tyname = " << AttribType<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      std::stringstream ss;
+      ss  << "Property type mismatch. " << name << " expects type `"
+              << AttribType<T>::type_name()
+              << "` but defined as type `" << attr.var.type_name() << "`";
+      ret.err = ss.str();
+      return ret;
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
+
+template<typename T>
+static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  TypedProperty<T> &target) /* out */
 {
   ParseResult ret;
 
@@ -1110,11 +1287,13 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
+#endif
 
 
 
+#if 0
 // TODO(syoyo): TimeSamples, Reference
-#define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target)       \
+#define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target)       \
   if (__prop.first.compare(__name) == 0) {                                     \
     if (__table.count(__name)) { \
       continue; \
@@ -1134,7 +1313,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
               << "` but defined as type `" << attr.var.type_name() << "`");    \
     }                                                                          \
   } else
+#else
 
+#if 0
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
@@ -1149,7 +1330,28 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     /* go next */ \
   } \
 }
+#endif
 
+#endif
+
+#if 0
+#define PARSE_TYPED_PROPETY(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseTypedProperty(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    continue; /* got it */\
+  } else if (ret.code == ParseResult::ResultCode::TypeMismatch) { \
+    PUSH_ERROR_AND_RETURN(                                                   \
+        "(" << value::TypeTrait<__klass>::type_name()                        \
+            << ") " << ret.err); \
+  } else if (ret.code == ParseResult::ResultCode::InternalError) { \
+    PUSH_ERROR_AND_RETURN("Internal error: " + ret.err); \
+  } else { \
+    /* go next */ \
+  } \
+}
+#endif
+
+#if 0
 // e.g. "float3 outputs:rgb"
 // Attribute type must be EmptyAttrib(No value or connection assigned)
 #define PARSE_TYPED_OUTPUT_ATTRIBUTE(__table, __prop, __name, __klass,      \
@@ -1180,8 +1382,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
               << "` but defined as type `" << attr.type_name << "`");        \
     }                                                                        \
   } else
+#endif
 
-// TODO(syoyo): TimeSamples, Reference
+#if 0
 #define PARSE_PROPERTY(__table, __prop, __name, __klass, __target)             \
   if (__prop.first == __name) {                                                \
     if (__table.count(__name)) { continue; } \
@@ -1198,7 +1401,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
               << "` but defined as type `" << attr.var.type_name() << "`");    \
     }                                                                          \
   } else
+#endif
 
+#if 0
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target)                                         \
   if (__prop.first == __name) {                                              \
@@ -1222,6 +1427,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }                                                                        \
   } else
 
+#endif
+
+#if 0
 // Add custom property(including property with "primvars" prefix)
 // Please call this macro after listing up all predefined property using
 // `PARSE_PROPERTY` and `PARSE_ENUM_PROPETY`
@@ -1232,6 +1440,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     __dst[__prop.first] = __prop.second;                     \
     __table.insert(__prop.first);                            \
   } else
+
 
 // This code path should not be reached though.
 #define PARSE_PROPERTY_END_MAKE_ERROR(__table, __prop)                      \
@@ -1244,12 +1453,14 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 #define PARSE_PROPERTY_END_MAKE_WARN(__prop) \
   { PUSH_WARN("Unsupported/unimplemented property: " + __prop.first); }
 
+#endif
+
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     Xform *xform) {
-  
+
   std::string err;
   if (!prim::ReconstructPrim(properties, references, xform, &_warn, &err)) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Xform Prim: " << err);
@@ -1266,8 +1477,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
   // TODO: Move to ReconstructPrim
   _parser.RegisterPrimConstructFunction(
       PrimTypeTrait<GPrim>::prim_type_name,
-      [&](const Path &path, const std::map<std::string, Property> &properties,
-          std::vector<std::pair<ListEditQual, Reference>> &references) {
+      [&](const Path &path, const PropertyMap &properties,
+          ReferenceList &references) {
         // TODO: Implement
         GPrim gprim;
 
@@ -1309,8 +1520,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
       "GeomSubset",
       [&](const Path &full_path, const Path &prim_name, const int64_t primIdx,
           const int64_t parentPrimIdx,
-          const std::map<std::string, Property> &properties,
-          const std::vector<std::pair<ListEditQual, Reference>> &references,
+          const prim::PropertyMap &properties,
+          const ReferenceList &references,
           const ascii::AsciiParser::PrimMetaInput &in_meta)
           -> nonstd::expected<bool, std::string> {
         const Path &parent = full_path.GetParentPrim();
@@ -1545,8 +1756,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GPrim *gprim) {
   (void)gprim;
 
@@ -1559,9 +1770,10 @@ bool USDAReader::Impl::ReconstructPrim(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomSphere *sphere) {
+#if 0
   (void)sphere;
 
   constexpr auto kMaterialBinding = "material:binding";
@@ -1676,15 +1888,22 @@ bool USDAReader::Impl::ReconstructPrim(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, sphere, &_warn, &_err)) {
+    return false;
+  }
+  return true;
+#endif
 }
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomCone *cone) {
   (void)properties;
   (void)cone;
+#if 0
   //
   // Resolve prepend references
   //
@@ -1760,7 +1979,7 @@ bool USDAReader::Impl::ReconstructPrim(
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->radius)
-      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->height)
+      PARSE_TYPED_PROPERTY(table, prop, "height", GeomCone, cone->height)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -1806,15 +2025,25 @@ bool USDAReader::Impl::ReconstructPrim(
 #endif
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, cone, &_warn, &_err)) {
+    return false;
+  }
+  return true;
+#endif
 }
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomCube *cube) {
+
+#if 0
   (void)properties;
   (void)cube;
+
+
 #if 0
   //
   // Resolve prepend references
@@ -1929,13 +2158,21 @@ bool USDAReader::Impl::ReconstructPrim(
 #endif
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, cube, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomCapsule *capsule) {
+#if 0
   //
   // Resolve prepend references
   //
@@ -2085,13 +2322,21 @@ bool USDAReader::Impl::ReconstructPrim(
 #endif
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, capsule, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomCylinder *cylinder) {
+#if 0
 #if 0
   //
   // Resolve prepend references
@@ -2241,13 +2486,21 @@ bool USDAReader::Impl::ReconstructPrim(
 #endif
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, cylinder, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomMesh *mesh) {
+#if 0
   //
   // Resolve prepend references
   //
@@ -2455,13 +2708,21 @@ bool USDAReader::Impl::ReconstructPrim(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, mesh, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomBasisCurves *curves) {
+#if 0
   DCOUT("GeomBasisCurves");
 
   auto BasisHandler = [](const std::string &tok)
@@ -2525,19 +2786,27 @@ bool USDAReader::Impl::ReconstructPrim(
   }
 
   return true;
+#else
+  if (!prim::ReconstructPrim(properties, references, curves, &_warn, &_err)) {
+    return false;
+  }
+
+  return true;
+#endif
 }
 
+#if 0
 template <>
 bool USDAReader::Impl::ReconstructPrim(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     GeomCamera *camera) {
   auto ProjectionHandler = [](const std::string &tok)
       -> nonstd::expected<GeomCamera::Projection, std::string> {
     using EnumTy = std::pair<GeomCamera::Projection, const char *>;
     constexpr std::array<EnumTy, 2> enums = {
-        std::make_pair(GeomCamera::Projection::perspective, "perspective"),
-        std::make_pair(GeomCamera::Projection::orthographic, "orthographic"),
+        std::make_pair(GeomCamera::Projection::Perspective, "perspective"),
+        std::make_pair(GeomCamera::Projection::Orthographic, "orthographic"),
     };
 
     auto ret =
@@ -2585,11 +2854,12 @@ bool USDAReader::Impl::ReconstructPrim(
 
   return true;
 }
+#endif
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     LuxSphereLight *light) {
 #if 0
   std::set<std::string> table;
@@ -2615,8 +2885,8 @@ bool USDAReader::Impl::ReconstructPrim<LuxSphereLight>(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     LuxDomeLight *light) {
 #if 0
   std::set<std::string> table;
@@ -2646,10 +2916,11 @@ bool USDAReader::Impl::ReconstructPrim<LuxDomeLight>(
 #endif
 }
 
+#if 0
 template <>
 bool USDAReader::Impl::ReconstructPrim<Model>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     Model *model) {
 
   std::string err;
@@ -2662,8 +2933,8 @@ bool USDAReader::Impl::ReconstructPrim<Model>(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<Scope>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     Scope *scope) {
 
   std::string err;
@@ -2676,8 +2947,8 @@ bool USDAReader::Impl::ReconstructPrim<Scope>(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     SkelRoot *root) {
 #if 0
   (void)root;
@@ -2711,8 +2982,8 @@ bool USDAReader::Impl::ReconstructPrim<SkelRoot>(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<Skeleton>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     Skeleton *skel) {
 
 #if 0
@@ -2763,20 +3034,20 @@ bool USDAReader::Impl::ReconstructPrim<Skeleton>(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<SkelAnimation>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     SkelAnimation *skelanim) {
 #if 0
 
 
   std::set<std::string> table;
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "joints", SkelAnimation, skelanim->joints)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "translations", SkelAnimation, skelanim->translations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "rotations", SkelAnimation, skelanim->rotations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", SkelAnimation, skelanim->scales)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
+    PARSE_TYPED_PROPERTY(table, prop, "joints", SkelAnimation, skelanim->joints)
+    PARSE_TYPED_PROPERTY(table, prop, "translations", SkelAnimation, skelanim->translations)
+    PARSE_TYPED_PROPERTY(table, prop, "rotations", SkelAnimation, skelanim->rotations)
+    PARSE_TYPED_PROPERTY(table, prop, "scales", SkelAnimation, skelanim->scales)
+    PARSE_TYPED_PROPERTY(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
+    PARSE_TYPED_PROPERTY(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
     //PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2792,8 +3063,8 @@ bool USDAReader::Impl::ReconstructPrim<SkelAnimation>(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<BlendShape>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     BlendShape *bs) {
 #if 0
 
@@ -2826,11 +3097,13 @@ bool USDAReader::Impl::ReconstructPrim<BlendShape>(
   return true;
 #endif
 }
+#endif
 
+#if 0
 template <>
 bool USDAReader::Impl::ReconstructShader<UsdPreviewSurface>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     UsdPreviewSurface *surface) {
   // TODO: references
 
@@ -2877,8 +3150,8 @@ bool USDAReader::Impl::ReconstructShader<UsdPreviewSurface>(
 
 template <>
 bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     UsdUVTexture *texture) {
   // TODO: references
 
@@ -2899,7 +3172,7 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
 
   for (auto &prop : properties) {
     PARSE_PROPERTY(table, prop, "inputs:file", UsdPreviewSurface, texture->file)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdPreviewSurface,
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:st", UsdPreviewSurface,
                           texture->st)
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
                        SourceColorSpaceHandler, UsdPreviewSurface,
@@ -2923,8 +3196,8 @@ bool USDAReader::Impl::ReconstructShader<UsdUVTexture>(
 
 template <>
 bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_int>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     UsdPrimvarReader_int *preader) {
   // TODO:
   return false;
@@ -2932,8 +3205,8 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_int>(
 
 template <>
 bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     UsdPrimvarReader_float *preader) {
   // TODO:
   return false;
@@ -2941,8 +3214,8 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float>(
 
 template <>
 bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float2>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     UsdPrimvarReader_float2 *preader) {
   std::set<std::string> table;
 
@@ -2960,8 +3233,8 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float2>(
 
 template <>
 bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float3>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     UsdPrimvarReader_float3 *preader) {
   // TODO:
   return false;
@@ -2969,17 +3242,19 @@ bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float3>(
 
 template <>
 bool USDAReader::Impl::ReconstructShader<UsdPrimvarReader_float4>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     UsdPrimvarReader_float4 *preader) {
   // TODO:
   return false;
 }
+#endif
 
+#if 0
 template <>
 bool USDAReader::Impl::ReconstructPrim<Shader>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const PropertyMap &properties,
+    const ReferenceList &references,
     Shader *shader) {
   constexpr auto kUsdPreviewSurface = "UsdPreviewSurface";
   constexpr auto kUsdUVTexture = "UsdUVTexture";
@@ -3079,11 +3354,12 @@ bool USDAReader::Impl::ReconstructPrim<Shader>(
 
   return true;
 }
+#endif
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     NodeGraph *graph) {
   (void)properties;
   (void)references;
@@ -3096,8 +3372,8 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<Material>(
-    const std::map<std::string, Property> &properties,
-    const std::vector<std::pair<ListEditQual, Reference>> &references,
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
     Material *material) {
   (void)properties;
   (void)references;
@@ -3105,6 +3381,20 @@ bool USDAReader::Impl::ReconstructPrim<Material>(
 
   PUSH_WARN("TODO: Implement Material.");
 
+  return true;
+}
+
+// Generic Prim handler. T = Xform, GeomMesh, ...
+template <typename T>
+bool USDAReader::Impl::ReconstructPrim(
+    const prim::PropertyMap &properties,
+    const ReferenceList &references,
+    T *prim) {
+
+  std::string err;
+  if (!prim::ReconstructPrim(properties, references, prim, &_warn, &err)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to reconstruct {} Prim: {}", value::TypeTrait<T>::type_name(), err));
+  }
   return true;
 }
 
@@ -3117,8 +3407,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<Xform>() {
   // TODO: Move to ReconstructPrim
   _parser.RegisterPrimConstructFunction(
       PrimTypeTrait<Xform>::prim_type_name,
-      [&](const Path &path, const std::map<std::string, Property> &properties,
-          std::vector<std::pair<ListEditQual, Reference>> &references) {
+      [&](const Path &path, const PropertyMap &properties,
+          ReferenceList &references) {
         Xform xform;
 
         DCOUT("Reconstruct Xform: Path.PrimPart = " << path.GetPrimPart());
