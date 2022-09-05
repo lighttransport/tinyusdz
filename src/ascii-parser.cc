@@ -4438,12 +4438,14 @@ bool AsciiParser::ParseCustomMetaValue() {
 // TODO: Return Path
 bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   // @...@
-  // or @@@...@@@ (Triple '@'-deliminated asset references)
+  // or @@@...@@@ (Triple '@'-deliminated asset references.)
   // And optionally followed by prim path.
   // Example:
   //   @bora@
   //   @@@bora@@@
   //   @bora@</dora>
+  //
+  // @@@ = Path containing '@'. '@@@' in Path is encoded as '\@@@'
 
   // TODO: Correctly support escape characters
 
@@ -4507,15 +4509,21 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 
   } else {
     bool found_delimiter{false};
+    bool escape_sequence{false};
     int at_cnt{0};
     std::string tok;
 
     // Read until '@@@' appears
+    // Need to escaped '@@@'("\\@@@")
     while (!Eof()) {
       char c;
 
       if (!Char1(&c)) {
         return false;
+      }
+
+      if (c == '\\') {
+        escape_sequence = true;
       }
 
       if (c == '@') {
@@ -4530,14 +4538,29 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
       tok += c;
 
       if (at_cnt == 3) {
-        // Got it. '@@@'
-        found_delimiter = true;
-        break;
+        if (escape_sequence) {
+          // Still in path identifier...
+          // Unescape "\\@@@"
+
+          if (tok.size() > 3) { // this should be true.
+            if (endsWith(tok, "\\@@@")) { // this also should be true.
+              tok.erase(tok.size()-4);
+              tok.append("@@@");
+            }
+          }
+          at_cnt = 0;
+          escape_sequence = false;
+        } else {
+          // Got it. '@@@'
+          found_delimiter = true;
+          break;
+        }
       }
     }
 
     if (found_delimiter) {
-      out->asset_path = tok;
+      // remote last '@@@'
+      out->asset_path = removeSuffix(tok, "@@@");
       (*triple_deliminated) = true;
 
       valid = true;
@@ -5977,6 +6000,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
       }
 
+      DCOUT("Asset path = " << asset_ref.asset_path);
       value::AssetPath assetp(asset_ref.asset_path);
       attr.var.set_scalar(assetp);
 
