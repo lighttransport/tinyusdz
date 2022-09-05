@@ -485,6 +485,7 @@ class USDAReader::Impl {
       const ReferenceList &references,
       T *out);
 
+#if 0
   ///
   /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
   /// here, not in Tydra
@@ -494,6 +495,7 @@ class USDAReader::Impl {
       const prim::PropertyMap &properties,
       const ReferenceList &references,
       T *out);
+#endif
 
   // T = Prim class(e.g. Xform)
   template <typename T>
@@ -799,7 +801,7 @@ class USDAReader::Impl {
   bool ReconstructStage();
 
  private:
-  bool stage_reconstructed_{false};
+  //bool stage_reconstructed_{false};
 
 #if 0
   ///

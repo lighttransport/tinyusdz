@@ -272,6 +272,36 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::AssetPath &asset) {
+  std::string in_s = asset.GetAssetPath();
+   
+  std::string quote_str = "@";
+
+  std::string s;
+
+  if (tinyusdz::contains(s, '@')) {
+    // Escape '@@@'(to '\@@@') if the input path contains '@@@'  
+    for (size_t i = 0; i < in_s.length(); i++) {
+      if ((i + 2) < in_s.length()) {
+        if (in_s[i] == '@' && in_s[i+1] == '@' && in_s[i+2] == '@') {
+          s += "\\@@@";
+          i += 2;
+        } else {
+          s += in_s[i];
+        }
+      }
+    }
+
+    quote_str = "@@@";
+  } else {
+    s = in_s;
+  }
+
+  ofs << quote_str << s << quote_str;
+
+  return ofs;
+}
+
 }  // namespace std
 
 namespace tinyusdz {

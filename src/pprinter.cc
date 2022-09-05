@@ -63,11 +63,12 @@ std::string pquote(const Path &p) {
   return wquote(p.full_path_name(), "<", ">");
 }
 
+#if 0
 // TODO: Triple @
 std::string aquote(const value::AssetPath &p) {
   return wquote(p.GetAssetPath(), "@", "@");
 }
-
+#endif
 
 
 std::string to_string(const double &v) {
@@ -292,7 +293,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
         } else {
           ss << pv.value().value;
         }
-      } 
+      }
     }
 
     if (attr.meta.authored()) {
@@ -414,7 +415,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
   if (attr.authored()) {
 
     auto v = attr.get();
-    
+
     ss << pprint::Indent(indent);
 
     // TODO: ListEdit qual.
@@ -474,7 +475,7 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
   if (attr.authored()) {
 
     auto v = attr.get();
-    
+
     ss << pprint::Indent(indent);
 
     // TODO: ListEdit qual.
@@ -1618,14 +1619,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
 static std::string print_shader_params(const UsdPrimvarReader_float &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  if (shader.varname) {
-    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
-    // TODO: meta
-  }
-
-  if (shader.result) {
-    ss << pprint::Indent(indent) << "float outputs:result\n";
-  }
+  ss << print_typed_attr(shader.varname, "varname", indent+1);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
 
   return ss.str();
 
@@ -1634,14 +1630,9 @@ static std::string print_shader_params(const UsdPrimvarReader_float &shader, con
 static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  if (shader.varname) {
-    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
-    // TODO: meta
-  }
-
-  if (shader.result) {
-    ss << pprint::Indent(indent) << "float2 outputs:result\n";
-  }
+  ss << print_typed_attr(shader.varname, "varname", indent+1);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
 
   return ss.str();
 }
@@ -1649,14 +1640,9 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  if (shader.varname) {
-    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
-    // TODO: meta
-  }
-
-  if (shader.result) {
-    ss << pprint::Indent(indent) << "float3 outputs:result\n";
-  }
+  ss << print_typed_attr(shader.varname, "varname", indent+1);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
 
   return ss.str();
 }
@@ -1664,14 +1650,9 @@ static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  if (shader.varname) {
-    ss << pprint::Indent(indent) << "token varname = " << quote(shader.varname.value().str()) << "\n";
-    // TODO: meta
-  }
-
-  if (shader.result) {
-    ss << pprint::Indent(indent) << "float4 outputs:result\n";
-  }
+  ss << print_typed_attr(shader.varname, "varname", indent+1);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
+  ss << print_typed_attr(shader.result, "outputs:result", indent+1);
 
   return ss.str();
 }
@@ -1698,19 +1679,23 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
   if (shader.outputsSurface) {
     ss << pprint::Indent(indent) << "token outputs:surface";
     if (shader.outputsSurface.value().IsPath()) {
-      ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath) << "\n";
+      ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath);
+    }
+    if (shader.outputsSurface.value().meta.authored()) {
+      ss << "(\n" << print_attr_metas(shader.outputsSurface.value().meta, indent+1) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
-    // TODO: meta
   }
 
   if (shader.outputsDisplacement) {
     ss << pprint::Indent(indent) << "token outputs:displacement";
-    if (shader.outputsSurface.value().IsPath()) {
-      ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath) << "\n";
+    if (shader.outputsDisplacement.value().IsPath()) {
+      ss << ".connect = " << pquote(shader.outputsDisplacement.value().targetPath) << "\n";
+    }
+    if (shader.outputsDisplacement.value().meta.authored()) {
+      ss << "(\n" << print_attr_metas(shader.outputsDisplacement.value().meta, indent+1) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
-    // TODO: meta
   }
 
   return ss.str();
@@ -1720,21 +1705,24 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
 static std::string print_shader_params(const UsdUVTexture &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  if (shader.file) {
-    ss << pprint::Indent(indent) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
-    // TODO: meta
-  }
+  ss << print_typed_attr(shader.file, "inputs:file", indent+1);
+  //if (shader.file) {
+  //  ss << pprint::Indent(indent) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
+  //  // TODO: meta
+  //}
 
   if (shader.sourceColorSpace) {
     ss << pprint::Indent(indent) << "token inputs:sourceColorSpace = " << quote(to_string(shader.sourceColorSpace.value())) << "\n";
     // TOOD: meta
   }
 
-  if (shader.st.authored()) {
-  //  if (shader.st.
-  //  ss << pprint::Indent(indent+1)
-  }
+  ss << print_typed_prop(shader.st, "inputs:st", indent+1);
+  //if (shader.st.authored()) {
+  ////  if (shader.st.
+  ////  ss << pprint::Indent(indent+1)
+  //}
 
+#if 0
   if (shader.outputsR) {
     ss << pprint::Indent(indent) << "float outputs:r\n";
   }
@@ -1750,6 +1738,12 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   if (shader.outputsRGB) {
     ss << pprint::Indent(indent) << "float3 outputs:rgb\n";
   }
+#else
+  ss << print_typed_attr(shader.outputsR, "outputs:r", indent+1);
+  ss << print_typed_attr(shader.outputsG, "outputs:g", indent+1);
+  ss << print_typed_attr(shader.outputsB, "outputs:b", indent+1);
+  ss << print_typed_attr(shader.outputsRGB, "outputs:rgb", indent+1);
+#endif
 
   return ss.str();
 }
