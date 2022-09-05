@@ -1046,6 +1046,8 @@ class Relation {
   bool IsPath() const { return type == Type::Path; }
 
   bool IsPathVector() const { return type == Type::PathVector; }
+
+  AttrMeta meta;
 };
 
 //

@@ -38,11 +38,11 @@ struct UsdPrimvarReader {
 
   PrimMeta meta;
 
-  nonstd::optional<T> fallback;  // "inputs:fallback"
+  TypedAttribute<T> fallback;  // "inputs:fallback"
 
-  nonstd::optional<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
+  TypedAttribute<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
 
-  nonstd::optional<T> result; // "T outputs:result"
+  TypedAttribute<T> result; // "T outputs:result"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -59,8 +59,6 @@ using UsdPrimvarReaderType =
                       UsdPrimvarReader_float3, UsdPrimvarReader_float4,
                       UsdPrimvarReader_int>;
 
-#if 0
-#endif
 
 struct UsdUVTexture {
 
@@ -80,7 +78,7 @@ struct UsdUVTexture {
 
   std::string name;
 
-  nonstd::optional<value::AssetPath> file; // "asset inputs:file" interfaceOnly
+  TypedAttribute<value::AssetPath> file; // "asset inputs:file" interfaceOnly
 
   //TypedAttributeWithFallback<Connection<value::texcoord2f>> st{Connection<value::texcoord2f>({0.0f, 0.0f})}; // "inputs:st"
   TypedProperty<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
@@ -100,11 +98,11 @@ struct UsdUVTexture {
   /// 
   /// Terminal attribute. No value assign(e.g. `float outputs:r = 1.2`)
   ///
-  nonstd::optional<float> outputsR; // "float outputs:r"
-  nonstd::optional<float> outputsG; // "float outputs:g"
-  nonstd::optional<float> outputsB; // "float outputs:b"
-  nonstd::optional<float> outputsA; // "float outputs:a"
-  nonstd::optional<value::float3> outputsRGB; // "float3 outputs:rgb"
+  TypedAttribute<float> outputsR; // "float outputs:r"
+  TypedAttribute<float> outputsG; // "float outputs:g"
+  TypedAttribute<float> outputsB; // "float outputs:b"
+  TypedAttribute<float> outputsA; // "float outputs:a"
+  TypedAttribute<value::float3> outputsRGB; // "float3 outputs:rgb"
 
   // Custom properties
   std::map<std::string, Property> props;

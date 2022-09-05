@@ -18,19 +18,34 @@
 
 //
 // NOTE:
-// 
-// There are 3 variant of Primtive property(attribute)
+//
+// There are mainly 5 variant of Primtive property(attribute)
 //
 // - TypedAttribute<T> : Uniform only. `uniform T`
 // - TypedAttribute<Animatable<T>> : Scalar only. `uniform T` or `T value.timeSamples`
 // - TypedProperty<T> : Generic typed property. `uniform T`, `T value.timeSamples` or `T value.connect`(Connection)
+// - optional<T> : For output attribute(Just author it. e.g. `float outputs:rgb`)
+// - Relation : Typeless relation(e.g. `rel material:binding`)
 
 namespace tinyusdz {
 namespace prim {
 
 constexpr auto kMaterialBinding = "material:binding";
 
+///
+/// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
+/// here, not in Tydra
+///
+template <typename T>
+bool ReconstructShader(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    T *out,
+    std::string *warn,
+    std::string *err);
+
 namespace {
+
 
 struct ParseResult
 {
@@ -42,6 +57,7 @@ struct ParseResult
     TypeMismatch,
     VariabilityMismatch,
     ConnectionNotAllowed,
+    InvalidConnection,
     InternalError,
   };
 
@@ -549,6 +565,80 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
   return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
                                  quote(tok) + ".");
 };
+
+// Allowed syntax:
+//   "token outputs:surface"
+//   "token outputs:surface.connect = </path/to/conn/>"
+static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  nonstd::optional<Relation> &target) /* out */
+{
+  ParseResult ret;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (auto pv = prop.GetConnectionTarget()) {
+      Relation rel;
+      rel.Set(pv.value());
+      rel.meta = prop.attrib.meta;
+      target = rel;
+      table.insert(propname);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
+    }
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    const PrimAttrib &attr = prop.attrib;
+
+    // Type info is stored in Attribute::type_name
+    if (value::TypeTrait<value::token>::type_name() == attr.var.type_name()) {
+      if (prop.type == Property::Type::EmptyAttrib) {
+        Relation rel;
+        rel.SetEmpty();
+        rel.meta = prop.attrib.meta;
+        table.insert(name);
+        target = rel;
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        DCOUT("Output Invalid Property.type");
+        ret.err = "Invalid connection or value assigned for output attribute.";
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        return ret;
+      }
+    } else {
+      DCOUT("attr.type = " << attr.var.type_name());
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      std::stringstream ss;
+      ss  << "Property type mismatch. " << name << " expects type `token` but defined as type `" << attr.var.type_name() << "`";
+      ret.err = ss.str();
+      return ret;
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
+
+#define PARSE_SHADER_OUTPUT_PROPERTY(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseShaderOutputProperty(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    continue; /* got it */\
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
+    /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err)); \
+  } \
+}
 
 template <class E>
 static nonstd::expected<bool, std::string> CheckAllowedTokens(
@@ -2115,6 +2205,334 @@ bool ReconstructPrim<GeomCamera>(
 
   return true;
 }
+
+template <>
+bool ReconstructShader<UsdPreviewSurface>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPreviewSurface *surface,
+    std::string *warn,
+    std::string *err) {
+  // TODO: references
+  (void)references;
+
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
+                         surface->diffuseColor)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:emissiveColor", UsdPreviewSurface,
+                         surface->emissiveColor)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:roughness", UsdPreviewSurface,
+                         surface->roughness)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:specularColor", UsdPreviewSurface,
+                         surface->specularColor)  // specular workflow
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:metallic", UsdPreviewSurface,
+                         surface->metallic)  // non specular workflow
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoat", UsdPreviewSurface,
+                         surface->clearcoat)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoatRoughness",
+                         UsdPreviewSurface, surface->clearcoatRoughness)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacity", UsdPreviewSurface,
+                         surface->opacity)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacityThreshold",
+                         UsdPreviewSurface, surface->opacityThreshold)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:ior", UsdPreviewSurface,
+                         surface->ior)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:normal", UsdPreviewSurface,
+                         surface->normal)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:dispacement", UsdPreviewSurface,
+                         surface->displacement)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:occlusion", UsdPreviewSurface,
+                         surface->occlusion)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:useSpecularWorkflow",
+                         UsdPreviewSurface, surface->useSpecularWorkflow)
+    PARSE_SHADER_OUTPUT_PROPERTY(table, prop, "outputs:surface", UsdPreviewSurface,
+                   surface->outputsSurface)
+    PARSE_SHADER_OUTPUT_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface,
+                   surface->outputsDisplacement)
+    ADD_PROPERY(table, prop, UsdPreviewSurface, surface->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdUVTexture>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdUVTexture *texture,
+    std::string *warn,
+    std::string *err)
+{
+  // TODO: references
+  (void)references;
+
+  auto SourceColorSpaceHandler = [](const std::string &tok)
+      -> nonstd::expected<UsdUVTexture::SourceColorSpace, std::string> {
+    using EnumTy = std::pair<UsdUVTexture::SourceColorSpace, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(UsdUVTexture::SourceColorSpace::Auto, "auto"),
+        std::make_pair(UsdUVTexture::SourceColorSpace::Raw, "raw"),
+        std::make_pair(UsdUVTexture::SourceColorSpace::SRGB, "sRGB"),
+    };
+
+    return EnumHandler<UsdUVTexture::SourceColorSpace>(
+        "inputs:sourceColorSpace", tok, enums);
+  };
+
+  std::set<std::string> table;
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:st", UsdUVTexture,
+                          texture->st)
+    PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
+                       SourceColorSpaceHandler, UsdUVTexture,
+                       texture->sourceColorSpace)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
+                                  texture->outputsR)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:g", UsdUVTexture,
+                                  texture->outputsG)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:b", UsdUVTexture,
+                                  texture->outputsB)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:a", UsdUVTexture,
+                                  texture->outputsA)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:rgb", UsdUVTexture,
+                                  texture->outputsRGB)
+    ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_int>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_int *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_int,
+                   preader->varname)  // `token`
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_int, preader->result)
+    ADD_PROPERY(table, prop, UsdPrimvarReader_int, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+  return false;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_float>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_float *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+                   preader->varname)  // `token`
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_float, preader->result)
+    ADD_PROPERY(table, prop, UsdPrimvarReader_float, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+  return false;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_float2>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_float2 *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+                   preader->varname)  // `token`
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_float2, preader->result)
+    ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_float3>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_float3 *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float3,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float3,
+                   preader->varname)  // `token`
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_float3, preader->result)
+    ADD_PROPERY(table, prop, UsdPrimvarReader_float3, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_float4>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_float4 *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+                   preader->varname)  // `token`
+    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_float2, preader->result)
+    ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(prop)
+  }
+  return true;
+}
+
+template <>
+bool ReconstructPrim<Shader>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    Shader *shader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)properties;
+
+  constexpr auto kUsdPreviewSurface = "UsdPreviewSurface";
+  constexpr auto kUsdUVTexture = "UsdUVTexture";
+  constexpr auto kUsdPrimvarReader_int = "UsdPrimvarReader_int";
+  constexpr auto kUsdPrimvarReader_float = "UsdPrimvarReader_float";
+  constexpr auto kUsdPrimvarReader_float2 = "UsdPrimvarReader_float2";
+  constexpr auto kUsdPrimvarReader_float3 = "UsdPrimvarReader_float3";
+  constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
+
+  for (const auto &prop : properties) {
+    if (prop.first == "info:id") {
+      const PrimAttrib &attr = prop.second.attrib;
+
+      auto pv = attr.var.get_value<value::token>();
+      if (!pv) {
+        PUSH_ERROR_AND_RETURN("`info:id` must be type `token`, but got type `"
+                              << attr.var.type_name() << "`.");
+      }
+
+      std::string shader_type = pv.value().str();
+
+      DCOUT("info:id = " << shader_type);
+
+      if (shader_type.compare(kUsdPreviewSurface) == 0) {
+        UsdPreviewSurface surface;
+        if (!ReconstructShader<UsdPreviewSurface>(properties, references,
+                                                  &surface, warn, err)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
+        }
+        shader->info_id = kUsdPreviewSurface;
+        shader->value = surface;
+        DCOUT("info_id = " << shader->info_id);
+      } else if (shader_type.compare(kUsdUVTexture) == 0) {
+        UsdUVTexture texture;
+        if (!ReconstructShader<UsdUVTexture>(properties, references,
+                                             &texture, warn, err)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
+        }
+        shader->info_id = kUsdUVTexture;
+        shader->value = texture;
+      } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
+        UsdPrimvarReader_int preader;
+        if (!ReconstructShader<UsdPrimvarReader_int>(properties, references,
+                                                     &preader, warn, err)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_int);
+        }
+        shader->info_id = kUsdPrimvarReader_int;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
+        UsdPrimvarReader_float preader;
+        if (!ReconstructShader<UsdPrimvarReader_float>(properties, references,
+                                                       &preader, warn, err)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float);
+        }
+        shader->info_id = kUsdPrimvarReader_float;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
+        UsdPrimvarReader_float2 preader;
+        if (!ReconstructShader<UsdPrimvarReader_float2>(properties, references,
+                                                        &preader, warn, err)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float2);
+        }
+        shader->info_id = kUsdPrimvarReader_float2;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
+        UsdPrimvarReader_float3 preader;
+        if (!ReconstructShader<UsdPrimvarReader_float3>(properties, references,
+                                                        &preader, warn, err)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float3);
+        }
+        shader->info_id = kUsdPrimvarReader_float3;
+        shader->value = preader;
+      } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
+        UsdPrimvarReader_float4 preader;
+        if (!ReconstructShader<UsdPrimvarReader_float4>(properties, references,
+                                                        &preader, warn, err)) {
+          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                                << kUsdPrimvarReader_float4);
+        }
+        shader->info_id = kUsdPrimvarReader_float4;
+        shader->value = preader;
+      } else {
+        // TODO: string, point, vector, matrix
+        PUSH_ERROR_AND_RETURN(
+            "Invalid or Unsupported Shader type. info:id = \"" + shader_type +
+            "\n");
+      }
+
+    } else {
+      // std::cout << "TODO: " << prop.first << "\n";
+    }
+  }
+
+  return true;
+}
+
 
 } // namespace prim
 } // namespace tinyusdz
