@@ -427,6 +427,42 @@ class TypedAttribute {
   bool blocked{false}; // for `uniform` attribute. 
 };
 
+///
+/// Tyeped Terminal(Output) Attribute(No value assign, no fallback(default) value, no connection) 
+///
+/// - `authored() = true` : Attribute value is authored(attribute is
+/// described in USDA/USDC)
+/// - `authored() = false` : Attribute value is not authored(not described
+/// in USD). 
+///
+template <typename T>
+class TypedTerminalAttribute {
+ public:
+
+  void SetAuthor(bool onoff) {
+    _authored = onoff;
+  }
+    
+  // value set?
+  bool authored() const {
+    return _authored;
+  }
+
+  std::string type_name() const {
+    return value::TypeTrait<T>::type_name();
+  }
+
+  uint32_t type_id() const {
+    return value::TypeTrait<T>::type_id;
+  }
+
+  AttrMeta meta;
+
+ private:
+    
+  bool _authored{false};
+};
+
 template <typename T>
 class TypedAttributeWithFallback;
 

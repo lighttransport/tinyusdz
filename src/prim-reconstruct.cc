@@ -127,10 +127,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
-
-    // Type info is stored in Attribute::type_name
-    if (value::TypeTrait<T>::type_name() == attr.var.type_name()) {
+    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -184,12 +182,12 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
               << value::TypeTrait<T>::type_name()
-              << "` but defined as type `" << attr.var.type_name() << "`";
+              << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
     }
@@ -220,10 +218,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
-
-    // Type info is stored in Attribute::type_name
-    if (value::TypeTrait<T>::type_name() == attr.var.type_name()) {
+    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -263,12 +259,12 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
               << value::TypeTrait<T>::type_name()
-              << "` but defined as type `" << attr.var.type_name() << "`";
+              << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
     }
@@ -299,10 +295,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
-
-    // Type info is stored in Attribute::type_name
-    if (value::TypeTrait<T>::type_name() == attr.var.type_name()) {
+    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -356,12 +350,12 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
               << value::TypeTrait<T>::type_name()
-              << "` but defined as type `" << attr.var.type_name() << "`";
+              << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
     }
@@ -392,10 +386,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
-
-    // Type info is stored in Attribute::type_name
-    if (value::TypeTrait<T>::type_name() == attr.var.type_name()) {
+    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -436,12 +428,12 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
               << value::TypeTrait<T>::type_name()
-              << "` but defined as type `" << attr.var.type_name() << "`";
+              << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
     }
@@ -485,8 +477,10 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
     DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
 
 
-    // Type info is stored in Attribute::type_name
-    if (value::TypeTrait<T>::type_name() == attr.var.type_name()) {
+    // Type info is stored in Attribute::type_name for EmptyAttrib
+    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+
+    if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.define_only = true;
         target.variability = attr.variability;
@@ -524,12 +518,12 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr.var.type_name());
+      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
               << value::TypeTrait<T>::type_name()
-              << "` but defined as type `" << attr.var.type_name() << "`";
+              << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
     }
@@ -565,6 +559,55 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
   return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
                                  quote(tok) + ".");
 };
+
+// Allowed syntax:
+//   "T varname"
+template<typename T>
+static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  TypedTerminalAttribute<T> &target) /* out */
+{
+  ParseResult ret;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
+    ret.err = "Connection is not allowed for output terminal attribute.";
+    return ret;
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    const PrimAttrib &attr = prop.attrib;
+
+    // Type info is stored in Attribute::type_name
+    if (value::TypeTrait<T>::type_name() == attr.type_name) {
+      if (prop.type == Property::Type::EmptyAttrib) {
+        // OK
+        target.SetAuthor(true);
+        target.meta = prop.attrib.meta;
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        DCOUT("Output Invalid Property.type");
+        ret.err = "Invalid connection or value assigned for output terminal attribute.";
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        return ret;
+      }
+    } else {
+      DCOUT("attr.type = " << attr.type_name);
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTrait<T>::type_name(), attr.type_name);
+      return ret;
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
 
 // Allowed syntax:
 //   "token outputs:surface"
@@ -627,6 +670,17 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
 
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
+}
+
+#define PARSE_SHADER_TERMINAL_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    continue; /* got it */\
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
+    /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err)); \
+  } \
 }
 
 #define PARSE_SHADER_OUTPUT_PROPERTY(__table, __prop, __name, __klass, __target) { \
@@ -2290,15 +2344,15 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
                        SourceColorSpaceHandler, UsdUVTexture,
                        texture->sourceColorSpace)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
                                   texture->outputsR)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:g", UsdUVTexture,
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:g", UsdUVTexture,
                                   texture->outputsG)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:b", UsdUVTexture,
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:b", UsdUVTexture,
                                   texture->outputsB)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:a", UsdUVTexture,
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:a", UsdUVTexture,
                                   texture->outputsA)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:rgb", UsdUVTexture,
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:rgb", UsdUVTexture,
                                   texture->outputsRGB)
     ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
@@ -2322,7 +2376,7 @@ bool ReconstructShader<UsdPrimvarReader_int>(
                    preader->fallback)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_int,
                    preader->varname)  // `token`
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_int, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_int, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
@@ -2345,7 +2399,7 @@ bool ReconstructShader<UsdPrimvarReader_float>(
                    preader->fallback)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
                    preader->varname)  // `token`
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
@@ -2368,7 +2422,7 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
                    preader->varname)  // `token`
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float2, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
@@ -2392,7 +2446,7 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
                    preader->fallback)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float3,
                    preader->varname)  // `token`
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float3, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float3, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)
@@ -2416,7 +2470,7 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
                    preader->fallback)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
                    preader->varname)  // `token`
-    PARSE_TYPED_ATTRIBUTE(table, prop, "outputs:result",
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float2, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(prop)

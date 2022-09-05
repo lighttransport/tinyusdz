@@ -42,7 +42,8 @@ struct UsdPrimvarReader {
 
   TypedAttribute<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
 
-  TypedAttribute<T> result; // "T outputs:result"
+
+  TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -98,11 +99,11 @@ struct UsdUVTexture {
   /// 
   /// Terminal attribute. No value assign(e.g. `float outputs:r = 1.2`)
   ///
-  TypedAttribute<float> outputsR; // "float outputs:r"
-  TypedAttribute<float> outputsG; // "float outputs:g"
-  TypedAttribute<float> outputsB; // "float outputs:b"
-  TypedAttribute<float> outputsA; // "float outputs:a"
-  TypedAttribute<value::float3> outputsRGB; // "float3 outputs:rgb"
+  TypedTerminalAttribute<float> outputsR; // "float outputs:r"
+  TypedTerminalAttribute<float> outputsG; // "float outputs:g"
+  TypedTerminalAttribute<float> outputsB; // "float outputs:b"
+  TypedTerminalAttribute<float> outputsA; // "float outputs:a"
+  TypedTerminalAttribute<value::float3> outputsRGB; // "float3 outputs:rgb"
 
   // Custom properties
   std::map<std::string, Property> props;
