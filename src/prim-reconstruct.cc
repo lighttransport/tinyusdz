@@ -132,9 +132,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
       } else if (prop.type == Property::Type::Attrib) {
 
-        DCOUT("Adding prop: " << name);
+        DCOUT("Adding typed prop: " << name);
 
         if (attr.blocked) {
           // e.g. "float radius = None"
@@ -223,6 +225,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
       } else if (prop.type == Property::Type::Attrib) {
         DCOUT("Adding prop: " << name);
 
@@ -300,9 +304,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
       } else if (prop.type == Property::Type::Attrib) {
 
-        DCOUT("Adding prop: " << name);
+        DCOUT("Adding typed attribute: " << name);
 
         if (attr.blocked) {
           // e.g. "float radius = None"
@@ -337,7 +343,21 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
             return ret;
           }
+        } else if (attr.var.is_scalar()) {
+          if (auto pv = attr.var.get_value<T>()) {
+            target.set(pv.value());
+          } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = fmt::format("Failed to retrieve value with requested type.");
+            return ret;
+          }
+        } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Invalid or Unsupported attribute data.";
+            return ret;
         }
+
+        DCOUT("Added typed attribute: " << name);
 
         target.meta = attr.meta;
         table.insert(name);
@@ -375,11 +395,14 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 {
   ParseResult ret;
 
+  DCOUT(fmt::format("prop name {}", prop_name));
+
   if (prop_name.compare(name + ".connect") == 0) {
     ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
     ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
     return ret;
   } else if (prop_name.compare(name) == 0) {
+    DCOUT(fmt::format("prop name match {}", name));
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
@@ -387,13 +410,16 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    DCOUT(fmt::format("prop name {}, type = {}", prop_name, attr_type_name));
     if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
       } else if (prop.type == Property::Type::Attrib) {
 
-        DCOUT("Adding prop: " << name);
+        DCOUT("Adding typed attribute: " << name);
 
         if (prop.attrib.variability != Variability::Uniform) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -583,7 +609,8 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
     const PrimAttrib &attr = prop.attrib;
 
     // Type info is stored in Attribute::type_name
-    if (value::TypeTrait<T>::type_name() == attr.type_name) {
+    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         // OK
         target.SetAuthor(true);
@@ -598,7 +625,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
         return ret;
       }
     } else {
-      DCOUT("attr.type = " << attr.type_name);
+      DCOUT("attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTrait<T>::type_name(), attr.type_name);
       return ret;
@@ -643,7 +670,8 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     const PrimAttrib &attr = prop.attrib;
 
     // Type info is stored in Attribute::type_name
-    if (value::TypeTrait<value::token>::type_name() == attr.var.type_name()) {
+    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    if (value::TypeTrait<value::token>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         Relation rel;
         rel.SetEmpty();
@@ -745,14 +773,10 @@ nonstd::expected<T, std::string> EnumHandler(
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
     continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::TypeMismatch) { \
-    PUSH_ERROR_AND_RETURN(                                                   \
-        "(" << value::TypeTrait<__klass>::type_name()                        \
-            << ") " << ret.err); \
-  } else if (ret.code == ParseResult::ResultCode::InternalError) { \
-    PUSH_ERROR_AND_RETURN("Internal error: " + ret.err); \
-  } else { \
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
   } \
 }
 
@@ -859,7 +883,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 // Uniform enum
 
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
-                           __target)                                         \
+                           __target) {                                      \
   if (__prop.first == __name) {                                              \
     if (__table.count(__name)) { continue; } \
     const PrimAttrib &attr = __prop.second.attrib;                           \
@@ -879,40 +903,38 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
                                 << " must be type `token`, but got `"        \
                                 << attr.var.type_name() << "`.");            \
     }                                                                        \
-  } else
+  } } 
 
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedProperty(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
     continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::TypeMismatch) { \
-    PUSH_ERROR_AND_RETURN(                                                   \
-        "(" << value::TypeTrait<__klass>::type_name()                        \
-            << ") " << ret.err); \
-  } else if (ret.code == ParseResult::ResultCode::InternalError) { \
-    PUSH_ERROR_AND_RETURN("Internal error: " + ret.err); \
-  } else { \
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing property `{}` failed. Error: {}", __name, ret.err)); \
   } \
 }
 
 // Add custom property(including property with "primvars" prefix)
 // Please call this macro after listing up all predefined property using
 // `PARSE_PROPERTY` and `PARSE_ENUM_PROPETY`
-#define ADD_PROPERY(__table, __prop, __klass, __dst)         \
+#define ADD_PROPERY(__table, __prop, __klass, __dst) {        \
   /* Check if the property name is a predefined property */  \
   if (!__table.count(__prop.first)) {                        \
     DCOUT("custom property added: name = " << __prop.first); \
     __dst[__prop.first] = __prop.second;                     \
     __table.insert(__prop.first);                            \
-  } else
+  } \
+ }
 
 // This code path should not be reached though.
-#define PARSE_PROPERTY_END_MAKE_ERROR(__table, __prop)                      \
+#define PARSE_PROPERTY_END_MAKE_ERROR(__table, __prop) {                     \
   if (!__table.count(__prop.first)) {                              \
     PUSH_ERROR_AND_RETURN("Unsupported/unimplemented property: " + \
                           __prop.first);                           \
-  }
+  } \
+ }
 
 // This code path should not be reached though.
 #define PARSE_PROPERTY_END_MAKE_WARN(__prop) \
@@ -1560,7 +1582,7 @@ bool ReconstructPrim(
     PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves,
                        curves->wrap)
 
-    ADD_PROPERY(table, prop, GeomBasisCurves, curves->props);
+    ADD_PROPERY(table, prop, GeomBasisCurves, curves->props)
 
     PARSE_PROPERTY_END_MAKE_WARN(prop)
   }

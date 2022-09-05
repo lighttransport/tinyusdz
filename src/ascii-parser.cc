@@ -3277,7 +3277,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   std::string tok = ss.str();
 
   if (contains(tok, '.')) {
-    if (endsWith(tok, ".connect")) {
+    if (!endsWith(tok, ".connect")) {
+      DCOUT("tok = " << tok);
       PushError(
           "Must ends with `.connect` when a name contains punctuation `.`");
       return false;
@@ -5976,7 +5977,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
       }
 
-      value::asset_path assetp(asset_ref.asset_path);
+      value::AssetPath assetp(asset_ref.asset_path);
       attr.var.set_scalar(assetp);
 
     } else {
