@@ -1640,9 +1640,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
 static std::string print_shader_params(const UsdPrimvarReader_float &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent+1);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent+1);
+  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
+  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
   return ss.str();
 
@@ -1651,9 +1651,9 @@ static std::string print_shader_params(const UsdPrimvarReader_float &shader, con
 static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent+1);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent+1);
+  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
+  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
   return ss.str();
 }
@@ -1661,9 +1661,9 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent+1);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent+1);
+  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
+  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
   return ss.str();
 }
@@ -1671,9 +1671,9 @@ static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent+1);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent+1);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent+1);
+  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
+  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
   return ss.str();
 }
@@ -1726,7 +1726,7 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
 static std::string print_shader_params(const UsdUVTexture &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.file, "inputs:file", indent+1);
+  ss << print_typed_attr(shader.file, "inputs:file", indent);
   //if (shader.file) {
   //  ss << pprint::Indent(indent) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
   //  // TODO: meta
@@ -1737,16 +1737,16 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
     // TOOD: meta
   }
 
-  ss << print_typed_prop(shader.st, "inputs:st", indent+1);
+  ss << print_typed_prop(shader.st, "inputs:st", indent);
   //if (shader.st.authored()) {
   ////  if (shader.st.
   ////  ss << pprint::Indent(indent+1)
   //}
 
-  ss << print_typed_terminal_attr(shader.outputsR, "outputs:r", indent+1);
-  ss << print_typed_terminal_attr(shader.outputsG, "outputs:g", indent+1);
-  ss << print_typed_terminal_attr(shader.outputsB, "outputs:b", indent+1);
-  ss << print_typed_terminal_attr(shader.outputsRGB, "outputs:rgb", indent+1);
+  ss << print_typed_terminal_attr(shader.outputsR, "outputs:r", indent);
+  ss << print_typed_terminal_attr(shader.outputsG, "outputs:g", indent);
+  ss << print_typed_terminal_attr(shader.outputsB, "outputs:b", indent);
+  ss << print_typed_terminal_attr(shader.outputsRGB, "outputs:rgb", indent);
 
   return ss.str();
 }
@@ -1767,17 +1767,17 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
     ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
 
     if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
-      ss << print_shader_params(pvr.value(), indent);
+      ss << print_shader_params(pvr.value(), indent+1);
     } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
-      ss << print_shader_params(pvr2.value(), indent);
+      ss << print_shader_params(pvr2.value(), indent+1);
     } else if (auto pvr3 = shader.value.get_value<UsdPrimvarReader_float3>()) {
-      ss << print_shader_params(pvr3.value(), indent);
+      ss << print_shader_params(pvr3.value(), indent+1);
     } else if (auto pvr4 = shader.value.get_value<UsdPrimvarReader_float4>()) {
-      ss << print_shader_params(pvr4.value(), indent);
+      ss << print_shader_params(pvr4.value(), indent+1);
     } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
-      ss << print_shader_params(pvtex.value(), indent);
+      ss << print_shader_params(pvtex.value(), indent+1);
     } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
-      ss << print_shader_params(pvs.value(), indent);
+      ss << print_shader_params(pvs.value(), indent+1);
     } else {
       ss << pprint::Indent(indent+1) << "[TODO] Generic Shader\n";
     }

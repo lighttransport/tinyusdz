@@ -279,7 +279,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::AssetPath &as
 
   std::string s;
 
-  if (tinyusdz::contains(s, '@')) {
+  if (tinyusdz::contains(in_s, '@')) {
     // Escape '@@@'(to '\@@@') if the input path contains '@@@'  
     for (size_t i = 0; i < in_s.length(); i++) {
       if ((i + 2) < in_s.length()) {

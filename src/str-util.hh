@@ -45,7 +45,7 @@ inline std::string removeSuffix(const std::string &str, const std::string &suffi
 }
 
 inline bool contains(const std::string &str, char c) {
-  return str.find(c) == std::string::npos;
+  return str.find(c) != std::string::npos;
 }
 
 // Remove the beginning and the ending delimiter(s) from input string
