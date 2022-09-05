@@ -140,11 +140,11 @@ inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 using token = tinyusdz::Token;
 
 // SdfAssetPath
-class asset_path {
+class AssetPath {
  public:
-  asset_path() = default;
-  asset_path(const std::string &a) : asset_path_(a) {}
-  asset_path(const std::string &a, const std::string &r)
+  AssetPath() = default;
+  AssetPath(const std::string &a) : asset_path_(a) {}
+  AssetPath(const std::string &a, const std::string &r)
       : asset_path_(a), resolved_path_(r) {}
 
   bool Resolve() {
@@ -164,8 +164,6 @@ class asset_path {
   std::string asset_path_;
   std::string resolved_path_;
 };
-
-using AssetPath = asset_path;
 
 //
 // Type ID for TypeTrait<T>::type_id.
@@ -776,7 +774,7 @@ DEFINE_TYPE_TRAIT(token, kToken, TYPE_ID_TOKEN, 1);
 DEFINE_TYPE_TRAIT(std::string, kString, TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 
-DEFINE_TYPE_TRAIT(asset_path, kAssetPath, TYPE_ID_ASSET_PATH, 1);
+DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header files(e.g. `prim-types.hh`,

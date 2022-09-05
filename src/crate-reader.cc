@@ -1239,7 +1239,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       if (auto v = GetToken(crate::Index(d))) {
         std::string str = v.value().str();
 
-        value::asset_path assetp(str);
+        value::AssetPath assetp(str);
         value->Set(assetp);
         return true;
       } else {
@@ -1717,12 +1717,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<value::asset_path> apaths(static_cast<size_t>(n));
+        std::vector<value::AssetPath> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
           if (auto tokv = GetToken(v[i])) {
             DCOUT("Token[" << i << "] = " << tokv.value());
-            apaths[i] = value::asset_path(tokv.value().str());
+            apaths[i] = value::AssetPath(tokv.value().str());
           } else {
             return false;
           }
@@ -4005,7 +4005,7 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         PROC_SCALAR(value::kHalf3, value::half3)
         PROC_SCALAR(value::kHalf4, value::half4)
         PROC_SCALAR(value::kToken, value::token)
-        PROC_SCALAR(value::kAssetPath, value::asset_path)
+        PROC_SCALAR(value::kAssetPath, value::AssetPath)
 
         PROC_SCALAR(value::kMatrix2d, value::matrix2d)
         PROC_SCALAR(value::kMatrix3d, value::matrix3d)

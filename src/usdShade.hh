@@ -38,9 +38,9 @@ struct UsdPrimvarReader {
 
   PrimMeta meta;
 
-  TypedAttribute<T> fallback;  // "inputs:fallback"
+  TypedAttribute<Animatable<T>> fallback;  // "inputs:fallback"
 
-  TypedAttribute<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
+  TypedAttribute<Animatable<value::token>> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
 
 
   TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"
@@ -79,13 +79,13 @@ struct UsdUVTexture {
 
   std::string name;
 
-  TypedAttribute<value::AssetPath> file; // "asset inputs:file" interfaceOnly
+  TypedAttribute<Animatable<value::AssetPath>> file; // "asset inputs:file" interfaceOnly
 
   //TypedAttributeWithFallback<Connection<value::texcoord2f>> st{Connection<value::texcoord2f>({0.0f, 0.0f})}; // "inputs:st"
   TypedProperty<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
 
-  nonstd::optional<Wrap> wrapS; // "inputs:wrapS" interfaceOnly
-  nonstd::optional<Wrap> wrapT; // "inputs:wrapT" interfaceOnly
+  TypedAttribute<Animatable<Wrap>> wrapS; // "inputs:wrapS" interfaceOnly
+  TypedAttribute<Animatable<Wrap>> wrapT; // "inputs:wrapT" interfaceOnly
 
   TypedAttributeWithFallback<value::color4f> falllback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected(TODO: Disallow Relation?(i.e, `fallback.connect = </Path/To/FallbackColor>`)
 

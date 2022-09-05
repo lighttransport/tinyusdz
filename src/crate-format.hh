@@ -402,7 +402,7 @@ class CrateValue {
   __FUNC(value::matrix2d) \
   __FUNC(value::matrix3d) \
   __FUNC(value::matrix4d) \
-  __FUNC(value::asset_path) \
+  __FUNC(value::AssetPath) \
   __FUNC(value::token) \
   __FUNC(std::string)
 
