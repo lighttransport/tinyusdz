@@ -5423,6 +5423,8 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
                                      const std::string &primattr_name,
                                      PrimAttrib *out_attr) {
   PrimAttrib attr;
+  primvar::PrimVar var;
+  bool blocked{false};
 
   if (array_qual) {
     if (value::TypeTrait<T>::type_name() == "bool") {
@@ -5437,9 +5439,13 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
         return false;
       }
 
-      DCOUT("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
-            ", sz = " + std::to_string(value.size()));
-      attr.var.set_scalar(value);
+      if (value) {
+        DCOUT("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
+              ", sz = " + std::to_string(value.size()));
+        var.set_scalar(value.value());
+      } else {
+        blocked = true;
+      }
     }
 
   } else if (hasConnect(primattr_name)) {
@@ -5449,7 +5455,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       return false;
     }
 
-    attr.var.set_scalar(value);  // TODO: set as `Path` type
+    var.set_scalar(value);
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
@@ -5465,9 +5471,10 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       // TODO: TimeSampled
       value::TimeSamples ts;
       ts.values.push_back(*value);
-      attr.var.var = ts;
+      var.set_timesamples(ts);
 
     } else {
+      blocked = true;
       // std::cout << "ParseBasicPrimAttr: " <<
       // value::TypeTrait<T>::type_name()
       //           << " = None\n";
@@ -5480,6 +5487,12 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
   }
   attr.meta = meta;
+
+  if (blocked) {
+    attr.set_blocked(true);
+  } else {
+    attr.set_var(std::move(var));
+  }
 
   // if (meta.count("interpolation")) {
   //   const MetaVariable &var = meta.at("interpolation");
@@ -5719,7 +5732,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     p.type = Property::Type::EmptyAttrib;
 
     // Empty Attribute. type info only
-    p.attrib.type_name = type_name;
+    p.attrib.set_type_name(type_name);
     if (uniform_qual) {
       p.attrib.variability = Variability::Uniform;
     }
@@ -5747,7 +5760,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     rel.Set(path);
 
     Property p(rel, /* isConnection*/ true, custom_qual);
-    p.attrib.type_name = type_name;
+    p.attrib.set_type_name(type_name);
 
     (*props)[primattr_name] = p;
 
@@ -5822,9 +5835,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     std::string varname = removeSuffix(primattr_name, ".timeSamples");
     PrimAttrib attr;
-    //attr.uniform = false;
+    prim::PrimVar var;
+    var.set_timesamples(ts);
+ 
     attr.name = varname;
-    attr.var.set_timesamples(ts);  // TODO: Use set_timesample() ?
+    attr.set_var(std::move(var));
 
     DCOUT("timeSamples primattr: type = " << type_name
                                           << ", name = " << varname);
