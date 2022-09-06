@@ -5,7 +5,7 @@
 //
 // TODO:
 //
-// - [ ] Refactor Reconstruct*** function
+// - [ ] GeomSubset
 //
 
 #ifdef _MSC_VER
@@ -69,7 +69,21 @@ namespace prim {
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
 RECONSTRUCT_PRIM_DECL(Scope);
+RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
+RECONSTRUCT_PRIM_DECL(GeomCapsule);
+RECONSTRUCT_PRIM_DECL(GeomCube);
+RECONSTRUCT_PRIM_DECL(GeomCylinder);
+RECONSTRUCT_PRIM_DECL(GeomSphere);
+RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
+RECONSTRUCT_PRIM_DECL(LuxSphereLight);
+RECONSTRUCT_PRIM_DECL(LuxDomeLight);
+RECONSTRUCT_PRIM_DECL(SkelRoot);
+RECONSTRUCT_PRIM_DECL(SkelAnimation);
+RECONSTRUCT_PRIM_DECL(Skeleton);
+RECONSTRUCT_PRIM_DECL(BlendShape);
+//RECONSTRUCT_PRIM_DECL(Material);
+RECONSTRUCT_PRIM_DECL(Shader);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -1603,6 +1617,33 @@ bool USDCReader::Impl::ReconstructTypedProperty(
   return true;
 }
 
+template <typename T>
+bool USDCReader::Impl::ReconstructPrim(
+    const crate::CrateReader::Node &node,
+    const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap, T *prim) {
+
+  (void)fvs;
+
+  prim::PropertyMap properties;
+  if (!BuildPropertyMap(node.GetChildren(), psmap, &properties)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
+  }
+
+  prim::ReferenceList refs; // TODO:
+  std::string err;
+
+  if (!prim::ReconstructPrim<T>(properties, refs, prim, &_warn, &err)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, err);
+  }
+
+  return true;
+}
+
+
+
+#if 0
+
 //
 // -- specialization of ReconstructPrim
 //
@@ -1837,6 +1878,7 @@ bool USDCReader::Impl::ReconstructPrim<Skeleton>(
 
   return true;
 }
+#endif
 
 bool USDCReader::Impl::ReconstrcutStageMeta(
     const crate::FieldValuePairVector &fvs, StageMetas *metas,
@@ -2182,8 +2224,25 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         std::string prim_name = elemPath.GetPrimPart();
 
         RECONSTRUCT_PRIM(Xform, typeName.value(), prim_name)
-        // RECONSTRUCT_PRIM(GeomMesh, typeName.value(), prim_name)
-        RECONSTRUCT_PRIM(Scope, typeName.value(), prim_name) {
+        RECONSTRUCT_PRIM(Model, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(Scope, typeName.value(), prim_name) 
+        RECONSTRUCT_PRIM(GeomMesh, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomPoints, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomCylinder, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomCube, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomSphere, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomCapsule, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomBasisCurves, typeName.value(), prim_name)
+        //RECONSTRUCT_PRIM(GeomSubset, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(LuxSphereLight, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(LuxDomeLight, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(SkelRoot, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(Skeleton, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(SkelAnimation, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(Shader, typeName.value(), prim_name)
+        //RECONSTRUCT_PRIM(Material, typeName.value(), prim_name)
+
+        {
           PUSH_WARN(
               "TODO or we can ignore this typeName: " << typeName.value());
         }

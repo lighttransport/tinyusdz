@@ -1260,11 +1260,6 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << print_typed_prop(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
   ss << print_typed_prop(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
 
-  // material binding.
-  if (mesh.materialBinding) {
-    ss << pprint::Indent(indent+1) << "rel material:binding = " << pquote(mesh.materialBinding.value().binding) << "\n";
-  }
-
   if (mesh.skeleton) {
     ss << pprint::Indent(indent+1) << "rel skel:skeleton = " << pquote(mesh.skeleton.value()) << "\n";
   }
@@ -1331,7 +1326,11 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
 
   // members
   ss << print_typed_prop(geom.points, "points", indent);
+  ss << print_typed_prop(geom.normals, "normals", indent);
   ss << print_typed_prop(geom.widths, "widths", indent);
+  ss << print_typed_prop(geom.ids, "ids", indent);
+  ss << print_typed_prop(geom.velocities, "velocities", indent);
+  ss << print_typed_prop(geom.accelerations, "accelerations", indent);
 
   ss << print_gprim_predefined(geom, indent);
 

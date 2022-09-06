@@ -424,16 +424,16 @@ class TypedAttribute {
 
  private:
   nonstd::optional<T> attrib;
-  bool blocked{false}; // for `uniform` attribute. 
+  bool blocked{false}; // for `uniform` attribute.
 };
 
 ///
-/// Tyeped Terminal(Output) Attribute(No value assign, no fallback(default) value, no connection) 
+/// Tyeped Terminal(Output) Attribute(No value assign, no fallback(default) value, no connection)
 ///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
 /// - `authored() = false` : Attribute value is not authored(not described
-/// in USD). 
+/// in USD).
 ///
 template <typename T>
 class TypedTerminalAttribute {
@@ -442,7 +442,7 @@ class TypedTerminalAttribute {
   void SetAuthor(bool onoff) {
     _authored = onoff;
   }
-    
+
   // value set?
   bool authored() const {
     return _authored;
@@ -459,7 +459,7 @@ class TypedTerminalAttribute {
   AttrMeta meta;
 
  private:
-    
+
   bool _authored{false};
 };
 
@@ -553,7 +553,7 @@ class TypedAttributeWithFallback {
  private:
   nonstd::optional<T> attrib;
   T fallback;
-  bool blocked{false}; // for `uniform` attribute. 
+  bool blocked{false}; // for `uniform` attribute.
 };
 
 template<typename T>
@@ -1156,7 +1156,7 @@ class TypedProperty {
   nonstd::optional<T> fallback;  // may have fallback
   AttrMeta meta;
   bool custom{false}; // `custom`
-  Variability variability{Variability::Varying}; // `uniform`, `varying` 
+  Variability variability{Variability::Varying}; // `uniform`, `varying`
 
   // TODO: Other variability
   bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
