@@ -508,7 +508,7 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
     // Type info is stored in Attribute::type_name for EmptyAttrib
     std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
 
-    if (value::TypeTrait<T>::type_name() == attr_type_name) {
+    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.define_only = true;
         target.variability = attr.variability;
