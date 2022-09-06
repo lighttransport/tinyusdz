@@ -31,6 +31,8 @@ namespace tinyusdz {
 namespace prim {
 
 constexpr auto kMaterialBinding = "material:binding";
+constexpr auto kSkelSkeleton = "skel:skeleton";
+constexpr auto kSkelAnimationSource = "skel:animationSource";
 
 ///
 /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
@@ -699,6 +701,44 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
+
+// "rel material:binding = <...>"
+#define PARSE_MATERIAL_BINDING_RELATION(__table, __prop, __ptarget) \
+  if (prop.first == kMaterialBinding) { \
+    if (__table.count(kMaterialBinding)) { \
+       continue; \
+    } \
+    if (prop.second.IsRel() && prop.second.IsEmpty()) { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kMaterialBinding)); \
+    } \
+    const Relation &rel = prop.second.rel; \
+    if (rel.IsPath()) { \
+      MaterialBindingAPI m; \
+      m.binding = rel.targetPath; \
+      __ptarget->materialBinding = m; \
+      table.insert(prop.first); \
+      DCOUT("Added rel material:binding."); \
+    } else { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kMaterialBinding)); \
+    } \
+  }
+
+#define PARSE_SKEL_SKELETON_RELATION(__table, __prop, __ptarget) \
+  if (prop.first == kSkelSkeleton) { \
+    if (__table.count(kSkelSkeleton)) { \
+       continue; \
+    } \
+    if (prop.second.IsRel() && prop.second.IsEmpty()) { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kSkelSkeleton)); \
+    } \
+    const Relation &rel = prop.second.rel; \
+    if (rel.IsPath()) { \
+      __ptarget->skeleton = rel.targetPath; \
+      table.insert(prop.first); \
+    } else { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kSkelSkeleton)); \
+    } \
+  }
 
 #define PARSE_SHADER_TERMINAL_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target); \
@@ -1403,8 +1443,6 @@ bool ReconstructPrim<Skeleton>(
   (void)warn;
   (void)references;
 
-  constexpr auto kSkelAnimationSource = "skel:animationSource";
-
   std::set<std::string> table;
   for (auto &prop : properties) {
 
@@ -1700,33 +1738,126 @@ bool ReconstructPrim<GeomSphere>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
-      if (prop.first == kMaterialBinding) {
-        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
-          MaterialBindingAPI m;
-#if 0
-          if (auto pathv = pv.value().targets.get<Path>()) {
-            m.binding = pathv.value();
-            sphere->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#else
-          if (pv.value().IsPath()) {
-            m.binding = pv.value().targetPath;
-            sphere->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#endif
-        } else {
-          PUSH_WARN(kMaterialBinding << " must be Relationship ");
-        }
-      } else {
-        PUSH_WARN("TODO:" << prop.first);
+      PARSE_MATERIAL_BINDING_RELATION(table, prop, sphere)
+      {
+        PUSH_WARN("TODO: Rel " << prop.first);
+        table.insert(prop.first);
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomSphere, sphere->radius)
       ADD_PROPERY(table, prop, GeomSphere, sphere->props)
+      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+    }
+  }
+
+#if 0 // TODO
+  //
+  // Resolve append references
+  // (Overwrite variables with the referenced one).
+  //
+  for (const auto &ref : references) {
+    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
+      const Reference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_path;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        DCOUT("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          (void)prop;
+          // if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+          //   if (prop.first == "radius") {
+          //     if (auto p = value::as_basic<double>(&attr->var)) {
+          //       SDCOUT << "append reference radius = " << (*p) << "\n";
+          //       sphere->radius = *p;
+          //     }
+          //   }
+          // }
+        }
+      }
+    }
+  }
+#endif
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<GeomPoints>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    GeomPoints *points,
+    std::string *warn,
+    std::string *err) {
+
+  (void)references;
+
+  DCOUT("Reconstruct Points.");
+
+#if 0 //  TODO
+  //
+  // Resolve prepend references
+  //
+  for (const auto &ref : references) {
+    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
+
+    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
+        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
+      const Reference &asset_ref = std::get<1>(ref);
+
+      std::string filepath = asset_ref.asset_path;
+      if (!io::IsAbsPath(filepath)) {
+        filepath = io::JoinPath(_base_dir, filepath);
+      }
+
+      if (_reference_cache.count(filepath)) {
+        DCOUT("Got a cache: filepath = " + filepath);
+
+        const auto root_nodes = _reference_cache.at(filepath);
+        const GPrim &prim = std::get<1>(root_nodes)[std::get<0>(root_nodes)];
+
+        for (const auto &prop : prim.props) {
+          (void)prop;
+#if 0
+          if (auto attr = nonstd::get_if<PrimAttrib>(&prop.second)) {
+            if (prop.first == "radius") {
+              if (auto p = value::as_basic<double>(&attr->var)) {
+                SDCOUT << "prepend reference radius = " << (*p) << "\n";
+                sphere->radius = *p;
+              }
+            }
+          }
+#endif
+        }
+      }
+    }
+  }
+#endif
+
+  std::set<std::string> table;
+  for (const auto &prop : properties) {
+    DCOUT("prop: " << prop.first);
+    if (prop.second.IsRel()) {
+      PARSE_MATERIAL_BINDING_RELATION(table, prop, points)
+      {
+        PUSH_WARN("TODO: Rel " << prop.first);
+        table.insert(prop.first);
+      }
+    } else {
+      PARSE_TYPED_PROPERTY(table, prop, "points", GeomPoints, points->points)
+      PARSE_TYPED_PROPERTY(table, prop, "normals", GeomPoints, points->normals)
+      PARSE_TYPED_PROPERTY(table, prop, "widths", GeomPoints, points->widths)
+      PARSE_TYPED_PROPERTY(table, prop, "ids", GeomPoints, points->ids)
+      PARSE_TYPED_PROPERTY(table, prop, "velocities", GeomPoints, points->velocities)
+      PARSE_TYPED_PROPERTY(table, prop, "accelerations", GeomPoints, points->accelerations)
+      ADD_PROPERY(table, prop, GeomSphere, points->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -1784,29 +1915,10 @@ bool ReconstructPrim<GeomCone>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
-      if (prop.first == kMaterialBinding) {
-        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
-          MaterialBindingAPI m;
-#if 0
-          if (auto pathv = pv.value().targets.get<Path>()) {
-            m.binding = pathv.value();
-            sphere->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#else
-          if (pv.value().IsPath()) {
-            m.binding = pv.value().targetPath;
-            cone->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#endif
-        } else {
-          PUSH_WARN(kMaterialBinding << " must be Relationship ");
-        }
-      } else {
-        PUSH_WARN("TODO:" << prop.first);
+      PARSE_MATERIAL_BINDING_RELATION(table, prop, cone)
+      {
+        PUSH_WARN("TODO: rel " << prop.first);
+        table.insert(prop.first);
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->radius)
@@ -1832,29 +1944,10 @@ bool ReconstructPrim<GeomCylinder>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
-      if (prop.first == kMaterialBinding) {
-        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
-          MaterialBindingAPI m;
-#if 0
-          if (auto pathv = pv.value().targets.get<Path>()) {
-            m.binding = pathv.value();
-            sphere->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#else
-          if (pv.value().IsPath()) {
-            m.binding = pv.value().targetPath;
-            cylinder->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#endif
-        } else {
-          PUSH_WARN(kMaterialBinding << " must be Relationship ");
-        }
-      } else {
+      PARSE_MATERIAL_BINDING_RELATION(table, prop, cylinder)
+       {
         PUSH_WARN("TODO:" << prop.first);
+        table.insert(prop.first);
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCylinder,
@@ -1882,29 +1975,10 @@ bool ReconstructPrim<GeomCapsule>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
-      if (prop.first == kMaterialBinding) {
-        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
-          MaterialBindingAPI m;
-#if 0
-          if (auto pathv = pv.value().targets.get<Path>()) {
-            m.binding = pathv.value();
-            sphere->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#else
-          if (pv.value().IsPath()) {
-            m.binding = pv.value().targetPath;
-            capsule->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#endif
-        } else {
-          PUSH_WARN(kMaterialBinding << " must be Relationship ");
-        }
-      } else {
+      PARSE_MATERIAL_BINDING_RELATION(table, prop, capsule)
+      {
         PUSH_WARN("TODO:" << prop.first);
+        table.insert(prop.first);
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCapsule, capsule->radius)
@@ -1933,29 +2007,10 @@ bool ReconstructPrim<GeomCube>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
-      if (prop.first == kMaterialBinding) {
-        if (auto pv = prop.second.attrib.var.get_value<Relation>()) {
-          MaterialBindingAPI m;
-#if 0
-          if (auto pathv = pv.value().targets.get<Path>()) {
-            m.binding = pathv.value();
-            sphere->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#else
-          if (pv.value().IsPath()) {
-            m.binding = pv.value().targetPath;
-            cube->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(kMaterialBinding << " must be Path.");
-          }
-#endif
-        } else {
-          PUSH_WARN(kMaterialBinding << " must be Relationship ");
-        }
-      } else {
+      PARSE_MATERIAL_BINDING_RELATION(table, prop, cube)
+       {
         PUSH_WARN("TODO:" << prop.first);
+        table.insert(prop.first);
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "size", GeomCube, cube->size)
@@ -1976,6 +2031,8 @@ bool ReconstructPrim<GeomMesh>(
     std::string *err) {
 
   (void)references;
+
+  DCOUT("GeomMesh");
 
 #if 0 // TODO
   //
@@ -2101,42 +2158,11 @@ bool ReconstructPrim<GeomMesh>(
 
   for (const auto &prop : properties) {
     if (prop.second.IsRel()) {
-      if (prop.first == kMaterialBinding) {
-        // Must be relation of type Path.
-        if (prop.second.IsRel() && prop.second.IsEmpty()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kMaterialBinding));
-        }
-
-        {
-          const Relation &rel = prop.second.rel;
-          if (rel.IsPath()) {
-            DCOUT("materialBinding");
-            MaterialBindingAPI m;
-            m.binding = rel.targetPath;
-            mesh->materialBinding = m;
-          } else {
-            PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kMaterialBinding));
-          }
-        }
-      } else if (prop.first == "skel:skeleton") {
-        // Must be relation of type Path.
-        if (prop.second.IsRel() && prop.second.IsEmpty()) {
-          PUSH_ERROR_AND_RETURN(
-              "`skel:skeleton` must be a Relation with Path target.");
-        }
-
-        {
-          const Relation &rel = prop.second.rel;
-          if (rel.IsPath()) {
-            DCOUT("skelBinding");
-            mesh->skeleton = rel.targetPath;
-          } else {
-            PUSH_ERROR_AND_RETURN("`skel:skeleton` target must be Path.");
-          }
-        }
-
-      } else {
+      PARSE_MATERIAL_BINDING_RELATION(table, prop, mesh)
+      PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
+      {
         PUSH_WARN("TODO: rel : " << prop.first);
+        table.insert(prop.first); // mark it procesed
       }
     } else {
       PARSE_TYPED_PROPERTY(table, prop, "points", GeomMesh, mesh->points)

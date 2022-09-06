@@ -18,6 +18,7 @@ constexpr auto kGeomSubset = "GeomSubset";
 constexpr auto kGeomBasisCurves = "BasisCurves";
 constexpr auto kGeomCylinder = "Cylinder";
 constexpr auto kGeomCapsule = "Capsule";
+constexpr auto kGeomPoints = "Points";
 constexpr auto kGeomCone = "Cone";
 constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
@@ -407,12 +408,12 @@ struct GeomPoints : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedProperty<std::vector<value::point3f>> points;    // point3f
-  TypedProperty<std::vector<value::normal3f>> normals;  // normal3f
-  TypedProperty<std::vector<float>> widths;
-  TypedProperty<std::vector<int64_t>> ids;                    // per-point ids.
-  TypedProperty<std::vector<value::vector3f>> velocities;     // vector3f
-  TypedProperty<std::vector<value::vector3f>> accelerations;  // vector3f
+  TypedProperty<std::vector<value::point3f>> points;    // point3f[]
+  TypedProperty<std::vector<value::normal3f>> normals;  // normal3f[]
+  TypedProperty<std::vector<float>> widths; // float[]
+  TypedProperty<std::vector<int64_t>> ids;                    // int64[] per-point ids.
+  TypedProperty<std::vector<value::vector3f>> velocities;     // vector3f[]
+  TypedProperty<std::vector<value::vector3f>> accelerations;  // vector3f[]
 };
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
@@ -432,6 +433,7 @@ DEFINE_TYPE_TRAIT(GeomCube, kGeomCube, TYPE_ID_GEOM_CUBE, 1);
 DEFINE_TYPE_TRAIT(GeomCone, kGeomCone, TYPE_ID_GEOM_CONE, 1);
 DEFINE_TYPE_TRAIT(GeomCylinder, kGeomCylinder, TYPE_ID_GEOM_CYLINDER, 1);
 DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
+DEFINE_TYPE_TRAIT(GeomPoints, kGeomPoints, TYPE_ID_GEOM_POINTS, 1);
 DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
 DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
 

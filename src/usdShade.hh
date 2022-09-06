@@ -2,6 +2,13 @@
 // Copyright 2022 - Present, Syoyo Fujita.
 //
 // Material and Shader. And more, TinyUSDZ implmenents some usdImaging stuff here.
+//
+// TODO:
+//   - [ ] Consider `interfaceOnly` connection 
+//   - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
+//   - [ ] NodeGraph support
+//   - [ ] MaterialX support
+//
 #pragma once
 
 #include "prim-types.hh"
@@ -18,8 +25,9 @@ struct Material {
 
   PrimMeta meta;
 
-  Relation surface; // outputs:surface.connect
-  Relation volume; // outputs:volume.connect
+  // Terminal attribute.
+  Connection<value::token> surface; // "token outputs:surface.connect"
+  Connection<value::token> volume; // "token outputs:volume.connect"
 
 };
 
