@@ -818,16 +818,17 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   }
 };
 
-// Lookup TypeTrait<T>::type_name from TypeTrait<T>::type_id
+// Lookup TypeTrait<T>::type_name from type_id
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
 std::string GetTypeName(uint32_t tyid);
+
+// Lookup TypeTrait<T>::type_id from string
+nonstd::optional<uint32_t> TryGetTypeId(const std::string &tyname);
+uint32_t GetTypeId(const std::string &tyname);
 
 }  // namespace value
 }  // namespace tinyusdz
 
-// TODO(syoyo): Replace any_value with linb::any
-// TODO(syoyo): Move TypeTrait<T> code to another header to simplify .inc
-// inclusion.
 #include "tiny-any.inc"
 
 namespace tinyusdz {
@@ -1035,9 +1036,11 @@ TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
 #undef TYPECAST_BASETYPE
 #endif
 
+#if 0
 struct AttribMap {
   std::map<std::string, Value> attribs;
 };
+#endif
 
 }  // namespace value
 }  // namespace tinyusdz
