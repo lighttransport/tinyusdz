@@ -136,85 +136,6 @@ bool Reconstructor::reconstruct(AttribMap &amap) {
 #endif
 
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
-#if 0
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wexit-time-destructors"
-#endif
-
-  static std::map<uint32_t, std::string> m;
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
-  if (m.empty()) {
-    // initialize
-    m[TYPE_ID_BOOL] = TypeTrait<bool>::type_name();
-    m[TYPE_ID_UCHAR] = TypeTrait<uint8_t>::type_name();
-    m[TYPE_ID_HALF] = TypeTrait<value::half>::type_name();
-    m[TYPE_ID_INT32] = TypeTrait<int32_t>::type_name();
-    m[TYPE_ID_UINT32] = TypeTrait<uint32_t>::type_name();
-
-    m[TYPE_ID_VECTOR3H] = TypeTrait<vector3h>::type_name();
-    m[TYPE_ID_VECTOR3F] = TypeTrait<vector3f>::type_name();
-    m[TYPE_ID_VECTOR3D] = TypeTrait<vector3d>::type_name();
-
-    m[TYPE_ID_POINT3H] = TypeTrait<point3h>::type_name();
-    m[TYPE_ID_POINT3F] = TypeTrait<point3f>::type_name();
-    m[TYPE_ID_POINT3D] = TypeTrait<point3d>::type_name();
-
-    m[TYPE_ID_NORMAL3H] = TypeTrait<normal3h>::type_name();
-    m[TYPE_ID_NORMAL3F] = TypeTrait<normal3f>::type_name();
-    m[TYPE_ID_NORMAL3D] = TypeTrait<normal3d>::type_name();
-
-    m[TYPE_ID_COLOR3F] = TypeTrait<color3f>::type_name();
-    m[TYPE_ID_COLOR3D] = TypeTrait<color3d>::type_name();
-    m[TYPE_ID_COLOR4F] = TypeTrait<color4f>::type_name();
-    m[TYPE_ID_COLOR4D] = TypeTrait<color4d>::type_name();
-
-    m[TYPE_ID_HALF2] = TypeTrait<value::half2>::type_name();
-    m[TYPE_ID_HALF3] = TypeTrait<value::half3>::type_name();
-    m[TYPE_ID_HALF4] = TypeTrait<value::half4>::type_name();
-
-    m[TYPE_ID_DICT] = TypeTrait<dict>::type_name();
-
-    // TODO: ...
-
-    m[TYPE_ID_INT32 | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<int>>::type_name();
-    m[TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<float>>::type_name();
-    m[TYPE_ID_FLOAT2 | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<float2>>::type_name();
-    m[TYPE_ID_FLOAT3 | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<float3>>::type_name();
-    m[TYPE_ID_FLOAT4 | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<float4>>::type_name();
-
-    m[TYPE_ID_POINT3H | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<point3h>>::type_name();
-    m[TYPE_ID_POINT3F | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<point3f>>::type_name();
-    m[TYPE_ID_POINT3D | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<point3d>>::type_name();
-
-    m[TYPE_ID_VECTOR3H | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<vector3h>>::type_name();
-    m[TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<vector3f>>::type_name();
-    m[TYPE_ID_VECTOR3D | TYPE_ID_1D_ARRAY_BIT] =
-        TypeTrait<std::vector<vector3d>>::type_name();
-
-    // TODO: ...
-  }
-
-  if (!m.count(tyid)) {
-    return nonstd::nullopt;
-  }
-
-  return m.at(tyid);
-#else
   MAPBOX_ETERNAL_CONSTEXPR const auto tynamemap =
       mapbox::eternal::map<uint32_t, mapbox::eternal::string>({
           {TYPE_ID_TOKEN, kToken},
@@ -289,7 +210,6 @@ nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
   }
 
   return nonstd::nullopt;
-#endif
 }
 
 std::string GetTypeName(uint32_t tyid) {
