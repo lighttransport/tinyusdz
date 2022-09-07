@@ -1136,6 +1136,15 @@ struct PrimAttrib {
     _var = std::move(v);
   }
 
+  template<typename T>
+  nonstd::optional<T> get_value() const {
+    return _var.get_value<T>();
+  }
+
+  const primvar::PrimVar &get_var() const {
+    return _var;
+  }
+
   void set_blocked(bool onoff) {
     _blocked = onoff;
   }

@@ -392,5 +392,117 @@ uint32_t GetTypeId(const std::string &tyname) {
   return ret.value();
 }
 
+nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname) {
+  MAPBOX_ETERNAL_CONSTEXPR const auto utyidmap =
+      mapbox::eternal::hash_map<mapbox::eternal::string, uint32_t>({
+        {kPoint3h, TYPE_ID_HALF3},
+        {kPoint3f, TYPE_ID_FLOAT3},
+        {kPoint3d, TYPE_ID_DOUBLE3},
+        {kNormal3h, TYPE_ID_HALF3},
+        {kNormal3f, TYPE_ID_FLOAT3},
+        {kNormal3d, TYPE_ID_DOUBLE3},
+        {kVector3h, TYPE_ID_HALF3},
+        {kVector3f, TYPE_ID_FLOAT3},
+        {kVector3d, TYPE_ID_DOUBLE3},
+        {kColor3h, TYPE_ID_HALF3},
+        {kColor3f, TYPE_ID_FLOAT3},
+        {kColor3d, TYPE_ID_DOUBLE3},
+        {kColor4h, TYPE_ID_HALF4},
+        {kColor4f, TYPE_ID_FLOAT4},
+        {kColor4d, TYPE_ID_DOUBLE4},
+        {kTexCoord2h, TYPE_ID_HALF2},
+        {kTexCoord2f, TYPE_ID_FLOAT2},
+        {kTexCoord2d, TYPE_ID_DOUBLE3},
+        {kTexCoord3h, TYPE_ID_HALF3},
+        {kTexCoord3f, TYPE_ID_FLOAT3},
+        {kTexCoord3d, TYPE_ID_DOUBLE4},
+        {kFrame4d, TYPE_ID_MATRIX4D},
+  });
+
+  {
+    std::string s = tyname;
+    uint32_t array_bit = 0;
+    if (endsWith(tyname, "[]")) {
+      s = removeSuffix(s, "[]");
+      array_bit |= TYPE_ID_1D_ARRAY_BIT;
+    }
+
+    auto ret = utyidmap.find(s.c_str());
+    if (ret != utyidmap.end()) {
+      return ret->second | array_bit;
+    }
+  }
+
+  // Fallback
+  return TryGetTypeId(tyname);
+}
+
+uint32_t GetUnderlyingTypeId(const std::string &tyname) {
+  auto ret = TryGetUnderlyingTypeId(tyname);
+
+  if (!ret) {
+    return TYPE_ID_INVALID;
+  }
+
+  return ret.value();
+}
+
+nonstd::optional<std::string> TryGetUnderlyingTypeName(const uint32_t tyid) {
+  MAPBOX_ETERNAL_CONSTEXPR const auto utynamemap =
+      mapbox::eternal::map<uint32_t, mapbox::eternal::string>({
+        {TYPE_ID_POINT3H, kHalf3},
+        {TYPE_ID_POINT3F, kFloat3},
+        {TYPE_ID_POINT3D, kDouble3},
+        {TYPE_ID_NORMAL3H, kHalf3},
+        {TYPE_ID_NORMAL3F, kFloat3},
+        {TYPE_ID_NORMAL3D, kDouble3},
+        {TYPE_ID_VECTOR3H, kHalf3},
+        {TYPE_ID_VECTOR3F, kFloat3},
+        {TYPE_ID_VECTOR3D, kDouble3},
+        {TYPE_ID_COLOR3H, kHalf3},
+        {TYPE_ID_COLOR3F, kFloat3},
+        {TYPE_ID_COLOR3D, kDouble3},
+        {TYPE_ID_COLOR4H, kHalf4},
+        {TYPE_ID_COLOR4F, kFloat4},
+        {TYPE_ID_COLOR4D, kDouble4},
+        {TYPE_ID_TEXCOORD2H, kHalf2},
+        {TYPE_ID_TEXCOORD2F, kFloat2},
+        {TYPE_ID_TEXCOORD2D, kDouble2},
+        {TYPE_ID_TEXCOORD3H, kHalf3},
+        {TYPE_ID_TEXCOORD3F, kFloat3},
+        {TYPE_ID_TEXCOORD3D, kDouble3},
+        {TYPE_ID_FRAME4D, kMatrix4d},
+  });
+
+  {
+  bool array_bit = (TYPE_ID_1D_ARRAY_BIT & tyid);
+  uint32_t scalar_tid = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+
+  auto ret = utynamemap.find(scalar_tid);
+  if (ret != utynamemap.end()) {
+    std::string s = ret->second.c_str();
+    if (array_bit) {
+      s += "[]";
+    }
+    return std::move(s);
+  }
+  }
+
+  return TryGetTypeName(tyid);
+
+}
+
+std::string GetUnderlyingTypeName(uint32_t tyid) {
+  auto ret = TryGetUnderlyingTypeName(tyid);
+
+  if (!ret) {
+    return "(GetUnderlyingTypeName) [[Unknown or unimplemented/unsupported type_id: " +
+           std::to_string(tyid) + "]]";
+  }
+
+  return ret.value();
+}
+
+
 }  // namespace value
 }  // namespace tinyusdz

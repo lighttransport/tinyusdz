@@ -3889,8 +3889,8 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
     DCOUT("===  fvs.first " << fv.first
                             << ", second: " << fv.second.type_name());
     if ((fv.first == "typeName") && (fv.second.type_name() == "Token")) {
-      attr->type_name = fv.second.value<value::token>().str();
-      DCOUT("typeName: " << attr->type_name);
+      attr->set_type_name(fv.second.value<value::token>().str());
+      DCOUT("typeName: " << attr->type_name());
     } else if (fv.first == "default") {
       // Nothing to do at there. Process `default` in the later
       continue;
@@ -3907,7 +3907,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         DCOUT("full path: " << path.full_path_name());
         //DCOUT("local path: " << path.local_path_name());
 
-        attr->var.set_scalar(path);
+        primvar::PrimVar var;
+        var.set_scalar(path);
+        attr->set_var(std::move(var));
 
         has_connection = true;
 
@@ -3928,7 +3930,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         DCOUT("full path: " << path.full_path_name());
         //DCOUT("local path: " << path.local_path_name());
 
-        attr->var.set_scalar(path);
+        primvar::PrimVar var;
+        var.set_scalar(path);
+        attr->set_var(std::move(var));
 
         has_connection = true;
 
@@ -3980,7 +3984,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
       PUSH_ERROR("Failed to decode " << __tyname << " value."); \
       return false;                                             \
     }                                                           \
-    attr->var.set_scalar(ret.value());                          \
+    primvar::PrimVar var; \
+    var.set_scalar(ret.value()); \
+    attr->set_var(std::move(var));                          \
     success = true;
 
 #define PROC_ARRAY(__tyname, __ty)                                  \
@@ -3991,7 +3997,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
       PUSH_ERROR("Failed to decode " << __tyname << "[] value.");   \
       return false;                                                 \
     }                                                               \
-    attr->var.set_scalar(ret.value());                              \
+    primvar::PrimVar var; \
+    var.set_scalar(ret.value()); \
+    attr->set_var(std::move(var));                          \
     success = true;
 
       if (0) {  // dummy
