@@ -39,8 +39,10 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3d &v);
 
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v);
 

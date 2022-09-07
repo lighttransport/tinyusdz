@@ -5439,10 +5439,10 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
         return false;
       }
 
-      if (value) {
+      if (value.size()) {
         DCOUT("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
               ", sz = " + std::to_string(value.size()));
-        var.set_scalar(value.value());
+        var.set_scalar(value);
       } else {
         blocked = true;
       }
@@ -5493,15 +5493,6 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   } else {
     attr.set_var(std::move(var));
   }
-
-  // if (meta.count("interpolation")) {
-  //   const MetaVariable &var = meta.at("interpolation");
-  //   auto p = var.value.get_value<value::token>();
-  //   if (p) {
-  //     attr.interpolation =
-  //     tinyusdz::InterpolationFromString(p.value().str());
-  //   }
-  // }
 
   (*out_attr) = std::move(attr);
 
@@ -5835,7 +5826,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     std::string varname = removeSuffix(primattr_name, ".timeSamples");
     PrimAttrib attr;
-    prim::PrimVar var;
+    primvar::PrimVar var;
     var.set_timesamples(ts);
  
     attr.name = varname;
@@ -6017,7 +6008,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
       DCOUT("Asset path = " << asset_ref.asset_path);
       value::AssetPath assetp(asset_ref.asset_path);
-      attr.var.set_scalar(assetp);
+      primvar::PrimVar var;
+      var.set_scalar(assetp);
+      attr.set_var(std::move(var));
 
     } else {
       PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
