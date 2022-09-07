@@ -1,98 +1,19 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present, Syoyo Fujita.
 #include "value-types.hh"
+
+#include "str-util.hh"
 #include "value-pprint.hh"
 
+// For compile-time map
+// Another candidate is frozen: https://github.com/serge-sans-paille/frozen
+//
+#include "external/mapbox/eternal/include/mapbox/eternal.hpp"
 
 namespace tinyusdz {
 namespace value {
 
-//base_value::~base_value() {}
-
-
-#if 0
-bool is_float(const any_value &v) {
-  if (v.underlying_type_name() == "float") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_double(const any_value &v) {
-  if (v.underlying_type_name() == "double") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_float(const Value &v) {
-  if (v.underlying_type_name() == "float") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_float2(const Value &v) {
-  if (v.underlying_type_name() == "float2") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_float3(const Value &v) {
-  if (v.underlying_type_name() == "float3") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_float4(const Value &v) {
-  if (v.underlying_type_name() == "float4") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_double(const Value &v) {
-  if (v.underlying_type_name() == "double") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_double2(const Value &v) {
-  if (v.underlying_type_name() == "double2") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_double3(const Value &v) {
-  if (v.underlying_type_name() == "double3") {
-    return true;
-  }
-
-  return false;
-}
-
-bool is_double4(const Value &v) {
-  if (v.underlying_type_name() == "double4") {
-    return true;
-  }
-
-  return false;
-}
-#endif
-
-#if 0 // TODO: Remove
+#if 0  // TODO: Remove
 bool Reconstructor::reconstruct(AttribMap &amap) {
   err_.clear();
 
@@ -215,6 +136,7 @@ bool Reconstructor::reconstruct(AttribMap &amap) {
 #endif
 
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
+#if 0
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
@@ -292,10 +214,85 @@ nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
   }
 
   return m.at(tyid);
+#else
+  MAPBOX_ETERNAL_CONSTEXPR const auto tynamemap =
+      mapbox::eternal::map<uint32_t, mapbox::eternal::string>({
+          {TYPE_ID_TOKEN, kToken},
+          {TYPE_ID_STRING, kString},
+          {TYPE_ID_STRING, kPath},
+          {TYPE_ID_ASSET_PATH, kAssetPath},
+          {TYPE_ID_DICT, kDictionary},
+          {TYPE_ID_TIMECODE, kTimeCode},
+          {TYPE_ID_BOOL, kBool},
+          {TYPE_ID_UCHAR, kUChar},
+          {TYPE_ID_HALF, kHalf},
+          {TYPE_ID_INT32, kInt},
+          {TYPE_ID_UINT32, kUInt},
+          {TYPE_ID_INT64, kInt64},
+          {TYPE_ID_UINT64, kUInt64},
+          {TYPE_ID_INT2, kInt2},
+          {TYPE_ID_INT3, kInt3},
+          {TYPE_ID_INT4, kInt4},
+          {TYPE_ID_UINT2, kUInt2},
+          {TYPE_ID_UINT3, kUInt3},
+          {TYPE_ID_UINT4, kUInt4},
+          {TYPE_ID_HALF2, kHalf2},
+          {TYPE_ID_HALF3, kHalf3},
+          {TYPE_ID_HALF4, kHalf4},
+          {TYPE_ID_MATRIX2D, kMatrix2d},
+          {TYPE_ID_MATRIX3D, kMatrix3d},
+          {TYPE_ID_MATRIX4D, kMatrix4d},
+          {TYPE_ID_FLOAT, kFloat},
+          {TYPE_ID_FLOAT2, kFloat2},
+          {TYPE_ID_FLOAT3, kFloat3},
+          {TYPE_ID_FLOAT4, kFloat4},
+          {TYPE_ID_DOUBLE, kDouble},
+          {TYPE_ID_DOUBLE2, kDouble2},
+          {TYPE_ID_DOUBLE3, kDouble3},
+          {TYPE_ID_DOUBLE4, kDouble4},
+          {TYPE_ID_QUATH, kQuath},
+          {TYPE_ID_QUATF, kQuatf},
+          {TYPE_ID_QUATD, kQuatd},
+          {TYPE_ID_VECTOR3H, kVector3h},
+          {TYPE_ID_VECTOR3F, kVector3f},
+          {TYPE_ID_VECTOR3D, kVector3d},
+          {TYPE_ID_POINT3H, kPoint3h},
+          {TYPE_ID_POINT3F, kPoint3f},
+          {TYPE_ID_POINT3D, kPoint3d},
+          {TYPE_ID_NORMAL3H, kNormal3h},
+          {TYPE_ID_NORMAL3F, kNormal3f},
+          {TYPE_ID_NORMAL3D, kNormal3d},
+          {TYPE_ID_COLOR3F, kColor3f},
+          {TYPE_ID_COLOR3D, kColor3d},
+          {TYPE_ID_COLOR4F, kColor4f},
+          {TYPE_ID_COLOR4D, kColor4d},
+          {TYPE_ID_FRAME4D, kFrame4d},
+          {TYPE_ID_TEXCOORD2H, kTexCoord2h},
+          {TYPE_ID_TEXCOORD2F, kTexCoord2f},
+          {TYPE_ID_TEXCOORD2D, kTexCoord2d},
+          {TYPE_ID_TEXCOORD3H, kTexCoord3h},
+          {TYPE_ID_TEXCOORD3F, kTexCoord3f},
+          {TYPE_ID_TEXCOORD3D, kTexCoord3d},
+          {TYPE_ID_RELATIONSHIP, kRelationship},
+      });
+
+  bool array_bit = (TYPE_ID_1D_ARRAY_BIT & tyid);
+  uint32_t scalar_tid = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+
+  auto ret = tynamemap.find(scalar_tid);
+  if (ret != tynamemap.end()) {
+    std::string s = ret->second.c_str();
+    if (array_bit) {
+      s += "[]";
+    }
+    return std::move(s);
+  }
+
+  return nonstd::nullopt;
+#endif
 }
 
 std::string GetTypeName(uint32_t tyid) {
-
   auto ret = TryGetTypeName(tyid);
 
   if (!ret) {
@@ -306,5 +303,94 @@ std::string GetTypeName(uint32_t tyid) {
   return ret.value();
 }
 
-} // namespace value
-} // namespace tinyusdz
+nonstd::optional<uint32_t> TryGetTypeId(const std::string &tyname) {
+  MAPBOX_ETERNAL_CONSTEXPR const auto tyidmap =
+      mapbox::eternal::hash_map<mapbox::eternal::string, uint32_t>({
+          {kToken, TYPE_ID_TOKEN},
+          {kString, TYPE_ID_STRING},
+          {kPath, TYPE_ID_STRING},
+          {kAssetPath, TYPE_ID_ASSET_PATH},
+          {kDictionary, TYPE_ID_DICT},
+          {kTimeCode, TYPE_ID_TIMECODE},
+          {kBool, TYPE_ID_BOOL},
+          {kUChar, TYPE_ID_UCHAR},
+          {kHalf, TYPE_ID_HALF},
+          {kInt, TYPE_ID_INT32},
+          {kUInt, TYPE_ID_UINT32},
+          {kInt64, TYPE_ID_INT64},
+          {kUInt64, TYPE_ID_UINT64},
+          {kInt2, TYPE_ID_INT2},
+          {kInt3, TYPE_ID_INT3},
+          {kInt4, TYPE_ID_INT4},
+          {kUInt2, TYPE_ID_UINT2},
+          {kUInt3, TYPE_ID_UINT3},
+          {kUInt4, TYPE_ID_UINT4},
+          {kHalf2, TYPE_ID_HALF2},
+          {kHalf3, TYPE_ID_HALF3},
+          {kHalf4, TYPE_ID_HALF4},
+          {kMatrix2d, TYPE_ID_MATRIX2D},
+          {kMatrix3d, TYPE_ID_MATRIX3D},
+          {kMatrix4d, TYPE_ID_MATRIX4D},
+          {kFloat, TYPE_ID_FLOAT},
+          {kFloat2, TYPE_ID_FLOAT2},
+          {kFloat3, TYPE_ID_FLOAT3},
+          {kFloat4, TYPE_ID_FLOAT4},
+          {kDouble, TYPE_ID_DOUBLE},
+          {kDouble2, TYPE_ID_DOUBLE2},
+          {kDouble3, TYPE_ID_DOUBLE3},
+          {kDouble4, TYPE_ID_DOUBLE4},
+          {kQuath, TYPE_ID_QUATH},
+          {kQuatf, TYPE_ID_QUATF},
+          {kQuatd, TYPE_ID_QUATD},
+          {kVector3h, TYPE_ID_VECTOR3H},
+          {kVector3f, TYPE_ID_VECTOR3F},
+          {kVector3d, TYPE_ID_VECTOR3D},
+          {kPoint3h, TYPE_ID_POINT3H},
+          {kPoint3f, TYPE_ID_POINT3F},
+          {kPoint3d, TYPE_ID_POINT3D},
+          {kNormal3h, TYPE_ID_NORMAL3H},
+          {kNormal3f, TYPE_ID_NORMAL3F},
+          {kNormal3d, TYPE_ID_NORMAL3D},
+          {kColor3f, TYPE_ID_COLOR3F},
+          {kColor3d, TYPE_ID_COLOR3D},
+          {kColor4f, TYPE_ID_COLOR4F},
+          {kColor4d, TYPE_ID_COLOR4D},
+          {kFrame4d, TYPE_ID_FRAME4D},
+          {kTexCoord2h, TYPE_ID_TEXCOORD2H},
+          {kTexCoord2f, TYPE_ID_TEXCOORD2F},
+          {kTexCoord2d, TYPE_ID_TEXCOORD2D},
+          {kTexCoord3h, TYPE_ID_TEXCOORD3H},
+          {kTexCoord3f, TYPE_ID_TEXCOORD3F},
+          {kTexCoord3d, TYPE_ID_TEXCOORD3D},
+          {kRelationship, TYPE_ID_RELATIONSHIP},
+      });
+
+  std::string s = tyname;
+  uint32_t array_bit = 0;
+  if (endsWith(tyname, "[]")) {
+    s = removeSuffix(s, "[]");
+    array_bit |= TYPE_ID_1D_ARRAY_BIT;
+  }
+
+  // It looks USD does not support 2D array type, so no further `[]` check
+
+  auto ret = tyidmap.find(s.c_str());
+  if (ret != tyidmap.end()) {
+    return ret->second | array_bit;
+  }
+
+  return nonstd::nullopt;
+}
+
+uint32_t GetTypeId(const std::string &tyname) {
+  auto ret = TryGetTypeId(tyname);
+
+  if (!ret) {
+    return TYPE_ID_INVALID;
+  }
+
+  return ret.value();
+}
+
+}  // namespace value
+}  // namespace tinyusdz
