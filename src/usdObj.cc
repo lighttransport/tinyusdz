@@ -98,7 +98,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   const auto &attrs = reader.GetAttrib();
 
   PrimAttrib pointsAttr;
-  pointsAttr.type_name = "float3[]";
+  pointsAttr.set_type_name("float3[]");
   //pointsAttr.var = primvar::to_vec3(attrs.vertices); // std::vector<float> -> std::vector<value::float3>
   prim->props["points"].attrib = pointsAttr;
 
@@ -197,14 +197,14 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     PrimAttrib attr;
-    attr.type_name = "int[]";
+    attr.set_type_name("int[]");
     //attr.var = vertexIndices;
     prim->props["faceVertexIndices"].attrib = attr;
   }
 
   {
     PrimAttrib attr;
-    attr.type_name = "int[]";
+    attr.set_type_name("int[]");
     //attr.var = vertexCounts;
     prim->props["faceVertexCounts"].attrib = attr;
   }
@@ -213,7 +213,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
     PrimAttrib normalsAttr;
     normalsAttr.meta.interpolation = Interpolation::FaceVarying;
     normalsAttr.variability = Variability::Varying;
-    normalsAttr.type_name = "float3[]";
+    normalsAttr.set_type_name("normal3f[]");
     //normalsAttr.var = facevaryingNormals;
     prim->props["normals"].attrib = normalsAttr;
   }
@@ -222,7 +222,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
     PrimAttrib texcoordsAttr;
     texcoordsAttr.meta.interpolation = Interpolation::FaceVarying;
     texcoordsAttr.variability = Variability::Varying;
-    texcoordsAttr.type_name = "float2[]";
+    texcoordsAttr.set_type_name("texCoord2f[]");
     //texcoordsAttr.var = facevaryingTexcoords;
     prim->props["prmvars:uv"].attrib = texcoordsAttr;
   }

@@ -1454,7 +1454,9 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
       propType = Property::Type::Attrib;
 
       if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        attr.var.var = pv.value();
+        primvar::PrimVar var;
+        var.set_timesamples(pv.value());
+        attr.set_var(std::move(var));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
@@ -1479,7 +1481,9 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
         }
       }
     }
-    attr.var.var.values.push_back(scalar);
+    primvar::PrimVar var;
+    var.set_scalar(scalar);
+    attr.set_var(std::move(var));
   }
 
   if (propType == Property::Type::EmptyAttrib) {

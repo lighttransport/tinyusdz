@@ -10,6 +10,7 @@
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "str-util.hh"
+#include "value-types.hh"
 
 namespace std {
 
@@ -138,6 +139,11 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3d &v) {
   return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v) {
+  os << "(" << tinyusdz::half_to_float(v.r) << ", " << tinyusdz::half_to_float(v.g) << ", " << tinyusdz::half_to_float(v.b) << ")";
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
   return os;
@@ -145,6 +151,11 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v) {
   os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v) {
+  os << "(" << tinyusdz::half_to_float(v.r) << ", " << tinyusdz::half_to_float(v.g) << ", " << tinyusdz::half_to_float(v.b) << ", " << tinyusdz::half_to_float(v.a) << ")";
   return os;
 }
 
