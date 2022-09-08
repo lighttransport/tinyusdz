@@ -1618,8 +1618,8 @@ struct Scope {
   std::map<std::string, Property> props;
 };
 
-Interpolation InterpolationFromString(const std::string &v);
-Orientation OrientationFromString(const std::string &v);
+nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
+nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 
 namespace value {
 
