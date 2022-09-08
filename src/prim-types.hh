@@ -1107,9 +1107,19 @@ class Connection {
 struct PrimAttrib {
   std::string name;  // attrib name
 
-  std::string type_name;  // name of attrib type(e.g. "float', "color3f")
+  void set_type_name(const std::string &tname) {
+    _type_name = tname;
+  }
 
-  //ListEditQual list_edit{ListEditQual::ResetToExplicit}; // moved to Property
+  // `var` may be empty, so store type info with set_type_name and set_type_id.
+  std::string type_name() const {
+    if (_type_name.size()) {
+      return _type_name;
+    }
+
+    // Fallback. May be unreliable(`var` could be empty).
+    return _var.type_name();
+  }
 
   Variability variability{Variability::Varying}; // 'uniform` qualifier is handled with `variability=uniform`
 
@@ -1117,12 +1127,36 @@ struct PrimAttrib {
 
   AttrMeta meta;
 
-  bool blocked{false}; // Attribute Block('None')
+  
+  void set_var(primvar::PrimVar &&v) {
+    if (_type_name.empty()) {
+      _type_name = v.type_name();
+    }
 
-  //
-  // Conent
-  //
-  primvar::PrimVar var;
+    _var = std::move(v);
+  }
+
+  template<typename T>
+  nonstd::optional<T> get_value() const {
+    return _var.get_value<T>();
+  }
+
+  const primvar::PrimVar &get_var() const {
+    return _var;
+  }
+
+  void set_blocked(bool onoff) {
+    _blocked = onoff;
+  }
+
+  bool blocked() const {
+    return _blocked;
+  }
+
+ private:
+  bool _blocked{false}; // Attribute Block('None')
+  std::string _type_name;
+  primvar::PrimVar _var;
 };
 
 ///

@@ -118,8 +118,10 @@ constexpr auto kNormal3h= "normal3h";
 constexpr auto kNormal3f= "normal3f";
 constexpr auto kNormal3d= "normal3d";
 
+constexpr auto kColor3h= "color3h";
 constexpr auto kColor3f= "color3f";
 constexpr auto kColor3d= "color3d";
+constexpr auto kColor4h= "color4h";
 constexpr auto kColor4f= "color4f";
 constexpr auto kColor4d= "color4d";
 
@@ -605,12 +607,28 @@ struct point3d {
   double operator[](size_t idx) { return *(&x + idx); }
 };
 
+struct color3h {
+  half r, g, b;
+
+  // C++11 or later, struct is tightly packed, so use the pointer offset is
+  // valid.
+  half operator[](size_t idx) { return *(&r + idx); }
+};
+
 struct color3f {
   float r, g, b;
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
   float operator[](size_t idx) { return *(&r + idx); }
+};
+
+struct color4h {
+  half r, g, b, a;
+
+  // C++11 or later, struct is tightly packed, so use the pointer offset is
+  // valid.
+  half operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct color4f {
@@ -755,6 +773,8 @@ DEFINE_ROLE_TYPE_TRAIT(point3d, kPoint3d, TYPE_ID_POINT3D, double3);
 
 DEFINE_ROLE_TYPE_TRAIT(frame4d, kFrame4d, TYPE_ID_FRAME4D, matrix4d);
 
+DEFINE_ROLE_TYPE_TRAIT(color3h, kColor3h, TYPE_ID_COLOR3H, half3);
+DEFINE_ROLE_TYPE_TRAIT(color4h, kColor4h, TYPE_ID_COLOR4H, half4);
 DEFINE_ROLE_TYPE_TRAIT(color3f, kColor3f, TYPE_ID_COLOR3F, float3);
 DEFINE_ROLE_TYPE_TRAIT(color4f, kColor4f, TYPE_ID_COLOR4F, float4);
 DEFINE_ROLE_TYPE_TRAIT(color3d, kColor3d, TYPE_ID_COLOR3D, double3);
@@ -819,12 +839,32 @@ struct TypeTrait<std::vector<std::vector<T>>> {
 };
 
 // Lookup TypeTrait<T>::type_name from type_id
+// Return nullopt when the input is invalid type id.
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
+
+// Return error string when the input is invalid type id
 std::string GetTypeName(uint32_t tyid);
 
 // Lookup TypeTrait<T>::type_id from string
+// Return nullopt when the input is invalid type name.
 nonstd::optional<uint32_t> TryGetTypeId(const std::string &tyname);
+
+// Return TYPE_ID_INVALID when the input is invalid type name
 uint32_t GetTypeId(const std::string &tyname);
+
+
+// For Role type.
+// Get underlying type name(e.g. return type "float4" for role type "color4f"), or return nullopt/invalid string for invalid input type id.
+// For non-Role type, the behavior is same with TryGetTypeName/GetTypeName(i.e, return "float4" for type `float4`)
+nonstd::optional<std::string> TryGetUnderlyingTypeName(uint32_t tyid);
+std::string GetUnderlyingTypeName(uint32_t tyid);
+
+// Get underlying type id(e.g. return type "float4" for role type "color4f"), or return nullopt/TYPE_ID_INVALID for invalid input type name
+// For non-Role type, the behavior is same with TryGetTypeId/GetTypeId(i.e, return `float4` for name "float4")
+nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname);
+uint32_t GetUnderlyingTypeId(const std::string &tyname);
+
+
 
 }  // namespace value
 }  // namespace tinyusdz

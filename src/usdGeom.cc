@@ -30,13 +30,13 @@ std::vector<value::normal3f> GeomMesh::GetNormals() const {
       return dst;
     }
 
-    if (prop.attrib.var.is_timesample()) {
+    if (prop.attrib.get_var().is_timesample()) {
       // TODO:
       return dst;
     }
 
-    if (prop.attrib.var.type_name() == "normal3f[]") {
-      if (auto pv = prop.attrib.var.get_value<std::vector<value::normal3f>>()) {
+    if (prop.attrib.type_name() == "normal3f[]") {
+      if (auto pv = prop.attrib.get_value<std::vector<value::normal3f>>()) {
         dst = pv.value();
       }
     }
@@ -60,7 +60,7 @@ std::vector<value::normal3f> GeomMesh::GetNormals() const {
 Interpolation GeomMesh::GetNormalsInterpolation() const {
   if (props.count(kPrimvarsNormals)) {
     const auto &prop = props.at(kPrimvarsNormals);
-    if (prop.attrib.var.type_name() == "normal3f[]") {
+    if (prop.attrib.type_name() == "normal3f[]") {
       if (prop.attrib.meta.interpolation) {
         return prop.attrib.meta.interpolation.value();
       }
