@@ -184,18 +184,19 @@ struct Section {
 // From CityHash code.
 template <class T>
 inline void hash_combine(std::size_t &seed, const T &v) {
-#ifdef __wasi__  // 32bit platform
+#if defined(__wasi__) || (sizeof(std::size_t) == 4)  // 32bit platform
   // Use boost version.
   std::hash<T> hasher;
   seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 #else
+  // Assume 64bit
   std::hash<T> hasher;
-  const uint64_t kMul = 0x9ddfea08eb382d69ULL;
-  std::size_t a = (hasher(v) ^ seed) * kMul;
+  const size_t kMul = 0x9ddfea08eb382d69ULL;
+  size_t a = (hasher(v) ^ seed) * kMul;
   a ^= (a >> 47);
-  std::size_t b = (seed ^ a) * kMul;
+  size_t b = (seed ^ a) * kMul;
   b ^= (b >> 47);
-  seed = b * kMul;
+  seed = size_t(b * kMul);
 #endif
 }
 

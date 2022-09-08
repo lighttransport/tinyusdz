@@ -105,7 +105,7 @@ inline bool operator==(const Token &tok, const std::string &rhs) {
 
 struct TokenHasher {
   inline size_t operator()(const Token &tok) const {
-    return tok.hash();
+    return size_t(tok.hash());
   } 
 };
 

@@ -512,7 +512,7 @@ class AsciiParser {
 
   bool Rewind(size_t offset);
   uint64_t CurrLoc();
-  bool SeekTo(size_t pos);
+  bool SeekTo(uint64_t pos); // Move to absolute `pos` bytes location
 
   bool PushParserState();
   bool PopParserState(ParseState *state);
