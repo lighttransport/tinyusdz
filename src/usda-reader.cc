@@ -92,6 +92,9 @@ RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(BlendShape);
 RECONSTRUCT_PRIM_DECL(LuxDomeLight);
 RECONSTRUCT_PRIM_DECL(LuxSphereLight);
+RECONSTRUCT_PRIM_DECL(LuxCylinderLight);
+RECONSTRUCT_PRIM_DECL(LuxDiskLight);
+RECONSTRUCT_PRIM_DECL(LuxDistantLight);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
@@ -154,6 +157,9 @@ DEFINE_PRIM_TYPE(GeomBasisCurves, "BasisCurves",
 DEFINE_PRIM_TYPE(GeomSubset, "GeomSubset", value::TYPE_ID_GEOM_GEOMSUBSET);
 DEFINE_PRIM_TYPE(LuxSphereLight, "SphereLight", value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(LuxDomeLight, "DomeLight", value::TYPE_ID_LUX_DOME);
+DEFINE_PRIM_TYPE(LuxDiskLight, "DiskLight", value::TYPE_ID_LUX_DISK);
+DEFINE_PRIM_TYPE(LuxDistantLight, "DistantLight", value::TYPE_ID_LUX_DISTANT);
+DEFINE_PRIM_TYPE(LuxCylinderLight, "CylinderLight", value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(Material, "Material", value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, "Shader", value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(SkelRoot, "SkelRoot", value::TYPE_ID_SKEL_ROOT);
@@ -1313,6 +1319,9 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
 
   RegisterReconstructCallback<LuxSphereLight>();
   RegisterReconstructCallback<LuxDomeLight>();
+  RegisterReconstructCallback<LuxDiskLight>();
+  RegisterReconstructCallback<LuxDistantLight>();
+  RegisterReconstructCallback<LuxCylinderLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();

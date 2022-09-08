@@ -334,6 +334,7 @@ enum TypeId {
   TYPE_ID_LUX_CYLINDER,
   TYPE_ID_LUX_DISK,
   TYPE_ID_LUX_RECT,
+  TYPE_ID_LUX_DISTANT,
   TYPE_ID_LUX_END,
 
   // Types for usdShader
