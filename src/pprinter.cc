@@ -651,12 +651,7 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
 
       std::string ty;
 
-      if (prop.IsConnection()) {
-        ty = attr.type_name;
-      } else {
-        // TODO: Use `attr.type_name`?
-        ty = attr.var.type_name();
-      }
+      ty = attr.type_name();
       ss << ty << " " << item.first;
 
       if (prop.IsConnection()) {
@@ -673,11 +668,11 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
         // has value content
         ss << " = ";
 
-        if (attr.var.is_timesample()) {
+        if (attr.get_var().is_timesample()) {
           ss << "[TODO: TimeSamples]";
         } else {
           // is_scalar
-          ss << value::pprint_value(attr.var.var.values[0]);
+          ss << value::pprint_value(attr.get_var().var.values[0]);
         }
       }
     }

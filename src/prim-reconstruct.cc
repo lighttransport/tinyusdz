@@ -129,7 +129,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    std::string attr_type_name = attr.type_name();
     if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
@@ -140,18 +140,18 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         DCOUT("Adding typed prop: " << name);
 
-        if (attr.blocked) {
+        if (attr.blocked()) {
           // e.g. "float radius = None"
           target.SetBlock(true);
         } else if (attr.variability == Variability::Uniform) {
           // e.g. "float radius = 1.2"
-          if (!attr.var.is_scalar()) {
+          if (!attr.get_var().is_scalar()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
             ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
             return ret;
           }
 
-          if (auto pv = attr.var.get_value<T>()) {
+          if (auto pv = attr.get_value<T>()) {
             target.set(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
@@ -159,11 +159,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
 
-        } else if (attr.var.is_timesample()) {
+        } else if (attr.get_var().is_timesample()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           Animatable<T> anim;
-          if (auto av = ConvertToAnimatable<T>(attr.var)) {
+          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
             anim = av.value();
             target.set(anim);
           } else {
@@ -222,7 +222,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    std::string attr_type_name = attr.type_name();
     if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
@@ -238,10 +238,10 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        if (attr.blocked) {
+        if (attr.blocked()) {
           target.SetBlock(true);
-        } else if (attr.var.is_scalar()) {
-          if (auto pv = attr.var.get_value<T>()) {
+        } else if (attr.get_var().is_scalar()) {
+          if (auto pv = attr.get_value<T>()) {
             target.set(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -301,7 +301,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    std::string attr_type_name = attr.type_name();
     if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
@@ -312,18 +312,18 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         DCOUT("Adding typed attribute: " << name);
 
-        if (attr.blocked) {
+        if (attr.blocked()) {
           // e.g. "float radius = None"
           target.SetBlock(true);
         } else if (attr.variability == Variability::Uniform) {
           // e.g. "float radius = 1.2"
-          if (!attr.var.is_scalar()) {
+          if (!attr.get_var().is_scalar()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
             ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
             return ret;
           }
 
-          if (auto pv = attr.var.get_value<T>()) {
+          if (auto pv = attr.get_value<T>()) {
             target.set(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
@@ -331,11 +331,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
 
-        } else if (attr.var.is_timesample()) {
+        } else if (attr.get_var().is_timesample()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           Animatable<T> anim;
-          if (auto av = ConvertToAnimatable<T>(attr.var)) {
+          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
             anim = av.value();
             target.set(anim);
           } else {
@@ -345,8 +345,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
             return ret;
           }
-        } else if (attr.var.is_scalar()) {
-          if (auto pv = attr.var.get_value<T>()) {
+        } else if (attr.get_var().is_scalar()) {
+          if (auto pv = attr.get_value<T>()) {
             target.set(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
@@ -411,7 +411,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    std::string attr_type_name = attr.type_name();
     DCOUT(fmt::format("prop name {}, type = {}", prop_name, attr_type_name));
     if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
@@ -429,10 +429,10 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        if (attr.blocked) {
+        if (attr.blocked()) {
           target.SetBlock(true);
-        } else if (attr.var.is_scalar()) {
-          if (auto pv = attr.var.get_value<T>()) {
+        } else if (attr.get_var().is_scalar()) {
+          if (auto pv = attr.get_value<T>()) {
             target.set(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -502,13 +502,12 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.var.type_name());
+    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.type_name());
 
 
-    // Type info is stored in Attribute::type_name for EmptyAttrib
-    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    std::string attr_type_name = attr.type_name();
 
-    if (value::TypeTrait<T>::type_name() == attr_type_name) {
+    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.define_only = true;
         target.variability = attr.variability;
@@ -519,10 +518,10 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
 
         Animatable<T> anim;
 
-        if (attr.blocked) {
+        if (attr.blocked()) {
           anim.blocked = true;
         } else {
-          if (auto av = ConvertToAnimatable<T>(attr.var)) {
+          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
             anim = av.value();
           } else {
             // Conversion failed.
@@ -610,8 +609,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
     }
     const PrimAttrib &attr = prop.attrib;
 
-    // Type info is stored in Attribute::type_name
-    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    std::string attr_type_name = attr.type_name();
     if (value::TypeTrait<T>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         // OK
@@ -629,7 +627,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
     } else {
       DCOUT("attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
-      ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTrait<T>::type_name(), attr.type_name);
+      ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTrait<T>::type_name(), attr_type_name);
       return ret;
     }
   }
@@ -671,8 +669,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     }
     const PrimAttrib &attr = prop.attrib;
 
-    // Type info is stored in Attribute::type_name
-    std::string attr_type_name = (prop.type == Property::Type::EmptyAttrib) ? attr.type_name : attr.var.type_name();
+    std::string attr_type_name = attr.type_name();
     if (value::TypeTrait<value::token>::type_name() == attr_type_name) {
       if (prop.type == Property::Type::EmptyAttrib) {
         Relation rel;
@@ -689,10 +686,10 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
         return ret;
       }
     } else {
-      DCOUT("attr.type = " << attr.var.type_name());
+      DCOUT("attr.type = " << attr.type_name());
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `token` but defined as type `" << attr.var.type_name() << "`";
+      ss  << "Property type mismatch. " << name << " expects type `token` but defined as type `" << attr.type_name() << "`";
       ret.err = ss.str();
       return ret;
     }
@@ -837,11 +834,11 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
   }
 
   if (attr.variability == Variability::Uniform) {
-    if (attr.var.is_timesample()) {
+    if (attr.get_var().is_timesample()) {
       return nonstd::make_unexpected(fmt::format("Property `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name));
     }
 
-    if (auto tok = attr.var.get_value<value::token>()) {
+    if (auto tok = attr.get_value<value::token>()) {
       auto e = enum_handler(tok.value().str());
       if (e) {
         (*result) = e.value();
@@ -850,15 +847,15 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
         return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTrait<T>::type_name(), e.error()));
       }
     } else {
-      return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.var.type_name()));
+      return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
     }
 
 
   } else {
     // uniform or TimeSamples
-    if (attr.var.is_scalar()) {
+    if (attr.get_var().is_scalar()) {
 
-      if (auto tok = attr.var.get_value<value::token>()) {
+      if (auto tok = attr.get_value<value::token>()) {
         auto e = enum_handler(tok.value().str());
         if (e) {
           (*result) = e.value();
@@ -867,10 +864,10 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
           return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTrait<T>::type_name(), e.error()));
         }
       } else {
-        return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.var.type_name()));
+        return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
       }
-    } else if (attr.var.is_timesample()) {
-      size_t n = attr.var.num_timesamples();
+    } else if (attr.get_var().is_timesample()) {
+      size_t n = attr.get_var().num_timesamples();
 
       TypedTimeSamples<T> samples;
 
@@ -878,14 +875,14 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 
         double sample_time;
 
-        if (auto pv = attr.var.get_ts_time(i)) {
+        if (auto pv = attr.get_var().get_ts_time(i)) {
           sample_time = pv.value();
         } else {
           // This should not happen.
           return nonstd::make_unexpected("Internal error.");
         }
 
-        if (auto pv = attr.var.is_ts_value_blocked(i)) {
+        if (auto pv = attr.get_var().is_ts_value_blocked(i)) {
           if (pv.value() == true) {
             samples.AddBlockedSample(sample_time);
             continue;
@@ -895,7 +892,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
           return nonstd::make_unexpected("Internal error.");
         }
 
-        if (auto tok = attr.var.get_ts_value<value::token>(i)) {
+        if (auto tok = attr.get_var().get_ts_value<value::token>(i)) {
           auto e = enum_handler(tok.value().str());
           if (e) {
             samples.AddSample(sample_time, e.value());
@@ -927,7 +924,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
   if (__prop.first == __name) {                                              \
     if (__table.count(__name)) { continue; } \
     const PrimAttrib &attr = __prop.second.attrib;                           \
-    if (auto tok = attr.var.get_value<value::token>()) {                     \
+    if (auto tok = attr.get_value<value::token>()) {                     \
       auto e = __enum_handler(tok.value().str());                            \
       if (e) {                                                               \
         __target = e.value();                                                \
@@ -941,7 +938,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
       PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()    \
                                 << ") Property type mismatch. " << __name    \
                                 << " must be type `token`, but got `"        \
-                                << attr.var.type_name() << "`.");            \
+                                << attr.type_name() << "`.");            \
     }                                                                        \
   } } 
 
@@ -977,8 +974,11 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
  }
 
 // This code path should not be reached though.
-#define PARSE_PROPERTY_END_MAKE_WARN(__prop) \
-  { PUSH_WARN("Unsupported/unimplemented property: " + __prop.first); }
+#define PARSE_PROPERTY_END_MAKE_WARN(__table, __prop) { \
+  if (!__table.count(__prop.first)) { \
+    PUSH_WARN("Unsupported/unimplemented property: " + __prop.first); \
+   } \
+ }
 
 bool ReconstructXformOpsFromProperties(
   std::set<std::string> &table, /* inout */
@@ -1044,7 +1044,7 @@ bool ReconstructXformOpsFromProperties(
     if (prop.IsRel()) {
       PUSH_ERROR_AND_RETURN("Relation for `xformOpOrder` is not supported.");
     } else if (auto pv =
-                   prop.attrib.var.get_value<std::vector<value::token>>()) {
+                   prop.attrib.get_value<std::vector<value::token>>()) {
 
       // 'uniform' check
       if (prop.attrib.variability != Variability::Uniform) {
@@ -1103,207 +1103,207 @@ bool ReconstructXformOpsFromProperties(
           op.op = XformOp::OpType::Transform;
           op.suffix = xfm.value();  // may contain nested namespaces
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::matrix4d>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::matrix4d>()) {
             op.set_scalar(pvd.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:transform` must be type `matrix4d`, but got type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
 
         } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
           op.op = XformOp::OpType::Translate;
           op.suffix = tx.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:translate` must be type `double3` or `float3`, but "
                 "got type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto scale = SplitXformOpToken(tok, kScale)) {
           op.op = XformOp::OpType::Scale;
           op.suffix = scale.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:scale` must be type `double3` or `float3`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
           op.op = XformOp::OpType::RotateX;
           op.suffix = rotX.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<double>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<float>()) {
+          } else if (auto pvf = attr.get_value<float>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateX` must be type `double` or `float`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
           op.op = XformOp::OpType::RotateY;
           op.suffix = rotX.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<double>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<float>()) {
+          } else if (auto pvf = attr.get_value<float>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateY` must be type `double` or `float`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotZ = SplitXformOpToken(tok, kRotateZ)) {
           op.op = XformOp::OpType::RotateY;
           op.suffix = rotZ.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<double>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<float>()) {
+          } else if (auto pvf = attr.get_value<float>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZ` must be type `double` or `float`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
           op.op = XformOp::OpType::RotateXYZ;
           op.suffix = rotateXYZ.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotateXZY = SplitXformOpToken(tok, kRotateXZY)) {
           op.op = XformOp::OpType::RotateXZY;
           op.suffix = rotateXZY.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
           op.op = XformOp::OpType::RotateYXZ;
           op.suffix = rotateYXZ.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotateYZX = SplitXformOpToken(tok, kRotateYZX)) {
           op.op = XformOp::OpType::RotateYZX;
           op.suffix = rotateYZX.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
           op.op = XformOp::OpType::RotateZXY;
           op.suffix = rotateZXY.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto rotateZYX = SplitXformOpToken(tok, kRotateZYX)) {
           op.op = XformOp::OpType::RotateZYX;
           op.suffix = rotateZYX.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::double3>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::float3>()) {
+          } else if (auto pvf = attr.get_value<value::float3>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
           op.op = XformOp::OpType::Orient;
           op.suffix = orient.value();
 
-          if (attr.var.is_timesample()) {
-            op.set_timesamples(attr.var.var);
-          } else if (auto pvd = attr.var.get_value<value::quatf>()) {
+          if (attr.get_var().is_timesample()) {
+            op.set_timesamples(attr.get_var().var);
+          } else if (auto pvd = attr.get_value<value::quatf>()) {
             op.set_scalar(pvd.value());
-          } else if (auto pvf = attr.var.get_value<value::quatd>()) {
+          } else if (auto pvf = attr.get_value<value::quatd>()) {
             op.set_scalar(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:orient` must be type `quatf` or `quatd`, but got "
                 "type `" +
-                attr.var.type_name() + "`.");
+                attr.type_name() + "`.");
           }
         } else {
           PUSH_ERROR_AND_RETURN(
@@ -1317,7 +1317,7 @@ bool ReconstructXformOpsFromProperties(
     } else {
       PUSH_ERROR_AND_RETURN(
           "`xformOpOrder` must be type `token[]` but got type `"
-          << prop.attrib.var.type_name() << "`.");
+          << prop.attrib.type_name() << "`.");
     }
   }
 
@@ -1375,7 +1375,7 @@ bool ReconstructPrim<Model>(
   std::set<std::string> table;
   for (const auto &prop : properties) {
     ADD_PROPERY(table, prop, Model, model->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -1398,7 +1398,7 @@ bool ReconstructPrim<Scope>(
   std::set<std::string> table;
   for (const auto &prop : properties) {
     ADD_PROPERY(table, prop, Scope, scope->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -1426,7 +1426,7 @@ bool ReconstructPrim<SkelRoot>(
   // custom props only
   for (const auto &prop : properties) {
     ADD_PROPERY(table, prop, SkelRoot, root->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -1622,7 +1622,7 @@ bool ReconstructPrim(
 
     ADD_PROPERY(table, prop, GeomBasisCurves, curves->props)
 
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -1646,7 +1646,7 @@ bool ReconstructPrim<LuxSphereLight>(
     PARSE_TYPED_PROPERTY(table, prop, "inputs:intensity", LuxSphereLight,
                    light->intensity)
     ADD_PROPERY(table, prop, LuxSphereLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -1675,7 +1675,7 @@ bool ReconstructPrim<LuxDomeLight>(
     PARSE_TYPED_PROPERTY(table, prop, "inputs:intensity", LuxDomeLight,
                    light->intensity)
     ADD_PROPERY(table, prop, LuxDomeLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   DCOUT("Implement DomeLight");
@@ -2157,6 +2157,7 @@ bool ReconstructPrim<GeomMesh>(
   std::set<std::string> table;
 
   for (const auto &prop : properties) {
+    DCOUT("GeomMesh prop: " << prop.first);
     if (prop.second.IsRel()) {
       PARSE_MATERIAL_BINDING_RELATION(table, prop, mesh)
       PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
@@ -2197,7 +2198,7 @@ bool ReconstructPrim<GeomMesh>(
                          FacevaryingLinearInterpolationHandler, GeomMesh,
                          mesh->facevaryingLinearInterpolation)
       ADD_PROPERY(table, prop, GeomMesh, mesh->props)
-      PARSE_PROPERTY_END_MAKE_WARN(prop)
+      PARSE_PROPERTY_END_MAKE_WARN(table, prop)
     }
   }
 
@@ -2353,7 +2354,7 @@ bool ReconstructShader<UsdPreviewSurface>(
     PARSE_SHADER_OUTPUT_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface,
                    surface->outputsDisplacement)
     ADD_PROPERY(table, prop, UsdPreviewSurface, surface->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -2403,7 +2404,7 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:rgb", UsdUVTexture,
                                   texture->outputsRGB)
     ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -2427,7 +2428,7 @@ bool ReconstructShader<UsdPrimvarReader_int>(
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_int, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_int, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return false;
 }
@@ -2450,7 +2451,7 @@ bool ReconstructShader<UsdPrimvarReader_float>(
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return false;
 }
@@ -2473,7 +2474,7 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float2, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -2497,7 +2498,7 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float3, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float3, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   return true;
@@ -2521,7 +2522,7 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float2, preader->result)
     ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(prop)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return true;
 }
@@ -2548,10 +2549,10 @@ bool ReconstructPrim<Shader>(
     if (prop.first == "info:id") {
       const PrimAttrib &attr = prop.second.attrib;
 
-      auto pv = attr.var.get_value<value::token>();
+      auto pv = attr.get_value<value::token>();
       if (!pv) {
         PUSH_ERROR_AND_RETURN("`info:id` must be type `token`, but got type `"
-                              << attr.var.type_name() << "`.");
+                              << attr.type_name() << "`.");
       }
 
       std::string shader_type = pv.value().str();
