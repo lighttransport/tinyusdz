@@ -446,6 +446,11 @@ endif()
 #
 foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
+  # /bigobj is required to avoid : fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
+  if(MSVC)
+    target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
+  endif()
+
   if(TINYUSDZ_PRODUCTION_BUILD)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_PRODUCTION_BUILD")

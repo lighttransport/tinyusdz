@@ -34,6 +34,6 @@ bool ImGuiComboUI(const std::string &caption, std::string &current_key,
 }
 
 
-bool material_ui(tinyusdz::PreviewSurface &material);
+bool material_ui(tinyusdz::UsdPreviewSurface &material);
 
 } // namesapce example
