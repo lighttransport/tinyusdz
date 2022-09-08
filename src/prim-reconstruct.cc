@@ -517,7 +517,7 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
         ret.err = "Internal error. Invalid property with connection.";
         return ret;
       }
-      
+
     } else if (prop.IsAttrib()) {
 
       DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.type_name());
@@ -948,6 +948,18 @@ template <typename EnumTy>
 using EnumHandlerFun = std::function<nonstd::expected<EnumTy, std::string>(
     const std::string &)>;
 
+static nonstd::expected<Axis, std::string> AxisEnumHandler(const std::string &tok) {
+  using EnumTy = std::pair<Axis, const char *>;
+  const std::vector<EnumTy> enums = {
+      std::make_pair(Axis::X, "X"),
+      std::make_pair(Axis::Y,
+                     "Y"),
+      std::make_pair(Axis::Z, "Z"),
+  };
+  return EnumHandler<Axis>("axis", tok, enums);
+};
+
+#if 0
 // Animatable enum
 template<typename T, typename EnumTy>
 nonstd::expected<bool, std::string> ParseEnumProperty(
@@ -1042,10 +1054,10 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 
   return false;
 }
+#endif
 
 
-// Uniform enum
-
+// For Uniform enum(e.g. nonstd::optional<Axis>)
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target) {                                      \
   if (__prop.first == __name) {                                              \
@@ -1729,17 +1741,21 @@ bool ReconstructPrim(
 
   std::set<std::string> table;
 
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &curves->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_PROPERTY(table, prop, "curveVertexCounts", GeomBasisCurves,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "curveVertexCounts", GeomBasisCurves,
                          curves->curveVertexCounts)
-    PARSE_TYPED_PROPERTY(table, prop, "points", GeomBasisCurves, curves->points)
-    PARSE_TYPED_PROPERTY(table, prop, "velocities", GeomBasisCurves,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomBasisCurves, curves->points)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomBasisCurves,
                           curves->velocities)
-    PARSE_TYPED_PROPERTY(table, prop, "normals", GeomBasisCurves,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomBasisCurves,
                   curves->normals)
-    PARSE_TYPED_PROPERTY(table, prop, "accelerations", GeomBasisCurves,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomBasisCurves,
                  curves->accelerations)
-    PARSE_TYPED_PROPERTY(table, prop, "widths", GeomBasisCurves, curves->widths)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomBasisCurves, curves->widths)
     PARSE_ENUM_PROPETY(table, prop, "type", TypeHandler, GeomBasisCurves,
                        curves->type)
     PARSE_ENUM_PROPETY(table, prop, "basis", BasisHandler, GeomBasisCurves,
@@ -1766,6 +1782,11 @@ bool ReconstructPrim<LuxSphereLight>(
   (void)references;
 
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_PROPERTY(table, prop, "inputs:color", LuxSphereLight, light->color)
@@ -1790,6 +1811,10 @@ bool ReconstructPrim<LuxDomeLight>(
   (void)references;
 
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+    return false;
+  }
 
   for (const auto &prop : properties) {
     PARSE_TYPED_PROPERTY(table, prop, "guideRadius", LuxDomeLight, light->guideRadius)
@@ -1862,6 +1887,11 @@ bool ReconstructPrim<GeomSphere>(
 #endif
 
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &sphere->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
@@ -1871,7 +1901,7 @@ bool ReconstructPrim<GeomSphere>(
         table.insert(prop.first);
       }
     } else {
-      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomSphere, sphere->radius)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomSphere, sphere->radius)
       ADD_PROPERY(table, prop, GeomSphere, sphere->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -1969,6 +1999,11 @@ bool ReconstructPrim<GeomPoints>(
 #endif
 
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &points->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
@@ -1978,12 +2013,12 @@ bool ReconstructPrim<GeomPoints>(
         table.insert(prop.first);
       }
     } else {
-      PARSE_TYPED_PROPERTY(table, prop, "points", GeomPoints, points->points)
-      PARSE_TYPED_PROPERTY(table, prop, "normals", GeomPoints, points->normals)
-      PARSE_TYPED_PROPERTY(table, prop, "widths", GeomPoints, points->widths)
-      PARSE_TYPED_PROPERTY(table, prop, "ids", GeomPoints, points->ids)
-      PARSE_TYPED_PROPERTY(table, prop, "velocities", GeomPoints, points->velocities)
-      PARSE_TYPED_PROPERTY(table, prop, "accelerations", GeomPoints, points->accelerations)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomPoints, points->points)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomPoints, points->normals)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomPoints, points->widths)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "ids", GeomPoints, points->ids)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPoints, points->velocities)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPoints, points->accelerations)
       ADD_PROPERY(table, prop, GeomSphere, points->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2039,6 +2074,11 @@ bool ReconstructPrim<GeomCone>(
   (void)references;
 
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &cone->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
@@ -2048,8 +2088,9 @@ bool ReconstructPrim<GeomCone>(
         table.insert(prop.first);
       }
     } else {
-      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCone, cone->radius)
-      PARSE_TYPED_PROPERTY(table, prop, "height", GeomCone, cone->height)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
+      PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2067,7 +2108,13 @@ bool ReconstructPrim<GeomCylinder>(
 
   (void)references;
 
+
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &cylinder->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
@@ -2077,10 +2124,11 @@ bool ReconstructPrim<GeomCylinder>(
         table.insert(prop.first);
       }
     } else {
-      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCylinder,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCylinder,
                            cylinder->radius)
-      PARSE_TYPED_PROPERTY(table, prop, "height", GeomCylinder,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
                            cylinder->height)
+      PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2099,6 +2147,11 @@ bool ReconstructPrim<GeomCapsule>(
   (void)references;
 
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &capsule->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
@@ -2108,8 +2161,9 @@ bool ReconstructPrim<GeomCapsule>(
         table.insert(prop.first);
       }
     } else {
-      PARSE_TYPED_PROPERTY(table, prop, "radius", GeomCapsule, capsule->radius)
-      PARSE_TYPED_PROPERTY(table, prop, "height", GeomCapsule, capsule->height)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
+      PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2131,6 +2185,11 @@ bool ReconstructPrim<GeomCube>(
   // pxrUSD says... "If you author size you must also author extent."
   //
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &cube->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
@@ -2140,7 +2199,7 @@ bool ReconstructPrim<GeomCube>(
         table.insert(prop.first);
       }
     } else {
-      PARSE_TYPED_PROPERTY(table, prop, "size", GeomCube, cube->size)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "size", GeomCube, cube->size)
       ADD_PROPERY(table, prop, GeomCube, cube->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2283,6 +2342,10 @@ bool ReconstructPrim<GeomMesh>(
 
   std::set<std::string> table;
 
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &mesh->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     DCOUT("GeomMesh prop: " << prop.first);
     if (prop.second.IsRel()) {
@@ -2407,6 +2470,11 @@ bool ReconstructPrim<GeomCamera>(
   };
 
   std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &camera->xformOps, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "focalLength", GeomCamera, camera->focalLength)
     PARSE_TYPED_ATTRIBUTE(table, prop, "focusDistance", GeomCamera,

@@ -11,7 +11,7 @@ namespace tinyusdz {
 constexpr auto kLuxSphereLight = "SphereLight";
 constexpr auto kLuxDomeLight = "DomeLight";
 
-struct LuxSphereLight {
+struct LuxSphereLight : public Xformable {
   std::string name;
 
   int64_t parent_id{-1};  // Index to xform node
@@ -44,7 +44,7 @@ struct LuxSphereLight {
   PrimMeta meta;
 };
 
-struct LuxDomeLight {
+struct LuxDomeLight : public Xformable {
   std::string name;
   int64_t parent_id{-1};  // Index to xform node
 
