@@ -26,11 +26,11 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 
 }  // namespace
 
-nonstd::expected<TransformNode, std::string> Convert(const Stage &stage, const Xform &xform) {
+nonstd::expected<Node, std::string> Convert(const Stage &stage, const Xform &xform) {
 
   (void)stage;
 
-  TransformNode node;
+  Node node;
   if (auto m = xform.GetLocalMatrix()) {
     node.local_matrix = m.value();
   }
@@ -41,12 +41,11 @@ nonstd::expected<TransformNode, std::string> Convert(const Stage &stage, const X
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const GeomMesh &mesh) {
   RenderMesh dst;
 
-  //if (mesh.points.value) {
-  //  if (auto pv = mesh.points.
-  //  dst.points.resize(mesh.points.value.size());
-  //  memcpy(dst.points.data(), mesh.points.value.data(),
-  //         sizeof(value::float3) * mesh.points.value.size());
-  //}
+  if (mesh.GetPoints().size()) {
+    dst.points.resize(mesh.GetPoints().size());
+    memcpy(dst.points.data(), mesh.GetPoints().data(),
+           sizeof(value::float3) * mesh.GetPoints().size());
+  }
 
   // normals
   {

@@ -1835,10 +1835,88 @@ std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool c
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(light.color, "inputs:color", indent+1);
-  ss << print_typed_prop(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_prop(light.radius, "inputs:radius", indent+1);
-  ss << print_typed_prop(light.specular, "inputs:specular", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+
+  ss << print_xformOps(light.xformOps, indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const LuxDistantLight &light, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def DistantLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  ss << print_prim_metas(light.meta, indent+1);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+
+  ss << print_typed_attr(light.angle, "inputs:angle", indent+1);
+
+  ss << print_xformOps(light.xformOps, indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const LuxCylinderLight &light, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def CylinderLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  ss << print_prim_metas(light.meta, indent+1);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+
+  ss << print_typed_attr(light.length, "inputs:length", indent+1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+
+  ss << print_xformOps(light.xformOps, indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const LuxDiskLight &light, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "def DiskLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << "(\n";
+  ss << print_prim_metas(light.meta, indent+1);
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+
+  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
 
@@ -1859,8 +1937,8 @@ std::string to_string(const LuxDomeLight &light, const uint32_t indent, bool clo
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(light.color, "inputs:color", indent+1);
-  ss << print_typed_prop(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
 
