@@ -78,7 +78,8 @@ struct DrawGeomMesh {
   /// Required accessor API for NanoSG
   ///
   const float *GetVertices() const {
-    return reinterpret_cast<const float *>(ref_mesh->points.data());
+     return nullptr; // TODO
+    //return reinterpret_cast<const float *>(ref_mesh->points.data());
   }
 
   size_t GetVertexStrideBytes() const { return sizeof(float) * 3; }

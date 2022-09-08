@@ -182,21 +182,32 @@ struct Section {
 
 // https://stackoverflow.com/questions/8513911/how-to-create-a-good-hash-combine-with-64-bit-output-inspired-by-boosthash-co
 // From CityHash code.
+
 template <class T>
-inline void hash_combine(std::size_t &seed, const T &v) {
-#if defined(__wasi__) || (sizeof(std::size_t) == 4)  // 32bit platform
+inline void hash_combine_impl32(std::size_t &seed, const T &v)
+{
   // Use boost version.
   std::hash<T> hasher;
   seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+template <class T>
+inline void hash_combine(std::size_t &seed, const T &v) {
+#if defined(__wasi__)  // 32bit platform
+  hash_compbine_impl32(seed, v);
 #else
-  // Assume 64bit
-  std::hash<T> hasher;
-  const size_t kMul = 0x9ddfea08eb382d69ULL;
-  size_t a = (hasher(v) ^ seed) * kMul;
-  a ^= (a >> 47);
-  size_t b = (seed ^ a) * kMul;
-  b ^= (b >> 47);
-  seed = size_t(b * kMul);
+  if (sizeof(std::size_t) == 4) {
+    hash_combine_impl32(seed, v);
+  } else {
+    // Assume 64bit
+    std::hash<T> hasher;
+    const size_t kMul = 0x9ddfea08eb382d69ULL;
+    size_t a = (hasher(v) ^ seed) * kMul;
+    a ^= (a >> 47);
+    size_t b = (seed ^ a) * kMul;
+    b ^= (b >> 47);
+    seed = size_t(b * kMul);
+  }
 #endif
 }
 

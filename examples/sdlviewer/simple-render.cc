@@ -82,6 +82,7 @@ bool LoadTextureImage(const tinyusdz::UVTexture &tex, Image *out_image) {
 }
 #endif
     
+#if 0
 bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere,
                          DrawGeomMesh* dst) {
   // TODO: Write our own sphere -> polygon converter
@@ -154,6 +155,7 @@ bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere,
 
   return true;
 }
+#endif
 
 bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
 #if 0
@@ -164,7 +166,6 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
               << " must be equal to mesh.GetNumPoints() * 3: " << mesh.GetNumPoints() * 3 << "\n";
     return false;
   }
-#endif
   dst->vertices.resize(mesh.points.size() * 3);
   memcpy(dst->vertices.data(), mesh.points.data(),
          dst->vertices.size() * sizeof(tinyusdz::value::point3f));
@@ -371,7 +372,8 @@ bool ConvertToRenderMesh(const tinyusdz::GeomMesh& mesh, DrawGeomMesh* dst) {
   std::cout << "num triangulated faces = " << dst->facevertex_indices.size() / 3
             << "\n";
 
-  return true;
+#endif
+  return false;
 }
 
 float3 Shade(const DrawGeomMesh& mesh, const DifferentialGeometry &dg, const PointLight &light) {
