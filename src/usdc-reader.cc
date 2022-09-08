@@ -76,13 +76,14 @@ RECONSTRUCT_PRIM_DECL(GeomCube);
 RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
+RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(LuxSphereLight);
 RECONSTRUCT_PRIM_DECL(LuxDomeLight);
 RECONSTRUCT_PRIM_DECL(SkelRoot);
 RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(Skeleton);
 RECONSTRUCT_PRIM_DECL(BlendShape);
-//RECONSTRUCT_PRIM_DECL(Material);
+RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 
 #undef RECONSTRUCT_PRIM_DECL
@@ -150,7 +151,7 @@ class USDCReader::Impl {
                        const crate::FieldValuePairVector &fvs,
                        const PathIndexToSpecIndexMap &psmap, T *prim);
 
-  bool ReconstructPrimRecursively(int parent_id, int current_id, int level,
+  bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrim, int level,
                                   const PathIndexToSpecIndexMap &psmap,
                                   Stage *stage);
 
@@ -426,19 +427,29 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 }
 
 // TODO: Use template and move code to `value-types.hh`
+// TODO: Preserve type for Role type(currently, "color3f" is converted to "float3" type)
 static bool UpcastType(
   const std::string &reqType,
   value::Value &inout)
 {
+  // `reqType` may be Role type. Get underlying type
+  uint32_t tyid;
+  if (auto pv = value::TryGetUnderlyingTypeId(reqType)) {
+    tyid = pv.value();
+  } else {
+    // Invalid reqType.
+    return false;
+  }
 
-  if (reqType == "float") {
+
+  if (tyid == value::TYPE_ID_FLOAT) {
     float dst;
     if (auto pv = inout.get_value<value::half>()) {
       dst = half_to_float(pv.value());
       inout = dst;
       return true;
     }
-  } else if (reqType == "float2") {
+  } else if (tyid == value::TYPE_ID_FLOAT2) {
     value::float2 dst;
     if (auto pv = inout.get_value<value::half2>()) {
       value::half2 v = pv.value();
@@ -447,7 +458,7 @@ static bool UpcastType(
       inout = dst;
       return true;
     }
-  } else if (reqType == "float3") {
+  } else if (tyid == value::TYPE_ID_FLOAT3) {
     value::float3 dst;
     if (auto pv = inout.get_value<value::half3>()) {
       value::half3 v = pv.value();
@@ -457,7 +468,7 @@ static bool UpcastType(
       inout = dst;
       return true;
     }
-  } else if (reqType == "float4") {
+  } else if (tyid == value::TYPE_ID_FLOAT4) {
     value::float4 dst;
     if (auto pv = inout.get_value<value::half4>()) {
       value::half4 v = pv.value();
@@ -468,14 +479,14 @@ static bool UpcastType(
       inout = dst;
       return true;
     }
-  } else if (reqType == "double") {
+  } else if (tyid == value::TYPE_ID_DOUBLE) {
     double dst;
     if (auto pv = inout.get_value<value::half>()) {
       dst = double(half_to_float(pv.value()));
       inout = dst;
       return true;
     }
-  } else if (reqType == "double2") {
+  } else if (tyid == value::TYPE_ID_DOUBLE2) {
     value::double2 dst;
     if (auto pv = inout.get_value<value::half2>()) {
       value::half2 v = pv.value();
@@ -484,7 +495,7 @@ static bool UpcastType(
       inout = dst;
       return true;
     }
-  } else if (reqType == "double3") {
+  } else if (tyid == value::TYPE_ID_DOUBLE3) {
     value::double3 dst;
     if (auto pv = inout.get_value<value::half3>()) {
       value::half3 v = pv.value();
@@ -494,7 +505,7 @@ static bool UpcastType(
       inout = dst;
       return true;
     }
-  } else if (reqType == "double4") {
+  } else if (tyid == value::TYPE_ID_DOUBLE4) {
     value::double4 dst;
     if (auto pv = inout.get_value<value::half4>()) {
       value::half4 v = pv.value();
@@ -523,7 +534,9 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
   PrimAttrib attr;
 
   bool is_scalar{false};
+
   value::Value scalar;
+  Relation rel;
 
   // TODO: Rel, TimeSamples, Connection
 
@@ -591,6 +604,77 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`interpolation` field is not `token` type.");
       }
+    } else if (fv.first == "connectionPaths") {
+      // .connect
+      propType = Property::Type::Connection;
+
+      if (auto pv = fv.second.get_value<ListOp<Path>>()) {
+        auto p = pv.value();
+        DCOUT("connectionPaths = " << to_string(p));
+
+        if (!p.IsExplicit()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "`connectionPaths` must be composed of Explicit items.");
+        }
+
+        // Must be explicit_items for now.
+        auto items = p.GetExplicitItems();
+        if (items.size() == 0) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "`connectionPaths` have empty Explicit items.");
+        }
+
+        if (items.size() == 1) {
+          // Single
+          const Path path = items[0];
+
+          rel.Set(path);
+
+        } else {
+          rel.Set(items); // [Path]
+        }
+
+      } else {
+
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`connectionPaths` field is not `ListOp[Path]` type.");
+      }
+    } else if (fv.first == "targetPaths") {
+      // `rel`
+      propType = Property::Type::Relation;
+
+      if (auto pv = fv.second.get_value<ListOp<Path>>()) {
+        auto p = pv.value();
+        DCOUT("targetPaths = " << to_string(p));
+
+        if (!p.IsExplicit()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "`targetPaths` must be composed of Explicit items.");
+        }
+
+        // Must be explicit_items for now.
+        auto items = p.GetExplicitItems();
+        if (items.size() == 0) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "`targetPaths` have empty Explicit items.");
+        }
+
+        if (items.size() == 1) {
+          // Single
+          const Path path = items[0];
+
+          rel.Set(path);
+
+        } else {
+          rel.Set(items); // [Path]
+        }
+
+      } else {
+
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`targetPaths` field is not `ListOp[Path]` type.");
+      }
+
     } else {
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);
@@ -622,9 +706,17 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
 
 
   if (propType == Property::Type::EmptyAttrib) {
-    (*prop) = Property(custom);
+    if (typeName) {
+      (*prop) = Property(typeName.value().str(), custom);
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
+    }
   } else if (propType == Property::Type::Attrib) {
     (*prop) = Property(attr, custom);
+  } else if (propType == Property::Type::Connection) {
+    (*prop) = Property(rel, /* isConnection*/ true, custom);
+  } else if (propType == Property::Type::Relation) {
+    (*prop) = Property(rel, /* isConnection */false, custom);
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
   }
@@ -913,7 +1005,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 }
 
 bool USDCReader::Impl::ReconstructPrimRecursively(
-    int parent, int current, int level, const PathIndexToSpecIndexMap &psmap,
+    int parent, int current, Prim *rootPrim, int level, const PathIndexToSpecIndexMap &psmap,
     Stage *stage) {
   DCOUT("ReconstructPrimRecursively: parent = "
         << std::to_string(current) << ", level = " << std::to_string(level));
@@ -1073,6 +1165,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           properties = pv.value();
           DCOUT("properties = " << properties);
         }
+      } else {
+        DCOUT("TODO: " << fv.first);
+        PUSH_WARN("TODO: " << fv.first);
       }
     }
 
@@ -1134,6 +1229,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         RECONSTRUCT_PRIM(GeomSphere, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomCapsule, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomBasisCurves, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomCamera, typeName.value(), prim_name)
         //RECONSTRUCT_PRIM(GeomSubset, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(LuxSphereLight, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(LuxDomeLight, typeName.value(), prim_name)
@@ -1141,7 +1237,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         RECONSTRUCT_PRIM(Skeleton, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(SkelAnimation, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(Shader, typeName.value(), prim_name)
-        //RECONSTRUCT_PRIM(Material, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(Material, typeName.value(), prim_name)
 
         {
           PUSH_WARN(
@@ -1160,10 +1256,17 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     }
   }
 
+  // null : parent node is Property or other Spec type.
+  // non-null : parent node is Prim
+  Prim *currPrimPtr = nullptr;
+  if (prim) {
+    currPrimPtr = &(prim.value());
+  }
+
   {
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
-      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]),
+      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]), currPrimPtr, 
                                       level + 1, psmap, stage)) {
         return false;
       }
@@ -1173,6 +1276,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   if (parent == 0) {  // root prim
     if (prim) {
       stage->GetRootPrims().emplace_back(std::move(prim.value()));
+    }
+  } else {
+    // Add to root prim.
+    if (prim && rootPrim) {
+      rootPrim->children.emplace_back(std::move(prim.value()));
     }
   }
 
@@ -1221,7 +1329,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
   int root_node_id = 0;
   bool ret = ReconstructPrimRecursively(/* no further root for root_node */ -1,
-                                        root_node_id, /* level */ 0,
+                                        root_node_id, /* root Prim */nullptr, /* level */ 0,
                                         path_index_to_spec_index_map, stage);
 
   if (!ret) {

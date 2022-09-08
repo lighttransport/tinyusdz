@@ -8,8 +8,8 @@
 
 namespace tinyusdz {
 
-constexpr auto kLuxSphereLight = "LuxSphereLight";
-constexpr auto kLuxDomeLight = "LuxDomeLight";
+constexpr auto kLuxSphereLight = "SphereLight";
+constexpr auto kLuxDomeLight = "DomeLight";
 
 struct LuxSphereLight {
   std::string name;

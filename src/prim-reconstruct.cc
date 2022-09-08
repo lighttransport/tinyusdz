@@ -502,56 +502,78 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
     }
     const PrimAttrib &attr = prop.attrib;
 
-    DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.type_name());
+    DCOUT("prop is_rel = " << prop.IsRel() << ", is_conn = " << prop.IsConnection());
 
-
-    std::string attr_type_name = attr.type_name();
-
-    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
-      if (prop.type == Property::Type::EmptyAttrib) {
-        target.define_only = true;
-        target.variability = attr.variability;
-        target.meta = attr.meta;
-        table.insert(name);
-      } else if (prop.type == Property::Type::Attrib) {
-        DCOUT("Adding prop: " << name);
-
-        Animatable<T> anim;
-
-        if (attr.blocked()) {
-          anim.blocked = true;
-        } else {
-          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            anim = av.value();
-          } else {
-            // Conversion failed.
-            DCOUT("ConvertToAnimatable failed.");
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
-            return ret;
-          }
-        }
-
-        target.value = anim;
-        target.variability = attr.variability;
-        target.meta = attr.meta;
-        table.insert(name);
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.target = pv.value();
+        target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
       } else {
-        DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
         ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Internal error. Invalid property with connection.";
+        return ret;
+      }
+      
+    } else if (prop.IsAttrib()) {
+
+      DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.type_name());
+
+      std::string attr_type_name = attr.type_name();
+
+      if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
+        if (prop.type == Property::Type::EmptyAttrib) {
+          target.define_only = true;
+          target.variability = attr.variability;
+          target.meta = attr.meta;
+          table.insert(name);
+        } else if (prop.type == Property::Type::Attrib) {
+          DCOUT("Adding prop: " << name);
+
+          Animatable<T> anim;
+
+          if (attr.blocked()) {
+            anim.blocked = true;
+          } else {
+            if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
+              anim = av.value();
+            } else {
+              // Conversion failed.
+              DCOUT("ConvertToAnimatable failed.");
+              ret.code = ParseResult::ResultCode::InternalError;
+              ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+              return ret;
+            }
+          }
+
+          target.value = anim;
+          target.variability = attr.variability;
+          target.meta = attr.meta;
+          table.insert(name);
+          ret.code = ParseResult::ResultCode::Success;
+          return ret;
+        } else {
+          DCOUT("Invalid Property.type");
+          ret.err = "Invalid Property type(internal error)";
+          ret.code = ParseResult::ResultCode::InternalError;
+          return ret;
+        }
+      } else {
+        DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
+        ret.code = ParseResult::ResultCode::TypeMismatch;
+        std::stringstream ss;
+        ss  << "Property type mismatch. " << name << " expects type `"
+                << value::TypeTrait<T>::type_name()
+                << "` but defined as type `" << attr_type_name << "`";
+        ret.err = ss.str();
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
-      ret.code = ParseResult::ResultCode::TypeMismatch;
-      std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTrait<T>::type_name()
-              << "` but defined as type `" << attr_type_name << "`";
-      ret.err = ss.str();
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Internal error. Unsupported/Unimplemented property type.";
       return ret;
     }
   }
@@ -607,28 +629,36 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    const PrimAttrib &attr = prop.attrib;
 
-    std::string attr_type_name = attr.type_name();
-    if (value::TypeTrait<T>::type_name() == attr_type_name) {
-      if (prop.type == Property::Type::EmptyAttrib) {
-        // OK
-        target.SetAuthor(true);
-        target.meta = prop.attrib.meta;
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
+    if (prop.IsConnection()) {
+      ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
+      ret.err = "Connection is not allowed for output terminal attribute.";
+      return ret;
+    } else {
+
+      const PrimAttrib &attr = prop.attrib;
+
+      std::string attr_type_name = attr.type_name();
+      if (value::TypeTrait<T>::type_name() == attr_type_name) {
+        if (prop.type == Property::Type::EmptyAttrib) {
+          // OK
+          target.SetAuthor(true);
+          target.meta = prop.attrib.meta;
+          table.insert(name);
+          ret.code = ParseResult::ResultCode::Success;
+          return ret;
+        } else {
+          DCOUT("Output Invalid Property.type");
+          ret.err = "Invalid connection or value assigned for output terminal attribute.";
+          ret.code = ParseResult::ResultCode::InvalidConnection;
+          return ret;
+        }
       } else {
-        DCOUT("Output Invalid Property.type");
-        ret.err = "Invalid connection or value assigned for output terminal attribute.";
-        ret.code = ParseResult::ResultCode::InvalidConnection;
+        DCOUT("attr.type = " << attr_type_name);
+        ret.code = ParseResult::ResultCode::TypeMismatch;
+        ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTrait<T>::type_name(), attr_type_name);
         return ret;
       }
-    } else {
-      DCOUT("attr.type = " << attr_type_name);
-      ret.code = ParseResult::ResultCode::TypeMismatch;
-      ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTrait<T>::type_name(), attr_type_name);
-      return ret;
     }
   }
 
@@ -667,29 +697,110 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    const PrimAttrib &attr = prop.attrib;
 
-    std::string attr_type_name = attr.type_name();
-    if (value::TypeTrait<value::token>::type_name() == attr_type_name) {
-      if (prop.type == Property::Type::EmptyAttrib) {
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
         Relation rel;
-        rel.SetEmpty();
+        rel.Set(pv.value());
         rel.meta = prop.attrib.meta;
-        table.insert(name);
         target = rel;
+        table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
       } else {
-        DCOUT("Output Invalid Property.type");
-        ret.err = "Invalid connection or value assigned for output attribute.";
-        ret.code = ParseResult::ResultCode::InvalidConnection;
+        ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Invalid shader output attribute with connection.";
         return ret;
       }
     } else {
-      DCOUT("attr.type = " << attr.type_name());
-      ret.code = ParseResult::ResultCode::TypeMismatch;
+
+      const PrimAttrib &attr = prop.attrib;
+
+      std::string attr_type_name = attr.type_name();
+      if (value::TypeTrait<value::token>::type_name() == attr_type_name) {
+        if (prop.type == Property::Type::EmptyAttrib) {
+          Relation rel;
+          rel.SetEmpty();
+          rel.meta = prop.attrib.meta;
+          table.insert(name);
+          target = rel;
+          ret.code = ParseResult::ResultCode::Success;
+          return ret;
+        } else {
+          DCOUT("Output Invalid Property.type");
+          ret.err = "Invalid connection or value assigned for output attribute.";
+          ret.code = ParseResult::ResultCode::InvalidConnection;
+          return ret;
+        }
+      } else {
+        DCOUT("attr.type = " << attr.type_name());
+        ret.code = ParseResult::ResultCode::TypeMismatch;
+        std::stringstream ss;
+        ss  << "Property type mismatch. " << name << " expects type `token` but defined as type `" << attr.type_name() << "`";
+        ret.err = ss.str();
+        return ret;
+      }
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
+
+// Allowed syntax:
+//   "token outputs:surface.connect = </path/to/conn/>"
+static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  nonstd::optional<Connection<Path>> &target) /* out */
+{
+  ParseResult ret;
+  ret.code = ParseResult::ResultCode::InternalError;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (auto pv = prop.GetConnectionTarget()) {
+      Connection<Path> conn;
+      conn.target = pv.value();
+      target = conn;
+      /* conn.meta = prop.attrib.meta; */ // TODO
+      table.insert(propname);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
+    } else {
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Property does not contain connectionPath.";
+      return ret;
+    }
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        Connection<Path> conn;
+        conn.target = pv.value();
+        target = conn;
+        /* conn.meta = prop.attrib.meta; */ // TODO
+        table.insert(prop_name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Property does not contain connectionPath.";
+        return ret;
+      }
+    } else {
       std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `token` but defined as type `" << attr.type_name() << "`";
+      ss  << "Property must have connection path.";
+      ret.code = ParseResult::ResultCode::InternalError;
       ret.err = ss.str();
       return ret;
     }
@@ -715,6 +826,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       __ptarget->materialBinding = m; \
       table.insert(prop.first); \
       DCOUT("Added rel material:binding."); \
+      continue; \
     } else { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kMaterialBinding)); \
     } \
@@ -732,6 +844,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     if (rel.IsPath()) { \
       __ptarget->skeleton = rel.targetPath; \
       table.insert(prop.first); \
+      continue; \
     } else { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kSkelSkeleton)); \
     } \
@@ -740,6 +853,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
 #define PARSE_SHADER_TERMINAL_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    DCOUT("Added shader terminal attribute: " << __name); \
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
@@ -751,11 +865,24 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
 #define PARSE_SHADER_OUTPUT_PROPERTY(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderOutputProperty(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    DCOUT("Added shader output property: " << __name); \
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
   } else { \
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err)); \
+  } \
+}
+
+#define PARSE_SHADER_INPUT_CONNECTION_PROPERTY(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseShaderInputConnectionProperty(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    DCOUT("Added shader input connection: " << __name); \
+    continue; /* got it */\
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
+    /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader property `{}` failed. Error: {}", __name, ret.err)); \
   } \
 }
 
@@ -940,7 +1067,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
                                 << " must be type `token`, but got `"        \
                                 << attr.type_name() << "`.");            \
     }                                                                        \
-  } } 
+  } }
 
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedProperty(__table, __prop.first, __prop.second, __name, __target); \
@@ -2159,6 +2286,7 @@ bool ReconstructPrim<GeomMesh>(
   for (const auto &prop : properties) {
     DCOUT("GeomMesh prop: " << prop.first);
     if (prop.second.IsRel()) {
+      DCOUT(fmt::format("{} is Relationship", prop.first));
       PARSE_MATERIAL_BINDING_RELATION(table, prop, mesh)
       PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
       {
@@ -2633,6 +2761,31 @@ bool ReconstructPrim<Shader>(
     }
   }
 
+  return true;
+}
+
+template <>
+bool ReconstructPrim<Material>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    Material *material,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+
+  // TODO: special treatment for properties with 'inputs' and 'outputs' namespace.
+
+  // For `Material`, `outputs` are terminal attribute and treated as input attribute with connection(Should be "token output:surface.connect = </path/to/shader>").
+  for (auto &prop : properties) {
+    PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:surface",
+                                  Material, material->surface)
+    PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
+                                  Material, material->volume)
+    ADD_PROPERY(table, prop, Material, material->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
   return true;
 }
 

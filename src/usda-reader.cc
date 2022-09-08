@@ -1246,6 +1246,7 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
   return true;
 }
 
+#if 0
 template <>
 bool USDAReader::Impl::ReconstructPrim<Material>(
     const prim::PropertyMap &properties,
@@ -1259,6 +1260,7 @@ bool USDAReader::Impl::ReconstructPrim<Material>(
 
   return true;
 }
+#endif
 
 // Generic Prim handler. T = Xform, GeomMesh, ...
 template <typename T>
