@@ -277,6 +277,7 @@ list(
   ../../src/tinyusdz.cc
   ../../src/io-util.cc
   ../../src/prim-types.cc
+  ../../src/prim-reconstruct.cc
   ../../src/pprinter.cc
   ../../src/primvar.cc
   ../../src/crate-reader.cc
@@ -290,13 +291,13 @@ list(
   ../../src/image-loader.cc
   ../../src/value-types.cc
   ../../src/value-pprint.cc
+  ../../src/tiny-format.cc
   ../../src/usdObj.cc
   ../../src/usdGeom.cc
   ../../src/usdLux.cc
   ../../src/usdShade.cc
+  ../../src/xform.cc
   ../../src/tydra/render-data.cc
-  #../../src/integerCoding.cpp
-  #../../src/lz4-compression.cc
 )
 
 set(TINYUSDZ_DEP_SOURCES
@@ -310,8 +311,6 @@ set(TINYUSDZ_DEP_SOURCES
     ../../src/external/fpng.cpp
     ../../src/external/staticstruct.cc
     ../../src/external/tinyxml2/tinyxml2.cpp
-    #../../src/external/ryu/ryu/s2d.c
-    #../../src/external/ryu/ryu/s2f.c
     )
 
 set(GUI_SOURCES
@@ -369,6 +368,12 @@ if(USDVIEW_ENABLE_PHYSICS)
   list(APPEND EXT_LIBRARIES BulletDynamics BulletCollision Bullet3Common
        LinearMath)
 endif()
+
+if (MSVC)
+  # /bigobj is required to avoid : fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
+  target_compile_options(${BUILD_TARGET} PRIVATE /bigobj)
+endif ()
+
 
 if(WIN32)
   # nothing.

@@ -4,13 +4,13 @@
 
 namespace example {
 
-bool material_ui(tinyusdz::PreviewSurface &material)
+bool material_ui(tinyusdz::UsdPreviewSurface &material)
 {
   bool changed = false;
 
-  if (!material.diffuseColor.HasTexture()) {
-    ImGui::InputFloat("diffuseColor", material.diffuseColor.color.data());
-  }
+  //if (!material.diffuseColor.HasTexture()) {
+  //  ImGui::InputFloat("diffuseColor", material.diffuseColor.color.data());
+  //}
 
   return changed;
 }
