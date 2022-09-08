@@ -23,10 +23,12 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using mat2 = value::matrix2f;  // float precision
 
+// Geometric, light and camera
 enum class NodeType {
   Xform,
-  Scope,  // Node with no-op
   Mesh,   // Polygon mesh
+  PointLight,
+  DomeLight,
   Camera,
 };
 
@@ -77,14 +79,9 @@ struct Node {
 
   std::vector<uint32_t> children;
 
-  bool isScope{false};
-};
-
-struct TransformNode {
-
+  // Every node have its transform.
   value::matrix4d local_matrix;
   value::matrix4d global_matrix;
-
 };
 
 struct RenderMesh {
@@ -265,7 +262,7 @@ struct UVTexture {
 };
 #endif
 
-nonstd::expected<TransformNode, std::string> Convert(const Stage &stage,
+nonstd::expected<Node, std::string> Convert(const Stage &stage,
                                                   const Xform &xform);
 
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,

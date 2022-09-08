@@ -115,6 +115,9 @@ std::string to_string(const BlendShape &bs, const uint32_t indent = 0, bool clos
 
 std::string to_string(const LuxSphereLight &light, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const LuxDomeLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const LuxDiskLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const LuxDistantLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const LuxCylinderLight &light, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const Material &material, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Shader &shader, const uint32_t indent = 0, bool closing_brace = true);

@@ -1789,10 +1789,89 @@ bool ReconstructPrim<LuxSphereLight>(
 
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:color", LuxSphereLight, light->color)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:radius", LuxSphereLight, light->radius)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:intensity", LuxSphereLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxSphereLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxSphereLight, light->radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxSphereLight,
                    light->intensity)
+    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<LuxDiskLight>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    LuxDiskLight *light,
+    std::string *warn,
+    std::string *err) {
+
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxSphereLight, light->radius)
+    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<LuxCylinderLight>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    LuxCylinderLight *light,
+    std::string *warn,
+    std::string *err) {
+
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", LuxCylinderLight, light->length)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxCylinderLight, light->radius)
+    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<LuxDistantLight>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    LuxDistantLight *light,
+    std::string *warn,
+    std::string *err) {
+
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", LuxDistantLight, light->angle)
     ADD_PROPERY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -1817,14 +1896,14 @@ bool ReconstructPrim<LuxDomeLight>(
   }
 
   for (const auto &prop : properties) {
-    PARSE_TYPED_PROPERTY(table, prop, "guideRadius", LuxDomeLight, light->guideRadius)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:diffuse", LuxDomeLight, light->diffuse)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:specular", LuxDomeLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "guideRadius", LuxDomeLight, light->guideRadius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", LuxDomeLight, light->diffuse)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", LuxDomeLight,
                    light->specular)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:colorTemperature", LuxDomeLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", LuxDomeLight,
                    light->colorTemperature)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:color", LuxDomeLight, light->color)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:intensity", LuxDomeLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxDomeLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxDomeLight,
                    light->intensity)
     ADD_PROPERY(table, prop, LuxDomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)

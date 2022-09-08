@@ -390,6 +390,9 @@ namespace value {
   __FUNC(GeomCamera)            \
   __FUNC(LuxSphereLight)        \
   __FUNC(LuxDomeLight)          \
+  __FUNC(LuxDiskLight)          \
+  __FUNC(LuxDistantLight)          \
+  __FUNC(LuxCylinderLight)          \
   __FUNC(SkelRoot)              \
   __FUNC(Skeleton)              \
   __FUNC(SkelAnimation)         \

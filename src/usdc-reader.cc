@@ -79,6 +79,9 @@ RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(LuxSphereLight);
 RECONSTRUCT_PRIM_DECL(LuxDomeLight);
+RECONSTRUCT_PRIM_DECL(LuxDiskLight);
+RECONSTRUCT_PRIM_DECL(LuxDistantLight);
+RECONSTRUCT_PRIM_DECL(LuxCylinderLight);
 RECONSTRUCT_PRIM_DECL(SkelRoot);
 RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(Skeleton);
@@ -1233,6 +1236,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         //RECONSTRUCT_PRIM(GeomSubset, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(LuxSphereLight, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(LuxDomeLight, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(LuxCylinderLight, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(LuxDiskLight, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(LuxDistantLight, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(SkelRoot, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(Skeleton, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(SkelAnimation, typeName.value(), prim_name)
