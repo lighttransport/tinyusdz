@@ -1624,6 +1624,24 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
+  if (material.surface) {
+    ss << pprint::Indent(indent+1) << "token outputs:surface ";
+    // Must have connection though.
+    if (material.surface.value().target) {
+      ss << pquote(material.surface.value().target.value());
+    }
+    ss << "\n";
+  }
+
+  if (material.volume) {
+    ss << pprint::Indent(indent+1) << "token outputs:volume ";
+    // Must have connection though.
+    if (material.volume.value().target) {
+      ss << pquote(material.volume.value().target.value());
+    }
+    ss << "\n";
+  }
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
