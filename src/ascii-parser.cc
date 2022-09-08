@@ -3807,9 +3807,9 @@ bool AsciiParser::Rewind(size_t offset) {
   return true;
 }
 
-uint64_t AsciiParser::CurrLoc() { return _sr->tell(); }
+size_t AsciiParser::CurrLoc() { return _sr->tell(); }
 
-bool AsciiParser::SeekTo(size_t pos) {
+bool AsciiParser::SeekTo(uint64_t pos) {
   if (!_sr->seek_set(pos)) {
     return false;
   }
@@ -6005,7 +6005,7 @@ bool AsciiParser::ParseProperty(std::map<std::string, Property> *props) {
 
   // rel?
   {
-    size_t loc = CurrLoc();
+    uint64_t loc = CurrLoc();
     std::string tok;
 
     if (!ReadIdentifier(&tok)) {

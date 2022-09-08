@@ -29,7 +29,10 @@
 #define nssv_CONFIG_NO_EXCEPTIONS 0
 #else
 // -fno-exceptions
+#ifndef nsel_CONFIG_NO_EXCEPTIONS
 #define nsel_CONFIG_NO_EXCEPTIONS 1
+#endif
+
 #define nssv_CONFIG_NO_EXCEPTIONS 1
 #endif
 #include "nonstd/optional.hpp"
