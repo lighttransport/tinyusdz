@@ -233,10 +233,10 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
 }
 
 static void RegisterPrimTypes(std::set<std::string> &d) {
-  // TODO: Register Prim types from USDAReader.
   d.insert("Xform");
   d.insert("Sphere");
   d.insert("Cube");
+  d.insert("Cone");
   d.insert("Cylinder");
   d.insert("Capsule");
   d.insert("BasisCurves");
@@ -249,6 +249,7 @@ static void RegisterPrimTypes(std::set<std::string> &d) {
   d.insert("SphereLight");
   d.insert("DomeLight");
   d.insert("DiskLight");
+  d.insert("PointLight");
   d.insert("Camera");
   d.insert("SkelRoot");
   d.insert("Skeleton");
@@ -3277,7 +3278,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   std::string tok = ss.str();
 
   if (contains(tok, '.')) {
-    if (endsWith(tok, ".connect")) {
+    if (!endsWith(tok, ".connect")) {
+      DCOUT("tok = " << tok);
       PushError(
           "Must ends with `.connect` when a name contains punctuation `.`");
       return false;
@@ -4131,7 +4133,7 @@ value::TimeSamples AsciiParser::ConvertToTimeSamples(
       dst.values.push_back(item.second.value());
     } else {
       // Blocked.
-      dst.values.push_back(value::Block());
+      dst.values.push_back(value::ValueBlock());
     }
   }
 
@@ -4150,7 +4152,7 @@ value::TimeSamples AsciiParser::ConvertToTimeSamples(
       dst.values.push_back(item.second.value());
     } else {
       // Blocked.
-      dst.values.push_back(value::Block());
+      dst.values.push_back(value::ValueBlock());
     }
   }
 
@@ -4437,12 +4439,14 @@ bool AsciiParser::ParseCustomMetaValue() {
 // TODO: Return Path
 bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   // @...@
-  // or @@@...@@@ (Triple '@'-deliminated asset references)
+  // or @@@...@@@ (Triple '@'-deliminated asset references.)
   // And optionally followed by prim path.
   // Example:
   //   @bora@
   //   @@@bora@@@
   //   @bora@</dora>
+  //
+  // @@@ = Path containing '@'. '@@@' in Path is encoded as '\@@@'
 
   // TODO: Correctly support escape characters
 
@@ -4506,15 +4510,21 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 
   } else {
     bool found_delimiter{false};
+    bool escape_sequence{false};
     int at_cnt{0};
     std::string tok;
 
     // Read until '@@@' appears
+    // Need to escaped '@@@'("\\@@@")
     while (!Eof()) {
       char c;
 
       if (!Char1(&c)) {
         return false;
+      }
+
+      if (c == '\\') {
+        escape_sequence = true;
       }
 
       if (c == '@') {
@@ -4529,14 +4539,29 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
       tok += c;
 
       if (at_cnt == 3) {
-        // Got it. '@@@'
-        found_delimiter = true;
-        break;
+        if (escape_sequence) {
+          // Still in path identifier...
+          // Unescape "\\@@@"
+
+          if (tok.size() > 3) { // this should be true.
+            if (endsWith(tok, "\\@@@")) { // this also should be true.
+              tok.erase(tok.size()-4);
+              tok.append("@@@");
+            }
+          }
+          at_cnt = 0;
+          escape_sequence = false;
+        } else {
+          // Got it. '@@@'
+          found_delimiter = true;
+          break;
+        }
       }
     }
 
     if (found_delimiter) {
-      out->asset_path = tok;
+      // remote last '@@@'
+      out->asset_path = removeSuffix(tok, "@@@");
       (*triple_deliminated) = true;
 
       valid = true;
@@ -5399,6 +5424,8 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
                                      const std::string &primattr_name,
                                      PrimAttrib *out_attr) {
   PrimAttrib attr;
+  primvar::PrimVar var;
+  bool blocked{false};
 
   if (array_qual) {
     if (value::TypeTrait<T>::type_name() == "bool") {
@@ -5413,9 +5440,13 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
         return false;
       }
 
-      DCOUT("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
-            ", sz = " + std::to_string(value.size()));
-      attr.var.set_scalar(value);
+      if (value.size()) {
+        DCOUT("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
+              ", sz = " + std::to_string(value.size()));
+        var.set_scalar(value);
+      } else {
+        blocked = true;
+      }
     }
 
   } else if (hasConnect(primattr_name)) {
@@ -5425,7 +5456,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       return false;
     }
 
-    attr.var.set_scalar(value);  // TODO: set as `Path` type
+    var.set_scalar(value);
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
@@ -5441,9 +5472,10 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       // TODO: TimeSampled
       value::TimeSamples ts;
       ts.values.push_back(*value);
-      attr.var.var = ts;
+      var.set_timesamples(ts);
 
     } else {
+      blocked = true;
       // std::cout << "ParseBasicPrimAttr: " <<
       // value::TypeTrait<T>::type_name()
       //           << " = None\n";
@@ -5457,14 +5489,11 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   }
   attr.meta = meta;
 
-  // if (meta.count("interpolation")) {
-  //   const MetaVariable &var = meta.at("interpolation");
-  //   auto p = var.value.get_value<value::token>();
-  //   if (p) {
-  //     attr.interpolation =
-  //     tinyusdz::InterpolationFromString(p.value().str());
-  //   }
-  // }
+  if (blocked) {
+    attr.set_blocked(true);
+  } else {
+    attr.set_var(std::move(var));
+  }
 
   (*out_attr) = std::move(attr);
 
@@ -5545,8 +5574,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     if (c != '=') {
       DCOUT("Relationship with no target: " << attr_name);
 
-      // No targets.
-      Property p(custom_qual);
+      // No targets. Define only.
+      Property p(type_name, custom_qual);
       p.type = Property::Type::NoTargetsRelation;
       p.qual = qual;
 
@@ -5691,12 +5720,12 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     DCOUT("Define only property = " + primattr_name);
 
-    Property p(custom_qual);
-    p.type = Property::Type::EmptyAttrib;
-
     // Empty Attribute. type info only
-    p.attrib.type_name = type_name;
-    p.attrib.uniform = uniform_qual;
+    Property p(type_name, custom_qual);
+
+    if (uniform_qual) {
+      p.attrib.variability = Variability::Uniform;
+    }
 
     (*props)[primattr_name] = p;
 
@@ -5721,7 +5750,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     rel.Set(path);
 
     Property p(rel, /* isConnection*/ true, custom_qual);
-    p.attrib.type_name = type_name;
+    p.attrib.set_type_name(type_name);
 
     (*props)[primattr_name] = p;
 
@@ -5796,9 +5825,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     std::string varname = removeSuffix(primattr_name, ".timeSamples");
     PrimAttrib attr;
-    attr.uniform = false;
+    primvar::PrimVar var;
+    var.set_timesamples(ts);
+
     attr.name = varname;
-    attr.var.set_timesamples(ts);  // TODO: Use set_timesample() ?
+    attr.set_var(std::move(var));
 
     DCOUT("timeSamples primattr: type = " << type_name
                                           << ", name = " << varname);
@@ -5974,14 +6005,19 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
       }
 
-      value::asset_path assetp(asset_ref.asset_path);
-      attr.var.set_scalar(assetp);
+      DCOUT("Asset path = " << asset_ref.asset_path);
+      value::AssetPath assetp(asset_ref.asset_path);
+      primvar::PrimVar var;
+      var.set_scalar(assetp);
+      attr.set_var(std::move(var));
 
     } else {
       PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
     }
 
-    attr.uniform = uniform_qual;
+    if (uniform_qual) {
+      attr.variability = Variability::Uniform;
+    }
     attr.name = primattr_name;
 
     DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);

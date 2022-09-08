@@ -60,6 +60,7 @@ struct Skeleton {
   PrimMeta meta;
 };
 
+// NOTE: SkelRoot itself does not have dedicated attributes in the schema.
 struct SkelRoot {
   std::string name;
   int64_t parent_id{-1};
@@ -67,8 +68,6 @@ struct SkelRoot {
   Animatable<Extent> extent;
   Purpose purpose{Purpose::Default};
   Animatable<Visibility> visibility{Visibility::Inherited};
-
-  // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
 
   // ref proxyPrim
   std::vector<XformOp> xformOps;
@@ -84,12 +83,12 @@ struct SkelAnimation {
   std::string name;
 
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[]
-  TypedAttribute<std::vector<float>> blendShapeWeights; // float[]
+  TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights; // float[]
   TypedAttribute<std::vector<value::token>> joints; // uniform token[]
-  TypedAttribute<std::vector<value::quatf>> rotations;  // quatf[] Joint-local unit quaternion rotations
-  TypedAttribute<std::vector<value::half3>>
+  TypedAttribute<Animatable<std::vector<value::quatf>>> rotations;  // quatf[] Joint-local unit quaternion rotations
+  TypedAttribute<Animatable<std::vector<value::half3>>>
       scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
-  TypedAttribute<std::vector<value::float3>> translations;  // float3[] Joint-local translation.
+  TypedAttribute<Animatable<std::vector<value::float3>>> translations;  // float3[] Joint-local translation.
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -99,6 +98,7 @@ struct SkelAnimation {
 // struct PackedJointAnimation {
 // };
 
+#if 0
 // W.I.P.
 struct SkelBindingAPI {
   value::matrix4d geomBindTransform;     // primvars:skel:geomBindTransform
@@ -113,6 +113,7 @@ struct SkelBindingAPI {
       -1};  // index to Scene.blendshapes. ref skel:bindShapeTargets
   int64_t skeleton{-1};  // index to Scene.skeletons. // ref skel:skeleton
 };
+#endif
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"

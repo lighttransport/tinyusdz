@@ -2,6 +2,13 @@
 // Copyright 2022 - Present, Syoyo Fujita.
 //
 // Material and Shader. And more, TinyUSDZ implmenents some usdImaging stuff here.
+//
+// TODO:
+//   - [ ] Consider `interfaceOnly` connection 
+//   - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
+//   - [ ] NodeGraph support
+//   - [ ] MaterialX support
+//
 #pragma once
 
 #include "prim-types.hh"
@@ -18,9 +25,12 @@ struct Material {
 
   PrimMeta meta;
 
-  Relation surface; // outputs:surface.connect
-  Relation volume; // outputs:volume.connect
+  // Terminal attribute.
+  nonstd::optional<Connection<Path>> surface; // "token outputs:surface.connect"
+  nonstd::optional<Connection<Path>> volume; // "token outputs:volume.connect"
 
+  // Custom properties
+  std::map<std::string, Property> props;
 };
 
 // TODO
@@ -28,6 +38,9 @@ struct NodeGraph {
   std::string name;
 
   int64_t parent_id{-1};
+
+  // Custom properties
+  std::map<std::string, Property> props;
 
   PrimMeta meta;
 };
@@ -38,11 +51,12 @@ struct UsdPrimvarReader {
 
   PrimMeta meta;
 
-  nonstd::optional<T> fallback;  // "inputs:fallback"
+  TypedAttribute<Animatable<T>> fallback;  // "inputs:fallback"
 
-  nonstd::optional<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted).
+  TypedAttribute<Animatable<value::token>> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
 
-  TypedAttribute<T> result; // "T outputs:result"
+
+  TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -59,8 +73,6 @@ using UsdPrimvarReaderType =
                       UsdPrimvarReader_float3, UsdPrimvarReader_float4,
                       UsdPrimvarReader_int>;
 
-#if 0
-#endif
 
 struct UsdUVTexture {
 
@@ -80,29 +92,31 @@ struct UsdUVTexture {
 
   std::string name;
 
-  nonstd::optional<value::AssetPath> file; // "asset inputs:file" interfaceOnly
+  TypedAttribute<Animatable<value::AssetPath>> file; // "asset inputs:file" interfaceOnly
 
-  //AttribWithFallback<Connection<value::texcoord2f>> st{Connection<value::texcoord2f>({0.0f, 0.0f})}; // "inputs:st"
-  TypedAttribute<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
+  //TypedAttributeWithFallback<Connection<value::texcoord2f>> st{Connection<value::texcoord2f>({0.0f, 0.0f})}; // "inputs:st"
+  TypedProperty<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
 
-  nonstd::optional<Wrap> wrapS; // "inputs:wrapS" interfaceOnly
-  nonstd::optional<Wrap> wrapT; // "inputs:wrapT" interfaceOnly
+  TypedAttribute<Animatable<Wrap>> wrapS; // "inputs:wrapS" interfaceOnly
+  TypedAttribute<Animatable<Wrap>> wrapT; // "inputs:wrapT" interfaceOnly
 
-  AttribWithFallback<value::color4f> falllback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected(TODO: Disallow Relation?(i.e, `fallback.connect = </Path/To/FallbackColor>`)
+  TypedAttributeWithFallback<value::color4f> falllback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected(TODO: Disallow Relation?(i.e, `fallback.connect = </Path/To/FallbackColor>`)
 
   nonstd::optional<SourceColorSpace> sourceColorSpace; // "inputs:sourceColorSpace" interfaceOnly
 
-  AttribWithFallback<value::float4> scale{{1.0f, 1.0f, 1.0f, 1.0f}}; // "inputs:scale" interfaceOnly
-  AttribWithFallback<value::float4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // "inputs:bias" interfaceOnly
+  TypedAttributeWithFallback<value::float4> scale{{1.0f, 1.0f, 1.0f, 1.0f}}; // "inputs:scale" interfaceOnly
+  TypedAttributeWithFallback<value::float4> bias{{0.0f, 0.0f, 0.0f, 0.0f}}; // "inputs:bias" interfaceOnly
 
   ///
   /// Outputs
+  /// 
+  /// Terminal attribute. No value assign(e.g. `float outputs:r = 1.2`)
   ///
-  TypedAttribute<float> outputsR; // "float outputs:r"
-  TypedAttribute<float> outputsG; // "float outputs:g"
-  TypedAttribute<float> outputsB; // "float outputs:b"
-  TypedAttribute<float> outputsA; // "float outputs:a"
-  TypedAttribute<value::float3> outputsRGB; // "float3 outputs:rgb"
+  TypedTerminalAttribute<float> outputsR; // "float outputs:r"
+  TypedTerminalAttribute<float> outputsG; // "float outputs:g"
+  TypedTerminalAttribute<float> outputsB; // "float outputs:b"
+  TypedTerminalAttribute<float> outputsA; // "float outputs:a"
+  TypedTerminalAttribute<value::float3> outputsRGB; // "float3 outputs:rgb"
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -122,33 +136,35 @@ struct UsdPreviewSurface {
 
   std::string name;
 
-  TypedAttribute<value::color3f> diffuseColor{{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
-  TypedAttribute<value::color3f> emissiveColor{{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
+  TypedProperty<value::color3f> diffuseColor{{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
+  TypedProperty<value::color3f> emissiveColor{{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
 
-  TypedAttribute<int> useSpecularWorkflow{0}; // "inputs:useSpecularWorkflow"
+  TypedProperty<int> useSpecularWorkflow{0}; // "inputs:useSpecularWorkflow"
 
   // specular workflow
-  TypedAttribute<value::color3f> specularColor{{0.0f, 0.0f, 0.0f}};
+  TypedProperty<value::color3f> specularColor{{0.0f, 0.0f, 0.0f}};
 
   // metalness workflow
-  //AttribWithFallback<float> metallic{0.0f};  // "inputs:metallic"
-  TypedAttribute<float> metallic{0.0f};  // "inputs:metallic"
+  //TypedAttributeWithFallback<float> metallic{0.0f};  // "inputs:metallic"
+  TypedProperty<float> metallic{0.0f};  // "inputs:metallic"
 
   //
-  TypedAttribute<float> clearcoat{0.0f};  // "inputs:clearcoat"
-  TypedAttribute<float> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
-  TypedAttribute<float> roughness{0.5f};  // "inputs:roughness"
-  TypedAttribute<float> opacity{1.0f};  // "inputs:opacity"
-  TypedAttribute<float> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
-  TypedAttribute<float> ior{1.5f};  // "inputs:ior"
+  TypedProperty<float> clearcoat{0.0f};  // "inputs:clearcoat"
+  TypedProperty<float> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
+  TypedProperty<float> roughness{0.5f};  // "inputs:roughness"
+  TypedProperty<float> opacity{1.0f};  // "inputs:opacity"
+  TypedProperty<float> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
+  TypedProperty<float> ior{1.5f};  // "inputs:ior"
 
-  TypedAttribute<value::normal3f> normal{{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
-  TypedAttribute<float> displacement{0.0f}; // "inputs:displacement"
-  TypedAttribute<float> occlusion{0.0f}; // "inputs:occlusion"
+  TypedProperty<value::normal3f> normal{{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
+  TypedProperty<float> displacement{0.0f}; // "inputs:displacement"
+  TypedProperty<float> occlusion{0.0f}; // "inputs:occlusion"
 
-  //
-  // Outputs
-  //
+  ///
+  /// Outputs
+  ///
+  /// Terminal attribute(No value assigned or `.connect` only)
+  ///
   nonstd::optional<Relation> outputsSurface; // "token outputs:surface", "outputs:surface.connect"
   nonstd::optional<Relation> outputsDisplacement; // "token outputs:displacement", "outputs:displacement.connect"
 

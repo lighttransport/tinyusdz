@@ -9,6 +9,7 @@
 
 namespace tinyusdz {
 
+// From schema definition.
 constexpr auto kGPrim = "GPrim";
 constexpr auto kGeomCube = "Cube";
 constexpr auto kGeomXform = "Xform";
@@ -17,12 +18,16 @@ constexpr auto kGeomSubset = "GeomSubset";
 constexpr auto kGeomBasisCurves = "BasisCurves";
 constexpr auto kGeomCylinder = "Cylinder";
 constexpr auto kGeomCapsule = "Capsule";
+constexpr auto kGeomPoints = "Points";
 constexpr auto kGeomCone = "Cone";
 constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
 
-// Generic Prim
-struct GPrim {
+
+// Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
+// <pxrUSD>/pxr/usd/usdGeom/schema.udsa
+
+struct GPrim : Xformable {
   std::string name;
 
   int64_t parent_id{-1};  // Index to parent node
@@ -32,85 +37,48 @@ struct GPrim {
   // Gprim
 
   // nonstd::nullopt = not authorized.
-  nonstd::optional<Animatable<Extent>> extent;  // bounding extent. When authorized, the extent is the bounding box of whole its children.
+  nonstd::optional<Animatable<Extent>>
+      extent;  // bounding extent. When authorized, the extent is the bounding
+               // box of whole its children.
 
-  AttribWithFallback<bool> doubleSided{false};
+  TypedAttributeWithFallback<bool> doubleSided{
+      false};  // "uniform bool doubleSided"
 
-  AttribWithFallback<Orientation> orientation{Orientation::RightHanded};
-  AttribWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  AttribWithFallback<Purpose> purpose{Purpose::Default};
+  TypedAttributeWithFallback<Orientation> orientation{
+      Orientation::RightHanded};  // "uniform token orientation"
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{
+      Visibility::Inherited};  // "token visibility"
+  TypedAttributeWithFallback<Purpose> purpose{
+      Purpose::Default};  // "uniform token purpose"
 
-  nonstd::optional<Animatable<value::color3f>> displayColor;    // primvars:displayColor
+  nonstd::optional<Animatable<value::color3f>>
+      displayColor;                                    // primvars:displayColor
   nonstd::optional<Animatable<float>> displayOpacity;  // primvars:displaOpacity
 
   nonstd::optional<Relation> proxyPrim;
   nonstd::optional<MaterialBindingAPI> materialBinding;
-  std::vector<value::token> xformOpOrder;
 
   std::map<std::string, Property> props;
 
   bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
-  bool active{true};
+  //bool active{true};
 
   // child nodes
   std::vector<GPrim> children;
 
   // Prim metadataum.
   PrimMeta meta;
+
 };
 
 struct Xform : GPrim {
 
-  std::vector<XformOp> xformOps;
-
   Xform() {}
 
-  ///
-  /// Evaluate XformOps
-  ///
-  bool EvaluateXformOps(value::matrix4d *out_matrix) const;
-
-  ///
-  /// Get concatenated matrix.
-  ///
-  nonstd::optional<value::matrix4d> GetGlobalMatrix(const value::matrix4d &parentMatrix) const {
-    if (auto m = GetLocalMatrix()) {
-      // TODO: Inherit transform from parent node.
-      value::matrix4d cm = Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
-      return cm;
-    }
-    
-    return nonstd::nullopt;
-  }
-
-  ///
-  /// Evaluate xformOps and get local matrix.
-  ///
-  nonstd::optional<value::matrix4d> GetLocalMatrix() const {
-    if (_dirty) {
-      value::matrix4d m;
-      if (EvaluateXformOps(&m)) {
-        _matrix = m;
-        _dirty = false;
-      } else {
-        // TODO: Report an error.
-        return nonstd::nullopt;
-      }
-    }
-
-    return _matrix;
-  }
-
-  void SetDirty(bool onoff) {
-    _dirty = onoff;
-  }
-
-  mutable bool _dirty{true};
-  mutable value::matrix4d _matrix;  // Matrix of this Xform(local matrix)
 };
 
-// GeomSubset
+// GeomSubset 
 struct GeomSubset {
   enum class ElementType { Face };
 
@@ -126,7 +94,7 @@ struct GeomSubset {
 
   ElementType elementType{ElementType::Face};  // must be face
   FamilyType familyType{FamilyType::Unrestricted};
-  nonstd::optional<value::token> familyName; // "token familyName"
+  nonstd::optional<value::token> familyName;  // "token familyName"
 
   nonstd::expected<bool, std::string> SetElementType(const std::string &str) {
     if (str == "face") {
@@ -164,41 +132,42 @@ struct GeomSubset {
 // Polygon mesh geometry
 struct GeomMesh : GPrim {
   enum class InterpolateBoundary {
-    None, // "none"
-    EdgeAndCorner, // "edgeAndCorner"
-    EdgeOnly // "edgeOnly"
+    None,           // "none"
+    EdgeAndCorner,  // "edgeAndCorner"
+    EdgeOnly        // "edgeOnly"
   };
 
   enum class FacevaryingLinearInterpolation {
-    CornersPlus1, // "cornersPlus1"
+    CornersPlus1,  // "cornersPlus1"
     CornersPlus2,  // "cornersPlus2"
-    CornersOnly, // "cornersOnly"
-    Boundaries, // "boundaries"
-    None, // "none"
-    All, // "all"
+    CornersOnly,   // "cornersOnly"
+    Boundaries,    // "boundaries"
+    None,          // "none"
+    All,           // "all"
   };
 
   enum class SubdivisionScheme {
     CatmullClark,  // "catmullClark"
-    Loop, // "loop"
-    Bilinear, // "bilinear"
-    None, // "none"
+    Loop,          // "loop"
+    Bilinear,      // "bilinear"
+    None,          // "none"
   };
-
 
   //
   // Predefined attribs.
   //
-  TypedAttribute<std::vector<value::point3f>> points;    // point3f[]
-  TypedAttribute<std::vector<value::normal3f>> normals;  // normal3f[] (NOTE: "primvars:normals" are stored in `GPrim::props`)
+  TypedProperty<std::vector<value::point3f>> points;  // point3f[]
+  TypedProperty<std::vector<value::normal3f>>
+      normals;  // normal3f[] (NOTE: "primvars:normals" are stored in
+                // `GPrim::props`)
 
-  TypedAttribute<std::vector<value::vector3f>> velocities; // vector3f[]
+  TypedProperty<std::vector<value::vector3f>> velocities;  // vector3f[]
 
-  TypedAttribute<std::vector<int32_t>> faceVertexCounts;
-  TypedAttribute<std::vector<int32_t>> faceVertexIndices;
+  TypedProperty<std::vector<int32_t>> faceVertexCounts;
+  TypedProperty<std::vector<int32_t>> faceVertexIndices;
 
   // Make SkelBindingAPI first citizen.
-  nonstd::optional<Path> skeleton; // rel skel:skeleton
+  nonstd::optional<Path> skeleton;  // rel skel:skeleton
 
   //
   // Utility functions
@@ -213,7 +182,8 @@ struct GeomMesh : GPrim {
   ///
   /// @brief Returns `points`.
   ///
-  /// @return points vectro(copied). Returns empty when `points` attribute is not defined.
+  /// @return points vectro(copied). Returns empty when `points` attribute is
+  /// not defined.
   ///
   const std::vector<value::point3f> &GetPoints() const;
 
@@ -236,15 +206,19 @@ struct GeomMesh : GPrim {
   //
   // SubD attribs.
   //
-  TypedAttribute<std::vector<int32_t>> cornerIndices;
-  TypedAttribute<std::vector<float>> cornerSharpnesses;
-  TypedAttribute<std::vector<int32_t>> creaseIndices;
-  TypedAttribute<std::vector<int32_t>> creaseLengths;
-  TypedAttribute<std::vector<float>> creaseSharpnesses;
-  TypedAttribute<std::vector<int32_t>> holeIndices;
-  AttribWithFallback<InterpolateBoundary> interpolateBoundary{InterpolateBoundary::EdgeAndCorner};
-  AttribWithFallback<SubdivisionScheme> subdivisionScheme{SubdivisionScheme::CatmullClark};
-  AttribWithFallback<FacevaryingLinearInterpolation> facevaryingLinearInterpolation{FacevaryingLinearInterpolation::CornersPlus1};
+  TypedProperty<std::vector<int32_t>> cornerIndices;
+  TypedProperty<std::vector<float>> cornerSharpnesses;
+  TypedProperty<std::vector<int32_t>> creaseIndices;
+  TypedProperty<std::vector<int32_t>> creaseLengths;
+  TypedProperty<std::vector<float>> creaseSharpnesses;
+  TypedProperty<std::vector<int32_t>> holeIndices;
+  TypedAttributeWithFallback<InterpolateBoundary> interpolateBoundary{
+      InterpolateBoundary::EdgeAndCorner};
+  TypedAttributeWithFallback<SubdivisionScheme> subdivisionScheme{
+      SubdivisionScheme::CatmullClark};
+  TypedAttributeWithFallback<FacevaryingLinearInterpolation>
+      facevaryingLinearInterpolation{
+          FacevaryingLinearInterpolation::CornersPlus1};
 
   //
   // TODO: Make SkelBindingAPI property first citizen
@@ -267,122 +241,109 @@ struct GeomMesh : GPrim {
   /// Validate GeomSubset data whose are attached to this GeomMesh.
   ///
   nonstd::expected<bool, std::string> ValidateGeomSubset();
-
 };
 
 struct GeomCamera : public GPrim {
-
   enum class Projection {
-    perspective,   // "perspective"
-    orthographic,  // "orthographic"
+    Perspective,   // "perspective"
+    Orthographic,  // "orthographic"
   };
 
   enum class StereoRole {
-    mono,   // "mono"
-    left,   // "left"
-    right,  // "right"
+    Mono,   // "mono"
+    Left,   // "left"
+    Right,  // "right"
   };
 
   //
   // Properties
   //
 
-  // TODO: Animatable?
-  std::vector<value::float4> clippingPlanes;
-  value::float2 clippingRange{{0.1f, 1000000.0f}};
-  float exposure{0.0f};  // in EV
-  float focalLength{50.0f};
-  float focusDistance{0.0f};
-  float horizontalAperture{20.965f};
-  float horizontalApertureOffset{0.0f};
-  float verticalAperture{15.2908f};
-  float verticalApertureOffset{0.0f};
-  float fStop{0.0f};  // 0.0 = no focusing
-  Projection projection;
+  TypedAttribute<std::vector<value::float4>> clippingPlanes;
+  TypedAttributeWithFallback<Animatable<value::float2>> clippingRange{
+      value::float2({0.1f, 1000000.0f})};
+  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f};  // in EV
+  TypedAttributeWithFallback<Animatable<float>> focalLength{50.0f};
+  TypedAttributeWithFallback<Animatable<float>> focusDistance{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> horizontalAperture{20.965f};
+  TypedAttributeWithFallback<Animatable<float>> horizontalApertureOffset{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> verticalAperture{15.2908f};
+  TypedAttributeWithFallback<Animatable<float>> verticalApertureOffset{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> fStop{0.0f};  // 0.0 = no focusing
+  TypedAttributeWithFallback<Animatable<Projection>> projection{
+      Projection::Perspective};  // "token projection" Animatable
 
-  float shutterClose = 0.0f;  // shutter:close
-  float shutterOpen = 0.0f;   // shutter:open
+  TypedAttributeWithFallback<StereoRole> stereoRole{
+      StereoRole::Mono};  // "uniform token stereoRole"
 
-
+  TypedAttributeWithFallback<Animatable<double>> shutterClose{
+      0.0};  // double shutter:close
+  TypedAttributeWithFallback<Animatable<double>> shutterOpen{0.0};  // double shutter:open
 };
 
-struct GeomBoundable : GPrim {
-};
+//struct GeomBoundable : GPrim {};
 
 struct GeomCone : public GPrim {
-
-
   //
   // Properties
   //
-  TypedAttribute<double> height{2.0};
-  TypedAttribute<double> radius{1.0};
+  TypedAttributeWithFallback<Animatable<double>> height{2.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 
-  Axis axis{Axis::Z};
-
-
+  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
 };
 
 struct GeomCapsule : public GPrim {
-
   //
   // Properties
   //
-  TypedAttribute<double> height{2.0};
-  TypedAttribute<double> radius{0.5};
-  Axis axis{Axis::Z};
-
-
+  TypedAttributeWithFallback<Animatable<double>> height{2.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{0.5};
+  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
 };
 
 struct GeomCylinder : public GPrim {
-
   //
   // Properties
   //
-  TypedAttribute<double> height{2.0};
-  TypedAttribute<double> radius{1.0};
-  Axis axis{Axis::Z};
-
+  TypedAttributeWithFallback<Animatable<double>> height{2.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{1.0};
+  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
 };
 
 struct GeomCube : public GPrim {
-
   //
   // Properties
   //
-  TypedAttribute<double> size{2.0};
-
+  TypedAttributeWithFallback<Animatable<double>> size{2.0};
 };
 
 struct GeomSphere : public GPrim {
-
   //
   // Predefined attribs.
   //
-  TypedAttribute<double> radius{1.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{2.0};
 };
 
 //
 // Basis Curves(for hair/fur)
 //
 struct GeomBasisCurves : public GPrim {
-
   enum class Type {
-    Cubic, // "cubic"(default)
-    Linear, // "linear"
+    Cubic,   // "cubic"(default)
+    Linear,  // "linear"
   };
 
   enum class Basis {
-    Bezier, // "bezier"(default)
-    Bspline, // "bspline"
-    CatmullRom, // "catmullRom"
+    Bezier,      // "bezier"(default)
+    Bspline,     // "bspline"
+    CatmullRom,  // "catmullRom"
   };
 
   enum class Wrap {
-    Nonperiodic, // "nonperiodic"(default)
-    Periodic, // "periodic"
-    Pinned, // "pinned"
+    Nonperiodic,  // "nonperiodic"(default)
+    Periodic,     // "periodic"
+    Pinned,       // "pinned"
   };
 
   nonstd::optional<Type> type;
@@ -392,31 +353,27 @@ struct GeomBasisCurves : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedAttribute<std::vector<value::point3f>> points;    // point3f
-  TypedAttribute<std::vector<value::normal3f>> normals;  // normal3f
-  TypedAttribute<std::vector<int>> curveVertexCounts;
-  TypedAttribute<std::vector<float>> widths;
-  TypedAttribute<std::vector<value::vector3f>> velocities;     // vector3f
-  TypedAttribute<std::vector<value::vector3f>> accelerations;  // vector3f
-
-
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;    // point3f
+  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;  // normal3f
+  TypedAttribute<Animatable<std::vector<int>>> curveVertexCounts;
+  TypedAttribute<Animatable<std::vector<float>>> widths;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;     // vector3f
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;  // vector3f
 };
 
 //
 // Points primitive.
 //
 struct GeomPoints : public GPrim {
-
   //
   // Predefined attribs.
   //
-  TypedAttribute<std::vector<value::point3f>> points;   // point3f
-  TypedAttribute<std::vector<value::normal3f>> normals;  // normal3f
-  TypedAttribute<std::vector<float>> widths;
-  TypedAttribute<std::vector<int64_t>> ids;                  // per-point ids. 
-  TypedAttribute<std::vector<value::vector3f>> velocities;     // vector3f
-  TypedAttribute<std::vector<value::vector3f>> accelerations;  // vector3f
-
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;    // point3f[]
+  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;  // normal3f[]
+  TypedAttribute<Animatable<std::vector<float>>> widths; // float[]
+  TypedAttribute<Animatable<std::vector<int64_t>>> ids;                    // int64[] per-point ids.
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;     // vector3f[]
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;  // vector3f[]
 };
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
@@ -429,12 +386,14 @@ DEFINE_TYPE_TRAIT(GPrim, kGPrim, TYPE_ID_GPRIM, 1);
 
 DEFINE_TYPE_TRAIT(Xform, kGeomXform, TYPE_ID_GEOM_XFORM, 1);
 DEFINE_TYPE_TRAIT(GeomMesh, kGeomMesh, TYPE_ID_GEOM_MESH, 1);
-DEFINE_TYPE_TRAIT(GeomBasisCurves, kGeomBasisCurves, TYPE_ID_GEOM_BASIS_CURVES, 1);
+DEFINE_TYPE_TRAIT(GeomBasisCurves, kGeomBasisCurves, TYPE_ID_GEOM_BASIS_CURVES,
+                  1);
 DEFINE_TYPE_TRAIT(GeomSphere, kGeomSphere, TYPE_ID_GEOM_SPHERE, 1);
 DEFINE_TYPE_TRAIT(GeomCube, kGeomCube, TYPE_ID_GEOM_CUBE, 1);
 DEFINE_TYPE_TRAIT(GeomCone, kGeomCone, TYPE_ID_GEOM_CONE, 1);
 DEFINE_TYPE_TRAIT(GeomCylinder, kGeomCylinder, TYPE_ID_GEOM_CYLINDER, 1);
 DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
+DEFINE_TYPE_TRAIT(GeomPoints, kGeomPoints, TYPE_ID_GEOM_POINTS, 1);
 DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
 DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
 

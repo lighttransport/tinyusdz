@@ -2,7 +2,7 @@
 
 `TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
-![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)
+[![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)](https://github.com/syoyo/tinyusdz/actions/)
 
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/syoyo/tinyusdz.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/syoyo/tinyusdz/alerts/)
 
@@ -14,7 +14,7 @@ Initial working demo in 2022 Summer(August) planned after finishing implementing
 
 * [x] USDC(Crate) data parse
 * [ ] Reconstuct primitive and scene graph representaion(2022 Summer expected)
-  * [ ] Xform
+  * [x] Xform
   * [ ] GeomMesh
   * [ ] GeomBasisCurves(for hair/fur)
   * [ ] GeomPoints(for particles)
@@ -328,3 +328,4 @@ TinyUSDZ is licensed under MIT license.
 * gulrak/filesytem : MIT license. https://github.com/gulrak/filesystem
 * p-ranav/glob : MIT license. https://github.com/p-ranav/glob
 * linalg.h : Unlicense. https://github.com/sgorsten/linalg
+* mapbox/eternal: ISC License. https://github.com/mapbox/eternal

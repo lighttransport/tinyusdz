@@ -35,17 +35,6 @@ namespace ascii {
 constexpr auto kUniform = "uniform";
 constexpr auto kToken = "token";
 
-// Prim name
-constexpr auto kGPrim = "GPrim";
-constexpr auto kGeomMesh = "Mesh";
-constexpr auto kGeomSubset = "GeomSubset";
-constexpr auto kGeomCone = "Cone";
-constexpr auto kGeomCube = "Cube";
-constexpr auto kLuxSphereLight = "SphereLight";
-constexpr auto kLuxDomeLight = "DomeLight";
-constexpr auto kMaterial = "Mateiral";
-constexpr auto kShader = "Shader";
-
 // Frequently used attr/meta keywords
 constexpr auto kKind = "kind";
 constexpr auto kInterpolation = "interpolation";

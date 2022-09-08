@@ -273,11 +273,116 @@ struct AttrMeta {
   }
 };
 
+// Typed TimeSamples value
+//
+// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
+//
+// in .usd, are represented as
+//
+// 0: (1.0, false)
+// 1: (2.0, true)
+// 2: (3.0, false)
+//
+
 template <typename T>
-class AttribWithFallback;
+struct TypedTimeSamples {
+
+  struct Sample {
+    double t;
+    T value;
+    bool blocked{false};
+  };
+
+ public:
+
+  bool empty() const {
+    return _samples.empty();
+  }
+
+  // TODO: Implement.
+  nonstd::optional<T> TryGet(double t = 0.0) const;
+#if 0
+    if (empty()) {
+      return nonstd::nullopt;
+    }
+
+    if (_dirty) {
+      // TODO: Sort by time
+      _dirty = false;
+    }
+
+    // TODO: Fetch value then lineary interpolate value.
+    return nonstd::nullopt;
+  }
+#endif
+
+  void AddSample(const Sample &s) {
+    _samples.push_back(s);
+    _dirty = true;
+  }
+
+  void AddSample(const double t, T &v) {
+    _samples.push_back({t, v, false});
+    _dirty = true;
+  }
+
+  void AddBlockedSample(const double t) {
+    _samples.push_back({t, T(), true});
+    _dirty = true;
+  }
+
+  const std::vector<Sample> &GetSamples() const {
+    return _samples;
+  }
+
+ private:
+  std::vector<Sample> _samples;
+  bool _dirty{false};
+
+};
+
+
+template <typename T>
+struct Animatable {
+  // scalar
+  T value;
+  bool blocked{false};
+
+  // timesamples
+  TypedTimeSamples<T> ts;
+
+  bool IsTimeSamples() const {
+    return !ts.empty();
+  }
+
+  bool IsScalar() const {
+    return ts.empty();
+  }
+
+  // Scalar
+  bool IsBlocked() const {
+    return blocked;
+  }
+
+#if 0  // TODO
+  T Get() const { return value; }
+
+  T Get(double t) {
+    if (IsTimeSampled()) {
+      // TODO: lookup value by t
+      return timeSamples.Get(t);
+    }
+    return value;
+  }
+#endif
+
+  Animatable() {}
+  Animatable(const T &v) : value(v) {}
+};
 
 ///
-/// Attribute with fallback(default) value
+/// Tyeped Attribute without fallback(default) value.
+/// For attribute with `uniform` qualifier or TimeSamples, but don't have `.connect`(Connection)
 ///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
@@ -285,16 +390,102 @@ class AttribWithFallback;
 /// in USD). If you call `get()`, fallback value is returned.
 ///
 template <typename T>
-class AttribWithFallback {
+class TypedAttribute {
  public:
-  AttribWithFallback() = delete;
+
+  void set(const T &v) { attrib = v; }
+
+  const nonstd::optional<T> get() const {
+    if (attrib) {
+      return attrib.value();
+    }
+    return nonstd::nullopt;
+  }
+
+  // TODO: Animation data.
+  bool IsBlocked() const {
+    return blocked;
+  }
+
+  // for `uniform` attribute only
+  void SetBlock(bool onoff) {
+    blocked = onoff;
+  }
+
+  // value set?
+  bool authored() const {
+    if (attrib) {
+      return true;
+    }
+    return false;
+  }
+
+  AttrMeta meta;
+
+ private:
+  nonstd::optional<T> attrib;
+  bool blocked{false}; // for `uniform` attribute.
+};
+
+///
+/// Tyeped Terminal(Output) Attribute(No value assign, no fallback(default) value, no connection)
+///
+/// - `authored() = true` : Attribute value is authored(attribute is
+/// described in USDA/USDC)
+/// - `authored() = false` : Attribute value is not authored(not described
+/// in USD).
+///
+template <typename T>
+class TypedTerminalAttribute {
+ public:
+
+  void SetAuthor(bool onoff) {
+    _authored = onoff;
+  }
+
+  // value set?
+  bool authored() const {
+    return _authored;
+  }
+
+  std::string type_name() const {
+    return value::TypeTrait<T>::type_name();
+  }
+
+  uint32_t type_id() const {
+    return value::TypeTrait<T>::type_id;
+  }
+
+  AttrMeta meta;
+
+ private:
+
+  bool _authored{false};
+};
+
+template <typename T>
+class TypedAttributeWithFallback;
+
+///
+/// Attribute with fallback(default) value.
+/// For attribute with `uniform` qualifier or TimeSamples, but don't have `.connect`(Connection)
+///
+/// - `authored() = true` : Attribute value is authored(attribute is
+/// described in USDA/USDC)
+/// - `authored() = false` : Attribute value is not authored(not described
+/// in USD). If you call `get()`, fallback value is returned.
+///
+template <typename T>
+class TypedAttributeWithFallback {
+ public:
+  TypedAttributeWithFallback() = delete;
 
   ///
   /// Init with fallback value;
   ///
-  AttribWithFallback(const T &fallback_) : fallback(fallback_) {}
+  TypedAttributeWithFallback(const T &fallback_) : fallback(fallback_) {}
 
-  AttribWithFallback &operator=(const T &value) {
+  TypedAttributeWithFallback &operator=(const T &value) {
     attrib = value;
 
     // fallback Value should be already set with `AttribWithFallback(const T&
@@ -330,11 +521,23 @@ class AttribWithFallback {
 
   void set(const T &v) { attrib = v; }
 
+
+  // TODO: Animation data.
   const T &get() const {
     if (attrib) {
       return attrib.value();
     }
     return fallback;
+  }
+
+  // TODO: Animation data.
+  bool IsBlocked() const {
+    return blocked;
+  }
+
+  // for `uniform` attribute only
+  void SetBlock(bool onoff) {
+    blocked = onoff;
   }
 
   // value set?
@@ -350,7 +553,11 @@ class AttribWithFallback {
  private:
   nonstd::optional<T> attrib;
   T fallback;
+  bool blocked{false}; // for `uniform` attribute.
 };
+
+template<typename T>
+using TypedAnimatableAttributeWithFallback = TypedAttributeWithFallback<Animatable<T>>;
 
 class PrimNode;
 
@@ -875,6 +1082,8 @@ class Relation {
   bool IsPath() const { return type == Type::Path; }
 
   bool IsPathVector() const { return type == Type::PathVector; }
+
+  AttrMeta meta;
 };
 
 //
@@ -893,145 +1102,72 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-// Typed TimeSamples value
-//
-// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
-//
-// in .usd, are represented as
-//
-// 0: (1.0, false)
-// 1: (2.0, true)
-// 2: (3.0, false)
-//
-
-template <typename T>
-struct TypedTimeSamples {
-
-  struct Sample {
-    double t;
-    T value;
-    bool blocked{false};
-  };
-
- public:
-
-  bool empty() const {
-    return _samples.empty();
-  }
-
-  // TODO: Implement.
-  nonstd::optional<T> TryGet(double t = 0.0) const;
-#if 0
-    if (empty()) {
-      return nonstd::nullopt;
-    }
-
-    if (_dirty) {
-      // TODO: Sort by time
-      _dirty = false;
-    }
-
-    // TODO: Fetch value then lineary interpolate value.
-    return nonstd::nullopt;
-  }
-#endif
-
-  void AddSample(const Sample &s) {
-    _samples.push_back(s);
-    _dirty = true;
-  }
-
-  void AddSample(const double t, T &v) {
-    _samples.push_back({t, v, false});
-    _dirty = true;
-  }
-
-  void AddBlockedSample(const double t) {
-    _samples.push_back({t, T(), true});
-    _dirty = true;
-  }
-
-  const std::vector<Sample> &GetSamples() const {
-    return _samples;
-  }
-
- private:
-  std::vector<Sample> _samples;
-  bool _dirty{false};
-
-};
-
-template <typename T>
-struct Animatable {
-  // scalar
-  T value;
-  bool blocked{false};
-
-  // timesamples
-  TypedTimeSamples<T> ts;
-
-  bool IsTimeSampled() const {
-    return !ts.empty();
-  }
-
-  bool IsScalar() const {
-    return ts.empty();
-  }
-
-  // Scalar
-  bool IsBlocked() const {
-    return blocked;
-  }
-
-#if 0  // TODO
-  T Get() const { return value; }
-
-  T Get(double t) {
-    if (IsTimeSampled()) {
-      // TODO: lookup value by t
-      return timeSamples.Get(t);
-    }
-    return value;
-  }
-#endif
-
-  Animatable() {}
-  Animatable(const T &v) : value(v) {}
-};
 
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
   std::string name;  // attrib name
 
-  std::string type_name;  // name of attrib type(e.g. "float', "color3f")
+  void set_type_name(const std::string &tname) {
+    _type_name = tname;
+  }
 
-  //ListEditQual list_edit{ListEditQual::ResetToExplicit}; // moved to Property
+  // `var` may be empty, so store type info with set_type_name and set_type_id.
+  std::string type_name() const {
+    if (_type_name.size()) {
+      return _type_name;
+    }
 
-  Variability variability;
+    // Fallback. May be unreliable(`var` could be empty).
+    return _var.type_name();
+  }
+
+  Variability variability{Variability::Varying}; // 'uniform` qualifier is handled with `variability=uniform`
 
   // Interpolation interpolation{Interpolation::Invalid};
 
   AttrMeta meta;
 
-  //
-  // Qualifiers
-  //
-  bool uniform{false};  // `uniform`
+  
+  void set_var(primvar::PrimVar &&v) {
+    if (_type_name.empty()) {
+      _type_name = v.type_name();
+    }
 
-  bool blocked{false}; // Attribute Block('None')
-  primvar::PrimVar var;
+    _var = std::move(v);
+  }
+
+  template<typename T>
+  nonstd::optional<T> get_value() const {
+    return _var.get_value<T>();
+  }
+
+  const primvar::PrimVar &get_var() const {
+    return _var;
+  }
+
+  void set_blocked(bool onoff) {
+    _blocked = onoff;
+  }
+
+  bool blocked() const {
+    return _blocked;
+  }
+
+ private:
+  bool _blocked{false}; // Attribute Block('None')
+  std::string _type_name;
+  primvar::PrimVar _var;
 };
 
 ///
-/// Typed version of PrimAttrib(e.g. for `points`, `normals`, `velocities.timeSamples`
-/// `inputs:st.connect`)
+/// Typed version of Property(e.g. for `points`, `normals`, `velocities.timeSamples`, `inputs:st.connect`)
 ///
 template <typename T>
-class TypedAttribute {
+class TypedProperty {
  public:
-  TypedAttribute() = default;
+  TypedProperty() = default;
 
-  explicit TypedAttribute(const T &fv) : fallback(fv) {}
+  explicit TypedProperty(const T &fv) : fallback(fv) {}
 
   using type = typename value::TypeTrait<T>::value_type;
 
@@ -1054,12 +1190,14 @@ class TypedAttribute {
   nonstd::optional<T> fallback;  // may have fallback
   AttrMeta meta;
   bool custom{false}; // `custom`
-  bool uniform{false};  // `uniform`
+  Variability variability{Variability::Varying}; // `uniform`, `varying`
+
+  // TODO: Other variability
   bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
   ListEditQual qual{ListEditQual::ResetToExplicit}; // default = "unqualified"
 };
 
-// Attribute or Relation/Connection. And has this property is custom or not
+// Generic container for Attribute or Relation/Connection. And has this property is custom or not
 // (Need to lookup schema if the property is custom or not for Crate data)
 class Property {
  public:
@@ -1080,7 +1218,10 @@ class Property {
 
   Property() = default;
 
-  Property(bool custom) : has_custom(custom) { type = Type::EmptyAttrib; }
+  Property(const std::string &type_name, bool custom) : has_custom(custom) {
+    attrib.set_type_name(type_name);
+    type = Type::EmptyAttrib;
+  }
 
   Property(const PrimAttrib &a, bool custom) : attrib(a), has_custom(custom) {
     type = Type::Attrib;
@@ -1219,6 +1360,7 @@ struct XformOp {
       return nonstd::nullopt;
     }
 
+#if 0
     if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
       //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
       auto pv = linb::any_cast<const T>(&var.values[0]);
@@ -1235,6 +1377,9 @@ struct XformOp {
       return *linb::cast<const T>(&var.values[0]);
     }
     return nonstd::nullopt;
+#else
+    return var.values[0].get_value<T>();
+#endif
   }
 
 };
@@ -1476,8 +1621,59 @@ struct Scope {
   std::map<std::string, Property> props;
 };
 
-Interpolation InterpolationFromString(const std::string &v);
-Orientation OrientationFromString(const std::string &v);
+//
+// For usdGeom, usdLux
+//
+struct Xformable {
+
+  ///
+  /// Evaluate XformOps
+  ///
+  bool EvaluateXformOps(value::matrix4d *out_matrix) const;
+
+  ///
+  /// Get concatenated matrix.
+  ///
+  nonstd::optional<value::matrix4d> GetGlobalMatrix(
+      const value::matrix4d &parentMatrix) const {
+    if (auto m = GetLocalMatrix()) {
+      // TODO: Inherit transform from parent node.
+      value::matrix4d cm =
+          Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
+      return cm;
+    }
+
+    return nonstd::nullopt;
+  }
+
+  ///
+  /// Evaluate xformOps and get local matrix.
+  ///
+  nonstd::optional<value::matrix4d> GetLocalMatrix() const {
+    if (_dirty) {
+      value::matrix4d m;
+      if (EvaluateXformOps(&m)) {
+        _matrix = m;
+        _dirty = false;
+      } else {
+        // TODO: Report an error.
+        return nonstd::nullopt;
+      }
+    }
+
+    return _matrix;
+  }
+
+  void SetDirty(bool onoff) { _dirty = onoff; }
+
+  std::vector<XformOp> xformOps;
+
+  mutable bool _dirty{true};
+  mutable value::matrix4d _matrix;  // Matrix of this Xform(local matrix)
+};
+
+nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
+nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 
 namespace value {
 
