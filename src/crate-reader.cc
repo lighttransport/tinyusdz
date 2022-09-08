@@ -52,9 +52,9 @@
 namespace tinyusdz {
 namespace crate {
 
-constexpr auto kTypeName = "typeName";
-constexpr auto kToken = "Token";
-constexpr auto kDefault = "default";
+//constexpr auto kTypeName = "typeName";
+//constexpr auto kToken = "Token";
+//constexpr auto kDefault = "default";
 
 #define kTag "[Crate]"
 
@@ -756,7 +756,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // must be an array of double.
   DCOUT("TimeSample times:" << times_value.type_name());
-  
+
   if (auto pv = times_value.get_value<std::vector<double>>()) {
     d->times = pv.value();
     DCOUT("`times` = " << d->times);
@@ -797,9 +797,9 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   DCOUT("Number of values = " << num_values);
 
   if (d->times.size() != num_values) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of `times` elements and # of values in Crate differs."); 
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of `times` elements and # of values in Crate differs.");
   }
-  
+
   for (size_t i = 0; i < num_values; i++) {
     crate::ValueRep rep;
     if (!ReadValueRep(&rep)) {
@@ -3858,6 +3858,7 @@ CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
                                  name + "`");
 }
 
+#if 0
 bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
                                  PrimAttrib *attr,
                                  const std::string &prop_name) {
@@ -4067,6 +4068,7 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
 
   return success;
 }
+#endif
 
 
 }  // namespace crate
