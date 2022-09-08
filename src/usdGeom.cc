@@ -237,7 +237,7 @@ value::matrix4d GetTransform(XformOp xform)
 
 }  // namespace
 
-bool Xform::EvaluateXformOps(value::matrix4d *out_matrix) const {
+bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix) const {
 
   value::matrix4d cm;
 
