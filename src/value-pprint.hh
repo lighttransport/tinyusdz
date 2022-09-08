@@ -39,8 +39,10 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3d &v);
 
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v);
 
@@ -64,6 +66,9 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
+
+// 1D array
 template <typename T>
 inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
   os << "[";

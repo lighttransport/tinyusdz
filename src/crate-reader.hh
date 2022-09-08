@@ -5,8 +5,10 @@
 #include <string>
 #include <unordered_set>
 
-#include "crate-format.hh"
+//
 #include "nonstd/optional.hpp"
+//
+#include "crate-format.hh"
 #include "stream-reader.hh"
 
 namespace tinyusdz {
@@ -17,7 +19,7 @@ struct CrateReaderConfig {
 
   // For malcious Crate data.
   // Set limits to prevent infinite-loop, buffer-overrun, etc.
-  size_t maxDictElements = 4096;
+  size_t maxDictElements = 256;
   size_t maxArrayElements = 1024*1024*1024; // 1M
 };
 
@@ -28,8 +30,8 @@ class CrateReader {
  public:
 
   ///
-  /// Intermediate Node data structure.
-  /// This does not contain leaf node inormation.
+  /// Intermediate Node data structure for scene graph.
+  /// This does not contain actual prim/property data.
   ///
   class Node {
    public:
@@ -62,6 +64,28 @@ class CrateReader {
     ///
     std::string GetLocalPath() const { return _path.full_path_name(); }
 
+
+    ///
+    /// Element Path(= name of Prim. Tokens in `primChildren` field). Prim node only.
+    ///
+    void SetElementPath(Path &path) {
+      _elemPath = path;
+    }
+
+    nonstd::optional<std::string> GetElementName() const  {
+      if (_elemPath.IsRelativePath()) {
+        return _elemPath.full_path_name();
+      } else {
+        return nonstd::nullopt;
+      }
+    }
+
+    // Element path(e.g. `geom0`)
+    const Path &GetElementPath() const  {
+      return _elemPath;
+    }
+
+    // Full path(e.g. `/root/geom0`
     const Path &GetPath() const { return _path; }
 
     // crate::CrateDataType GetNodeDataType() const { return _node_type; }
@@ -70,9 +94,8 @@ class CrateReader {
       return _primChildren;
     }
 
-    void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
-
-    const value::dict &GetAssetInfo() const { return _assetInfo; }
+    //void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
+    //const value::dict &GetAssetInfo() const { return _assetInfo; }
 
    private:
     int64_t
@@ -82,7 +105,8 @@ class CrateReader {
         _primChildren;  // List of name of child nodes
 
     Path _path;  // local path
-    value::dict _assetInfo;
+    //value::dict _assetInfo;
+    Path _elemPath;
 
     // value::TypeId _node_type;
     // NodeType _node_type;
@@ -152,6 +176,10 @@ class CrateReader {
     return _paths;
   }
 
+  const std::vector<Path> &GetElemPaths() const {
+    return _elemPaths;
+  }
+
   const std::vector<crate::Spec> &GetSpecs() const {
     return _specs;
   }
@@ -184,6 +212,7 @@ class CrateReader {
   }
 
   nonstd::optional<Path> GetPath(crate::Index index) const;
+  nonstd::optional<Path> GetElementPath(crate::Index index) const;
   nonstd::optional<std::string> GetPathString(crate::Index index) const;
 
 
@@ -208,9 +237,9 @@ class CrateReader {
   nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
       const FieldValuePairVector &fvs, const std::string &name);
 
-  bool ParseAttribute(const FieldValuePairVector &fvs,
-                                    PrimAttrib *attr,
-                                    const std::string &prop_name);
+  //bool ParseAttribute(const FieldValuePairVector &fvs,
+  //                                  PrimAttrib *attr,
+  //                                  const std::string &prop_name);
 
  private:
 
