@@ -233,10 +233,10 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
 }
 
 static void RegisterPrimTypes(std::set<std::string> &d) {
-  // TODO: Register Prim types from USDAReader.
   d.insert("Xform");
   d.insert("Sphere");
   d.insert("Cube");
+  d.insert("Cone");
   d.insert("Cylinder");
   d.insert("Capsule");
   d.insert("BasisCurves");
@@ -249,6 +249,7 @@ static void RegisterPrimTypes(std::set<std::string> &d) {
   d.insert("SphereLight");
   d.insert("DomeLight");
   d.insert("DiskLight");
+  d.insert("PointLight");
   d.insert("Camera");
   d.insert("SkelRoot");
   d.insert("Skeleton");

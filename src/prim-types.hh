@@ -1621,6 +1621,57 @@ struct Scope {
   std::map<std::string, Property> props;
 };
 
+//
+// For usdGeom, usdLux
+//
+struct Xformable {
+
+  ///
+  /// Evaluate XformOps
+  ///
+  bool EvaluateXformOps(value::matrix4d *out_matrix) const;
+
+  ///
+  /// Get concatenated matrix.
+  ///
+  nonstd::optional<value::matrix4d> GetGlobalMatrix(
+      const value::matrix4d &parentMatrix) const {
+    if (auto m = GetLocalMatrix()) {
+      // TODO: Inherit transform from parent node.
+      value::matrix4d cm =
+          Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
+      return cm;
+    }
+
+    return nonstd::nullopt;
+  }
+
+  ///
+  /// Evaluate xformOps and get local matrix.
+  ///
+  nonstd::optional<value::matrix4d> GetLocalMatrix() const {
+    if (_dirty) {
+      value::matrix4d m;
+      if (EvaluateXformOps(&m)) {
+        _matrix = m;
+        _dirty = false;
+      } else {
+        // TODO: Report an error.
+        return nonstd::nullopt;
+      }
+    }
+
+    return _matrix;
+  }
+
+  void SetDirty(bool onoff) { _dirty = onoff; }
+
+  std::vector<XformOp> xformOps;
+
+  mutable bool _dirty{true};
+  mutable value::matrix4d _matrix;  // Matrix of this Xform(local matrix)
+};
+
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 

@@ -23,8 +23,11 @@ constexpr auto kGeomCone = "Cone";
 constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
 
-// Generic Prim
-struct GPrim {
+
+// Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
+// <pxrUSD>/pxr/usd/usdGeom/schema.udsa
+
+struct GPrim : Xformable {
   std::string name;
 
   int64_t parent_id{-1};  // Index to parent node
@@ -54,71 +57,28 @@ struct GPrim {
 
   nonstd::optional<Relation> proxyPrim;
   nonstd::optional<MaterialBindingAPI> materialBinding;
-  std::vector<value::token> xformOpOrder;
 
   std::map<std::string, Property> props;
 
   bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
-  bool active{true};
+  //bool active{true};
 
   // child nodes
   std::vector<GPrim> children;
 
   // Prim metadataum.
   PrimMeta meta;
+
 };
 
 struct Xform : GPrim {
-  std::vector<XformOp> xformOps;
 
   Xform() {}
 
-  ///
-  /// Evaluate XformOps
-  ///
-  bool EvaluateXformOps(value::matrix4d *out_matrix) const;
-
-  ///
-  /// Get concatenated matrix.
-  ///
-  nonstd::optional<value::matrix4d> GetGlobalMatrix(
-      const value::matrix4d &parentMatrix) const {
-    if (auto m = GetLocalMatrix()) {
-      // TODO: Inherit transform from parent node.
-      value::matrix4d cm =
-          Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
-      return cm;
-    }
-
-    return nonstd::nullopt;
-  }
-
-  ///
-  /// Evaluate xformOps and get local matrix.
-  ///
-  nonstd::optional<value::matrix4d> GetLocalMatrix() const {
-    if (_dirty) {
-      value::matrix4d m;
-      if (EvaluateXformOps(&m)) {
-        _matrix = m;
-        _dirty = false;
-      } else {
-        // TODO: Report an error.
-        return nonstd::nullopt;
-      }
-    }
-
-    return _matrix;
-  }
-
-  void SetDirty(bool onoff) { _dirty = onoff; }
-
-  mutable bool _dirty{true};
-  mutable value::matrix4d _matrix;  // Matrix of this Xform(local matrix)
 };
 
-// GeomSubset
+// GeomSubset 
 struct GeomSubset {
   enum class ElementType { Face };
 
@@ -316,53 +276,53 @@ struct GeomCamera : public GPrim {
   TypedAttributeWithFallback<StereoRole> stereoRole{
       StereoRole::Mono};  // "uniform token stereoRole"
 
-  TypedAttributeWithFallback<Animatable<float>> shutterClose{
-      0.0f};  // shutter:close
-  TypedAttributeWithFallback<Animatable<float>> shutterOpen{0.0f};  // shutter:open
+  TypedAttributeWithFallback<Animatable<double>> shutterClose{
+      0.0};  // double shutter:close
+  TypedAttributeWithFallback<Animatable<double>> shutterOpen{0.0};  // double shutter:open
 };
 
-struct GeomBoundable : GPrim {};
+//struct GeomBoundable : GPrim {};
 
 struct GeomCone : public GPrim {
   //
   // Properties
   //
-  TypedProperty<double> height{2.0};
-  TypedProperty<double> radius{1.0};
+  TypedAttributeWithFallback<Animatable<double>> height{2.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 
-  Axis axis{Axis::Z};
+  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
 };
 
 struct GeomCapsule : public GPrim {
   //
   // Properties
   //
-  TypedProperty<double> height{2.0};
-  TypedProperty<double> radius{0.5};
-  Axis axis{Axis::Z};
+  TypedAttributeWithFallback<Animatable<double>> height{2.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{0.5};
+  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
 };
 
 struct GeomCylinder : public GPrim {
   //
   // Properties
   //
-  TypedProperty<double> height{2.0};
-  TypedProperty<double> radius{1.0};
-  Axis axis{Axis::Z};
+  TypedAttributeWithFallback<Animatable<double>> height{2.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{1.0};
+  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
 };
 
 struct GeomCube : public GPrim {
   //
   // Properties
   //
-  TypedProperty<double> size{2.0};
+  TypedAttributeWithFallback<Animatable<double>> size{2.0};
 };
 
 struct GeomSphere : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedProperty<double> radius{1.0};
+  TypedAttributeWithFallback<Animatable<double>> radius{2.0};
 };
 
 //
@@ -393,12 +353,12 @@ struct GeomBasisCurves : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedProperty<std::vector<value::point3f>> points;    // point3f
-  TypedProperty<std::vector<value::normal3f>> normals;  // normal3f
-  TypedProperty<std::vector<int>> curveVertexCounts;
-  TypedProperty<std::vector<float>> widths;
-  TypedProperty<std::vector<value::vector3f>> velocities;     // vector3f
-  TypedProperty<std::vector<value::vector3f>> accelerations;  // vector3f
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;    // point3f
+  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;  // normal3f
+  TypedAttribute<Animatable<std::vector<int>>> curveVertexCounts;
+  TypedAttribute<Animatable<std::vector<float>>> widths;
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;     // vector3f
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;  // vector3f
 };
 
 //
@@ -408,12 +368,12 @@ struct GeomPoints : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedProperty<std::vector<value::point3f>> points;    // point3f[]
-  TypedProperty<std::vector<value::normal3f>> normals;  // normal3f[]
-  TypedProperty<std::vector<float>> widths; // float[]
-  TypedProperty<std::vector<int64_t>> ids;                    // int64[] per-point ids.
-  TypedProperty<std::vector<value::vector3f>> velocities;     // vector3f[]
-  TypedProperty<std::vector<value::vector3f>> accelerations;  // vector3f[]
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;    // point3f[]
+  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;  // normal3f[]
+  TypedAttribute<Animatable<std::vector<float>>> widths; // float[]
+  TypedAttribute<Animatable<std::vector<int64_t>>> ids;                    // int64[] per-point ids.
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;     // vector3f[]
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;  // vector3f[]
 };
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT

@@ -586,43 +586,6 @@ std::string print_typed_prop(const TypedProperty<T> &prop, const std::string &na
   return ss.str();
 }
 
-template<typename T>
-std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
-  std::stringstream ss;
-
-  // properties
-  if (gprim.doubleSided.authored()) {
-    ss << pprint::Indent(indent) << "uniform bool doubleSided = " << gprim.doubleSided.get() << "\n";
-  }
-
-  if (gprim.orientation.authored()) {
-    ss << pprint::Indent(indent) << "uniform token orientation = " << to_string(gprim.orientation.get())
-       << "\n";
-  }
-
-
-  if (gprim.extent) {
-    ss << pprint::Indent(indent) << "float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value(), indent+1) << "\n";
-  }
-
-  if (gprim.visibility.authored()) {
-    ss << pprint::Indent(indent) << "token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent+1) << "\n";
-  }
-
-  if (gprim.materialBinding) {
-    auto m = gprim.materialBinding.value();
-    if (m.binding.IsValid()) {
-      ss << pprint::Indent(indent) << "rel material:binding = " << wquote(to_string(m.binding), "<", ">") << "\n";
-    }
-  }
-
-  // primvars
-  if (gprim.displayColor) {
-    ss << pprint::Indent(indent) << "float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value(), indent+1) << "\n";
-  }
-
-  return ss.str();
-}
 
 // Print user-defined (custom) properties.
 std::string print_props(const std::map<std::string, Property> &props, uint32_t indent)
@@ -781,6 +744,46 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
   return ss.str();
 }
 
+template<typename T>
+std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
+  std::stringstream ss;
+
+  // properties
+  if (gprim.doubleSided.authored()) {
+    ss << pprint::Indent(indent) << "uniform bool doubleSided = " << gprim.doubleSided.get() << "\n";
+  }
+
+  if (gprim.orientation.authored()) {
+    ss << pprint::Indent(indent) << "uniform token orientation = " << to_string(gprim.orientation.get())
+       << "\n";
+  }
+
+
+  if (gprim.extent) {
+    ss << pprint::Indent(indent) << "float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value(), indent+1) << "\n";
+  }
+
+  if (gprim.visibility.authored()) {
+    ss << pprint::Indent(indent) << "token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent+1) << "\n";
+  }
+
+  if (gprim.materialBinding) {
+    auto m = gprim.materialBinding.value();
+    if (m.binding.IsValid()) {
+      ss << pprint::Indent(indent) << "rel material:binding = " << wquote(to_string(m.binding), "<", ">") << "\n";
+    }
+  }
+
+  // primvars
+  if (gprim.displayColor) {
+    ss << pprint::Indent(indent) << "float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value(), indent+1) << "\n";
+  }
+
+  ss << print_xformOps(gprim.xformOps, indent+1);
+
+
+  return ss.str();
+}
 
 } // namespace local
 
@@ -1167,7 +1170,7 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_xformOps(xform.xformOps, indent+1);
+  ss << print_gprim_predefined(xform, indent+1);
 
   // TODO: Generic properties
 
@@ -1204,6 +1207,9 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
   ss << print_typed_token_attr(camera.projection, "projection", indent+1);
   ss << print_typed_token_attr(camera.stereoRole, "stereoRole", indent+1);
 
+  ss << print_typed_attr(camera.shutterOpen, "shutter:open", indent+1);
+  ss << print_typed_attr(camera.shutterClose, "shutter:close", indent+1);
+
 
   ss << print_gprim_predefined(camera, indent);
 
@@ -1225,7 +1231,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(sphere.radius, "radius", indent+1);
+  ss << print_typed_attr(sphere.radius, "radius", indent+1);
 
   ss << print_gprim_predefined(sphere, indent);
 
@@ -1320,12 +1326,12 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(geom.points, "points", indent);
-  ss << print_typed_prop(geom.normals, "normals", indent);
-  ss << print_typed_prop(geom.widths, "widths", indent);
-  ss << print_typed_prop(geom.ids, "ids", indent);
-  ss << print_typed_prop(geom.velocities, "velocities", indent);
-  ss << print_typed_prop(geom.accelerations, "accelerations", indent);
+  ss << print_typed_attr(geom.points, "points", indent);
+  ss << print_typed_attr(geom.normals, "normals", indent);
+  ss << print_typed_attr(geom.widths, "widths", indent);
+  ss << print_typed_attr(geom.ids, "ids", indent);
+  ss << print_typed_attr(geom.velocities, "velocities", indent);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent);
 
   ss << print_gprim_predefined(geom, indent);
 
@@ -1397,12 +1403,12 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
     ss << pprint::Indent(indent+1) << "uniform token wrap = " << quote(to_string(geom.wrap.value())) << "\n";
   }
 
-  ss << print_typed_prop(geom.points, "points", indent);
-  ss << print_typed_prop(geom.normals, "normals", indent);
-  ss << print_typed_prop(geom.widths, "widths", indent);
-  ss << print_typed_prop(geom.velocities, "velocites", indent);
-  ss << print_typed_prop(geom.accelerations, "accelerations", indent);
-  ss << print_typed_prop(geom.curveVertexCounts, "curveVertexCounts", indent);
+  ss << print_typed_attr(geom.points, "points", indent);
+  ss << print_typed_attr(geom.normals, "normals", indent);
+  ss << print_typed_attr(geom.widths, "widths", indent);
+  ss << print_typed_attr(geom.velocities, "velocites", indent);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent);
+  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent);
 
   ss << print_gprim_predefined(geom, indent+1);
 
@@ -1425,7 +1431,7 @@ std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(geom.size, "size", indent+1);
+  ss << print_typed_attr(geom.size, "size", indent+1);
 
   ss << print_gprim_predefined(geom, indent);
 
@@ -1446,8 +1452,20 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(geom.radius, "radius", indent+1);
-  ss << print_typed_prop(geom.height, "height", indent+1);
+  ss << print_typed_attr(geom.radius, "radius", indent+1);
+  ss << print_typed_attr(geom.height, "height", indent+1);
+
+  if (geom.axis) {
+    std::string axis;
+    if (geom.axis.value() == Axis::X) {
+      axis = "\"X\"";
+    } else if (geom.axis.value() == Axis::Y) {
+      axis = "\"Y\"";
+    } else {
+      axis = "\"Z\"";
+    }
+    ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
+  }
 
   ss << print_gprim_predefined(geom, indent);
 
@@ -1468,19 +1486,21 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool clos
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(geom.radius, "radius", indent+1);
-  ss << print_typed_prop(geom.height, "height", indent+1);
+  ss << print_typed_attr(geom.radius, "radius", indent+1);
+  ss << print_typed_attr(geom.height, "height", indent+1);
 
-  std::string axis;
-  if (geom.axis == Axis::X) {
-    axis = "x";
-  } else if (geom.axis == Axis::Y) {
-    axis = "y";
-  } else {
-    axis = "z";
+  if (geom.axis) {
+    std::string axis;
+    if (geom.axis.value() == Axis::X) {
+      axis = "\"X\"";
+    } else if (geom.axis.value() == Axis::Y) {
+      axis = "\"Y\"";
+    } else {
+      axis = "\"Z\"";
+    }
+    ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
   }
 
-  ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
 
   ss << print_gprim_predefined(geom, indent+1);
 
@@ -1501,19 +1521,20 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(geom.radius, "radius", indent+1);
-  ss << print_typed_prop(geom.height, "height", indent+1);
+  ss << print_typed_attr(geom.radius, "radius", indent+1);
+  ss << print_typed_attr(geom.height, "height", indent+1);
 
-  std::string axis;
-  if (geom.axis == Axis::X) {
-    axis = "x";
-  } else if (geom.axis == Axis::Y) {
-    axis = "y";
-  } else {
-    axis = "z";
+  if (geom.axis) {
+    std::string axis;
+    if (geom.axis.value() == Axis::X) {
+      axis = "\"X\"";
+    } else if (geom.axis.value() == Axis::Y) {
+      axis = "\"Y\"";
+    } else {
+      axis = "\"Z\"";
+    }
+    ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
   }
-
-  ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
 
   ss << print_gprim_predefined(geom, indent+1);
 
@@ -1819,6 +1840,8 @@ std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool c
   ss << print_typed_prop(light.radius, "inputs:radius", indent+1);
   ss << print_typed_prop(light.specular, "inputs:specular", indent+1);
 
+  ss << print_xformOps(light.xformOps, indent+1);
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
@@ -1838,6 +1861,8 @@ std::string to_string(const LuxDomeLight &light, const uint32_t indent, bool clo
   // members
   ss << print_typed_prop(light.color, "inputs:color", indent+1);
   ss << print_typed_prop(light.intensity, "inputs:intensity", indent+1);
+
+  ss << print_xformOps(light.xformOps, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
