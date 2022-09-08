@@ -26,9 +26,11 @@ struct Material {
   PrimMeta meta;
 
   // Terminal attribute.
-  Connection<value::token> surface; // "token outputs:surface.connect"
-  Connection<value::token> volume; // "token outputs:volume.connect"
+  nonstd::optional<Connection<Path>> surface; // "token outputs:surface.connect"
+  nonstd::optional<Connection<Path>> volume; // "token outputs:volume.connect"
 
+  // Custom properties
+  std::map<std::string, Property> props;
 };
 
 // TODO
@@ -36,6 +38,9 @@ struct NodeGraph {
   std::string name;
 
   int64_t parent_id{-1};
+
+  // Custom properties
+  std::map<std::string, Property> props;
 
   PrimMeta meta;
 };

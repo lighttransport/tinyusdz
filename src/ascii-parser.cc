@@ -5573,8 +5573,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     if (c != '=') {
       DCOUT("Relationship with no target: " << attr_name);
 
-      // No targets.
-      Property p(custom_qual);
+      // No targets. Define only.
+      Property p(type_name, custom_qual);
       p.type = Property::Type::NoTargetsRelation;
       p.qual = qual;
 
@@ -5719,11 +5719,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     DCOUT("Define only property = " + primattr_name);
 
-    Property p(custom_qual);
-    p.type = Property::Type::EmptyAttrib;
-
     // Empty Attribute. type info only
-    p.attrib.set_type_name(type_name);
+    Property p(type_name, custom_qual);
+
     if (uniform_qual) {
       p.attrib.variability = Variability::Uniform;
     }
@@ -5828,7 +5826,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     PrimAttrib attr;
     primvar::PrimVar var;
     var.set_timesamples(ts);
- 
+
     attr.name = varname;
     attr.set_var(std::move(var));
 

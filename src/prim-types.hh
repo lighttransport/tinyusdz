@@ -1218,7 +1218,10 @@ class Property {
 
   Property() = default;
 
-  Property(bool custom) : has_custom(custom) { type = Type::EmptyAttrib; }
+  Property(const std::string &type_name, bool custom) : has_custom(custom) {
+    attrib.set_type_name(type_name);
+    type = Type::EmptyAttrib;
+  }
 
   Property(const PrimAttrib &a, bool custom) : attrib(a), has_custom(custom) {
     type = Type::Attrib;
