@@ -6,6 +6,7 @@
 
 #include "unit-prim-types.h"
 #include "unit-primvar.h"
+#include "unit-value-types.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -16,6 +17,7 @@
 TEST_LIST = {
   { "prim_type_test", prim_type_test },
   { "primvar_test", primvar_test },
+  { "value_types_test", value_types_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

@@ -121,8 +121,10 @@ constexpr auto kNormal3h= "normal3h";
 constexpr auto kNormal3f= "normal3f";
 constexpr auto kNormal3d= "normal3d";
 
+constexpr auto kColor3h= "color3h";
 constexpr auto kColor3f= "color3f";
 constexpr auto kColor3d= "color3d";
+constexpr auto kColor4h= "color4h";
 constexpr auto kColor4f= "color4f";
 constexpr auto kColor4d= "color4d";
 
@@ -143,11 +145,11 @@ inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 using token = tinyusdz::Token;
 
 // SdfAssetPath
-class asset_path {
+class AssetPath {
  public:
-  asset_path() = default;
-  asset_path(const std::string &a) : asset_path_(a) {}
-  asset_path(const std::string &a, const std::string &r)
+  AssetPath() = default;
+  AssetPath(const std::string &a) : asset_path_(a) {}
+  AssetPath(const std::string &a, const std::string &r)
       : asset_path_(a), resolved_path_(r) {}
 
   bool Resolve() {
@@ -168,8 +170,6 @@ class asset_path {
   std::string resolved_path_;
 };
 
-using AssetPath = asset_path;
-
 //
 // Type ID for TypeTrait<T>::type_id.
 //
@@ -189,7 +189,7 @@ enum TypeId {
   TYPE_ID_NULL,
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
-  TYPE_ID_BLOCK,  // None as type
+  TYPE_ID_VALUEBLOCK,  // Value block. `None` in ascii.
 
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
@@ -322,6 +322,7 @@ enum TypeId {
   TYPE_ID_GEOM_CYLINDER,
   TYPE_ID_GEOM_CONE,
   TYPE_ID_GEOM_CAPSULE,
+  TYPE_ID_GEOM_POINTS,
   TYPE_ID_GEOM_GEOMSUBSET,
   TYPE_ID_GEOM_CAMERA,
   TYPE_ID_GEOM_END,
@@ -609,12 +610,28 @@ struct point3d {
   double operator[](size_t idx) { return *(&x + idx); }
 };
 
+struct color3h {
+  half r, g, b;
+
+  // C++11 or later, struct is tightly packed, so use the pointer offset is
+  // valid.
+  half operator[](size_t idx) { return *(&r + idx); }
+};
+
 struct color3f {
   float r, g, b;
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
   float operator[](size_t idx) { return *(&r + idx); }
+};
+
+struct color4h {
+  half r, g, b, a;
+
+  // C++11 or later, struct is tightly packed, so use the pointer offset is
+  // valid.
+  half operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct color4f {
@@ -665,8 +682,8 @@ struct texcoord3d {
   double s, t, r;
 };
 
-// Attribute Block(`None`)
-struct Block {};
+// Attribute value Block(`None`)
+struct ValueBlock {};
 
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
@@ -698,7 +715,7 @@ struct TypeTrait<void> {
 
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 //DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
-DEFINE_TYPE_TRAIT(Block, "none", TYPE_ID_BLOCK, 1);
+DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
@@ -759,6 +776,8 @@ DEFINE_ROLE_TYPE_TRAIT(point3d, kPoint3d, TYPE_ID_POINT3D, double3);
 
 DEFINE_ROLE_TYPE_TRAIT(frame4d, kFrame4d, TYPE_ID_FRAME4D, matrix4d);
 
+DEFINE_ROLE_TYPE_TRAIT(color3h, kColor3h, TYPE_ID_COLOR3H, half3);
+DEFINE_ROLE_TYPE_TRAIT(color4h, kColor4h, TYPE_ID_COLOR4H, half4);
 DEFINE_ROLE_TYPE_TRAIT(color3f, kColor3f, TYPE_ID_COLOR3F, float3);
 DEFINE_ROLE_TYPE_TRAIT(color4f, kColor4f, TYPE_ID_COLOR4F, float4);
 DEFINE_ROLE_TYPE_TRAIT(color3d, kColor3d, TYPE_ID_COLOR3D, double3);
@@ -779,7 +798,7 @@ DEFINE_TYPE_TRAIT(token, kToken, TYPE_ID_TOKEN, 1);
 DEFINE_TYPE_TRAIT(std::string, kString, TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 
-DEFINE_TYPE_TRAIT(asset_path, kAssetPath, TYPE_ID_ASSET_PATH, 1);
+DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header files(e.g. `prim-types.hh`,
@@ -822,20 +841,113 @@ struct TypeTrait<std::vector<std::vector<T>>> {
   }
 };
 
-// Lookup TypeTrait<T>::type_name from TypeTrait<T>::type_id
+// Lookup TypeTrait<T>::type_name from type_id
+// Return nullopt when the input is invalid type id.
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
+
+// Return error string when the input is invalid type id
 std::string GetTypeName(uint32_t tyid);
+
+// Lookup TypeTrait<T>::type_id from string
+// Return nullopt when the input is invalid type name.
+nonstd::optional<uint32_t> TryGetTypeId(const std::string &tyname);
+
+// Return TYPE_ID_INVALID when the input is invalid type name
+uint32_t GetTypeId(const std::string &tyname);
+
+
+// For Role type.
+// Get underlying type name(e.g. return type "float4" for role type "color4f"), or return nullopt/invalid string for invalid input type id.
+// For non-Role type, the behavior is same with TryGetTypeName/GetTypeName(i.e, return "float4" for type `float4`)
+nonstd::optional<std::string> TryGetUnderlyingTypeName(uint32_t tyid);
+std::string GetUnderlyingTypeName(uint32_t tyid);
+
+// Get underlying type id(e.g. return type "float4" for role type "color4f"), or return nullopt/TYPE_ID_INVALID for invalid input type name
+// For non-Role type, the behavior is same with TryGetTypeId/GetTypeId(i.e, return `float4` for name "float4")
+nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname);
+uint32_t GetUnderlyingTypeId(const std::string &tyname);
+
+
 
 }  // namespace value
 }  // namespace tinyusdz
 
-// TODO(syoyo): Replace any_value with linb::any
-// TODO(syoyo): Move TypeTrait<T> code to another header to simplify .inc
-// inclusion.
 #include "tiny-any.inc"
 
 namespace tinyusdz {
 namespace value {
+
+///
+/// Generic Value class using any
+/// TODO: Type-check when casting with underlying_type(Need to modify linb::any class) 
+///
+class Value {
+ public:
+
+  Value() = default;
+
+  template <class T>
+  Value(const T &v) : v_(v) {}
+
+  // template <class T>
+  // Value(T &&v) : v_(v) {}
+
+  const std::string type_name() const { return v_.type_name(); }
+  const std::string underlying_type_name() const { return v_.underlying_type_name(); }
+
+  uint32_t type_id() const { return v_.type_id(); }
+  uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
+
+  // Return nullptr when type conversion failed.
+  template <class T>
+  const T *as() const {
+    if (TypeTrait<T>::type_id == v_.type_id()) {
+      return linb::any_cast<const T>(&v_);
+    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      return linb::any_cast<const T>(&v_);
+    } else {
+      return nullptr;
+    }
+  }
+
+  // Useful function to retrieve concrete value with type T.
+  // Undefined behavior(usually will triger segmentation fault) when
+  // type-mismatch. (We don't throw exception)
+  template <class T>
+  const T value() const {
+    //return (*reinterpret_cast<const T *>(v_.value()));
+    return linb::any_cast<const T>(v_);
+  }
+
+  // Type-safe way to get concrete value.
+  template <class T>
+  nonstd::optional<T> get_value() const {
+    if (TypeTrait<T>::type_id == v_.type_id()) {
+      return std::move(value<T>());
+    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      // Use force cast
+      // TODO: type-check
+      return std::move(*linb::cast<const T>(&v_));
+    }
+    return nonstd::nullopt;
+  }
+
+  template <class T>
+  Value &operator=(const T &v) {
+    v_ = v;
+    return (*this);
+  }
+
+  const linb::any &get_raw() const { return v_; }
+
+ private:
+  //any_value v_;
+  linb::any v_;
+};
 
 // Handy, but may not be efficient for large time samples(e.g. 1M samples or more)
 //
@@ -846,9 +958,11 @@ namespace value {
 //
 // We assume having large time samples is rare situlation, and above benchmark speed is acceptable in general  usecases.
 //
+// `None`(ValueBlock) is represented as `value::ValueBlock`
+//
 struct TimeSamples {
   std::vector<double> times;
-  std::vector<linb::any> values;  // Could be an array of 'None' or Type T
+  std::vector<value::Value> values;  // Could have arbitrary type, but usually an array of 'None'(ValueBlock) or Type T
 
   bool IsScalar() const {
     return (times.size() == 0) && (values.size() == 1);
@@ -928,91 +1042,8 @@ struct AnimatableValue {
   }
 };
 
-///
-/// Generic Value class using any
-/// TODO: Type-check when casting with underlying_type(Need to modify linb::any class) 
-///
-class Value {
- public:
-  // using Dict = std::map<std::string, Value>;
 
-  Value() = default;
 
-  template <class T>
-  Value(const T &v) : v_(v) {}
-
-  // template <class T>
-  // Value(T &&v) : v_(v) {}
-
-  const std::string type_name() const { return v_.type_name(); }
-  const std::string underlying_type_name() const { return v_.underlying_type_name(); }
-
-  uint32_t type_id() const { return v_.type_id(); }
-  uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
-
-  // Return nullptr when type conversion failed.
-  template <class T>
-  const T *as() const {
-    if (TypeTrait<T>::type_id == v_.type_id()) {
-      return linb::any_cast<const T>(&v_);
-    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      return linb::any_cast<const T>(&v_);
-    } else {
-      return nullptr;
-    }
-  }
-
-  // Useful function to retrieve concrete value with type T.
-  // Undefined behavior(usually will triger segmentation fault) when
-  // type-mismatch. (We don't throw exception)
-  template <class T>
-  const T value() const {
-    //return (*reinterpret_cast<const T *>(v_.value()));
-    return linb::any_cast<const T>(v_);
-  }
-
-  // Type-safe way to get concrete value.
-  template <class T>
-  nonstd::optional<T> get_value() const {
-    if (TypeTrait<T>::type_id == v_.type_id()) {
-      return std::move(value<T>());
-    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      // Use force cast
-      // TODO: type-check
-      return std::move(*linb::cast<const T>(&v_));
-    }
-    return nonstd::nullopt;
-  }
-
-  template <class T>
-  Value &operator=(const T &v) {
-    v_ = v;
-    return (*this);
-  }
-
-  //const any_value &get_raw() const { return v_; }
-
- private:
-  //any_value v_;
-  linb::any v_;
-};
-
-//bool is_float(const any_value &v);
-//bool is_double(const any_value &v);
-
-// Frequently-used utility function
-bool is_float(const Value &v);
-bool is_float2(const Value &v);
-bool is_float3(const Value &v);
-bool is_float4(const Value &v);
-bool is_double(const Value &v);
-bool is_double2(const Value &v);
-bool is_double3(const Value &v);
-bool is_double4(const Value &v);
 
 #if 0 // TODO: Remove? since not used so frequently at the moment.
 //
@@ -1048,9 +1079,11 @@ TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
 #undef TYPECAST_BASETYPE
 #endif
 
+#if 0
 struct AttribMap {
   std::map<std::string, Value> attribs;
 };
+#endif
 
 }  // namespace value
 }  // namespace tinyusdz

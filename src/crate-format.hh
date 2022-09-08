@@ -403,7 +403,7 @@ class CrateValue {
   __FUNC(value::matrix2d) \
   __FUNC(value::matrix3d) \
   __FUNC(value::matrix4d) \
-  __FUNC(value::asset_path) \
+  __FUNC(value::AssetPath) \
   __FUNC(value::token) \
   __FUNC(std::string)
 
@@ -413,6 +413,8 @@ class CrateValue {
   SET_TYPE_SCALAR(Permission)
   SET_TYPE_SCALAR(Variability)
   SET_TYPE_SCALAR(value::dict)
+
+  SET_TYPE_SCALAR(value::ValueBlock)
 
   SET_TYPE_SCALAR(ListOp<value::token>)
   SET_TYPE_SCALAR(ListOp<std::string>)

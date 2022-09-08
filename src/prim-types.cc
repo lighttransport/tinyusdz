@@ -239,7 +239,7 @@ value::half float_to_half_full(float _f) {
   return fp16;
 }
 
-Interpolation InterpolationFromString(const std::string &v) {
+nonstd::optional<Interpolation> InterpolationFromString(const std::string &v) {
   if ("faceVarying" == v) {
     return Interpolation::FaceVarying;
   } else if ("constant" == v) {
@@ -251,16 +251,16 @@ Interpolation InterpolationFromString(const std::string &v) {
   } else if ("varying" == v) {
     return Interpolation::Varying;
   }
-  return Interpolation::Invalid;
+  return nonstd::nullopt;
 }
 
-Orientation OrientationFromString(const std::string &v) {
+nonstd::optional<Orientation> OrientationFromString(const std::string &v) {
   if ("rightHanded" == v) {
     return Orientation::RightHanded;
   } else if ("leftHanded" == v) {
     return Orientation::LeftHanded;
   }
-  return Orientation::Invalid;
+  return nonstd::nullopt;
 }
 
 bool operator==(const Path &lhs, const Path &rhs) {

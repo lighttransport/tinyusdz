@@ -8,10 +8,10 @@
 
 namespace tinyusdz {
 
-constexpr auto kLuxSphereLight = "LuxSphereLight";
-constexpr auto kLuxDomeLight = "LuxDomeLight";
+constexpr auto kLuxSphereLight = "SphereLight";
+constexpr auto kLuxDomeLight = "DomeLight";
 
-struct LuxSphereLight {
+struct LuxSphereLight : public Xformable {
   std::string name;
 
   int64_t parent_id{-1};  // Index to xform node
@@ -21,17 +21,17 @@ struct LuxSphereLight {
   //
 
   // Light API
-  value::color3f color{1.0f, 1.0f, 1.0f}; // inputs.color Light energy in linear color space.
-  float colorTemperature{6500.0f};  // inputs:colorTemperature
-  float diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  bool enableColorTemperature{false}; // inputs:enableColorTemperature
-  float exposure{0.0f}; // inputs:exposure EV
-  float intensity{1.0f}; // inputs:intensity
-  bool normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  float specular{1.0f}; // inputs:specular specular multiplier
+  TypedProperty<value::color3f> color{{1.0f, 1.0f, 1.0f}}; // inputs.color Light energy in linear color space.
+  TypedProperty<float> colorTemperature{6500.0f};  // inputs:colorTemperature
+  TypedProperty<float> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
+  TypedProperty<bool> enableColorTemperature{false}; // inputs:enableColorTemperature
+  TypedProperty<float> exposure{0.0f}; // inputs:exposure EV
+  TypedProperty<float> intensity{1.0f}; // inputs:intensity
+  TypedProperty<bool> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
+  TypedProperty<float> specular{1.0f}; // inputs:specular specular multiplier
   // rel light:filters
 
-  float radius{0.5f}; // inputs:radius
+  TypedProperty<float> radius{0.5f}; // inputs:radius
 
   //
   // Properties
@@ -44,7 +44,7 @@ struct LuxSphereLight {
   PrimMeta meta;
 };
 
-struct LuxDomeLight {
+struct LuxDomeLight : public Xformable {
   std::string name;
   int64_t parent_id{-1};  // Index to xform node
 
@@ -61,19 +61,19 @@ struct LuxDomeLight {
   // TODO: Support texture
 
   // Light API
-  value::color3f color{1.0f, 1.0f, 1.0f}; // inputs.color Light energy in linear color space.
-  float colorTemperature{6500.0f};  // inputs:colorTemperature
-  float diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  bool enableColorTemperature{false}; // inputs:enableColorTemperature
-  float exposure{0.0f}; // inputs:exposure EV
-  float intensity{1.0f}; // inputs:intensity
-  bool normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  float specular{1.0f}; // inputs:specular specular multiplier
+  TypedProperty<value::color3f> color{{1.0f, 1.0f, 1.0f}}; // inputs.color Light energy in linear color space.
+  TypedProperty<float> colorTemperature{6500.0f};  // inputs:colorTemperature
+  TypedProperty<float> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
+  TypedProperty<bool> enableColorTemperature{false}; // inputs:enableColorTemperature
+  TypedProperty<float> exposure{0.0f}; // inputs:exposure EV
+  TypedProperty<float> intensity{1.0f}; // inputs:intensity
+  TypedProperty<bool> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
+  TypedProperty<float> specular{1.0f}; // inputs:specular specular multiplier
   // rel light:filters
 
 
   // DomeLight specific
-  float guideRadius{1.0e5f};
+  TypedProperty<float> guideRadius{1.0e5f};
   // asset inputs:texture:file
   TextureFormat textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
   // rel portals

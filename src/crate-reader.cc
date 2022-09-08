@@ -31,6 +31,7 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
+#include "tiny-format.hh"
 
 //
 #ifdef __clang__
@@ -51,11 +52,11 @@
 namespace tinyusdz {
 namespace crate {
 
-constexpr auto kTypeName = "typeName";
-constexpr auto kToken = "Token";
-constexpr auto kDefault = "default";
+//constexpr auto kTypeName = "typeName";
+//constexpr auto kToken = "Token";
+//constexpr auto kDefault = "default";
 
-#define kCrateTag "[Crate]"
+#define kTag "[Crate]"
 
 namespace {
 
@@ -188,6 +189,16 @@ nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
   }
 
   return _paths[index.value];
+}
+
+nonstd::optional<Path> CrateReader::GetElementPath(crate::Index index) const {
+  if (index.value <= _elemPaths.size()) {
+    // ok
+  } else {
+    return nonstd::nullopt;
+  }
+
+  return _elemPaths[index.value];
 }
 
 nonstd::optional<std::string> CrateReader::GetPathString(
@@ -699,17 +710,23 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 }
 
 bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
-  (void)d;
 
-  // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation)
+  // Layout
+  //
+  // - `times`(double[])
+  // - NumValueReps(int64)
+  // - ArrayOfValueRep
+  //
+
+  // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation for details)
 
   DCOUT("ReadTimeSamples: offt before tell = " << _sr->tell());
 
   // 8byte for the offset for recursive value. See RecursiveRead() in
-  // crateFile.cpp for details.
+  // https://github.com/PixarAnimationStudios/USD/blob/release/pxr/usd/usd/crateFile.cpp for details.
   int64_t offset{0};
   if (!_sr->read8(&offset)) {
-    _err += "Failed to read the offset for value in Dictionary.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
     return false;
   }
 
@@ -718,47 +735,48 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // -8 to compensate sizeof(offset)
   if (!_sr->seek_from_current(offset - 8)) {
-    _err += "Failed to seek to TimeSample times. Invalid offset value: " +
-            std::to_string(offset) + "\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSample times. Invalid offset value: " +
+            std::to_string(offset));
   }
 
   // TODO(syoyo): Deduplicate times?
 
-  crate::ValueRep rep{0};
-  if (!ReadValueRep(&rep)) {
-    _err += "Failed to read ValueRep for TimeSample' times element.\n";
-    return false;
+  crate::ValueRep times_rep{0};
+  if (!ReadValueRep(&times_rep)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' `times` element.");
   }
 
   // Save offset
   size_t values_offset = _sr->tell();
 
-  crate::CrateValue value;
-  if (!UnpackValueRep(rep, &value)) {
-    _err += "Failed to unpack value of TimeSample's times element.\n";
-    return false;
+  crate::CrateValue times_value;
+  if (!UnpackValueRep(times_rep, &times_value)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's `times` element.");
   }
 
   // must be an array of double.
-  DCOUT("TimeSample times:" << value.type_name());
-  DCOUT("TODO: Parse TimeSample values");
+  DCOUT("TimeSample times:" << times_value.type_name());
+
+  if (auto pv = times_value.get_value<std::vector<double>>()) {
+    d->times = pv.value();
+    DCOUT("`times` = " << d->times);
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`times` in TimeSamples must be type `double[]`, but got type `{}`", times_value.type_name()));
+  }
 
   //
-  // Parse values for TimeSamples.
-  // TODO(syoyo): Delayed loading of values.
+  // Parse values(elements) of TimeSamples.
   //
 
   // seek position will be changed in `_UnpackValueRep`, so revert it.
   if (!_sr->seek_set(values_offset)) {
-    _err += "Failed to seek to TimeSamples values.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSamples values.");
   }
 
   // 8byte for the offset for recursive value. See RecursiveRead() in
   // crateFile.cpp for details.
   if (!_sr->read8(&offset)) {
-    _err += "Failed to read the offset for value in TimeSamples.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in TimeSamples.");
     return false;
   }
 
@@ -767,27 +785,44 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // -8 to compensate sizeof(offset)
   if (!_sr->seek_from_current(offset - 8)) {
-    _err += "Failed to seek to TimeSample values. Invalid offset value: " +
-            std::to_string(offset) + "\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSample values. Invalid offset value: " + std::to_string(offset));
   }
 
   uint64_t num_values{0};
   if (!_sr->read8(&num_values)) {
-    _err += "Failed to read the number of values from TimeSamples.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of values from TimeSamples.");
     return false;
   }
 
   DCOUT("Number of values = " << num_values);
 
-  _warn += "TODO: Decode TimeSample's values\n";
+  if (d->times.size() != num_values) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of `times` elements and # of values in Crate differs.");
+  }
+
+  for (size_t i = 0; i < num_values; i++) {
+    crate::ValueRep rep;
+    if (!ReadValueRep(&rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' value element.");
+    }
+
+    ///
+    /// Type check of the content of `value` will be done at ReconstructPrim() in usdc-reader.cc.
+    ///
+    crate::CrateValue value;
+    if (!UnpackValueRep(rep, &value)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's value element.");
+    }
+
+    d->values.emplace_back(std::move(value.get_raw()));
+  }
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
   if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
-    _err += "Failed to seek over TimeSamples's values.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek over TimeSamples's values.");
   }
+
 
   return true;
 }
@@ -1096,7 +1131,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
   }
 
   if (sz > _config.maxDictElements) {
-    PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "The number of elements for Dictionary data is too large. Max = " << std::to_string(_config.maxDictElements) << ", but got " << std::to_string(sz));
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "The number of elements for Dictionary data is too large. Max = " << std::to_string(_config.maxDictElements) << ", but got " << std::to_string(sz));
   }
 
   DCOUT("# o elements in dict" << sz);
@@ -1106,26 +1141,26 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     std::string key;
 
     if (!ReadString(&key)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read key string for Dictionary element.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read key string for Dictionary element.");
     }
 
     // 8byte for the offset for recursive value. See RecursiveRead() in
     // crateFile.cpp for details.
     int64_t offset{0};
     if (!_sr->read8(&offset)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read the offset for value in Dictionary.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
     }
 
     // -8 to compensate sizeof(offset)
     if (!_sr->seek_from_current(offset - 8)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
     }
 
     DCOUT("key = " << key);
 
     crate::ValueRep rep{0};
     if (!ReadValueRep(&rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to read value for Dictionary element.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read value for Dictionary element.");
     }
 
     DCOUT("vrep =" << crate::GetCrateDataTypeName(rep.GetType()));
@@ -1134,7 +1169,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
 
     crate::CrateValue value;
     if (!UnpackValueRep(rep, &value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to unpack value of Dictionary element.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of Dictionary element.");
     }
 
     if (dict.count(key)) {
@@ -1151,7 +1186,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     dict[key] = var;
 
     if (!_sr->seek_set(saved_position)) {
-      PUSH_ERROR_AND_RETURN_TAG(kCrateTag, "Failed to set seek.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
     }
   }
 
@@ -1204,7 +1239,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       if (auto v = GetToken(crate::Index(d))) {
         std::string str = v.value().str();
 
-        value::asset_path assetp(str);
+        value::AssetPath assetp(str);
         value->Set(assetp);
         return true;
       } else {
@@ -1538,6 +1573,12 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       value->Set(dict);
       return true;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK: {
+      // Guess No content for ValueBlock
+      value::ValueBlock block;
+      value->Set(block);
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP:
@@ -1554,7 +1595,6 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
@@ -1677,12 +1717,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        std::vector<value::asset_path> apaths(static_cast<size_t>(n));
+        std::vector<value::AssetPath> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
           if (auto tokv = GetToken(v[i])) {
             DCOUT("Token[" << i << "] = " << tokv.value());
-            apaths[i] = value::asset_path(tokv.value().str());
+            apaths[i] = value::AssetPath(tokv.value().str());
           } else {
             return false;
           }
@@ -2709,8 +2749,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       value::TimeSamples ts;
       if (!ReadTimeSamples(&ts)) {
-        _err += "Failed to read TimeSamples data\n";
-        return false;
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read TimeSamples data");
       }
 
       value->Set(ts);
@@ -3819,6 +3858,7 @@ CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
                                  name + "`");
 }
 
+#if 0
 bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
                                  PrimAttrib *attr,
                                  const std::string &prop_name) {
@@ -3850,8 +3890,8 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
     DCOUT("===  fvs.first " << fv.first
                             << ", second: " << fv.second.type_name());
     if ((fv.first == "typeName") && (fv.second.type_name() == "Token")) {
-      attr->type_name = fv.second.value<value::token>().str();
-      DCOUT("typeName: " << attr->type_name);
+      attr->set_type_name(fv.second.value<value::token>().str());
+      DCOUT("typeName: " << attr->type_name());
     } else if (fv.first == "default") {
       // Nothing to do at there. Process `default` in the later
       continue;
@@ -3868,7 +3908,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         DCOUT("full path: " << path.full_path_name());
         //DCOUT("local path: " << path.local_path_name());
 
-        attr->var.set_scalar(path);
+        primvar::PrimVar var;
+        var.set_scalar(path);
+        attr->set_var(std::move(var));
 
         has_connection = true;
 
@@ -3889,7 +3931,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         DCOUT("full path: " << path.full_path_name());
         //DCOUT("local path: " << path.local_path_name());
 
-        attr->var.set_scalar(path);
+        primvar::PrimVar var;
+        var.set_scalar(path);
+        attr->set_var(std::move(var));
 
         has_connection = true;
 
@@ -3941,7 +3985,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
       PUSH_ERROR("Failed to decode " << __tyname << " value."); \
       return false;                                             \
     }                                                           \
-    attr->var.set_scalar(ret.value());                          \
+    primvar::PrimVar var; \
+    var.set_scalar(ret.value()); \
+    attr->set_var(std::move(var));                          \
     success = true;
 
 #define PROC_ARRAY(__tyname, __ty)                                  \
@@ -3952,7 +3998,9 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
       PUSH_ERROR("Failed to decode " << __tyname << "[] value.");   \
       return false;                                                 \
     }                                                               \
-    attr->var.set_scalar(ret.value());                              \
+    primvar::PrimVar var; \
+    var.set_scalar(ret.value()); \
+    attr->set_var(std::move(var));                          \
     success = true;
 
       if (0) {  // dummy
@@ -3966,7 +4014,7 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
         PROC_SCALAR(value::kHalf3, value::half3)
         PROC_SCALAR(value::kHalf4, value::half4)
         PROC_SCALAR(value::kToken, value::token)
-        PROC_SCALAR(value::kAssetPath, value::asset_path)
+        PROC_SCALAR(value::kAssetPath, value::AssetPath)
 
         PROC_SCALAR(value::kMatrix2d, value::matrix2d)
         PROC_SCALAR(value::kMatrix3d, value::matrix3d)
@@ -4020,6 +4068,7 @@ bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
 
   return success;
 }
+#endif
 
 
 }  // namespace crate

@@ -8,6 +8,7 @@ tinyusdz_sources=[
   '../../src/io-util.cc',
   '../../src/pprinter.cc',
   '../../src/prim-types.cc',
+  '../../src/prim-reconstruct.cc',
   '../../src/usdGeom.cc',
   '../../src/usdShade.cc',
   '../../src/usdSkel.cc',
@@ -27,6 +28,7 @@ tinyusdz_sources=[
   '../../src/image-loader.cc',
   '../../src/image-writer.cc',
   '../../src/xform.cc',
+  '../../src/tiny-format.cc',
   # deps
   '../../src/external/fpng.cpp',
   '../../src/external/pystring.cpp',
