@@ -237,9 +237,9 @@ class CrateReader {
   nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
       const FieldValuePairVector &fvs, const std::string &name);
 
-  bool ParseAttribute(const FieldValuePairVector &fvs,
-                                    PrimAttrib *attr,
-                                    const std::string &prop_name);
+  //bool ParseAttribute(const FieldValuePairVector &fvs,
+  //                                  PrimAttrib *attr,
+  //                                  const std::string &prop_name);
 
  private:
 
