@@ -35,7 +35,7 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage, const Xform &xfo
     node.local_matrix = m.value();
   }
 
-  return node;
+  return std::move(node);
 }
 
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage, const GeomMesh &mesh) {
