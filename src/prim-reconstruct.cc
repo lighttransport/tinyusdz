@@ -130,7 +130,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
-    if (value::TypeTrait<T>::type_name() == attr_type_name) {
+    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -223,7 +223,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
-    if (value::TypeTrait<T>::type_name() == attr_type_name) {
+    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -302,7 +302,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
-    if (value::TypeTrait<T>::type_name() == attr_type_name) {
+    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -413,7 +413,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
     std::string attr_type_name = attr.type_name();
     DCOUT(fmt::format("prop name {}, type = {}", prop_name, attr_type_name));
-    if (value::TypeTrait<T>::type_name() == attr_type_name) {
+    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
         target.meta = attr.meta;
         table.insert(name);
@@ -481,18 +481,32 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
 {
   ParseResult ret;
 
+  DCOUT("Parsing typed property: " << prop_name);
+
   if (prop_name.compare(name + ".connect") == 0) {
     std::string propname = removeSuffix(name, ".connect");
     if (table.count(propname)) {
+      DCOUT("Already processed: " << prop_name);
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    if (auto pv = prop.GetConnectionTarget()) {
-      target.target = pv.value();
-      target.variability = prop.attrib.variability;
-      target.meta = prop.attrib.meta;
-      table.insert(propname);
-      ret.code = ParseResult::ResultCode::Success;
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.target = pv.value();
+        target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(propname);
+        ret.code = ParseResult::ResultCode::Success;
+        DCOUT("Added as property with connection: " << propname);
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        ret.err = "Connection target not found.";
+        return ret;
+      }
+    } else {
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Internal error. Unsupported/Unimplemented property type.";
       return ret;
     }
   } else if (prop_name.compare(name) == 0) {
@@ -530,6 +544,8 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
           target.variability = attr.variability;
           target.meta = attr.meta;
           table.insert(name);
+          ret.code = ParseResult::ResultCode::Success;
+          return ret;
         } else if (prop.type == Property::Type::Attrib) {
           DCOUT("Adding prop: " << name);
 
@@ -2595,6 +2611,7 @@ bool ReconstructShader<UsdPreviewSurface>(
   (void)references;
 
   std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     PARSE_TYPED_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
                          surface->diffuseColor)
@@ -2660,6 +2677,7 @@ bool ReconstructShader<UsdUVTexture>(
   };
 
   std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
@@ -2695,10 +2713,11 @@ bool ReconstructShader<UsdPrimvarReader_int>(
 {
   (void)references;
   std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_int,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_int,
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_int,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_int, preader->result)
@@ -2718,10 +2737,11 @@ bool ReconstructShader<UsdPrimvarReader_float>(
 {
   (void)references;
   std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float, preader->result)
@@ -2741,8 +2761,10 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
 {
   (void)references;
   std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+    DCOUT("prop = " << prop.first);
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float2,
                    preader->varname)  // `token`
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
                    preader->fallback)
@@ -2765,10 +2787,11 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
 {
   (void)references;
   std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float3,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float3,
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float3,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float3, preader->result)
@@ -2789,14 +2812,16 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
 {
   (void)references;
   std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float4,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float4,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_float2, preader->result)
-    ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
+                                  UsdPrimvarReader_float4, preader->result)
+    ADD_PROPERY(table, prop, UsdPrimvarReader_float4, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return true;
@@ -2820,92 +2845,98 @@ bool ReconstructPrim<Shader>(
   constexpr auto kUsdPrimvarReader_float3 = "UsdPrimvarReader_float3";
   constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
 
-  for (const auto &prop : properties) {
-    if (prop.first == "info:id") {
-      const PrimAttrib &attr = prop.second.attrib;
+  auto info_id_prop = properties.find("info:id");
+  if (info_id_prop == properties.end()) {
+    // Generic? Shader. Currently report as an error.
+    PUSH_ERROR_AND_RETURN("`Shader` must contain `uniform token info:id` property.");
+  }
 
-      auto pv = attr.get_value<value::token>();
-      if (!pv) {
-        PUSH_ERROR_AND_RETURN("`info:id` must be type `token`, but got type `"
-                              << attr.type_name() << "`.");
-      }
-
-      std::string shader_type = pv.value().str();
-
-      DCOUT("info:id = " << shader_type);
-
-      if (shader_type.compare(kUsdPreviewSurface) == 0) {
-        UsdPreviewSurface surface;
-        if (!ReconstructShader<UsdPreviewSurface>(properties, references,
-                                                  &surface, warn, err)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
-        }
-        shader->info_id = kUsdPreviewSurface;
-        shader->value = surface;
-        DCOUT("info_id = " << shader->info_id);
-      } else if (shader_type.compare(kUsdUVTexture) == 0) {
-        UsdUVTexture texture;
-        if (!ReconstructShader<UsdUVTexture>(properties, references,
-                                             &texture, warn, err)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
-        }
-        shader->info_id = kUsdUVTexture;
-        shader->value = texture;
-      } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
-        UsdPrimvarReader_int preader;
-        if (!ReconstructShader<UsdPrimvarReader_int>(properties, references,
-                                                     &preader, warn, err)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                                << kUsdPrimvarReader_int);
-        }
-        shader->info_id = kUsdPrimvarReader_int;
-        shader->value = preader;
-      } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
-        UsdPrimvarReader_float preader;
-        if (!ReconstructShader<UsdPrimvarReader_float>(properties, references,
-                                                       &preader, warn, err)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                                << kUsdPrimvarReader_float);
-        }
-        shader->info_id = kUsdPrimvarReader_float;
-        shader->value = preader;
-      } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
-        UsdPrimvarReader_float2 preader;
-        if (!ReconstructShader<UsdPrimvarReader_float2>(properties, references,
-                                                        &preader, warn, err)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                                << kUsdPrimvarReader_float2);
-        }
-        shader->info_id = kUsdPrimvarReader_float2;
-        shader->value = preader;
-      } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
-        UsdPrimvarReader_float3 preader;
-        if (!ReconstructShader<UsdPrimvarReader_float3>(properties, references,
-                                                        &preader, warn, err)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                                << kUsdPrimvarReader_float3);
-        }
-        shader->info_id = kUsdPrimvarReader_float3;
-        shader->value = preader;
-      } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
-        UsdPrimvarReader_float4 preader;
-        if (!ReconstructShader<UsdPrimvarReader_float4>(properties, references,
-                                                        &preader, warn, err)) {
-          PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
-                                << kUsdPrimvarReader_float4);
-        }
-        shader->info_id = kUsdPrimvarReader_float4;
-        shader->value = preader;
+  std::string shader_type;
+  if (info_id_prop->second.IsAttrib()) {
+    const PrimAttrib &attr = info_id_prop->second.attrib;
+    if ((attr.type_name() == value::kToken) && (attr.variability == Variability::Uniform)) {
+      if (auto pv = attr.get_value<value::token>()) {
+        shader_type = pv.value().str(); 
       } else {
-        // TODO: string, point, vector, matrix
-        PUSH_ERROR_AND_RETURN(
-            "Invalid or Unsupported Shader type. info:id = \"" + shader_type +
-            "\n");
+        PUSH_ERROR_AND_RETURN("Internal errror. `info:id` has invalid type.");
       }
-
     } else {
-      // std::cout << "TODO: " << prop.first << "\n";
+      PUSH_ERROR_AND_RETURN("`info:id` property must be `uniform token` type.");
+    } 
+  } else {
+    PUSH_ERROR_AND_RETURN("Invalid type or value for `info:id` property in `Shader`.");
+  }
+    
+
+  DCOUT("info:id = " << shader_type);
+
+  if (shader_type.compare(kUsdPreviewSurface) == 0) {
+    UsdPreviewSurface surface;
+    if (!ReconstructShader<UsdPreviewSurface>(properties, references,
+                                              &surface, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
     }
+    shader->info_id = kUsdPreviewSurface;
+    shader->value = surface;
+    DCOUT("info_id = " << shader->info_id);
+  } else if (shader_type.compare(kUsdUVTexture) == 0) {
+    UsdUVTexture texture;
+    if (!ReconstructShader<UsdUVTexture>(properties, references,
+                                         &texture, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
+    }
+    shader->info_id = kUsdUVTexture;
+    shader->value = texture;
+  } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
+    UsdPrimvarReader_int preader;
+    if (!ReconstructShader<UsdPrimvarReader_int>(properties, references,
+                                                 &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_int);
+    }
+    shader->info_id = kUsdPrimvarReader_int;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
+    UsdPrimvarReader_float preader;
+    if (!ReconstructShader<UsdPrimvarReader_float>(properties, references,
+                                                   &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_float);
+    }
+    shader->info_id = kUsdPrimvarReader_float;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
+    UsdPrimvarReader_float2 preader;
+    if (!ReconstructShader<UsdPrimvarReader_float2>(properties, references,
+                                                    &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_float2);
+    }
+    shader->info_id = kUsdPrimvarReader_float2;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
+    UsdPrimvarReader_float3 preader;
+    if (!ReconstructShader<UsdPrimvarReader_float3>(properties, references,
+                                                    &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_float3);
+    }
+    shader->info_id = kUsdPrimvarReader_float3;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
+    UsdPrimvarReader_float4 preader;
+    if (!ReconstructShader<UsdPrimvarReader_float4>(properties, references,
+                                                    &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_float4);
+    }
+    shader->info_id = kUsdPrimvarReader_float4;
+    shader->value = preader;
+  } else {
+    // TODO: string, point, vector, matrix
+    PUSH_ERROR_AND_RETURN(
+        "Invalid or Unsupported Shader type. info:id = \"" + shader_type +
+        "\n");
   }
 
   return true;
