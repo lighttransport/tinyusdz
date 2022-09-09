@@ -10,6 +10,7 @@
 
 namespace std {
 
+
 std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v) {
   ofs << to_string(v);
   return ofs;
@@ -76,6 +77,7 @@ std::string to_string(const double &v) {
   ss << v;
   return ss.str();
 }
+
 
 #if 0
 template<typename T>
@@ -154,8 +156,6 @@ template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent);
-
   if (v.IsTimeSamples()) {
     ss << print_typed_timesamples(v.ts, indent);
   } else if (v.IsBlocked()) {
@@ -172,8 +172,6 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
 template<typename T>
 std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent = 0) {
   std::stringstream ss;
-
-  ss << pprint::Indent(indent);
 
   if (v.IsTimeSamples()) {
     ss << print_typed_token_timesamples(v.ts, indent);
@@ -549,7 +547,7 @@ std::string print_typed_prop(const TypedProperty<T> &prop, const std::string &na
 
   std::stringstream ss;
 
-  if (prop.value) {
+  if (prop.authored()) {
 
     ss << pprint::Indent(indent);
 
@@ -560,21 +558,26 @@ std::string print_typed_prop(const TypedProperty<T> &prop, const std::string &na
     // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
-    if (prop.value) {
-      if (prop.value.value().IsTimeSamples()) {
-        ss << ".timeSamples";
-      }
+    if (prop.IsAttrib() && prop.value.value().IsTimeSamples()) {
+      ss << ".timeSamples";
     }
 
-    if (prop.value.value().IsBlocked()) {
-      ss << " = None";
-    } else if (!prop.define_only) {
-      ss << " = ";
-      if (prop.value.value().IsTimeSamples()) {
-        ss << print_typed_timesamples(prop.value.value().ts, indent+1);
+    if (prop.IsEmptyAttrib()) {
+    } else if (prop.IsAttrib()) {
+      if (prop.value.value().IsBlocked()) {
+        ss << " = None";
       } else {
-        ss << prop.value.value().value;
+        ss << " = ";
+        if (prop.value.value().IsTimeSamples()) {
+          ss << print_typed_timesamples(prop.value.value().ts, indent+1);
+        } else {
+          ss << prop.value.value().value;
+        }
       }
+    } else if (prop.IsConnection()) {
+      ss << " = " << pquote(prop.target.value());
+    } else {
+      ss << "[??? Invalid Property data]";
     }
 
     if (prop.meta.authored()) {
@@ -1649,7 +1652,7 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
     ss << pprint::Indent(indent+1) << "token outputs:surface ";
     // Must have connection though.
     if (material.surface.value().target) {
-      ss << pquote(material.surface.value().target.value());
+      ss << "= " << pquote(material.surface.value().target.value());
     }
     ss << "\n";
   }
@@ -1658,10 +1661,12 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
     ss << pprint::Indent(indent+1) << "token outputs:volume ";
     // Must have connection though.
     if (material.volume.value().target) {
-      ss << pquote(material.volume.value().target.value());
+      ss << "= " << pquote(material.volume.value().target.value());
     }
     ss << "\n";
   }
+
+  ss << print_props(material.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1673,9 +1678,11 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
 static std::string print_shader_params(const UsdPrimvarReader_float &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_prop(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
+
+  ss << print_props(shader.props, indent);
 
   return ss.str();
 
@@ -1684,9 +1691,11 @@ static std::string print_shader_params(const UsdPrimvarReader_float &shader, con
 static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_prop(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
+
+  ss << print_props(shader.props, indent);
 
   return ss.str();
 }
@@ -1694,9 +1703,11 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_prop(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
+
+  ss << print_props(shader.props, indent);
 
   return ss.str();
 }
@@ -1704,9 +1715,11 @@ static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "varname", indent);
+  ss << print_typed_prop(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
+
+  ss << print_props(shader.props, indent);
 
   return ss.str();
 }
@@ -1814,6 +1827,7 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
     } else {
       ss << pprint::Indent(indent+1) << "[TODO] Generic Shader\n";
     }
+
 
     if (closing_brace) {
       ss << pprint::Indent(indent) << "}\n";
@@ -2016,6 +2030,10 @@ std::string to_string(const XformOp::OpType &op) {
   }
 
   return ss;
+}
+
+std::string to_string(const tinyusdz::value::token &v) {
+  return v.str();
 }
 
 } // tinyusdz

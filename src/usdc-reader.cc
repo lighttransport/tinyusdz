@@ -533,6 +533,7 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
   bool custom{false};
   nonstd::optional<value::token> typeName;
   nonstd::optional<Interpolation> interpolation;
+  nonstd::optional<int> elementSize;
   Property::Type propType{Property::Type::EmptyAttrib};
   PrimAttrib attr;
 
@@ -678,6 +679,42 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
                                   "`targetPaths` field is not `ListOp[Path]` type.");
       }
 
+    } else if (fv.first == "elementSize") {
+      // Attribute Meta
+      if (auto pv = fv.second.get_value<int>()) {
+        auto p = pv.value();
+        DCOUT("elementSize = " << to_string(p));
+
+        // TODO: Read max limit from parse Option
+        if ((p < 1) || (p > 512))  {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    fmt::format("`elementSize` must be within [{}, {}], but got {}", 1, 511, p));
+        }
+
+        elementSize = p;
+
+      } else {
+
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`elementSize` field is not `int` type.");
+      }
+    } else if (fv.first == "targetChildren") {
+      // Path vector
+      if (auto pv = fv.second.get_value<std::vector<Path>>()) {
+        //DCOUT("targetChildren = " << pv.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`targetChildren` field is not `PathVector` type.");
+      }
+    } else if (fv.first == "connectionChildren") {
+      // Path vector
+      if (auto pv = fv.second.get_value<std::vector<Path>>()) {
+        //DCOUT("connectionChildren = " << pv.value());
+        // TODO
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`connectionChildren` field is not `PathVector` type.");
+      }
     } else {
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);
@@ -703,8 +740,12 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
     attr.set_var(std::move(var));
   }
 
+  // metas
   if (interpolation) {
     attr.meta.interpolation = interpolation.value();
+  }
+  if (elementSize) {
+    attr.meta.elementSize = elementSize.value();
   }
 
 
@@ -1115,6 +1156,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     nonstd::optional<std::string> typeName;
     nonstd::optional<Specifier> specifier;
     std::vector<value::token> properties;
+    nonstd::optional<bool> active;
+    nonstd::optional<int> elementSize; // for usdSkel
+    std::vector<value::token> apiSchemas;
 
     ///
     ///
@@ -1148,6 +1192,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     DCOUT("---");
 
+    // Fields for Prim and Prim metas.
     for (const auto &fv : fvs) {
       if (fv.first == "typeName") {
         if (auto pv = fv.second.get_value<value::token>()) {
@@ -1162,11 +1207,62 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         if (auto pv = fv.second.get_value<Specifier>()) {
           specifier = pv.value();
           DCOUT("specifier = " << to_string(specifier.value()));
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`specifier` must be type `Specifier`, but got type `"
+                        << fv.second.type_name() << "`");
         }
       } else if (fv.first == "properties") {
         if (auto pv = fv.second.get_value<std::vector<value::token>>()) {
           properties = pv.value();
           DCOUT("properties = " << properties);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`properties` must be type `token[]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "primChildren") {
+        if (auto pv = fv.second.get_value<std::vector<value::token>>()) {
+          // We can ignore primChildren for now
+          //PUSH_WARN("We can ignore `primChildren` for now");
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`primChildren` must be type `token[]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "active") {
+        if (auto pv = fv.second.get_value<bool>()) {
+          active = pv.value();
+          DCOUT("active = " << to_string(active.value()));
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`properties` must be type `token[]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "assetInfo") {
+        // CustomData(dict)
+        if (auto pv = fv.second.get_value<CustomDataType>()) {
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`assetInfo` must be type `dictionary`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "kind") {
+        if (auto pv = fv.second.get_value<value::token>()) {
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`kind` must be type `token`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "apiSchemas") {
+        if (auto pv = fv.second.get_value<ListOp<value::token>>()) {
+          auto listop = pv.value();
+          //apiSchemas = pv.value();
+          DCOUT("apiSchemas = " << to_string(listop));
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`apiSchemas` must be type `ListOp[Token]`, but got type `"
+                        << fv.second.type_name() << "`");
         }
       } else {
         DCOUT("TODO: " << fv.first);
@@ -1272,7 +1368,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   {
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
-      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]), currPrimPtr, 
+      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]), currPrimPtr,
                                       level + 1, psmap, stage)) {
         return false;
       }

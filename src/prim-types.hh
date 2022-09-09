@@ -1177,6 +1177,18 @@ class TypedProperty {
   nonstd::optional<Animatable<T>> value; // T or TimeSamples<T>
   nonstd::optional<Path> target;
 
+  bool IsConnection() const {
+    return target.has_value();
+  }
+
+  bool IsAttrib() const {
+    return value.has_value();
+  }
+
+  bool IsEmptyAttrib() const {
+    return define_only;
+  }
+
   bool authored() const {
     if (define_only) {
       return true;
