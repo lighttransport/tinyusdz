@@ -176,6 +176,8 @@ class USDCReader::Impl {
   size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
 
  private:
+  nonstd::expected<APISchemas, std::string> ToAPISchemas(const ListOp<value::token> &);
+
   ///
   /// Builds std::map<std::string, Property> from the list of Path(Spec)
   /// indices.
@@ -355,6 +357,118 @@ bool USDCReader::Impl::ReconstructGeomSubset(
 #endif
 
 namespace {}
+
+nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(const ListOp<value::token> &arg) {
+
+  APISchemas schemas;
+
+  auto SchemaHandler = [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
+    if (tok.str() == "MaterialBindingAPI") {
+      return APISchemas::APIName::MaterialBindingAPI;
+    } else if (tok.str() == "SkelBindingAPI") {
+      return APISchemas::APIName::SkelBindingAPI;
+    } else {
+      return nonstd::nullopt;
+    }
+  };
+
+  if (arg.IsExplicit()) { // fast path
+    for (auto &item : arg.GetExplicitItems()) {
+      if (auto pv = SchemaHandler(item)) {
+        std::string instanceName = ""; // TODO
+        schemas.names.push_back({pv.value(), instanceName});
+      } else {
+        return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+      }
+    }
+    schemas.qual = ListEditQual::ResetToExplicit;
+  
+  } else {
+
+    // Assume all items have same ListEdit qualifier.
+    if (arg.GetExplicitItems().size()) {
+      if (arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      }
+      for (auto &&item : arg.GetExplicitItems()) {
+        if (auto pv = SchemaHandler(item)) {
+          std::string instanceName = ""; // TODO
+          schemas.names.push_back({pv.value(), instanceName});
+        } else {
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+        }
+      }
+      schemas.qual = ListEditQual::ResetToExplicit;
+  
+
+    } else if (arg.GetAddedItems().size()) {
+      if (arg.GetExplicitItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      }
+      for (auto &item : arg.GetAddedItems()) {
+        if (auto pv = SchemaHandler(item)) {
+          std::string instanceName = ""; // TODO
+          schemas.names.push_back({pv.value(), instanceName});
+        } else {
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+        }
+      }
+      schemas.qual = ListEditQual::Add;
+    } else if (arg.GetAppendedItems().size()) {
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      }
+      for (auto &&item : arg.GetAppendedItems()) {
+        if (auto pv = SchemaHandler(item)) {
+          std::string instanceName = ""; // TODO
+          schemas.names.push_back({pv.value(), instanceName});
+        } else {
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+        }
+      }
+      schemas.qual = ListEditQual::Append;
+    } else if (arg.GetDeletedItems().size()) {
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      }
+      for (auto &&item : arg.GetDeletedItems()) {
+        if (auto pv = SchemaHandler(item)) {
+          std::string instanceName = ""; // TODO
+          schemas.names.push_back({pv.value(), instanceName});
+        } else {
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+        }
+      }
+      schemas.qual = ListEditQual::Delete;
+    } else if (arg.GetPrependedItems().size()) {
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      }
+      for (auto &&item : arg.GetPrependedItems()) {
+        if (auto pv = SchemaHandler(item)) {
+          std::string instanceName = ""; // TODO
+          schemas.names.push_back({pv.value(), instanceName});
+        } else {
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+        }
+      }
+      schemas.qual = ListEditQual::Prepend;
+    } else if (arg.GetOrderedItems().size()) {
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size()) {
+        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      }
+
+      //schemas.qual = ListEditQual::Order;
+      return nonstd::make_unexpected("TODO: Ordered ListOp items.");
+    } else {
+      // ??? This should not happend.
+      return nonstd::make_unexpected("Internal error: ListOp conversion.");
+    }
+
+  }
+
+  return schemas;
+}
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                       const PathIndexToSpecIndexMap &psmap,
@@ -1157,8 +1271,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     nonstd::optional<Specifier> specifier;
     std::vector<value::token> properties;
     nonstd::optional<bool> active;
-    nonstd::optional<int> elementSize; // for usdSkel
-    std::vector<value::token> apiSchemas;
+    //nonstd::optional<int> elementSize; // for usdSkel
+    nonstd::optional<APISchemas> apiSchemas;
 
     ///
     ///
@@ -1257,8 +1371,15 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       } else if (fv.first == "apiSchemas") {
         if (auto pv = fv.second.get_value<ListOp<value::token>>()) {
           auto listop = pv.value();
-          //apiSchemas = pv.value();
-          DCOUT("apiSchemas = " << to_string(listop));
+      
+          auto ret = ToAPISchemas(listop);
+          if (!ret) {
+            PUSH_ERROR_AND_RETURN_TAG(
+                kTag, "Failed to validate `apiSchemas`: " + ret.error());
+          } else {
+            apiSchemas = (*ret); 
+          }
+          //DCOUT("apiSchemas = " << to_string(listop));
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "`apiSchemas` must be type `ListOp[Token]`, but got type `"
