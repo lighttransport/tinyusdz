@@ -467,7 +467,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(const L
 
   }
 
-  return schemas;
+  return std::move(schemas);
 }
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
