@@ -53,7 +53,7 @@ struct UsdPrimvarReader {
 
   TypedAttribute<Animatable<T>> fallback;  // "inputs:fallback"
 
-  TypedAttribute<Animatable<value::token>> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
+  TypedProperty<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
 
 
   TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"

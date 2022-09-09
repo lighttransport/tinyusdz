@@ -329,3 +329,4 @@ TinyUSDZ is licensed under MIT license.
 * p-ranav/glob : MIT license. https://github.com/p-ranav/glob
 * linalg.h : Unlicense. https://github.com/sgorsten/linalg
 * mapbox/eternal: ISC License. https://github.com/mapbox/eternal
+* bvh: MIT license. https://github.com/madmann91/bvh

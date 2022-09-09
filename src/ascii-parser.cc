@@ -33,6 +33,7 @@
 
 #include "ascii-parser.hh"
 #include "str-util.hh"
+#include "tiny-format.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -5755,6 +5756,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     p.attrib.set_type_name(type_name);
 
     (*props)[primattr_name] = p;
+
+    DCOUT(fmt::format("Added {} as a connection.", primattr_name));
 
     return true;
 
