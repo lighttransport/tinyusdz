@@ -108,7 +108,7 @@ static inline void swap8(int64_t *val) {
 ///
 class StreamReader {
  public:
-  explicit StreamReader(const uint8_t *binary, const size_t length,
+  explicit StreamReader(const uint8_t *binary, const uint64_t length,
                         const bool swap_endian)
       : binary_(binary), length_(length), swap_endian_(swap_endian), idx_(0) {
     (void)pad_;
@@ -128,18 +128,18 @@ class StreamReader {
       return false;
     }
 
-    if (size_t((int64_t(idx_) + offset)) > length_) {
+    if (uint64_t((int64_t(idx_) + offset)) > length_) {
       return false;
     }
 
-    idx_ = size_t(int64_t(idx_) + offset);
+    idx_ = uint64_t(int64_t(idx_) + offset);
     return true;
   }
 
-  size_t read(const size_t n, const uint64_t dst_len, uint8_t *dst) const {
-    size_t len = n;
+  uint64_t read(const uint64_t n, const uint64_t dst_len, uint8_t *dst) const {
+    uint64_t len = n;
     if ((idx_ + len) > length_) {
-      len = length_ - size_t(idx_);
+      len = length_ - uint64_t(idx_);
     }
 
     if (len > 0) {
@@ -341,18 +341,18 @@ class StreamReader {
   }
 #endif
 
-  size_t tell() const { return size_t(idx_); }
+  uint64_t tell() const { return uint64_t(idx_); }
   bool eof() const { return idx_ >= length_; }
 
   const uint8_t *data() const { return binary_; }
 
   bool swap_endian() const { return swap_endian_; }
 
-  size_t size() const { return length_; }
+  uint64_t size() const { return length_; }
 
  private:
   const uint8_t *binary_;
-  const size_t length_;
+  const uint64_t length_;
   bool swap_endian_;
   char pad_[7];
   mutable uint64_t idx_;
