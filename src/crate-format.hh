@@ -356,14 +356,14 @@ class CrateDataType
  public:
   CrateDataType() = default;
 
-  CrateDataType(const std::string &s, CrateDataTypeId did, bool a)
+  CrateDataType(const char *s, CrateDataTypeId did, bool a)
     : name(s), dtype_id(did), supports_array(a) {
   }
 
   CrateDataType(const CrateDataType &rhs) = default;
   CrateDataType &operator=(const CrateDataType&rhs) = default;
 
-  std::string name; // name of CrateDatatType
+  const char *name{nullptr}; // name of CrateDatatType. Constant symbol. TODO: Use string_view.
   CrateDataTypeId dtype_id{CrateDataTypeId::CRATE_DATA_TYPE_INVALID};
   bool supports_array{false};
 };

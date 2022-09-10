@@ -164,7 +164,7 @@ public:
     }
 
     constexpr std::size_t operator-(const iterator& rhs) const noexcept {
-        return pos - rhs.pos;
+        return std::size_t(pos - rhs.pos);
     }
 
     constexpr const auto& operator*() const noexcept {

@@ -134,7 +134,7 @@ class USDCReader::Impl {
   /// Construct Property(Attribute, Relationship/Connection) from
   /// FieldValuePairs
   ///
-  bool ParseProperty(const crate::FieldValuePairVector &fvs, Property *prop);
+  bool ParseProperty(const SpecType specType, const crate::FieldValuePairVector &fvs, Property *prop);
 
   // For simple, non animatable and non `.connect` types. e.g. "token[]"
   template <typename T>
@@ -416,9 +416,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       std::string prop_name = path.value().GetPropPart();
 
       Property prop;
-      if (!ParseProperty(child_fvs, &prop)) {
+      if (!ParseProperty(spec.spec_type, child_fvs, &prop)) {
         PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "Failed to construct Property from FieldValuePairVector.");
+            kTag, fmt::format("Failed to construct Property `{}` from FieldValuePairVector.", prop_name));
       }
 
       props->emplace(prop_name, prop);
@@ -524,7 +524,7 @@ static bool UpcastType(
   return false;
 }
 
-bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
+bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::FieldValuePairVector &fvs,
                                      Property *prop) {
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -685,10 +685,9 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
         auto p = pv.value();
         DCOUT("elementSize = " << to_string(p));
 
-        // TODO: Read max limit from parse Option
-        if ((p < 1) || (p > 512))  {
+        if ((p < 1) || (uint32_t(p) > _config.kMaxElementSize))  {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    fmt::format("`elementSize` must be within [{}, {}], but got {}", 1, 511, p));
+                                    fmt::format("`elementSize` must be within [{}, {}), but got {}", 1, _config.kMaxElementSize, p));
         }
 
         elementSize = p;
@@ -749,11 +748,20 @@ bool USDCReader::Impl::ParseProperty(const crate::FieldValuePairVector &fvs,
   }
 
 
+  // FIXME: SpecType supercedes propType.
   if (propType == Property::Type::EmptyAttrib) {
     if (typeName) {
       (*prop) = Property(typeName.value().str(), custom);
     } else {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
+      DCOUT("spec_type = " << to_string(spec_type));
+      if (spec_type == SpecType::RelationshipTarget) {
+        // `rel` with no target. e.g. `rel target`
+        rel = Relation();
+        rel.SetEmpty();
+        (*prop) = Property(rel, /* isConnection */false, custom);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
+      }
     }
   } else if (propType == Property::Type::Attrib) {
     (*prop) = Property(attr, custom);
