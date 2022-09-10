@@ -1051,11 +1051,20 @@ class Relation {
   std::string targetString;
   Path targetPath;
   std::vector<Path> targetPathVector;
+  ListEditQual qual{ListEditQual::ResetToExplicit};
 
   static Relation MakeEmpty() {
     Relation r;
     r.SetEmpty();
     return r;
+  }
+
+  void SetListEditQualifier(ListEditQual q) {
+    qual = q;
+  }
+
+  ListEditQual GetListEditQualifier() const {
+    return qual;
   }
 
   void SetEmpty() { type = Type::Empty; }
@@ -1127,7 +1136,7 @@ struct PrimAttrib {
 
   AttrMeta meta;
 
-  
+
   void set_var(primvar::PrimVar &&v) {
     if (_type_name.empty()) {
       _type_name = v.type_name();
