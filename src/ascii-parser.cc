@@ -3812,7 +3812,7 @@ bool AsciiParser::Rewind(size_t offset) {
   return true;
 }
 
-size_t AsciiParser::CurrLoc() { return _sr->tell(); }
+uint64_t AsciiParser::CurrLoc() { return _sr->tell(); }
 
 bool AsciiParser::SeekTo(uint64_t pos) {
   if (!_sr->seek_set(pos)) {
