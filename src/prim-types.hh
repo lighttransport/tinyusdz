@@ -89,6 +89,7 @@ enum class ListEditQual {
   Add,              // "add"
   Delete,           // "delete"
   Prepend,          // "prepend"
+  Order,            // "order"
   Invalid
 };
 

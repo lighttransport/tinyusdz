@@ -1709,6 +1709,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n < _config.maxAssetPathElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of AssetPaths too large. TinyUSDZ limites it up to {}", _config.maxAssetPathElements));
+        }
+
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),

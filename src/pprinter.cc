@@ -943,6 +943,8 @@ std::string to_string(tinyusdz::ListEditQual v) {
     return "delete";
   } else if (v == tinyusdz::ListEditQual::Prepend) {
     return "prepend";
+  } else if (v == tinyusdz::ListEditQual::Order) {
+    return "order";
   }
 
   return "[[Invalid ListEditQual value]]";
