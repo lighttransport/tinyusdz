@@ -34,7 +34,7 @@ struct BlendShape {
 struct Skeleton {
   std::string name;
 
-  Animatable<Extent> extent;
+  TypedAttribute<Animatable<Extent>> extent;
 
   TypedAttribute<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
 

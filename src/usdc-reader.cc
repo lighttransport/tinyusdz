@@ -178,6 +178,10 @@ class USDCReader::Impl {
  private:
   nonstd::expected<APISchemas, std::string> ToAPISchemas(const ListOp<value::token> &);
 
+  // ListOp<T> -> (ListEditOp, [T])
+  template <typename T>
+  std::vector<std::pair<ListEditQual, std::vector<T>>> DecodeListOp(const ListOp<T> &);
+
   ///
   /// Builds std::map<std::string, Property> from the list of Path(Spec)
   /// indices.
@@ -468,6 +472,39 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(const L
   }
 
   return std::move(schemas);
+}
+
+template <typename T>
+std::vector<std::pair<ListEditQual, std::vector<T>>> USDCReader::Impl::DecodeListOp(const ListOp<T> &arg) {
+
+  std::vector<std::pair<ListEditQual, std::vector<T>>> dst;
+
+  if (arg.IsExplicit()) { // fast path
+    dst.push_back({ListEditQual::ResetToExplicit, arg.GetExplicitItems()});
+  } else {
+
+    // Assume all items have same ListEdit qualifier.
+    if (arg.GetExplicitItems().size()) {
+      dst.push_back({ListEditQual::ResetToExplicit, arg.GetExplicitItems()});
+    }
+    if (arg.GetAddedItems().size()) {
+      dst.push_back({ListEditQual::Add, arg.GetAddedItems()});
+    }
+    if (arg.GetAppendedItems().size()) {
+      dst.push_back({ListEditQual::Append, arg.GetAppendedItems()});
+    }
+    if (arg.GetDeletedItems().size()) {
+      dst.push_back({ListEditQual::Delete, arg.GetDeletedItems()});
+    }
+    if (arg.GetPrependedItems().size()) {
+      dst.push_back({ListEditQual::Prepend, arg.GetPrependedItems()});
+    }
+    if (arg.GetOrderedItems().size()) {
+      dst.push_back({ListEditQual::Order, arg.GetOrderedItems()});
+    }
+  }
+
+  return std::move(dst);
 }
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
@@ -762,20 +799,24 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
       propType = Property::Type::Relation;
 
       if (auto pv = fv.second.get_value<ListOp<Path>>()) {
-        auto p = pv.value();
+        const ListOp<Path> &p = pv.value();
         DCOUT("targetPaths = " << to_string(p));
 
-        if (!p.IsExplicit()) {
+        auto ps = DecodeListOp<Path>(p);
+
+        if (ps.empty()) {
+          // Empty `targetPaths`
           PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    "`targetPaths` must be composed of Explicit items.");
+                                    "`targetPaths` is empty.");
         }
 
-        // Must be explicit_items for now.
-        auto items = p.GetExplicitItems();
-        if (items.size() == 0) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    "`targetPaths` have empty Explicit items.");
+        if (ps.size() > 1) {
+          // This should not happen though.
+          PUSH_WARN("ListOp with multiple ListOpType is not supported for now. Use the first one: " + to_string(std::get<0>(ps[0])));
         }
+
+        auto qual = std::get<0>(ps[0]);
+        auto items = std::get<1>(ps[0]);
 
         if (items.size() == 1) {
           // Single
@@ -786,6 +827,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
         } else {
           rel.Set(items); // [Path]
         }
+
+        rel.SetListEditQualifier(qual);
 
       } else {
 

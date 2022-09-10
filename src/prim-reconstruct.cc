@@ -1628,6 +1628,7 @@ bool ReconstructPrim<Skeleton>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "joints", Skeleton, skel->joints)
     PARSE_TYPED_ATTRIBUTE(table, prop, "jointNames", Skeleton, skel->jointNames)
     PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
+    ADD_PROPERY(table, prop, Skeleton, skel->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -1652,6 +1653,7 @@ bool ReconstructPrim<SkelAnimation>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "scales", SkelAnimation, skelanim->scales)
     PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
     PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
+    ADD_PROPERY(table, prop, Skeleton, skelanim->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -1677,6 +1679,7 @@ bool ReconstructPrim<BlendShape>(
     PARSE_TYPED_ATTRIBUTE(table, prop, kOffsets, BlendShape, bs->offsets)
     PARSE_TYPED_ATTRIBUTE(table, prop, kNormalOffsets, BlendShape, bs->normalOffsets)
     PARSE_TYPED_ATTRIBUTE(table, prop, kPointIndices, BlendShape, bs->pointIndices)
+    ADD_PROPERY(table, prop, Skeleton, bs->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 

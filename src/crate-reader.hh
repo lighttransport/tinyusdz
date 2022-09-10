@@ -21,6 +21,7 @@ struct CrateReaderConfig {
   // Set limits to prevent infinite-loop, buffer-overrun, etc.
   size_t maxDictElements = 256;
   size_t maxArrayElements = 1024*1024*1024; // 1M
+  size_t maxAssetPathElements = 512;
 
   size_t maxTokenLength = 4096; // Maximum allowed length `token`
   size_t maxStringLength = 1024*1024*64;
@@ -288,6 +289,9 @@ class CrateReader {
 
   bool ReadPathListOp(ListOp<Path> *d);
   bool ReadTokenListOp(ListOp<value::token> *d);
+
+  // Read 64bit uint with range check
+  bool ReadNum(uint64_t &n, uint64_t maxnum);
 
   // Tracks the memory used(In advisorily manner since counting memory usage is
   // done by manually, so not all memory consumption could be tracked)
