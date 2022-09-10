@@ -242,17 +242,18 @@ struct APISchemas
 struct PrimMeta {
   nonstd::optional<bool> active; // 'active'
   nonstd::optional<Kind> kind;                  // 'kind'
+  nonstd::optional<CustomDataType> assetInfo; // 'assetInfo'
   nonstd::optional<CustomDataType> customData;  // `customData`
 
-  std::map<std::string, MetaVariable> meta;  // other meta values
-
   nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
+
+  std::map<std::string, MetaVariable> meta;  // other meta values
 
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authored() const { return (kind || customData || meta.size() || apiSchemas || stringData.size()); }
+  bool authored() const { return (active || kind || customData || meta.size() || apiSchemas || stringData.size() || assetInfo); }
 };
 
 // Metadata for Attribute
@@ -1696,6 +1697,7 @@ struct Xformable {
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
+nonstd::optional<Kind> KindFromString(const std::string &v);
 
 namespace value {
 

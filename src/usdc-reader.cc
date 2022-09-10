@@ -39,8 +39,8 @@
 #include "prim-reconstruct.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
-#include "value-pprint.hh"
 #include "tiny-format.hh"
+#include "value-pprint.hh"
 
 //
 #ifdef __clang__
@@ -57,14 +57,16 @@
 //
 #include "common-macros.inc"
 
-
 namespace tinyusdz {
 
 namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *)
+#define RECONSTRUCT_PRIM_DECL(__ty)                                      \
+  template <>                                                            \
+  bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, \
+                             __ty *, std::string *, std::string *)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -91,7 +93,7 @@ RECONSTRUCT_PRIM_DECL(Shader);
 
 #undef RECONSTRUCT_PRIM_DECL
 
-} // namespace prim
+}  // namespace prim
 
 namespace usdc {
 
@@ -134,7 +136,8 @@ class USDCReader::Impl {
   /// Construct Property(Attribute, Relationship/Connection) from
   /// FieldValuePairs
   ///
-  bool ParseProperty(const SpecType specType, const crate::FieldValuePairVector &fvs, Property *prop);
+  bool ParseProperty(const SpecType specType,
+                     const crate::FieldValuePairVector &fvs, Property *prop);
 
   // For simple, non animatable and non `.connect` types. e.g. "token[]"
   template <typename T>
@@ -146,15 +149,16 @@ class USDCReader::Impl {
   // For attribute which maybe a value, connection or TimeSamples.
   template <typename T>
   bool ReconstructTypedProperty(int parent,
-                                 const crate::FieldValuePairVector &fvs,
-                                 TypedProperty<T> *attr);
+                                const crate::FieldValuePairVector &fvs,
+                                TypedProperty<T> *attr);
 
   template <typename T>
   bool ReconstructPrim(const crate::CrateReader::Node &node,
                        const crate::FieldValuePairVector &fvs,
                        const PathIndexToSpecIndexMap &psmap, T *prim);
 
-  bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrim, int level,
+  bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrim,
+                                  int level,
                                   const PathIndexToSpecIndexMap &psmap,
                                   Stage *stage);
 
@@ -176,11 +180,13 @@ class USDCReader::Impl {
   size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
 
  private:
-  nonstd::expected<APISchemas, std::string> ToAPISchemas(const ListOp<value::token> &);
+  nonstd::expected<APISchemas, std::string> ToAPISchemas(
+      const ListOp<value::token> &);
 
   // ListOp<T> -> (ListEditOp, [T])
   template <typename T>
-  std::vector<std::pair<ListEditQual, std::vector<T>>> DecodeListOp(const ListOp<T> &);
+  std::vector<std::pair<ListEditQual, std::vector<T>>> DecodeListOp(
+      const ListOp<T> &);
 
   ///
   /// Builds std::map<std::string, Property> from the list of Path(Spec)
@@ -362,11 +368,12 @@ bool USDCReader::Impl::ReconstructGeomSubset(
 
 namespace {}
 
-nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(const ListOp<value::token> &arg) {
-
+nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
+    const ListOp<value::token> &arg) {
   APISchemas schemas;
 
-  auto SchemaHandler = [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
+  auto SchemaHandler =
+      [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
     if (tok.str() == "MaterialBindingAPI") {
       return APISchemas::APIName::MaterialBindingAPI;
     } else if (tok.str() == "SkelBindingAPI") {
@@ -376,113 +383,139 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(const L
     }
   };
 
-  if (arg.IsExplicit()) { // fast path
+  if (arg.IsExplicit()) {  // fast path
     for (auto &item : arg.GetExplicitItems()) {
       if (auto pv = SchemaHandler(item)) {
-        std::string instanceName = ""; // TODO
+        std::string instanceName = "";  // TODO
         schemas.names.push_back({pv.value(), instanceName});
       } else {
-        return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+        return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
+                                       item.str());
       }
     }
     schemas.qual = ListEditQual::ResetToExplicit;
-  
-  } else {
 
+  } else {
     // Assume all items have same ListEdit qualifier.
     if (arg.GetExplicitItems().size()) {
-      if (arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
-        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      if (arg.GetAddedItems().size() || arg.GetAppendedItems().size() ||
+          arg.GetDeletedItems().size() || arg.GetPrependedItems().size() ||
+          arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected(
+            "Currently TinyUSDZ does not support ListOp with different "
+            "ListEdit qualifiers.");
       }
       for (auto &&item : arg.GetExplicitItems()) {
         if (auto pv = SchemaHandler(item)) {
-          std::string instanceName = ""; // TODO
+          std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else {
-          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
+                                         item.str());
         }
       }
       schemas.qual = ListEditQual::ResetToExplicit;
-  
 
     } else if (arg.GetAddedItems().size()) {
-      if (arg.GetExplicitItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
-        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      if (arg.GetExplicitItems().size() || arg.GetAppendedItems().size() ||
+          arg.GetDeletedItems().size() || arg.GetPrependedItems().size() ||
+          arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected(
+            "Currently TinyUSDZ does not support ListOp with different "
+            "ListEdit qualifiers.");
       }
       for (auto &item : arg.GetAddedItems()) {
         if (auto pv = SchemaHandler(item)) {
-          std::string instanceName = ""; // TODO
+          std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else {
-          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
+                                         item.str());
         }
       }
       schemas.qual = ListEditQual::Add;
     } else if (arg.GetAppendedItems().size()) {
-      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
-        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
+          arg.GetDeletedItems().size() || arg.GetPrependedItems().size() ||
+          arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected(
+            "Currently TinyUSDZ does not support ListOp with different "
+            "ListEdit qualifiers.");
       }
       for (auto &&item : arg.GetAppendedItems()) {
         if (auto pv = SchemaHandler(item)) {
-          std::string instanceName = ""; // TODO
+          std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else {
-          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
+                                         item.str());
         }
       }
       schemas.qual = ListEditQual::Append;
     } else if (arg.GetDeletedItems().size()) {
-      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetPrependedItems().size() || arg.GetOrderedItems().size()) {
-        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
+          arg.GetAppendedItems().size() || arg.GetPrependedItems().size() ||
+          arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected(
+            "Currently TinyUSDZ does not support ListOp with different "
+            "ListEdit qualifiers.");
       }
       for (auto &&item : arg.GetDeletedItems()) {
         if (auto pv = SchemaHandler(item)) {
-          std::string instanceName = ""; // TODO
+          std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else {
-          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
+                                         item.str());
         }
       }
       schemas.qual = ListEditQual::Delete;
     } else if (arg.GetPrependedItems().size()) {
-      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetOrderedItems().size()) {
-        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
+          arg.GetAppendedItems().size() || arg.GetDeletedItems().size() ||
+          arg.GetOrderedItems().size()) {
+        return nonstd::make_unexpected(
+            "Currently TinyUSDZ does not support ListOp with different "
+            "ListEdit qualifiers.");
       }
       for (auto &&item : arg.GetPrependedItems()) {
         if (auto pv = SchemaHandler(item)) {
-          std::string instanceName = ""; // TODO
+          std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else {
-          return nonstd::make_unexpected("Invalid or Unsupported API schema: " + item.str());
+          return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
+                                         item.str());
         }
       }
       schemas.qual = ListEditQual::Prepend;
     } else if (arg.GetOrderedItems().size()) {
-      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() || arg.GetAppendedItems().size() || arg.GetDeletedItems().size() || arg.GetPrependedItems().size()) {
-        return nonstd::make_unexpected("Currently TinyUSDZ does not support ListOp with different ListEdit qualifiers."); 
+      if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
+          arg.GetAppendedItems().size() || arg.GetDeletedItems().size() ||
+          arg.GetPrependedItems().size()) {
+        return nonstd::make_unexpected(
+            "Currently TinyUSDZ does not support ListOp with different "
+            "ListEdit qualifiers.");
       }
 
-      //schemas.qual = ListEditQual::Order;
+      // schemas.qual = ListEditQual::Order;
       return nonstd::make_unexpected("TODO: Ordered ListOp items.");
     } else {
       // ??? This should not happend.
       return nonstd::make_unexpected("Internal error: ListOp conversion.");
     }
-
   }
 
   return std::move(schemas);
 }
 
 template <typename T>
-std::vector<std::pair<ListEditQual, std::vector<T>>> USDCReader::Impl::DecodeListOp(const ListOp<T> &arg) {
-
+std::vector<std::pair<ListEditQual, std::vector<T>>>
+USDCReader::Impl::DecodeListOp(const ListOp<T> &arg) {
   std::vector<std::pair<ListEditQual, std::vector<T>>> dst;
 
-  if (arg.IsExplicit()) { // fast path
+  if (arg.IsExplicit()) {  // fast path
     dst.push_back({ListEditQual::ResetToExplicit, arg.GetExplicitItems()});
   } else {
-
     // Assume all items have same ListEdit qualifier.
     if (arg.GetExplicitItems().size()) {
       dst.push_back({ListEditQual::ResetToExplicit, arg.GetExplicitItems()});
@@ -508,9 +541,8 @@ std::vector<std::pair<ListEditQual, std::vector<T>>> USDCReader::Impl::DecodeLis
 }
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
-                      const PathIndexToSpecIndexMap &psmap,
-                      prim::PropertyMap *props) {
-
+                                        const PathIndexToSpecIndexMap &psmap,
+                                        prim::PropertyMap *props) {
   for (size_t i = 0; i < pathIndices.size(); i++) {
     int child_index = int(pathIndices[i]);
     if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
@@ -569,7 +601,10 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       Property prop;
       if (!ParseProperty(spec.spec_type, child_fvs, &prop)) {
         PUSH_ERROR_AND_RETURN_TAG(
-            kTag, fmt::format("Failed to construct Property `{}` from FieldValuePairVector.", prop_name));
+            kTag,
+            fmt::format(
+                "Failed to construct Property `{}` from FieldValuePairVector.",
+                prop_name));
       }
 
       props->emplace(prop_name, prop);
@@ -581,11 +616,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 }
 
 // TODO: Use template and move code to `value-types.hh`
-// TODO: Preserve type for Role type(currently, "color3f" is converted to "float3" type)
-static bool UpcastType(
-  const std::string &reqType,
-  value::Value &inout)
-{
+// TODO: Preserve type for Role type(currently, "color3f" is converted to
+// "float3" type)
+static bool UpcastType(const std::string &reqType, value::Value &inout) {
   // `reqType` may be Role type. Get underlying type
   uint32_t tyid;
   if (auto pv = value::TryGetUnderlyingTypeId(reqType)) {
@@ -594,7 +627,6 @@ static bool UpcastType(
     // Invalid reqType.
     return false;
   }
-
 
   if (tyid == value::TYPE_ID_FLOAT) {
     float dst;
@@ -675,7 +707,8 @@ static bool UpcastType(
   return false;
 }
 
-bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::FieldValuePairVector &fvs,
+bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
+                                     const crate::FieldValuePairVector &fvs,
                                      Property *prop) {
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -731,7 +764,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
       is_scalar = true;
 
     } else if (fv.first == "timeSamples") {
-
       propType = Property::Type::Attrib;
 
       if (auto pv = fv.second.get_value<value::TimeSamples>()) {
@@ -743,7 +775,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
                                   "`timeSamples` is not TimeSamples data.");
       }
     } else if (fv.first == "interpolation") {
-
       propType = Property::Type::Attrib;
 
       if (auto pv = fv.second.get_value<value::token>()) {
@@ -752,8 +783,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
         if (auto interp = InterpolationFromString(pv.value().str())) {
           interpolation = interp.value();
         } else {
-          PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    "Invalid token for `interpolation`.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid token for `interpolation`.");
         }
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -768,15 +798,15 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
         DCOUT("connectionPaths = " << to_string(p));
 
         if (!p.IsExplicit()) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    "`connectionPaths` must be composed of Explicit items.");
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`connectionPaths` must be composed of Explicit items.");
         }
 
         // Must be explicit_items for now.
         auto items = p.GetExplicitItems();
         if (items.size() == 0) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    "`connectionPaths` have empty Explicit items.");
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`connectionPaths` have empty Explicit items.");
         }
 
         if (items.size() == 1) {
@@ -786,13 +816,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
           rel.Set(path);
 
         } else {
-          rel.Set(items); // [Path]
+          rel.Set(items);  // [Path]
         }
 
       } else {
-
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`connectionPaths` field is not `ListOp[Path]` type.");
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`connectionPaths` field is not `ListOp[Path]` type.");
       }
     } else if (fv.first == "targetPaths") {
       // `rel`
@@ -806,13 +835,15 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
 
         if (ps.empty()) {
           // Empty `targetPaths`
-          PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    "`targetPaths` is empty.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "`targetPaths` is empty.");
         }
 
         if (ps.size() > 1) {
           // This should not happen though.
-          PUSH_WARN("ListOp with multiple ListOpType is not supported for now. Use the first one: " + to_string(std::get<0>(ps[0])));
+          PUSH_WARN(
+              "ListOp with multiple ListOpType is not supported for now. Use "
+              "the first one: " +
+              to_string(std::get<0>(ps[0])));
         }
 
         auto qual = std::get<0>(ps[0]);
@@ -825,15 +856,14 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
           rel.Set(path);
 
         } else {
-          rel.Set(items); // [Path]
+          rel.Set(items);  // [Path]
         }
 
         rel.SetListEditQualifier(qual);
 
       } else {
-
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`targetPaths` field is not `ListOp[Path]` type.");
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`targetPaths` field is not `ListOp[Path]` type.");
       }
 
     } else if (fv.first == "elementSize") {
@@ -842,34 +872,35 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
         auto p = pv.value();
         DCOUT("elementSize = " << to_string(p));
 
-        if ((p < 1) || (uint32_t(p) > _config.kMaxElementSize))  {
-          PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    fmt::format("`elementSize` must be within [{}, {}), but got {}", 1, _config.kMaxElementSize, p));
+        if ((p < 1) || (uint32_t(p) > _config.kMaxElementSize)) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag,
+              fmt::format("`elementSize` must be within [{}, {}), but got {}",
+                          1, _config.kMaxElementSize, p));
         }
 
         elementSize = p;
 
       } else {
-
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`elementSize` field is not `int` type.");
       }
     } else if (fv.first == "targetChildren") {
       // Path vector
       if (auto pv = fv.second.get_value<std::vector<Path>>()) {
-        //DCOUT("targetChildren = " << pv.value());
+        // DCOUT("targetChildren = " << pv.value());
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`targetChildren` field is not `PathVector` type.");
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`targetChildren` field is not `PathVector` type.");
       }
     } else if (fv.first == "connectionChildren") {
       // Path vector
       if (auto pv = fv.second.get_value<std::vector<Path>>()) {
-        //DCOUT("connectionChildren = " << pv.value());
-        // TODO
+        // DCOUT("connectionChildren = " << pv.value());
+        //  TODO
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`connectionChildren` field is not `PathVector` type.");
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`connectionChildren` field is not `PathVector` type.");
       }
     } else {
       PUSH_WARN("TODO: " << fv.first);
@@ -879,8 +910,9 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
 
   if (is_scalar) {
     if (typeName) {
-      // Some inlined? value uses less accuracy type(e.g. `half3`) than typeName(e.g. `float3`)
-      // Use type specified in `typeName` as much as possible.
+      // Some inlined? value uses less accuracy type(e.g. `half3`) than
+      // typeName(e.g. `float3`) Use type specified in `typeName` as much as
+      // possible.
       std::string reqTy = typeName.value().str();
       std::string scalarTy = scalar.type_name();
 
@@ -904,7 +936,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
     attr.meta.elementSize = elementSize.value();
   }
 
-
   // FIXME: SpecType supercedes propType.
   if (propType == Property::Type::EmptyAttrib) {
     if (typeName) {
@@ -915,7 +946,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
         // `rel` with no target. e.g. `rel target`
         rel = Relation();
         rel.SetEmpty();
-        (*prop) = Property(rel, /* isConnection */false, custom);
+        (*prop) = Property(rel, /* isConnection */ false, custom);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
       }
@@ -925,7 +956,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type, const crate::Fiel
   } else if (propType == Property::Type::Connection) {
     (*prop) = Property(rel, /* isConnection*/ true, custom);
   } else if (propType == Property::Type::Relation) {
-    (*prop) = Property(rel, /* isConnection */false, custom);
+    (*prop) = Property(rel, /* isConnection */ false, custom);
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
   }
@@ -1058,11 +1089,10 @@ bool USDCReader::Impl::ReconstructTypedProperty(
 }
 
 template <typename T>
-bool USDCReader::Impl::ReconstructPrim(
-    const crate::CrateReader::Node &node,
-    const crate::FieldValuePairVector &fvs,
-    const PathIndexToSpecIndexMap &psmap, T *prim) {
-
+bool USDCReader::Impl::ReconstructPrim(const crate::CrateReader::Node &node,
+                                       const crate::FieldValuePairVector &fvs,
+                                       const PathIndexToSpecIndexMap &psmap,
+                                       T *prim) {
   (void)fvs;
 
   prim::PropertyMap properties;
@@ -1070,7 +1100,7 @@ bool USDCReader::Impl::ReconstructPrim(
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
   }
 
-  prim::ReferenceList refs; // TODO:
+  prim::ReferenceList refs;  // TODO:
   std::string err;
 
   if (!prim::ReconstructPrim<T>(properties, refs, prim, &_warn, &err)) {
@@ -1079,8 +1109,6 @@ bool USDCReader::Impl::ReconstructPrim(
 
   return true;
 }
-
-
 
 bool USDCReader::Impl::ReconstrcutStageMeta(
     const crate::FieldValuePairVector &fvs, StageMetas *metas,
@@ -1214,8 +1242,8 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 }
 
 bool USDCReader::Impl::ReconstructPrimRecursively(
-    int parent, int current, Prim *rootPrim, int level, const PathIndexToSpecIndexMap &psmap,
-    Stage *stage) {
+    int parent, int current, Prim *rootPrim, int level,
+    const PathIndexToSpecIndexMap &psmap, Stage *stage) {
   DCOUT("ReconstructPrimRecursively: parent = "
         << std::to_string(current) << ", level = " << std::to_string(level));
 
@@ -1296,14 +1324,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
   if (current == 0) {
-
     if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
       DCOUT("Root element path: " << pv.value().full_path_name());
     } else {
-      PUSH_ERROR_AND_RETURN(
-          "(Internal error). Root Element Path not found.");
+      PUSH_ERROR_AND_RETURN("(Internal error). Root Element Path not found.");
     }
-
 
     // Root layer(Stage) is Relationship for some reaon.
     if (spec.spec_type != SpecType::Relationship) {
@@ -1322,8 +1347,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     nonstd::optional<Specifier> specifier;
     std::vector<value::token> properties;
     nonstd::optional<bool> active;
-    //nonstd::optional<int> elementSize; // for usdSkel
     nonstd::optional<APISchemas> apiSchemas;
+    nonstd::optional<Kind> kind;
+    nonstd::optional<CustomDataType> assetInfo;
 
     ///
     ///
@@ -1389,7 +1415,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       } else if (fv.first == "primChildren") {
         if (auto pv = fv.second.get_value<std::vector<value::token>>()) {
           // We can ignore primChildren for now
-          //PUSH_WARN("We can ignore `primChildren` for now");
+          // PUSH_WARN("We can ignore `primChildren` for now");
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "`primChildren` must be type `token[]`, but got type `"
@@ -1407,6 +1433,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       } else if (fv.first == "assetInfo") {
         // CustomData(dict)
         if (auto pv = fv.second.get_value<CustomDataType>()) {
+          assetInfo = pv.value();
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "`assetInfo` must be type `dictionary`, but got type `"
@@ -1414,6 +1441,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         }
       } else if (fv.first == "kind") {
         if (auto pv = fv.second.get_value<value::token>()) {
+          if (auto kv = KindFromString(pv.value().str())) {
+            kind = kv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN_TAG(
+                kTag, "Invalid token for `kind` Prim metadata. ");
+          }
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "`kind` must be type `token`, but got type `"
@@ -1422,15 +1455,15 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       } else if (fv.first == "apiSchemas") {
         if (auto pv = fv.second.get_value<ListOp<value::token>>()) {
           auto listop = pv.value();
-      
+
           auto ret = ToAPISchemas(listop);
           if (!ret) {
             PUSH_ERROR_AND_RETURN_TAG(
                 kTag, "Failed to validate `apiSchemas`: " + ret.error());
           } else {
-            apiSchemas = (*ret); 
+            apiSchemas = (*ret);
           }
-          //DCOUT("apiSchemas = " << to_string(listop));
+          // DCOUT("apiSchemas = " << to_string(listop));
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "`apiSchemas` must be type `ListOp[Token]`, but got type `"
@@ -1451,7 +1484,20 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       PUSH_ERROR_AND_RETURN_TAG(kTag,                                        \
                                 "Failed to reconstruct Prim " << __node_ty); \
     }                                                                        \
-    typed_prim.name = __prim_name; \
+    /* TODO: Better Prim meta handling */                                    \
+    if (active) {                                                           \
+      typed_prim.meta.active = active.value();                               \
+    }                                                                        \
+    if (apiSchemas) {                                                        \
+      typed_prim.meta.apiSchemas = apiSchemas.value();                       \
+    }                                                                        \
+    if (kind) {                                                              \
+      typed_prim.meta.kind = kind.value();                                   \
+    }                                                                        \
+    if (assetInfo) {                                                         \
+      typed_prim.meta.assetInfo = assetInfo.value();                         \
+    }                                                                        \
+    typed_prim.name = __prim_name;                                           \
     value::Value primdata = typed_prim;                                      \
     prim = Prim(primdata);                                                   \
     /* PrimNode pnode; */                                                    \
@@ -1466,9 +1512,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         elemPath = pv.value();
         DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal errror) Element path not found.");
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "(Internal errror) Element path not found.");
       }
-
 
       // Sanity check
       if (specifier) {
@@ -1501,7 +1547,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         RECONSTRUCT_PRIM(GeomCapsule, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomBasisCurves, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomCamera, typeName.value(), prim_name)
-        //RECONSTRUCT_PRIM(GeomSubset, typeName.value(), prim_name)
+        // RECONSTRUCT_PRIM(GeomSubset, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(LuxSphereLight, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(LuxDomeLight, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(LuxCylinderLight, typeName.value(), prim_name)
@@ -1519,6 +1565,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         }
 
         if (prim) {
+          // Prim name
           prim.value().elementPath = elemPath;
         }
       }
@@ -1540,8 +1587,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   {
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
-      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]), currPrimPtr,
-                                      level + 1, psmap, stage)) {
+      if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]),
+                                      currPrimPtr, level + 1, psmap, stage)) {
         return false;
       }
     }
@@ -1603,7 +1650,8 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
   int root_node_id = 0;
   bool ret = ReconstructPrimRecursively(/* no further root for root_node */ -1,
-                                        root_node_id, /* root Prim */nullptr, /* level */ 0,
+                                        root_node_id, /* root Prim */ nullptr,
+                                        /* level */ 0,
                                         path_index_to_spec_index_map, stage);
 
   if (!ret) {
