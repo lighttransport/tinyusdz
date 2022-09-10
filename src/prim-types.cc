@@ -334,7 +334,7 @@ Path::Path(const std::string &p, const std::string &prop) {
         return;
       }
 
-      prop_part = prop_name.erase(0, 1); // remove '.'
+      prop_part = prop_name.erase(0, 1);  // remove '.'
       prim_part = p.substr(0, size_t(loc));
 
       valid = true;
@@ -345,7 +345,6 @@ Path::Path(const std::string &p, const std::string &prop) {
     }
 
   } else if (p[0] == '.') {
-
     // property
     auto nslashes = std::count_if(p.begin(), p.end(), slash_fun);
     if (nslashes > 0) {
@@ -358,7 +357,6 @@ Path::Path(const std::string &p, const std::string &prop) {
     valid = true;
 
   } else {
-
     // prim.prop
 
     auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
@@ -367,7 +365,6 @@ Path::Path(const std::string &p, const std::string &prop) {
       prim_part = p;
       valid = true;
     } else if (ndots == 1) {
-
       if (p.size() < 3) {
         // "/."
         valid = false;
@@ -396,7 +393,7 @@ Path::Path(const std::string &p, const std::string &prop) {
       }
 
       prim_part = p.substr(0, size_t(loc));
-      prop_part = prop_name.erase(0, 1); // remove '.'
+      prop_part = prop_name.erase(0, 1);  // remove '.'
 
       valid = true;
 
@@ -530,9 +527,24 @@ Path Path::GetParentPrim() const {
   return Path(prim_part.substr(0, n), "");
 }
 
-bool MetaVariable::IsObject() const
- {
-    return (value.type_id() == value::TypeTrait<tinyusdz::CustomDataType>::type_id);
+bool MetaVariable::IsObject() const {
+  return (value.type_id() ==
+          value::TypeTrait<tinyusdz::CustomDataType>::type_id);
+}
+
+nonstd::optional<Kind> KindFromString(const std::string &str) {
+  if (str == "model") {
+    return Kind::Model;
+  } else if (str == "group") {
+    return Kind::Group;
+  } else if (str == "assembly") {
+    return Kind::Assembly;
+  } else if (str == "component") {
+    return Kind::Component;
+  } else if (str == "subcomponent") {
+    return Kind::Subcomponent;
   }
+  return nonstd::nullopt;
+}
 
 }  // namespace tinyusdz

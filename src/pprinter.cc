@@ -199,33 +199,41 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << pprint::Indent(indent) << "kind = " << quote(to_string(meta.kind.value())) << "\n";
   }
 
-  if (meta.customData) {
-    ss << print_customData(meta.customData.value(), indent+1);
+  if (meta.assetInfo) {
+    ss << print_customData(meta.assetInfo.value(), indent+1);
   }
 
   if (meta.apiSchemas) {
     auto schemas = meta.apiSchemas.value();
 
-    ss << pprint::Indent(indent) << to_string(schemas.qual) << " " << "apiSchemas = [";
+    if (schemas.names.size()) {
 
-    for (size_t i = 0; i < schemas.names.size(); i++) {
-      if (i != 0) {
-        ss << ", ";
+      ss << pprint::Indent(indent) << to_string(schemas.qual) << " apiSchemas = [";
+
+      for (size_t i = 0; i < schemas.names.size(); i++) {
+        if (i != 0) {
+          ss << ", ";
+        }
+
+        auto name = std::get<0>(schemas.names[i]);
+        ss << "\"" << to_string(name);
+
+        auto instanceName = std::get<1>(schemas.names[i]);
+
+        if (!instanceName.empty()) {
+          ss << ":" << instanceName;
+        }
+
+        ss << "\"";
       }
-
-      auto name = std::get<0>(schemas.names[i]);
-      ss << "\"" << to_string(name);
-
-      auto instanceName = std::get<1>(schemas.names[i]);
-
-      if (!instanceName.empty()) {
-        ss << ":" << instanceName;
-      }
-
-      ss << "\"";
+      ss << "]\n";
     }
-    ss << "]\n";
   }
+
+  if (meta.customData) {
+    ss << print_customData(meta.customData.value(), indent+1);
+  }
+
 
   for (const auto &item : meta.meta) {
     ss << print_meta(item.second, indent+1);
