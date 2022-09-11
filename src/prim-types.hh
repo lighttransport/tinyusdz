@@ -925,8 +925,9 @@ struct Payload {
 struct Reference {
   std::string asset_path;
   Path prim_path;
-  LayerOffset layer_offset;
-  value::dict custom_data;
+  LayerOffset layerOffset;
+  //value::dict custom_data;
+  CustomDataType customData;
 };
 
 //

@@ -38,6 +38,20 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::StringData &v) {
+  std::string delim = "\"";
+
+  if (v.is_triple_quoted) {
+    delim = "\"\"\"";
+  }
+
+  ofs << delim;
+  ofs << v.value;
+  ofs << delim;
+
+  return ofs;
+}
+
 } // namespace std
 
 

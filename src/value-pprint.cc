@@ -278,6 +278,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
   return ofs;
 }
 
+#if 0
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
   ofs << "{\n";
   for (const auto &item : m) {
@@ -288,6 +289,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
 
   return ofs;
 }
+#endif
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::AssetPath &asset) {
@@ -402,6 +404,7 @@ namespace value {
   __FUNC(Material)              \
   __FUNC(Shader)
 
+#if 0 // remove
 // std::ostream &operator<<(std::ostream &os, const any_value &v) {
 // std::ostream &operator<<(std::ostream &os, const linb::any &v) {
 std::string pprint_any(const linb::any &v, const uint32_t indent,
@@ -495,41 +498,51 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
 
   return os.str();
 }
+#endif
 
 std::string pprint_value(const value::Value &v, const uint32_t indent,
                          bool closing_brace) {
 #define BASETYPE_CASE_EXPR(__ty)   \
   case TypeTrait<__ty>::type_id: { \
-    os << v.value<__ty>();         \
+    auto ret = v.get_value<__ty>(); \
+    if (ret) { \
+      os << ret.value();         \
+    } else { \
+      os << "[InternalError: Base type TypeId mismatch.]"; \
+    } \
     break;                         \
   }
 
 #define PRIMTYPE_CASE_EXPR(__ty)                             \
   case TypeTrait<__ty>::type_id: {                           \
-    os << to_string(v.value<__ty>(), indent, closing_brace); \
+    auto ret = v.get_value<__ty>(); \
+    if (ret) { \
+      os << to_string(ret.value(), indent, closing_brace);     \
+    } else { \
+      os << "[InternalError: Prim type TypeId mismatch.]"; \
+    } \
     break;                                                   \
   }
 
 #define ARRAY1DTYPE_CASE_EXPR(__ty)             \
   case TypeTrait<std::vector<__ty>>::type_id: { \
-    os << v.value<std::vector<__ty>>();         \
+    auto ret = v.get_value<std::vector<__ty>>(); \
+    if (ret) { \
+      os << ret.value(); \
+    } else { \
+      os << "[InternalError: 1D type TypeId mismatch.]"; \
+    } \
     break;                                      \
   }
 
-#define ARRAY2DTYPE_CASE_EXPR(__ty)                          \
-  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: { \
-    os << v.value<std::vector<std::vector<__ty>>>();         \
-    break;                                                   \
-  }
+
 
   std::stringstream os;
 
   switch (v.type_id()) {
-    // no `bool` type for 1D and 2D array
+    // TODO: `bool` type for 1D?
     BASETYPE_CASE_EXPR(bool)
 
-    // no std::vector<dict> and std::vector<std::vector<dict>>, ...
-    BASETYPE_CASE_EXPR(dict)
 
     // base type
     CASE_EXPR_LIST(BASETYPE_CASE_EXPR)
@@ -538,16 +551,30 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     CASE_EXPR_LIST(ARRAY1DTYPE_CASE_EXPR)
 
     // 2D array
-    CASE_EXPR_LIST(ARRAY2DTYPE_CASE_EXPR)
+    //CASE_EXPR_LIST(ARRAY2DTYPE_CASE_EXPR)
 
     // GPrim
     CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
+
+    // dict and customData
+    case TypeTrait<CustomDataType>::type_id: {
+      auto ret = v.get_value<CustomDataType>();
+      if (ret) {
+        os << print_customData(ret.value(), indent);
+      } else {
+        os << "[InternalError: Dict type TypeId mismatch.]";
+      }
+      break;
+    }
 
     case TypeTrait<value::token>::type_id: {
       os << quote(v.value<value::token>().str());
       break;
     }
     case TypeTrait<std::vector<value::token>>::type_id: {
+      auto ret = v.get_value<std::vector<value::token>>();
+      if (ret) {
+      }
       const std::vector<value::token> &lst =
           v.value<std::vector<value::token>>();
       std::vector<std::string> vs;

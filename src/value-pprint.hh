@@ -7,7 +7,9 @@
 // forward decl
 namespace tinyusdz {
 
+// in prim-types.hh
 class Path;
+struct StringData; 
 
 } // namespace tinyusdz
 
@@ -77,6 +79,7 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
 
 // NOTE: Implemented in pprinter.cc
 std::ostream &operator<<(std::ostream &os, const tinyusdz::Path &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::StringData &v);
 
 // 1D array
 template <typename T>
@@ -98,7 +101,9 @@ namespace tinyusdz {
 namespace value {
 
 std::string pprint_value(const tinyusdz::value::Value &v, const uint32_t indent = 0, bool closing_brace = true);
-std::string pprint_any(const linb::any &v, const uint32_t indent = 0, bool closing_brace = true);
+
+// TODO: Remove
+//std::string pprint_any(const linb::any &v, const uint32_t indent = 0, bool closing_brace = true);
 
 } // namespace primvar
 } // namespace tinyusdz
