@@ -185,6 +185,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/xform.cc
+    ${PROJECT_SOURCE_DIR}/src/performance.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc

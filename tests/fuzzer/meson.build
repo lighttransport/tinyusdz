@@ -7,6 +7,7 @@ tinyusdz_sources=[
   '../../src/integerCoding.cpp',
   '../../src/io-util.cc',
   '../../src/pprinter.cc',
+  '../../src/performance.cc',
   '../../src/prim-types.cc',
   '../../src/prim-reconstruct.cc',
   '../../src/usdGeom.cc',
