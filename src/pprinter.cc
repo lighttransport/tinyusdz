@@ -1376,14 +1376,16 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(geom.points, "points", indent);
-  ss << print_typed_attr(geom.normals, "normals", indent);
-  ss << print_typed_attr(geom.widths, "widths", indent);
-  ss << print_typed_attr(geom.ids, "ids", indent);
-  ss << print_typed_attr(geom.velocities, "velocities", indent);
-  ss << print_typed_attr(geom.accelerations, "accelerations", indent);
+  ss << print_typed_attr(geom.points, "points", indent+1);
+  ss << print_typed_attr(geom.normals, "normals", indent+1);
+  ss << print_typed_attr(geom.widths, "widths", indent+1);
+  ss << print_typed_attr(geom.ids, "ids", indent+1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent+1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent+1);
 
-  ss << print_gprim_predefined(geom, indent);
+  ss << print_props(geom.props, indent+1);
+
+  ss << print_gprim_predefined(geom, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

@@ -1740,7 +1740,7 @@ DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 
-DEFINE_TYPE_TRAIT(StringData, "String", TYPE_ID_SCOPE, 1);
+DEFINE_TYPE_TRAIT(StringData, "String", TYPE_ID_STRING_DATA, 1);
 
 DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA, 1); // TODO: Unify with `dict`?
 

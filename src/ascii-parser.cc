@@ -241,6 +241,7 @@ static void RegisterPrimTypes(std::set<std::string> &d) {
   d.insert("Capsule");
   d.insert("BasisCurves");
   d.insert("Mesh");
+  d.insert("Points");
   d.insert("GeomSubset");
   d.insert("Scope");
   d.insert("Material");
@@ -6557,6 +6558,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
         if (!ParseDefBlock(idx, primIdx, depth + 1)) {
           PUSH_ERROR_AND_RETURN("`def` block parse failed.");
         }
+        DCOUT(fmt::format("Done parse `def` block."));
       } else {
         DCOUT("Enter ParsePrimAttr.");
         // Assume PrimAttr
@@ -6695,6 +6697,8 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
       PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy +
                             "` failed: " + ret.error());
     }
+  } else {
+    PUSH_WARN(fmt::format("TODO: Unsupported/Unimplemented Prim type: `{}`. Skipping parsing.", pTy));
   }
 
   PopPath();
