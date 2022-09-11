@@ -48,6 +48,16 @@ inline bool contains(const std::string &str, char c) {
   return str.find(c) != std::string::npos;
 }
 
+inline size_t counts(const std::string &str, char c) {
+  size_t cnt = 0;
+  for (size_t i = 0; i < str.size(); i++) {
+    if (str[i] == c) {
+      cnt++;
+    }
+  }
+  return cnt;
+}
+
 // Remove the beginning and the ending delimiter(s) from input string
 // e.g. "mystring" -> mystring
 // no error for an input string which does not contain `delim` in both side.
