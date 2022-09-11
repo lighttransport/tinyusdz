@@ -2,11 +2,12 @@ import os
 import glob
 import subprocess
 
+# Default configuration Assume running this script from <tinyusdz> root directory
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--basedir", type=str, default="tests/usda")
-    parser.add_argument("--app", type=str, default="./build/usda-parser")
+    parser.add_argument("--app", type=str, default="./build/usda_parser")
     args = parser.parse_args()
 
     app = args.app    

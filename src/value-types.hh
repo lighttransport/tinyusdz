@@ -930,7 +930,13 @@ class Value {
   template <class T>
   nonstd::optional<T> get_value() const {
     if (TypeTrait<T>::type_id == v_.type_id()) {
-      return std::move(value<T>());
+      const T *pv = linb::any_cast<const T>(&v_);
+      if (!pv) {
+        // ???
+        return nonstd::nullopt;
+      }
+
+      return std::move(*pv);
     } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
