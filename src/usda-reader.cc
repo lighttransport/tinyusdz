@@ -99,7 +99,6 @@ RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomCone);
-RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomCube);
 RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
@@ -147,6 +146,7 @@ DEFINE_PRIM_TYPE(Model, "Model", value::TYPE_ID_MODEL);
 
 DEFINE_PRIM_TYPE(Xform, "Xform", value::TYPE_ID_GEOM_XFORM);
 DEFINE_PRIM_TYPE(GeomMesh, "Mesh", value::TYPE_ID_GEOM_MESH);
+DEFINE_PRIM_TYPE(GeomPoints, "Points", value::TYPE_ID_GEOM_POINTS);
 DEFINE_PRIM_TYPE(GeomSphere, "Sphere", value::TYPE_ID_GEOM_SPHERE);
 DEFINE_PRIM_TYPE(GeomCube, "Cube", value::TYPE_ID_GEOM_CUBE);
 DEFINE_PRIM_TYPE(GeomCone, "Cone", value::TYPE_ID_GEOM_CONE);
@@ -1306,6 +1306,7 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   RegisterReconstructCallback<GeomCube>();
   RegisterReconstructCallback<GeomSphere>();
   RegisterReconstructCallback<GeomCone>();
+  RegisterReconstructCallback<GeomPoints>();
   RegisterReconstructCallback<GeomCylinder>();
   RegisterReconstructCallback<GeomCapsule>();
   RegisterReconstructCallback<GeomMesh>();
