@@ -5,6 +5,8 @@
 //
 // TODO:
 //
+// - [ ] Validate the existence of connection Paths(Connection) and target
+// Paths(Relation)
 // - [ ] GeomSubset
 //
 
@@ -75,6 +77,7 @@ RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
 RECONSTRUCT_PRIM_DECL(GeomCube);
+RECONSTRUCT_PRIM_DECL(GeomCone);
 RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
@@ -718,6 +721,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<value::token> typeName;
   nonstd::optional<Interpolation> interpolation;
   nonstd::optional<int> elementSize;
+  nonstd::optional<CustomDataType> customData;
+  nonstd::optional<StringData> comment;
   Property::Type propType{Property::Type::EmptyAttrib};
   PrimAttrib attr;
 
@@ -726,8 +731,15 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   value::Value scalar;
   Relation rel;
 
+  // for consistency check
+  bool hasConnectionChildren{false};
+  bool hasConnectionPaths{false};
+  bool hasTargetChildren{false};
+  bool hasTargetPaths{false};
+
   // TODO: Rel, TimeSamples, Connection
 
+  DCOUT("== List of Fields");
   for (auto &fv : fvs) {
     DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
                       << ")");
@@ -792,6 +804,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     } else if (fv.first == "connectionPaths") {
       // .connect
       propType = Property::Type::Connection;
+      hasConnectionPaths = true;
 
       if (auto pv = fv.second.get_value<ListOp<Path>>()) {
         auto p = pv.value();
@@ -826,6 +839,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     } else if (fv.first == "targetPaths") {
       // `rel`
       propType = Property::Type::Relation;
+      hasTargetPaths = true;
 
       if (auto pv = fv.second.get_value<ListOp<Path>>()) {
         const ListOp<Path> &p = pv.value();
@@ -886,27 +900,78 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                                   "`elementSize` field is not `int` type.");
       }
     } else if (fv.first == "targetChildren") {
+      // `targetChildren` seems optionally exist to validate the existence of
+      // target Paths when `targetPaths` field exists.
+      // TODO: validate path of `targetChildren`
+      hasTargetChildren = true;
+
       // Path vector
       if (auto pv = fv.second.get_value<std::vector<Path>>()) {
-        // DCOUT("targetChildren = " << pv.value());
+        DCOUT("targetChildren = " << pv.value());
+        // PUSH_WARN("TODO: targetChildren");
+
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`targetChildren` field is not `PathVector` type.");
       }
     } else if (fv.first == "connectionChildren") {
+      // `connectionChildren` seems optionally exist to validate the existence
+      // of connection Paths when `connectiontPaths` field exists.
+      // TODO: validate path of `connetionChildren`
+      hasConnectionChildren = true;
+
       // Path vector
       if (auto pv = fv.second.get_value<std::vector<Path>>()) {
-        // DCOUT("connectionChildren = " << pv.value());
-        //  TODO
+        DCOUT("connectionChildren = " << pv.value());
+        // PUSH_WARN("TODO: connectionChildren");
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`connectionChildren` field is not `PathVector` type.");
       }
+    } else if (fv.first == "customData") {
+      // CustomData(dict)
+      if (auto pv = fv.second.get_value<CustomDataType>()) {
+        customData = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`customData` must be type `dictionary`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "comment") {
+      if (auto pv = fv.second.get_value<std::string>()) {
+        StringData s;
+        s.value = pv.value();
+        s.is_triple_quoted = hasNewline(s.value); 
+        comment = s;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`comment` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+
+
     } else {
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);
     }
   }
+  DCOUT("== End List of Fields");
+
+  // Post check
+#if 0
+  if (hasConnectionChildren) {
+    // Validate existence of Path..
+  }
+
+  if (hasTargetChildren) {
+    // Validate existence of Path..
+  }
+#else
+  (void)hasTargetPaths;
+  (void)hasTargetChildren;
+  (void)hasConnectionChildren;
+  (void)hasConnectionPaths;
+#endif
 
   if (is_scalar) {
     if (typeName) {
@@ -934,6 +999,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   }
   if (elementSize) {
     attr.meta.elementSize = elementSize.value();
+  }
+  if (customData) {
+    attr.meta.customData = customData.value();
+  }
+  if (comment) {
+    attr.meta.comment = comment.value();
   }
 
   // FIXME: SpecType supercedes propType.
@@ -1183,9 +1254,9 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       DCOUT("startimeCode = " << metas->startTimeCode.get());
     } else if (fv.first == "endTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
-        metas->startTimeCode = double(vf.value());
+        metas->endTimeCode = double(vf.value());
       } else if (auto vd = fv.second.get_value<double>()) {
-        metas->startTimeCode = vd.value();
+        metas->endTimeCode = vd.value();
       } else {
         PUSH_ERROR_AND_RETURN(
             "`endTimeCode` value must be double or float "
@@ -1233,6 +1304,18 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       sdata.is_triple_quoted = hasNewline(sdata.value);
       metas->doc = sdata;
       DCOUT("doc = " << metas->doc.value);
+    } else if (fv.first == "comment") {  // 'comment'
+      auto v = fv.second.get_value<std::string>();
+      if (!v) {
+        PUSH_ERROR("Type must be `string` for `comment`, but got " +
+                   fv.second.type_name() + "\n");
+        return false;
+      }
+      StringData sdata;
+      sdata.value = v.value();
+      sdata.is_triple_quoted = hasNewline(sdata.value);
+      metas->comment = sdata;
+      DCOUT("comment = " << metas->comment.value);
     } else {
       PUSH_WARN("[StageMeta] TODO: " + fv.first + "\n");
     }
@@ -1350,6 +1433,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     nonstd::optional<APISchemas> apiSchemas;
     nonstd::optional<Kind> kind;
     nonstd::optional<CustomDataType> assetInfo;
+    nonstd::optional<StringData> doc;
+    nonstd::optional<StringData> comment;
 
     ///
     ///
@@ -1469,9 +1554,31 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
               kTag, "`apiSchemas` must be type `ListOp[Token]`, but got type `"
                         << fv.second.type_name() << "`");
         }
+      } else if (fv.first == "documentation") {
+        if (auto pv = fv.second.get_value<std::string>()) {
+          StringData s;
+          s.value = pv.value();
+          s.is_triple_quoted = hasNewline(s.value);
+          doc = s;
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`documentation` must be type `string`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "comment") {
+        if (auto pv = fv.second.get_value<std::string>()) {
+          StringData s;
+          s.value = pv.value();
+          s.is_triple_quoted = hasNewline(s.value);
+          comment = s;
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`comment` must be type `string`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
       } else {
-        DCOUT("TODO: " << fv.first);
-        PUSH_WARN("TODO: " << fv.first);
+        DCOUT("PrimProp TODO: " << fv.first);
+        PUSH_WARN("PrimProp TODO: " << fv.first);
       }
     }
 
@@ -1485,7 +1592,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
                                 "Failed to reconstruct Prim " << __node_ty); \
     }                                                                        \
     /* TODO: Better Prim meta handling */                                    \
-    if (active) {                                                           \
+    if (active) {                                                            \
       typed_prim.meta.active = active.value();                               \
     }                                                                        \
     if (apiSchemas) {                                                        \
@@ -1496,6 +1603,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     }                                                                        \
     if (assetInfo) {                                                         \
       typed_prim.meta.assetInfo = assetInfo.value();                         \
+    }                                                                        \
+    if (doc) {                                                               \
+      typed_prim.meta.doc = doc.value();                                     \
+    }                                                                        \
+    if (comment) {                                                           \
+      typed_prim.meta.comment = comment.value();                             \
     }                                                                        \
     typed_prim.name = __prim_name;                                           \
     value::Value primdata = typed_prim;                                      \
@@ -1543,6 +1656,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         RECONSTRUCT_PRIM(GeomPoints, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomCylinder, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomCube, typeName.value(), prim_name)
+        RECONSTRUCT_PRIM(GeomCone, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomSphere, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomCapsule, typeName.value(), prim_name)
         RECONSTRUCT_PRIM(GeomBasisCurves, typeName.value(), prim_name)

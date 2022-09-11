@@ -270,7 +270,7 @@ bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
     return false;
   }
 
-  DCOUT("value = " << rep->GetData());
+  DCOUT("ValueRep value = " << rep->GetData());
 
   return true;
 }
@@ -801,10 +801,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 
   for (size_t i = 0; i < num_values; i++) {
+
     crate::ValueRep rep;
     if (!ReadValueRep(&rep)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' value element.");
     }
+
+    size_t next_vrep_loc = _sr->tell();
 
     ///
     /// Type check of the content of `value` will be done at ReconstructPrim() in usdc-reader.cc.
@@ -815,6 +818,10 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     }
 
     d->values.emplace_back(std::move(value.get_raw()));
+
+    // UnpackValueRep() will change StreamReader's read position.
+    // Revert to next ValueRep location here.
+    _sr->seek_set(next_vrep_loc);
   }
 
   // Move to next location.
@@ -1639,6 +1646,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     return UnpackInlinedValueRep(rep, value);
   }
 
+  DCOUT("ValueRep type value = " << rep.GetType());
   auto tyRet = crate::GetCrateDataType(rep.GetType());
   if (!tyRet) {
     PUSH_ERROR(tyRet.error());
@@ -1684,6 +1692,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
   switch (dty.dtype_id) {
     case crate::CrateDataTypeId::NumDataTypes:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
+      DCOUT("dtype_id = " << to_string(uint32_t(dty.dtype_id)));
       PUSH_ERROR("`Invalid` DataType.");
       return false;
     }

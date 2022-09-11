@@ -244,7 +244,8 @@ struct PrimMeta {
   nonstd::optional<Kind> kind;                  // 'kind'
   nonstd::optional<CustomDataType> assetInfo; // 'assetInfo'
   nonstd::optional<CustomDataType> customData;  // `customData`
-
+  nonstd::optional<StringData> doc; // 'documentation'
+  nonstd::optional<StringData> comment; // 'comment'
   nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
 
   std::map<std::string, MetaVariable> meta;  // other meta values
@@ -253,7 +254,7 @@ struct PrimMeta {
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authored() const { return (active || kind || customData || meta.size() || apiSchemas || stringData.size() || assetInfo); }
+  bool authored() const { return (active || kind || customData || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
 };
 
 // Metadata for Attribute
@@ -262,6 +263,7 @@ struct AttrMeta {
   // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
+  nonstd::optional<StringData> comment;    // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values

@@ -542,19 +542,23 @@ struct frame4d {
   double m[4][4];
 };
 
+// Quaternion has memory layout of [x, y, z, w] in Crate(Binary)
+// and QfQuat class in pxrUSD. 
+// https://github.com/PixarAnimationStudios/USD/blob/3abc46452b1271df7650e9948fef9f0ce602e3b2/pxr/base/gf/quatf.h#L287
+// NOTE: ASCII uses [w, x, y, z] ordering
 struct quath {
-  half real;
   half3 imag;
+  half real;
 };
 
 struct quatf {
-  float real;
   float3 imag;
+  float real;
 };
 
 struct quatd {
-  double real;
   double3 imag;
+  double real;
 };
 
 struct vector3h {

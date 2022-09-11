@@ -688,11 +688,12 @@ std::string Stage::ExportToString() const {
   ss << "#usda 1.0\n";
   ss << "(\n";
   if (stage_metas.doc.value.empty()) {
-    ss << "  doc = \"TinyUSDZ v" << tinyusdz::version_major << "."
+    ss << "  doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major << "."
        << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
   } else {
     ss << "  doc = " << to_string(stage_metas.doc) << "\n";
   }
+
   if (stage_metas.metersPerUnit.authored()) {
     ss << "  metersPerUnit = " << stage_metas.metersPerUnit.get() << "\n";
   }
@@ -715,6 +716,9 @@ std::string Stage::ExportToString() const {
 
   if (stage_metas.defaultPrim.str().size()) {
     ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str()) << "\n";
+  }
+  if (!stage_metas.comment.value.empty()) {
+    ss << "  doc = " << to_string(stage_metas.comment) << "\n";
   }
 
   if (stage_metas.customLayerData.size()) {

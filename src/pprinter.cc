@@ -7,6 +7,16 @@
 #include "value-pprint.hh"
 #include "str-util.hh"
 
+namespace tinyusdz {
+namespace {
+
+// Path quote
+std::string pquote(const Path &p) {
+  return wquote(p.full_path_name(), "<", ">");
+}
+
+} // namespace
+} // namespace tinyusdz
 
 namespace std {
 
@@ -18,6 +28,12 @@ std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v) {
 
 std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v) {
   ofs << to_string(v);
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
+  ofs << tinyusdz::pquote(v);
 
   return ofs;
 }
@@ -59,10 +75,6 @@ void SetIndentString(const std::string &s) {
 
 namespace {
 
-// Path quote
-std::string pquote(const Path &p) {
-  return wquote(p.full_path_name(), "<", ">");
-}
 
 #if 0
 // TODO: Triple @
@@ -77,7 +89,6 @@ std::string to_string(const double &v) {
   ss << v;
   return ss.str();
 }
-
 
 #if 0
 template<typename T>
@@ -230,6 +241,14 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     }
   }
 
+  if (meta.doc) {
+    ss << pprint::Indent(indent) << "doc = " << to_string(meta.doc.value()) << "\n";
+  }
+
+  if (meta.comment) {
+    ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
+  }
+
   if (meta.customData) {
     ss << print_customData(meta.customData.value(), indent+1);
   }
@@ -256,6 +275,10 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   if (meta.elementSize) {
     ss << pprint::Indent(indent) << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
+  }
+
+  if (meta.comment) {
+    ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
   }
 
   if (meta.customData) {
@@ -293,11 +316,10 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
       auto pv = attr.get();
 
       if (pv) {
-        ss << " = ";
         if (pv.value().IsTimeSamples()) {
-          ss << print_typed_timesamples(pv.value().ts, indent+1);
+          ss << ".timeSamples = " << print_typed_timesamples(pv.value().ts, indent+1);
         } else {
-          ss << pv.value().value;
+          ss << " = " << pv.value().value;
         }
       }
     }
@@ -824,6 +846,7 @@ std::string to_string(const StringData &s) {
     return quote(s.value);
   }
 }
+
 
 std::string print_customData(const CustomDataType &customData, const uint32_t indent) {
   std::stringstream ss;

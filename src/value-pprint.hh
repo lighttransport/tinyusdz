@@ -4,6 +4,13 @@
 
 #include "value-types.hh"
 
+// forward decl
+namespace tinyusdz {
+
+class Path;
+
+} // namespace tinyusdz
+
 namespace std {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int2 &v);
@@ -67,6 +74,9 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
+
+// NOTE: Implemented in pprinter.cc
+std::ostream &operator<<(std::ostream &os, const tinyusdz::Path &v);
 
 // 1D array
 template <typename T>

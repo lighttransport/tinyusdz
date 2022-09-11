@@ -173,6 +173,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v) {
   return os;
 }
 
+// pxrUSD prints quateron in [w, x, y, z] order
+// https://github.com/PixarAnimationStudios/USD/blob/3abc46452b1271df7650e9948fef9f0ce602e3b2/pxr/base/gf/quatf.h#L287
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quath &v) {
   os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
      << v.imag[2] << ")";
