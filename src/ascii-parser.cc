@@ -3281,11 +3281,15 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   std::string tok = ss.str();
 
   if (contains(tok, '.')) {
-    if (!endsWith(tok, ".connect")) {
-      DCOUT("tok = " << tok);
-      PushError(
-          "Must ends with `.connect` when a name contains punctuation `.`");
-      return false;
+    if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
+      // OK
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Must ends with `.connect` or `.timeSamples` for attrbute name: `{}`", tok));
+    }
+
+    // Multiple `.` is not allowed(e.g. attr.connect.timeSamples)
+    if (counts(tok, '.') > 1) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Attribute identifier `{}` containing multiple `.` is not allowed.", tok));
     }
   }
 
