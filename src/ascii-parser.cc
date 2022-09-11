@@ -49,9 +49,9 @@
 //#include "ryu/ryu.h"
 //#include "ryu/ryu_parse.h"
 
+#include "external/fast_float/include/fast_float/fast_float.h"
 #include "external/jsteemann/atoi.h"
 #include "external/simple_match/include/simple_match/simple_match.hpp"
-#include "external/fast_float/include/fast_float/fast_float.h"
 #include "nonstd/expected.hpp"
 //#include "nonstd/optional.hpp"
 
@@ -96,7 +96,6 @@
     PushWarn(ss_w.str());                                            \
   } while (0)
 #endif
-
 
 #include "common-macros.inc"
 
@@ -252,7 +251,7 @@ static void RegisterPrimTypes(std::set<std::string> &d) {
   d.insert("DiskLight");
   d.insert("DistantLight");
   d.insert("CylinderLight");
-  //d.insert("PortalLight");
+  // d.insert("PortalLight");
   d.insert("Camera");
   d.insert("SkelRoot");
   d.insert("Skeleton");
@@ -468,8 +467,8 @@ std::string AsciiParser::GetError() {
   while (!err_stack.empty()) {
     ErrorDiagnositc diag = err_stack.top();
 
-    ss << "Near line " << (diag.cursor.row+1) << ", col " << (diag.cursor.col+1)
-       << ": ";
+    ss << "Near line " << (diag.cursor.row + 1) << ", col "
+       << (diag.cursor.col + 1) << ": ";
     ss << diag.err << "\n";
 
     err_stack.pop();
@@ -487,8 +486,8 @@ std::string AsciiParser::GetWarning() {
   while (!warn_stack.empty()) {
     ErrorDiagnositc diag = warn_stack.top();
 
-    ss << "Near line " << (diag.cursor.row+1) << ", col " << (diag.cursor.col+1)
-       << ": ";
+    ss << "Near line " << (diag.cursor.row + 1) << ", col "
+       << (diag.cursor.col + 1) << ": ";
     ss << diag.err << "\n";
 
     warn_stack.pop();
@@ -810,6 +809,24 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::token> *value) {
 
 template <>
 bool AsciiParser::ReadBasicType(std::string *value) {
+  if (!value) {
+    return false;
+  }
+
+  // May be triple-quoted string
+  {
+    StringData sdata;
+    if (MaybeTripleQuotedString(&sdata)) {
+      (*value) = sdata.value;
+      return true;
+
+    } else if (MaybeString(&sdata)) {
+      (*value) = sdata.value;
+      return true;
+    }
+  }
+
+  // Just in case
   return ReadStringLiteral(value);
 }
 
@@ -821,6 +838,44 @@ bool AsciiParser::ReadBasicType(nonstd::optional<std::string> *value) {
   }
 
   std::string v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(StringData *value) {
+  if (!value) {
+    return false;
+  }
+
+  // May be triple-quoted string
+  {
+    StringData sdata;
+    if (MaybeTripleQuotedString(&sdata)) {
+      (*value) = sdata;
+      return true;
+
+    } else if (MaybeString(&sdata)) {
+      (*value) = sdata;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<StringData> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  StringData v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -2600,7 +2655,6 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::half4> *value) {
   return false;
 }
 
-
 template <>
 bool AsciiParser::ReadBasicType(value::quath *value) {
   value::half4 v;
@@ -2696,7 +2750,6 @@ bool AsciiParser::ReadBasicType(std::vector<T> *value) {
 
 template <typename T>
 bool AsciiParser::ReadBasicType(nonstd::optional<std::vector<T>> *value) {
-
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -3284,12 +3337,18 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
       // OK
     } else {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Must ends with `.connect` or `.timeSamples` for attrbute name: `{}`", tok));
+      PUSH_ERROR_AND_RETURN_TAG(
+          kAscii, fmt::format("Must ends with `.connect` or `.timeSamples` for "
+                              "attrbute name: `{}`",
+                              tok));
     }
 
     // Multiple `.` is not allowed(e.g. attr.connect.timeSamples)
     if (counts(tok, '.') > 1) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Attribute identifier `{}` containing multiple `.` is not allowed.", tok));
+      PUSH_ERROR_AND_RETURN_TAG(
+          kAscii, fmt::format("Attribute identifier `{}` containing multiple "
+                              "`.` is not allowed.",
+                              tok));
     }
   }
 
@@ -4019,9 +4078,9 @@ bool AsciiParser::Expect(char expect_c) {
 // -- impl ParseTimeSampleData
 //
 
-
 template <typename T>
-nonstd::optional<AsciiParser::TimeSampleData<T>> AsciiParser::TryParseTimeSamples() {
+nonstd::optional<AsciiParser::TimeSampleData<T>>
+AsciiParser::TryParseTimeSamples() {
   // timeSamples = '{' ((int : T) sep)+ '}'
   // sep = ','(may ok to omit for the last element.
 
@@ -4073,7 +4132,8 @@ nonstd::optional<AsciiParser::TimeSampleData<T>> AsciiParser::TryParseTimeSample
 
     // The last element may have separator ','
     {
-      // Semicolon ';' is not allowed as a separator for timeSamples array values.
+      // Semicolon ';' is not allowed as a separator for timeSamples array
+      // values.
       if (!SkipWhitespace()) {
         return nonstd::nullopt;
       }
@@ -4091,7 +4151,6 @@ nonstd::optional<AsciiParser::TimeSampleData<T>> AsciiParser::TryParseTimeSample
       } else if (sep == ',') {
         // ok
       } else {
-
         Rewind(1);
 
         // Look ahead Newline + '}'
@@ -4126,7 +4185,6 @@ nonstd::optional<AsciiParser::TimeSampleData<T>> AsciiParser::TryParseTimeSample
 
   return std::move(data);
 }
-
 
 template <typename T>
 value::TimeSamples AsciiParser::ConvertToTimeSamples(
@@ -4550,9 +4608,9 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
           // Still in path identifier...
           // Unescape "\\@@@"
 
-          if (tok.size() > 3) { // this should be true.
-            if (endsWith(tok, "\\@@@")) { // this also should be true.
-              tok.erase(tok.size()-4);
+          if (tok.size() > 3) {            // this should be true.
+            if (endsWith(tok, "\\@@@")) {  // this also should be true.
+              tok.erase(tok.size() - 4);
               tok.append("@@@");
             }
           }
@@ -5031,7 +5089,8 @@ bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out) {
   } else if (vardef.type == "path[]") {
     std::vector<PathIdentifier> values;
     if (!ParseBasicTypeArray(&values)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse array of path identifiers");
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+                                "Failed to parse array of path identifiers");
     }
 
     std::vector<Path> pvs;
@@ -5044,7 +5103,8 @@ bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out) {
   } else if (vardef.type == "ref[]") {
     std::vector<Reference> value;
     if (!ParseBasicTypeArray(&value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse array of assert reference");
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+                                "Failed to parse array of assert reference");
     }
 
     var.Set(value);
@@ -5279,7 +5339,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         if (MaybeTripleQuotedString(&sdata)) {
           out_meta->stringData.push_back(sdata);
 
-          DCOUT("Add string to attr meta:" << to_string(sdata));
+          DCOUT("Add triple-quoted string to attr meta:" << to_string(sdata));
           if (!SkipWhitespaceAndNewline()) {
             return false;
           }
@@ -5771,24 +5831,26 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     //
     DCOUT("timeSample data. type = " << type_name);
 
-#define PARSE_TYPE(__type) \
-    if (type_name == value::TypeTrait<__type>::type_name()) { \
-      if (array_qual) { \
-        if (auto pv = TryParseTimeSamples<std::vector<__type>>()) { \
-          ts = ConvertToTimeSamples<std::vector<__type>>(pv.value()); \
-        } else { \
-          PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `" << value::TypeTrait<__type>::type_name() << "[]`"); \
-        } \
-      } else { \
-        if (auto pv = TryParseTimeSamples<__type>()) { \
-          ts = ConvertToTimeSamples<__type>(pv.value()); \
-        } else { \
-          PUSH_ERROR_AND_RETURN( \
-              "Failed to parse timeSample data with type `" << value::TypeTrait<__type>::type_name() << "`");\
-        } \
-      } \
-    } else
-
+#define PARSE_TYPE(__type)                                                  \
+  if (type_name == value::TypeTrait<__type>::type_name()) {                 \
+    if (array_qual) {                                                       \
+      if (auto pv = TryParseTimeSamples<std::vector<__type>>()) {           \
+        ts = ConvertToTimeSamples<std::vector<__type>>(pv.value());         \
+      } else {                                                              \
+        PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `" \
+                              << value::TypeTrait<__type>::type_name()      \
+                              << "[]`");                                    \
+      }                                                                     \
+    } else {                                                                \
+      if (auto pv = TryParseTimeSamples<__type>()) {                        \
+        ts = ConvertToTimeSamples<__type>(pv.value());                      \
+      } else {                                                              \
+        PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `" \
+                              << value::TypeTrait<__type>::type_name()      \
+                              << "`");                                      \
+      }                                                                     \
+    }                                                                       \
+  } else
 
     value::TimeSamples ts;
 
@@ -5825,8 +5887,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     PARSE_TYPE(value::point3f)
     PARSE_TYPE(value::texcoord2f)
     PARSE_TYPE(value::texcoord3f)
-    PARSE_TYPE(value::matrix4d)
-    {
+    PARSE_TYPE(value::matrix4d) {
       PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + type_name);
     }
 
@@ -5878,7 +5939,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         return false;
       }
     } else if (type_name == value::kString) {
-      if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name, &attr)) {
+      // TODO: Use StringData?
+      if (!ParseBasicPrimAttr<StringData>(array_qual, primattr_name, &attr)) {
         return false;
       }
     } else if (type_name == value::kToken) {
