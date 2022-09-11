@@ -121,6 +121,8 @@ static void RegisterStageMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["comment"] =
+      AsciiParser::VariableDef(value::kString, "comment");
 
   // TODO: both support float and double?
   metas["metersPerUnit"] =
@@ -148,6 +150,7 @@ static void RegisterPrimMetas(
   metas.clear();
 
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
+  metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
 
   // Composition arcs
   // Type can be array. i.e. path, path[]
