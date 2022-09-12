@@ -1,4 +1,4 @@
-# Tiny USDZ library 
+# Tiny USDZ library in C++14
 
 `TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
@@ -8,38 +8,21 @@
 
 ## Status
 
-TinyUSDZ is currently work-in-progress. It does not yet working.
-Mostly finished rewritting TinyUSDZ core to support more USD features including Composition Arcs, Skinning, Animations, Hair strands, etc.
-Initial working demo in 2022 Summer(August) planned after finishing implementing scene graph reconstruction.
+TinyUSDZ is near to release first working version.
+Remaining task is to write a examples, demo and scene/render delegate(Tydra)
 
-* [x] USDC(Crate) data parse
-* [ ] Reconstuct primitive and scene graph representaion(2022 Summer expected)
-  * [x] Xform
-  * [ ] GeomMesh
-  * [ ] GeomBasisCurves(for hair/fur)
-  * [ ] GeomPoints(for particles)
-  * [ ] etc.
-  * [ ] Built-in usdObj(wavefront .obj mesh support)
-    * See [doc/usdObj.md](doc/usdObj.md) for details.
-  * [ ] MagicaVoxel vox for Volume?
-  * [ ] VDBVolume support through TinyVDBIO? https://github.com/syoyo/tinyvdbio
+* [x] USDZ/USDC(Crate) parser
+* [ ] USDZ?USDC(Crate) writer
 * [x] USDA parser
-  * Initial USDA parser starting to work(see `src/ascii-parser.cc` and `src/usda-reader.cc`)
-* [ ] Composition
-  * [ ] subLayers
-  * [ ] references
-  * [ ] payloads(delayed load)
-  * [ ] variants/variantSets(priority is low)
-  * [ ] specializers(priority is low)
-* [ ] Write simple SDL viewer example(2022 Summer expected)
-* [ ] Character animation(usdSkel, blendshapes, animations) support(2022 Winter expected)
-* [ ] Vulkan raytracing viewer example
-* [ ] Write iOS and Android example(2022 Fall expected)
-* [ ] USDZ(USDC, Crate) writer
-  * `src/crate-writer.cc`
-* [x] USDA writer(`pprint` module)
-* [ ] USD <-> glTF converter example
+* [x] USDA writer
+* [x] Support basic Primitives(Xform, Mesh, BasisCurves, etc.)
 
+Please see [doc/status.md](doc/status.md) for details.
+
+* [ ] Write simple SDL viewer example(2022 Fall expected)
+* [ ] Write iOS and Android example(2022 Fall expected)
+* [ ] Vulkan raytracing viewer example
+* [ ] USD <-> glTF converter example
 
 ### Tydra
 
@@ -82,13 +65,13 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
   * [ ] RISC-V(Should work)
   * [ ] SPARC, POWER(Big endian machine). May work(theoretically)
 * [x] Android arm64v8a
-* [ ] iOS(Should compile)
-* [x] macOS
+* [x] iOS
+* [x] macOS(Arm, x86-64)
 * [x] Windows 10 64bit or later
   * [ ] Windows ARM(should work)
-* [x] WebAssembly(through Emscripten)
-  * See [examples/sdlviewer/](examples/sdlviewer) example.
-  * Multithreading is not available due to Browser's restriction.
+* [x] WebAssembly
+  * Emscripten
+    * See [examples/sdlviewer/](examples/sdlviewer) example.
 * [x] WASI(through WASI toolchain)
   * See [sandbox/wasi](sandbox/wasi)
 
@@ -99,7 +82,7 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
   * [x] Visual Studio 2019 or later(2017 may compiles)
     * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
   * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
-  * [x] llvm-ming(clang) supported
+  * [x] llvm-mingw(clang) supported
 
 ## USDZ file format
 
@@ -121,9 +104,9 @@ If you need to deal with arbitrary USD files from unknown origin(e.g. from inter
 ### Integrate to your app
 
 Recomended way is simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
-See `<tinyusdz>/CMakeLists.txt` for details.
+See `<tinyusdz>/CMakeLists.txt` and [examples/sdlviewer/CMakeLists.txt](examples/sdlviewer/CMakeLists.txt) for details.
 
-I do not recommend to use tinyusdz as a git submodule, since the repo contains lots of codes required to build TinyUSDZ examples but these are not required for your app.
+It may not be recommend to use tinyusdz as a git submodule, since the repo contains lots of codes required to build TinyUSDZ examples but these are not required for your app.
 
 ### Compiler defines
 
@@ -155,7 +138,7 @@ For Windows native build, we assume `ninja.exe` is installed on your system(You 
 
 #### CMake build options
 
-* `TINYUSDZ_PRODUCTION_BUILD` : Production build. Do not include debugging logs.
+* `TINYUSDZ_PRODUCTION_BUILD` : Production build. Do not output debugging logs.
 * `TINYUSDZ_BUILD_TESTS` : Build tests
 * `TINYUSDZ_BUILD_EXAMPLES` : Build examples(note that not all examples in `examples` folder are built)
 * `TINYUSDZ_WITH_OPENSUBDIV` : Use OpenSubviv to tessellate subdivision surface.
@@ -175,36 +158,34 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 > ninja.exe
 ```
 
-### Meson
+### Fuzzer 
 
-Meson build is provided for compile tests.
-
-```
-$ meson builddir
-$ cd builddir
-$ ninja
-```
+See [tests/fuzzer](tests/fuzzer) .
+For building fuzzer tests, you'll need Meson and Ninja.
 
 ### Examples
 
-* [Simple usdz_dump](examples/simple_usdz_dump/)
+* [usda_parser](xamples/usda_parser/) Parse USDA and print it as Ascii.
+* [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
-  * Separated CMake build : See [Readme](examples/sdlviewer/README.md)
+  * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
 
-See [examples](examples) directory for more examples.
+See [examples](examples) directory for more examples, but may not actively maintained except for the above examples.
 
-### Data format
+### USDZ Data format
 
 See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
 
 ## Blender add-on(will be removed)
 
-We recommend to use Blender's native USD import/export.
+There was some experiements of TinyUSDZ add-on for Blender.
+
+But Blender's USD support is getting better.
+We recommend to use Omniverse version of Blender's USD import/export feature.
 
 https://builder.blender.org/download/experimental/
 
-
-### Linux
+### Build Blender add-on on Linux(deprecared)
 
 Edit path to python interpreter in `scripts/bootstrap-cmake-linux-blender-pymodule.sh`, then
 
@@ -236,7 +217,7 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
   * [ ] Blend shapes
     * [ ] In-between blend shapes
 * [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
-* [ ] USDZ saver
+* [ ] USDC writer
 * [ ] Support Nested USDZ
 * [ ] UDIM texture support
 * [ ] MaterialX support
@@ -261,10 +242,6 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 Python binding and prebuilt packages(uploadded on PyPI) are provided.
 
 See [python/README.md](python/README.md) and [doc/python_binding.md](doc/python_binding.md) for details.
-
-## Fuzzing test
-
-See `tests/fuzzer/` 
 
 ## CI build
 
@@ -294,7 +271,7 @@ TinyUSDZ is licensed under MIT license.
 
 ### Third party licenses
 
-* USD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
+* pxrUSD : Apache 2.0 license. https://github.com/PixarAnimationStudios/USD
 * OpenSubdiv : Apache 2.0 license. https://github.com/PixarAnimationStudios/OpenSubdiv
 * lz4 : BSD-2 license. http://www.lz4.org
 * cnpy(uncompressed ZIP decode/encode code) : MIT license https://github.com/rogersce/cnpy
@@ -330,3 +307,5 @@ TinyUSDZ is licensed under MIT license.
 * linalg.h : Unlicense. https://github.com/sgorsten/linalg
 * mapbox/eternal: ISC License. https://github.com/mapbox/eternal
 * bvh: MIT license. https://github.com/madmann91/bvh
+* dtoa_milo.h: MIT License. https://github.com/miloyip/dtoa-benchmark
+* jeaiii/itoa: MIT License. https://github.com/jeaiii/itoa
