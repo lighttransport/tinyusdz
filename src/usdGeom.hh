@@ -62,11 +62,6 @@ struct GPrim : Xformable {
 
   bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
-  //bool active{true};
-
-  // child nodes
-  std::vector<GPrim> children;
-
   // Prim metadataum.
   PrimMeta meta;
 

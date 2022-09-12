@@ -52,6 +52,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::StringData &v) {
   return ofs;
 }
 
+
 } // namespace std
 
 
@@ -807,11 +808,11 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
 
 
   if (gprim.extent) {
-    ss << pprint::Indent(indent) << "float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value(), indent+1) << "\n";
+    ss << pprint::Indent(indent) << "float3[] extent" << prefix(gprim.extent.value()) << " = " << print_animatable(gprim.extent.value(), indent) << "\n";
   }
 
   if (gprim.visibility.authored()) {
-    ss << pprint::Indent(indent) << "token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent+1) << "\n";
+    ss << pprint::Indent(indent) << "token visibility" << prefix(gprim.visibility.get()) << " = " << print_animatable(gprim.visibility.get(), indent) << "\n";
   }
 
   if (gprim.materialBinding) {
@@ -823,10 +824,10 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
 
   // primvars
   if (gprim.displayColor) {
-    ss << pprint::Indent(indent) << "float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value(), indent+1) << "\n";
+    ss << pprint::Indent(indent) << "float3[] primvars:displayColor" << prefix(gprim.displayColor.value()) << " = " << print_animatable(gprim.displayColor.value(), indent) << "\n";
   }
 
-  ss << print_xformOps(gprim.xformOps, indent+1);
+  ss << print_xformOps(gprim.xformOps, indent);
 
 
   return ss.str();

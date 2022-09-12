@@ -3,12 +3,12 @@
 #include <iostream>
 
 //
-// create dummy scene.
+// create simple scene composed of Xform and Mesh.
 //
-void DummyScene(tinyusdz::Stage *stage)
+void SimpleScene(tinyusdz::Stage *stage)
 {
   //
-  // tinyusdz currently does not provide scene graph API yet, so edit parameters directly.
+  // tinyusdz currently does not provide scene construction API yet, so edit parameters directly.
   //
   tinyusdz::Xform xform;
   xform.name = "root";
@@ -25,10 +25,6 @@ void DummyScene(tinyusdz::Stage *stage)
 
   tinyusdz::GeomMesh mesh;
   mesh.name = "quad";
-
-  tinyusdz::NodeIndex mesh_node_id;
-  mesh_node_id.type_id = tinyusdz::value::TYPE_ID_GEOM_MESH;
-  mesh_node_id.index = 0; // geom_meshes[0]
 
   {
     std::vector<tinyusdz::value::point3f> pts;
@@ -62,54 +58,23 @@ void DummyScene(tinyusdz::Stage *stage)
     mesh.faceVertexIndices.value = indices;
   }
 
-  tinyusdz::NodeIndex xform_node_id;
-  xform_node_id.type_id = tinyusdz::value::TYPE_ID_GEOM_XFORM;
-  xform_node_id.index = 0; // nodes[0]
+  tinyusdz::Prim meshPrim(mesh);
+  tinyusdz::Prim xformPrim(xform); 
 
+  // [Xform]
+  //  |
+  //  +- [Mesh]
+  //
+  xformPrim.children.emplace_back(std::move(meshPrim));
 
-#if 0
-  scene->xforms.push_back(xform);
-  scene->geom_meshes.push_back(std::move(mesh));
-
-  {
-    // Node graph
-    auto xform_node = tinyusdz::PrimNode();
-    xform_node.data = xform;
-
-    auto geom_node = tinyusdz::PrimNode();
-    geom_node.data = mesh;
-
-    xform_node.children.push_back(geom_node);
-
-    scene->prim_nodes.push_back(std::move(xform_node));
-
-  }
-
-
-
-  // Index-based node graph
-  tinyusdz::Node mesh_node;
-  tinyusdz::Node xform_node;
-
-  xform_node.index = scene->node_indices.size();
-  scene->node_indices.emplace_back(xform_node_id);
-
-  mesh_node.index = scene->node_indices.size();
-  scene->node_indices.emplace_back(mesh_node_id);
-
-  mesh_node.parent = 0; // xform_node_id[0]
-  xform_node.children.push_back(mesh_node);
-
-  scene->nodes.push_back(xform_node);
-  scene->nodes.push_back(mesh_node);
-#endif
+  stage->GetRootPrims().emplace_back(std::move(xformPrim));
 }
 
 int main(int argc, char **argv)
 {
   tinyusdz::Stage stage; // empty scene
 
-  DummyScene(&stage);
+  SimpleScene(&stage);
 
   std::string warn;
   std::string err;

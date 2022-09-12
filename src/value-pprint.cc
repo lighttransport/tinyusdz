@@ -11,6 +11,10 @@
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "value-types.hh"
+//
+// For fast int/float to ascii
+//#include "external/jeaiii_to_text.h" // TODO: Remove C++17 code
+#include "external/dtoa_milo.h"
 
 namespace std {
 
@@ -321,6 +325,82 @@ std::ostream &operator<<(std::ostream &ofs,
 
   return ofs;
 }
+
+template<>
+std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
+
+  // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
+  // but according to std::numeric_limits<double>::digits10(=15),
+  // 256 should be sufficient
+  char buf[256];
+
+  // TODO: multi-threading for further performance gain?
+
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      ofs << ", ";
+    }
+    dtoa_milo(v[i], buf);
+    ofs << std::string(buf);
+  }
+
+  return ofs;
+}
+
+template<>
+std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
+
+  // Use dtoa
+  char buf[256];
+
+  // TODO: multi-threading for further performance gain?
+
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      ofs << ", ";
+    }
+    dtoa_milo(double(v[i]), buf);
+    ofs << std::string(buf);
+  }
+
+  return ofs;
+}
+
+
+template<>
+std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
+
+  // TODO: Use jeaiii_to_text
+  char buf[256];
+
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      ofs << ", ";
+    }
+    dtoa_milo(double(v[i]), buf);
+    ofs << std::string(buf);
+  }
+
+  return ofs;
+}
+
+template<>
+std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
+
+  // TODO: Use jeaiii_to_text
+  char buf[256];
+
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      ofs << ", ";
+    }
+    dtoa_milo(double(v[i]), buf);
+    ofs << std::string(buf);
+  }
+
+  return ofs;
+}
+
 
 }  // namespace std
 
