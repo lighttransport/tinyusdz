@@ -849,6 +849,10 @@ std::string to_string(const APISchemas::APIName &name) {
   switch (name) {
   case APISchemas::APIName::SkelBindingAPI: { s = "SkelBindingAPI"; break; }
   case APISchemas::APIName::MaterialBindingAPI: { s = "MaterialBindingAPI"; break; }
+  case APISchemas::APIName::Preliminary_AnchoringAPI: { s = "Preliminary_AnchoringAPI"; break; }
+  case APISchemas::APIName::Preliminary_PhysicsColliderAPI: { s = "Preliminary_PhysicsColliderAPI"; break; }
+  case APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI: { s = "Preliminary_PhysicsRigidBodyAPI"; break; }
+  case APISchemas::APIName::Preliminary_PhysicsMaterialAPI: { s = "Preliminary_PhysicsMaterialAPI"; break; }
   }
 
   return s;
@@ -957,6 +961,8 @@ std::string to_string(tinyusdz::Kind v) {
     return "component";
   } else if (v == tinyusdz::Kind::Subcomponent) {
     return "subcomponent";
+  } else if (v == tinyusdz::Kind::SceneLibrary) {
+    return "sceneLibrary";
   } else {
     return "[[InvalidKind]]";
   }
