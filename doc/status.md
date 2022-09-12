@@ -110,6 +110,8 @@ NOTE: USDC(Binary) = Read only
 * [ ] Audio(usdAudio)
 * [ ] MaterialX support(usdMtlx)
 * [ ] Physics(usdPhysics)
+* [ ] Python binding and package.
+* [ ] C-API for other languages
 * [ ] and more...
 
 

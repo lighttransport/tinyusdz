@@ -83,6 +83,7 @@ enum class Interpolation {
   Invalid
 };
 
+// NOTE: Attribute cannot have ListEdit qualifier
 enum class ListEditQual {
   ResetToExplicit,  // "unqualified"(no qualifier)
   Append,           // "append"
@@ -1238,7 +1239,7 @@ class Property {
   PrimAttrib attrib;
   Relation rel;  // Relation(`rel`) or Connection(`.connect`)
   Type type{Type::EmptyAttrib};
-  ListEditQual qual{ListEditQual::ResetToExplicit}; // List Edit qualifier
+  ListEditQual qual{ListEditQual::ResetToExplicit}; // List Edit qualifier(Attribute can never be list editable)
 
   bool has_custom{false};  // Qualified with 'custom' keyword?
 

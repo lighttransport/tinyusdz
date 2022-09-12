@@ -12,7 +12,7 @@ TinyUSDZ is near to release first working version.
 Remaining task is to write a examples, demo and scene/render delegate(Tydra)
 
 * [x] USDZ/USDC(Crate) parser
-* [ ] USDZ/USDC(Crate) writer
+* [ ] USDZ/USDC(Crate) writer (Work-in-progress)
 * [x] USDA parser
 * [x] USDA writer
 * [x] Support basic Primitives(Xform, Mesh, BasisCurves, etc.), basic Lights and Shaders(UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader)

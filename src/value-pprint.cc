@@ -336,6 +336,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
   // TODO: multi-threading for further performance gain?
 
+  ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
@@ -343,6 +344,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
     dtoa_milo(v[i], buf);
     ofs << std::string(buf);
   }
+  ofs << "]";
 
   return ofs;
 }
@@ -355,6 +357,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
 
   // TODO: multi-threading for further performance gain?
 
+  ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
@@ -362,6 +365,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
     dtoa_milo(double(v[i]), buf);
     ofs << std::string(buf);
   }
+  ofs << "]";
 
   return ofs;
 }
@@ -373,6 +377,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
   // TODO: Use jeaiii_to_text
   char buf[256];
 
+  ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
@@ -380,6 +385,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
     dtoa_milo(double(v[i]), buf);
     ofs << std::string(buf);
   }
+  ofs << "]";
 
   return ofs;
 }
@@ -390,6 +396,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
   // TODO: Use jeaiii_to_text
   char buf[256];
 
+  ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
@@ -397,6 +404,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
     dtoa_milo(double(v[i]), buf);
     ofs << std::string(buf);
   }
+  ofs << "]";
 
   return ofs;
 }
