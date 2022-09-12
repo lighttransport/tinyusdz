@@ -17,6 +17,7 @@
 #include <memory>
 #include <type_traits>
 #include <vector>
+#include <limits>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -169,6 +170,33 @@ class AssetPath {
   std::string asset_path_;
   std::string resolved_path_;
 };
+
+class TimeCode {
+ public:
+  TimeCode(const double d) : time_(d) {}
+
+  static constexpr double Default() {
+    // Return qNaN. same in pxrUSD
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+
+  double Get(bool *is_default) {
+    if (is_default) {
+      (*is_default) = IsDefault();
+    }
+    return time_;
+  }
+
+  bool IsDefault() {
+    // TODO: Bitwise comparison 
+    return !std::isnan(time_);
+  }
+
+ private:
+  double time_; 
+};
+
+static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 
 //
 // Type ID for TypeTrait<T>::type_id.

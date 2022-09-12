@@ -36,7 +36,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
     pts.push_back({0.0f, 1.0f, 0.0f});
 
-    mesh.points.value = pts;
+    mesh.points.set(pts);
   }
 
   {
@@ -45,7 +45,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     std::vector<int> counts;
     counts.push_back(3);
     counts.push_back(3);
-    mesh.faceVertexCounts.value = counts;
+    mesh.faceVertexCounts.set(counts);
 
     indices.push_back(0);
     indices.push_back(1);
@@ -55,7 +55,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     indices.push_back(2);
     indices.push_back(3);
 
-    mesh.faceVertexIndices.value = indices;
+    mesh.faceVertexIndices.set(indices);
   }
 
   tinyusdz::Prim meshPrim(mesh);
