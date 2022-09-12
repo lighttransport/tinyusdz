@@ -443,13 +443,14 @@ class CrateValue {
   SET_TYPE_SCALAR(std::vector<LayerOffset>)
 
   SET_TYPE_SCALAR(value::TimeSamples)
-  SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist 
+  SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist
 
   SET_TYPE_LIST(SET_TYPE_SCALAR)
 
 
   SET_TYPE_LIST(SET_TYPE_1D)
 
+#if 0 // TODO: Unsafe so Remove
   // Useful function to retrieve concrete value with type T.
   // Undefined behavior(usually will triger segmentation fault) when
   // type-mismatch. (We don't throw exception)
@@ -459,6 +460,7 @@ class CrateValue {
     //return linb::any_cast<const T>(value_);
     return value_.value<T>();
   }
+#endif
 
   // Type-safe way to get concrete value.
   template <class T>
@@ -479,8 +481,6 @@ class CrateValue {
   }
 
  private:
-  // TODO: Use value::Value?
-  //linb::any value_;
   value::Value value_;
 };
 

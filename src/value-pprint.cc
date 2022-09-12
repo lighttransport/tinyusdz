@@ -568,33 +568,50 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     }
 
     case TypeTrait<value::token>::type_id: {
-      os << quote(v.value<value::token>().str());
+      if (auto ret = v.get_value<value::token>()) {
+        os << quote(ret.value().str());
+      } else {
+        os << "[InternalError: Token type TypeId mismatch.]";
+      }
       break;
     }
     case TypeTrait<std::vector<value::token>>::type_id: {
       auto ret = v.get_value<std::vector<value::token>>();
       if (ret) {
-      }
-      const std::vector<value::token> &lst =
-          v.value<std::vector<value::token>>();
-      std::vector<std::string> vs;
-      std::transform(lst.begin(), lst.end(), std::back_inserter(vs),
-                     [](const value::token &tok) { return tok.str(); });
+        const std::vector<value::token> &lst = ret.value();
+        std::vector<std::string> vs;
+        std::transform(lst.begin(), lst.end(), std::back_inserter(vs),
+                       [](const value::token &tok) { return tok.str(); });
 
-      os << quote(vs);
+        os << quote(vs);
+      } else {
+        os << "[InternalError: `token[]` type TypeId mismatch.]";
+      }
       break;
     }
     case TypeTrait<std::string>::type_id: {
-      os << quote(v.value<const std::string>());
+      if (auto ret = v.get_value<std::string>()) {
+        os << quote(ret.value());
+      } else {
+        os << "[InternalError: String type TypeId mismatch.]";
+      }
       break;
     }
     case TypeTrait<std::vector<std::string>>::type_id: {
-      const std::vector<std::string> &vs = v.value<std::vector<std::string>>();
-      os << quote(vs);
+      if (auto ret = v.get_value<std::vector<std::string>>()) {
+        const std::vector<std::string> &vs = ret.value();
+        os << quote(vs);
+      } else {
+        os << "[InternalError: `string[]` type TypeId mismatch.]";
+      }
       break;
     }
     case TypeTrait<value::ValueBlock>::type_id: {
-      os << "None";
+      if (auto ret = v.get_value<value::ValueBlock>()) {
+        os << "None";
+      } else {
+        os << "[InternalError: ValueBlock type TypeId mismatch.]";
+      }
       break;
     }
     // TODO: List-up all case and remove `default` clause.
