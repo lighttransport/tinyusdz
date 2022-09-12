@@ -20,7 +20,7 @@ constexpr auto kPrimvarsNormals = "primvars:normals";
 
 }  // namespace
 
-std::vector<value::normal3f> GeomMesh::GetNormals() const {
+std::vector<value::normal3f> GeomMesh::GetNormals(double time) const {
   std::vector<value::normal3f> dst;
 
   if (props.count(kPrimvarsNormals)) {
@@ -40,18 +40,19 @@ std::vector<value::normal3f> GeomMesh::GetNormals() const {
         dst = pv.value();
       }
     }
-  } else if (normals.value) {
+  } else if (normals.authored()) {
 
-    if (normals.value.value().IsTimeSamples()) {
+    if (normals.get().value().IsTimeSamples()) {
       // TODO
+      (void)time;
       return dst;
     }
 
-    if (normals.value.value().IsBlocked()) {
+    if (normals.get().value().IsBlocked()) {
       return dst;
     }
 
-    dst = normals.value.value().value;
+    dst = normals.get().value().value;
   }
 
   return dst;
@@ -166,18 +167,18 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     return true;
   };
 
-  if (!faceVertexCounts.value) {
+  if (!faceVertexCounts.authored()) {
     // No `faceVertexCounts` definition
     ss << "`faceVerexCounts` attribute is not present in GeomMesh.\n";
     return nonstd::make_unexpected(ss.str());
   }
 
-  if (faceVertexCounts.target) {
+  if (faceVertexCounts.authored()) {
     return nonstd::make_unexpected(
         "TODO: Support faceVertexCounts.connect\n");
   }
 
-  const auto &fv = faceVertexCounts.value.value().value;
+  const auto &fv = faceVertexCounts.get().value().value;
   size_t n = fv.size();
 
   // Currently we only check if face ids are valid.

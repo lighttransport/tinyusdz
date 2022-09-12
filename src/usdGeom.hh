@@ -132,7 +132,7 @@ struct GeomMesh : GPrim {
     EdgeOnly        // "edgeOnly"
   };
 
-  enum class FacevaryingLinearInterpolation {
+  enum class FaceVaryingLinearInterpolation {
     CornersPlus1,  // "cornersPlus1"
     CornersPlus2,  // "cornersPlus2"
     CornersOnly,   // "cornersOnly"
@@ -151,15 +151,15 @@ struct GeomMesh : GPrim {
   //
   // Predefined attribs.
   //
-  TypedProperty<std::vector<value::point3f>> points;  // point3f[]
-  TypedProperty<std::vector<value::normal3f>>
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;  // point3f[]
+  TypedAttribute<Animatable<std::vector<value::normal3f>>>
       normals;  // normal3f[] (NOTE: "primvars:normals" are stored in
                 // `GPrim::props`)
 
-  TypedProperty<std::vector<value::vector3f>> velocities;  // vector3f[]
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;  // vector3f[]
 
-  TypedProperty<std::vector<int32_t>> faceVertexCounts;
-  TypedProperty<std::vector<int32_t>> faceVertexIndices;
+  TypedAttribute<Animatable<std::vector<int32_t>>> faceVertexCounts; // int[] faceVertexCounts
+  TypedAttribute<Animatable<std::vector<int32_t>>> faceVertexIndices; // int[] faceVertexIndices
 
   // Make SkelBindingAPI first citizen.
   nonstd::optional<Path> skeleton;  // rel skel:skeleton
@@ -180,7 +180,7 @@ struct GeomMesh : GPrim {
   /// @return points vectro(copied). Returns empty when `points` attribute is
   /// not defined.
   ///
-  const std::vector<value::point3f> &GetPoints() const;
+  const std::vector<value::point3f> GetPoints(double time=value::TimeCode::Default()) const;
 
   ///
   /// @brief Returns normals vector. Precedence order: `primvars:normals` then
@@ -190,30 +190,33 @@ struct GeomMesh : GPrim {
   /// `primvars:normals` nor `normals` attribute defined, attribute is a
   /// relation or normals attribute have invalid type(other than `normal3f`).
   ///
-  std::vector<value::normal3f> GetNormals() const;
+  std::vector<value::normal3f> GetNormals(double time=value::TimeCode::Default()) const;
 
   ///
-  /// @brief Get interpolation of normals.
+  /// @brief Get interpolation of `primvars:normals`, then `normals`.
   /// @return Interpolation of normals. `vertex` by defaut.
   ///
   Interpolation GetNormalsInterpolation() const;
 
+  std::vector<int32_t> GetFaceVertexCounts(double time=value::TimeCode::Default());
+  std::vector<int32_t> GetFaceVertexIndices(double time=value::TimeCode::Default());
+
   //
   // SubD attribs.
   //
-  TypedProperty<std::vector<int32_t>> cornerIndices;
-  TypedProperty<std::vector<float>> cornerSharpnesses;
-  TypedProperty<std::vector<int32_t>> creaseIndices;
-  TypedProperty<std::vector<int32_t>> creaseLengths;
-  TypedProperty<std::vector<float>> creaseSharpnesses;
-  TypedProperty<std::vector<int32_t>> holeIndices;
-  TypedAttributeWithFallback<InterpolateBoundary> interpolateBoundary{
-      InterpolateBoundary::EdgeAndCorner};
-  TypedAttributeWithFallback<SubdivisionScheme> subdivisionScheme{
-      SubdivisionScheme::CatmullClark};
-  TypedAttributeWithFallback<FacevaryingLinearInterpolation>
-      facevaryingLinearInterpolation{
-          FacevaryingLinearInterpolation::CornersPlus1};
+  TypedAttribute<Animatable<std::vector<int32_t>>> cornerIndices; // int[] cornerIndices
+  TypedAttribute<Animatable<std::vector<float>>> cornerSharpnesses; // float[] cornerSharpnesses
+  TypedAttribute<Animatable<std::vector<int32_t>>> creaseIndices; // int[] creaseIndices
+  TypedAttribute<Animatable<std::vector<int32_t>>> creaseLengths; // int[] creaseLengths
+  TypedAttribute<Animatable<std::vector<float>>> creaseSharpnesses; // float[] creaseSharpnesses
+  TypedAttribute<Animatable<std::vector<int32_t>>> holeIndices; // int[] holeIndices
+  TypedAttributeWithFallback<Animatable<InterpolateBoundary>> interpolateBoundary{ 
+      InterpolateBoundary::EdgeAndCorner}; // token interpolateBoundary
+  TypedAttributeWithFallback<SubdivisionScheme> subdivisionScheme{ 
+      SubdivisionScheme::CatmullClark}; // uniform token subdivisionScheme
+  TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
+      faceVaryingLinearInterpolation{
+          FaceVaryingLinearInterpolation::CornersPlus1}; // token faceVaryingLinearInterpolation
 
   //
   // TODO: Make SkelBindingAPI property first citizen
@@ -221,7 +224,6 @@ struct GeomMesh : GPrim {
   // - float[] primvars:skel:jointWeights
   // - uniform token[] skel:blendShapes
   // - uniform token[] skel:blendShapeTargets
-  // - ListOp(usually prepend?) rel skel:skeleton
 
   //
   // GeomSubset
