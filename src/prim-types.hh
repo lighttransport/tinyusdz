@@ -71,7 +71,10 @@ enum class Purpose {
   Invalid
 };
 
-enum class Kind { Model, Group, Assembly, Component, Subcomponent, Invalid };
+// 
+// USDZ extension: sceneLibrary https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
+// 
+enum class Kind { Model, Group, Assembly, Component, Subcomponent, SceneLibrary, Invalid };
 
 // Attribute interpolation
 enum class Interpolation {
@@ -260,6 +263,17 @@ struct APISchemas
   enum class APIName {
     MaterialBindingAPI, // "MaterialBindingAPI"
     SkelBindingAPI, // "SkelBindingAPI"
+    // USDZ AR extensions
+    Preliminary_AnchoringAPI,
+    Preliminary_PhysicsColliderAPI, 
+    //Preliminary_Trigger,
+    //Preliminary_PhysicsGravitationalForce,
+    Preliminary_PhysicsMaterialAPI,
+    Preliminary_PhysicsRigidBodyAPI,
+    //Preliminary_InfiniteColliderPlane,
+    //Preliminary_ReferenceImage,
+    //Preliminary_Action,
+    //Preliminary_Text,
   };
 
   ListEditQual qual{ListEditQual::ResetToExplicit}; // must be 'prepend'

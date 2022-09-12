@@ -381,6 +381,14 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
       return APISchemas::APIName::MaterialBindingAPI;
     } else if (tok.str() == "SkelBindingAPI") {
       return APISchemas::APIName::SkelBindingAPI;
+    } else if (tok.str() == "Preliminary_AnchoringAPI") {
+      return APISchemas::APIName::Preliminary_AnchoringAPI;
+    } else if (tok.str() == "Preliminary_PhysicsColliderAPI") {
+      return APISchemas::APIName::Preliminary_PhysicsColliderAPI;
+    } else if (tok.str() == "Preliminary_PhysicsMaterialAPI") {
+      return APISchemas::APIName::Preliminary_PhysicsMaterialAPI;
+    } else if (tok.str() == "Preliminary_PhysicsRigidBodyAPI") {
+      return APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI;
     } else {
       return nonstd::nullopt;
     }
@@ -1530,7 +1538,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
             kind = kv.value();
           } else {
             PUSH_ERROR_AND_RETURN_TAG(
-                kTag, "Invalid token for `kind` Prim metadata. ");
+                kTag, fmt::format("Invalid token for `kind` Prim metadata: `{}`", pv.value().str()));
           }
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
