@@ -95,6 +95,21 @@ inline std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
   return os;
 }
 
+// Provide specialized version for int and float array.
+template <>
+std::ostream &operator<<(std::ostream &os, const std::vector<double> &v);
+
+template <>
+std::ostream &operator<<(std::ostream &os, const std::vector<float> &v);
+
+template <>
+std::ostream &operator<<(std::ostream &os, const std::vector<int32_t> &v);
+
+template <>
+std::ostream &operator<<(std::ostream &os, const std::vector<uint32_t> &v);
+
+// TODO: int64
+
 } // namespace std
 
 namespace tinyusdz {
