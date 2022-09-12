@@ -917,6 +917,7 @@ class Value {
     }
   }
 
+#if 0
   // Useful function to retrieve concrete value with type T.
   // Undefined behavior(usually will triger segmentation fault) when
   // type-mismatch. (We don't throw exception)
@@ -925,6 +926,7 @@ class Value {
     //return (*reinterpret_cast<const T *>(v_.value()));
     return linb::any_cast<const T>(v_);
   }
+#endif
 
   // Type-safe way to get concrete value.
   template <class T>
