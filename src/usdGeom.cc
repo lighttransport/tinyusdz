@@ -20,7 +20,7 @@ constexpr auto kPrimvarsNormals = "primvars:normals";
 
 }  // namespace
 
-std::vector<value::normal3f> GeomMesh::GetNormals(double time) const {
+std::vector<value::normal3f> GeomMesh::GetNormals(double time, InterpolationType interp) const {
   std::vector<value::normal3f> dst;
 
   if (props.count(kPrimvarsNormals)) {
@@ -45,6 +45,7 @@ std::vector<value::normal3f> GeomMesh::GetNormals(double time) const {
     if (normals.get().value().IsTimeSamples()) {
       // TODO
       (void)time;
+      (void)interp;
       return dst;
     }
 
