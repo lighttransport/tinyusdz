@@ -20,8 +20,15 @@ option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples area built in `examples` folder)"
        ON)
 
-option(TINYUSDZ_CXX_EXCEPTIONS "Enable/Disable C++ exceptions(default: Off)"
-       OFF)
+if (MSVC)
+  # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
+  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On) 
+else()
+  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off) 
+endif()
+
+option(TINYUSDZ_CXX_EXCEPTIONS "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
+       ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
