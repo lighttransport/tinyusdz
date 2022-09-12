@@ -12,17 +12,23 @@ TinyUSDZ is near to release first working version.
 Remaining task is to write a examples, demo and scene/render delegate(Tydra)
 
 * [x] USDZ/USDC(Crate) parser
-* [ ] USDZ?USDC(Crate) writer
+* [ ] USDZ/USDC(Crate) writer
 * [x] USDA parser
 * [x] USDA writer
-* [x] Support basic Primitives(Xform, Mesh, BasisCurves, etc.)
+* [x] Support basic Primitives(Xform, Mesh, BasisCurves, etc.), basic Lights and Shaders(UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader)
 
-Please see [doc/status.md](doc/status.md) for details.
+**Please see** [doc/status.md](doc/status.md) **for more details**
 
 * [ ] Write simple SDL viewer example(2022 Fall expected)
 * [ ] Write iOS and Android example(2022 Fall expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] USD <-> glTF converter example
+* [ ] Web demo with Three.js?
+  * [ ] Three.js started to support USDZ with Ascii format, but no USDC support yet: https://github.com/mrdoob/three.js/issues/14219
+
+### Web platform and sandboxed environment
+
+TinyUSDZ does not use C++ exceptions and can be built without threads. TinyUSDZ supports WASM and WASI build. So TinyUSDZ should runs well on various Web platform(WebAssembly. No SharedArrayBuffer, Atomics and WebAssembly SIMD(which is not yet available on iOS Safari) required) and sandboxed environment(WASI. Users who need to read various USD file which possibly could contain malcious data from Internet, IPFS or blockchain storage). 
 
 ### Tydra
 
@@ -53,7 +59,6 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
-* TinyObjLoader: Wavefront .obj loader ( https://github.com/tinyobjloader/tinyobjloader )
 * USD-build-aarch64: Full USD build for AARCH64(Linux and Android): https://github.com/syoyo/USD-build-aarch64
 * BlenderUSDZ: It contains their own Python USDC parser/serializer. https://github.com/robmcrosby/BlenderUSDZ
 
