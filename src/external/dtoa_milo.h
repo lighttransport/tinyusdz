@@ -7,18 +7,23 @@
 #include <cmath>
 #include <limits>
 
-#if defined(_MSC_VER)
-#include "msinttypes/stdint.h"
-#include <intrin.h>
-#else
+//#if defined(_MSC_VER)
+//#include "msinttypes/stdint.h"
+//#include <intrin.h>
+//#else
+// cstdint should be available for VS2019 or later
 #include <cstdint>
-#endif
+//#endif
 
+// TINYUSDZ: TODO: Completely disable int128 feature for portablity?
+#if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)) && \
+    defined(__x86_64__)
 namespace gcc_ints
 {
     __extension__ typedef __int128 int128;
     __extension__ typedef unsigned __int128 uint128;
-}
+}  // namespace gcc_ints
+#endif
 
 #define UINT64_C2(h, l) ((static_cast<uint64_t>(h) << 32) | static_cast<uint64_t>(l))
 
