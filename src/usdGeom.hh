@@ -180,7 +180,7 @@ struct GeomMesh : GPrim {
   /// @return points vectro(copied). Returns empty when `points` attribute is
   /// not defined.
   ///
-  const std::vector<value::point3f> GetPoints(double time=value::TimeCode::Default()) const;
+  const std::vector<value::point3f> GetPoints(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
 
   ///
   /// @brief Returns normals vector. Precedence order: `primvars:normals` then
@@ -190,7 +190,7 @@ struct GeomMesh : GPrim {
   /// `primvars:normals` nor `normals` attribute defined, attribute is a
   /// relation or normals attribute have invalid type(other than `normal3f`).
   ///
-  std::vector<value::normal3f> GetNormals(double time=value::TimeCode::Default()) const;
+  std::vector<value::normal3f> GetNormals(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
 
   ///
   /// @brief Get interpolation of `primvars:normals`, then `normals`.
@@ -198,8 +198,8 @@ struct GeomMesh : GPrim {
   ///
   Interpolation GetNormalsInterpolation() const;
 
-  std::vector<int32_t> GetFaceVertexCounts(double time=value::TimeCode::Default());
-  std::vector<int32_t> GetFaceVertexIndices(double time=value::TimeCode::Default());
+  std::vector<int32_t> GetFaceVertexCounts(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
+  std::vector<int32_t> GetFaceVertexIndices(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
 
   //
   // SubD attribs.
