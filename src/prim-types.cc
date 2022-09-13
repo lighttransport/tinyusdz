@@ -543,6 +543,9 @@ nonstd::optional<Kind> KindFromString(const std::string &str) {
     return Kind::Component;
   } else if (str == "subcomponent") {
     return Kind::Subcomponent;
+  } else if (str == "sceneLibrary") {
+    // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
+    return Kind::SceneLibrary;
   }
   return nonstd::nullopt;
 }

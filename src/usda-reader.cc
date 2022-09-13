@@ -635,6 +635,12 @@ class USDAReader::Impl {
           std::make_pair(APISchemas::APIName::SkelBindingAPI, "SkelBindingAPI"),
           std::make_pair(APISchemas::APIName::MaterialBindingAPI,
                          "MaterialBindingAPI"),
+          std::make_pair(APISchemas::APIName::Preliminary_PhysicsMaterialAPI,
+                         "Preliminary_PhysicsMaterialAPI"),
+          std::make_pair(APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI,
+                         "Preliminary_PhysicsRigidBodyAPI"),
+          std::make_pair(APISchemas::APIName::Preliminary_PhysicsColliderAPI,
+                         "Preliminary_PhysicsColliderAPI"),
       };
       return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
     };
@@ -678,6 +684,9 @@ class USDAReader::Impl {
               out->kind = Kind::Group;
             } else if (tok.str() == "assembly") {
               out->kind = Kind::Assembly;
+            } else if (tok.str() == "sceneLibrary") {
+              // USDZ specific: https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
+              out->kind = Kind::SceneLibrary;
             } else {
               PUSH_ERROR_AND_RETURN("Invalid token for `kind` metadataum.");
             }

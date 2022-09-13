@@ -71,7 +71,10 @@ enum class Purpose {
   Invalid
 };
 
-enum class Kind { Model, Group, Assembly, Component, Subcomponent, Invalid };
+// 
+// USDZ extension: sceneLibrary https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
+// 
+enum class Kind { Model, Group, Assembly, Component, Subcomponent, SceneLibrary, Invalid };
 
 // Attribute interpolation
 enum class Interpolation {
@@ -452,12 +455,52 @@ class MetaVariable {
 
 };
 
+// TimeSample interpolation type.
+//
+// Held = something like numpy.digitize(right=False)
+// https://numpy.org/doc/stable/reference/generated/numpy.digitize.html
+//
+// Returns `values[i-1]` for `times[i-1] <= t < times[i]`
+// 
+// Linear = linear interpolation
+// 
+// example:
+// { 0 : 0.0
+//   10 : 1.0
+// } 
+//
+// - Held
+//   - time 5 = returns 0.0
+//   - time 9.99 = returns 0.0
+//   - time 10 = returns 1.0
+// - Linear
+//   - time 5 = returns 0.5
+//   - time 9.99 = nearly 1.0
+//   - time 10 = 1.0
+//
+enum class InterpolationType
+{
+  Held, // something like nearest-neighbor. returns
+  Linear,
+};
+
 struct APISchemas
 {
   // TinyUSDZ does not allow user-supplied API schema for now
   enum class APIName {
     MaterialBindingAPI, // "MaterialBindingAPI"
     SkelBindingAPI, // "SkelBindingAPI"
+    // USDZ AR extensions
+    Preliminary_AnchoringAPI,
+    Preliminary_PhysicsColliderAPI, 
+    //Preliminary_Trigger,
+    //Preliminary_PhysicsGravitationalForce,
+    Preliminary_PhysicsMaterialAPI,
+    Preliminary_PhysicsRigidBodyAPI,
+    //Preliminary_InfiniteColliderPlane,
+    //Preliminary_ReferenceImage,
+    //Preliminary_Action,
+    //Preliminary_Text,
   };
 
   ListEditQual listOpQual{ListEditQual::ResetToExplicit}; // must be 'prepend'

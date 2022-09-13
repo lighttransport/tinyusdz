@@ -851,6 +851,10 @@ std::string to_string(const APISchemas::APIName &name) {
   switch (name) {
   case APISchemas::APIName::SkelBindingAPI: { s = "SkelBindingAPI"; break; }
   case APISchemas::APIName::MaterialBindingAPI: { s = "MaterialBindingAPI"; break; }
+  case APISchemas::APIName::Preliminary_AnchoringAPI: { s = "Preliminary_AnchoringAPI"; break; }
+  case APISchemas::APIName::Preliminary_PhysicsColliderAPI: { s = "Preliminary_PhysicsColliderAPI"; break; }
+  case APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI: { s = "Preliminary_PhysicsRigidBodyAPI"; break; }
+  case APISchemas::APIName::Preliminary_PhysicsMaterialAPI: { s = "Preliminary_PhysicsMaterialAPI"; break; }
   }
 
   return s;
@@ -921,6 +925,21 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
   return s;
 }
 
+std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
+  std::string s;
+
+  switch (v) {
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1: { s = "cornersPlus1"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: { s = "cornersPlus2"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: { s = "cornersOnly"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: { s = "boundaries"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::All: { s = "all"; break; }
+  }
+
+  return s;
+}
+
 std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
   std::string s;
 
@@ -944,6 +963,8 @@ std::string to_string(tinyusdz::Kind v) {
     return "component";
   } else if (v == tinyusdz::Kind::Subcomponent) {
     return "subcomponent";
+  } else if (v == tinyusdz::Kind::SceneLibrary) {
+    return "sceneLibrary";
   } else {
     return "[[InvalidKind]]";
   }
@@ -1309,31 +1330,26 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_prop(mesh.points, "points", indent+1);
-  ss << print_typed_prop(mesh.normals, "normals", indent+1);
-  ss << print_typed_prop(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
-  ss << print_typed_prop(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
+  ss << print_typed_attr(mesh.points, "points", indent+1);
+  ss << print_typed_attr(mesh.normals, "normals", indent+1);
+  ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
+  ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
 
   if (mesh.skeleton) {
     ss << pprint::Indent(indent+1) << "rel skel:skeleton = " << pquote(mesh.skeleton.value()) << "\n";
   }
 
   // subdiv
-  ss << print_typed_prop(mesh.cornerIndices, "cornerIndices", indent+1);
-  ss << print_typed_prop(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
-  ss << print_typed_prop(mesh.creaseIndices, "creaseIndices", indent+1);
-  ss << print_typed_prop(mesh.creaseLengths, "creaseLengths", indent+1);
-  ss << print_typed_prop(mesh.creaseSharpnesses, "creaseSharpnesses", indent+1);
-  ss << print_typed_prop(mesh.holeIndices, "holeIndices", indent+1);
+  ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
+  ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
+  ss << print_typed_attr(mesh.creaseIndices, "creaseIndices", indent+1);
+  ss << print_typed_attr(mesh.creaseLengths, "creaseLengths", indent+1);
+  ss << print_typed_attr(mesh.creaseSharpnesses, "creaseSharpnesses", indent+1);
+  ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent+1);
 
-  if (mesh.subdivisionScheme.authored()) {
-    ss << pprint::Indent(indent+1) << "uniform token subdivisionScheme = " << quote(to_string(mesh.subdivisionScheme.get())) << "\n";
-    // TODO: meta
-  }
-  if (mesh.interpolateBoundary.authored()) {
-    ss << pprint::Indent(indent+1) << "uniform token interpolateBoundary = " << to_string(mesh.interpolateBoundary.get()) << "\n";
-    // TODO: meta
-  }
+  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme", indent+1);
+  ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary", indent+1);
+  ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1);
 
   ss << print_gprim_predefined(mesh, indent+1);
 

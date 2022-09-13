@@ -2419,24 +2419,24 @@ bool ReconstructPrim<GeomMesh>(
                                                       tok, enums);
   };
 
-  auto FacevaryingLinearInterpolationHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomMesh::FacevaryingLinearInterpolation,
+  auto FaceVaryingLinearInterpolationHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomMesh::FaceVaryingLinearInterpolation,
                           std::string> {
     using EnumTy =
-        std::pair<GeomMesh::FacevaryingLinearInterpolation, const char *>;
+        std::pair<GeomMesh::FaceVaryingLinearInterpolation, const char *>;
     const std::vector<EnumTy> enums = {
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus1,
+        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1,
                        "cornersPlus1"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersPlus2,
+        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2,
                        "cornersPlus2"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::CornersOnly,
+        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::CornersOnly,
                        "cornersOnly"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::Boundaries,
+        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::Boundaries,
                        "boundaries"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::None, "none"),
-        std::make_pair(GeomMesh::FacevaryingLinearInterpolation::All, "all"),
+        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::None, "none"),
+        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::All, "all"),
     };
-    return EnumHandler<GeomMesh::FacevaryingLinearInterpolation>(
+    return EnumHandler<GeomMesh::FaceVaryingLinearInterpolation>(
         "facevaryingLinearInterpolation", tok, enums);
   };
 
@@ -2457,24 +2457,24 @@ bool ReconstructPrim<GeomMesh>(
         table.insert(prop.first); // mark it procesed
       }
     } else {
-      PARSE_TYPED_PROPERTY(table, prop, "points", GeomMesh, mesh->points)
-      PARSE_TYPED_PROPERTY(table, prop, "normals", GeomMesh, mesh->normals)
-      PARSE_TYPED_PROPERTY(table, prop, "faceVertexCounts", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomMesh, mesh->points)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomMesh, mesh->normals)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexCounts", GeomMesh,
                            mesh->faceVertexCounts)
-      PARSE_TYPED_PROPERTY(table, prop, "faceVertexIndices", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexIndices", GeomMesh,
                            mesh->faceVertexIndices)
       // Subd
-      PARSE_TYPED_PROPERTY(table, prop, "cornerIndices", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "cornerIndices", GeomMesh,
                            mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "cornerSharpnesses", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "cornerSharpnesses", GeomMesh,
                            mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "creaseIndices", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "creaseIndices", GeomMesh,
                            mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "creaseLengths", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "creaseLengths", GeomMesh,
                            mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "creaseSharpnesses", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "creaseSharpnesses", GeomMesh,
                            mesh->cornerIndices)
-      PARSE_TYPED_PROPERTY(table, prop, "holeIndices", GeomMesh,
+      PARSE_TYPED_ATTRIBUTE(table, prop, "holeIndices", GeomMesh,
                            mesh->cornerIndices)
       //
       PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GeomMesh, mesh->doubleSided)
@@ -2486,8 +2486,8 @@ bool ReconstructPrim<GeomMesh>(
                          InterpolateBoundaryHandler, GeomMesh,
                          mesh->interpolateBoundary)
       PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
-                         FacevaryingLinearInterpolationHandler, GeomMesh,
-                         mesh->facevaryingLinearInterpolation)
+                         FaceVaryingLinearInterpolationHandler, GeomMesh,
+                         mesh->faceVaryingLinearInterpolation)
       ADD_PROPERY(table, prop, GeomMesh, mesh->props)
       PARSE_PROPERTY_END_MAKE_WARN(table, prop)
     }
