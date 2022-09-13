@@ -668,39 +668,45 @@ template <typename T>
 class TypedAttribute {
  public:
 
-  void SetValue(const T &v) { attrib = v; }
+  void SetValue(const T &v) { _attrib = v; }
 
   const nonstd::optional<T> GetValue() const {
-    if (attrib) {
-      return attrib.value();
+    if (_attrib) {
+      return _attrib.value();
     }
     return nonstd::nullopt;
   }
 
   // TODO: Animation data.
   bool IsBlocked() const {
-    return blocked;
+    return _blocked;
   }
 
   // for `uniform` attribute only
   void SetBlock(bool onoff) {
-    blocked = onoff;
+    _blocked = onoff;
   }
 
   bool IsConnection() const {
-    return paths.size();
+    return _paths.size();
   }
 
-  void SetConnection(const Path &path);
-  void SetConnections(const std::vector<Path> &paths);
+  void SetConnection(const Path &path) {
+    _paths.clear();
+    _paths.push_back(path);
+  }
+
+  void SetConnections(const std::vector<Path> &paths) {
+    _paths = paths;
+  }
 
   const std::vector<Path> &GetConnections() const {
-    return paths; 
+    return _paths; 
   }
 
   const nonstd::optional<Path> GetConnection() const {
-    if (paths.size()) {
-      return paths[0];
+    if (_paths.size()) {
+      return _paths[0];
     }
 
     return nonstd::nullopt;
@@ -708,10 +714,10 @@ class TypedAttribute {
 
   // value set?
   bool authored() const {
-    if (attrib) {
+    if (_attrib) {
       return true;
     }
-    if (paths.size()) {
+    if (_paths.size()) {
       return true;
     }
     return false;
@@ -720,9 +726,9 @@ class TypedAttribute {
   AttrMeta meta;
 
  private:
-  std::vector<Path> paths; 
-  nonstd::optional<T> attrib;
-  bool blocked{false}; // for `uniform` attribute.
+  std::vector<Path> _paths; 
+  nonstd::optional<T> _attrib;
+  bool _blocked{false}; // for `uniform` attribute.
 };
 
 ///
@@ -781,10 +787,10 @@ class TypedAttributeWithFallback {
   ///
   /// Init with fallback value;
   ///
-  TypedAttributeWithFallback(const T &fallback_) : fallback(fallback_) {}
+  TypedAttributeWithFallback(const T &fallback) : _fallback(fallback) {}
 
   TypedAttributeWithFallback &operator=(const T &value) {
-    attrib = value;
+    _attrib = value;
 
     // fallback Value should be already set with `AttribWithFallback(const T&
     // fallback)` constructor.
@@ -817,30 +823,58 @@ class TypedAttributeWithFallback {
   //   }
   // }
 
-  void set(const T &v) { attrib = v; }
+  void SetValue(const T &v) { _attrib = v; }
 
 
   // TODO: Animation data.
-  const T &get() const {
-    if (attrib) {
-      return attrib.value();
+  const T &GetValue() const {
+    if (_attrib) {
+      return _attrib.value();
     }
-    return fallback;
+    return _fallback;
   }
 
   // TODO: Animation data.
   bool IsBlocked() const {
-    return blocked;
+    return _blocked;
   }
 
   // for `uniform` attribute only
   void SetBlock(bool onoff) {
-    blocked = onoff;
+    _blocked = onoff;
+  }
+
+  bool IsConnection() const {
+    return _paths.size();
+  }
+
+  void SetConnection(const Path &path) {
+    _paths.clear();
+    _paths.push_back(path);
+  }
+
+  void SetConnections(const std::vector<Path> &paths) {
+    _paths = paths;
+  }
+
+  const std::vector<Path> &GetConnections() const {
+    return _paths; 
+  }
+
+  const nonstd::optional<Path> GetConnection() const {
+    if (_paths.size()) {
+      return _paths[0];
+    }
+
+    return nonstd::nullopt;
   }
 
   // value set?
   bool authored() const {
-    if (attrib) {
+    if (_attrib) {
+      return true;
+    }
+    if (_paths.size()) {
       return true;
     }
     return false;
@@ -849,9 +883,10 @@ class TypedAttributeWithFallback {
   AttrMeta meta;
 
  private:
-  nonstd::optional<T> attrib;
-  T fallback;
-  bool blocked{false}; // for `uniform` attribute.
+  std::vector<Path> _paths; 
+  nonstd::optional<T> _attrib;
+  T _fallback;
+  bool _blocked{false}; // for `uniform` attribute.
 };
 
 template<typename T>
@@ -1819,6 +1854,8 @@ DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 DEFINE_TYPE_TRAIT(StringData, "String", TYPE_ID_STRING_DATA, 1);
 
 DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA, 1); // TODO: Unify with `dict`?
+
+DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2); // float3[2]
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

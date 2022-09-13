@@ -36,8 +36,7 @@ struct GPrim : Xformable {
 
   // Gprim
 
-  // nonstd::nullopt = not authorized.
-  nonstd::optional<Animatable<Extent>>
+  TypedAttribute<Animatable<Extent>>
       extent;  // bounding extent. When authorized, the extent is the bounding
                // box of whole its children.
 
@@ -51,9 +50,9 @@ struct GPrim : Xformable {
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"
 
-  nonstd::optional<Animatable<value::color3f>>
+  TypedAttribute<Animatable<value::color3f>>
       displayColor;                                    // primvars:displayColor
-  nonstd::optional<Animatable<float>> displayOpacity;  // primvars:displaOpacity
+  TypedAttribute<Animatable<float>> displayOpacity;  // primvars:displaOpacity
 
   nonstd::optional<Relation> proxyPrim;
   nonstd::optional<MaterialBindingAPI> materialBinding;
@@ -69,7 +68,7 @@ struct GPrim : Xformable {
 
 struct Xform : GPrim {
 
-  Xform() {}
+  //Xform() {}
 
 };
 
