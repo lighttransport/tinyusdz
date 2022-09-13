@@ -46,6 +46,7 @@ std::string to_string(const XformOp::OpType &ty);
 
 std::string to_string(GeomMesh::InterpolateBoundary interp_boundary);
 std::string to_string(GeomMesh::SubdivisionScheme subd_scheme);
+std::string to_string(GeomMesh::FaceVaryingLinearInterpolation fv);
 
 std::string to_string(const Path &path, bool show_full_path = true);
 std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
