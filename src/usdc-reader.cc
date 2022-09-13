@@ -149,11 +149,13 @@ class USDCReader::Impl {
                                   T *attr, bool *custom_out = nullptr,
                                   Variability *variability_out = nullptr);
 
+#if 0
   // For attribute which maybe a value, connection or TimeSamples.
   template <typename T>
   bool ReconstructTypedProperty(int parent,
                                 const crate::FieldValuePairVector &fvs,
                                 TypedProperty<T> *attr);
+#endif
 
   template <typename T>
   bool ReconstructPrim(const crate::CrateReader::Node &node,
@@ -1114,6 +1116,7 @@ bool USDCReader::Impl::ReconstructSimpleAttribute(
   return true;
 }
 
+#if 0
 template <typename T>
 bool USDCReader::Impl::ReconstructTypedProperty(
     int parent, const crate::FieldValuePairVector &fvs,
@@ -1166,6 +1169,7 @@ bool USDCReader::Impl::ReconstructTypedProperty(
 
   return true;
 }
+#endif
 
 template <typename T>
 bool USDCReader::Impl::ReconstructPrim(const crate::CrateReader::Node &node,
@@ -1223,7 +1227,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         PUSH_ERROR_AND_RETURN("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v +
                               "'(note: Case sensitive)");
       }
-      DCOUT("upAxis = " << to_string(metas->upAxis.get()));
+      DCOUT("upAxis = " << to_string(metas->upAxis.GetValue()));
 
     } else if (fv.first == "metersPerUnit") {
       if (auto vf = fv.second.get_value<float>()) {
@@ -1235,7 +1239,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "`metersPerUnit` value must be double or float type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("metersPerUnit = " << metas->metersPerUnit.get());
+      DCOUT("metersPerUnit = " << metas->metersPerUnit.GetValue());
     } else if (fv.first == "timeCodesPerSecond") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->timeCodesPerSecond = double(vf.value());
@@ -1247,7 +1251,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.get());
+      DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.GetValue());
     } else if (fv.first == "startTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->startTimeCode = double(vf.value());
@@ -1259,7 +1263,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("startimeCode = " << metas->startTimeCode.get());
+      DCOUT("startimeCode = " << metas->startTimeCode.GetValue());
     } else if (fv.first == "endTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->endTimeCode = double(vf.value());
@@ -1271,7 +1275,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("endTimeCode = " << metas->endTimeCode.get());
+      DCOUT("endTimeCode = " << metas->endTimeCode.GetValue());
     } else if ((fv.first == "defaultPrim")) {
       auto v = fv.second.get_value<value::token>();
       if (!v) {

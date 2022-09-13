@@ -42,18 +42,23 @@ std::vector<value::normal3f> GeomMesh::GetNormals(double time, InterpolationType
     }
   } else if (normals.authored()) {
 
-    if (normals.get().value().IsTimeSamples()) {
+    if (normals.IsConnection()) {
       // TODO
-      (void)time;
-      (void)interp;
+      return dst;
+    } else if (normals.IsBlocked()) {
       return dst;
     }
 
-    if (normals.get().value().IsBlocked()) {
-      return dst;
-    }
+    if (normals.GetValue()) {
+      if (normals.GetValue().value().IsTimeSamples()) {
+        // TODO
+        (void)time;
+        (void)interp;
+        return dst;
+      }
 
-    dst = normals.get().value().value;
+      dst = normals.GetValue().value().value;
+    }
   }
 
   return dst;
@@ -179,16 +184,18 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
         "TODO: Support faceVertexCounts.connect\n");
   }
 
-  const auto &fv = faceVertexCounts.get().value().value;
-  size_t n = fv.size();
+  if (faceVertexCounts.GetValue()) {
+    const auto &fv = faceVertexCounts.GetValue().value().value;
+    size_t n = fv.size();
 
-  // Currently we only check if face ids are valid.
-  for (size_t i = 0; i < geom_subset_children.size(); i++) {
-    const GeomSubset &subset = geom_subset_children[i];
+    // Currently we only check if face ids are valid.
+    for (size_t i = 0; i < geom_subset_children.size(); i++) {
+      const GeomSubset &subset = geom_subset_children[i];
 
-    if (!CheckFaceIds(n, subset.indices)) {
-      ss << "Face index out-of-range.\n";
-      return nonstd::make_unexpected(ss.str());
+      if (!CheckFaceIds(n, subset.indices)) {
+        ss << "Face index out-of-range.\n";
+        return nonstd::make_unexpected(ss.str());
+      }
     }
   }
 

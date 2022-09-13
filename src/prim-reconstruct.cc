@@ -16,14 +16,17 @@
 #define PushError(s) if (err) { (*err) += s; }
 #define PushWarn(s) if (warn) { (*warn) += s; }
 
+// TODO:
+// - [ ] PathList for `.connect` (e.g. string con.connect = [ </root>, </root.a>])
+//
+
 //
 // NOTE:
 //
-// There are mainly 5 variant of Primtive property(attribute)
+// There are mainly 4 variant of Primtive property(attribute)
 //
-// - TypedAttribute<T> : Uniform only. `uniform T`
-// - TypedAttribute<Animatable<T>> : Scalar only. `uniform T` or `T value.timeSamples`
-// - TypedProperty<T> : Generic typed property. `uniform T`, `T value.timeSamples` or `T value.connect`(Connection)
+// - TypedAttribute<T> : Uniform only. `uniform T` or `uniform T var.connect`
+// - TypedAttribute<Animatable<T>> : Varying. `T var`, `T var = val`, `T var.connect` or `T value.timeSamples`
 // - optional<T> : For output attribute(Just author it. e.g. `float outputs:rgb`)
 // - Relation : Typeless relation(e.g. `rel material:binding`)
 
@@ -119,14 +122,52 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   ParseResult ret;
 
   if (prop_name.compare(name + ".connect") == 0) {
-    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
-    ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
-    return ret;
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      DCOUT("Already processed: " << prop_name);
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(propname);
+        ret.code = ParseResult::ResultCode::Success;
+        DCOUT("Added as property with connection: " << propname);
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        ret.err = "Connection target not found.";
+        return ret;
+      }
+    } else {
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Internal error. Unsupported/Unimplemented property type.";
+      return ret;
+    }
   } else if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
+
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(prop_name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Internal error. Invalid property with connection.";
+        return ret;
+      }
+    }
+
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
@@ -152,7 +193,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
           if (auto pv = attr.get_value<T>()) {
-            target.set(pv.value());
+            target.SetValue(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = fmt::format("Failed to retrieve value with requested type.");
@@ -165,7 +206,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           Animatable<T> anim;
           if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
             anim = av.value();
-            target.set(anim);
+            target.SetValue(anim);
           } else {
             // Conversion failed.
             DCOUT("ConvertToAnimatable failed.");
@@ -212,14 +253,52 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   ParseResult ret;
 
   if (prop_name.compare(name + ".connect") == 0) {
-    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
-    ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
-    return ret;
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      DCOUT("Already processed: " << prop_name);
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(propname);
+        ret.code = ParseResult::ResultCode::Success;
+        DCOUT("Added as property with connection: " << propname);
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        ret.err = "Connection target not found.";
+        return ret;
+      }
+    } else {
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Internal error. Unsupported/Unimplemented property type.";
+      return ret;
+    }
   } else if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
+
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(prop_name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Internal error. Invalid property with connection.";
+        return ret;
+      }
+    }
+
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
@@ -242,7 +321,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           target.SetBlock(true);
         } else if (attr.get_var().is_scalar()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set(pv.value());
+            target.SetValue(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
             ret.err = "Internal data corrupsed.";
@@ -291,14 +370,52 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   ParseResult ret;
 
   if (prop_name.compare(name + ".connect") == 0) {
-    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
-    ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
-    return ret;
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      DCOUT("Already processed: " << prop_name);
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(propname);
+        ret.code = ParseResult::ResultCode::Success;
+        DCOUT("Added as property with connection: " << propname);
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        ret.err = "Connection target not found.";
+        return ret;
+      }
+    } else {
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Internal error. Unsupported/Unimplemented property type.";
+      return ret;
+    }
   } else if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
+
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(prop_name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Internal error. Invalid property with connection.";
+        return ret;
+      }
+    }
+
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
@@ -323,12 +440,37 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
 
-          if (auto pv = attr.get_value<T>()) {
-            target.SetValue(pv.value());
+          // Special handling for Extent
+          if (value::TypeTrait<T>::type_id == value::TypeTrait<Extent>::type_id) {
+
+            if (auto pv = attr.get_value<std::vector<value::float3>>()) {
+              if (pv.value().size() != 2) {
+                ret.code = ParseResult::ResultCode::TypeMismatch;
+                ret.err = fmt::format("`extent` must be `float3[2]`, but got array size {}", pv.value().size());
+                return ret;
+              }
+
+              Extent ext;
+              ext.lower = pv.value()[0];
+              ext.upper = pv.value()[1];
+
+              target.SetValue(ext);
+  
+            } else {
+              ret.code = ParseResult::ResultCode::TypeMismatch;
+              ret.err = fmt::format("`extent` must be type `float3`");
+              return ret;
+            }
+
           } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Failed to retrieve value with requested type.");
-            return ret;
+
+            if (auto pv = attr.get_value<T>()) {
+              target.SetValue(pv.value());
+            } else {
+              ret.code = ParseResult::ResultCode::InternalError;
+              ret.err = fmt::format("Failed to retrieve value with requested type.");
+              return ret;
+            }
           }
 
         } else if (attr.get_var().is_timesample()) {
@@ -337,7 +479,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           Animatable<T> anim;
           if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
             anim = av.value();
-            target.set(anim);
+            target.SetValue(anim);
           } else {
             // Conversion failed.
             DCOUT("ConvertToAnimatable failed.");
@@ -347,7 +489,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
         } else if (attr.get_var().is_scalar()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set(pv.value());
+            target.SetValue(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = fmt::format("Failed to retrieve value with requested type.");
@@ -400,15 +542,53 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   DCOUT(fmt::format("prop name {}", prop_name));
 
   if (prop_name.compare(name + ".connect") == 0) {
-    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
-    ret.err = fmt::format("Connection is not allowed for Attribute `{}`.", name);
-    return ret;
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      DCOUT("Already processed: " << prop_name);
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(propname);
+        ret.code = ParseResult::ResultCode::Success;
+        DCOUT("Added as property with connection: " << propname);
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        ret.err = "Connection target not found.";
+        return ret;
+      }
+    } else {
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Internal error. Unsupported/Unimplemented property type.";
+      return ret;
+    }
   } else if (prop_name.compare(name) == 0) {
     DCOUT(fmt::format("prop name match {}", name));
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
+
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(prop_name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Internal error. Invalid property with connection.";
+        return ret;
+      }
+    }
+
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
@@ -444,6 +624,171 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           ret.err = "TimeSample or corrupted value assigned to a property where `uniform` variability is set.";
           return ret;
         }
+
+        target.meta = attr.meta;
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        DCOUT("Invalid Property.type");
+        ret.err = "Invalid Property type(internal error)";
+        ret.code = ParseResult::ResultCode::InternalError;
+        return ret;
+      }
+    } else {
+      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
+      ret.code = ParseResult::ResultCode::TypeMismatch;
+      std::stringstream ss;
+      ss  << "Property type mismatch. " << name << " expects type `"
+              << value::TypeTrait<T>::type_name()
+              << "` but defined as type `" << attr_type_name << "`";
+      ret.err = ss.str();
+      return ret;
+    }
+  }
+
+  ret.code = ParseResult::ResultCode::Unmatched;
+  return ret;
+}
+
+// Special case for Extent(float3[2]) type.
+static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  const Property &prop,
+  const std::string &name,
+  TypedAttribute<Animatable<Extent>> &target) /* out */
+{
+  ParseResult ret;
+
+  if (prop_name.compare(name + ".connect") == 0) {
+    std::string propname = removeSuffix(name, ".connect");
+    if (table.count(propname)) {
+      DCOUT("Already processed: " << prop_name);
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(propname);
+        ret.code = ParseResult::ResultCode::Success;
+        DCOUT("Added as property with connection: " << propname);
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InvalidConnection;
+        ret.err = "Connection target not found.";
+        return ret;
+      }
+    } else {
+      ret.code = ParseResult::ResultCode::InternalError;
+      ret.err = "Internal error. Unsupported/Unimplemented property type.";
+      return ret;
+    }
+  } else if (prop_name.compare(name) == 0) {
+    if (table.count(name)) {
+      ret.code = ParseResult::ResultCode::AlreadyProcessed;
+      return ret;
+    }
+
+    if (prop.IsConnection()) {
+      if (auto pv = prop.GetConnectionTarget()) {
+        target.SetConnection(pv.value());
+        //target.variability = prop.attrib.variability;
+        target.meta = prop.attrib.meta;
+        table.insert(prop_name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else {
+        ret.code = ParseResult::ResultCode::InternalError;
+        ret.err = "Internal error. Invalid property with connection.";
+        return ret;
+      }
+    }
+
+    const PrimAttrib &attr = prop.attrib;
+
+    std::string attr_type_name = attr.type_name();
+      if (prop.type == Property::Type::EmptyAttrib) {
+        target.meta = attr.meta;
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else if (prop.type == Property::Type::Attrib) {
+
+        DCOUT("Adding typed attribute: " << name);
+
+        if (attr.blocked()) {
+          // e.g. "float radius = None"
+          target.SetBlock(true);
+        } else if (attr.variability == Variability::Uniform) {
+          // e.g. "float radius = 1.2"
+          if (!attr.get_var().is_scalar()) {
+            ret.code = ParseResult::ResultCode::VariabilityMismatch;
+            ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
+            return ret;
+          }
+
+            if (auto pv = attr.get_value<std::vector<value::float3>>()) {
+              if (pv.value().size() != 2) {
+                ret.code = ParseResult::ResultCode::TypeMismatch;
+                ret.err = fmt::format("`extent` must be `float3[2]`, but got array size {}", pv.value().size());
+                return ret;
+              }
+
+              Extent ext;
+              ext.lower = pv.value()[0];
+              ext.upper = pv.value()[1];
+
+              target.SetValue(ext);
+  
+            } else {
+              ret.code = ParseResult::ResultCode::TypeMismatch;
+              ret.err = fmt::format("`extent` must be type `float3`");
+              return ret;
+            }
+
+          } else {
+
+            if (auto pv = attr.get_value<T>()) {
+              target.SetValue(pv.value());
+            } else {
+              ret.code = ParseResult::ResultCode::InternalError;
+              ret.err = fmt::format("Failed to retrieve value with requested type.");
+              return ret;
+            }
+          }
+
+        } else if (attr.get_var().is_timesample()) {
+          // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
+
+          Animatable<T> anim;
+          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
+            anim = av.value();
+            target.SetValue(anim);
+          } else {
+            // Conversion failed.
+            DCOUT("ConvertToAnimatable failed.");
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+            return ret;
+          }
+        } else if (attr.get_var().is_scalar()) {
+          if (auto pv = attr.get_value<T>()) {
+            target.SetValue(pv.value());
+          } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = fmt::format("Failed to retrieve value with requested type.");
+            return ret;
+          }
+        } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Invalid or Unsupported attribute data.";
+            return ret;
+        }
+
+        DCOUT("Added typed attribute: " << name);
 
         target.meta = attr.meta;
         table.insert(name);
@@ -1099,6 +1444,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
     }                                                                        \
   } }
 
+#if 0 // TODO: remove
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedProperty(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
@@ -1109,6 +1455,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing property `{}` failed. Error: {}", __name, ret.err)); \
   } \
 }
+#endif
 
 // Add custom property(including property with "primvars" prefix)
 // Please call this macro after listing up all predefined property using
@@ -2191,6 +2538,7 @@ bool ReconstructPrim<GeomCone>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
       PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
       PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2618,33 +2966,33 @@ bool ReconstructShader<UsdPreviewSurface>(
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuseColor", UsdPreviewSurface,
                          surface->diffuseColor)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:emissiveColor", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emissiveColor", UsdPreviewSurface,
                          surface->emissiveColor)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:roughness", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:roughness", UsdPreviewSurface,
                          surface->roughness)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:specularColor", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specularColor", UsdPreviewSurface,
                          surface->specularColor)  // specular workflow
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:metallic", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:metallic", UsdPreviewSurface,
                          surface->metallic)  // non specular workflow
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoat", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:clearcoat", UsdPreviewSurface,
                          surface->clearcoat)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:clearcoatRoughness",
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:clearcoatRoughness",
                          UsdPreviewSurface, surface->clearcoatRoughness)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacity", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", UsdPreviewSurface,
                          surface->opacity)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:opacityThreshold",
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacityThreshold",
                          UsdPreviewSurface, surface->opacityThreshold)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:ior", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:ior", UsdPreviewSurface,
                          surface->ior)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:normal", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", UsdPreviewSurface,
                          surface->normal)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:dispacement", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:dispacement", UsdPreviewSurface,
                          surface->displacement)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:occlusion", UsdPreviewSurface,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:occlusion", UsdPreviewSurface,
                          surface->occlusion)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:useSpecularWorkflow",
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:useSpecularWorkflow",
                          UsdPreviewSurface, surface->useSpecularWorkflow)
     PARSE_SHADER_OUTPUT_PROPERTY(table, prop, "outputs:surface", UsdPreviewSurface,
                    surface->outputsSurface)
@@ -2686,7 +3034,7 @@ bool ReconstructShader<UsdUVTexture>(
 
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:st", UsdUVTexture,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
                           texture->st)
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
                        SourceColorSpaceHandler, UsdUVTexture,
@@ -2722,7 +3070,7 @@ bool ReconstructShader<UsdPrimvarReader_int>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_int,
                    preader->fallback)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_int,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_int,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_int, preader->result)
@@ -2746,7 +3094,7 @@ bool ReconstructShader<UsdPrimvarReader_float>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float,
                    preader->fallback)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float, preader->result)
@@ -2769,7 +3117,7 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     DCOUT("prop = " << prop.first);
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float2,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
                    preader->varname)  // `token`
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
                    preader->fallback)
@@ -2796,7 +3144,7 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float3,
                    preader->fallback)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float3,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float3,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float3, preader->result)
@@ -2822,7 +3170,7 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float4,
                    preader->fallback)
-    PARSE_TYPED_PROPERTY(table, prop, "inputs:varname", UsdPrimvarReader_float4,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float4,
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float4, preader->result)
