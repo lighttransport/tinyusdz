@@ -5594,8 +5594,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     return false;
   }
 
-  ListEditQual qual;
-  if (!MaybeListEditQual(&qual)) {
+  // List editing only applicable for Relation for Primitive attributes.
+  ListEditQual listop_qual;
+  if (!MaybeListEditQual(&listop_qual)) {
     return false;
   }
 
@@ -5648,7 +5649,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       // No targets. Define only.
       Property p(type_name, custom_qual);
       p.type = Property::Type::NoTargetsRelation;
-      p.qual = qual;
+      p.listOpQual = listop_qual;
 
       (*props)[attr_name] = p;
 
@@ -5688,7 +5689,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     DCOUT("Relationship with target: " << attr_name);
     Property p(rel, /* isConnection */ false, custom_qual);
-    p.qual = qual;
+    p.listOpQual = listop_qual;
 
     (*props)[attr_name] = p;
 
@@ -5698,6 +5699,10 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   //
   // Attrib.
   //
+
+  if (listop_qual != ListEditQual::ResetToExplicit) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "List editing qualifier is not allowed for Attribute.");
+  }
 
   if (type_name == "uniform") {
     uniform_qual = true;

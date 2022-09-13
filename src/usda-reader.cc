@@ -716,7 +716,7 @@ class USDAReader::Impl {
           if (listEditQual != ListEditQual::Prepend) {
             PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be `prepend` in TinyUSDZ, but got `" << to_string(listEditQual) << "`");
           }
-          apiSchemas.qual = listEditQual;
+          apiSchemas.listOpQual = listEditQual;
 
           if (auto pv = var.Get<std::vector<value::token>>()) {
 

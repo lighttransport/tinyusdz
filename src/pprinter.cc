@@ -234,7 +234,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
     if (schemas.names.size()) {
 
-      ss << pprint::Indent(indent) << to_string(schemas.qual) << " apiSchemas = [";
+      ss << pprint::Indent(indent) << to_string(schemas.listOpQqual) << " apiSchemas = [";
 
       for (size_t i = 0; i < schemas.names.size(); i++) {
         if (i != 0) {
@@ -321,7 +321,6 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
     ss << pprint::Indent(indent);
 
-    // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
     if (attr.IsBlocked()) {
@@ -358,7 +357,6 @@ std::string print_typed_token_attr(const TypedAttribute<Animatable<T>> &attr, co
 
     ss << pprint::Indent(indent);
 
-    // TODO: ListEdit qual.
     ss << "token " << name;
 
     if (attr.IsBlocked()) {
@@ -395,7 +393,6 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
 
     ss << "uniform ";
 
-    // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
 
@@ -428,7 +425,6 @@ std::string print_typed_token_attr(const TypedAttribute<T> &attr, const std::str
 
     ss << pprint::Indent(indent);
 
-    // TODO: ListEdit qual.
     ss << "uniform token " << name;
 
 
@@ -461,7 +457,6 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
 
     ss << pprint::Indent(indent);
 
-    // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
     if (v.IsTimeSamples()) {
@@ -488,7 +483,6 @@ std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, con
 
     ss << pprint::Indent(indent);
 
-    // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
     if (attr.meta.authored()) {
@@ -512,7 +506,6 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
 
     ss << "uniform ";
 
-    // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
     if (attr.IsBlocked()) {
@@ -542,7 +535,6 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
 
     ss << pprint::Indent(indent);
 
-    // TODO: ListEdit qual.
     ss << "token " << name;
 
     if (v.IsTimeSamples()) {
@@ -569,7 +561,6 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
 
     ss << pprint::Indent(indent);
 
-    // TODO: ListEdit qual.
     ss << "uniform token " << name;
 
     if (attr.IsBlocked()) {
@@ -596,11 +587,21 @@ std::string print_typed_prop(const TypedProperty<T> &prop, const std::string &na
 
     ss << pprint::Indent(indent);
 
+    if (prop.IsRel()) {
+
+      if (prop.listOpQual != ListEditQual::ResetToExplicit) {
+        ss << to_string(prop.listOpQual);
+      }
+      ss << "rel " << name;
+
+      ss << "\n";
+      return ss.str();
+    }
+
     if (prop.variability == Variability::Uniform) {
       ss << "uniform ";
     }
 
-    // TODO: ListEdit qual.
     ss << value::TypeTrait<T>::type_name() << " " << name;
 
     if (prop.IsAttrib() && prop.value.value().IsTimeSamples()) {
@@ -608,6 +609,7 @@ std::string print_typed_prop(const TypedProperty<T> &prop, const std::string &na
     }
 
     if (prop.IsEmptyAttrib()) {
+      // nothing todo;
     } else if (prop.IsAttrib()) {
       if (prop.value.value().IsBlocked()) {
         ss << " = None";

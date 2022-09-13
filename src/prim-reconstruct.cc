@@ -324,7 +324,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
           if (auto pv = attr.get_value<T>()) {
-            target.set(pv.value());
+            target.SetValue(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = fmt::format("Failed to retrieve value with requested type.");
@@ -433,7 +433,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           target.SetBlock(true);
         } else if (attr.get_var().is_scalar()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set(pv.value());
+            target.SetValue(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
             ret.err = "Internal data corrupsed.";
@@ -472,6 +472,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 }
 
 
+#if 0
 template<typename T>
 static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
   const std::string prop_name,
@@ -597,6 +598,7 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
+#endif
 
 
 // Empty allowedTokens = allow all
@@ -2859,17 +2861,17 @@ bool ReconstructPrim<Shader>(
     const PrimAttrib &attr = info_id_prop->second.attrib;
     if ((attr.type_name() == value::kToken) && (attr.variability == Variability::Uniform)) {
       if (auto pv = attr.get_value<value::token>()) {
-        shader_type = pv.value().str(); 
+        shader_type = pv.value().str();
       } else {
         PUSH_ERROR_AND_RETURN("Internal errror. `info:id` has invalid type.");
       }
     } else {
       PUSH_ERROR_AND_RETURN("`info:id` property must be `uniform token` type.");
-    } 
+    }
   } else {
     PUSH_ERROR_AND_RETURN("Invalid type or value for `info:id` property in `Shader`.");
   }
-    
+
 
   DCOUT("info:id = " << shader_type);
 
