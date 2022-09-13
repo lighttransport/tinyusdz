@@ -6,7 +6,7 @@
     static constexpr uint32_t ndim = 0; /* array dim */          \
     static constexpr uint32_t size = sizeof(__dty);              \
     static constexpr uint32_t ncomp =                            \
-        __nc; /* the number of components(e.g. float3 => 3) */   \
+        __nc; /* the number of components(e.g. extent = 2) */   \
     static constexpr uint32_t type_id = __tyid;                  \
     static constexpr uint32_t underlying_type_id = __tyid;       \
     static std::string type_name() { return __name; }            \

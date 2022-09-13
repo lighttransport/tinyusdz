@@ -695,23 +695,23 @@ std::string Stage::ExportToString() const {
   }
 
   if (stage_metas.metersPerUnit.authored()) {
-    ss << "  metersPerUnit = " << stage_metas.metersPerUnit.get() << "\n";
+    ss << "  metersPerUnit = " << stage_metas.metersPerUnit.GetValue() << "\n";
   }
 
   if (stage_metas.upAxis.authored()) {
-    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.get())) << "\n";
+    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.GetValue())) << "\n";
   }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
-    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.get() << "\n";
+    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.GetValue() << "\n";
   }
 
   if (stage_metas.startTimeCode.authored()) {
-    ss << "  startTimeCode = " << stage_metas.startTimeCode.get() << "\n";
+    ss << "  startTimeCode = " << stage_metas.startTimeCode.GetValue() << "\n";
   }
 
   if (stage_metas.endTimeCode.authored()) {
-    ss << "  endTimeCode = " << stage_metas.endTimeCode.get() << "\n";
+    ss << "  endTimeCode = " << stage_metas.endTimeCode.GetValue() << "\n";
   }
 
   if (stage_metas.defaultPrim.str().size()) {

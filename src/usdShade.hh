@@ -4,7 +4,7 @@
 // Material and Shader. And more, TinyUSDZ implmenents some usdImaging stuff here.
 //
 // TODO:
-//   - [ ] Consider `interfaceOnly` connection 
+//   - [ ] Consider `interfaceOnly` connection
 //   - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
 //   - [ ] NodeGraph support
 //   - [ ] MaterialX support
@@ -53,7 +53,7 @@ struct UsdPrimvarReader {
 
   TypedAttribute<Animatable<T>> fallback;  // "inputs:fallback"
 
-  TypedProperty<value::token> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
+  TypedAttribute<Animatable<value::token>> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
 
 
   TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"
@@ -94,8 +94,7 @@ struct UsdUVTexture {
 
   TypedAttribute<Animatable<value::AssetPath>> file; // "asset inputs:file" interfaceOnly
 
-  //TypedAttributeWithFallback<Connection<value::texcoord2f>> st{Connection<value::texcoord2f>({0.0f, 0.0f})}; // "inputs:st"
-  TypedProperty<value::texcoord2f> st{{0.0f, 0.0f}}; // "inputs:st"
+  TypedAttributeWithFallback<Animatable<value::texcoord2f>> st{value::texcoord2f{0.0f, 0.0f}}; // "inputs:st"
 
   TypedAttribute<Animatable<Wrap>> wrapS; // "inputs:wrapS" interfaceOnly
   TypedAttribute<Animatable<Wrap>> wrapT; // "inputs:wrapT" interfaceOnly
@@ -109,7 +108,7 @@ struct UsdUVTexture {
 
   ///
   /// Outputs
-  /// 
+  ///
   /// Terminal attribute. No value assign(e.g. `float outputs:r = 1.2`)
   ///
   TypedTerminalAttribute<float> outputsR; // "float outputs:r"
@@ -136,29 +135,29 @@ struct UsdPreviewSurface {
 
   std::string name;
 
-  TypedProperty<value::color3f> diffuseColor{{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
-  TypedProperty<value::color3f> emissiveColor{{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
+  TypedAttributeWithFallback<Animatable<value::color3f>> diffuseColor{value::color3f{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
+  TypedAttributeWithFallback<Animatable<value::color3f>> emissiveColor{value::color3f{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
 
-  TypedProperty<int> useSpecularWorkflow{0}; // "inputs:useSpecularWorkflow"
+  TypedAttributeWithFallback<Animatable<int>> useSpecularWorkflow{0}; // "inputs:useSpecularWorkflow"
 
   // specular workflow
-  TypedProperty<value::color3f> specularColor{{0.0f, 0.0f, 0.0f}};
+  TypedAttributeWithFallback<Animatable<value::color3f>> specularColor{value::color3f{0.0f, 0.0f, 0.0f}};
 
   // metalness workflow
   //TypedAttributeWithFallback<float> metallic{0.0f};  // "inputs:metallic"
-  TypedProperty<float> metallic{0.0f};  // "inputs:metallic"
+  TypedAttributeWithFallback<Animatable<float>> metallic{0.0f};  // "inputs:metallic"
 
   //
-  TypedProperty<float> clearcoat{0.0f};  // "inputs:clearcoat"
-  TypedProperty<float> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
-  TypedProperty<float> roughness{0.5f};  // "inputs:roughness"
-  TypedProperty<float> opacity{1.0f};  // "inputs:opacity"
-  TypedProperty<float> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
-  TypedProperty<float> ior{1.5f};  // "inputs:ior"
+  TypedAttributeWithFallback<Animatable<float>> clearcoat{0.0f};  // "inputs:clearcoat"
+  TypedAttributeWithFallback<Animatable<float>> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
+  TypedAttributeWithFallback<Animatable<float>> roughness{0.5f};  // "inputs:roughness"
+  TypedAttributeWithFallback<Animatable<float>> opacity{1.0f};  // "inputs:opacity"
+  TypedAttributeWithFallback<Animatable<float>> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
+  TypedAttributeWithFallback<Animatable<float>> ior{1.5f};  // "inputs:ior"
 
-  TypedProperty<value::normal3f> normal{{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
-  TypedProperty<float> displacement{0.0f}; // "inputs:displacement"
-  TypedProperty<float> occlusion{0.0f}; // "inputs:occlusion"
+  TypedAttributeWithFallback<Animatable<value::normal3f>> normal{value::normal3f{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
+  TypedAttributeWithFallback<Animatable<float>> displacement{0.0f}; // "inputs:displacement"
+  TypedAttributeWithFallback<Animatable<float>> occlusion{0.0f}; // "inputs:occlusion"
 
   ///
   /// Outputs
