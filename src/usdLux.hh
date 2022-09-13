@@ -42,11 +42,11 @@ struct LuxSphereLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
+  TypedAttribute<Animatable<Extent>> extent; // float3[] 
 
   //
   // Properties
   //
-  Animatable<Extent> extent;  // bounding extent(in local coord?).
   Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
@@ -76,13 +76,13 @@ struct LuxCylinderLight : public Xformable {
 
   TypedAttributeWithFallback<Animatable<float>> length{1.0f}; // inputs:length size in Y axis
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius  size in X axis
+  TypedAttribute<Animatable<Extent>> extent; // float3[] 
 
   // asset inputs:texture:file
 
   //
   // Properties
   //
-  Animatable<Extent> extent;  // bounding extent(in local coord?).
   Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
@@ -111,15 +111,16 @@ struct LuxRectLight : public Xformable {
   TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
   // rel light:filters
 
+  TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
   TypedAttributeWithFallback<Animatable<float>> width{1.0f}; // inputs:width  size in X axis
+  TypedAttribute<Animatable<Extent>> extent; // float3[] 
 
   // asset inputs:texture:file
 
   //
   // Properties
   //
-  Animatable<Extent> extent;  // bounding extent(in local coord?).
   Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
@@ -148,13 +149,13 @@ struct LuxDiskLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
+  TypedAttribute<Animatable<Extent>> extent; // float3[] 
 
   // asset inputs:texture:file
 
   //
   // Properties
   //
-  Animatable<Extent> extent;  // bounding extent(in local coord?).
   Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
@@ -183,13 +184,13 @@ struct LuxDistantLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> angle{0.53f}; // inputs:angle in degrees
+  TypedAttribute<Animatable<Extent>> extent; // float3[] 
 
   // asset inputs:texture:file
 
   //
   // Properties
   //
-  Animatable<Extent> extent;  // bounding extent(in local coord?).
   Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
@@ -229,13 +230,13 @@ struct LuxDomeLight : public Xformable {
   TypedAttributeWithFallback<Animatable<float>> guideRadius{1.0e5f};
   // asset inputs:texture:file
   TextureFormat textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
+  TypedAttribute<Animatable<Extent>> extent; // float3[] 
   // rel portals
   // rel proxyPrim
 
   //
   // Properties
   //
-  Animatable<Extent> extent;  // bounding extent(in local coord?).
   Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
   std::vector<value::token> xformOpOrder;
