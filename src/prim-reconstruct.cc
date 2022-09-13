@@ -111,6 +111,65 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
   return nonstd::nullopt;
 }
 
+// Require special treatment for Extent(float3[2])
+template<>
+nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar &var)
+{
+  Animatable<Extent> dst;
+
+  if (!var.is_valid()) {
+    DCOUT("is_valid failed");
+    return nonstd::nullopt;
+  }
+
+  if (var.is_scalar()) {
+
+    if (auto pv = var.get_value<std::vector<value::float3>>()) {
+      if (pv.value().size() == 2) {
+        Extent ext;
+        ext.lower = pv.value()[0];
+        ext.upper = pv.value()[1];
+
+        dst.value = ext;
+        dst.blocked = false;
+      
+      } else {
+        return nonstd::nullopt;
+      }
+
+      return std::move(dst);
+    }
+  } else if (var.is_timesample()) {
+    for (size_t i = 0; i < var.var.times.size(); i++) {
+      double t = var.var.times[i];
+
+      // Attribute Block?
+      if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
+        dst.ts.AddBlockedSample(t);
+      } else if (auto pv = var.get_ts_value<std::vector<value::float3>>(i)) {
+        if (pv.value().size() == 2) {
+          Extent ext;
+          ext.lower = pv.value()[0];
+          ext.upper = pv.value()[1];
+          dst.ts.AddSample(t, ext);
+        } else {
+          DCOUT(i << "/" << var.var.times.size() << " array size mismatch.");
+          return nonstd::nullopt;
+        }
+      } else {
+        // Type mismatch
+        DCOUT(i << "/" << var.var.times.size() << " type mismatch.");
+        return nonstd::nullopt;
+      }
+    }
+
+    return std::move(dst);
+  }
+
+  DCOUT("???");
+  return nonstd::nullopt;
+}
+
 // For animatable attribute(`varying`)
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
@@ -440,37 +499,12 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
 
-          // Special handling for Extent
-          if (value::TypeTrait<T>::type_id == value::TypeTrait<Extent>::type_id) {
-
-            if (auto pv = attr.get_value<std::vector<value::float3>>()) {
-              if (pv.value().size() != 2) {
-                ret.code = ParseResult::ResultCode::TypeMismatch;
-                ret.err = fmt::format("`extent` must be `float3[2]`, but got array size {}", pv.value().size());
-                return ret;
-              }
-
-              Extent ext;
-              ext.lower = pv.value()[0];
-              ext.upper = pv.value()[1];
-
-              target.SetValue(ext);
-  
-            } else {
-              ret.code = ParseResult::ResultCode::TypeMismatch;
-              ret.err = fmt::format("`extent` must be type `float3`");
-              return ret;
-            }
-
+          if (auto pv = attr.get_value<T>()) {
+            target.SetValue(pv.value());
           } else {
-
-            if (auto pv = attr.get_value<T>()) {
-              target.SetValue(pv.value());
-            } else {
-              ret.code = ParseResult::ResultCode::InternalError;
-              ret.err = fmt::format("Failed to retrieve value with requested type.");
-              return ret;
-            }
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = fmt::format("Failed to retrieve value with requested type.");
+            return ret;
           }
 
         } else if (attr.get_var().is_timesample()) {
@@ -652,6 +686,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 }
 
 // Special case for Extent(float3[2]) type.
+// TODO: Reuse code of ParseTypedAttribute as much as possible
 static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   const Property &prop,
@@ -710,104 +745,72 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
     const PrimAttrib &attr = prop.attrib;
 
     std::string attr_type_name = attr.type_name();
-      if (prop.type == Property::Type::EmptyAttrib) {
-        target.meta = attr.meta;
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
+    if (prop.type == Property::Type::EmptyAttrib) {
+      target.meta = attr.meta;
+      table.insert(name);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
+    } else if (prop.type == Property::Type::Attrib) {
+
+      DCOUT("Adding typed attribute: " << name);
+
+      if (attr.blocked()) {
+        // e.g. "float3[] extent = None"
+        target.SetBlock(true);
+      } else if (attr.variability == Variability::Uniform) {
+        ret.code = ParseResult::ResultCode::VariabilityMismatch;
+        ret.err = fmt::format("`extent` attribute is varying. `uniform` qualifier assigned to it.");
         return ret;
-      } else if (prop.type == Property::Type::Attrib) {
-
-        DCOUT("Adding typed attribute: " << name);
-
-        if (attr.blocked()) {
-          // e.g. "float radius = None"
-          target.SetBlock(true);
-        } else if (attr.variability == Variability::Uniform) {
-          // e.g. "float radius = 1.2"
-          if (!attr.get_var().is_scalar()) {
-            ret.code = ParseResult::ResultCode::VariabilityMismatch;
-            ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
+      } else if (attr.get_var().is_scalar()){
+        if (auto pv = attr.get_value<std::vector<value::float3>>()) {
+          if (pv.value().size() != 2) {
+            ret.code = ParseResult::ResultCode::TypeMismatch;
+            ret.err = fmt::format("`extent` must be `float3[2]`, but got array size {}", pv.value().size());
             return ret;
           }
 
-            if (auto pv = attr.get_value<std::vector<value::float3>>()) {
-              if (pv.value().size() != 2) {
-                ret.code = ParseResult::ResultCode::TypeMismatch;
-                ret.err = fmt::format("`extent` must be `float3[2]`, but got array size {}", pv.value().size());
-                return ret;
-              }
+          Extent ext;
+          ext.lower = pv.value()[0];
+          ext.upper = pv.value()[1];
 
-              Extent ext;
-              ext.lower = pv.value()[0];
-              ext.upper = pv.value()[1];
+          target.SetValue(ext);
 
-              target.SetValue(ext);
-  
-            } else {
-              ret.code = ParseResult::ResultCode::TypeMismatch;
-              ret.err = fmt::format("`extent` must be type `float3`");
-              return ret;
-            }
-
-          } else {
-
-            if (auto pv = attr.get_value<T>()) {
-              target.SetValue(pv.value());
-            } else {
-              ret.code = ParseResult::ResultCode::InternalError;
-              ret.err = fmt::format("Failed to retrieve value with requested type.");
-              return ret;
-            }
-          }
-
-        } else if (attr.get_var().is_timesample()) {
-          // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
-
-          Animatable<T> anim;
-          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            anim = av.value();
-            target.SetValue(anim);
-          } else {
-            // Conversion failed.
-            DCOUT("ConvertToAnimatable failed.");
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
-            return ret;
-          }
-        } else if (attr.get_var().is_scalar()) {
-          if (auto pv = attr.get_value<T>()) {
-            target.SetValue(pv.value());
-          } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Failed to retrieve value with requested type.");
-            return ret;
-          }
         } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Invalid or Unsupported attribute data.";
-            return ret;
+          ret.code = ParseResult::ResultCode::TypeMismatch;
+          ret.err = fmt::format("`extent` must be type `float3[]`, but got type `{}", attr.type_name());
+          return ret;
         }
 
-        DCOUT("Added typed attribute: " << name);
+      } else if (attr.get_var().is_timesample()) {
+        // e.g. "float3[] extent.timeSamples = ..."
 
-        target.meta = attr.meta;
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
+        Animatable<Extent> anim;
+        if (auto av = ConvertToAnimatable<Extent>(attr.get_var())) {
+          anim = av.value();
+          target.SetValue(anim);
+        } else {
+          // Conversion failed.
+          DCOUT("ConvertToAnimatable failed.");
+          ret.code = ParseResult::ResultCode::InternalError;
+          ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types or invalid array size?";
+          return ret;
+        }
       } else {
-        DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
-        ret.code = ParseResult::ResultCode::InternalError;
-        return ret;
+          ret.code = ParseResult::ResultCode::InternalError;
+          ret.err = "Invalid or Unsupported Extent attribute value.";
+          return ret;
       }
+
+      DCOUT("Added Extent attribute: " << name);
+
+      target.meta = attr.meta;
+      table.insert(name);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
-      ret.code = ParseResult::ResultCode::TypeMismatch;
-      std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTrait<T>::type_name()
-              << "` but defined as type `" << attr_type_name << "`";
-      ret.err = ss.str();
+      DCOUT("Invalid Property.type");
+      ret.err = "Invalid Property type(internal error)";
+      ret.code = ParseResult::ResultCode::InternalError;
       return ret;
     }
   }
@@ -1304,6 +1307,17 @@ nonstd::expected<T, std::string> EnumHandler(
     /* go next */ \
   } else { \
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
+  } \
+}
+
+#define PARSE_EXTENT_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseExtentAttribute(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    continue; /* got it */\
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
+    /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `extent` failed. Error: {}", ret.err)); \
   } \
 }
 
@@ -2161,6 +2175,39 @@ bool ReconstructPrim<LuxSphereLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxSphereLight, light->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxSphereLight,
                    light->intensity)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
+    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<LuxRectLight>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    LuxRectLight *light,
+    std::string *warn,
+    std::string *err) {
+
+  (void)references;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxRectLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:height", LuxRectLight, light->height)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:width", LuxRectLight, light->width)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxRectLight,
+                   light->intensity)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
     ADD_PROPERY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2186,8 +2233,9 @@ bool ReconstructPrim<LuxDiskLight>(
 
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxSphereLight, light->radius)
-    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxDiskLight, light->radius)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxDiskLight, light->extent)
+    ADD_PROPERY(table, prop, LuxDiskLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2214,6 +2262,7 @@ bool ReconstructPrim<LuxCylinderLight>(
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", LuxCylinderLight, light->length)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxCylinderLight, light->radius)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxCylinderLight, light->extent)
     ADD_PROPERY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2349,6 +2398,7 @@ bool ReconstructPrim<GeomSphere>(
       }
     } else {
       PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomSphere, sphere->radius)
+      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomSphere, sphere->extent)
       ADD_PROPERY(table, prop, GeomSphere, sphere->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2466,6 +2516,7 @@ bool ReconstructPrim<GeomPoints>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "ids", GeomPoints, points->ids)
       PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPoints, points->velocities)
       PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPoints, points->accelerations)
+      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomPoints, points->extent)
       ADD_PROPERY(table, prop, GeomSphere, points->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2538,7 +2589,7 @@ bool ReconstructPrim<GeomCone>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
       PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
       PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
+      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2577,6 +2628,7 @@ bool ReconstructPrim<GeomCylinder>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
                            cylinder->height)
       PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis)
+      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCylinder, cylinder->extent)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2612,6 +2664,7 @@ bool ReconstructPrim<GeomCapsule>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
       PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
       PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis)
+      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCapsule, capsule->extent)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2648,6 +2701,7 @@ bool ReconstructPrim<GeomCube>(
       }
     } else {
       PARSE_TYPED_ATTRIBUTE(table, prop, "size", GeomCube, cube->size)
+      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCube, cube->extent)
       ADD_PROPERY(table, prop, GeomCube, cube->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2836,6 +2890,7 @@ bool ReconstructPrim<GeomMesh>(
       PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
                          FaceVaryingLinearInterpolationHandler, GeomMesh,
                          mesh->faceVaryingLinearInterpolation)
+      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomMesh, mesh->extent)
       ADD_PROPERY(table, prop, GeomMesh, mesh->props)
       PARSE_PROPERTY_END_MAKE_WARN(table, prop)
     }
@@ -2946,6 +3001,7 @@ bool ReconstructPrim<GeomCamera>(
                        camera->projection)
     PARSE_ENUM_PROPETY(table, prop, "stereoRole", StereoRoleHandler, GeomCamera,
                        camera->stereoRole)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCamera, camera->extent)
     ADD_PROPERY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
