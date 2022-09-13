@@ -127,6 +127,233 @@ struct StringData {
   int line_col{0};
 };
 
+///
+/// Simlar to SdfPath.
+///
+/// We don't need the performance for USDZ, so use naiive implementation
+/// to represent Path.
+/// Path is something like Unix path, delimited by `/`, ':' and '.'
+/// Square brackets('<', '>' is not included)
+///
+/// Example:
+///
+/// - `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
+/// - `bora` : Relative path
+///
+/// ':' is a namespce delimiter(example `input:muda`).
+///
+/// Limitations:
+///
+/// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
+/// supported.
+/// - Variant chars('{' '}') is not supported.
+/// - '../' is TODO
+///
+/// and have more limitatons.
+///
+class Path {
+ public:
+  Path() : valid(false) {}
+
+  // `p` is split into prim_part and prop_part
+  // Path(const std::string &p);
+  Path(const std::string &prim, const std::string &prop);
+
+  // : prim_part(prim), valid(true) {}
+  // Path(const std::string &prim, const std::string &prop)
+  //    : prim_part(prim), prop_part(prop) {}
+
+  Path(const Path &rhs) = default;
+
+  Path &operator=(const Path &rhs) {
+    this->valid = rhs.valid;
+
+    this->prim_part = rhs.prim_part;
+    this->prop_part = rhs.prop_part;
+
+    return (*this);
+  }
+
+  std::string full_path_name() const {
+    std::string s;
+    if (!valid) {
+      s += "#INVALID#";
+    }
+
+    s += prim_part;
+    if (prop_part.empty()) {
+      return s;
+    }
+
+    s += "." + prop_part;
+
+    return s;
+  }
+
+  std::string GetPrimPart() const { return prim_part; }
+
+  std::string GetPropPart() const { return prop_part; }
+
+  bool IsValid() const { return valid; }
+
+  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
+
+  static Path RootPath() { return Path("/", ""); }
+  // static Path RelativePath() { return Path("."); }
+
+  Path AppendProperty(const std::string &elem);
+
+  Path AppendElement(const std::string &elem);
+
+  ///
+  /// Split a path to the root(common ancestor) and its siblings
+  ///
+  /// example:
+  ///
+  /// - / -> [/, Empty]
+  /// - /bora -> [/bora, Empty]
+  /// - /bora/dora -> [/bora, /dora]
+  /// - /bora/dora/muda -> [/bora, /dora/muda]
+  /// - bora -> [Empty, bora]
+  /// - .muda -> [Empty, .muda]
+  ///
+  std::pair<Path, Path> SplitAtRoot() const;
+
+  Path GetParentPrim() const;
+
+  ///
+  /// @returns true if a path is '/' only
+  ///
+  bool IsRootPath() const {
+    if (!valid) {
+      return false;
+    }
+
+    if ((prim_part.size() == 1) && (prim_part[0] == '/')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  ///
+  /// @returns true if a path is root prim: e.g. '/bora'
+  ///
+  bool IsRootPrim() const {
+    if (!valid) {
+      return false;
+    }
+
+    if (IsRootPath()) {
+      return false;
+    }
+
+    if ((prim_part.size() > 1) && (prim_part[0] == '/')) {
+      // no other '/' except for the fist one
+      if (prim_part.find_last_of('/') == 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool IsAbsolutePath() const {
+    if (prim_part.size()) {
+      if ((prim_part.size() > 0) && (prim_part[0] == '/')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool IsRelativePath() const {
+    if (prim_part.size()) {
+      return !IsAbsolutePath();
+    }
+
+    return true;  // prop part only
+  }
+
+  // Strip '/'
+  Path &MakeRelative() {
+    if (IsAbsolutePath() && (prim_part.size() > 1)) {
+      // Remove first '/'
+      prim_part.erase(0, 1);
+    }
+    return *this;
+  }
+
+  const Path MakeRelative(Path &&rhs) {
+    (*this) = std::move(rhs);
+
+    return MakeRelative();
+  }
+
+  static const Path MakeRelative(const Path &rhs) {
+    Path p = rhs;  // copy
+    return p.MakeRelative();
+  }
+
+ private:
+  std::string prim_part;  // e.g. /Model/MyMesh, MySphere
+  std::string prop_part;  // e.g. .visibility
+  bool valid{false};
+};
+
+///
+/// Split Path by the delimiter(e.g. "/") then create lists.
+///
+class TokenizedPath {
+ public:
+  TokenizedPath() {}
+
+  TokenizedPath(const Path &path) {
+    std::string s = path.GetPropPart();
+    if (s.empty()) {
+      // ???
+      return;
+    }
+
+    if (s[0] != '/') {
+      // Path must start with "/"
+      return;
+    }
+
+    s.erase(0, 1);
+
+    char delimiter = '/';
+    size_t pos{0};
+    while ((pos = s.find(delimiter)) != std::string::npos) {
+      std::string token = s.substr(0, pos);
+      _tokens.push_back(token);
+      s.erase(0, pos + sizeof(char));
+    }
+
+    if (!s.empty()) {
+      // leaf element
+      _tokens.push_back(s);
+    }
+  }
+
+ private:
+  std::vector<std::string> _tokens;
+};
+
+bool operator==(const Path &lhs, const Path &rhs);
+
+class TimeCode {
+  TimeCode(double tm = 0.0) : _time(tm) {}
+
+  size_t hash() const { return std::hash<double>{}(_time); }
+
+  double value() const { return _time; }
+
+ private:
+  double _time;
+};
+
 class MetaVariable;
 
 using CustomDataType = std::map<std::string, MetaVariable>;
@@ -233,7 +460,7 @@ struct APISchemas
     SkelBindingAPI, // "SkelBindingAPI"
   };
 
-  ListEditQual qual{ListEditQual::ResetToExplicit}; // must be 'prepend'
+  ListEditQual listOpQual{ListEditQual::ResetToExplicit}; // must be 'prepend'
 
   // std::get<1>: instance name. For Multi-apply API Schema e.g. `material:MainMaterial` for `CollectionAPI:material:MainMaterial`
   std::vector<std::pair<APIName, std::string>> names;
@@ -387,7 +614,7 @@ struct Animatable {
 
 ///
 /// Tyeped Attribute without fallback(default) value.
-/// For attribute with `uniform` qualifier or TimeSamples, but don't have `.connect`(Connection)
+/// For attribute with `uniform` qualifier or TimeSamples, or have `.connect`(Connection)
 ///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
@@ -398,9 +625,9 @@ template <typename T>
 class TypedAttribute {
  public:
 
-  void set(const T &v) { attrib = v; }
+  void SetValue(const T &v) { attrib = v; }
 
-  const nonstd::optional<T> get() const {
+  const nonstd::optional<T> GetValue() const {
     if (attrib) {
       return attrib.value();
     }
@@ -417,9 +644,31 @@ class TypedAttribute {
     blocked = onoff;
   }
 
+  bool IsConnection() const {
+    return paths.size();
+  }
+
+  void SetConnection(const Path &path);
+  void SetConnections(const std::vector<Path> &paths);
+
+  const std::vector<Path> &GetConnections() const {
+    return paths; 
+  }
+
+  const nonstd::optional<Path> GetConnection() const {
+    if (paths.size()) {
+      return paths[0];
+    }
+
+    return nonstd::nullopt;
+  }
+
   // value set?
   bool authored() const {
     if (attrib) {
+      return true;
+    }
+    if (paths.size()) {
       return true;
     }
     return false;
@@ -428,6 +677,7 @@ class TypedAttribute {
   AttrMeta meta;
 
  private:
+  std::vector<Path> paths; 
   nonstd::optional<T> attrib;
   bool blocked{false}; // for `uniform` attribute.
 };
@@ -685,232 +935,6 @@ struct ListOpHeader {
 };
 
 
-///
-/// Simlar to SdfPath.
-///
-/// We don't need the performance for USDZ, so use naiive implementation
-/// to represent Path.
-/// Path is something like Unix path, delimited by `/`, ':' and '.'
-/// Square brackets('<', '>' is not included)
-///
-/// Example:
-///
-/// - `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
-/// - `bora` : Relative path
-///
-/// ':' is a namespce delimiter(example `input:muda`).
-///
-/// Limitations:
-///
-/// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
-/// supported.
-/// - Variant chars('{' '}') is not supported.
-/// - '../' is TODO
-///
-/// and have more limitatons.
-///
-class Path {
- public:
-  Path() : valid(false) {}
-
-  // `p` is split into prim_part and prop_part
-  // Path(const std::string &p);
-  Path(const std::string &prim, const std::string &prop);
-
-  // : prim_part(prim), valid(true) {}
-  // Path(const std::string &prim, const std::string &prop)
-  //    : prim_part(prim), prop_part(prop) {}
-
-  Path(const Path &rhs) = default;
-
-  Path &operator=(const Path &rhs) {
-    this->valid = rhs.valid;
-
-    this->prim_part = rhs.prim_part;
-    this->prop_part = rhs.prop_part;
-
-    return (*this);
-  }
-
-  std::string full_path_name() const {
-    std::string s;
-    if (!valid) {
-      s += "#INVALID#";
-    }
-
-    s += prim_part;
-    if (prop_part.empty()) {
-      return s;
-    }
-
-    s += "." + prop_part;
-
-    return s;
-  }
-
-  std::string GetPrimPart() const { return prim_part; }
-
-  std::string GetPropPart() const { return prop_part; }
-
-  bool IsValid() const { return valid; }
-
-  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
-
-  static Path RootPath() { return Path("/", ""); }
-  // static Path RelativePath() { return Path("."); }
-
-  Path AppendProperty(const std::string &elem);
-
-  Path AppendElement(const std::string &elem);
-
-  ///
-  /// Split a path to the root(common ancestor) and its siblings
-  ///
-  /// example:
-  ///
-  /// - / -> [/, Empty]
-  /// - /bora -> [/bora, Empty]
-  /// - /bora/dora -> [/bora, /dora]
-  /// - /bora/dora/muda -> [/bora, /dora/muda]
-  /// - bora -> [Empty, bora]
-  /// - .muda -> [Empty, .muda]
-  ///
-  std::pair<Path, Path> SplitAtRoot() const;
-
-  Path GetParentPrim() const;
-
-  ///
-  /// @returns true if a path is '/' only
-  ///
-  bool IsRootPath() const {
-    if (!valid) {
-      return false;
-    }
-
-    if ((prim_part.size() == 1) && (prim_part[0] == '/')) {
-      return true;
-    }
-
-    return false;
-  }
-
-  ///
-  /// @returns true if a path is root prim: e.g. '/bora'
-  ///
-  bool IsRootPrim() const {
-    if (!valid) {
-      return false;
-    }
-
-    if (IsRootPath()) {
-      return false;
-    }
-
-    if ((prim_part.size() > 1) && (prim_part[0] == '/')) {
-      // no other '/' except for the fist one
-      if (prim_part.find_last_of('/') == 0) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  bool IsAbsolutePath() const {
-    if (prim_part.size()) {
-      if ((prim_part.size() > 0) && (prim_part[0] == '/')) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  bool IsRelativePath() const {
-    if (prim_part.size()) {
-      return !IsAbsolutePath();
-    }
-
-    return true;  // prop part only
-  }
-
-  // Strip '/'
-  Path &MakeRelative() {
-    if (IsAbsolutePath() && (prim_part.size() > 1)) {
-      // Remove first '/'
-      prim_part.erase(0, 1);
-    }
-    return *this;
-  }
-
-  const Path MakeRelative(Path &&rhs) {
-    (*this) = std::move(rhs);
-
-    return MakeRelative();
-  }
-
-  static const Path MakeRelative(const Path &rhs) {
-    Path p = rhs;  // copy
-    return p.MakeRelative();
-  }
-
- private:
-  std::string prim_part;  // e.g. /Model/MyMesh, MySphere
-  std::string prop_part;  // e.g. .visibility
-  bool valid{false};
-};
-
-///
-/// Split Path by the delimiter(e.g. "/") then create lists.
-///
-class TokenizedPath {
- public:
-  TokenizedPath() {}
-
-  TokenizedPath(const Path &path) {
-    std::string s = path.GetPropPart();
-    if (s.empty()) {
-      // ???
-      return;
-    }
-
-    if (s[0] != '/') {
-      // Path must start with "/"
-      return;
-    }
-
-    s.erase(0, 1);
-
-    char delimiter = '/';
-    size_t pos{0};
-    while ((pos = s.find(delimiter)) != std::string::npos) {
-      std::string token = s.substr(0, pos);
-      _tokens.push_back(token);
-      s.erase(0, pos + sizeof(char));
-    }
-
-    if (!s.empty()) {
-      // leaf element
-      _tokens.push_back(s);
-    }
-  }
-
- private:
-  std::vector<std::string> _tokens;
-};
-
-bool operator==(const Path &lhs, const Path &rhs);
-
-class TimeCode {
-  TimeCode(double tm = 0.0) : _time(tm) {}
-
-  size_t hash() const { return std::hash<double>{}(_time); }
-
-  double value() const { return _time; }
-
- private:
-  double _time;
-};
 
 struct LayerOffset {
   double _offset;
@@ -1057,7 +1081,7 @@ class Relation {
   std::string targetString;
   Path targetPath;
   std::vector<Path> targetPathVector;
-  ListEditQual qual{ListEditQual::ResetToExplicit};
+  ListEditQual listOpQual{ListEditQual::ResetToExplicit};
 
   static Relation MakeEmpty() {
     Relation r;
@@ -1066,11 +1090,11 @@ class Relation {
   }
 
   void SetListEditQualifier(ListEditQual q) {
-    qual = q;
+    listOpQual = q;
   }
 
   ListEditQual GetListEditQualifier() const {
-    return qual;
+    return listOpQual;
   }
 
   void SetEmpty() { type = Type::Empty; }
@@ -1174,8 +1198,11 @@ struct PrimAttrib {
   primvar::PrimVar _var;
 };
 
+#if 0
 ///
 /// Typed version of Property(e.g. for `points`, `normals`, `velocities.timeSamples`, `inputs:st.connect`)
+/// (but no Relation)
+/// TODO: Use TypedAttribute since this class does not store Relation information.
 ///
 template <typename T>
 class TypedProperty {
@@ -1192,6 +1219,10 @@ class TypedProperty {
   nonstd::optional<Animatable<T>> value; // T or TimeSamples<T>
   nonstd::optional<Path> target;
 
+  //bool IsRel() const {
+  //  return (value::TypeTrait<T>::type_id == value::TypeTrait<Relation>::type_id)
+  //}
+    
   bool IsConnection() const {
     return target.has_value();
   }
@@ -1221,8 +1252,9 @@ class TypedProperty {
 
   // TODO: Other variability
   bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
-  ListEditQual qual{ListEditQual::ResetToExplicit}; // default = "unqualified"
+  //ListEditQual listOpQual{ListEditQual::ResetToExplicit}; // default = "unqualified"
 };
+#endif
 
 // Generic container for Attribute or Relation/Connection. And has this property is custom or not
 // (Need to lookup schema if the property is custom or not for Crate data)
@@ -1239,7 +1271,7 @@ class Property {
   PrimAttrib attrib;
   Relation rel;  // Relation(`rel`) or Connection(`.connect`)
   Type type{Type::EmptyAttrib};
-  ListEditQual qual{ListEditQual::ResetToExplicit}; // List Edit qualifier(Attribute can never be list editable)
+  ListEditQual listOpQual{ListEditQual::ResetToExplicit}; // List Edit qualifier(Attribute can never be list editable)
 
   bool has_custom{false};  // Qualified with 'custom' keyword?
 

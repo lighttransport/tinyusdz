@@ -396,7 +396,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
                                        item.str());
       }
     }
-    schemas.qual = ListEditQual::ResetToExplicit;
+    schemas.listOpQual = ListEditQual::ResetToExplicit;
 
   } else {
     // Assume all items have same ListEdit qualifier.
@@ -417,7 +417,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
                                          item.str());
         }
       }
-      schemas.qual = ListEditQual::ResetToExplicit;
+      schemas.listOpQual = ListEditQual::ResetToExplicit;
 
     } else if (arg.GetAddedItems().size()) {
       if (arg.GetExplicitItems().size() || arg.GetAppendedItems().size() ||
@@ -436,7 +436,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
                                          item.str());
         }
       }
-      schemas.qual = ListEditQual::Add;
+      schemas.listOpQual = ListEditQual::Add;
     } else if (arg.GetAppendedItems().size()) {
       if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
           arg.GetDeletedItems().size() || arg.GetPrependedItems().size() ||
@@ -454,7 +454,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
                                          item.str());
         }
       }
-      schemas.qual = ListEditQual::Append;
+      schemas.listOpQual = ListEditQual::Append;
     } else if (arg.GetDeletedItems().size()) {
       if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
           arg.GetAppendedItems().size() || arg.GetPrependedItems().size() ||
@@ -472,7 +472,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
                                          item.str());
         }
       }
-      schemas.qual = ListEditQual::Delete;
+      schemas.listOpQual = ListEditQual::Delete;
     } else if (arg.GetPrependedItems().size()) {
       if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
           arg.GetAppendedItems().size() || arg.GetDeletedItems().size() ||
@@ -490,7 +490,7 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
                                          item.str());
         }
       }
-      schemas.qual = ListEditQual::Prepend;
+      schemas.listOpQual = ListEditQual::Prepend;
     } else if (arg.GetOrderedItems().size()) {
       if (arg.GetExplicitItems().size() || arg.GetAddedItems().size() ||
           arg.GetAppendedItems().size() || arg.GetDeletedItems().size() ||
@@ -941,7 +941,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       if (auto pv = fv.second.get_value<std::string>()) {
         StringData s;
         s.value = pv.value();
-        s.is_triple_quoted = hasNewline(s.value); 
+        s.is_triple_quoted = hasNewline(s.value);
         comment = s;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
