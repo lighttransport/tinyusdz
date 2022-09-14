@@ -722,7 +722,7 @@ std::string Stage::ExportToString() const {
   }
 
   if (stage_metas.customLayerData.size()) {
-    ss << print_customData(stage_metas.customLayerData, /* indent */1);
+    ss << print_customData(stage_metas.customLayerData, "customLayerData", /* indent */1);
   }
 
   // TODO: Sort by line_no?(preserve appearance in read USDA)

@@ -139,6 +139,7 @@ std::string to_string(const UsdPrimvarReader_int &shader, const uint32_t indent 
 #endif
 
 std::string to_string(const UsdUVTexture::SourceColorSpace v);
+std::string to_string(const UsdUVTexture::Wrap v);
 
 std::string to_string(const GeomCamera::Projection &proj);
 std::string to_string(const GeomCamera::StereoRole &role);
@@ -146,7 +147,7 @@ std::string to_string(const GeomCamera::StereoRole &role);
 std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent);
-std::string print_customData(const CustomDataType &customData, const uint32_t indent);
+std::string print_customData(const CustomDataType &customData, const std::string &name, const uint32_t indent);
 
 
 } // namespace tinyusdz

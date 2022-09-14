@@ -1474,7 +1474,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 #endif
 
 
-// For Uniform enum(e.g. nonstd::optional<Axis>)
+// TODO: TimeSamples
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target) {                                      \
   if (__prop.first == __name) {                                              \
@@ -1497,6 +1497,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
                                 << attr.type_name() << "`.");            \
     }                                                                        \
   } }
+
 
 #if 0 // TODO: remove
 #define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target) { \
@@ -2382,6 +2383,7 @@ bool ReconstructPrim<GeomSphere>(
     std::string *warn,
     std::string *err) {
 
+  (void)warn;
   (void)references;
 
   DCOUT("Reconstruct Sphere.");
@@ -2434,20 +2436,13 @@ bool ReconstructPrim<GeomSphere>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    if (prop.second.IsRel()) {
-      PARSE_MATERIAL_BINDING_RELATION(table, prop, sphere)
-      {
-        PUSH_WARN("TODO: Rel " << prop.first);
-        table.insert(prop.first);
-      }
-    } else {
-      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomSphere, sphere->radius)
-      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomSphere, sphere->extent)
-      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomSphere,
-                         sphere->purpose)
-      ADD_PROPERY(table, prop, GeomSphere, sphere->props)
-      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-    }
+    PARSE_MATERIAL_BINDING_RELATION(table, prop, sphere)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomSphere, sphere->radius)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomSphere, sphere->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomSphere,
+                       sphere->purpose)
+    ADD_PROPERY(table, prop, GeomSphere, sphere->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
 #if 0 // TODO
@@ -2497,6 +2492,7 @@ bool ReconstructPrim<GeomPoints>(
     std::string *warn,
     std::string *err) {
 
+  (void)warn;
   (void)references;
 
   DCOUT("Reconstruct Points.");
@@ -2549,25 +2545,18 @@ bool ReconstructPrim<GeomPoints>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    if (prop.second.IsRel()) {
-      PARSE_MATERIAL_BINDING_RELATION(table, prop, points)
-      {
-        PUSH_WARN("TODO: Rel " << prop.first);
-        table.insert(prop.first);
-      }
-    } else {
-      PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomPoints, points->points)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomPoints, points->normals)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomPoints, points->widths)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "ids", GeomPoints, points->ids)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPoints, points->velocities)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPoints, points->accelerations)
-      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomPoints, points->extent)
-      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomPoints,
-                         points->purpose)
-      ADD_PROPERY(table, prop, GeomSphere, points->props)
-      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-    }
+    PARSE_MATERIAL_BINDING_RELATION(table, prop, points)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomPoints, points->points)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomPoints, points->normals)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomPoints, points->widths)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "ids", GeomPoints, points->ids)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPoints, points->velocities)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPoints, points->accelerations)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomPoints, points->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomPoints,
+                       points->purpose)
+    ADD_PROPERY(table, prop, GeomSphere, points->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
 #if 0 // TODO
@@ -2617,6 +2606,7 @@ bool ReconstructPrim<GeomCone>(
     std::string *warn,
     std::string *err) {
 
+  (void)warn;
   (void)references;
 
   std::set<std::string> table;
@@ -2627,23 +2617,16 @@ bool ReconstructPrim<GeomCone>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    if (prop.second.IsRel()) {
-      PARSE_PROXY_PRIM_RELATION(table, prop, cone)
-      PARSE_MATERIAL_BINDING_RELATION(table, prop, cone)
-      {
-        PUSH_WARN("TODO: rel " << prop.first);
-        table.insert(prop.first);
-      }
-    } else {
-      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
-      PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
-      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCone,
-                         cone->purpose)
-      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
-      ADD_PROPERY(table, prop, GeomCone, cone->props)
-      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-    }
+    PARSE_PROXY_PRIM_RELATION(table, prop, cone)
+    PARSE_MATERIAL_BINDING_RELATION(table, prop, cone)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
+    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCone,
+                       cone->purpose)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
+    ADD_PROPERY(table, prop, GeomCone, cone->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
@@ -2657,6 +2640,7 @@ bool ReconstructPrim<GeomCylinder>(
     std::string *warn,
     std::string *err) {
 
+  (void)warn;
   (void)references;
 
 
@@ -2668,25 +2652,18 @@ bool ReconstructPrim<GeomCylinder>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    if (prop.second.IsRel()) {
-      PARSE_PROXY_PRIM_RELATION(table, prop, cylinder)
-      PARSE_MATERIAL_BINDING_RELATION(table, prop, cylinder)
-       {
-        PUSH_WARN("TODO:" << prop.first);
-        table.insert(prop.first);
-      }
-    } else {
-      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCylinder,
-                           cylinder->radius)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
-                           cylinder->height)
-      PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis)
-      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCylinder,
-                         cylinder->purpose)
-      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCylinder, cylinder->extent)
-      ADD_PROPERY(table, prop, GeomCylinder, cylinder->props)
-      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-    }
+    PARSE_PROXY_PRIM_RELATION(table, prop, cylinder)
+    PARSE_MATERIAL_BINDING_RELATION(table, prop, cylinder)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCylinder,
+                         cylinder->radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
+                         cylinder->height)
+    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCylinder,
+                       cylinder->purpose)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCylinder, cylinder->extent)
+    ADD_PROPERY(table, prop, GeomCylinder, cylinder->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
@@ -2700,6 +2677,7 @@ bool ReconstructPrim<GeomCapsule>(
     std::string *warn,
     std::string *err) {
 
+  (void)warn;
   (void)references;
 
   std::set<std::string> table;
@@ -2710,23 +2688,16 @@ bool ReconstructPrim<GeomCapsule>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    if (prop.second.IsRel()) {
-      PARSE_PROXY_PRIM_RELATION(table, prop, capsule)
-      PARSE_MATERIAL_BINDING_RELATION(table, prop, capsule)
-      {
-        PUSH_WARN("TODO:" << prop.first);
-        table.insert(prop.first);
-      }
-    } else {
-      PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
-      PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis)
-      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCapsule,
-                         capsule->purpose)
-      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCapsule, capsule->extent)
-      ADD_PROPERY(table, prop, GeomCapsule, capsule->props)
-      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-    }
+    PARSE_PROXY_PRIM_RELATION(table, prop, capsule)
+    PARSE_MATERIAL_BINDING_RELATION(table, prop, capsule)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
+    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCapsule,
+                       capsule->purpose)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCapsule, capsule->extent)
+    ADD_PROPERY(table, prop, GeomCapsule, capsule->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
@@ -2740,6 +2711,7 @@ bool ReconstructPrim<GeomCube>(
     std::string *warn,
     std::string *err) {
 
+  (void)warn;
   (void)references;
 
   //
@@ -2753,21 +2725,14 @@ bool ReconstructPrim<GeomCube>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    if (prop.second.IsRel()) {
-      PARSE_PROXY_PRIM_RELATION(table, prop, cube)
-      PARSE_MATERIAL_BINDING_RELATION(table, prop, cube)
-       {
-        PUSH_WARN("TODO:" << prop.first);
-        table.insert(prop.first);
-      }
-    } else {
-      PARSE_TYPED_ATTRIBUTE(table, prop, "size", GeomCube, cube->size)
-      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCube, cube->extent)
-      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCube,
-                         cube->purpose)
-      ADD_PROPERY(table, prop, GeomCube, cube->props)
-      PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-    }
+    PARSE_PROXY_PRIM_RELATION(table, prop, cube)
+    PARSE_MATERIAL_BINDING_RELATION(table, prop, cube)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "size", GeomCube, cube->size)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCube, cube->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCube,
+                       cube->purpose)
+    ADD_PROPERY(table, prop, GeomCube, cube->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
   return true;
@@ -2913,53 +2878,45 @@ bool ReconstructPrim<GeomMesh>(
 
   for (const auto &prop : properties) {
     DCOUT("GeomMesh prop: " << prop.first);
-    if (prop.second.IsRel()) {
-      DCOUT(fmt::format("{} is Relationship", prop.first));
-      PARSE_PROXY_PRIM_RELATION(table, prop, mesh)
-      PARSE_MATERIAL_BINDING_RELATION(table, prop, mesh)
-      PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
-      {
-        PUSH_WARN("TODO: rel : " << prop.first);
-        table.insert(prop.first); // mark it procesed
-      }
-    } else {
-      PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomMesh, mesh->points)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomMesh, mesh->normals)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexCounts", GeomMesh,
-                           mesh->faceVertexCounts)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexIndices", GeomMesh,
-                           mesh->faceVertexIndices)
-      // Subd
-      PARSE_TYPED_ATTRIBUTE(table, prop, "cornerIndices", GeomMesh,
-                           mesh->cornerIndices)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "cornerSharpnesses", GeomMesh,
-                           mesh->cornerIndices)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "creaseIndices", GeomMesh,
-                           mesh->cornerIndices)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "creaseLengths", GeomMesh,
-                           mesh->cornerIndices)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "creaseSharpnesses", GeomMesh,
-                           mesh->cornerIndices)
-      PARSE_TYPED_ATTRIBUTE(table, prop, "holeIndices", GeomMesh,
-                           mesh->cornerIndices)
-      //
-      PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GeomMesh, mesh->doubleSided)
+    PARSE_PROXY_PRIM_RELATION(table, prop, mesh)
+    PARSE_MATERIAL_BINDING_RELATION(table, prop, mesh)
+    PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomMesh, mesh->points)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomMesh, mesh->normals)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexCounts", GeomMesh,
+                         mesh->faceVertexCounts)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexIndices", GeomMesh,
+                         mesh->faceVertexIndices)
+    // Subd
+    PARSE_TYPED_ATTRIBUTE(table, prop, "cornerIndices", GeomMesh,
+                         mesh->cornerIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "cornerSharpnesses", GeomMesh,
+                         mesh->cornerIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "creaseIndices", GeomMesh,
+                         mesh->cornerIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "creaseLengths", GeomMesh,
+                         mesh->cornerIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "creaseSharpnesses", GeomMesh,
+                         mesh->cornerIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "holeIndices", GeomMesh,
+                         mesh->cornerIndices)
+    //
+    PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GeomMesh, mesh->doubleSided)
 
-      PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme",
-                         SubdivisioSchemeHandler, GeomMesh,
-                         mesh->subdivisionScheme)
-      PARSE_ENUM_PROPETY(table, prop, "interpolateBoundary",
-                         InterpolateBoundaryHandler, GeomMesh,
-                         mesh->interpolateBoundary)
-      PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
-                         FaceVaryingLinearInterpolationHandler, GeomMesh,
-                         mesh->faceVaryingLinearInterpolation)
-      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomMesh,
-                         mesh->purpose)
-      PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomMesh, mesh->extent)
-      ADD_PROPERY(table, prop, GeomMesh, mesh->props)
-      PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-    }
+    PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme",
+                       SubdivisioSchemeHandler, GeomMesh,
+                       mesh->subdivisionScheme)
+    PARSE_ENUM_PROPETY(table, prop, "interpolateBoundary",
+                       InterpolateBoundaryHandler, GeomMesh,
+                       mesh->interpolateBoundary)
+    PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
+                       FaceVaryingLinearInterpolationHandler, GeomMesh,
+                       mesh->faceVaryingLinearInterpolation)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomMesh,
+                       mesh->purpose)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomMesh, mesh->extent)
+    ADD_PROPERY(table, prop, GeomMesh, mesh->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
   //
@@ -3153,6 +3110,21 @@ bool ReconstructShader<UsdUVTexture>(
         "inputs:sourceColorSpace", tok, enums);
   };
 
+  auto WrapHandler = [](const std::string &tok)
+      -> nonstd::expected<UsdUVTexture::Wrap, std::string> {
+    using EnumTy = std::pair<UsdUVTexture::Wrap, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(UsdUVTexture::Wrap::UseMetadata, "useMetadata"),
+        std::make_pair(UsdUVTexture::Wrap::Black, "black"),
+        std::make_pair(UsdUVTexture::Wrap::Clamp, "clamp"),
+        std::make_pair(UsdUVTexture::Wrap::Repeat, "repeat"),
+        std::make_pair(UsdUVTexture::Wrap::Mirror, "mirror"),
+    };
+
+    return EnumHandler<UsdUVTexture::Wrap>(
+        "inputs:wrap*", tok, enums);
+  };
+
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
@@ -3163,6 +3135,12 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
                        SourceColorSpaceHandler, UsdUVTexture,
                        texture->sourceColorSpace)
+    PARSE_ENUM_PROPETY(table, prop, "inputs:wrapS",
+                       WrapHandler, UsdUVTexture,
+                       texture->wrapS)
+    PARSE_ENUM_PROPETY(table, prop, "inputs:wrapT",
+                       WrapHandler, UsdUVTexture,
+                       texture->wrapT)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
                                   texture->outputsR)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:g", UsdUVTexture,
