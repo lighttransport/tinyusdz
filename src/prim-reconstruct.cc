@@ -33,6 +33,7 @@
 namespace tinyusdz {
 namespace prim {
 
+constexpr auto kProxyPrim = "proxyPrim";
 constexpr auto kMaterialBinding = "material:binding";
 constexpr auto kSkelSkeleton = "skel:skeleton";
 constexpr auto kSkelAnimationSource = "skel:animationSource";
@@ -1176,6 +1177,25 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
   return ret;
 }
 
+#define PARSE_PROXY_PRIM_RELATION(__table, __prop, __ptarget) \
+  if (prop.first == kProxyPrim) { \
+    if (__table.count(kProxyPrim)) { \
+       continue; \
+    } \
+    if (prop.second.IsRel() && prop.second.IsEmpty()) { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kProxyPrim)); \
+    } \
+    const Relation &rel = prop.second.rel; \
+    if (rel.IsPath()) { \
+      __ptarget->proxyPrim = rel; \
+      table.insert(prop.first); \
+      DCOUT("Added rel proxyPrim."); \
+      continue; \
+    } else { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kProxyPrim)); \
+    } \
+  }
+
 // "rel material:binding = <...>"
 #define PARSE_MATERIAL_BINDING_RELATION(__table, __prop, __ptarget) \
   if (prop.first == kMaterialBinding) { \
@@ -1334,6 +1354,26 @@ static nonstd::expected<Axis, std::string> AxisEnumHandler(const std::string &to
       std::make_pair(Axis::Z, "Z"),
   };
   return EnumHandler<Axis>("axis", tok, enums);
+};
+
+static nonstd::expected<Visibility, std::string> VisibilityEnumHandler(const std::string &tok) {
+  using EnumTy = std::pair<Visibility, const char *>;
+  const std::vector<EnumTy> enums = {
+      std::make_pair(Visibility::Inherited, "inherited"),
+      std::make_pair(Visibility::Invisible, "invisible"),
+  };
+  return EnumHandler<Visibility>("visilibity", tok, enums);
+};
+
+static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::string &tok) {
+  using EnumTy = std::pair<Purpose, const char *>;
+  const std::vector<EnumTy> enums = {
+      std::make_pair(Purpose::Default, "default"),
+      std::make_pair(Purpose::Proxy, "proxy"),
+      std::make_pair(Purpose::Render, "render"),
+      std::make_pair(Purpose::Guide, "guide"),
+  };
+  return EnumHandler<Purpose>("purpose", tok, enums);
 };
 
 #if 0
@@ -2138,6 +2178,8 @@ bool ReconstructPrim(
     PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomBasisCurves,
                  curves->accelerations)
     PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomBasisCurves, curves->widths)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomBasisCurves,
+                       curves->purpose)
     PARSE_ENUM_PROPETY(table, prop, "type", TypeHandler, GeomBasisCurves,
                        curves->type)
     PARSE_ENUM_PROPETY(table, prop, "basis", BasisHandler, GeomBasisCurves,
@@ -2175,6 +2217,8 @@ bool ReconstructPrim<LuxSphereLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxSphereLight, light->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxSphereLight,
                    light->intensity)
+    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, LuxSphereLight,
+                   light->visibility)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
     ADD_PROPERY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -2399,6 +2443,8 @@ bool ReconstructPrim<GeomSphere>(
     } else {
       PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomSphere, sphere->radius)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomSphere, sphere->extent)
+      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomSphere,
+                         sphere->purpose)
       ADD_PROPERY(table, prop, GeomSphere, sphere->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2517,6 +2563,8 @@ bool ReconstructPrim<GeomPoints>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPoints, points->velocities)
       PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPoints, points->accelerations)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomPoints, points->extent)
+      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomPoints,
+                         points->purpose)
       ADD_PROPERY(table, prop, GeomSphere, points->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2580,6 +2628,7 @@ bool ReconstructPrim<GeomCone>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
+      PARSE_PROXY_PRIM_RELATION(table, prop, cone)
       PARSE_MATERIAL_BINDING_RELATION(table, prop, cone)
       {
         PUSH_WARN("TODO: rel " << prop.first);
@@ -2589,6 +2638,8 @@ bool ReconstructPrim<GeomCone>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
       PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
       PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
+      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCone,
+                         cone->purpose)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2617,6 +2668,7 @@ bool ReconstructPrim<GeomCylinder>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
+      PARSE_PROXY_PRIM_RELATION(table, prop, cylinder)
       PARSE_MATERIAL_BINDING_RELATION(table, prop, cylinder)
        {
         PUSH_WARN("TODO:" << prop.first);
@@ -2628,6 +2680,8 @@ bool ReconstructPrim<GeomCylinder>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
                            cylinder->height)
       PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis)
+      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCylinder,
+                         cylinder->purpose)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCylinder, cylinder->extent)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2655,6 +2709,7 @@ bool ReconstructPrim<GeomCapsule>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
+      PARSE_PROXY_PRIM_RELATION(table, prop, capsule)
       PARSE_MATERIAL_BINDING_RELATION(table, prop, capsule)
       {
         PUSH_WARN("TODO:" << prop.first);
@@ -2664,6 +2719,8 @@ bool ReconstructPrim<GeomCapsule>(
       PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
       PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
       PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis)
+      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCapsule,
+                         capsule->purpose)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCapsule, capsule->extent)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2694,6 +2751,7 @@ bool ReconstructPrim<GeomCube>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     if (prop.second.IsRel()) {
+      PARSE_PROXY_PRIM_RELATION(table, prop, cube)
       PARSE_MATERIAL_BINDING_RELATION(table, prop, cube)
        {
         PUSH_WARN("TODO:" << prop.first);
@@ -2702,6 +2760,8 @@ bool ReconstructPrim<GeomCube>(
     } else {
       PARSE_TYPED_ATTRIBUTE(table, prop, "size", GeomCube, cube->size)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCube, cube->extent)
+      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCube,
+                         cube->purpose)
       ADD_PROPERY(table, prop, GeomCube, cube->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
@@ -2852,6 +2912,7 @@ bool ReconstructPrim<GeomMesh>(
     DCOUT("GeomMesh prop: " << prop.first);
     if (prop.second.IsRel()) {
       DCOUT(fmt::format("{} is Relationship", prop.first));
+      PARSE_PROXY_PRIM_RELATION(table, prop, mesh)
       PARSE_MATERIAL_BINDING_RELATION(table, prop, mesh)
       PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
       {
@@ -2890,6 +2951,8 @@ bool ReconstructPrim<GeomMesh>(
       PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
                          FaceVaryingLinearInterpolationHandler, GeomMesh,
                          mesh->faceVaryingLinearInterpolation)
+      PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomMesh,
+                         mesh->purpose)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomMesh, mesh->extent)
       ADD_PROPERY(table, prop, GeomMesh, mesh->props)
       PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -3001,6 +3064,8 @@ bool ReconstructPrim<GeomCamera>(
                        camera->projection)
     PARSE_ENUM_PROPETY(table, prop, "stereoRole", StereoRoleHandler, GeomCamera,
                        camera->stereoRole)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCamera,
+                         camera->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCamera, camera->extent)
     ADD_PROPERY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)

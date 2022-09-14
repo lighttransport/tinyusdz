@@ -14,11 +14,9 @@ constexpr auto kLuxDomeLight = "DomeLight";
 constexpr auto kLuxDiskLight = "DiskLight";
 constexpr auto kLuxRectLight = "RectLight";
 constexpr auto kLuxDistantLight = "DistantLight";
-
-// TODO
-//constexpr auto kLuxGeometryLight = "GeometryLight";
-//constexpr auto kLuxPortalLight = "PortalLight";
-//constexpr auto kLuxPluginLight = "PluginLight";
+constexpr auto kLuxGeometryLight = "GeometryLight";
+constexpr auto kLuxPortalLight = "PortalLight";
+constexpr auto kLuxPluginLight = "PluginLight";
 
 
 struct LuxSphereLight : public Xformable {
@@ -245,6 +243,24 @@ struct LuxDomeLight : public Xformable {
   PrimMeta meta;
 };
 
+// TODO:
+struct LuxGeometryLight : public Xformable {
+  nonstd::optional<Relation> geometry; // `rel geometry`
+};
+
+// TODO
+struct LuxPortalLight : public Xformable {
+  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+};
+
+// TODO
+struct LuxPluginLight : public Xformable {
+};
+
+// TODO
+struct PluginLightFilter {
+};
+
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
@@ -256,6 +272,10 @@ DEFINE_TYPE_TRAIT(LuxCylinderLight, kLuxCylinderLight, TYPE_ID_LUX_CYLINDER, 1);
 DEFINE_TYPE_TRAIT(LuxSphereLight, kLuxSphereLight, TYPE_ID_LUX_SPHERE, 1);
 DEFINE_TYPE_TRAIT(LuxDiskLight, kLuxDiskLight, TYPE_ID_LUX_DISK, 1);
 DEFINE_TYPE_TRAIT(LuxDistantLight, kLuxDistantLight, TYPE_ID_LUX_DISTANT, 1);
+DEFINE_TYPE_TRAIT(LuxRectLight, kLuxRectLight, TYPE_ID_LUX_RECT, 1);
+DEFINE_TYPE_TRAIT(LuxGeometryLight, kLuxGeometryLight, TYPE_ID_LUX_GEOMETRY, 1);
+DEFINE_TYPE_TRAIT(LuxPortalLight, kLuxPortalLight, TYPE_ID_LUX_PORTAL, 1);
+DEFINE_TYPE_TRAIT(LuxPluginLight, kLuxPluginLight, TYPE_ID_LUX_PLUGIN, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
