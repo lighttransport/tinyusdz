@@ -2746,6 +2746,32 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::quatd> *value) {
   return false;
 }
 
+template <>
+bool AsciiParser::ReadBasicType(value::AssetPath *value) {
+
+  bool triple_deliminated;
+  if (ParseAssetIdentifier(value, &triple_deliminated)) {
+    return true;
+  }
+  return false;
+}
+
+template <>
+bool AsciiParser::ReadBasicType(nonstd::optional<value::AssetPath> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::AssetPath v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 // 1D array
 template <typename T>
 bool AsciiParser::ReadBasicType(std::vector<T> *value) {
@@ -4505,17 +4531,16 @@ bool AsciiParser::ParseCustomMetaValue() {
   PUSH_ERROR_AND_RETURN("TODO");
 }
 
-// TODO: Return Path
-bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
+bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated)
+{
   // @...@
-  // or @@@...@@@ (Triple '@'-deliminated asset references.)
-  // And optionally followed by prim path.
+  // or @@@...@@@ (Triple '@'-deliminated asset identifier.)
+  // @@@ = Path containing '@'. '@@@' in Path is encoded as '\@@@'
+  // 
   // Example:
   //   @bora@
   //   @@@bora@@@
-  //   @bora@</dora>
-  //
-  // @@@ = Path containing '@'. '@@@' in Path is encoded as '\@@@'
+  //   @@@bora\@@@dora@@@
 
   // TODO: Correctly support escape characters
 
@@ -4571,7 +4596,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
     }
 
     if (found_delimiter) {
-      out->asset_path = tok;
+      (*out) = tok;
       (*triple_deliminated) = false;
 
       valid = true;
@@ -4630,16 +4655,32 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 
     if (found_delimiter) {
       // remote last '@@@'
-      out->asset_path = removeSuffix(tok, "@@@");
+      (*out) = removeSuffix(tok, "@@@");
       (*triple_deliminated) = true;
 
       valid = true;
     }
   }
 
-  if (!valid) {
-    return false;
+  return valid;
+}
+
+// TODO: Return Path
+bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
+
+  /*
+    Asset reference = AsssetIdentifier + optially followd by prim path
+   
+    Example:
+     @bora@
+     @bora@</dora>
+  */
+
+  value::AssetPath ap;
+  if (!ParseAssetIdentifier(&ap, triple_deliminated)) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse asset path identifier.");
   }
+  out->asset_path = ap;
 
   // Parse optional prim_path
   if (!SkipWhitespace()) {
@@ -5865,6 +5906,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
     // NOTE: `string` does not support multi-line string.
 
+    PARSE_TYPE(value::AssetPath)
     PARSE_TYPE(value::token)
     PARSE_TYPE(std::string)
     PARSE_TYPE(float)

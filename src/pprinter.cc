@@ -228,7 +228,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.assetInfo) {
-    ss << print_customData(meta.assetInfo.value(), indent+1);
+    ss << print_customData(meta.assetInfo.value(), "assetInfo", indent);
   }
 
   if (meta.apiSchemas) {
@@ -267,7 +267,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.customData) {
-    ss << print_customData(meta.customData.value(), indent+1);
+    ss << print_customData(meta.customData.value(), "customData", indent+1);
   }
 
 
@@ -299,7 +299,7 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   }
 
   if (meta.customData) {
-    ss << print_customData(meta.customData.value(), indent);
+    ss << print_customData(meta.customData.value(), "customData", indent);
   }
 
   // other user defined metadataum.
@@ -661,65 +661,76 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
   return ss.str();
 }
 
-#if 0
-template<typename T>
-std::string print_typed_prop(const TypedProperty<T> &prop, const std::string &name, const uint32_t indent) {
-
+std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent) {
   std::stringstream ss;
 
-  if (prop.authored()) {
+  if (v.IsScalar()) {
+    ss << value::pprint_value(v.values[0]);
+  } else {
 
-    ss << pprint::Indent(indent);
-
-    if (prop.IsRel()) {
-
-      if (prop.listOpQual != ListEditQual::ResetToExplicit) {
-        ss << to_string(prop.listOpQual);
-      }
-      ss << "rel " << name;
-
-      ss << "\n";
-      return ss.str();
+    if (!v.ValidTimeSamples()) {
+      return "[Invalid TimeSamples data(internal error?)]";
     }
 
-    if (prop.variability == Variability::Uniform) {
-      ss << "uniform ";
-    }
+    ss << "{\n";
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    for (size_t i = 0; i < v.times.size(); i++) {
 
-    if (prop.IsAttrib() && prop.value.value().IsTimeSamples()) {
-      ss << ".timeSamples";
+      ss << pprint::Indent(indent+1);
+      ss << v.times[i] << ": " << value::pprint_value(v.values[i]);
+      ss << ",\n"; // USDA allow ',' for the last item
     }
-
-    if (prop.IsEmptyAttrib()) {
-      // nothing todo;
-    } else if (prop.IsAttrib()) {
-      if (prop.value.value().IsBlocked()) {
-        ss << " = None";
-      } else {
-        ss << " = ";
-        if (prop.value.value().IsTimeSamples()) {
-          ss << print_typed_timesamples(prop.value.value().ts, indent+1);
-        } else {
-          ss << prop.value.value().value;
-        }
-      }
-    } else if (prop.IsConnection()) {
-      ss << " = " << pquote(prop.target.value());
-    } else {
-      ss << "[??? Invalid Property data]";
-    }
-
-    if (prop.meta.authored()) {
-      ss << " (\n" << print_attr_metas(prop.meta, indent + 1) << pprint::Indent(indent) << ")";
-    }
-    ss << "\n";
+    ss << pprint::Indent(indent) << "}\n";
   }
 
   return ss.str();
 }
-#endif
+
+std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent)
+{
+  std::stringstream ss;
+  
+  if (!prop.IsRel()) {
+    return ss.str();
+  }
+
+  ss << pprint::Indent(indent);
+
+  if (prop.HasCustom()) {
+    ss << "custom ";
+  }
+
+  // List editing
+  if (prop.listOpQual != ListEditQual::ResetToExplicit) {
+    ss << to_string(prop.listOpQual) << " ";
+  }
+  
+  ss << "rel " << name;
+
+  const Relation &rel = prop.rel;
+
+
+  if (rel.IsEmpty()) {
+    // nothing todo
+  } else if (rel.IsPath()) {
+    ss << " = " << rel.targetPath;
+  } else if (rel.IsPathVector()) {
+    ss << " = " << rel.targetPathVector;
+  } else if (rel.IsString()) {
+    ss << " = " << quote(rel.targetString);
+  } else {
+    ss << "[InternalErrror]";
+  }
+
+  // Metadata is stored in attrib.meta.
+  if (rel.meta.authored()) {
+    ss << " (\n" << print_attr_metas(rel.meta, indent+1) << pprint::Indent(indent) << ")";
+  }
+
+  ss << "\n";
+
+  return ss.str();
+}
 
 
 // Print user-defined (custom) properties.
@@ -729,14 +740,16 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
 
   for (const auto &item : props) {
 
-    ss << pprint::Indent(indent);
-
     const Property &prop = item.second;
 
     if (prop.IsRel()) {
-      ss << "[TODO]: `rel`";
+
+      ss << print_rel_prop(prop, item.first, indent);
+
     } else {
       const PrimAttrib &attr = item.second.attrib;
+
+      ss << pprint::Indent(indent);
 
 
       if (prop.HasCustom()) {
@@ -758,7 +771,9 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
 
         ss << " = ";
         if (prop.rel.IsPath()) {
-          ss << pquote(prop.rel.targetPath);
+          ss << prop.rel.targetPath;
+        } else if (prop.rel.IsPathVector()) {
+          ss << prop.rel.targetPathVector;
         }
       } else if (prop.IsEmpty()) {
         ss << "\n";
@@ -767,19 +782,18 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
         ss << " = ";
 
         if (attr.get_var().is_timesample()) {
-          ss << "[TODO: TimeSamples]";
+          ss << print_timesamples(attr.get_var().var, indent+1);
         } else {
           // is_scalar
           ss << value::pprint_value(attr.get_var().var.values[0]);
         }
       }
-    }
 
-    if (item.second.attrib.meta.authored()) {
-      ss << " (\n" << print_attr_metas(item.second.attrib.meta, indent+1) << pprint::Indent(indent) << ")";
+      if (item.second.attrib.meta.authored()) {
+        ss << " (\n" << print_attr_metas(item.second.attrib.meta, indent+1) << pprint::Indent(indent) << ")";
+      }
+      ss << "\n";
     }
-
-    ss << "\n";
   }
 
   return ss.str();
@@ -814,30 +828,6 @@ std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint3
 }
 
 
-std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent) {
-  std::stringstream ss;
-
-  if (v.IsScalar()) {
-    ss << value::pprint_value(v.values[0]);
-  } else {
-
-    if (!v.ValidTimeSamples()) {
-      return "[Invalid TimeSamples data(internal error?)]";
-    }
-
-    ss << "{\n";
-
-    for (size_t i = 0; i < v.times.size(); i++) {
-
-      ss << pprint::Indent(indent+1);
-      ss << v.times[i] << ": " << value::pprint_value(v.values[i]);
-      ss << ",\n"; // USDA allow ',' for the last item
-    }
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
-  return ss.str();
-}
 
 std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t indent) {
 
@@ -940,10 +930,15 @@ std::string to_string(const StringData &s) {
 }
 
 
-std::string print_customData(const CustomDataType &customData, const uint32_t indent) {
+std::string print_customData(const CustomDataType &customData, const std::string &dict_name, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << "customData = {\n";
+  ss << pprint::Indent(indent);
+  if (!dict_name.empty()) {
+    ss << dict_name << " = {\n";
+  } else {
+    ss << "{\n";
+  } 
   for (const auto &item : customData) {
     ss << print_meta(item.second, indent+1);
   }
@@ -1018,6 +1013,20 @@ std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
     case tinyusdz::UsdUVTexture::SourceColorSpace::Auto: { s = "auto"; break; }
     case tinyusdz::UsdUVTexture::SourceColorSpace::Raw: {s = "raw"; break; }
     case tinyusdz::UsdUVTexture::SourceColorSpace::SRGB: { s = "sRGB"; break; }
+  }
+
+  return s;
+}
+
+std::string to_string(const tinyusdz::UsdUVTexture::Wrap v) {
+  std::string s;
+
+  switch (v) {
+    case tinyusdz::UsdUVTexture::Wrap::UseMetadata: { s = "useMetadata"; break; }
+    case tinyusdz::UsdUVTexture::Wrap::Black: {s = "black"; break; }
+    case tinyusdz::UsdUVTexture::Wrap::Clamp: { s = "clamp"; break; }
+    case tinyusdz::UsdUVTexture::Wrap::Repeat: { s = "repeat"; break; }
+    case tinyusdz::UsdUVTexture::Wrap::Mirror: { s = "mirror"; break; }
   }
 
   return s;
@@ -1401,7 +1410,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
 
   if (mesh.skeleton) {
-    ss << pprint::Indent(indent+1) << "rel skel:skeleton = " << pquote(mesh.skeleton.value()) << "\n";
+    ss << pprint::Indent(indent+1) << "rel skel:skeleton = " << mesh.skeleton.value() << "\n";
   }
 
   // subdiv
@@ -1914,21 +1923,13 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   std::stringstream ss;
 
   ss << print_typed_attr(shader.file, "inputs:file", indent);
-  //if (shader.file) {
-  //  ss << pprint::Indent(indent) << "asset inputs:file = " << aquote(shader.file.value()) << "\n";
-  //  // TODO: meta
-  //}
 
-  if (shader.sourceColorSpace) {
-    ss << pprint::Indent(indent) << "token inputs:sourceColorSpace = " << quote(to_string(shader.sourceColorSpace.value())) << "\n";
-    // TOOD: meta
-  }
+  ss << print_typed_token_attr(shader.sourceColorSpace, "inputs:sourceColorSpace", indent);
+
 
   ss << print_typed_attr(shader.st, "inputs:st", indent);
-  //if (shader.st.authored()) {
-  ////  if (shader.st.
-  ////  ss << pprint::Indent(indent+1)
-  //}
+  ss << print_typed_token_attr(shader.wrapS, "inputs:wrapT", indent);
+  ss << print_typed_token_attr(shader.wrapT, "inputs:wrapS", indent);
 
   ss << print_typed_terminal_attr(shader.outputsR, "outputs:r", indent);
   ss << print_typed_terminal_attr(shader.outputsG, "outputs:g", indent);
