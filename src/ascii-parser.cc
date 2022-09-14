@@ -121,6 +121,8 @@ static void RegisterStageMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["documentation"] = AsciiParser::VariableDef(value::kString, "doc"); // alias to 'doc'
+
   metas["comment"] =
       AsciiParser::VariableDef(value::kString, "comment");
 
@@ -3599,12 +3601,13 @@ bool AsciiParser::ParseStageMetaOpt() {
     } else {
       PUSH_ERROR_AND_RETURN("`upAxis` isn't a token value.");
     }
-  } else if (varname == "doc") {
+  } else if ((varname == "doc") || (varname == "documentation")) {
+    // `documentation` will be shorten to `doc`
     if (auto pv = var.Get<StringData>()) {
       DCOUT("doc = " << to_string(pv.value()));
       _stage_metas.doc = pv.value();
     } else {
-      PUSH_ERROR_AND_RETURN("`doc` isn't a string value.");
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
   } else if (varname == "metersPerUnit") {
     DCOUT("ty = " << var.TypeName());
