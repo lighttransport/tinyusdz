@@ -65,10 +65,9 @@ enum class Visibility {
 
 enum class Purpose {
   Default,  // 0
-  Render,
-  Proxy,
-  Guide,
-  Invalid
+  Render, // "render"
+  Proxy, // "proxy"
+  Guide, // "guide"
 };
 
 // 

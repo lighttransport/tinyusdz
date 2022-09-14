@@ -22,6 +22,7 @@ constexpr auto kGeomPoints = "Points";
 constexpr auto kGeomCone = "Cone";
 constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
+constexpr auto kPointInstancer = "PointInstancer";
 
 
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
@@ -72,7 +73,7 @@ struct Xform : GPrim {
 
 };
 
-// GeomSubset 
+// GeomSubset
 struct GeomSubset {
   enum class ElementType { Face };
 
@@ -209,9 +210,9 @@ struct GeomMesh : GPrim {
   TypedAttribute<Animatable<std::vector<int32_t>>> creaseLengths; // int[] creaseLengths
   TypedAttribute<Animatable<std::vector<float>>> creaseSharpnesses; // float[] creaseSharpnesses
   TypedAttribute<Animatable<std::vector<int32_t>>> holeIndices; // int[] holeIndices
-  TypedAttributeWithFallback<Animatable<InterpolateBoundary>> interpolateBoundary{ 
+  TypedAttributeWithFallback<Animatable<InterpolateBoundary>> interpolateBoundary{
       InterpolateBoundary::EdgeAndCorner}; // token interpolateBoundary
-  TypedAttributeWithFallback<SubdivisionScheme> subdivisionScheme{ 
+  TypedAttributeWithFallback<SubdivisionScheme> subdivisionScheme{
       SubdivisionScheme::CatmullClark}; // uniform token subdivisionScheme
   TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
       faceVaryingLinearInterpolation{
@@ -372,6 +373,25 @@ struct GeomPoints : public GPrim {
   TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;  // vector3f[]
 };
 
+//
+// Point instancer(TODO).
+//
+struct PointInstancer : public GPrim {
+
+  nonstd::optional<Relation> prototypes; // rel prototypes
+
+  TypedAttribute<Animatable<std::vector<int32_t>>> protoIndices; // int[] protoIndices
+  TypedAttribute<Animatable<std::vector<int64_t>>> ids; // int64[] protoIndices
+  TypedAttribute<Animatable<std::vector<value::point3f>>> positions; // point3f[] positions
+  TypedAttribute<Animatable<std::vector<value::quath>>> orientations; // quath[] orientations
+  TypedAttribute<Animatable<std::vector<value::float3>>> scales; // float3[] scales
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities; // vector3f[] velocities
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations; // vector3f[] accelerations
+  TypedAttribute<Animatable<std::vector<value::vector3f>>> angularVelocities; // vector3f[] angularVelocities
+  TypedAttribute<Animatable<std::vector<int64_t>>> invisibleIds; // int64[] invisibleIds
+
+};
+
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
@@ -392,6 +412,7 @@ DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
 DEFINE_TYPE_TRAIT(GeomPoints, kGeomPoints, TYPE_ID_GEOM_POINTS, 1);
 DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
 DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
+DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
