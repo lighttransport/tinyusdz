@@ -287,7 +287,7 @@ struct GeomCone : public GPrim {
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 
-  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
+  nonstd::optional<Axis> axis; // uniform token axis
 };
 
 struct GeomCapsule : public GPrim {
@@ -296,7 +296,7 @@ struct GeomCapsule : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{0.5};
-  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
+  nonstd::optional<Axis> axis; // uniform token axis
 };
 
 struct GeomCylinder : public GPrim {
@@ -305,7 +305,7 @@ struct GeomCylinder : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
-  nonstd::optional<Axis> axis{Axis::Z}; // uniform token axis
+  nonstd::optional<Axis> axis; // uniform token axis
 };
 
 struct GeomCube : public GPrim {
