@@ -2641,6 +2641,7 @@ bool ReconstructPrim<GeomCone>(
       PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCone,
                          cone->purpose)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
+      ADD_PROPERY(table, prop, GeomCone, cone->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2683,6 +2684,7 @@ bool ReconstructPrim<GeomCylinder>(
       PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCylinder,
                          cylinder->purpose)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCylinder, cylinder->extent)
+      ADD_PROPERY(table, prop, GeomCylinder, cylinder->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
@@ -2722,6 +2724,7 @@ bool ReconstructPrim<GeomCapsule>(
       PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCapsule,
                          capsule->purpose)
       PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCapsule, capsule->extent)
+      ADD_PROPERY(table, prop, GeomCapsule, capsule->props)
       PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
     }
   }
