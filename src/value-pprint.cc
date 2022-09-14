@@ -648,7 +648,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTrait<CustomDataType>::type_id: {
       auto ret = v.get_value<CustomDataType>();
       if (ret) {
-        os << print_customData(ret.value(), indent);
+        os << print_customData(ret.value(), "", indent);
       } else {
         os << "[InternalError: Dict type TypeId mismatch.]";
       }

@@ -718,6 +718,24 @@ class USDAReader::Impl {
               "`dictionary`. got type `"
               << var.type << "`");
         }
+      } else if (meta.first == "assetInfo") {
+        DCOUT("assetInfo. type = " << var.type);
+        if (var.type == "dictionary") {
+          if (auto pv = var.Get<CustomDataType>()) {
+            out->assetInfo = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN_TAG(kTag,
+                "(Internal error?) `assetInfo` metadataum is not type "
+                "`dictionary`. got type `"
+                << var.type << "`");
+          }
+
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `assetInfo` metadataum is not type "
+              "`dictionary`. got type `"
+              << var.type << "`");
+        }
       } else if (meta.first == "apiSchemas") {
         DCOUT("apiSchemas. type = " << var.type);
         if (var.type == "token[]") {

@@ -380,6 +380,11 @@ class AsciiParser {
   ///
   bool MaybeTripleQuotedString(StringData *str);
 
+  ///
+  /// Parse assset path identifier. 
+  ///
+  bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
+
 #if 0
   ///
   ///
