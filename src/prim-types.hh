@@ -573,22 +573,10 @@ struct TypedTimeSamples {
     return _samples.empty();
   }
 
-  // TODO: Implement.
-  nonstd::optional<T> TryGet(double t = 0.0) const;
-#if 0
-    if (empty()) {
-      return nonstd::nullopt;
-    }
-
-    if (_dirty) {
-      // TODO: Sort by time
-      _dirty = false;
-    }
-
-    // TODO: Fetch value then lineary interpolate value.
-    return nonstd::nullopt;
-  }
-#endif
+  // Get value at specified time.
+  // Return linearly interpolated value when InterpolationType is Linear.
+  // Returns nullopt when specified time is out-of-range.
+  nonstd::optional<T> TryGet(double t = TimeCode::Default(), InterpolationType interp) const;
 
   void AddSample(const Sample &s) {
     _samples.push_back(s);
