@@ -43,19 +43,18 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unordered_set>
 #include <vector>
 
-
+#include "image-loader.hh"
 #include "integerCoding.h"
+#include "io-util.hh"
 #include "lz4-compression.hh"
+#include "pprinter.hh"
+#include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
-#include "io-util.hh"
-#include "pprinter.hh"
+#include "usdShade.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
-#include "image-loader.hh"
-#include "usdShade.hh"
 #include "value-pprint.hh"
-#include "str-util.hh"
 
 #if 0
 #if defined(TINYUSDZ_WITH_AUDIO)
@@ -128,15 +127,13 @@ class Node {
 
   const Path &GetPath() const { return _path; }
 
-  //NodeType GetNodeType() const { return _node_type; }
+  // NodeType GetNodeType() const { return _node_type; }
 
   const std::unordered_set<std::string> &GetPrimChildren() const {
     return _primChildren;
   }
 
-  void SetAssetInfo(const value::dict &dict) {
-    _assetInfo = dict;
-  }
+  void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
 
   const value::dict &GetAssetInfo() const { return _assetInfo; }
 
@@ -149,13 +146,13 @@ class Node {
   Path _path;  // local path
   value::dict _assetInfo;
 
-  //NodeType _node_type;
-
+  // NodeType _node_type;
 };
 
 }  // namespace
 
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
+                        const std::string &filename, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   if (stage == nullptr) {
@@ -169,7 +166,8 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
 
   if (length > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
     if (err) {
-      (*err) += "USDZ data is too large(size = " + std::to_string(length) +
+      (*err) += "USDC data [" + filename +
+                "] is too large(size = " + std::to_string(length) +
                 ", which exceeds memory limit " +
                 std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
     }
@@ -194,12 +192,12 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
     return false;
   }
 
-  //DCOUT("# of paths: " << reader.NumPaths());
-  //DCOUT("num_paths: " << std::to_string(parser.NumPaths()));
+  // DCOUT("# of paths: " << reader.NumPaths());
+  // DCOUT("num_paths: " << std::to_string(parser.NumPaths()));
 
-  //for (size_t i = 0; i < parser.NumPaths(); i++) {
-    //Path path = parser.GetPath(crate::Index(uint32_t(i)));
-    //DCOUT("path[" << i << "].name = " << path.full_path_name());
+  // for (size_t i = 0; i < parser.NumPaths(); i++) {
+  // Path path = parser.GetPath(crate::Index(uint32_t(i)));
+  // DCOUT("path[" << i << "].name = " << path.full_path_name());
   //}
 
   // Create `Stage` object
@@ -235,11 +233,12 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
 bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
-  std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
 
   std::vector<uint8_t> data;
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
     return false;
   }
 
@@ -248,15 +247,14 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
   if (data.size() < (11 * 8)) {
     // ???
     if (err) {
-      (*err) +=
-          "File size too short. Looks like this file is not a USDC : \"" +
-          filepath + "\"\n";
+      (*err) += "File size too short. Looks like this file is not a USDC : \"" +
+                filepath + "\"\n";
     }
     return false;
   }
 
-  return LoadUSDCFromMemory(data.data(), data.size(), stage, warn, err,
-                            options);
+  return LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
+                            err, options);
 }
 
 namespace {
@@ -269,46 +267,43 @@ static std::string GetFileExtension(const std::string &filename) {
 
 static std::string str_tolower(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(),
-                 [](unsigned char c) { return std::tolower(c); }
-  );
+                 [](unsigned char c) { return std::tolower(c); });
   return s;
 }
 
 }  // namespace
 
-bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
-                      std::string *warn, std::string *err,
-                      const USDLoadOptions &options) {
+bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
+                        const std::string &filename, Stage *stage,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options) {
   // <filename, byte_begin, byte_end>
   std::vector<std::tuple<std::string, size_t, size_t>> assets;
 
-  std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
-
-  std::vector<uint8_t> data;
-  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
-    return false;
-  }
-
-  if (data.size() < (11 * 8) + 30) { // 88 for USDC header, 30 for ZIP header
-    // ???
+  if (!addr) {
     if (err) {
-      (*err) +=
-          "File size too short. Looks like this file is not a USDZ : \"" +
-          filepath + "\"\n";
+      (*err) += "null for `addr` argument.\n";
     }
     return false;
   }
 
+  if (length < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
+    // ???
+    if (err) {
+      (*err) += "File size too short. Looks like this file is not a USDZ : \"" +
+                filename + "\"\n";
+    }
+    return false;
+  }
 
   size_t offset = 0;
-  while ((offset + 30) < data.size()) {
+  while ((offset + 30) < length) {
     //
     // PK zip format:
     // https://users.cs.jmu.edu/buchhofp/forensics/formats/pkzip.html
     //
     std::vector<char> local_header(30);
-    memcpy(local_header.data(), data.data() + offset, 30);
+    memcpy(local_header.data(), addr + offset, 30);
 
     // if we've reached the global header, stop reading
     if (local_header[2] != 0x03 || local_header[3] != 0x04) break;
@@ -318,7 +313,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     // read in the variable name
     uint16_t name_len;
     memcpy(&name_len, &local_header[26], sizeof(uint16_t));
-    if ((offset + name_len) > data.size()) {
+    if ((offset + name_len) > length) {
       if (err) {
         (*err) += "Invalid ZIP data\n";
       }
@@ -326,7 +321,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     }
 
     std::string varname(name_len, ' ');
-    memcpy(&varname[0], data.data() + offset, name_len);
+    memcpy(&varname[0], addr + offset, name_len);
 
     offset += name_len;
 
@@ -334,7 +329,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     uint16_t extra_field_len;
     memcpy(&extra_field_len, &local_header[28], sizeof(uint16_t));
     if (extra_field_len > 0) {
-      if (offset + extra_field_len > data.size()) {
+      if (offset + extra_field_len > length) {
         if (err) {
           (*err) += "Invalid extra field length in ZIP data\n";
         }
@@ -413,16 +408,16 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
   }
 
   {
-    const size_t start_addr = std::get<1>(assets[size_t(usdc_index)]);
-    const size_t end_addr = std::get<2>(assets[size_t(usdc_index)]);
-    const size_t usdc_size = end_addr - start_addr;
-    const uint8_t *usdc_addr = &data[start_addr];
-    bool ret =
-        LoadUSDCFromMemory(usdc_addr, usdc_size, stage, warn, err, options);
+    const size_t start_addr_offset = std::get<1>(assets[size_t(usdc_index)]);
+    const size_t end_addr_offset = std::get<2>(assets[size_t(usdc_index)]);
+    const size_t usdc_size = end_addr_offset - start_addr_offset;
+    const uint8_t *usdc_addr = addr + start_addr_offset;
+    bool ret = LoadUSDCFromMemory(usdc_addr, usdc_size, filename, stage, warn,
+                                  err, options);
 
     if (!ret) {
       if (err) {
-        (*err) += "Failed to load USDC.\n";
+        (*err) += "Failed to load USDZ: [" + filename + "].\n";
       }
 
       return false;
@@ -436,14 +431,16 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
 
     if ((ext.compare("png") == 0) || (ext.compare("jpg") == 0) ||
         (ext.compare("jpeg") == 0)) {
-      const size_t start_addr = std::get<1>(assets[i]);
-      const size_t end_addr = std::get<2>(assets[i]);
-      const size_t usdc_size = end_addr - start_addr;
-      const uint8_t *usdc_addr = &data[start_addr];
+      const size_t start_addr_offset = std::get<1>(assets[i]);
+      const size_t end_addr_offset = std::get<2>(assets[i]);
+      const size_t usdc_size = end_addr_offset - start_addr_offset;
+      const uint8_t *usdc_addr = addr + start_addr_offset;
 
       Image image;
-      nonstd::expected<image::ImageResult, std::string> ret = image::LoadImageFromMemory(usdc_addr, usdc_size, uri);
-      //bool ret = DecodeImage(usdc_addr, usdc_size, uri, &image, &_warn, &_err);
+      nonstd::expected<image::ImageResult, std::string> ret =
+          image::LoadImageFromMemory(usdc_addr, usdc_size, uri);
+      // bool ret = DecodeImage(usdc_addr, usdc_size, uri, &image, &_warn,
+      // &_err);
 
       if (!ret) {
         (*err) += ret.error();
@@ -453,10 +450,40 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
           (*warn) += (*ret).warning;
         }
       }
+    } else {
+      // TODO: Support other asserts(e.g. audio mp3)
     }
   }
 
   return true;
+}
+
+bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options) {
+  // <filename, byte_begin, byte_end>
+  std::vector<std::tuple<std::string, size_t, size_t>> assets;
+
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    return false;
+  }
+
+  if (data.size() < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
+    // ???
+    if (err) {
+      (*err) += "File size too short. Looks like this file is not a USDZ : \"" +
+                filepath + "\"\n";
+    }
+    return false;
+  }
+
+  return LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
+                            err, options);
 }
 
 #ifdef _WIN32
@@ -468,7 +495,8 @@ bool LoadUSDZFromFile(const std::wstring &_filename, Stage *stage,
 }
 #endif
 
-bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::string &base_dir, Stage *stage,
+bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
+                        const std::string &base_dir, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
   (void)warn;
@@ -526,19 +554,18 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
 bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
-
-  std::string filepath = io::ExpandFilePath(_filename, /* userdata */nullptr);
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
   std::string base_dir = io::GetBaseDir(_filename);
 
   std::vector<uint8_t> data;
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
     return false;
   }
 
-
-  return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn, err,
-                            options);
+  return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
+                            err, options);
 }
 
 ///
@@ -547,46 +574,79 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
 
 namespace {
 
-nonstd::optional<Path> GetPath(const value::Value &v)
-{
+nonstd::optional<Path> GetPath(const value::Value &v) {
   //
   // TODO: Find a better C++ way... use a std::function?
   //
-  if (auto pv = v.get_value<Model>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<Scope>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<Xform>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GPrim>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomMesh>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomBasisCurves>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomSphere>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomCube>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomCylinder>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomCapsule>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomCone>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomSubset>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<GeomCamera>()) { return Path(pv.value().name, ""); }
+  if (auto pv = v.get_value<Model>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<Scope>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<Xform>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GPrim>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomMesh>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomBasisCurves>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomSphere>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCube>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCylinder>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCapsule>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCone>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomSubset>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCamera>()) {
+    return Path(pv.value().name, "");
+  }
 
-  if (auto pv = v.get_value<LuxDomeLight>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<LuxSphereLight>()) { return Path(pv.value().name, ""); }
-  //if (auto pv = v.get_value<LuxCylinderLight>()) { return Path(pv.value().name); }
-  //if (auto pv = v.get_value<LuxDiskLight>()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<LuxDomeLight>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<LuxSphereLight>()) {
+    return Path(pv.value().name, "");
+  }
+  // if (auto pv = v.get_value<LuxCylinderLight>()) { return
+  // Path(pv.value().name); } if (auto pv = v.get_value<LuxDiskLight>()) {
+  // return Path(pv.value().name); }
 
-  if (auto pv = v.get_value<Material>()) { return Path(pv.value().name, ""); }
-  if (auto pv = v.get_value<Shader>()) { return Path(pv.value().name, ""); }
-  //if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
-  //if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name); }
+  if (auto pv = v.get_value<Material>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<Shader>()) {
+    return Path(pv.value().name, "");
+  }
+  // if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
+  // if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name);
+  // }
 
   return nonstd::nullopt;
 }
 
-} // namespace
+}  // namespace
 
-Prim::Prim(const value::Value &rhs)
-{
+Prim::Prim(const value::Value &rhs) {
   // Check if Prim type is Model(GPrim)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
-
     if (auto pv = GetPath(rhs)) {
       path = pv.value();
     }
@@ -597,12 +657,10 @@ Prim::Prim(const value::Value &rhs)
   }
 }
 
-Prim::Prim(value::Value &&rhs)
-{
+Prim::Prim(value::Value &&rhs) {
   // Check if Prim type is Model(GPrim)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
-
     data = std::move(rhs);
 
     if (auto pv = GetPath(data)) {
@@ -616,10 +674,10 @@ Prim::Prim(value::Value &&rhs)
 
 namespace {
 
-nonstd::optional<const Prim*> GetPrimAtPathRec(const Prim *parent, const Path &path) {
-
+nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
+                                                const Path &path) {
   //// TODO: Find better way to get path name from any value.
-  //if (auto pv = parent.get_value<Xform>)
+  // if (auto pv = parent.get_value<Xform>)
   if (auto pv = GetPath(parent->data)) {
     if (path == pv.value()) {
       return parent;
@@ -635,11 +693,10 @@ nonstd::optional<const Prim*> GetPrimAtPathRec(const Prim *parent, const Path &p
   return nonstd::nullopt;
 }
 
+}  // namespace
 
-} // namespace
-
-nonstd::expected<const Prim*, std::string> Stage::GetPrimAtPath(const Path &path)
-{
+nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
+    const Path &path) {
   if (!path.IsValid()) {
     return nonstd::make_unexpected("Path is invalid.\n");
   }
@@ -650,7 +707,8 @@ nonstd::expected<const Prim*, std::string> Stage::GetPrimAtPath(const Path &path
   }
 
   if (!path.IsAbsolutePath()) {
-    return nonstd::make_unexpected("Path is not absolute. Non-absolute Path is TODO.\n");
+    return nonstd::make_unexpected(
+        "Path is not absolute. Non-absolute Path is TODO.\n");
   }
 
   // Brute-force search.
@@ -661,35 +719,35 @@ nonstd::expected<const Prim*, std::string> Stage::GetPrimAtPath(const Path &path
     }
   }
 
-  return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() + "> int the Stage.\n");
+  return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
+                                 "> int the Stage.\n");
 }
 
 namespace {
 
-void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent)
-{
+void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   ss << "\n";
-  ss << pprint_value(prim.data, indent, /* closing_brace */false);
+  ss << pprint_value(prim.data, indent, /* closing_brace */ false);
 
   DCOUT("num_children = " << prim.children.size());
   for (const auto &child : prim.children) {
-    PrimPrintRec(ss, child, indent+1);
+    PrimPrintRec(ss, child, indent + 1);
   }
 
   ss << pprint::Indent(indent) << "}\n";
 }
 
-} // namespace
+}  // namespace
 
 std::string Stage::ExportToString() const {
-
   std::stringstream ss;
 
   ss << "#usda 1.0\n";
   ss << "(\n";
   if (stage_metas.doc.value.empty()) {
-    ss << "  doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major << "."
-       << tinyusdz::version_minor << "." << tinyusdz::version_micro << "\"\n";
+    ss << "  doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
+       << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
+       << "\"\n";
   } else {
     ss << "  doc = " << to_string(stage_metas.doc) << "\n";
   }
@@ -699,11 +757,13 @@ std::string Stage::ExportToString() const {
   }
 
   if (stage_metas.upAxis.authored()) {
-    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.GetValue())) << "\n";
+    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.GetValue()))
+       << "\n";
   }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
-    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.GetValue() << "\n";
+    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.GetValue()
+       << "\n";
   }
 
   if (stage_metas.startTimeCode.authored()) {
@@ -715,14 +775,16 @@ std::string Stage::ExportToString() const {
   }
 
   if (stage_metas.defaultPrim.str().size()) {
-    ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str()) << "\n";
+    ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
+       << "\n";
   }
   if (!stage_metas.comment.value.empty()) {
     ss << "  doc = " << to_string(stage_metas.comment) << "\n";
   }
 
   if (stage_metas.customLayerData.size()) {
-    ss << print_customData(stage_metas.customLayerData, "customLayerData", /* indent */1);
+    ss << print_customData(stage_metas.customLayerData, "customLayerData",
+                           /* indent */ 1);
   }
 
   // TODO: Sort by line_no?(preserve appearance in read USDA)
@@ -739,7 +801,6 @@ std::string Stage::ExportToString() const {
   }
 
   return ss.str();
-
 }
 
 }  // namespace tinyusdz
