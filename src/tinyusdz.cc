@@ -194,16 +194,9 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
     return false;
   }
 
-  //DCOUT("# of paths: " << reader.NumPaths());
-  //DCOUT("num_paths: " << std::to_string(parser.NumPaths()));
+  DCOUT("Loaded USDC file.");
 
-  //for (size_t i = 0; i < parser.NumPaths(); i++) {
-    //Path path = parser.GetPath(crate::Index(uint32_t(i)));
-    //DCOUT("path[" << i << "].name = " << path.full_path_name());
-  //}
-
-  // Create `Stage` object
-  // std::cout << "reconstruct scene:\n";
+  // Reconstruct `Stage`(scene) object
   {
     if (!reader.ReconstructStage(stage)) {
       DCOUT("Failed to reconstruct Stage from Crate.");
@@ -228,6 +221,8 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
     DCOUT(reader.GetError());
     (*err) = reader.GetError();
   }
+
+  DCOUT("Reconstructed Stage from USDC file.");
 
   return true;
 }

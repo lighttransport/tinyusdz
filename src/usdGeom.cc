@@ -20,7 +20,32 @@ constexpr auto kPrimvarsNormals = "primvars:normals";
 
 }  // namespace
 
-std::vector<value::normal3f> GeomMesh::GetNormals(double time, InterpolationType interp) const {
+const std::vector<value::point3f> GeomMesh::GetPoints(double time, InterpolationType interp) const {
+
+  std::vector<value::point3f> dst;
+
+  if (!points.authored() || points.IsBlocked()) {
+    return dst;
+  }
+
+  if (points.IsConnection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = points.GetValue()) {
+    if (pv.value().IsTimeSamples()) {
+      pv.value().ts.TryGet(time)
+    } else if (pv.value().IsScalar()) {
+      dst = pv.value().value;
+    }
+  }
+
+  return dst;
+
+}
+
+const std::vector<value::normal3f> GeomMesh::GetNormals(double time, InterpolationType interp) const {
   std::vector<value::normal3f> dst;
 
   if (props.count(kPrimvarsNormals)) {
