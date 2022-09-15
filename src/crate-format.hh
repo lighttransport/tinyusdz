@@ -194,7 +194,7 @@ inline void hash_combine_impl32(std::size_t &seed, const T &v)
 template <class T>
 inline void hash_combine(std::size_t &seed, const T &v) {
 #if defined(__wasi__)  // 32bit platform
-  hash_compbine_impl32(seed, v);
+  hash_combine_impl32(seed, v);
 #else
   if (sizeof(std::size_t) == 4) {
     hash_combine_impl32(seed, v);
