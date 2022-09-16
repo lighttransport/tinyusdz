@@ -19,7 +19,7 @@
 namespace std {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
-  os << tinyusdz::half_to_float(v);
+  os << tinyusdz::value::half_to_float(v);
   return os;
 }
 
@@ -144,8 +144,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3d &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v) {
-  os << "(" << tinyusdz::half_to_float(v.r) << ", "
-     << tinyusdz::half_to_float(v.g) << ", " << tinyusdz::half_to_float(v.b)
+  os << "(" << tinyusdz::value::half_to_float(v.r) << ", "
+     << tinyusdz::value::half_to_float(v.g) << ", " << tinyusdz::value::half_to_float(v.b)
      << ")";
   return os;
 }
@@ -161,9 +161,9 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v) {
-  os << "(" << tinyusdz::half_to_float(v.r) << ", "
-     << tinyusdz::half_to_float(v.g) << ", " << tinyusdz::half_to_float(v.b)
-     << ", " << tinyusdz::half_to_float(v.a) << ")";
+  os << "(" << tinyusdz::value::half_to_float(v.r) << ", "
+     << tinyusdz::value::half_to_float(v.g) << ", " << tinyusdz::value::half_to_float(v.b)
+     << ", " << tinyusdz::value::half_to_float(v.a) << ")";
   return os;
 }
 

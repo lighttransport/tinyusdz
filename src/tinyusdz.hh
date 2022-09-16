@@ -571,6 +571,24 @@ bool LoadUSDZFromFile(const std::wstring &filename, Stage *stage,
 #endif
 
 ///
+/// Load USDZ(zip) from memory.
+///
+/// @param[in] addr Memory address of USDZ data
+/// @param[in] length Byte length of USDZ data
+/// @param[in] filename Filename(can be empty).
+/// @param[out] stage USD stage(scene graph).
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length, const std::string &filename,
+                      Stage *stage,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options = USDLoadOptions());
+
+///
 /// Load USDC(binary) from a file.
 ///
 /// @param[in] filename USDC filename(UTF-8)
@@ -590,6 +608,7 @@ bool LoadUSDCFromFile(const std::string &filename, Stage *stage,
 ///
 /// @param[in] addr Memory address of USDC data
 /// @param[in] length Byte length of USDC data
+/// @param[in] filename Filename(can be empty).
 /// @param[out] stage USD stage.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
@@ -597,7 +616,7 @@ bool LoadUSDCFromFile(const std::string &filename, Stage *stage,
 ///
 /// @return true upon success
 ///
-bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, Stage *stage,
+bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length, const std::string &filename, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
 

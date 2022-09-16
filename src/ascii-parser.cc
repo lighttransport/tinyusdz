@@ -2551,7 +2551,7 @@ bool AsciiParser::ReadBasicType(value::half *value) {
     return false;
   }
 
-  (*value) = float_to_half_full(v);
+  (*value) = value::float_to_half_full(v);
   return true;
 }
 
@@ -2579,8 +2579,8 @@ bool AsciiParser::ReadBasicType(value::half2 *value) {
     return false;
   }
 
-  (*value)[0] = float_to_half_full(v[0]);
-  (*value)[1] = float_to_half_full(v[1]);
+  (*value)[0] = value::float_to_half_full(v[0]);
+  (*value)[1] = value::float_to_half_full(v[1]);
   return true;
 }
 
@@ -2608,9 +2608,9 @@ bool AsciiParser::ReadBasicType(value::half3 *value) {
     return false;
   }
 
-  (*value)[0] = float_to_half_full(v[0]);
-  (*value)[1] = float_to_half_full(v[1]);
-  (*value)[2] = float_to_half_full(v[2]);
+  (*value)[0] = value::float_to_half_full(v[0]);
+  (*value)[1] = value::float_to_half_full(v[1]);
+  (*value)[2] = value::float_to_half_full(v[2]);
   return true;
 }
 
@@ -2638,10 +2638,10 @@ bool AsciiParser::ReadBasicType(value::half4 *value) {
     return false;
   }
 
-  (*value)[0] = float_to_half_full(v[0]);
-  (*value)[1] = float_to_half_full(v[1]);
-  (*value)[2] = float_to_half_full(v[2]);
-  (*value)[3] = float_to_half_full(v[3]);
+  (*value)[0] = value::float_to_half_full(v[0]);
+  (*value)[1] = value::float_to_half_full(v[1]);
+  (*value)[2] = value::float_to_half_full(v[2]);
+  (*value)[3] = value::float_to_half_full(v[3]);
   return true;
 }
 
@@ -4539,7 +4539,7 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out, bool *triple_delim
   // @...@
   // or @@@...@@@ (Triple '@'-deliminated asset identifier.)
   // @@@ = Path containing '@'. '@@@' in Path is encoded as '\@@@'
-  // 
+  //
   // Example:
   //   @bora@
   //   @@@bora@@@
@@ -4673,7 +4673,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 
   /*
     Asset reference = AsssetIdentifier + optially followd by prim path
-   
+
     Example:
      @bora@
      @bora@</dora>

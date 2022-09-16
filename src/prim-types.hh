@@ -70,9 +70,9 @@ enum class Purpose {
   Guide, // "guide"
 };
 
-// 
+//
 // USDZ extension: sceneLibrary https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
-// 
+//
 enum class Kind { Model, Group, Assembly, Component, Subcomponent, SceneLibrary, Invalid };
 
 // Attribute interpolation
@@ -345,16 +345,6 @@ class TokenizedPath {
 
 bool operator==(const Path &lhs, const Path &rhs);
 
-class TimeCode {
-  TimeCode(double tm = 0.0) : _time(tm) {}
-
-  size_t hash() const { return std::hash<double>{}(_time); }
-
-  double value() const { return _time; }
-
- private:
-  double _time;
-};
 
 class MetaVariable;
 
@@ -460,13 +450,13 @@ class MetaVariable {
 // https://numpy.org/doc/stable/reference/generated/numpy.digitize.html
 //
 // Returns `values[i-1]` for `times[i-1] <= t < times[i]`
-// 
+//
 // Linear = linear interpolation
-// 
+//
 // example:
 // { 0 : 0.0
 //   10 : 1.0
-// } 
+// }
 //
 // - Held
 //   - time 5 = returns 0.0
@@ -477,7 +467,7 @@ class MetaVariable {
 //   - time 9.99 = nearly 1.0
 //   - time 10 = 1.0
 //
-enum class InterpolationType
+enum class TimeSampleInterpolationType
 {
   Held, // something like nearest-neighbor. returns
   Linear,
@@ -491,7 +481,7 @@ struct APISchemas
     SkelBindingAPI, // "SkelBindingAPI"
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
-    Preliminary_PhysicsColliderAPI, 
+    Preliminary_PhysicsColliderAPI,
     //Preliminary_Trigger,
     //Preliminary_PhysicsGravitationalForce,
     Preliminary_PhysicsMaterialAPI,
@@ -547,6 +537,50 @@ struct AttrMeta {
   }
 };
 
+template <typename T>
+inline T lerp(const T &a, const T &b, const double t) {
+  return (1.0 - t) * a + t * b;
+}
+
+template <typename T>
+inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b, const double t) {
+  std::vector<T> dst;
+
+  // Choose shorter one
+  size_t n = std::min(a.size(), b.size());
+  if (n == 0) {
+    return dst;
+  }
+
+  dst.resize(n);
+  
+  if (a.size() != b.size()) {
+    return dst;
+  }
+  for (size_t i = 0; i < n; i++) {
+    dst[i] = lerp(a[i], b[i], t);
+  }
+  
+  return dst;
+}
+
+// specializations of lerp
+template <>
+inline value::AssetPath lerp(const value::AssetPath &a, const value::AssetPath &b, const double t) {
+  (void)b;
+  (void)t;
+  // no interpolation
+  return a;
+}
+
+template <>
+inline std::vector<value::AssetPath> lerp(const std::vector<value::AssetPath> &a, const std::vector<value::AssetPath> &b, const double t) {
+  (void)b;
+  (void)t;
+  // no interpolation
+  return a;
+}
+
 // Typed TimeSamples value
 //
 // double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
@@ -561,22 +595,90 @@ struct AttrMeta {
 template <typename T>
 struct TypedTimeSamples {
 
+ public:
+
   struct Sample {
     double t;
     T value;
     bool blocked{false};
   };
 
- public:
-
   bool empty() const {
     return _samples.empty();
   }
 
+  void Update() {
+    std::sort(_samples.begin(), _samples.end(), [](const Sample &a, const Sample &b) {
+      return a.t < b.t;
+    });
+
+    _dirty = false;
+
+    return;
+  }
+
   // Get value at specified time.
-  // Return linearly interpolated value when InterpolationType is Linear.
+  // Return linearly interpolated value when TimeSampleInterpolationType is Linear.
   // Returns nullopt when specified time is out-of-range.
-  nonstd::optional<T> TryGet(double t = TimeCode::Default(), InterpolationType interp) const;
+  nonstd::optional<T> TryGet(double t = value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Held) {
+    if (empty()) {
+      return nonstd::nullopt;
+    }
+
+    if (_dirty) {
+      Update();
+    }
+
+    if (value::TimeCode(t).IsDefault()) {
+      // FIXME: Use the first item for now.
+      // TODO: Handle bloked
+      return _samples[0].value;
+    } else {
+
+      auto it = std::lower_bound(_samples.begin(), _samples.end(), t, [](const Sample &a, double tval) {
+        return a.t < tval;
+      });
+
+      // TODO: Support other interpolation method for example cubic?
+      if (interp == TimeSampleInterpolationType::Linear) {
+
+        size_t idx0 = size_t(std::max(
+            int64_t(0), std::min(int64_t(_samples.size() - 1),
+                                 int64_t(std::distance(_samples.begin(), it - 1)))));
+        size_t idx1 = size_t(std::max(
+            int64_t(0), std::min(int64_t(_samples.size() - 1), int64_t(idx0) + 1)));
+
+        double tl = _samples[idx0].t;
+        double tu = _samples[idx1].t;
+
+        double dt = (t - tl);
+        if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
+          // slope is zero.
+          dt = 0.0;
+        } else {
+          dt /= (tu - tl);
+        }
+
+        // Just in case.
+        dt = std::max(0.0, std::min(1.0, dt));
+
+        const T &p0 = _samples[idx0].value;
+        const T &p1 = _samples[idx1].value;
+
+        const T p = lerp(p0, p1, dt);
+
+        return std::move(p);
+      } else {
+        if (it == _samples.end()) {
+          // ???
+          return nonstd::nullopt;
+        }
+        return it->value;
+      }
+    }
+
+    return nonstd::nullopt;
+  }
 
   void AddSample(const Sample &s) {
     _samples.push_back(s);
@@ -598,6 +700,7 @@ struct TypedTimeSamples {
   }
 
  private:
+  // Need to be sorted when look up the value.
   std::vector<Sample> _samples;
   bool _dirty{false};
 
@@ -688,7 +791,7 @@ class TypedAttribute {
   }
 
   const std::vector<Path> &GetConnections() const {
-    return _paths; 
+    return _paths;
   }
 
   const nonstd::optional<Path> GetConnection() const {
@@ -713,7 +816,7 @@ class TypedAttribute {
   AttrMeta meta;
 
  private:
-  std::vector<Path> _paths; 
+  std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
   bool _blocked{false}; // for `uniform` attribute.
 };
@@ -845,7 +948,7 @@ class TypedAttributeWithFallback {
   }
 
   const std::vector<Path> &GetConnections() const {
-    return _paths; 
+    return _paths;
   }
 
   const nonstd::optional<Path> GetConnection() const {
@@ -870,7 +973,7 @@ class TypedAttributeWithFallback {
   AttrMeta meta;
 
  private:
-  std::vector<Path> _paths; 
+  std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
   T _fallback;
   bool _blocked{false}; // for `uniform` attribute.
@@ -1070,10 +1173,6 @@ MTy Mult(const MTy &m, const MTy &n) {
 
   return ret;
 }
-
-// typedef uint16_t float16;
-float half_to_float(value::half h);
-value::half float_to_half_full(float f);
 
 struct Extent {
   value::float3 lower{{std::numeric_limits<float>::infinity(),
@@ -1287,7 +1386,7 @@ class TypedProperty {
   //bool IsRel() const {
   //  return (value::TypeTrait<T>::type_id == value::TypeTrait<Relation>::type_id)
   //}
-    
+
   bool IsConnection() const {
     return target.has_value();
   }
@@ -1516,11 +1615,9 @@ enum class TimeSampleInterpolation
   // TODO: more to support...
 };
 
+
+
 #if 0
-template <typename T>
-inline T lerp(const T a, const T b, const double t) {
-  return (1.0 - t) * a + t * b;
-}
 
 template <typename T>
 struct TimeSamples {

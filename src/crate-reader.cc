@@ -435,7 +435,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
     }
     for (size_t i = 0; i < length; i++) {
       float f = float(ints[i]);
-      value::half h = float_to_half_full(f);
+      value::half h = value::float_to_half_full(f);
       (*d)[i] = h;
     }
   } else if (code == 't') {
@@ -1478,9 +1478,9 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       memcpy(&data, &d, 3);
 
       value::half3 v;
-      v[0] = float_to_half_full(float(data[0]));
-      v[1] = float_to_half_full(float(data[1]));
-      v[2] = float_to_half_full(float(data[2]));
+      v[0] = value::float_to_half_full(float(data[0]));
+      v[1] = value::float_to_half_full(float(data[1]));
+      v[2] = value::float_to_half_full(float(data[2]));
 
       DCOUT("value.half3 = " << v);
 
@@ -1544,10 +1544,10 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       memcpy(&data, &d, 4);
 
       value::half4 v;
-      v[0] = float_to_half_full(float(data[0]));
-      v[1] = float_to_half_full(float(data[0]));
-      v[2] = float_to_half_full(float(data[0]));
-      v[3] = float_to_half_full(float(data[0]));
+      v[0] = value::float_to_half_full(float(data[0]));
+      v[1] = value::float_to_half_full(float(data[0]));
+      v[2] = value::float_to_half_full(float(data[0]));
+      v[3] = value::float_to_half_full(float(data[0]));
 
       DCOUT("value.vec4h = " << v);
 
