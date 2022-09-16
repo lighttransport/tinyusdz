@@ -548,6 +548,41 @@ struct USDLoadOptions {
 //
 
 ///
+/// Load USD(USDA/USDC/USDZ) from a file.
+/// Automatically detect file format.
+///
+/// @param[in] filename USD filename(UTF-8)
+/// @param[out] stage USD stage(scene graph).
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadUSDFromFile(const std::string &filename, Stage *stage,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options = USDLoadOptions());
+
+///
+/// Load USD(USDA/USDC/USDZ) from memory.
+/// Automatically detect file format.
+///
+/// @param[in] addr Memory address of USDZ data
+/// @param[in] length Byte length of USDZ data
+/// @param[in] filename Filename(can be empty).
+/// @param[out] stage USD stage(scene graph).
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadUSDFromMemory(const uint8_t *addr, const size_t length, const std::string &filename,
+                      Stage *stage,
+                      std::string *warn, std::string *err,
+                      const USDLoadOptions &options = USDLoadOptions());
+
+///
 /// Load USDZ(zip) from a file.
 ///
 /// @param[in] filename USDZ filename(UTF-8)
@@ -665,6 +700,18 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length, const std::str
 bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDCWriteOptions &options = USDCWriteOptions());
 
 #endif
+
+// Test if input is USDA format.
+bool IsUSDA(const std::string &filename, const size_t maxFileSize=std::numeric_limits<uint32_t>::max());
+bool IsUSDA(const uint8_t *addr, const size_t length);
+
+// Test if input is USDC(Crate binary) format.
+bool IsUSDC(const std::string &filename, const size_t maxFileSize=std::numeric_limits<uint32_t>::max());
+bool IsUSDC(const uint8_t *addr, const size_t length);
+
+// Test if input is USDZ(Uncompressed ZIP) format.
+bool IsUSDZ(const std::string &filename, const size_t maxFileSize=std::numeric_limits<uint32_t>::max());
+bool IsUSDZ(const uint8_t *addr, const size_t length);
 
 }  // namespace tinyusdz
 

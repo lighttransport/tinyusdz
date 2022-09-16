@@ -29,7 +29,15 @@ $ ninja
 
 ## How to run
 
-Increase memory limit. e.g. `-rss_limit_mb=50000`
+Set input size and run fuzz main.
+
+```
+$ ./fuzz_tinyusdz -max_len=128m
+```
+
+for fuzzing `fuzz_intcoding`, capping max memory is required(otherwise oom happens).
+Use `-rss_limit_mb=50000` to limit memory.
+
 
 ```
 $ ./fuzz_intcoding -rss_limit_mb=20000 -jobs 4

@@ -18,7 +18,9 @@ struct CrateReaderConfig {
   int numThreads = -1;
 
   // For malcious Crate data.
-  // Set limits to prevent infinite-loop, buffer-overrun, etc.
+  // Set limits to prevent infinite-loop, buffer-overrun, out-of-memory, etc.
+  size_t maxTOCSections = 32;
+
   size_t maxDictElements = 256;
   size_t maxArrayElements = 1024*1024*1024; // 1M
   size_t maxAssetPathElements = 512;

@@ -3773,6 +3773,9 @@ bool CrateReader::ReadTOC() {
     PUSH_ERROR("Failed to read TOC(# of sections).");
     return false;
   }
+  if (num_sections >= _config.maxTOCSections) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of sections are too large.");
+  }
 
   DCOUT("toc sections = " << num_sections);
 
