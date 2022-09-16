@@ -344,6 +344,11 @@ typedef unsigned short stbi_us;
 extern "C" {
 #endif
 
+// TinyUSDZ mod. Use static build.
+#ifndef STB_IMAGE_STATIC
+#define STB_IMAGE_STATIC
+#endif
+
 #ifndef STBIDEF
 #ifdef STB_IMAGE_STATIC
 #define STBIDEF static

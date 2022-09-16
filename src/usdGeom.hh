@@ -175,12 +175,14 @@ struct GeomMesh : GPrim {
   void UpdateBy(const GPrim &pprim);
 
   ///
-  /// @brief Returns `points`.
+  /// @brief Returns `points`. 
   ///
+  /// @param[in] time Time for TimeSampled `points` data.
+  /// @param[in] interp Interpolation type for TimeSampled `points` data
   /// @return points vector(copied). Returns empty when `points` attribute is
   /// not defined.
   ///
-  const std::vector<value::point3f> GetPoints(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
+  const std::vector<value::point3f> GetPoints(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
 
   ///
   /// @brief Returns normals vector. Precedence order: `primvars:normals` then
@@ -190,7 +192,7 @@ struct GeomMesh : GPrim {
   /// `primvars:normals` nor `normals` attribute defined, attribute is a
   /// relation or normals attribute have invalid type(other than `normal3f`).
   ///
-  const std::vector<value::normal3f> GetNormals(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
+  const std::vector<value::normal3f> GetNormals(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
 
   ///
   /// @brief Get interpolation of `primvars:normals`, then `normals`.
@@ -198,8 +200,8 @@ struct GeomMesh : GPrim {
   ///
   Interpolation GetNormalsInterpolation() const;
 
-  const std::vector<int32_t> GetFaceVertexCounts(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
-  const std::vector<int32_t> GetFaceVertexIndices(double time=value::TimeCode::Default(), InterpolationType interp=InterpolationType::Linear) const;
+  const std::vector<int32_t> GetFaceVertexCounts(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
+  const std::vector<int32_t> GetFaceVertexIndices(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
 
   //
   // SubD attribs.
