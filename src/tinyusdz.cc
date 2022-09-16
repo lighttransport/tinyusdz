@@ -410,7 +410,28 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
   {
     const size_t start_addr_offset = std::get<1>(assets[size_t(usdc_index)]);
     const size_t end_addr_offset = std::get<2>(assets[size_t(usdc_index)]);
+    if (end_addr_offset < start_addr_offset) {
+      if (err) {
+        (*err) += "Invalid start/end offset to USDC data: [" + filename + "].\n";
+      }
+      return false;
+    }
     const size_t usdc_size = end_addr_offset - start_addr_offset;
+
+    if (start_addr_offset > length) {
+      if (err) {
+        (*err) += "Invalid start offset to USDC data: [" + filename + "].\n";
+      }
+      return false;
+    }
+
+    if (end_addr_offset > length) {
+      if (err) {
+        (*err) += "Invalid end offset to USDC data: [" + filename + "].\n";
+      }
+      return false; 
+    }
+
     const uint8_t *usdc_addr = addr + start_addr_offset;
     bool ret = LoadUSDCFromMemory(usdc_addr, usdc_size, filename, stage, warn,
                                   err, options);
@@ -433,14 +454,33 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
         (ext.compare("jpeg") == 0)) {
       const size_t start_addr_offset = std::get<1>(assets[i]);
       const size_t end_addr_offset = std::get<2>(assets[i]);
-      const size_t usdc_size = end_addr_offset - start_addr_offset;
-      const uint8_t *usdc_addr = addr + start_addr_offset;
+      const size_t asset_size = end_addr_offset - start_addr_offset;
+      const uint8_t *asset_addr = addr + start_addr_offset;
+
+      if (end_addr_offset < start_addr_offset) {
+        if (err) {
+          (*err) += "Invalid start/end offset of asset #" + std::to_string(i) + " in USDC data: [" + filename + "].\n";
+        }
+        return false;
+      }
+
+      if (start_addr_offset > length) {
+        if (err) {
+          (*err) += "Invalid start offset of asset #" + std::to_string(i) + " in USDC data: [" + filename + "].\n";
+        }
+        return false;
+      }
+
+      if (end_addr_offset > length) {
+        if (err) {
+          (*err) += "Invalid end offset of asset #" + std::to_string(i) + " in USDC data: [" + filename + "].\n";
+        }
+        return false;
+      }
 
       Image image;
       nonstd::expected<image::ImageResult, std::string> ret =
-          image::LoadImageFromMemory(usdc_addr, usdc_size, uri);
-      // bool ret = DecodeImage(usdc_addr, usdc_size, uri, &image, &_warn,
-      // &_err);
+          image::LoadImageFromMemory(asset_addr, asset_size, uri);
 
       if (!ret) {
         (*err) += ret.error();
