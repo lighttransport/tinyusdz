@@ -15,19 +15,21 @@ option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(TINYUSDZ_WITH_C_API "Enable C API." ON)
 option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
-option(TINYUSDZ_BUILD_BENCHMARKS "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
+option(TINYUSDZ_BUILD_BENCHMARKS
+       "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples area built in `examples` folder)"
        ON)
 
-if (MSVC)
+if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
-  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On) 
+  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On)
 else()
-  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off) 
+  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
 endif()
 
-option(TINYUSDZ_CXX_EXCEPTIONS "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
+option(TINYUSDZ_CXX_EXCEPTIONS
+       "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
@@ -46,7 +48,10 @@ option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
 
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
-option(TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option" OFF)
+option(
+  TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION
+  "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option"
+  OFF)
 
 option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ON)
 
@@ -58,8 +63,10 @@ option(
 option(TINYUSDZ_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
 
-option(TINYUSDZ_PRODUCTION_BUILD
-       "Build for production release(e.g. disables debug print, do not include full filepath in error messages)" OFF)
+option(
+  TINYUSDZ_PRODUCTION_BUILD
+  "Build for production release(e.g. disables debug print, do not include full filepath in error messages)"
+  OFF)
 
 # -- modules --
 option(TINYUSDZ_WITH_MODULE_USDA_READER "Build with USDA reader feature" ON)
@@ -70,9 +77,25 @@ option(TINYUSDZ_WITH_MODULE_USDC_READER "Build with USDC reader feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 # -------------
 
+# -- STB --
+
+#
+# In default TinyUSDZ embeds stb_image and stb_image_write to load/save JPG/PNG/BMP images.
+#
+
+# Set ON if you use stb_image implementation outside of TinyUSDZ library to avoid multiple symbol def error.
+option(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
+       "Build with STB image implementation" OFF)
+
+# Set ON if you use stb_image_write implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.
+option(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
+       "Build with STB image_write implementation" OFF)
+# ----------
 
 # -- TIFF --
-option(TINYUSDZ_WITH_TIFF "Build with TIFF texture(includes 32bit floating point TIFF) support" OFF)
+option(TINYUSDZ_WITH_TIFF
+       "Build with TIFF texture(includes 32bit floating point TIFF) support"
+       OFF)
 # ----------
 
 # -- EXR --
@@ -80,7 +103,8 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 # ---------
 
 # -- ColorIO --
-option(TINYUSDZ_WITH_COLORIO "Build with Color IO Baked LUT support(through tinycolorio)" ON)
+option(TINYUSDZ_WITH_COLORIO
+       "Build with Color IO Baked LUT support(through tinycolorio)" ON)
 # ---------
 
 # -- optional tool --
@@ -88,7 +112,8 @@ option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ON)
 # --------------
 
 # -- For developers --
-option(TINYUSDZ_COMPILE_TIME_TRACE "Add -ftime-trace to profile compilation time(clang only)" OFF)
+option(TINYUSDZ_COMPILE_TIME_TRACE
+       "Add -ftime-trace to profile compilation time(clang only)" OFF)
 # ---
 
 # cmake modules
@@ -165,20 +190,20 @@ if(TINYUSDZ_WITH_PYTHON)
 
   # workaround: find_package() does not work well inside of nanobind(`Python3::Module` target won't defined), so call it here.
   # and use `FindPython3`, not `FindPython`
-  if (TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION)
-    #message(STATUS "Local Python") 
+  if(TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION)
+    #message(STATUS "Local Python")
     set(Python3_FIND_FRAMEWORK NEVER) # Do not search framework python
     set(Python3_FIND_STRATEGY LOCATION)
     set(Python3_FIND_REGISTRY NEVER) # Windows only
-  else ()
-    set(Python_FIND_FRAMEWORK LAST) # Prefer Brew/Conda to Apple framework python
-  endif ()
+  else()
+    set(Python_FIND_FRAMEWORK LAST
+    )# Prefer Brew/Conda to Apple framework python
+  endif()
 
   find_package(
     Python3
     COMPONENTS Interpreter Development.Module
-    REQUIRED
-    )
+    REQUIRED)
 
   #message(STATUS "Python include dirs: " ${Python_INCLUDE_DIRS})
   message(STATUS "Python include dirs: " ${Python3_INCLUDE_DIRS})
@@ -221,9 +246,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
-    )
-
+    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc)
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
@@ -246,7 +269,7 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/external/string_id/database.cpp
     #${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
     #${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
-    )
+)
 
 # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
 set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
@@ -465,40 +488,46 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   endif()
 
   # default = enable module, so invert definition
-  if (NOT TINYUSDZ_WITH_MODULE_USDA_READER)
+  if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
   endif()
 
-  if (NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
+  if(NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
   endif()
 
-  if (NOT TINYUSDZ_WITH_MODULE_USDC_READER)
+  if(NOT TINYUSDZ_WITH_MODULE_USDC_READER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
   endif()
 
-  if (NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
+  if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
   endif()
 
+  if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION")
+  endif()
+
+  if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
+  endif()
 
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
   #target_include_directories(${TINYUSDZ_LIB_TARGET}
   #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
-  target_include_directories(${TINYUSDZ_LIB_TARGET}
-                             PRIVATE ${PROJECT_SOURCE_DIR}/src/external/fast_float/include)
-  target_include_directories(${TINYUSDZ_LIB_TARGET}
-                             PRIVATE ${PROJECT_SOURCE_DIR}/src/external/simple_match/include)
-
-  target_include_directories(
-    ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+  #target_include_directories(${TINYUSDZ_LIB_TARGET}
+  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/fast_float/include)
+  #target_include_directories(${TINYUSDZ_LIB_TARGET}
+  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/simple_match/include)
 
   #if(TINYUSDZ_WITH_JSON)
+  ##target_include_directories(
+  ##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
   #  target_include_directories(
   #    ${TINYUSDZ_LIB_TARGET}
   #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
@@ -561,17 +590,16 @@ endforeach()
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
-  set(TUSDZ_COMPILE_FLAGS "-Weverything -Werror -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function")
-
-  if (TINYUSDZ_COMPILE_TIME_TRACE)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
-  endif ()
-
-  set_source_files_properties(
-    ${TINYUSDZ_SOURCES}
-    PROPERTIES
-      COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS}
+  set(TUSDZ_COMPILE_FLAGS
+      "-Weverything -Werror -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
   )
+
+  if(TINYUSDZ_COMPILE_TIME_TRACE)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
+  endif()
+
+  set_source_files_properties(${TINYUSDZ_SOURCES}
+                              PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
 
 endif()
 
@@ -592,7 +620,7 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
   pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
-  
+
   # strip "py" prefix
   set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "tinyusdz")
 
@@ -612,16 +640,17 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 endif()
 
 if(TINYUSDZ_WITH_JSON)
-  add_executable(usdz_to_json
-                 ${CMAKE_CURRENT_SOURCE_DIR}/examples/usdz_to_json/usdz_to_json-main.cc)
+  add_executable(
+    usdz_to_json
+    ${CMAKE_CURRENT_SOURCE_DIR}/examples/usdz_to_json/usdz_to_json-main.cc)
   add_sanitizers(usdz_to_json)
   target_include_directories(usdz_to_json PRIVATE ${PROJECT_SOURCE_DIR}/src/)
   target_link_libraries(usdz_to_json PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif()
 
 if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
-  add_executable(usda_parser
-                 ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
+  add_executable(
+    usda_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
   add_sanitizers(usda_parser)
   target_include_directories(usda_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
   target_link_libraries(usda_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
@@ -641,7 +670,7 @@ endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_usdz_dump)
-  if (TINYUSDZ_WITH_MODULE_USDA_WRITER)
+  if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
@@ -656,12 +685,15 @@ if(TINYUSDZ_BUILD_BENCHMARKS)
   add_executable(${TINYUSDZ_BENCHMARK_TARGET} ${TINYUSDZ_BENCH_SOURCES})
   add_sanitizers(${TINYUSDZ_BENCHMARK_TARGET})
 
-  target_include_directories(${TINYUSDZ_BENCHMARK_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
-                                                    ${PROJECT_SOURCE_DIR}/bencharks)
-  target_link_libraries(${TINYUSDZ_BENCHMARK_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_include_directories(
+    ${TINYUSDZ_BENCHMARK_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                         ${PROJECT_SOURCE_DIR}/bencharks)
+  target_link_libraries(${TINYUSDZ_BENCHMARK_TARGET}
+                        PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+    target_compile_definitions(${TINYUSDZ_BENCHMARK_TARGET}
+                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
 endif(TINYUSDZ_BUILD_BENCHMARKS)
@@ -692,12 +724,15 @@ if(TINYUSDZ_BUILD_TESTS)
   add_executable(${TINYUSDZ_TEST_TARGET} ${TINYUSDZ_TEST_SOURCES})
   add_sanitizers(${TINYUSDZ_TEST_TARGET})
 
-  target_include_directories(${TINYUSDZ_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
-                                                    ${PROJECT_SOURCE_DIR}/tests)
-  target_link_libraries(${TINYUSDZ_TEST_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_include_directories(
+    ${TINYUSDZ_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                    ${PROJECT_SOURCE_DIR}/tests)
+  target_link_libraries(${TINYUSDZ_TEST_TARGET}
+                        PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   if(TINYUSDZ_WITH_OPENSUBDIV)
-    target_compile_definitions(${TINYUSDZ_TEST_TARGET} PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
+    target_compile_definitions(${TINYUSDZ_TEST_TARGET}
+                               PRIVATE "TINYUSDZ_USE_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
   #

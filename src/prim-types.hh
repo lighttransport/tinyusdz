@@ -469,9 +469,21 @@ class MetaVariable {
 //
 enum class TimeSampleInterpolationType
 {
-  Held, // something like nearest-neighbor. returns
+  Held, // something like nearest-neighbor. 
   Linear,
 };
+
+//
+// Supported type for `Linear`
+//
+// half, float, double, TimeCode(double)
+// matrix2d, matrix3d, matrix4d,
+// float2h, float3h, float4h
+// float2f, float3f, float4f
+// float2d, float3d, float4d
+// quath, quatf, quatd
+// (use slerp for quaternion type)
+
 
 struct APISchemas
 {
