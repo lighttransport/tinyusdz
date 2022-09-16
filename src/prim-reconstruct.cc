@@ -2074,6 +2074,8 @@ bool ReconstructPrim<BlendShape>(
   (void)warn;
   (void)references;
 
+  DCOUT("Reconstruct BlendShape");
+
   constexpr auto kOffsets = "offsets";
   constexpr auto kNormalOffsets = "normalOffsets";
   constexpr auto kPointIndices = "pointIndices";
@@ -2087,13 +2089,15 @@ bool ReconstructPrim<BlendShape>(
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
-  // `offsets` and `normalOffsets` are required property.
+#if 0 // TODO: Check required properties exist in strict mode.
+  // `offsets` and `normalOffsets` are required property
   if (!table.count(kOffsets)) {
     PUSH_ERROR_AND_RETURN("`offsets` property is missing. `uniform vector3f[] offsets` is a required property.");
   }
   if (!table.count(kNormalOffsets)) {
     PUSH_ERROR_AND_RETURN("`normalOffsets` property is missing. `uniform vector3f[] normalOffsets` is a required property.");
   }
+#endif
 
   return true;
 }
