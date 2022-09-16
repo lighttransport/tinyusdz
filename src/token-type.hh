@@ -5,19 +5,29 @@
 //
 // a class for `token` type.
 //
+// `token` is a short-length string and composed of alphanum + limited symbols(e.g. '@', '{', ...).
+// It should not contain newline.
+//
+// TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+//
 // Use foonathan/string_id to implement Token class.
 //
 // NOTE: database(token storage) is accessed with mutex,
 // so an application should not frequently construct Token class
 // among threads.
 //
-// TODO: Deprecate `Token` class? Seems there is no beneficial usecase in TinyUSDZ(`std::string` may suffice)
+// ---
+//
+// Seems there is no beneficial usecase in TinyUSDZ to use hash for token,
+// so use naiive implementation by default.
 //
 
 #include <iostream>
 #include <string>
 
 #include "nonstd/optional.hpp"
+
+#if defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -32,8 +42,13 @@
 #pragma clang diagnostic pop
 #endif
 
+#else // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#include <functional>
+#endif // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+
 namespace tinyusdz {
 
+#if defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
 
 namespace sid = foonathan::string_id;
 
@@ -94,6 +109,10 @@ class Token {
     return str_.value().hash_code();
   }
 
+  bool valid() const {
+    // TODO
+    return true;
+  }
 
  private:
   nonstd::optional<sid::string_id> str_;
@@ -115,12 +134,60 @@ struct TokenKeyEqual {
   } 
 };
 
-//std::ostream &operator<<(std::ostream &os, const Token &tok) {
-//
-//  os << tok.str();
-//
-//  return os;
-//}
+#else // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
 
+class Token {
+
+ public:
+  Token() {}
+
+  explicit Token(const std::string &str) {
+    str_ = str;
+  }
+
+  explicit Token(const char *str) {
+    str_ = str;
+  }
+
+  const std::string str() const {
+    return str_;
+  }
+
+  bool valid() const {
+    // TODO
+    return true;
+  } 
+
+  // No string hash for TinyUSDZ
+#if 0
+  uint64_t hash() const {
+    if (!str_) {
+      return 0;
+    }
+
+    // Assume non-zero hash value for non-empty string.
+    return str_.value().hash_code();
+  }
+#endif
+
+
+ private:
+  std::string str_;
+};
+
+struct TokenHasher {
+  inline size_t operator()(const Token &tok) const {
+    return std::hash<std::string>()(tok.str());
+  } 
+};
+
+struct TokenKeyEqual {
+  bool operator()(const Token &lhs, const Token &rhs) const {
+    return lhs.str() == rhs.str();
+  } 
+};
+
+
+#endif // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
 
 } // namespace tinyusdz
