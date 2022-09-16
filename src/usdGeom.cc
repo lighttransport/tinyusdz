@@ -12,6 +12,7 @@
 #include "pprinter.hh"
 #include "xform.hh"
 
+
 namespace tinyusdz {
 
 namespace {
@@ -20,7 +21,7 @@ constexpr auto kPrimvarsNormals = "primvars:normals";
 
 }  // namespace
 
-const std::vector<value::point3f> GeomMesh::GetPoints(double time, InterpolationType interp) const {
+const std::vector<value::point3f> GeomMesh::GetPoints(double time, TimeSampleInterpolationType interp) const {
 
   std::vector<value::point3f> dst;
 
@@ -35,7 +36,9 @@ const std::vector<value::point3f> GeomMesh::GetPoints(double time, Interpolation
 
   if (auto pv = points.GetValue()) {
     if (pv.value().IsTimeSamples()) {
-      pv.value().ts.TryGet(time)
+      if (auto tsv = pv.value().ts.TryGet(time, interp)) {
+        dst = tsv.value();
+      }
     } else if (pv.value().IsScalar()) {
       dst = pv.value().value;
     }
@@ -45,7 +48,7 @@ const std::vector<value::point3f> GeomMesh::GetPoints(double time, Interpolation
 
 }
 
-const std::vector<value::normal3f> GeomMesh::GetNormals(double time, InterpolationType interp) const {
+const std::vector<value::normal3f> GeomMesh::GetNormals(double time, TimeSampleInterpolationType interp) const {
   std::vector<value::normal3f> dst;
 
   if (props.count(kPrimvarsNormals)) {

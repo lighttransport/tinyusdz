@@ -19,17 +19,30 @@ list(
   ../../src/io-util.cc
   ../../src/prim-types.cc
   ../../src/pprinter.cc
+  ../../src/value-pprint.cc
+  ../../src/value-types.cc
   ../../src/primvar.cc
+  ../../src/prim-types.cc
   ../../src/crate-format.cc
   ../../src/crate-reader.cc
   ../../src/crate-writer.cc
+  ../../src/crate-pprint.cc
   ../../src/ascii-parser.cc
   ../../src/usda-reader.cc
   ../../src/usda-writer.cc
   ../../src/usdc-reader.cc
   ../../src/usdc-writer.cc
   ../../src/image-loader.cc
+  ../../src/prim-reconstruct.cc
+  ../../src/tiny-format.cc
+  ../../src/xform.cc
+  ../../src/usdGeom.cc
+  ../../src/usdLux.cc
+  ../../src/usdShade.cc
+  ../../src/usdSkel.cc
+  ../../src/usdMtlx.cc
   ../../src/usdObj.cc
+  ../../src/tydra/render-data.cc
 )
 
 set(TINYUSDZ_DEP_SOURCES
@@ -37,6 +50,9 @@ set(TINYUSDZ_DEP_SOURCES
   ../../src/lz4-compression.cc
   ../../src/lz4/lz4.c
   ../../src/external/fpng.cpp
+  ../../src/external/string_id/string_id.cpp
+  ../../src/external/string_id/error.cpp
+  ../../src/external/string_id/database.cpp
   ../../src/external/staticstruct.cc
   ../../src/external/tinyxml2/tinyxml2.cpp
   )

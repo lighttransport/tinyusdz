@@ -422,6 +422,58 @@ using half2 = std::array<half, 2>;
 using half3 = std::array<half, 3>;
 using half4 = std::array<half, 4>;
 
+float half_to_float(value::half h);
+half float_to_half_full(float f);
+
+inline half operator+(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) + half_to_float(b));
+}
+
+inline half operator-(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) - half_to_float(b));
+}
+
+inline half operator*(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) * half_to_float(b));
+}
+
+// TODO: save div
+inline half operator/(const half &a, const half &b) {
+  return float_to_half_full(half_to_float(a) / half_to_float(b));
+}
+
+inline half operator+(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) + b);
+}
+
+inline half operator-(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) - b);
+}
+
+inline half operator*(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) * b);
+}
+
+inline half operator/(const half &a, float b) {
+  return float_to_half_full(half_to_float(a) / b);
+}
+
+inline half operator+(float a, const half &b) {
+  return float_to_half_full(a + half_to_float(b));
+}
+
+inline half operator-(float a, const half &b) {
+  return float_to_half_full(a + half_to_float(b));
+}
+
+inline half operator*(float a, const half &b) {
+  return float_to_half_full(a + half_to_float(b));
+}
+
+inline half operator/(float a, const half &b) {
+  return float_to_half_full(a + half_to_float(b));
+}
+
 using int2 = std::array<int32_t, 2>;
 using int3 = std::array<int32_t, 3>;
 using int4 = std::array<int32_t, 4>;
@@ -637,11 +689,173 @@ struct point3h {
   half operator[](size_t idx) { return *(&x + idx); }
 };
 
+inline point3h operator+(const float a, const point3h &b) {
+  return {a + b.x, a + b.y, a + b.z};
+}
+
+inline point3h operator-(const float a, const point3h &b) {
+  return {a - b.x, a - b.y, a - b.z};
+}
+
+inline point3h operator*(const float a, const point3h &b) {
+  return {a * b.x, a * b.y, a * b.z};
+}
+
+// TODO: safe div
+inline point3h operator/(const float a, const point3h &b) {
+  return {a / b.x, a / b.y, a / b.z};
+}
+
+inline point3h operator+(const double a, const point3h &b) {
+  return {float(a) + b.x, float(a) + b.y, float(a) + b.z};
+}
+
+inline point3h operator-(const double a, const point3h &b) {
+  return {float(a) - b.x, float(a) - b.y, float(a) - b.z};
+}
+
+inline point3h operator*(const double a, const point3h &b) {
+  return {float(a) * b.x, float(a) * b.y, float(a) * b.z};
+}
+
+inline point3h operator/(const double a, const point3h &b) {
+  return {float(a) / b.x, float(a) / b.y, float(a) / b.z};
+}
+
+inline point3h operator+(const point3h &a, const float b) {
+  return {a.x + b, a.y + b, a.z + b};
+}
+
+inline point3h operator-(const point3h &a, const float b) {
+  return {a.x - b, a.y - b, a.z - b};
+}
+
+inline point3h operator*(const point3h &a, const float b) {
+  return {a.x * b, a.y * b, a.z * b};
+}
+
+inline point3h operator/(const point3h &a, const float b) {
+  return {a.x / b, a.y / b, a.z / b};
+}
+
+inline point3h operator+(const point3h &a, const double b) {
+  return {a.x + float(b), a.y + float(b), a.z + float(b)};
+}
+
+inline point3h operator-(const point3h &a, const double b) {
+  return {a.x - float(b), a.y - float(b), a.z - float(b)};
+}
+
+inline point3h operator*(const point3h &a, const double b) {
+  return {a.x * float(b), a.y * float(b), a.z * float(b)};
+}
+
+inline point3h operator/(const point3h &a, const double b) {
+  return {a.x / float(b), a.y / float(b), a.z / float(b)};
+}
+
+inline point3h operator+(const point3h &a, const point3h &b) {
+  return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+inline point3h operator-(const point3h &a, const point3h &b) {
+  return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+inline point3h operator*(const point3h &a, const point3h &b) {
+  return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+
+inline point3h operator/(const point3h &a, const point3h &b) {
+  return {a.x / b.x, a.y / b.y, a.z / b.z};
+}
+
 struct point3f {
   float x, y, z;
 
   float operator[](size_t idx) { return *(&x + idx); }
 };
+
+inline point3f operator+(const float a, const point3f &b) {
+  return {a + b.x, a + b.y, a + b.z};
+}
+
+inline point3f operator-(const float a, const point3f &b) {
+  return {a - b.x, a - b.y, a - b.z};
+}
+
+inline point3f operator*(const float a, const point3f &b) {
+  return {a * b.x, a * b.y, a * b.z};
+}
+
+// TODO: safe div
+inline point3f operator/(const float a, const point3f &b) {
+  return {a / b.x, a / b.y, a / b.z};
+}
+
+inline point3f operator+(const double a, const point3f &b) {
+  return {float(a) + b.x, float(a) + b.y, float(a) + b.z};
+}
+
+inline point3f operator-(const double a, const point3f &b) {
+  return {float(a) - b.x, float(a) - b.y, float(a) - b.z};
+}
+
+inline point3f operator*(const double a, const point3f &b) {
+  return {float(a) * b.x, float(a) * b.y, float(a) * b.z};
+}
+
+inline point3f operator/(const double a, const point3f &b) {
+  return {float(a) / b.x, float(a) / b.y, float(a) / b.z};
+}
+
+inline point3f operator+(const point3f &a, const float b) {
+  return {a.x + b, a.y + b, a.z + b};
+}
+
+inline point3f operator-(const point3f &a, const float b) {
+  return {a.x - b, a.y - b, a.z - b};
+}
+
+inline point3f operator*(const point3f &a, const float b) {
+  return {a.x * b, a.y * b, a.z * b};
+}
+
+inline point3f operator/(const point3f &a, const float b) {
+  return {a.x / b, a.y / b, a.z / b};
+}
+
+inline point3f operator+(const point3f &a, const double b) {
+  return {a.x + float(b), a.y + float(b), a.z + float(b)};
+}
+
+inline point3f operator-(const point3f &a, const double b) {
+  return {a.x - float(b), a.y - float(b), a.z - float(b)};
+}
+
+inline point3f operator*(const point3f &a, const double b) {
+  return {a.x * float(b), a.y * float(b), a.z * float(b)};
+}
+
+inline point3f operator/(const point3f &a, const double b) {
+  return {a.x / float(b), a.y / float(b), a.z / float(b)};
+}
+
+inline point3f operator+(const point3f &a, const point3f &b) {
+  return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+inline point3f operator-(const point3f &a, const point3f &b) {
+  return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+inline point3f operator*(const point3f &a, const point3f &b) {
+  return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+
+inline point3f operator/(const point3f &a, const point3f &b) {
+  return {a.x / b.x, a.y / b.y, a.z / b.z};
+}
 
 struct point3d {
   double x, y, z;
