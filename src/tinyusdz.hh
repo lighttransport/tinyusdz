@@ -702,15 +702,15 @@ bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDC
 #endif
 
 // Test if input is USDA format.
-bool IsUSDA(const std::string &filename, const size_t maxFileSize=std::numeric_limits<uint32_t>::max());
+bool IsUSDA(const std::string &filename, const size_t maxFileSize=(std::numeric_limits<uint32_t>::max)());
 bool IsUSDA(const uint8_t *addr, const size_t length);
 
 // Test if input is USDC(Crate binary) format.
-bool IsUSDC(const std::string &filename, const size_t maxFileSize=std::numeric_limits<uint32_t>::max());
+bool IsUSDC(const std::string &filename, const size_t maxFileSize=(std::numeric_limits<uint32_t>::max)());
 bool IsUSDC(const uint8_t *addr, const size_t length);
 
 // Test if input is USDZ(Uncompressed ZIP) format.
-bool IsUSDZ(const std::string &filename, const size_t maxFileSize=std::numeric_limits<uint32_t>::max());
+bool IsUSDZ(const std::string &filename, const size_t maxFileSize=(std::numeric_limits<uint32_t>::max)());
 bool IsUSDZ(const uint8_t *addr, const size_t length);
 
 }  // namespace tinyusdz
