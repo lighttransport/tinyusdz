@@ -144,30 +144,30 @@ struct PrimTypeTrait;
 
 DEFINE_PRIM_TYPE(Model, "Model", value::TYPE_ID_MODEL);
 
-DEFINE_PRIM_TYPE(Xform, "Xform", value::TYPE_ID_GEOM_XFORM);
-DEFINE_PRIM_TYPE(GeomMesh, "Mesh", value::TYPE_ID_GEOM_MESH);
-DEFINE_PRIM_TYPE(GeomPoints, "Points", value::TYPE_ID_GEOM_POINTS);
-DEFINE_PRIM_TYPE(GeomSphere, "Sphere", value::TYPE_ID_GEOM_SPHERE);
-DEFINE_PRIM_TYPE(GeomCube, "Cube", value::TYPE_ID_GEOM_CUBE);
-DEFINE_PRIM_TYPE(GeomCone, "Cone", value::TYPE_ID_GEOM_CONE);
-DEFINE_PRIM_TYPE(GeomCapsule, "Capsule", value::TYPE_ID_GEOM_CAPSULE);
-DEFINE_PRIM_TYPE(GeomCylinder, "Cylinder", value::TYPE_ID_GEOM_CYLINDER);
-DEFINE_PRIM_TYPE(GeomBasisCurves, "BasisCurves",
+DEFINE_PRIM_TYPE(Xform, kGeomXform, value::TYPE_ID_GEOM_XFORM);
+DEFINE_PRIM_TYPE(GeomMesh, kGeomMesh, value::TYPE_ID_GEOM_MESH);
+DEFINE_PRIM_TYPE(GeomPoints, kGeomPoints, value::TYPE_ID_GEOM_POINTS);
+DEFINE_PRIM_TYPE(GeomSphere, kGeomSphere, value::TYPE_ID_GEOM_SPHERE);
+DEFINE_PRIM_TYPE(GeomCube, kGeomCube, value::TYPE_ID_GEOM_CUBE);
+DEFINE_PRIM_TYPE(GeomCone, kGeomCone, value::TYPE_ID_GEOM_CONE);
+DEFINE_PRIM_TYPE(GeomCapsule, kGeomCapsule, value::TYPE_ID_GEOM_CAPSULE);
+DEFINE_PRIM_TYPE(GeomCylinder, kGeomCylinder, value::TYPE_ID_GEOM_CYLINDER);
+DEFINE_PRIM_TYPE(GeomBasisCurves, kGeomBasisCurves,
                  value::TYPE_ID_GEOM_BASIS_CURVES);
-DEFINE_PRIM_TYPE(GeomSubset, "GeomSubset", value::TYPE_ID_GEOM_GEOMSUBSET);
-DEFINE_PRIM_TYPE(LuxSphereLight, "SphereLight", value::TYPE_ID_LUX_SPHERE);
-DEFINE_PRIM_TYPE(LuxDomeLight, "DomeLight", value::TYPE_ID_LUX_DOME);
-DEFINE_PRIM_TYPE(LuxDiskLight, "DiskLight", value::TYPE_ID_LUX_DISK);
-DEFINE_PRIM_TYPE(LuxDistantLight, "DistantLight", value::TYPE_ID_LUX_DISTANT);
-DEFINE_PRIM_TYPE(LuxCylinderLight, "CylinderLight", value::TYPE_ID_LUX_CYLINDER);
-DEFINE_PRIM_TYPE(Material, "Material", value::TYPE_ID_MATERIAL);
-DEFINE_PRIM_TYPE(Shader, "Shader", value::TYPE_ID_SHADER);
-DEFINE_PRIM_TYPE(SkelRoot, "SkelRoot", value::TYPE_ID_SKEL_ROOT);
-DEFINE_PRIM_TYPE(Skeleton, "Skeleton", value::TYPE_ID_SKELETON);
-DEFINE_PRIM_TYPE(SkelAnimation, "SkelAnimation", value::TYPE_ID_SKELANIMATION);
-DEFINE_PRIM_TYPE(BlendShape, "Blendshape", value::TYPE_ID_BLENDSHAPE);
+DEFINE_PRIM_TYPE(GeomSubset, kGeomSubset, value::TYPE_ID_GEOM_GEOMSUBSET);
+DEFINE_PRIM_TYPE(LuxSphereLight, kLuxSphereLight, value::TYPE_ID_LUX_SPHERE);
+DEFINE_PRIM_TYPE(LuxDomeLight, kLuxDomeLight, value::TYPE_ID_LUX_DOME);
+DEFINE_PRIM_TYPE(LuxDiskLight, kLuxDiskLight, value::TYPE_ID_LUX_DISK);
+DEFINE_PRIM_TYPE(LuxDistantLight, kLuxDistantLight, value::TYPE_ID_LUX_DISTANT);
+DEFINE_PRIM_TYPE(LuxCylinderLight,  kLuxCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
+DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
+DEFINE_PRIM_TYPE(SkelRoot, kSkelRoot, value::TYPE_ID_SKEL_ROOT);
+DEFINE_PRIM_TYPE(Skeleton, kSkeleton, value::TYPE_ID_SKELETON);
+DEFINE_PRIM_TYPE(SkelAnimation, kSkelAnimation, value::TYPE_ID_SKELANIMATION);
+DEFINE_PRIM_TYPE(BlendShape, kBlendShape, value::TYPE_ID_BLENDSHAPE);
+DEFINE_PRIM_TYPE(GeomCamera, kGeomCamera, value::TYPE_ID_GEOM_CAMERA);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
-DEFINE_PRIM_TYPE(GeomCamera, "Camera", value::TYPE_ID_GEOM_CAMERA);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
 

@@ -15,6 +15,9 @@
 
 namespace tinyusdz {
 
+constexpr auto kMaterial = "Material";
+constexpr auto kShader = "Shader";
+
 //
 // Similar to Maya's ShadingGroup
 //

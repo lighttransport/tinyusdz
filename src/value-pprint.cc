@@ -681,7 +681,15 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       if (auto ret = v.get_value<std::string>()) {
         os << quote(ret.value());
       } else {
-        os << "[InternalError: String type TypeId mismatch.]";
+        os << "[InternalError: `string` type TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTrait<StringData>::type_id: {
+      if (auto ret = v.get_value<StringData>()) {
+        os << ret.value();
+      } else {
+        os << "[InternalError: `string` type TypeId mismatch.]";
       }
       break;
     }
@@ -689,6 +697,15 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       if (auto ret = v.get_value<std::vector<std::string>>()) {
         const std::vector<std::string> &vs = ret.value();
         os << quote(vs);
+      } else {
+        os << "[InternalError: `string[]` type TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTrait<std::vector<StringData>>::type_id: {
+      if (auto ret = v.get_value<std::vector<StringData>>()) {
+        const std::vector<StringData> &vs = ret.value();
+        os << vs;
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
       }
