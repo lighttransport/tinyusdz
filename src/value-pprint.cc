@@ -375,15 +375,13 @@ template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 
   // TODO: Use jeaiii_to_text
-  char buf[256];
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    dtoa_milo(double(v[i]), buf);
-    ofs << std::string(buf);
+    ofs << v[i];
   }
   ofs << "]";
 
@@ -394,15 +392,13 @@ template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 
   // TODO: Use jeaiii_to_text
-  char buf[256];
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    dtoa_milo(double(v[i]), buf);
-    ofs << std::string(buf);
+    ofs << v[i];
   }
   ofs << "]";
 
