@@ -518,7 +518,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
             (*warn) +=
                 "Multiple USDA files were found in USDZ. Use the first found "
                 "one: " +
-                assets[size_t(usdc_index)].filename + "]\n";
+                assets[size_t(usda_index)].filename + "]\n";
           }
           warned = true;
         }
