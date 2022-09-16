@@ -108,7 +108,12 @@ std::ostream &operator<<(std::ostream &os, const std::vector<int32_t> &v);
 template <>
 std::ostream &operator<<(std::ostream &os, const std::vector<uint32_t> &v);
 
-// TODO: int64
+template <>
+std::ostream &operator<<(std::ostream &os, const std::vector<int64_t> &v);
+
+template <>
+std::ostream &operator<<(std::ostream &os, const std::vector<uint64_t> &v);
+
 
 } // namespace std
 
