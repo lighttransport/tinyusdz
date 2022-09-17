@@ -747,7 +747,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 
   // Save offset
-  size_t values_offset = _sr->tell();
+  auto values_offset = _sr->tell();
 
   crate::CrateValue times_value;
   if (!UnpackValueRep(times_rep, &times_value)) {
@@ -807,7 +807,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' value element.");
     }
 
-    size_t next_vrep_loc = _sr->tell();
+    auto next_vrep_loc = _sr->tell();
 
     ///
     /// Type check of the content of `value` will be done at ReconstructPrim() in usdc-reader.cc.
@@ -1172,7 +1172,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
 
     DCOUT("vrep =" << crate::GetCrateDataTypeName(rep.GetType()));
 
-    size_t saved_position = _sr->tell();
+    auto saved_position = _sr->tell();
 
     crate::CrateValue value;
     if (!UnpackValueRep(rep, &value)) {
