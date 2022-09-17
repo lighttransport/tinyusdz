@@ -36,22 +36,7 @@ int main(int argc, char **argv) {
 
   tinyusdz::Stage stage;
 
-  if (ext.compare("usdz") == 0) {
-    std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      //return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else {  // assume usdc
+  if (ext.compare("usdc") == 0) {
     bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
@@ -63,6 +48,21 @@ int main(int argc, char **argv) {
 
     if (!ret) {
       std::cerr << "Failed to load USDC file: " << filepath << "\n";
+      return EXIT_FAILURE;
+    }
+  } else {  // assume usdz
+    //std::cout << "usdz\n";
+    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      //return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDZ file: " << filepath << "\n";
       return EXIT_FAILURE;
     }
   }
