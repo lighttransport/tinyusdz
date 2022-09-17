@@ -115,6 +115,18 @@ jobs:
     - name: make
       run: cd build && make
 
+  # 32bit build(Linux only)
+  build-32bit:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure
+      run: ./scripts/bootstrap-cmake-linux-32bit.sh
+    - name: make
+      run: cd build_m32 && make
+
   build:
 
     runs-on: ubuntu-latest
