@@ -81,6 +81,22 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+  # Windows(32bit) + Visual Studio 2019 build
+  build-windows-msvc:
+
+    runs-on: windows-latest
+    name: Build for Windows(Win32, MSVC)
+
+    # Use system installed cmake
+    # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: Configure
+        run: .\vcsetup-32bit.bat
+      - name: Build
+        run: cmake --build build_win32 --config Release
+
   # Android(aarch64) build
   build-android:
 
