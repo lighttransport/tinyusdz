@@ -18,7 +18,8 @@ jobs:
         uses: actions/checkout@v1
       - name: CmakeAndBuild
         run: |
-            sudo add-apt-repository -yu ppa:ubuntu-toolchain-r/test
+            sudo apt-add-repository -y 'deb http://dk.archive.ubuntu.com/ubuntu/ xenial main'
+            sudo apt-add-repository -y 'deb http://dk.archive.ubuntu.com/ubuntu/ xenial universe'
             sudo apt-get update
             sudo apt-get install -y build-essential
             sudo apt-get install -y gcc-4.9 g++-4.9 gcc-4.9-multilib
@@ -37,6 +38,8 @@ jobs:
         uses: actions/checkout@v1
       - name: CmakeAndBuild
         run: |
+            sudo apt-add-repository -y 'deb http://dk.archive.ubuntu.com/ubuntu/ xenial main'
+            sudo apt-add-repository -y 'deb http://dk.archive.ubuntu.com/ubuntu/ xenial universe'
             sudo apt-get update
             sudo apt-get install -y build-essential
             sudo apt-get install -y gcc-5 g++-5
