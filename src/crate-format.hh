@@ -201,10 +201,10 @@ inline void hash_combine(std::size_t &seed, const T &v) {
   } else {
     // Assume 64bit
     std::hash<T> hasher;
-    const size_t kMul = 0x9ddfea08eb382d69ULL;
-    size_t a = (hasher(v) ^ seed) * kMul;
+    const uint64_t kMul = 0x9ddfea08eb382d69ULL;
+    uint64_t a = (hasher(v) ^ seed) * kMul;
     a ^= (a >> 47);
-    size_t b = (seed ^ a) * kMul;
+    uint64_t b = (seed ^ a) * kMul;
     b ^= (b >> 47);
     seed = size_t(b * kMul);
   }

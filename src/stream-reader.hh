@@ -148,9 +148,11 @@ class StreamReader {
         return 0;
       }
 
-      memcpy(dst, &binary_[idx_], len);
-      idx_ += len;
-      return len;
+      size_t nbytes = size_t(len); // may shorten size on 32bit platform
+
+      memcpy(dst, &binary_[idx_], nbytes);
+      idx_ += nbytes;
+      return nbytes;
 
     } else {
       return 0;
