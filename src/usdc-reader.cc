@@ -1696,7 +1696,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         }
       }
 
-      _prim_table.insert(current);
+      DCOUT("add prim idx " << current);
+      if (_prim_table.count(current)) {
+        DCOUT("??? prim idx already set " << current);
+      } else {
+        _prim_table.insert(current);
+      }
     } else {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "TODO: specTy = " << to_string(spec.spec_type));
@@ -1713,10 +1718,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   {
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
+      DCOUT("Reconstuct Prim children: " << i << " / " << node.GetChildren().size());
       if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]),
                                       currPrimPtr, level + 1, psmap, stage)) {
         return false;
       }
+      DCOUT("DONE Reconstuct Prim children: " << i << " / " << node.GetChildren().size());
     }
   }
 
