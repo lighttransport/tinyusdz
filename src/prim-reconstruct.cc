@@ -3133,6 +3133,7 @@ bool ReconstructShader<UsdUVTexture>(
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   for (auto &prop : properties) {
+    DCOUT("prop.name = " << prop.first);
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
                           texture->st)
@@ -3159,6 +3160,7 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
+  DCOUT("UsdUVTexture reconstructed.");
   return true;
 }
 
@@ -3402,6 +3404,8 @@ bool ReconstructPrim<Shader>(
         "Invalid or Unsupported Shader type. info:id = \"" + shader_type +
         "\n");
   }
+
+  DCOUT("Shader reconstructed.");
 
   return true;
 }
