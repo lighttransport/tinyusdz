@@ -114,6 +114,25 @@ int main(int argc, char **argv) {
 
   if (argc > 1) {
     std::string filename = argv[1];
+#if 0
+    {
+      std::string warn;
+      std::string err;
+      tinyusdz::Stage stage;
+      bool ret = tinyusdz::LoadUSDZFromFile(filename, &stage, &warn, &err);
+
+      if (!warn.empty()) {
+        std::cerr << "WARN : " << warn << "\n";
+      }
+      if (!err.empty()) {
+        std::cerr << "ERR : " << err << "\n";
+      }
+
+      if (!ret) {
+        return EXIT_FAILURE;
+      }
+    }
+#endif
     std::vector<uint8_t> content = ReadFile(filename.c_str());
     if (content.empty()) {
       std::cerr << "File is empty or failed to read: " << filename << "\n";
