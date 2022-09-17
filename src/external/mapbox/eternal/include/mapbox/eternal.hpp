@@ -5,7 +5,8 @@
 #include <cstdint>
 
 // GCC 4.9 compatibility
-#if !defined(__clang__) && defined(__GNUC__) && __GNUC__ < 5
+// GCC < 5.5 also fails to compile with `constexpr`
+#if !defined(__clang__) && defined(__GNUC__) && ((__GNUC__ < 5) || (__GNUC__ == 5) && (__GNUC_MINOR__ < 5))
 
 #define MAPBOX_ETERNAL_IS_CONSTEXPR 0
 #define MAPBOX_ETERNAL_CONSTEXPR
