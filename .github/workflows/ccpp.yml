@@ -8,6 +8,24 @@ on:
 
 jobs:
 
+  # compile with oldest gcc4.9 which supports (most of)C++14
+  build-gcc49:
+
+    runs-on: ubuntu-18.04
+    name: Build with gcc 4.9 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: CmakeAndBuild
+        run: |
+            sudo apt-add-repository -yu 'deb http://ppa.launchpad.net/ubuntu-toolchain-r/test/ubuntu xenial main'
+            sudo apt-get update
+            sudo apt-get install -y build-essential
+            sudo apt-get install -y gcc-4.9 g++-4.9 gcc-4.9-multilib
+            ./scripts/bootstrap-gcc-49.sh
+            cd build-gcc49
+            make VERBOSE=1
+
   # compile with older gcc5
   build-gcc5:
 
@@ -122,6 +140,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: setup
+      run: |
+          sudo apt update
+          sudo apt-get install -y gcc-multilib g++-multilib
     - name: configure
       run: ./scripts/bootstrap-cmake-linux-32bit.sh
     - name: make

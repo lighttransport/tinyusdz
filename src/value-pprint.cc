@@ -11,19 +11,24 @@
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "value-types.hh"
-//
+
+
 // For fast int/float to ascii
-#include "external/jeaiii_to_text.h" // TODO: Remove C++17 code
+// Disabled for a while(need to write a test).
+//#include "external/jeaiii_to_text.h" 
+
 #include "external/dtoa_milo.h"
 
 namespace tinyusdz {
 
 namespace {
 
+#if 0
 void itoa(uint32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(uint64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+#endif
 
 }
 
@@ -389,15 +394,16 @@ template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
-  char buf[32];
+  //char buf[32];
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    tinyusdz::itoa(v[i], buf);
-    ofs << buf;
+    //tinyusdz::itoa(v[i], buf);
+    //ofs << buf;
+    ofs << v[i];
   }
   ofs << "]";
 
@@ -407,15 +413,16 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 
-  char buf[32];
+  //char buf[32];
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    tinyusdz::itoa(v[i], buf);
-    ofs << buf;
+    //tinyusdz::itoa(v[i], buf);
+    //ofs << buf;
+    ofs << v[i];
   }
   ofs << "]";
 
@@ -426,15 +433,16 @@ template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
-  char buf[32];
+  //char buf[32];
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    tinyusdz::itoa(v[i], buf);
-    ofs << buf;
+    //tinyusdz::itoa(v[i], buf);
+    //ofs << buf;
+    ofs << v[i];
   }
   ofs << "]";
 
@@ -444,15 +452,16 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
 
-  char buf[32];
+  //char buf[32];
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    tinyusdz::itoa(v[i], buf);
-    ofs << buf;
+    //tinyusdz::itoa(v[i], buf);
+    //ofs << buf;
+    ofs << v[i];
   }
   ofs << "]";
 

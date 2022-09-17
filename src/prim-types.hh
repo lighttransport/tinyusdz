@@ -704,12 +704,18 @@ struct TypedTimeSamples {
   }
 
   void AddSample(const double t, T &v) {
-    _samples.push_back({t, v, false});
+    Sample s;
+    s.t = t;
+    s.value = v;
+    _samples.emplace_back(s);
     _dirty = true;
   }
 
   void AddBlockedSample(const double t) {
-    _samples.push_back({t, T(), true});
+    Sample s;
+    s.t = t;
+    s.blocked = true;
+    _samples.emplace_back(s);
     _dirty = true;
   }
 
