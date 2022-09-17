@@ -12,7 +12,7 @@ mkdir ${builddir}
 
 
 cd ${builddir} && CC=clang CXX=clang++ cmake \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/linux_i686.toolchain.cmake \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/linux_i386.toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Debug \
   -DSANITIZE_ADDRESS=1 \
   -DCMAKE_VERBOSE_MAKEFILE=1 \

@@ -1847,7 +1847,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("IntArray = " << v);
+        DCOUT("IntArray = " << value::print_array_snipped(v));
 
         value->Set(v);
         return true;
@@ -1870,7 +1870,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("UIntArray = " << v);
+        DCOUT("UIntArray = " << value::print_array_snipped(v));
 
         value->Set(v);
         return true;
@@ -1924,7 +1924,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("UInt64Array = " << v);
+        DCOUT("UInt64Array = " << value::print_array_snipped(v));
 
         value->Set(v);
         return true;
@@ -1968,7 +1968,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("FloatArray = " << v);
+        DCOUT("FloatArray = " << value::print_array_snipped(v));
 
         value->Set(v);
 
@@ -1988,7 +1988,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("DoubleArray = " << v);
+        DCOUT("DoubleArray = " << value::print_array_snipped(v));
         value->Set(v);
 
         return true;
@@ -2246,7 +2246,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("double2 = " << v);
+        DCOUT("double2[] = " << value::print_array_snipped(v));
 
         value->Set(v);
         return true;
@@ -2283,7 +2283,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("float2 = " << v);
+        DCOUT("float2[] = " << value::print_array_snipped(v));
 
         value->Set(v);
         return true;
@@ -2320,7 +2320,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("half2 = " << v);
+        DCOUT("half2[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2356,7 +2356,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("int2 = " << v);
+        DCOUT("int2[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2392,7 +2392,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("double3 = " << v);
+        DCOUT("double3[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2428,7 +2428,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("float3f = " << v);
+        DCOUT("float3f[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2465,7 +2465,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("half3 = " << v);
+        DCOUT("half3[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2501,7 +2501,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("int3 = " << v);
+        DCOUT("int3[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2537,7 +2537,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("double4 = " << v);
+        DCOUT("double4[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2573,7 +2573,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("float4 = " << v);
+        DCOUT("float4[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2609,7 +2609,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("half4 = " << v);
+        DCOUT("half4[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {
@@ -2645,7 +2645,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        DCOUT("int4 = " << v);
+        DCOUT("int4[] = " << value::print_array_snipped(v));
         value->Set(v);
 
       } else {

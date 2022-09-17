@@ -12,6 +12,15 @@ set(CMAKE_SYSROOT "${WASI_SDK_PATH}/share/wasi-sysroot")
 # C++ exceptions is not availble.
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
 
+# wasm specific settings
+# https://github.com/bytecodealliance/wasm-micro-runtime/blob/main/doc/build_wasm_app.md
+# - Stack size: increased to 64KB.
+#   Default is 16KB, which is not enough for some USDZ files with deep hierarchies.
+#   TODO: Rewrite recursive function call with for-loop to save stack size.
+#   (e.g. ReconstructPrimRecursively))
+# - Initial memory: 128KB(Must be larger than stack size
+set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} -z stack-size=65536 -Wl,--initial-memory=131072") 
+
 list(
   APPEND
   TINYUSDZ_SOURCES
