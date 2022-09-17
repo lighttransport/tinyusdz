@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cmath>

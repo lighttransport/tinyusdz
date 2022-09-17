@@ -3133,6 +3133,7 @@ bool ReconstructShader<UsdUVTexture>(
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
   for (auto &prop : properties) {
+    DCOUT("prop.name = " << prop.first);
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
                           texture->st)
@@ -3159,6 +3160,7 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
+  DCOUT("UsdUVTexture reconstructed.");
   return true;
 }
 
@@ -3307,20 +3309,25 @@ bool ReconstructPrim<Shader>(
   auto info_id_prop = properties.find("info:id");
   if (info_id_prop == properties.end()) {
     // Generic? Shader. Currently report as an error.
-    PUSH_ERROR_AND_RETURN("`Shader` must contain `uniform token info:id` property.");
+    PUSH_ERROR_AND_RETURN("`Shader` must contain `info:id` property.");
   }
 
   std::string shader_type;
   if (info_id_prop->second.IsAttrib()) {
     const PrimAttrib &attr = info_id_prop->second.attrib;
-    if ((attr.type_name() == value::kToken) && (attr.variability == Variability::Uniform)) {
+    if ((attr.type_name() == value::kToken)) {
       if (auto pv = attr.get_value<value::token>()) {
         shader_type = pv.value().str();
       } else {
         PUSH_ERROR_AND_RETURN("Internal errror. `info:id` has invalid type.");
       }
     } else {
-      PUSH_ERROR_AND_RETURN("`info:id` property must be `uniform token` type.");
+      PUSH_ERROR_AND_RETURN("`info:id` attribute must be `token` type.");
+    }
+
+    // For some corrupted? USDZ file does not have `uniform` variability.
+    if (attr.variability != Variability::Uniform) {
+      PUSH_WARN("`info:id` attribute must have `uniform` variability.");
     }
   } else {
     PUSH_ERROR_AND_RETURN("Invalid type or value for `info:id` property in `Shader`.");
@@ -3397,6 +3404,8 @@ bool ReconstructPrim<Shader>(
         "Invalid or Unsupported Shader type. info:id = \"" + shader_type +
         "\n");
   }
+
+  DCOUT("Shader reconstructed.");
 
   return true;
 }

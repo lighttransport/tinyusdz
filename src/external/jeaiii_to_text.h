@@ -96,14 +96,16 @@ namespace jeaiii
         {
             if (n < u32(1e4))
             {
-                auto f0 = u32(10 * 0x1p24 / 1e3 + 1) * n;
+                // 0x1p24 = 16777216
+                auto f0 = u32(10 * 16777216ull / 1e3 + 1) * n;
                 *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 24];
                 b -= n < u32(1e3);
                 auto f2 = (f0 & mask<24>) * 100;
                 *reinterpret_cast<pair*>(b + 2) = digits.dd[f2 >> 24];
                 return b + 4;
             }
-            auto f0 = u64(10 * 0x1p32 / 1e5 + 1) * n;
+            // 0x1p32 = 4294967296
+            auto f0 = u64(10 * 4294967296ull / 1e5 + 1) * n;
             *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 32];
             b -= n < u32(1e5);
             auto f2 = (f0 & mask<32>) * 100;
@@ -112,11 +114,12 @@ namespace jeaiii
             *reinterpret_cast<pair*>(b + 4) = digits.dd[f4 >> 32];
             return b + 6;
         }
-        if (n < u64(0x1p32))
+        if (n < u64(4294967296ull))
         {
             if (n < u32(1e8))
             {
-                auto f0 = u64(10 * 0x1p48 / 1e7 + 1) * n >> 16;
+                // 0x1p48 = 281474976710656
+                auto f0 = u64(10 * 281474976710656ull / 1e7 + 1) * n >> 16;
                 *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 32];
                 b -= n < u32(1e7);
                 auto f2 = (f0 & mask<32>) * 100;
@@ -127,7 +130,8 @@ namespace jeaiii
                 *reinterpret_cast<pair*>(b + 6) = digits.dd[f6 >> 32];
                 return b + 8;
             }
-            auto f0 = u64(10 * 0x1p57 / 1e9 + 1) * n;
+            // 0x1p57 = 144115188075855872
+            auto f0 = u64(10 * 144115188075855872ull / 1e9 + 1) * n;
             *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 57];
             b -= n < u32(1e9);
             auto f2 = (f0 & mask<57>) * 100;
@@ -153,7 +157,7 @@ namespace jeaiii
         {
             if (n < u32(1e4))
             {
-                auto f0 = u32(10 * 0x1p24 / 1e3 + 1) * n;
+                auto f0 = u32(10 * 16777216ull / 1e3 + 1) * n;
                 *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 24];
                 b -= n < u32(1e3);
                 auto f2 = (f0 & mask<24>) * 100;
@@ -162,7 +166,7 @@ namespace jeaiii
             }
             else
             {
-                auto f0 = u64(10 * 0x1p32 / 1e5 + 1) * n;
+                auto f0 = u64(10 * 4294967296ull / 1e5 + 1) * n;
                 *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 32];
                 b -= n < u32(1e5);
                 auto f2 = (f0 & mask<32>) * 100;
@@ -174,7 +178,7 @@ namespace jeaiii
         }
         else if (n < u32(1e8))
         {
-            auto f0 = u64(10 * 0x1p48 / 1e7 + 1) * n >> 16;
+            auto f0 = u64(10 * 281474976710656ull / 1e7 + 1) * n >> 16;
             *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 32];
             b -= n < u32(1e7);
             auto f2 = (f0 & mask<32>) * 100;
@@ -185,9 +189,9 @@ namespace jeaiii
             *reinterpret_cast<pair*>(b + 6) = digits.dd[f6 >> 32];
             b += 8;
         }
-        else if (n < u64(0x1p32))
+        else if (n < u64(4294967296ull))
         {
-            auto f0 = u64(10 * 0x1p57 / 1e9 + 1) * n;
+            auto f0 = u64(10 * 144115188075855872ull / 1e9 + 1) * n;
             *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 57];
             b -= n < u32(1e9);
             auto f2 = (f0 & mask<57>) * 100;
@@ -213,7 +217,7 @@ namespace jeaiii
             }
             else
             {
-                auto f0 = u32(10 * 0x1p24 / 1e3 + 1) * n;
+                auto f0 = u32(10 * 16777216ull / 1e3 + 1) * n;
                 *reinterpret_cast<pair*>(b) = digits.fd[f0 >> 24];
                 b -= n < u32(1e3);
                 auto f2 = (f0 & mask<24>) * 100;
@@ -221,7 +225,7 @@ namespace jeaiii
                 b += 4;
             }
             // do 8 digits
-            auto f0 = u64(10 * u64(0x1p48) / u64(1e7) + 1) * y >> 16;
+            auto f0 = u64(10 * u64(281474976710656ull) / u64(1e7) + 1) * y >> 16;
             *reinterpret_cast<pair*>(b) = digits.dd[f0 >> 32];
             auto f2 = (f0 & mask<32>) * 100;
             *reinterpret_cast<pair*>(b + 2) = digits.dd[f2 >> 32];
@@ -232,7 +236,7 @@ namespace jeaiii
             b += 8;
         }
         // do 8 digits
-        auto f0 = u64(10 * u64(0x1p48) / u64(1e7) + 1) * z >> 16;
+        auto f0 = u64(10 * u64(281474976710656ull) / u64(1e7) + 1) * z >> 16;
         *reinterpret_cast<pair*>(b) = digits.dd[f0 >> 32];
         auto f2 = (f0 & mask<32>) * 100;
         *reinterpret_cast<pair*>(b + 2) = digits.dd[f2 >> 32];

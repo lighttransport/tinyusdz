@@ -100,7 +100,7 @@ std::string ExpandFilePath(const std::string &filepath, void *) {
   // Quote the string to keep any spaces in filepath intact.
   std::string quoted_path = "\"" + filepath + "\"";
   // char** w;
-  // TODO: Implement our own file path expansion routine.
+  // TODO: wordexp() is a awful API. Implement our own file path expansion routine.
   int ret = wordexp(quoted_path.c_str(), &p, WRDE_NOCMD);
   if (ret) {
     // err
