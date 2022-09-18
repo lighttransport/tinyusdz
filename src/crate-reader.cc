@@ -58,55 +58,20 @@ namespace crate {
 
 #define kTag "[Crate]"
 
-namespace {
+#define CHECK_MEMORY_USAGE(__nbytes) do { \
+  _memoryUsage += (__nbytes); \
+  if (_memoryUsage > _config.maxMemoryBudget) { \
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Reached to max memory budget."); \
+  }  \
+  } while(0)
 
-template <class Int>
-static inline bool ReadCompressedInts(const StreamReader *sr, Int *out,
-                                      size_t size) {
-  // TODO(syoyo): Error check
-  using Compressor =
-      typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
-                                Usd_IntegerCompression64>::type;
-  std::vector<char> compBuffer(Compressor::GetCompressedBufferSize(size));
-  uint64_t compSize;
-  if (!sr->read8(&compSize)) {
-    return false;
-  }
+#define REDUCE_MEMORY_USAGE(__nbytes) do { \
+  if (_memoryUsage < (__nbytes)) { \
+    _memoryUsage -= (__nbytes); \
+  } \
+  } while(0)
 
-  if (!sr->read(size_t(compSize), size_t(compSize),
-                reinterpret_cast<uint8_t *>(compBuffer.data()))) {
-    return false;
-  }
-  std::string err;
-  bool ret = Compressor::DecompressFromBuffer(
-      compBuffer.data(), size_t(compSize), out, size, &err);
-  (void)err;
 
-  return ret;
-}
-
-static inline bool ReadIndices(const StreamReader *sr,
-                               std::vector<crate::Index> *indices) {
-  // TODO(syoyo): Error check
-  uint64_t n;
-  if (!sr->read8(&n)) {
-    return false;
-  }
-
-  DCOUT("ReadIndices: n = " << n);
-
-  indices->resize(size_t(n));
-  size_t datalen = size_t(n) * sizeof(crate::Index);
-
-  if (datalen != sr->read(datalen, datalen,
-                          reinterpret_cast<uint8_t *>(indices->data()))) {
-    return false;
-  }
-
-  return true;
-}
-
-} // namespace
 
 //
 // --
@@ -221,7 +186,37 @@ bool CrateReader::ReadIndex(crate::Index *i) {
     PUSH_ERROR("Failed to read Index");
     return false;
   }
+
+  CHECK_MEMORY_USAGE(sizeof(uint32_t));
+
   (*i) = crate::Index(value);
+  return true;
+}
+
+bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
+  // TODO(syoyo): Error check
+  uint64_t n;
+  if (!_sr->read8(&n)) {
+    return false;
+  }
+
+  if (n > _config.maxNumIndices) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many indices.");
+  }
+
+  DCOUT("ReadIndices: n = " << n);
+
+  size_t datalen = size_t(n) * sizeof(crate::Index);
+
+  CHECK_MEMORY_USAGE(datalen);
+
+  indices->resize(size_t(n));
+
+  if (datalen != _sr->read(datalen, datalen,
+                          reinterpret_cast<uint8_t *>(indices->data()))) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Indices array.");
+  }
+
   return true;
 }
 
@@ -235,8 +230,10 @@ bool CrateReader::ReadString(std::string *s) {
 
   if (auto tok = GetStringToken(string_index)) {
     (*s) = tok.value().str();
+    CHECK_MEMORY_USAGE(s->size());
     return true;
   }
+
 
   PUSH_ERROR("Invalid StringIndex.");
   return false;
@@ -270,106 +267,135 @@ bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
     return false;
   }
 
+  CHECK_MEMORY_USAGE(sizeof(uint64_t));
+
   DCOUT("ValueRep value = " << rep->GetData());
 
   return true;
 }
 
+template <class Int>
+bool CrateReader::ReadCompressedInts(Int *out,
+                                      size_t size) {
+  using Compressor =
+      typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
+                                Usd_IntegerCompression64>::type;
+
+
+
+  size_t compBufferSize = Compressor::GetCompressedBufferSize(size);
+  CHECK_MEMORY_USAGE(compBufferSize);
+
+  uint64_t compSize;
+  if (!_sr->read8(&compSize)) {
+    return false;
+  }
+
+  if ((compSize > _sr->size()) || (compSize > _config.maxMemoryBudget)) {
+    return false;
+  }
+
+  std::vector<char> compBuffer(compBufferSize);
+  if (!_sr->read(size_t(compSize), size_t(compSize),
+                reinterpret_cast<uint8_t *>(compBuffer.data()))) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedInts.");
+  }
+
+  bool ret = Compressor::DecompressFromBuffer(
+      compBuffer.data(), size_t(compSize), out, size, &_err);
+
+  REDUCE_MEMORY_USAGE(compBufferSize);
+
+  return ret;
+}
+
 template <typename T>
 bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
-  if (!is_compressed) {
-    size_t length;
-    // < ver 0.7.0  use 32bit
-    if ((_version[0] == 0) && ((_version[1] < 7))) {
-      uint32_t n;
-      if (!_sr->read4(&n)) {
-        // PUSH_ERROR("Failed to read the number of array elements.");
-        return false;
-      }
-      length = size_t(n);
-    } else {
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        //_err += "Failed to read the number of array elements.\n";
-        return false;
-      }
 
-      length = size_t(n);
+  size_t length; // uncompressed array elements.
+  // < ver 0.7.0  use 32bit
+  if ((_version[0] == 0) && ((_version[1] < 7))) {
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+      return false;
     }
 
-    d->resize(length);
+    length = size_t(n);
+  }
+
+  DCOUT("array.len = " << length);
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too large array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(sizeof(T) * length);
+
+  d->resize(length);
+
+  if (!is_compressed) {
 
     // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
-      //_err += "Failed to read integer array data.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read integer array data.");
     }
 
     return true;
 
   } else {
-    size_t length;
-    // < ver 0.7.0  use 32bit
-    if ((_version[0] == 0) && ((_version[1] < 7))) {
-      uint32_t n;
-      if (!_sr->read4(&n)) {
-        //_err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-      length = size_t(n);
-    } else {
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        //_err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-
-      length = size_t(n);
-    }
-
-    DCOUT("array.len = " << length);
-
-    d->resize(length);
 
     if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(T) * length;
-      // Not stored in compressed.
-      // reader.ReadContiguous(odata, osize);
+      // Not stored in compressed for smaller data
       if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-        PUSH_ERROR("Failed to read uncompressed array data.");
-        return false;
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uncompressed integer array data.");
       }
       return true;
     }
 
-    return ReadCompressedInts(_sr, d->data(), d->size());
+    return ReadCompressedInts(d->data(), d->size());
   }
 }
 
 bool CrateReader::ReadHalfArray(bool is_compressed,
                                 std::vector<value::half> *d) {
-  if (!is_compressed) {
-    size_t length;
-    // < ver 0.7.0  use 32bit
-    if ((_version[0] == 0) && ((_version[1] < 7))) {
-      uint32_t n;
-      if (!_sr->read4(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-      length = size_t(n);
-    } else {
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-
-      length = size_t(n);
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if ((_version[0] == 0) && ((_version[1] < 7))) {
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
     }
 
-    d->resize(length);
+    length = size_t(n);
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(uint16_t));
+
+  d->resize(length);
+
+  if (!is_compressed) {
+
 
     // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(uint16_t) * length, sizeof(uint16_t) * length,
@@ -379,11 +405,78 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
     }
 
     return true;
+  } else {
+
+    //
+    // compressed data is represented by integers or look-up table.
+    //
+
+    if (length < crate::kMinCompressedArraySize) {
+      size_t sz = sizeof(uint16_t) * length;
+      // Not stored in compressed.
+      // reader.ReadContiguous(odata, osize);
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+      return true;
+    }
+
+    // Read the code
+    char code;
+    if (!_sr->read1(&code)) {
+      _err += "Failed to read the code.\n";
+      return false;
+    }
+
+    if (code == 'i') {
+      // Compressed integers.
+      std::vector<int32_t> ints(length);
+      if (!ReadCompressedInts(ints.data(), ints.size())) {
+        _err += "Failed to read compressed ints in ReadHalfArray.\n";
+        return false;
+      }
+      for (size_t i = 0; i < length; i++) {
+        float f = float(ints[i]);
+        value::half h = value::float_to_half_full(f);
+        (*d)[i] = h;
+      }
+    } else if (code == 't') {
+      // Lookup table & indexes.
+      uint32_t lutSize;
+      if (!_sr->read4(&lutSize)) {
+        _err += "Failed to read lutSize in ReadHalfArray.\n";
+        return false;
+      }
+
+      std::vector<value::half> lut(lutSize);
+      if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
+                     reinterpret_cast<uint8_t *>(lut.data()))) {
+        _err += "Failed to read lut table in ReadHalfArray.\n";
+        return false;
+      }
+
+      std::vector<uint32_t> indexes(length);
+      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+        _err += "Failed to read lut indices in ReadHalfArray.\n";
+        return false;
+      }
+
+      auto o = d->data();
+      for (auto index : indexes) {
+        *o++ = lut[index];
+      }
+    } else {
+      _err += "Invalid code. Data is currupted\n";
+      return false;
+    }
+
+    return true;
   }
 
-  //
-  // compressed data is represented by integers or look-up table.
-  //
+}
+
+bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
   size_t length;
   // < ver 0.7.0  use 32bit
@@ -404,95 +497,15 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
     length = size_t(n);
   }
 
-  DCOUT("array.len = " << length);
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(float));
 
   d->resize(length);
 
-  if (length < crate::kMinCompressedArraySize) {
-    size_t sz = sizeof(uint16_t) * length;
-    // Not stored in compressed.
-    // reader.ReadContiguous(odata, osize);
-    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-      _err += "Failed to read uncompressed array data.\n";
-      return false;
-    }
-    return true;
-  }
-
-  // Read the code
-  char code;
-  if (!_sr->read1(&code)) {
-    _err += "Failed to read the code.\n";
-    return false;
-  }
-
-  if (code == 'i') {
-    // Compressed integers.
-    std::vector<int32_t> ints(length);
-    if (!ReadCompressedInts(_sr, ints.data(), ints.size())) {
-      _err += "Failed to read compressed ints in ReadHalfArray.\n";
-      return false;
-    }
-    for (size_t i = 0; i < length; i++) {
-      float f = float(ints[i]);
-      value::half h = value::float_to_half_full(f);
-      (*d)[i] = h;
-    }
-  } else if (code == 't') {
-    // Lookup table & indexes.
-    uint32_t lutSize;
-    if (!_sr->read4(&lutSize)) {
-      _err += "Failed to read lutSize in ReadHalfArray.\n";
-      return false;
-    }
-
-    std::vector<value::half> lut(lutSize);
-    if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
-                   reinterpret_cast<uint8_t *>(lut.data()))) {
-      _err += "Failed to read lut table in ReadHalfArray.\n";
-      return false;
-    }
-
-    std::vector<uint32_t> indexes(length);
-    if (!ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
-      _err += "Failed to read lut indices in ReadHalfArray.\n";
-      return false;
-    }
-
-    auto o = d->data();
-    for (auto index : indexes) {
-      *o++ = lut[index];
-    }
-  } else {
-    _err += "Invalid code. Data is currupted\n";
-    return false;
-  }
-
-  return true;
-}
-
-bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   if (!is_compressed) {
-    size_t length;
-    // < ver 0.7.0  use 32bit
-    if ((_version[0] == 0) && ((_version[1] < 7))) {
-      uint32_t n;
-      if (!_sr->read4(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-      length = size_t(n);
-    } else {
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-
-      length = size_t(n);
-    }
-
-    d->resize(length);
 
     // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
@@ -502,11 +515,74 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     }
 
     return true;
+  } else {
+
+    //
+    // compressed data is represented by integers or look-up table.
+    //
+
+    if (length < crate::kMinCompressedArraySize) {
+      size_t sz = sizeof(float) * length;
+      // Not stored in compressed.
+      // reader.ReadContiguous(odata, osize);
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+      return true;
+    }
+
+    // Read the code
+    char code;
+    if (!_sr->read1(&code)) {
+      _err += "Failed to read the code.\n";
+      return false;
+    }
+
+    if (code == 'i') {
+      // Compressed integers.
+      std::vector<int32_t> ints(length);
+      if (!ReadCompressedInts(ints.data(), ints.size())) {
+        _err += "Failed to read compressed ints in ReadFloatArray.\n";
+        return false;
+      }
+      std::copy(ints.begin(), ints.end(), d->data());
+    } else if (code == 't') {
+      // Lookup table & indexes.
+      uint32_t lutSize;
+      if (!_sr->read4(&lutSize)) {
+        _err += "Failed to read lutSize in ReadFloatArray.\n";
+        return false;
+      }
+
+      std::vector<float> lut(lutSize);
+      if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+                     reinterpret_cast<uint8_t *>(lut.data()))) {
+        _err += "Failed to read lut table in ReadFloatArray.\n";
+        return false;
+      }
+
+      std::vector<uint32_t> indexes(length);
+      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+        _err += "Failed to read lut indices in ReadFloatArray.\n";
+        return false;
+      }
+
+      auto o = d->data();
+      for (auto index : indexes) {
+        *o++ = lut[index];
+      }
+    } else {
+      _err += "Invalid code. Data is currupted\n";
+      return false;
+    }
+
+    return true;
   }
 
-  //
-  // compressed data is represented by integers or look-up table.
-  //
+}
+
+bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
   size_t length;
   // < ver 0.7.0  use 32bit
@@ -527,91 +603,15 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     length = size_t(n);
   }
 
-  DCOUT("array.len = " << length);
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(double));
 
   d->resize(length);
 
-  if (length < crate::kMinCompressedArraySize) {
-    size_t sz = sizeof(float) * length;
-    // Not stored in compressed.
-    // reader.ReadContiguous(odata, osize);
-    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-      _err += "Failed to read uncompressed array data.\n";
-      return false;
-    }
-    return true;
-  }
-
-  // Read the code
-  char code;
-  if (!_sr->read1(&code)) {
-    _err += "Failed to read the code.\n";
-    return false;
-  }
-
-  if (code == 'i') {
-    // Compressed integers.
-    std::vector<int32_t> ints(length);
-    if (!ReadCompressedInts(_sr, ints.data(), ints.size())) {
-      _err += "Failed to read compressed ints in ReadFloatArray.\n";
-      return false;
-    }
-    std::copy(ints.begin(), ints.end(), d->data());
-  } else if (code == 't') {
-    // Lookup table & indexes.
-    uint32_t lutSize;
-    if (!_sr->read4(&lutSize)) {
-      _err += "Failed to read lutSize in ReadFloatArray.\n";
-      return false;
-    }
-
-    std::vector<float> lut(lutSize);
-    if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
-                   reinterpret_cast<uint8_t *>(lut.data()))) {
-      _err += "Failed to read lut table in ReadFloatArray.\n";
-      return false;
-    }
-
-    std::vector<uint32_t> indexes(length);
-    if (!ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
-      _err += "Failed to read lut indices in ReadFloatArray.\n";
-      return false;
-    }
-
-    auto o = d->data();
-    for (auto index : indexes) {
-      *o++ = lut[index];
-    }
-  } else {
-    _err += "Invalid code. Data is currupted\n";
-    return false;
-  }
-
-  return true;
-}
-
-bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   if (!is_compressed) {
-    size_t length;
-    // < ver 0.7.0  use 32bit
-    if ((_version[0] == 0) && ((_version[1] < 7))) {
-      uint32_t n;
-      if (!_sr->read4(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-      length = size_t(n);
-    } else {
-      uint64_t n;
-      if (!_sr->read8(&n)) {
-        _err += "Failed to read the number of array elements.\n";
-        return false;
-      }
-
-      length = size_t(n);
-    }
-
-    d->resize(length);
 
     // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
@@ -621,92 +621,72 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     }
 
     return true;
-  }
-
-  //
-  // compressed data is represented by integers or look-up table.
-  //
-
-  size_t length;
-  // < ver 0.7.0  use 32bit
-  if ((_version[0] == 0) && ((_version[1] < 7))) {
-    uint32_t n;
-    if (!_sr->read4(&n)) {
-      _err += "Failed to read the number of array elements.\n";
-      return false;
-    }
-    length = size_t(n);
   } else {
-    uint64_t n;
-    if (!_sr->read8(&n)) {
-      _err += "Failed to read the number of array elements.\n";
+
+    //
+    // compressed data is represented by integers or look-up table.
+    //
+
+    d->resize(length);
+
+    if (length < crate::kMinCompressedArraySize) {
+      size_t sz = sizeof(double) * length;
+      // Not stored in compressed.
+      // reader.ReadContiguous(odata, osize);
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+      return true;
+    }
+
+    // Read the code
+    char code;
+    if (!_sr->read1(&code)) {
+      _err += "Failed to read the code.\n";
       return false;
     }
 
-    length = size_t(n);
-  }
+    if (code == 'i') {
+      // Compressed integers.
+      std::vector<int32_t> ints(length);
+      if (!ReadCompressedInts(ints.data(), ints.size())) {
+        _err += "Failed to read compressed ints in ReadDoubleArray.\n";
+        return false;
+      }
+      std::copy(ints.begin(), ints.end(), d->data());
+    } else if (code == 't') {
+      // Lookup table & indexes.
+      uint32_t lutSize;
+      if (!_sr->read4(&lutSize)) {
+        _err += "Failed to read lutSize in ReadDoubleArray.\n";
+        return false;
+      }
 
-  DCOUT("array.len = " << length);
+      std::vector<double> lut(lutSize);
+      if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+                     reinterpret_cast<uint8_t *>(lut.data()))) {
+        _err += "Failed to read lut table in ReadDoubleArray.\n";
+        return false;
+      }
 
-  d->resize(length);
+      std::vector<uint32_t> indexes(length);
+      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+        _err += "Failed to read lut indices in ReadDoubleArray.\n";
+        return false;
+      }
 
-  if (length < crate::kMinCompressedArraySize) {
-    size_t sz = sizeof(double) * length;
-    // Not stored in compressed.
-    // reader.ReadContiguous(odata, osize);
-    if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
-      _err += "Failed to read uncompressed array data.\n";
+      auto o = d->data();
+      for (auto index : indexes) {
+        *o++ = lut[index];
+      }
+    } else {
+      _err += "Invalid code. Data is currupted\n";
       return false;
     }
+
     return true;
   }
-
-  // Read the code
-  char code;
-  if (!_sr->read1(&code)) {
-    _err += "Failed to read the code.\n";
-    return false;
-  }
-
-  if (code == 'i') {
-    // Compressed integers.
-    std::vector<int32_t> ints(length);
-    if (!ReadCompressedInts(_sr, ints.data(), ints.size())) {
-      _err += "Failed to read compressed ints in ReadDoubleArray.\n";
-      return false;
-    }
-    std::copy(ints.begin(), ints.end(), d->data());
-  } else if (code == 't') {
-    // Lookup table & indexes.
-    uint32_t lutSize;
-    if (!_sr->read4(&lutSize)) {
-      _err += "Failed to read lutSize in ReadDoubleArray.\n";
-      return false;
-    }
-
-    std::vector<double> lut(lutSize);
-    if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
-                   reinterpret_cast<uint8_t *>(lut.data()))) {
-      _err += "Failed to read lut table in ReadDoubleArray.\n";
-      return false;
-    }
-
-    std::vector<uint32_t> indexes(length);
-    if (!ReadCompressedInts(_sr, indexes.data(), indexes.size())) {
-      _err += "Failed to read lut indices in ReadDoubleArray.\n";
-      return false;
-    }
-
-    auto o = d->data();
-    for (auto index : indexes) {
-      *o++ = lut[index];
-    }
-  } else {
-    _err += "Invalid code. Data is currupted\n";
-    return false;
-  }
-
-  return true;
 }
 
 bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
@@ -843,6 +823,12 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
       return false;
     }
 
+    if (n > _config.maxArrayElements) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+    } 
+
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
@@ -853,10 +839,13 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
     }
 
     // reconstruct
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(void *));
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
       if (auto v = GetStringToken(ivalue[i])) {
-        result[i] = v.value().str();
+        std::string s = v.value().str();
+        CHECK_MEMORY_USAGE(s.size());
+        result[i] = s;
       } else {
         PUSH_ERROR("Invalid StringIndex.");
       }
@@ -883,6 +872,13 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
       _err += "Failed to read # of elements in ListOp.\n";
       return false;
     }
+
+    if (n > _config.maxArrayElements) {
+      _err += "Too many Path array elements.\n";
+      return false;
+    } 
+
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -937,6 +933,13 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
       _err += "Failed to read # of elements in ListOp.\n";
       return false;
     }
+
+    if (n > _config.maxArrayElements) {
+      _err += "Too many ListOp elements.\n";
+      return false;
+    } 
+
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -1042,6 +1045,13 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
       PUSH_ERROR("Failed to read # of elements in ListOp.");
       return false;
     }
+
+    if (n > _config.maxArrayElements) {
+      _err += "Too many ListOp elements.\n";
+      return false;
+    } 
+
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
@@ -1718,9 +1728,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        if (n < _config.maxAssetPathElements) {
+        if (n > _config.maxAssetPathElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of AssetPaths too large. TinyUSDZ limites it up to {}", _config.maxAssetPathElements));
         }
+
+        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
@@ -1758,6 +1770,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+        }
+
+        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
@@ -1792,6 +1810,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
+
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("String array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+        }
+
+        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
@@ -1898,6 +1922,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
 
+        CHECK_MEMORY_USAGE(sizeof(int64_t));
+
         int64_t v;
         if (!_sr->read(sizeof(int64_t), sizeof(int64_t),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -1930,6 +1956,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return true;
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        CHECK_MEMORY_USAGE(sizeof(uint64_t));
 
         uint64_t v;
         if (!_sr->read(sizeof(uint64_t), sizeof(uint64_t),
@@ -1995,6 +2023,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
 
+        CHECK_MEMORY_USAGE(sizeof(double));
+
         double v;
         if (!_sr->read_double(&v)) {
           PUSH_ERROR("Failed to read Double value.");
@@ -2018,6 +2048,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix2d));
+      
+
         std::vector<value::matrix2d> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::matrix2d),
                        size_t(n) * sizeof(value::matrix2d),
@@ -2030,6 +2067,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       } else {
         static_assert(sizeof(value::matrix2d) == (8 * 4), "");
+
+        CHECK_MEMORY_USAGE(sizeof(value::matrix2d));
 
         value::matrix4d v;
         if (!_sr->read(sizeof(value::matrix2d), sizeof(value::matrix2d),
@@ -2055,6 +2094,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix3d));
+
         std::vector<value::matrix3d> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::matrix3d),
                        size_t(n) * sizeof(value::matrix3d),
@@ -2068,7 +2113,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         static_assert(sizeof(value::matrix3d) == (8 * 9), "");
 
-        value::matrix4d v;
+        CHECK_MEMORY_USAGE(sizeof(value::matrix3d));
+
+        value::matrix3d v;
         if (!_sr->read(sizeof(value::matrix3d), sizeof(value::matrix3d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix3d` type\n";
@@ -2093,6 +2140,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix4d));
+
         std::vector<value::matrix4d> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::matrix4d),
                        size_t(n) * sizeof(value::matrix4d),
@@ -2105,6 +2158,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       } else {
         static_assert(sizeof(value::matrix4d) == (8 * 16), "");
+
+        CHECK_MEMORY_USAGE(sizeof(value::matrix4d));
 
         value::matrix4d v;
         if (!_sr->read(sizeof(value::matrix4d), sizeof(value::matrix4d),
@@ -2128,6 +2183,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::quatd));
+
         std::vector<value::quatd> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::quatd),
                        size_t(n) * sizeof(value::quatd),
@@ -2142,6 +2203,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        CHECK_MEMORY_USAGE(sizeof(value::quatd));
 
         value::quatd v;
         if (!_sr->read(sizeof(value::quatd), sizeof(value::quatd),
@@ -2164,6 +2227,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::quatf));
+
         std::vector<value::quatf> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::quatf),
                        size_t(n) * sizeof(value::quatf),
@@ -2178,6 +2247,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        CHECK_MEMORY_USAGE(sizeof(value::quatf));
 
         value::quatf v;
         if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
@@ -2200,6 +2271,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::quath));
+
         std::vector<value::quath> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::quath),
                        size_t(n) * sizeof(value::quath),
@@ -2214,6 +2291,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
+
+        CHECK_MEMORY_USAGE(sizeof(value::quath));
 
         value::quath v;
         if (!_sr->read(sizeof(value::quath), sizeof(value::quath),
@@ -2238,6 +2317,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::double2));
+
         std::vector<value::double2> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::double2),
                        size_t(n) * sizeof(value::double2),
@@ -2251,6 +2336,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
         return true;
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::double2));
         value::double2 v;
         if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2275,6 +2361,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::float2));
+
         std::vector<value::float2> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::float2),
                        size_t(n) * sizeof(value::float2),
@@ -2288,6 +2380,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
         return true;
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::float2));
         value::float2 v;
         if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2312,6 +2405,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::half2));
+
         std::vector<value::half2> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::half2),
                        size_t(n) * sizeof(value::half2),
@@ -2324,6 +2423,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::half2));
         value::half2 v;
         if (!_sr->read(sizeof(value::half2), sizeof(value::half2),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2348,6 +2448,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::int2));
+
         std::vector<value::int2> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::int2),
                        size_t(n) * sizeof(value::int2),
@@ -2360,6 +2466,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::int2));
         value::int2 v;
         if (!_sr->read(sizeof(value::int2), sizeof(value::int2),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2384,6 +2491,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::double3));
+
         std::vector<value::double3> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::double3),
                        size_t(n) * sizeof(value::double3),
@@ -2396,6 +2509,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::double3));
         value::double3 v;
         if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2420,6 +2534,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::float3));
+
         std::vector<value::float3> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::float3),
                        size_t(n) * sizeof(value::float3),
@@ -2432,6 +2552,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::float3));
         value::float3 v;
         if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2457,6 +2578,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::half3));
+
         std::vector<value::half3> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::half3),
                        size_t(n) * sizeof(value::half3),
@@ -2469,6 +2596,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::half3));
         value::half3 v;
         if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2493,6 +2621,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::int3));
+
         std::vector<value::int3> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::int3),
                        size_t(n) * sizeof(value::int3),
@@ -2505,6 +2639,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::int3));
         value::int3 v;
         if (!_sr->read(sizeof(value::int3), sizeof(value::int3),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2529,6 +2664,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::double4));
+
         std::vector<value::double4> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::double4),
                        size_t(n) * sizeof(value::double4),
@@ -2541,6 +2682,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::double4));
         value::double4 v;
         if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2565,6 +2707,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::float4));
+
         std::vector<value::float4> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::float4),
                        size_t(n) * sizeof(value::float4),
@@ -2577,6 +2725,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::float4));
         value::float4 v;
         if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2601,6 +2750,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::half4));
+
         std::vector<value::half4> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::half4),
                        size_t(n) * sizeof(value::half4),
@@ -2613,6 +2768,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::half4));
         value::half4 v;
         if (!_sr->read(sizeof(value::half4), sizeof(value::half4),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2637,6 +2793,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        }
+        
+        CHECK_MEMORY_USAGE(n * sizeof(value::int4));
+
         std::vector<value::int4> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::int4),
                        size_t(n) * sizeof(value::int4),
@@ -2649,6 +2811,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(v);
 
       } else {
+        CHECK_MEMORY_USAGE(sizeof(value::int4));
         value::int4 v;
         if (!_sr->read(sizeof(value::int4), sizeof(value::int4),
                        reinterpret_cast<uint8_t *>(&v))) {
@@ -2731,6 +2894,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR("Failed to read TokenVector value.");
         return false;
       }
+
+      if (n > _config.maxArrayElements) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+      }
+      
+      CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
       std::vector<crate::Index> indices(static_cast<size_t>(n));
       if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
@@ -2981,38 +3150,49 @@ bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
 
   DCOUT("numPaths : " << numPaths);
 
+  // 3 = pathIndex, elementTokenIndex, jump
+  CHECK_MEMORY_USAGE(size_t(numPaths) * sizeof(int32_t) * 3);
+
   pathIndexes.resize(static_cast<size_t>(numPaths));
   elementTokenIndexes.resize(static_cast<size_t>(numPaths));
   jumps.resize(static_cast<size_t>(numPaths));
 
+  size_t compBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(static_cast<size_t>(numPaths));
+  size_t workspaceBufferSize = Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(static_cast<size_t>(numPaths));
+  CHECK_MEMORY_USAGE(compBufferSize);
+  CHECK_MEMORY_USAGE(workspaceBufferSize);
+
   // Create temporary space for decompressing.
-  std::vector<char> compBuffer(Usd_IntegerCompression::GetCompressedBufferSize(
-      static_cast<size_t>(numPaths)));
-  std::vector<char> workingSpace(
-      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
-          static_cast<size_t>(numPaths)));
+  std::vector<char> compBuffer(compBufferSize);
+  std::vector<char> workingSpace(workspaceBufferSize);
 
   // pathIndexes.
   {
-    uint64_t pathIndexesSize;
-    if (!_sr->read8(&pathIndexesSize)) {
+    uint64_t compPathIndexesSize;
+    if (!_sr->read8(&compPathIndexesSize)) {
       _err += "Failed to read pathIndexesSize.\n";
       return false;
     }
 
-    if (pathIndexesSize !=
-        _sr->read(size_t(pathIndexesSize), size_t(pathIndexesSize),
+    if (compPathIndexesSize > compBufferSize) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed PathIndexes size.");
+    }
+
+    CHECK_MEMORY_USAGE(size_t(compPathIndexesSize));
+
+    if (compPathIndexesSize !=
+        _sr->read(size_t(compPathIndexesSize), size_t(compPathIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
-      _err += "Failed to read pathIndexes data.\n";
+      _err += "Failed to read compressed pathIndexes data.\n";
       return false;
     }
 
     DCOUT("comBuffer.size = " << compBuffer.size());
-    DCOUT("pathIndexesSize = " << pathIndexesSize);
+    DCOUT("compPathIndexesSize = " << compPathIndexesSize);
 
     std::string err;
     Usd_IntegerCompression::DecompressFromBuffer(
-        compBuffer.data(), size_t(pathIndexesSize), pathIndexes.data(),
+        compBuffer.data(), size_t(compPathIndexesSize), pathIndexes.data(),
         size_t(numPaths), &err, workingSpace.data());
     if (!err.empty()) {
       _err += "Failed to decode pathIndexes\n" + err;
@@ -3022,15 +3202,21 @@ bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
 
   // elementTokenIndexes.
   {
-    uint64_t elementTokenIndexesSize;
-    if (!_sr->read8(&elementTokenIndexesSize)) {
+    uint64_t compElementTokenIndexesSize;
+    if (!_sr->read8(&compElementTokenIndexesSize)) {
       _err += "Failed to read elementTokenIndexesSize.\n";
       return false;
     }
 
-    if (elementTokenIndexesSize !=
-        _sr->read(size_t(elementTokenIndexesSize),
-                  size_t(elementTokenIndexesSize),
+    if (compElementTokenIndexesSize > compBufferSize) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
+    }
+
+    CHECK_MEMORY_USAGE(size_t(compElementTokenIndexesSize));
+
+    if (compElementTokenIndexesSize !=
+        _sr->read(size_t(compElementTokenIndexesSize),
+                  size_t(compElementTokenIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       PUSH_ERROR("Failed to read elementTokenIndexes data.");
       return false;
@@ -3038,7 +3224,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
 
     std::string err;
     Usd_IntegerCompression::DecompressFromBuffer(
-        compBuffer.data(), size_t(elementTokenIndexesSize),
+        compBuffer.data(), size_t(compElementTokenIndexesSize),
         elementTokenIndexes.data(), size_t(numPaths), &err,
         workingSpace.data());
 
@@ -3050,22 +3236,28 @@ bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
 
   // jumps.
   {
-    uint64_t jumpsSize;
-    if (!_sr->read8(&jumpsSize)) {
-      PUSH_ERROR("Failed to read jumpsSize.");
+    uint64_t compJumpsSize;
+    if (!_sr->read8(&compJumpsSize)) {
+      PUSH_ERROR("Failed to read compressed jumpsSize.");
       return false;
     }
 
-    if (jumpsSize !=
-        _sr->read(size_t(jumpsSize), size_t(jumpsSize),
+    if (compJumpsSize > compBufferSize) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Compressed elementTokenIndexes size.");
+    }
+
+    CHECK_MEMORY_USAGE(size_t(compJumpsSize));
+
+    if (compJumpsSize !=
+        _sr->read(size_t(compJumpsSize), size_t(compJumpsSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
-      PUSH_ERROR("Failed to read jumps data.");
+      PUSH_ERROR("Failed to read compressed jumps data.");
       return false;
     }
 
     std::string err;
     Usd_IntegerCompression::DecompressFromBuffer(
-        compBuffer.data(), size_t(jumpsSize), jumps.data(), size_t(numPaths),
+        compBuffer.data(), size_t(compJumpsSize), jumps.data(), size_t(numPaths),
         &err, workingSpace.data());
 
     if (!err.empty()) {
@@ -3074,9 +3266,12 @@ bool CrateReader::ReadCompressedPaths(const uint64_t ref_num_paths) {
     }
   }
 
+  CHECK_MEMORY_USAGE(size_t(numPaths) * sizeof(Path)); // conservative estimation
+  CHECK_MEMORY_USAGE(size_t(numPaths) * sizeof(Path)); // conservative estimation
+  CHECK_MEMORY_USAGE(size_t(numPaths) * sizeof(Node)); // conservative estimation
+
   _paths.resize(static_cast<size_t>(numPaths));
   _elemPaths.resize(static_cast<size_t>(numPaths));
-
   _nodes.resize(static_cast<size_t>(numPaths));
 
   // Now build the paths.
@@ -3122,10 +3317,19 @@ bool CrateReader::ReadSection(crate::Section *s) {
     return false;
   }
 
+  if (size_t(s->start) > _sr->size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Section start offset exceeds USDC file size."); 
+  }
+
   if (!_sr->read8(&s->size)) {
     _err += "Failed to read section.size.\n";
     return false;
   }
+
+  if (size_t(s->start + s->size) > _sr->size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Section end offset exceeds USDC file size."); 
+  }
+
 
   return true;
 }
@@ -3177,12 +3381,15 @@ bool CrateReader::ReadTokens() {
   if (!_sr->read8(&compressedSize)) {
     _err += "Failed to read compressedSize at `TOKENS` section.\n";
     return false;
+
   }
 
   if (compressedSize > _sr->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed data size exceeds input file size.");
   }
 
+  CHECK_MEMORY_USAGE(compressedSize);
+  CHECK_MEMORY_USAGE(uncompressedSize);
 
   DCOUT("# of tokens = " << n << ", uncompressedSize = " << uncompressedSize
                          << ", compressedSize = " << compressedSize);
@@ -3242,7 +3449,7 @@ bool CrateReader::ReadTokens() {
 
     p += len + 1;  // +1 = '\0'
     n_remain = size_t(pe - p);
-    assert(p <= pe);
+    //assert(p <= pe);
     if (p > pe) {
       _err += "Invalid token string array.\n";
       return false;
@@ -3271,7 +3478,7 @@ bool CrateReader::ReadStrings() {
     return false;
   }
 
-  if (!ReadIndices(_sr, &_string_indices)) {
+  if (!ReadIndices(&_string_indices)) {
     _err += "Failed to read StringIndex array.\n";
     return false;
   }
@@ -3796,6 +4003,8 @@ bool CrateReader::ReadTOC() {
   DCOUT("toc sections = " << num_sections);
 
   _toc.sections.resize(static_cast<size_t>(num_sections));
+
+  CHECK_MEMORY_USAGE(num_sections * sizeof(Section));
 
   for (size_t i = 0; i < num_sections; i++) {
     if (!ReadSection(&_toc.sections[i])) {
