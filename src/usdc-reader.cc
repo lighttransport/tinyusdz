@@ -1569,6 +1569,24 @@ bool USDCReader::Impl::ParsePrimFields(
               kTag, "`comment` must be type `string`, but got type `"
                         << fv.second.type_name() << "`");
         }
+      } else if (fv.first == "customData") {
+        // CustomData(dict)
+        if (auto pv = fv.second.as<CustomDataType>()) {
+          primMeta.customData = (*pv);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`customData` must be type `dictionary`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "sceneName") { // USDZ extension
+        // CustomData(dict)
+        if (auto pv = fv.second.as<std::string>()) {
+          primMeta.sceneName = (*pv);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`sceneName` must be type `string`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
       } else {
         DCOUT("PrimProp TODO: " << fv.first);
         PUSH_WARN("PrimProp TODO: " << fv.first);

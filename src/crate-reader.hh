@@ -24,14 +24,19 @@ struct CrateReaderConfig {
   size_t maxNumTokens = 1024*1024;
   size_t maxNumStrings = 1024*1024;
   size_t maxNumFields = 1024*1024;
+  size_t maxNumFieldSets = 1024*1024;
   size_t maxNumSpecifiers = 1024*1024;
 
+  size_t maxNumIndices = 1024*1024*16;
   size_t maxDictElements = 256;
-  size_t maxArrayElements = 1024*1024*1024; // 1M
+  size_t maxArrayElements = 1024*1024*1024; // 1G
   size_t maxAssetPathElements = 512;
 
   size_t maxTokenLength = 4096; // Maximum allowed length of `token` string
   size_t maxStringLength = 1024*1024*64;
+
+  // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in bytes.
+  size_t maxMemoryBudget = std::numeric_limits<int32_t>::max(); // Default 2GB
 };
 
 ///
@@ -154,7 +159,9 @@ class CrateReader {
   std::string GetWarning();
 
   // Approximated memory usage in [mb]
-  size_t GetMemoryUsage() const;
+  size_t GetMemoryUsageInMB() const {
+    return _memoryUsage / 1024 / 1024;
+  }
 
   /// -------------------------------------
   /// Following Methods are valid after successfull parsing of Crate data.
@@ -274,6 +281,11 @@ class CrateReader {
 
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
+
+  template <class Int>
+  bool ReadCompressedInts(Int *out, size_t num_elements);
+
+  bool ReadIndices(std::vector<crate::Index> *is);
   bool ReadIndex(crate::Index *i);
   bool ReadString(std::string *s);
   bool ReadValueRep(crate::ValueRep *rep);
@@ -299,10 +311,6 @@ class CrateReader {
 
   // Read 64bit uint with range check
   bool ReadNum(uint64_t &n, uint64_t maxnum);
-
-  // Tracks the memory used(In advisorily manner since counting memory usage is
-  // done by manually, so not all memory consumption could be tracked)
-  size_t memory_used{0};  // in bytes.
 
   // Header(bootstrap)
   uint8_t _version[3] = {0, 0, 0};
@@ -350,6 +358,9 @@ class CrateReader {
   mutable std::string _warn;
 
   CrateReaderConfig _config;
+
+  // Approximated uncompressed memory usage(vertices, `tokens`, ...) in bytes. 
+  uint64_t _memoryUsage{0};
 };
 
 }  // namespace crate
