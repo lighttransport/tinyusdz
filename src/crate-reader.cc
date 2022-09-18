@@ -3158,6 +3158,10 @@ bool CrateReader::ReadTokens() {
     return false;
   }
 
+  if (n > _config.maxNumTokens) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many Tokens.");
+  }
+
   // Tokens are lz4 compressed starting from version 0.4.0
 
   // Compressed token data.
@@ -3167,11 +3171,18 @@ bool CrateReader::ReadTokens() {
     return false;
   }
 
+  // TODO uncompressdSize check.
+
   uint64_t compressedSize;
   if (!_sr->read8(&compressedSize)) {
     _err += "Failed to read compressedSize at `TOKENS` section.\n";
     return false;
   }
+
+  if (compressedSize > _sr->size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed data size exceeds input file size.");
+  }
+
 
   DCOUT("# of tokens = " << n << ", uncompressedSize = " << uncompressedSize
                          << ", compressedSize = " << compressedSize);
@@ -3297,6 +3308,11 @@ bool CrateReader::ReadFields() {
     _err += "Failed to read # of fields at `FIELDS` section.\n";
     return false;
   }
+
+  if (num_fields > _config.maxNumFields) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section."); 
+  }
+
 
   _fields.resize(static_cast<size_t>(num_fields));
 
