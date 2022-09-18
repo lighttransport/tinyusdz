@@ -1339,6 +1339,7 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
   RegisterReconstructCallback<GeomMesh>();
   RegisterReconstructCallback<GeomSubset>();
   RegisterReconstructCallback<GeomBasisCurves>();
+  RegisterReconstructCallback<GeomCamera>();
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
