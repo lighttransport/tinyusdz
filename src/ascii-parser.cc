@@ -2886,6 +2886,34 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
     }
     var.Set(val);
+  } else if (type_name == value::kInt) {
+    if (array_qual) {
+      std::vector<int32_t> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `int[]`");
+      }
+      var.Set(vss);
+    } else {
+      int32_t val;
+      if (!ReadBasicType(&val)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `int`");
+      }
+      var.Set(val);
+    }
+  } else if (type_name == value::kUInt) {
+    if (array_qual) {
+      std::vector<uint32_t> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `uint[]`");
+      }
+      var.Set(vss);
+    } else {
+      uint32_t val;
+      if (!ReadBasicType(&val)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `uint`");
+      }
+      var.Set(val);
+    }
   } else if (type_name == "float") {
     if (array_qual) {
       std::vector<float> vss;
@@ -3315,7 +3343,9 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
 }
 
 bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
-  // Example: xformOp:transform
+  // Example: 
+  // - xformOp:transform
+  // - primvars:uvmap1
 
   std::stringstream ss;
 
@@ -3340,7 +3370,15 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
         PushError("PrimAttr name must not starts with `.`\n");
         return false;
       }
-    } else if (!std::isalpha(int(c))) {
+    } else if (std::isalnum(int(c))) {
+      // number must not be allowed for the first char.
+      if (ss.str().size() == 0) {
+        if (!std::isalpha(int(c))) {
+          PushError("PrimAttr name must not starts with number.\n");
+          return false;
+        }
+      }
+    } else {
       _sr->seek_from_current(-1);
       break;
     }
