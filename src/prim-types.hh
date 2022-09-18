@@ -526,13 +526,16 @@ struct PrimMeta {
   nonstd::optional<StringData> comment; // 'comment'
   nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
 
+  // USDZ extensions
+  nonstd::optional<std::string> sceneName; // 'sceneName'
+
   std::map<std::string, MetaVariable> meta;  // other meta values
 
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authored() const { return (active || kind || customData || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
+  bool authored() const { return (active || kind || customData || sceneName || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
 };
 
 // Metadata for Attribute
