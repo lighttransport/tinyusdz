@@ -540,7 +540,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
   if ((usdc_index >= 0) && (usda_index >= 0)) {
     if (warn) {
       (*warn) +=
-          "Both USDA and USDC file found. Use USDC file [" + 
+          "Both USDA and USDC file found. Use USDC file [" +
           assets[size_t(usdc_index)].filename + "]\n";
     }
   }
@@ -567,7 +567,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
       if (err) {
         (*err) += "Invalid end offset to USDC data: [" + filename + "].\n";
       }
-      return false; 
+      return false;
     }
 
     const uint8_t *usdc_addr = addr + start_addr_offset;
@@ -603,7 +603,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
       if (err) {
         (*err) += "Invalid end offset to USDA data: [" + filename + "].\n";
       }
-      return false; 
+      return false;
     }
 
     const uint8_t *usda_addr = addr + start_addr_offset;
@@ -798,7 +798,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
 
   return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn,
                             err, options);
-  
+
 }
 
 bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
@@ -813,7 +813,7 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
   } else {
     // Guess USDZ
     return LoadUSDZFromMemory(addr, length, base_dir, stage, warn, err, options);
-  } 
+  }
 }
 
 ///
@@ -893,36 +893,36 @@ nonstd::optional<Path> GetPath(const value::Value &v) {
 
 #define EXTRACT_NAME_AND_RETURN_PATH(__ty) if (v.as<__ty>()) { return Path(v.as<__ty>()->name, ""); }
 
-  EXTRACT_NAME_AND_RETURN_PATH(Model);
-  EXTRACT_NAME_AND_RETURN_PATH(Scope);
-  EXTRACT_NAME_AND_RETURN_PATH(Xform);
-  EXTRACT_NAME_AND_RETURN_PATH(GPrim);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomMesh);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomPoints);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomCube);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomCapsule);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomCylinder);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomSphere);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomCone);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomSubset);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomCamera);
-  EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves);
-  EXTRACT_NAME_AND_RETURN_PATH(LuxDomeLight);
-  EXTRACT_NAME_AND_RETURN_PATH(LuxSphereLight);
-  EXTRACT_NAME_AND_RETURN_PATH(LuxCylinderLight);
-  EXTRACT_NAME_AND_RETURN_PATH(LuxDiskLight);
-  EXTRACT_NAME_AND_RETURN_PATH(LuxRectLight);
-  EXTRACT_NAME_AND_RETURN_PATH(Material);
-  EXTRACT_NAME_AND_RETURN_PATH(Shader);
-  EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface);
-  EXTRACT_NAME_AND_RETURN_PATH(UsdUVTexture);
+  EXTRACT_NAME_AND_RETURN_PATH(Model)
+  EXTRACT_NAME_AND_RETURN_PATH(Scope)
+  EXTRACT_NAME_AND_RETURN_PATH(Xform)
+  EXTRACT_NAME_AND_RETURN_PATH(GPrim)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomMesh)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomPoints)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCube)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCapsule)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCylinder)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomSphere)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCone)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomSubset)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(LuxDomeLight)
+  EXTRACT_NAME_AND_RETURN_PATH(LuxSphereLight)
+  EXTRACT_NAME_AND_RETURN_PATH(LuxCylinderLight)
+  EXTRACT_NAME_AND_RETURN_PATH(LuxDiskLight)
+  EXTRACT_NAME_AND_RETURN_PATH(LuxRectLight)
+  EXTRACT_NAME_AND_RETURN_PATH(Material)
+  EXTRACT_NAME_AND_RETURN_PATH(Shader)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdUVTexture)
 
   // TODO: primvar reader
   //EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float);
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
- 
+
 #endif
 
   return nonstd::nullopt;
@@ -1112,7 +1112,7 @@ bool IsUSDA(const uint8_t *addr, const size_t length) {
     return false;
   }
   const char header[9+1] = "#usda 1.0";
-  
+
   if (memcmp(header, addr, 9) == 0) {
     return true;
   }
@@ -1139,7 +1139,7 @@ bool IsUSDC(const uint8_t *addr, const size_t length) {
     return false;
   }
   const char header[8+1] = "PXR-USDC";
-  
+
   if (memcmp(header, addr, 8) == 0) {
     return true;
   }
@@ -1164,7 +1164,7 @@ bool IsUSDZ(const uint8_t *addr, const size_t length) {
 
   std::string warn;
   std::string err;
-  
+
   return ParseUSDZHeader(addr, length, /* [out] assets */nullptr, &warn, &err);
 }
 
