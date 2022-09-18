@@ -177,7 +177,7 @@ class USDCReader::Impl {
   /// When `current` is 0(StageMeta), `primOut` is not set.
   ///
   bool ReconstructPrimNode(
-    int parent, int current, Prim *rootPrim, int level,
+    int parent, int current, int level,
     const PathIndexToSpecIndexMap &psmap, Stage *stage,
     nonstd::optional<Prim> *primOut);
 
@@ -1437,7 +1437,6 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 
 #undef RECONSTRUCT_PRIM
 
-  return nonstd::nullopt;
 }
 
 ///
@@ -1580,7 +1579,7 @@ bool USDCReader::Impl::ParsePrimFields(
 }
 
 bool USDCReader::Impl::ReconstructPrimNode(
-  int parent, int current, Prim *rootPrim, int level,
+  int parent, int current, int level,
   const PathIndexToSpecIndexMap &psmap, Stage *stage,
   nonstd::optional<Prim> *primOut) {
 
@@ -1648,7 +1647,6 @@ bool USDCReader::Impl::ReconstructPrimNode(
                     << fv.first << "(type = " << fv.second.type_name() << ")");
   }
 
-  nonstd::optional<Prim> prim;
   Path elemPath;
 
   // StageMeta = root only attributes.
@@ -1933,7 +1931,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 #else
   nonstd::optional<Prim> prim;
 
-  if (!ReconstructPrimNode(parent, current, rootPrim, level, psmap, stage, &prim)) {
+  if (!ReconstructPrimNode(parent, current, level, psmap, stage, &prim)) {
     return false;
   }
 #endif
