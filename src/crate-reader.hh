@@ -160,7 +160,7 @@ class CrateReader {
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsageInMB() const {
-    return _memoryUsage / 1024 / 1024;
+    return size_t(_memoryUsage / 1024 / 1024);
   }
 
   /// -------------------------------------
