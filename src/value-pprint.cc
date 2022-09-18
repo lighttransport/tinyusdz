@@ -651,9 +651,9 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
                          bool closing_brace) {
 #define BASETYPE_CASE_EXPR(__ty)   \
   case TypeTrait<__ty>::type_id: { \
-    auto ret = v.get_value<__ty>(); \
-    if (ret) { \
-      os << ret.value();         \
+    auto p = v.as<__ty>(); \
+    if (p) { \
+      os << (*p);         \
     } else { \
       os << "[InternalError: Base type TypeId mismatch.]"; \
     } \
@@ -662,9 +662,9 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
 
 #define PRIMTYPE_CASE_EXPR(__ty)                             \
   case TypeTrait<__ty>::type_id: {                           \
-    auto ret = v.get_value<__ty>(); \
-    if (ret) { \
-      os << to_string(ret.value(), indent, closing_brace);     \
+    auto p = v.as<__ty>(); \
+    if (p) { \
+      os << to_string(*p, indent, closing_brace);     \
     } else { \
       os << "[InternalError: Prim type TypeId mismatch.]"; \
     } \
@@ -673,9 +673,9 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
 
 #define ARRAY1DTYPE_CASE_EXPR(__ty)             \
   case TypeTrait<std::vector<__ty>>::type_id: { \
-    auto ret = v.get_value<std::vector<__ty>>(); \
-    if (ret) { \
-      os << ret.value(); \
+    auto p = v.as<std::vector<__ty>>(); \
+    if (p) { \
+      os << (*p); \
     } else { \
       os << "[InternalError: 1D type TypeId mismatch.]"; \
     } \
@@ -705,9 +705,9 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
 
     // dict and customData
     case TypeTrait<CustomDataType>::type_id: {
-      auto ret = v.get_value<CustomDataType>();
-      if (ret) {
-        os << print_customData(ret.value(), "", indent);
+      auto p = v.as<CustomDataType>();
+      if (p) {
+        os << print_customData(*p, "", indent);
       } else {
         os << "[InternalError: Dict type TypeId mismatch.]";
       }
@@ -715,19 +715,19 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     }
 
     case TypeTrait<value::token>::type_id: {
-      if (auto ret = v.get_value<value::token>()) {
-        os << quote(ret.value().str());
+      auto p = v.as<value::token>();
+      if (p) {
+        os << quote(p->str());
       } else {
         os << "[InternalError: Token type TypeId mismatch.]";
       }
       break;
     }
     case TypeTrait<std::vector<value::token>>::type_id: {
-      auto ret = v.get_value<std::vector<value::token>>();
-      if (ret) {
-        const std::vector<value::token> &lst = ret.value();
+      auto p = v.get_value<std::vector<value::token>>();
+      if (p) {
         std::vector<std::string> vs;
-        std::transform(lst.begin(), lst.end(), std::back_inserter(vs),
+        std::transform(p->begin(), p->end(), std::back_inserter(vs),
                        [](const value::token &tok) { return tok.str(); });
 
         os << quote(vs);
@@ -737,41 +737,43 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       break;
     }
     case TypeTrait<std::string>::type_id: {
-      if (auto ret = v.get_value<std::string>()) {
-        os << quote(ret.value());
+      auto p = v.as<std::string>();
+      if (p) {
+        os << quote(*p);
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
       break;
     }
     case TypeTrait<StringData>::type_id: {
-      if (auto ret = v.get_value<StringData>()) {
-        os << ret.value();
+      auto p = v.as<StringData>();
+      if (p) {
+        os << (*p);
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
       break;
     }
     case TypeTrait<std::vector<std::string>>::type_id: {
-      if (auto ret = v.get_value<std::vector<std::string>>()) {
-        const std::vector<std::string> &vs = ret.value();
-        os << quote(vs);
+      auto p = v.as<std::vector<std::string>>();
+      if (p) {
+        os << quote(*p);
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
       }
       break;
     }
     case TypeTrait<std::vector<StringData>>::type_id: {
-      if (auto ret = v.get_value<std::vector<StringData>>()) {
-        const std::vector<StringData> &vs = ret.value();
-        os << vs;
+      auto p = v.as<std::vector<StringData>>();
+      if (p) {
+        os << (*p);
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
       }
       break;
     }
     case TypeTrait<value::ValueBlock>::type_id: {
-      if (auto ret = v.get_value<value::ValueBlock>()) {
+      if (v.as<value::ValueBlock>()) {
         os << "None";
       } else {
         os << "[InternalError: ValueBlock type TypeId mismatch.]";

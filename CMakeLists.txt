@@ -114,6 +114,8 @@ option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ON)
 # -- For developers --
 option(TINYUSDZ_COMPILE_TIME_TRACE
        "Add -ftime-trace to profile compilation time(clang only)" OFF)
+option(TINYUSDZ_CUSTOM_COMPILE_FLAGS
+       "Add custom compile flags(described in CMakeLists.txt). For Developer only)" OFF)
 # ---
 
 # cmake modules
@@ -601,6 +603,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set_source_files_properties(${TINYUSDZ_SOURCES}
                               PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
 
+endif()
+
+if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
+  #if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
+    set_source_files_properties(${TINYUSDZ_SOURCES}
+                              PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
+  #endif()
 endif()
 
 if(TINYUSDZ_WITH_C_API)

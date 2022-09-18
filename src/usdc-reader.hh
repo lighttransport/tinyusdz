@@ -15,6 +15,7 @@ namespace usdc {
 
 struct USDCReaderConfig {
   int32_t numThreads = -1; // -1 = use system's # of threads
+  uint32_t kMaxPrimNestLevel = 256;
   uint32_t kMaxFieldValuePairs = 4096;
   uint32_t kMaxTokenLength = 4096; // Max length of `token`
   uint32_t kMaxStringLength = 1024*1024*64; // Max length of `string` data
