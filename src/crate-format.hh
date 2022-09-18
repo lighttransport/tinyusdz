@@ -468,6 +468,12 @@ class CrateValue {
     return value_.get_value<T>();
   }
 
+  // Return null when type-mismatch
+  template <class T>
+  const T *as() const {
+    return value_.as<T>();
+  }
+
   std::string type_name() const {
     return value_.type_name();
   }
