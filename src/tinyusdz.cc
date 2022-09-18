@@ -33,6 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fstream>
 #include <map>
 #include <sstream>
+#include "usdLux.hh"
 
 #ifndef __wasi__
 #include <thread>
@@ -822,6 +823,10 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
 namespace {
 
 nonstd::optional<Path> GetPath(const value::Value &v) {
+  // Since multiple get_value() call consumes lots of stack size(depends on sizeof(T)?),
+  // Following code would produce 100KB of stack in debug build.
+  // So use as() instead(as() => roughly 2000 bytes for stack size).
+#if 0
   //
   // TODO: Find a better C++ way... use a std::function?
   //
@@ -884,6 +889,41 @@ nonstd::optional<Path> GetPath(const value::Value &v) {
   // if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
   // if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name);
   // }
+#else
+
+#define EXTRACT_NAME_AND_RETURN_PATH(__ty) if (v.as<__ty>()) { return Path(v.as<__ty>()->name, ""); }
+
+  EXTRACT_NAME_AND_RETURN_PATH(Model);
+  EXTRACT_NAME_AND_RETURN_PATH(Scope);
+  EXTRACT_NAME_AND_RETURN_PATH(Xform);
+  EXTRACT_NAME_AND_RETURN_PATH(GPrim);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomMesh);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomPoints);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCube);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCapsule);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCylinder);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomSphere);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCone);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomSubset);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCamera);
+  EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves);
+  EXTRACT_NAME_AND_RETURN_PATH(LuxDomeLight);
+  EXTRACT_NAME_AND_RETURN_PATH(LuxSphereLight);
+  EXTRACT_NAME_AND_RETURN_PATH(LuxCylinderLight);
+  EXTRACT_NAME_AND_RETURN_PATH(LuxDiskLight);
+  EXTRACT_NAME_AND_RETURN_PATH(LuxRectLight);
+  EXTRACT_NAME_AND_RETURN_PATH(Material);
+  EXTRACT_NAME_AND_RETURN_PATH(Shader);
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface);
+  EXTRACT_NAME_AND_RETURN_PATH(UsdUVTexture);
+
+  // TODO: primvar reader
+  //EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float);
+
+#undef EXTRACT_NAME_AND_RETURN_PATH
+
+ 
+#endif
 
   return nonstd::nullopt;
 }

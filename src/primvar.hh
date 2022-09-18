@@ -76,6 +76,9 @@ struct PrimVar {
   }
 
   // Type-safe way to get concrete value.
+  // NOTE: This consumes lots of stack size(rougly 1000 bytes),
+  // If you need to handle multiple types, use as() insted.
+  // 
   template <class T>
   nonstd::optional<T> get_value() const {
 
@@ -83,26 +86,7 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-#if 0
-    if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
-      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-      auto pv = linb::any_cast<const T>(&var.values[0]);
-      if (pv) {
-        return (*pv);
-      }
-      return nonstd::nullopt;
-    } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      //return *reinterpret_cast<const T *>(var.values[0].value());
-
-      // TODO: strict type check.
-      return *linb::cast<const T>(&var.values[0]);
-    }
-    return nonstd::nullopt;
-#else
     return var.values[0].get_value<T>();
-#endif
   }
 
   nonstd::optional<double> get_ts_time(size_t idx) const {
@@ -178,19 +162,7 @@ struct PrimVar {
       return nullptr;
     }
 
-#if 0
-    if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
-      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-      return linb::any_cast<const T>(&var.values[0]);
-    } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      // TODO: strict type check.
-      return *linb::cast<const T>(&var.values[0]);
-    }
-#else
     return var.values[0].as<T>();
-#endif
 
     return nullptr;
   }
