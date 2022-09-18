@@ -21,11 +21,16 @@ struct CrateReaderConfig {
   // Set limits to prevent infinite-loop, buffer-overrun, out-of-memory, etc.
   size_t maxTOCSections = 32;
 
+  size_t maxNumTokens = 1024*1024;
+  size_t maxNumStrings = 1024*1024;
+  size_t maxNumFields = 1024*1024;
+  size_t maxNumSpecifiers = 1024*1024;
+
   size_t maxDictElements = 256;
   size_t maxArrayElements = 1024*1024*1024; // 1M
   size_t maxAssetPathElements = 512;
 
-  size_t maxTokenLength = 4096; // Maximum allowed length `token`
+  size_t maxTokenLength = 4096; // Maximum allowed length of `token` string
   size_t maxStringLength = 1024*1024*64;
 };
 
