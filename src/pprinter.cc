@@ -305,7 +305,8 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   // other user defined metadataum.
   for (const auto &item : meta.meta) {
-    ss << print_meta(item.second, indent+1);
+    // TODO: emit typename?
+    ss << print_meta(item.second, indent);
   }
 
   for (const auto &item : meta.stringData) {

@@ -552,10 +552,12 @@ class AsciiParser {
   template <typename T>
   value::TimeSamples ConvertToTimeSamples(const TimeSampleData<std::vector<T>> &in);
 
-  // T = scalar(e.g. `float`) or 1D(e.g. `float[]`)
+  // T = scalar(e.g. `float`)
   template <typename T>
   nonstd::optional<TimeSampleData<T>> TryParseTimeSamples();
 
+  template <typename T>
+  nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesOfArray();
 
   nonstd::optional<std::tuple<ListEditQual, MetaVariable>> ParsePrimMeta();
   bool ParsePrimAttr(std::map<std::string, Property> *props);
