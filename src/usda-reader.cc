@@ -1029,10 +1029,12 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           return nonstd::make_unexpected("Invalid Prim path.");
         }
 
+#if 0
         if (parent.IsRootPrim()) {
           return nonstd::make_unexpected(
               "GeomSubset must be defined as a child of GeomMesh prim.");
         }
+#endif
 
         if (parentPrimIdx < 0) {
           return nonstd::make_unexpected(
