@@ -276,6 +276,18 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
             return ret;
           }
+        } else if (attr.get_var().is_scalar()) {
+          if (auto pv = attr.get_value<T>()) {
+            target.SetValue(pv.value());
+          } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Invalid attribute value.";
+            return ret;
+          }
+        } else {
+          ret.code = ParseResult::ResultCode::InternalError;
+          ret.err = "Invalid attribute value.";
+          return ret;
         }
 
         target.meta = attr.meta;
@@ -387,7 +399,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           if (auto pv = attr.get_value<T>()) {
             target.SetValue(pv.value());
           } else {
-            ret.code = ParseResult::ResultCode::VariabilityMismatch;
+            ret.code = ParseResult::ResultCode::InternalError;
             ret.err = "Internal data corrupsed.";
             return ret;
           }
@@ -3304,6 +3316,36 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
 }
 
 template <>
+bool ReconstructShader<UsdTransform2d>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdTransform2d *transform,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+  for (auto &prop : properties) {
+    DCOUT("prop = " << prop.first);
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:in", UsdTransform2d,
+                   transform->in)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:rotation", UsdTransform2d,
+                   transform->rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:scale", UsdTransform2d,
+                   transform->scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:translation", UsdTransform2d,
+                   transform->translation)
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdTransform2d, transform->result)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_float2, transform->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
 bool ReconstructPrim<Shader>(
     const PropertyMap &properties,
     const ReferenceList &references,
@@ -3320,6 +3362,7 @@ bool ReconstructPrim<Shader>(
   constexpr auto kUsdPrimvarReader_float2 = "UsdPrimvarReader_float2";
   constexpr auto kUsdPrimvarReader_float3 = "UsdPrimvarReader_float3";
   constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
+  constexpr auto kUsdTransform2d = "UsdTransform2d";
 
   auto info_id_prop = properties.find("info:id");
   if (info_id_prop == properties.end()) {
@@ -3413,6 +3456,15 @@ bool ReconstructPrim<Shader>(
     }
     shader->info_id = kUsdPrimvarReader_float4;
     shader->value = preader;
+  } else if (shader_type.compare(kUsdTransform2d) == 0) {
+    UsdTransform2d transform;
+    if (!ReconstructShader<UsdTransform2d>(properties, references,
+                                                    &transform, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdTransform2d);
+    }
+    shader->info_id = kUsdTransform2d;
+    shader->value = transform;
   } else {
     // TODO: string, point, vector, matrix
     PUSH_ERROR_AND_RETURN(

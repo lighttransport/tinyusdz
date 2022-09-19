@@ -4,6 +4,7 @@
 //
 #include "pprinter.hh"
 #include "prim-types.hh"
+#include "usdShade.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
 
@@ -1879,6 +1880,20 @@ static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, co
   return ss.str();
 }
 
+static std::string print_shader_params(const UsdTransform2d &shader, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << print_typed_attr(shader.in, "inputs:in", indent);
+  ss << print_typed_attr(shader.rotation, "inputs:rotation", indent);
+  ss << print_typed_attr(shader.scale, "inputs:scale", indent);
+  ss << print_typed_attr(shader.translation, "inputs:translation", indent);
+  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
+
+  ss << print_props(shader.props, indent);
+
+  return ss.str();
+}
+
 static std::string print_shader_params(const UsdPreviewSurface &shader, const uint32_t indent) {
   std::stringstream ss;
 
@@ -1969,6 +1984,8 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
       ss << print_shader_params(pvr4.value(), indent+1);
     } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
       ss << print_shader_params(pvtex.value(), indent+1);
+    } else if (auto pvtx2d = shader.value.get_value<UsdTransform2d>()) {
+      ss << print_shader_params(pvtx2d.value(), indent+1);
     } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
       ss << print_shader_params(pvs.value(), indent+1);
     } else {
