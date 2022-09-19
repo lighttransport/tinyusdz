@@ -599,6 +599,10 @@ class USDAReader::Impl {
             _stage.GetMetas().endTimeCode = metas.endTimeCode.value();
           }
 
+          if (metas.framesPerSecond) {
+            _stage.GetMetas().framesPerSecond = metas.framesPerSecond.value();
+          }
+
           _stage.GetMetas().customLayerData = metas.customLayerData;
 
           _stage.GetMetas().stringData = metas.strings;

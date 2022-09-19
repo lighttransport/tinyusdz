@@ -233,6 +233,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
+        DCOUT("Added prop with empty value: " << name);
+        target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
@@ -364,6 +366,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
+        DCOUT("Added prop with empty value: " << name);
+        target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
@@ -481,6 +485,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
+        DCOUT("Added prop with empty value: " << name);
+        target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
@@ -630,6 +636,8 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     DCOUT(fmt::format("prop name {}, type = {}", prop_name, attr_type_name));
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
       if (prop.type == Property::Type::EmptyAttrib) {
+        DCOUT("Added prop with empty value: " << name);
+        target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
@@ -747,6 +755,8 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
     std::string attr_type_name = attr.type_name();
     if (prop.type == Property::Type::EmptyAttrib) {
+      DCOUT("Added prop with empty value: " << name);
+      target.SetValueEmpty();
       target.meta = attr.meta;
       table.insert(name);
       ret.code = ParseResult::ResultCode::Success;

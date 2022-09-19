@@ -17,6 +17,11 @@ int main(int argc, char **argv) {
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filename);
 
+  if (!tinyusdz::IsUSDA(filename)) {
+    std::cerr << "Input file isn't a USDA file.\n";
+    return -1;
+  }
+
   std::vector<uint8_t> data;
   std::string err;
   if (!tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */0)) {

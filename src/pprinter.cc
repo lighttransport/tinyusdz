@@ -421,6 +421,8 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
       } else {
         ss << paths;
       }
+    } else if (attr.IsValueEmpty()) {
+      // nothing to do 
 
     } else {
       auto pv = attr.GetValue();
@@ -478,7 +480,6 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
 
   if (attr.authored()) {
 
-
     ss << pprint::Indent(indent);
 
     ss << value::TypeTrait<T>::type_name() << " " << name;
@@ -495,6 +496,8 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
         ss << paths;
       }
 
+    } else if (attr.IsValueEmpty()) {
+      // nothing to do 
     } else {
       auto v = attr.GetValue();
 

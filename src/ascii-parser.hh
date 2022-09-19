@@ -88,6 +88,7 @@ class AsciiParser {
     std::vector<StringData> strings; // String only unregistered metadata.
   };
 
+  // TODO: Unifity class with StageMetas in prim-types.hh
   struct StageMetas {
     ///
     /// Predefined Stage metas
@@ -100,6 +101,7 @@ class AsciiParser {
     nonstd::optional<double> timeCodesPerSecond;
     nonstd::optional<double> startTimeCode;
     nonstd::optional<double> endTimeCode;
+    nonstd::optional<double> framesPerSecond;
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
     std::vector<StringData> strings; // String only unregistered metadata.
