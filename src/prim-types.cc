@@ -329,4 +329,35 @@ nonstd::optional<Kind> KindFromString(const std::string &str) {
   return nonstd::nullopt;
 }
 
+bool ValidatePrimName(const std::string &name)
+{
+  if (name.empty()) {
+    return false;
+  }
+
+  // alphanum + '_'
+  // first char must not be number.
+
+  if (std::isdigit(int(name[0]))) {
+    return false;
+  } else if (std::isalpha(int(name[0]))) {
+    // ok
+  } else if (name[0] == '_') {
+    // ok
+  } else {
+    return false;
+  }
+
+  for (size_t i = 1; i < name.size(); i++) {
+    if (std::isalnum(int(name[i])) || (name[i] == '_')) {
+      // ok 
+    } else {
+      return false;
+    }
+  }
+
+  return true;
+
+}
+
 }  // namespace tinyusdz

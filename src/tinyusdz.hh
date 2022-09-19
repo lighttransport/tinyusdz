@@ -525,7 +525,7 @@ struct USDLoadOptions {
   // Set the maximum memory limit advisorily(including image data).
   // This feature would be helpful if you want to load USDZ model in mobile
   // device.
-  int32_t max_memory_limit_in_mb{10000};  // in [mb] Default 10GB
+  int32_t max_memory_limit_in_mb{16384};  // in [mb] Default 16GB
 
   ///
   /// Loads asset data(e.g. texture image, audio). Default is true.
@@ -534,8 +534,26 @@ struct USDLoadOptions {
   ///
   bool load_assets{true};
 
+  ///
+  /// Max MBs allowed for asset file(e.g. jpeg)
+  ///
+  uint32_t max_allowed_asset_size_in_mb{1024}; // [mb] default 1GB.
+
+  ///
+  /// For texture size
+  ///
+  uint32_t max_image_width = 2048;
+  uint32_t max_image_height = 2048;
+  uint32_t max_image_channels = 4;
+
   Axis upAxis{Axis::Y};
 };
+
+// TODO: Provide profiles for loader option. 
+// e.g.
+// - Embedded(e.g. web, tigh resource size limit for security)
+// - Realtime(moderate resource size limit)
+// - DCC(for data conversion. Unlimited resource size)
 
 #if 0  // TODO
 //struct USDWriteOptions
@@ -702,15 +720,15 @@ bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDC
 #endif
 
 // Test if input is USDA format.
-bool IsUSDA(const std::string &filename, const size_t maxFileSize=(std::numeric_limits<uint32_t>::max)());
+bool IsUSDA(const std::string &filename);
 bool IsUSDA(const uint8_t *addr, const size_t length);
 
 // Test if input is USDC(Crate binary) format.
-bool IsUSDC(const std::string &filename, const size_t maxFileSize=(std::numeric_limits<uint32_t>::max)());
+bool IsUSDC(const std::string &filename);
 bool IsUSDC(const uint8_t *addr, const size_t length);
 
 // Test if input is USDZ(Uncompressed ZIP) format.
-bool IsUSDZ(const std::string &filename, const size_t maxFileSize=(std::numeric_limits<uint32_t>::max)());
+bool IsUSDZ(const std::string &filename);
 bool IsUSDZ(const uint8_t *addr, const size_t length);
 
 }  // namespace tinyusdz
