@@ -1525,7 +1525,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 // Add custom property(including property with "primvars" prefix)
 // Please call this macro after listing up all predefined property using
 // `PARSE_PROPERTY` and `PARSE_ENUM_PROPETY`
-#define ADD_PROPERY(__table, __prop, __klass, __dst) {        \
+#define ADD_PROPERTY(__table, __prop, __klass, __dst) {        \
   /* Check if the property name is a predefined property */  \
   if (!__table.count(__prop.first)) {                        \
     DCOUT("custom property added: name = " << __prop.first); \
@@ -1917,6 +1917,11 @@ bool ReconstructPrim(
     return false;
   }
 
+  for (const auto &prop : properties) {
+    ADD_PROPERTY(table, prop, Xform, xform->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
   //
   // Resolve append references
   // (Overwrite variables with the referenced one).
@@ -1943,7 +1948,7 @@ bool ReconstructPrim<Model>(
 
   std::set<std::string> table;
   for (const auto &prop : properties) {
-    ADD_PROPERY(table, prop, Model, model->props)
+    ADD_PROPERTY(table, prop, Model, model->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -1966,7 +1971,7 @@ bool ReconstructPrim<Scope>(
   DCOUT("Scope");
   std::set<std::string> table;
   for (const auto &prop : properties) {
-    ADD_PROPERY(table, prop, Scope, scope->props)
+    ADD_PROPERTY(table, prop, Scope, scope->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -1994,7 +1999,7 @@ bool ReconstructPrim<SkelRoot>(
 
   // custom props only
   for (const auto &prop : properties) {
-    ADD_PROPERY(table, prop, SkelRoot, root->props)
+    ADD_PROPERTY(table, prop, SkelRoot, root->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2042,7 +2047,7 @@ bool ReconstructPrim<Skeleton>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "joints", Skeleton, skel->joints)
     PARSE_TYPED_ATTRIBUTE(table, prop, "jointNames", Skeleton, skel->jointNames)
     PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
-    ADD_PROPERY(table, prop, Skeleton, skel->props)
+    ADD_PROPERTY(table, prop, Skeleton, skel->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2067,7 +2072,7 @@ bool ReconstructPrim<SkelAnimation>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "scales", SkelAnimation, skelanim->scales)
     PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
     PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
-    ADD_PROPERY(table, prop, Skeleton, skelanim->props)
+    ADD_PROPERTY(table, prop, Skeleton, skelanim->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2095,7 +2100,7 @@ bool ReconstructPrim<BlendShape>(
     PARSE_TYPED_ATTRIBUTE(table, prop, kOffsets, BlendShape, bs->offsets)
     PARSE_TYPED_ATTRIBUTE(table, prop, kNormalOffsets, BlendShape, bs->normalOffsets)
     PARSE_TYPED_ATTRIBUTE(table, prop, kPointIndices, BlendShape, bs->pointIndices)
-    ADD_PROPERY(table, prop, Skeleton, bs->props)
+    ADD_PROPERTY(table, prop, Skeleton, bs->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2202,7 +2207,7 @@ bool ReconstructPrim(
     PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves,
                        curves->wrap)
 
-    ADD_PROPERY(table, prop, GeomBasisCurves, curves->props)
+    ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
 
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2235,7 +2240,7 @@ bool ReconstructPrim<LuxSphereLight>(
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, LuxSphereLight,
                    light->visibility)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
-    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2267,7 +2272,7 @@ bool ReconstructPrim<LuxRectLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxRectLight,
                    light->intensity)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
-    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2294,7 +2299,7 @@ bool ReconstructPrim<LuxDiskLight>(
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxDiskLight, light->radius)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxDiskLight, light->extent)
-    ADD_PROPERY(table, prop, LuxDiskLight, light->props)
+    ADD_PROPERTY(table, prop, LuxDiskLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2322,7 +2327,7 @@ bool ReconstructPrim<LuxCylinderLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", LuxCylinderLight, light->length)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxCylinderLight, light->radius)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxCylinderLight, light->extent)
-    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2348,7 +2353,7 @@ bool ReconstructPrim<LuxDistantLight>(
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", LuxDistantLight, light->angle)
-    ADD_PROPERY(table, prop, LuxSphereLight, light->props)
+    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2381,7 +2386,7 @@ bool ReconstructPrim<LuxDomeLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxDomeLight, light->color)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxDomeLight,
                    light->intensity)
-    ADD_PROPERY(table, prop, LuxDomeLight, light->props)
+    ADD_PROPERTY(table, prop, LuxDomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2455,7 +2460,7 @@ bool ReconstructPrim<GeomSphere>(
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomSphere, sphere->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomSphere,
                        sphere->purpose)
-    ADD_PROPERY(table, prop, GeomSphere, sphere->props)
+    ADD_PROPERTY(table, prop, GeomSphere, sphere->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2569,7 +2574,7 @@ bool ReconstructPrim<GeomPoints>(
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomPoints, points->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomPoints,
                        points->purpose)
-    ADD_PROPERY(table, prop, GeomSphere, points->props)
+    ADD_PROPERTY(table, prop, GeomSphere, points->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2639,7 +2644,7 @@ bool ReconstructPrim<GeomCone>(
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCone,
                        cone->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCone, cone->extent)
-    ADD_PROPERY(table, prop, GeomCone, cone->props)
+    ADD_PROPERTY(table, prop, GeomCone, cone->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2676,7 +2681,7 @@ bool ReconstructPrim<GeomCylinder>(
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCylinder,
                        cylinder->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCylinder, cylinder->extent)
-    ADD_PROPERY(table, prop, GeomCylinder, cylinder->props)
+    ADD_PROPERTY(table, prop, GeomCylinder, cylinder->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2710,7 +2715,7 @@ bool ReconstructPrim<GeomCapsule>(
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCapsule,
                        capsule->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCapsule, capsule->extent)
-    ADD_PROPERY(table, prop, GeomCapsule, capsule->props)
+    ADD_PROPERTY(table, prop, GeomCapsule, capsule->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2745,7 +2750,7 @@ bool ReconstructPrim<GeomCube>(
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCube, cube->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCube,
                        cube->purpose)
-    ADD_PROPERY(table, prop, GeomCube, cube->props)
+    ADD_PROPERTY(table, prop, GeomCube, cube->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -2929,7 +2934,7 @@ bool ReconstructPrim<GeomMesh>(
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomMesh,
                        mesh->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomMesh, mesh->extent)
-    ADD_PROPERY(table, prop, GeomMesh, mesh->props)
+    ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -3041,7 +3046,7 @@ bool ReconstructPrim<GeomCamera>(
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCamera,
                          camera->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCamera, camera->extent)
-    ADD_PROPERY(table, prop, GeomCamera, camera->props)
+    ADD_PROPERTY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
@@ -3093,7 +3098,7 @@ bool ReconstructShader<UsdPreviewSurface>(
                    surface->outputsSurface)
     PARSE_SHADER_OUTPUT_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface,
                    surface->outputsDisplacement)
-    ADD_PROPERY(table, prop, UsdPreviewSurface, surface->props)
+    ADD_PROPERTY(table, prop, UsdPreviewSurface, surface->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -3166,7 +3171,7 @@ bool ReconstructShader<UsdUVTexture>(
                                   texture->outputsA)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:rgb", UsdUVTexture,
                                   texture->outputsRGB)
-    ADD_PROPERY(table, prop, UsdUVTexture, texture->props)
+    ADD_PROPERTY(table, prop, UsdUVTexture, texture->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -3192,7 +3197,7 @@ bool ReconstructShader<UsdPrimvarReader_int>(
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_int, preader->result)
-    ADD_PROPERY(table, prop, UsdPrimvarReader_int, preader->props)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_int, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return false;
@@ -3216,7 +3221,7 @@ bool ReconstructShader<UsdPrimvarReader_float>(
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float, preader->result)
-    ADD_PROPERY(table, prop, UsdPrimvarReader_float, preader->props)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_float, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return false;
@@ -3241,7 +3246,7 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
                    preader->fallback)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float2, preader->result)
-    ADD_PROPERY(table, prop, UsdPrimvarReader_float2, preader->props)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_float2, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -3266,7 +3271,7 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float3, preader->result)
-    ADD_PROPERY(table, prop, UsdPrimvarReader_float3, preader->props)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_float3, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -3292,7 +3297,7 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
                    preader->varname)  // `token`
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float4, preader->result)
-    ADD_PROPERY(table, prop, UsdPrimvarReader_float4, preader->props)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_float4, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return true;
@@ -3439,7 +3444,7 @@ bool ReconstructPrim<Material>(
                                   Material, material->surface)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
                                   Material, material->volume)
-    ADD_PROPERY(table, prop, Material, material->props)
+    ADD_PROPERTY(table, prop, Material, material->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return true;

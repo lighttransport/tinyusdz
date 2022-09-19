@@ -179,6 +179,9 @@ static void RegisterPrimMetas(
   // usdSkel
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
 
+  // usdShade?
+  metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
+  
   // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
       value::Add1DArraySuffix(value::kToken), "apiSchemas");
@@ -804,6 +807,17 @@ bool AsciiParser::ReadBasicType(nonstd::optional<Identifier> *value) {
 
 template <>
 bool AsciiParser::ReadBasicType(value::token *value) {
+
+  // Try triple-quotated string first.
+  {
+    StringData sdata;
+    if (MaybeTripleQuotedString(&sdata)) {
+      // TODO: preserve quotation info.
+      (*value) = value::token(sdata.value);
+      return true;
+    }
+  }
+
   std::string s;
   if (!ReadStringLiteral(&s)) {
     return false;
@@ -1439,6 +1453,19 @@ bool AsciiParser::ReadBasicType(value::double3 *value) {
 }
 
 template <>
+bool AsciiParser::ReadBasicType(value::point3h *value) {
+  // parse as float3
+  value::float3 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = value::float_to_half_full(v[0]);
+    value->y = value::float_to_half_full(v[1]);
+    value->z = value::float_to_half_full(v[2]);
+    return true;
+  }
+  return false;
+}
+
+template <>
 bool AsciiParser::ReadBasicType(value::point3d *value) {
   value::double3 v;
   if (ParseBasicTypeTuple(&v)) {
@@ -1474,9 +1501,39 @@ bool AsciiParser::ReadBasicType(value::color3d *value) {
   return false;
 }
 
+#if 0
+template <>
+bool AsciiParser::ReadBasicType(value::point4h *value) {
+  // parse as float4
+  value::float4 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->x = value::float_to_half_full(v[0]);
+    value->y = value::float_to_half_full(v[1]);
+    value->z = value::float_to_half_full(v[2]);
+    value->w = value::float_to_half_full(v[3]);
+    return true;
+  }
+  return false;
+}
+#endif
+
+template <>
+bool AsciiParser::ReadBasicType(value::color4h *value) {
+  // parse as float4
+  value::float4 v;
+  if (ParseBasicTypeTuple(&v)) {
+    value->r = value::float_to_half_full(v[0]);
+    value->g = value::float_to_half_full(v[1]);
+    value->b = value::float_to_half_full(v[2]);
+    value->a = value::float_to_half_full(v[3]);
+    return true;
+  }
+  return false;
+}
+
 template <>
 bool AsciiParser::ReadBasicType(value::color4f *value) {
-  value::float3 v;
+  value::float4 v;
   if (ParseBasicTypeTuple(&v)) {
     value->r = v[0];
     value->g = v[1];
@@ -4212,6 +4269,7 @@ bool AsciiParser::Expect(char expect_c) {
 // -- impl ParseTimeSampleData
 //
 
+// TODO: Share code with array version as much as possible.
 template <typename T>
 nonstd::optional<AsciiParser::TimeSampleData<T>>
 AsciiParser::TryParseTimeSamples() {
@@ -4319,6 +4377,125 @@ AsciiParser::TryParseTimeSamples() {
 
   return std::move(data);
 }
+
+// TODO: Share code with array version as much as possible.
+template <typename T>
+nonstd::optional<AsciiParser::TimeSampleData<std::vector<T>>>
+AsciiParser::TryParseTimeSamplesOfArray() {
+  // timeSamples = '{' ((int : [T]) sep)+ '}'
+  // sep = ','(may ok to omit for the last element.
+
+  TimeSampleData<std::vector<T>> data;
+
+  if (!Expect('{')) {
+    return nonstd::nullopt;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return nonstd::nullopt;
+  }
+
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return nonstd::nullopt;
+    }
+
+    if (c == '}') {
+      break;
+    }
+
+    Rewind(1);
+
+    double timeVal;
+    // -inf, inf and nan are handled.
+    if (!ReadBasicType(&timeVal)) {
+      PushError("Parse time value failed.");
+      return nonstd::nullopt;
+    }
+
+    if (!SkipWhitespace()) {
+      return nonstd::nullopt;
+    }
+
+    if (!Expect(':')) {
+      return nonstd::nullopt;
+    }
+
+    if (!SkipWhitespace()) {
+      return nonstd::nullopt;
+    }
+
+    // None(nullopt) or T[]
+    nonstd::optional<std::vector<T>> tsValue;
+
+    if (MaybeNone()) {
+      tsValue = nonstd::nullopt;
+    } else {
+      std::vector<T> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PushError("Failed to parse array value.");
+        return nonstd::nullopt;
+      }
+      tsValue = value;
+    }
+
+    // The last element may have separator ','
+    {
+      // Semicolon ';' is not allowed as a separator for timeSamples array
+      // values.
+      if (!SkipWhitespace()) {
+        return nonstd::nullopt;
+      }
+
+      char sep;
+      if (!Char1(&sep)) {
+        return nonstd::nullopt;
+      }
+
+      DCOUT("sep = " << sep);
+      if (sep == '}') {
+        // End of item
+        data.push_back({timeVal, tsValue});
+        break;
+      } else if (sep == ',') {
+        // ok
+      } else {
+        Rewind(1);
+
+        // Look ahead Newline + '}'
+        auto loc = CurrLoc();
+
+        if (SkipWhitespaceAndNewline()) {
+          char nc;
+          if (!Char1(&nc)) {
+            return nonstd::nullopt;
+          }
+
+          if (nc == '}') {
+            // End of item
+            data.push_back({timeVal, tsValue});
+            break;
+          }
+        }
+
+        // Rewind and continue parsing.
+        SeekTo(loc);
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return nonstd::nullopt;
+    }
+
+    data.push_back({timeVal, tsValue});
+  }
+
+  DCOUT("Parse TimeSamples of array type success. # of items = " << data.size());
+
+  return std::move(data);
+}
+
 
 template <typename T>
 value::TimeSamples AsciiParser::ConvertToTimeSamples(
@@ -5513,11 +5690,11 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
       DCOUT("Attribute meta name: " << token);
 
       if ((token != "interpolation") && (token != "customData") &&
-          (token != "elementSize")) {
+          (token != "elementSize") && (token != "colorSpace")) {
         PUSH_ERROR_AND_RETURN(
             "Currently only string-only data, `interpolation`, `elementSize` "
-            "or `customData` "
-            "is supported but "
+            ", `colorSpace` or `customData` "
+            "are supported but "
             "got: " +
             token);
       }
@@ -5550,6 +5727,16 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
         DCOUT("Got `elementSize` meta : " << value);
         out_meta->elementSize = value;
+      } else if (token == "colorSpace") {
+        value::token tok;
+        if (!ReadBasicType(&tok)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `colorSpace`");
+        } 
+        // Add as custom meta value.
+        MetaVariable metavar;
+        metavar.name = "colorSpace";
+        metavar.Set(tok);
+        out_meta->meta.emplace("colorSpace", metavar);
       } else if (token == "customData") {
         CustomDataType dict;
 
@@ -5993,19 +6180,23 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     //
     // TODO(syoyo): Refactror and implement value parser dispatcher.
     //
-    DCOUT("timeSample data. type = " << type_name);
+    if (array_qual) {
+      DCOUT("timeSample data. type = " << type_name << "[]");
+    } else {
+      DCOUT("timeSample data. type = " << type_name);
+    }
 
+// 1D and scalar
 #define PARSE_TYPE(__type)                                                  \
-  if (type_name == value::TypeTrait<__type>::type_name()) {                 \
-    if (array_qual) {                                                       \
-      if (auto pv = TryParseTimeSamples<std::vector<__type>>()) {           \
+  if ((type_name == value::TypeTrait<__type>::type_name()) && array_qual) {                 \
+      if (auto pv = TryParseTimeSamplesOfArray<__type>()) {           \
         ts = ConvertToTimeSamples<std::vector<__type>>(pv.value());         \
       } else {                                                              \
         PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `" \
                               << value::TypeTrait<__type>::type_name()      \
                               << "[]`");                                    \
       }                                                                     \
-    } else {                                                                \
+  } else if (type_name == value::TypeTrait<__type>::type_name()) {                 \
       if (auto pv = TryParseTimeSamples<__type>()) {                        \
         ts = ConvertToTimeSamples<__type>(pv.value());                      \
       } else {                                                              \
@@ -6013,7 +6204,6 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
                               << value::TypeTrait<__type>::type_name()      \
                               << "`");                                      \
       }                                                                     \
-    }                                                                       \
   } else
 
     value::TimeSamples ts;
