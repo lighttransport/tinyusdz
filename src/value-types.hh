@@ -114,6 +114,10 @@ constexpr auto kVector3h= "vector3h";
 constexpr auto kVector3f= "vector3f";
 constexpr auto kVector3d= "vector3d";
 
+constexpr auto kVector4h= "vector4h";
+constexpr auto kVector4f= "vector4f";
+constexpr auto kVector4d= "vector4d";
+
 constexpr auto kPoint3h= "point3h";
 constexpr auto kPoint3f= "point3f";
 constexpr auto kPoint3d= "point3d";
@@ -138,6 +142,10 @@ constexpr auto kTexCoord2d= "texCoord2d";
 constexpr auto kTexCoord3h= "texCoord3h";
 constexpr auto kTexCoord3f= "texCoord3f";
 constexpr auto kTexCoord3d= "texCoord3d";
+
+constexpr auto kTexCoord4h= "texCoord4h";
+constexpr auto kTexCoord4f= "texCoord4f";
+constexpr auto kTexCoord4d= "texCoord4d";
 
 constexpr auto kRelationship= "rel";
 
