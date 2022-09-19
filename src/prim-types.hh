@@ -1019,6 +1019,9 @@ class TypedAttributeWithFallback {
     if (_paths.size()) {
       return true;
     }
+    if (_blocked) {
+      return true;
+    }
     return false;
   }
 

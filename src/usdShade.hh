@@ -221,6 +221,28 @@ struct PreviewSurface {
 };
 #endif
 
+struct UsdTransform2d {
+
+  std::string name;
+
+  TypedAttributeWithFallback<Animatable<value::float2>> in{value::float2{0.0f, 0.0f}};  // "inputs:in" Usually connected to UsdPrimvarReader_float2
+
+  TypedAttributeWithFallback<Animatable<float>> rotation{0.0f};  // "inputs:rotation" CCW, in degree.
+  TypedAttributeWithFallback<Animatable<value::float2>> scale{value::float2{1.0f, 1.0f}};  // "inputs:scale"
+  TypedAttributeWithFallback<Animatable<value::float2>> translation{value::float2{0.0f, 0.0f}};  // "inputs:translation"
+
+
+  ///
+  /// Outputs
+  ///
+  TypedTerminalAttribute<value::float2> result; // "float2 outputs:result"
+
+  // Custom properties
+  std::map<std::string, Property> props;
+
+  PrimMeta meta;
+};
+
 struct Shader {
   std::string name;
 
@@ -267,6 +289,8 @@ DEFINE_TYPE_TRAIT(UsdPrimvarReader_float4, "UsdPrimvarReader_float4",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4, 1);
 DEFINE_TYPE_TRAIT(UsdPrimvarReader_int, "UsdPrimvarReader_int",
                   TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
+DEFINE_TYPE_TRAIT(UsdTransform2d, "UsdTransform2d",
+                  TYPE_ID_IMAGING_TRANSFORM_2D, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
