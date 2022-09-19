@@ -125,10 +125,11 @@ enum class Variability {
   Invalid
 };
 
-// single or triple-quoted('"""') string
+// single or triple-quoted('"""' or ''') string
 struct StringData {
   std::string value;
   bool is_triple_quoted{false};
+  bool single_quote{false}; // true for ', false for "
 
   // optional(for USDA)
   int line_row{0};
@@ -1923,6 +1924,9 @@ struct Xformable {
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 nonstd::optional<Kind> KindFromString(const std::string &v);
+
+// Return false when invalid character(e.g. '%') exists. 
+bool ValidatePrimName(const std::string &tok);
 
 namespace value {
 

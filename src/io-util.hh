@@ -28,6 +28,14 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
                    const std::string &filepath, size_t filesize_max = 0,
                    void *userdata = nullptr);
 
+///
+/// Read first N bytes from a file.
+/// Example is for detect file formats.
+///
+bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
+                   const std::string &filepath, uint32_t max_read_bytes = 128,
+                   void *userdata = nullptr);
+
 std::string GetBaseDir(const std::string &filepath);
 std::string JoinPath(const std::string &dir, const std::string &filename);
 bool IsAbsPath(const std::string &filepath);

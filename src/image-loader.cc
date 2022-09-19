@@ -120,6 +120,31 @@ bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
   return true;
 }
 
+bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, uint32_t *width, uint32_t *height, uint32_t *channels, std::string *warn,
+                    std::string *err) {
+  (void)warn;
+  (void)uri;
+  (void)err; // TODO
+
+  int w = 0, h = 0, comp = 0;
+
+  int ret = stbi_info_from_memory(bytes, int(size), &w, &h, &comp);
+
+  if (w < 0) w = 0;
+  if (h < 0) h = 0;
+  if (comp < 0) comp = 0;
+
+  if (ret == 1) {
+    if (width) { (*width) = uint32_t(w); }
+    if (height) { (*height) = uint32_t(h); }
+    if (channels) { (*channels) = uint32_t(comp); }
+    return true;
+  }
+
+  return false;
+}
+
 #if defined(TINYUSDZ_WITH_EXR)
 
 bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
@@ -270,6 +295,34 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
 #endif
 
   bool ok = DecodeImageSTB(addr, sz, uri, &ret.image, &ret.warning, &err);
+  if (!ok) {
+    return nonstd::make_unexpected(err);
+  }
+
+  return std::move(ret);
+}
+
+nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
+    const uint8_t *addr, size_t sz, const std::string &uri) {
+  image::ImageInfoResult ret;
+  std::string err;
+
+#if defined(TINYUSDZ_WITH_EXR)
+  if (TINYEXR_SUCCESS == IsEXRFromMemory(addr, sz)) {
+
+    return nonstd::make_unexpected("TODO: EXR format");
+  }
+#endif
+
+#if defined(TINYUSDZ_WITH_TIFF)
+  {
+    if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &msg)) {
+
+      return nonstd::make_unexpected("TODO: TIFF/DNG format");
+  }
+#endif
+
+  bool ok = GetImageInfoSTB(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
   if (!ok) {
     return nonstd::make_unexpected(err);
   }

@@ -43,3 +43,7 @@ Use `-rss_limit_mb=50000` to limit memory.
 $ ./fuzz_intcoding -rss_limit_mb=20000 -jobs 4
 ```
 
+## PoC and regressesions
+
+PoC/regression dataset is managed in separate git repo. https://github.com/lighttransport/usd-fuzz
+

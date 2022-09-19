@@ -71,7 +71,15 @@ AAssetManager *asset_manager = nullptr;
 #endif
 
 
-std::string ExpandFilePath(const std::string &filepath, void *) {
+std::string ExpandFilePath(const std::string &_filepath, void *) {
+
+  std::string filepath = _filepath;
+  if (filepath.size() > 2048) {
+    // file path too large.
+    // TODO: Report warn.
+    filepath.resize(2048);
+  }
+
 #ifdef _WIN32
   // Assume input `filepath` is encoded in UTF-8
   std::wstring wfilepath = UTF8ToWchar(filepath);
@@ -224,6 +232,134 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
     }
     return false;
   }
+
+  out->resize(sz);
+  f.read(reinterpret_cast<char *>(&out->at(0)),
+         static_cast<std::streamsize>(sz));
+
+  return true;
+#endif
+}
+
+#if 0 // not used at this momemnt
+bool WriteWholeFile(std::string *err, const std::string &filepath,
+                    const std::vector<unsigned char> &contents, void *) {
+#ifdef _WIN32
+#if defined(__GLIBCXX__)  // mingw
+  int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
+                               _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
+  __gnu_cxx::stdio_filebuf<char> wfile_buf(
+      file_descriptor, std::ios_base::out | std::ios_base::binary);
+  std::ostream f(&wfile_buf);
+#elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
+  std::ofstream f(UTF8ToWchar(filepath).c_str(), std::ofstream::binary);
+#else  // other C++ compiler for win32?
+  std::ofstream f(filepath.c_str(), std::ofstream::binary);
+#endif
+#else
+  std::ofstream f(filepath.c_str(), std::ofstream::binary);
+#endif
+  if (!f) {
+    if (err) {
+      (*err) += "File open error for writing : " + filepath + "\n";
+    }
+    return false;
+  }
+
+  f.write(reinterpret_cast<const char *>(&contents.at(0)),
+          static_cast<std::streamsize>(contents.size()));
+  if (!f) {
+    if (err) {
+      (*err) += "File write error: " + filepath + "\n";
+    }
+    return false;
+  }
+
+  return true;
+}
+#endif
+
+bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
+                   const std::string &filepath, uint32_t max_read_bytes, void *userdata) {
+  (void)userdata;
+
+  // hard limit to 1MB.
+  max_read_bytes = (std::max)(1u, (std::min)(uint32_t(1024*1024), max_read_bytes));
+
+#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+  if (tinyusdz::io::asset_manager) {
+    AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
+                                       AASSET_MODE_STREAMING);
+    if (!asset) {
+      if (err) {
+        (*err) += "File open error(from AssestManager) : " + filepath + "\n";
+      }
+      return false;
+    }
+    size_t size = AAsset_getLength(asset);
+    if (size == 0) {
+      if (err) {
+        (*err) += "Invalid file size : " + filepath +
+                  " (does the path point to a directory?)";
+      }
+      return false;
+    }
+
+    size = (std::min)(max_read_bytes, size);
+    out->resize(size);
+    AAsset_read(asset, reinterpret_cast<char *>(&out->at(0)), size);
+    AAsset_close(asset);
+    return true;
+  } else {
+    if (err) {
+      (*err) += "No asset manager specified : " + filepath + "\n";
+    }
+    return false;
+  }
+
+#else
+#ifdef _WIN32
+#if defined(__GLIBCXX__)  // mingw
+  int file_descriptor =
+      _wopen(UTF8ToWchar(filepath).c_str(), _O_RDONLY | _O_BINARY);
+  __gnu_cxx::stdio_filebuf<char> wfile_buf(file_descriptor, std::ios_base::in);
+  std::istream f(&wfile_buf);
+#elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
+  // For libcxx, assume _LIBCPP_HAS_OPEN_WITH_WCHAR is defined to accept
+  // `wchar_t *`
+  std::ifstream f(UTF8ToWchar(filepath).c_str(), std::ifstream::binary);
+#else
+  // Unknown compiler/runtime
+  std::ifstream f(filepath.c_str(), std::ifstream::binary);
+#endif
+#else
+  std::ifstream f(filepath.c_str(), std::ifstream::binary);
+#endif
+  if (!f) {
+    if (err) {
+      (*err) += "File open error : " + filepath + "\n";
+    }
+    return false;
+  }
+
+  f.seekg(0, f.end);
+  size_t sz = static_cast<size_t>(f.tellg());
+  f.seekg(0, f.beg);
+
+  if (int64_t(sz) < 0) {
+    if (err) {
+      (*err) += "Invalid file size : " + filepath +
+                " (does the path point to a directory?)";
+    }
+    return false;
+  } else if (sz == 0) {
+    if (err) {
+      (*err) += "File is empty : " + filepath + "\n";
+    }
+    return false;
+  }
+
+  sz = (std::min)(size_t(max_read_bytes), sz);
 
   out->resize(sz);
   f.read(reinterpret_cast<char *>(&out->at(0)),
