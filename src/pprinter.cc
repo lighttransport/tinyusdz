@@ -39,10 +39,11 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::StringData &v) {
-  std::string delim = "\"";
+
+  std::string delim = v.single_quote ? "'" : "\"";
 
   if (v.is_triple_quoted) {
-    delim = "\"\"\"";
+    delim = v.single_quote ? "'''" : "\"\"\"";
   }
 
   ofs << delim;

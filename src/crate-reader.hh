@@ -26,6 +26,7 @@ struct CrateReaderConfig {
   size_t maxNumFields = 1024*1024;
   size_t maxNumFieldSets = 1024*1024;
   size_t maxNumSpecifiers = 1024*1024;
+  size_t maxNumPaths = 1024*1024;
 
   size_t maxNumIndices = 1024*1024*16;
   size_t maxDictElements = 256;

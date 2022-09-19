@@ -442,7 +442,7 @@ class AsciiParser {
 
   bool Expect(char expect_c);
 
-  bool ReadStringLiteral(std::string *literal);  // identifier wrapped with '"'
+  bool ReadStringLiteral(std::string *literal);  // identifier wrapped with " or '. result contains quote chars.
   bool ReadPrimAttrIdentifier(std::string *token);
   bool ReadIdentifier(std::string *token);  // no '"'
   bool ReadPathIdentifier(

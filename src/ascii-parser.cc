@@ -1860,7 +1860,7 @@ bool AsciiParser::ParsePurpose(Purpose *result) {
   }
 
   std::string str;
-  if (!ReadStringLiteral(&str)) {
+  if (!ReadIdentifier(&str)) {
     return false;
   }
 
@@ -2914,7 +2914,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       }
       var.Set(val);
     }
-  } else if (type_name == "float") {
+  } else if (type_name == value::kFloat) {
     if (array_qual) {
       std::vector<float> vss;
       if (!ParseBasicTypeArray(&vss)) {
@@ -2928,37 +2928,32 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       }
       var.Set(val);
     }
-  } else if (type_name == "string") {
+  } else if (type_name == value::kString) {
     if (array_qual) {
-      std::vector<std::string> strs;
+      std::vector<StringData> strs;
       if (!ParseBasicTypeArray(&strs)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
       }
       var.Set(strs);
     } else {
-      std::string str;
-      if (!ReadStringLiteral(&str)) {
+      StringData str;
+      if (!ReadBasicType(&str)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string`");
       }
       var.Set(str);
     }
   } else if (type_name == "token") {
     if (array_qual) {
-      std::vector<std::string> strs;
-      if (!ParseBasicTypeArray(&strs)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
-      }
       std::vector<value::token> toks;
-      for (auto item : strs) {
-        toks.push_back(value::token(item));
+      if (!ParseBasicTypeArray(&toks)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
       }
       var.Set(toks);
     } else {
-      std::string str;
-      if (!ReadStringLiteral(&str)) {
+      value::token tok;
+      if (!ReadBasicType(&tok)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `token`");
       }
-      value::token tok(str);
       var.Set(tok);
     }
   } else if (type_name == "dictionary") {
@@ -3141,10 +3136,19 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
     return false;
   }
 
-  if (c0 != '"') {
+  // TODO: Allow triple-quotated string?
+
+  bool single_quote{false};
+
+  if (c0 == '"') {
+    // ok
+  } else if (c0 == '\'') {
+    // ok
+    single_quote = true;
+  } else {
     DCOUT("c0 = " << c0);
     PUSH_ERROR_AND_RETURN(
-        "String literal expected but it does not start with '\"'");
+        "String or Token literal expected but it does not start with \" or '");
   }
 
   bool end_with_quotation{false};
@@ -3160,7 +3164,12 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
       PUSH_ERROR_AND_RETURN("New line in string literal.");
     }
 
-    if (c == '"') {
+    if (single_quote) {
+      if (c == '\'') {
+        end_with_quotation = true;
+        break;
+      }
+    } else if (c == '"') {
       end_with_quotation = true;
       break;
     }
@@ -3169,8 +3178,8 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
   }
 
   if (!end_with_quotation) {
-    PUSH_ERROR_AND_RETURN(
-        "String literal expected but it does not end with '\"'");
+    PUSH_ERROR_AND_RETURN(fmt::format("String literal expected but it does not end with {}.",
+      single_quote ? "'" : "\""));
   }
 
   (*literal) = ss.str();
@@ -3259,9 +3268,15 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
     return false;
   }
 
+  bool single_quote = false;
+
   if (triple_quote[0] == '"' && triple_quote[1] == '"' &&
       triple_quote[2] == '"') {
     // ok
+  } else if (triple_quote[0] == '\'' && triple_quote[1] == '\'' &&
+      triple_quote[2] == '\'') {
+    // ok
+    single_quote = true;
   } else {
     SeekTo(loc);
     return false;
@@ -3272,7 +3287,10 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
 
   auto locinfo = _curr_cursor;
 
-  int quote_count = 0;
+  int single_quote_count = 0; // '
+  int double_quote_count = 0; // "
+
+  bool got_triple_quote{false};
 
   while (!Eof()) {
     char c;
@@ -3284,7 +3302,16 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
 
     str_buf << c;
 
-    quote_count = (c == '"') ? (quote_count + 1) : 0;
+    if (c == '"') {
+      double_quote_count++;
+      single_quote_count = 0;
+    } else if (c == '\'') {
+      double_quote_count = 0;
+      single_quote_count++;
+    } else {
+      double_quote_count = 0;
+      single_quote_count = 0;
+    }
 
     // Update loc info
     locinfo.col++;
@@ -3317,22 +3344,34 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
       locinfo.row++;
     }
 
-    if (quote_count == 3) {
+    if (double_quote_count == 3) {
       // got '"""'
+      got_triple_quote = true;
+      break;
+    }
+    if (single_quote_count == 3) {
+      // got '''
+      got_triple_quote = true;
       break;
     }
   }
 
-  if (quote_count != 3) {
+  if (!got_triple_quote) {
     SeekTo(loc);
     return false;
   }
 
+  DCOUT("single_quote = " << single_quote);
   DCOUT("Triple quoted string found. col " << start_cursor.col << ", row "
                                            << start_cursor.row);
 
-  // remove last '"""'
-  str->value = removeSuffix(str_buf.str(), "\"\"\"");
+  // remove last '"""' or '''
+  str->single_quote = single_quote;
+  std::string s = str_buf.str();
+  if (s.size() > 3) { // just in case
+    s.erase(s.size() - 3);
+  }
+  str->value = s;
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = true;
@@ -3343,7 +3382,7 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
 }
 
 bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
-  // Example: 
+  // Example:
   // - xformOp:transform
   // - primvars:uvmap1
 
@@ -3443,7 +3482,7 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
     if (c == '_') {
       // ok
     } else if (!std::isalpha(int(c))) {
-      DCOUT("Invalid identiefier: c = " << c);
+      DCOUT(fmt::format("Invalid identiefier: '{}'", c));
       _sr->seek_from_current(-1);
       return false;
     }
@@ -6031,7 +6070,6 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
         return false;
       }
     } else if (type_name == value::kString) {
-      // TODO: Use StringData?
       if (!ParseBasicPrimAttr<StringData>(array_qual, primattr_name, &attr)) {
         return false;
       }
@@ -6533,6 +6571,9 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
   }
 
   DCOUT("prim name = " << prim_name);
+  if (!ValidatePrimName(prim_name)) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Prim name contains invalid chacracter.");
+  }
 
   if (!SkipWhitespaceAndNewline()) {
     return false;

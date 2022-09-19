@@ -56,6 +56,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
 #include "value-pprint.hh"
+#include "tiny-format.hh"
 
 #if 0
 #if defined(TINYUSDZ_WITH_AUDIO)
@@ -88,6 +89,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "common-macros.inc"
 
 namespace tinyusdz {
+
+//constexpr auto kTagUSDA = "[USDA]";
+//constexpr auto kTagUSDC = "[USDC]";
+constexpr auto kTagUSDZ = "[USDZ]";
+
+// For PUSH_ERROR_AND_RETURN
+#define PushError(s) if (err) { (*err) += s; }
+//#define PushWarn(s) if (warn) { (*warn) += s; }
 
 namespace {
 
@@ -165,12 +174,27 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  if (length > size_t(1024 * 1024 * options.max_memory_limit_in_mb)) {
+  size_t max_length;
+
+  // 32bit env
+  if (sizeof(void *) == 4) {
+    if (options.max_memory_limit_in_mb > 4096) { // exceeds 4GB
+      max_length = std::numeric_limits<uint32_t>::max();
+    } else {
+      max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    }
+  } else {
+    // TODO: Set hard limit?
+    max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+  }
+
+
+  if (length > max_length) {
     if (err) {
       (*err) += "USDC data [" + filename +
                 "] is too large(size = " + std::to_string(length) +
                 ", which exceeds memory limit " +
-                std::to_string(options.max_memory_limit_in_mb) + " [mb]).\n";
+                std::to_string(max_length) + ".\n";
     }
 
     return false;
@@ -652,6 +676,43 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
         return false;
       }
 
+      if (asset_size > (options.max_allowed_asset_size_in_mb * 1024 * 1024)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Asset file size too large.");
+      }
+
+      DCOUT("Image asset size: " << asset_size);
+
+      {
+        nonstd::expected<image::ImageInfoResult, std::string> info =
+            image::GetImageInfoFromMemory(asset_addr, asset_size, uri);
+
+        if (info) {
+          if (info->width == 0) {
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Image has zero width.");
+          }
+
+          if (info->width > options.max_image_width) {
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image width too large", i));
+          }
+
+          if (info->height == 0) {
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Image has zero height.");
+          }
+
+          if (info->height > options.max_image_height) {
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image height too large", i));
+          }
+
+          if (info->channels == 0) {
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Image has zero channels.");
+          }
+
+          if (info->channels > options.max_image_channels) {
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image channels too much", i));
+          }
+        }
+      }
+
       Image image;
       nonstd::expected<image::ImageResult, std::string> ret =
           image::LoadImageFromMemory(asset_addr, asset_size, uri);
@@ -1094,13 +1155,15 @@ std::string Stage::ExportToString() const {
 // File type detection
 //
 
-bool IsUSDA(const std::string &filename, const size_t max_bytes) {
+bool IsUSDA(const std::string &filename) {
   // TODO: Read first few bytes and check the magic number.
   //
   std::vector<uint8_t> data;
   std::string err;
-  if (!io::ReadWholeFile(&data, &err, filename, max_bytes,
+  // 12 = enough storage for "#usda 1.0"
+  if (!io::ReadFileHeader(&data, &err, filename, 12,
                          /* userdata */ nullptr)) {
+    // TODO: return `err`
     return false;
   }
 
@@ -1120,12 +1183,13 @@ bool IsUSDA(const uint8_t *addr, const size_t length) {
   return false;
 }
 
-bool IsUSDC(const std::string &filename, const size_t max_bytes) {
+bool IsUSDC(const std::string &filename) {
   // TODO: Read first few bytes and check the magic number.
   //
   std::vector<uint8_t> data;
   std::string err;
-  if (!io::ReadWholeFile(&data, &err, filename, max_bytes,
+  // 88 bytes should enough  
+  if (!io::ReadFileHeader(&data, &err, filename, /* header bytes */88,
                          /* userdata */ nullptr)) {
     return false;
   }
@@ -1147,12 +1211,13 @@ bool IsUSDC(const uint8_t *addr, const size_t length) {
   return false;
 }
 
-bool IsUSDZ(const std::string &filename, const size_t max_bytes) {
+bool IsUSDZ(const std::string &filename) {
   // TODO: Read first few bytes and check the magic number.
   //
   std::vector<uint8_t> data;
   std::string err;
-  if (!io::ReadWholeFile(&data, &err, filename, max_bytes,
+  // 256 bytes may be enough.
+  if (!io::ReadFileHeader(&data, &err, filename, 256,
                          /* userdata */ nullptr)) {
     return false;
   }
