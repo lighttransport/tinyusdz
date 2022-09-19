@@ -476,7 +476,7 @@ class MetaVariable {
 //
 enum class TimeSampleInterpolationType
 {
-  Held, // something like nearest-neighbor. 
+  Held, // something like nearest-neighbor.
   Linear,
 };
 
@@ -575,14 +575,14 @@ inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b, con
   }
 
   dst.resize(n);
-  
+
   if (a.size() != b.size()) {
     return dst;
   }
   for (size_t i = 0; i < n; i++) {
     dst[i] = lerp(a[i], b[i], t);
   }
-  
+
   return dst;
 }
 
@@ -829,9 +829,21 @@ class TypedAttribute {
 
     return nonstd::nullopt;
   }
+  
+  void SetValueEmpty() {
+    _empty = true;
+  }
+
+  bool IsValueEmpty() const {
+    return _empty;
+  }
 
   // value set?
   bool authored() const {
+    if (_empty) {
+      return true;
+    }
+
     if (_attrib) {
       return true;
     }
@@ -844,6 +856,7 @@ class TypedAttribute {
   AttrMeta meta;
 
  private:
+  bool _empty{false};
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
   bool _blocked{false}; // for `uniform` attribute.
@@ -943,6 +956,13 @@ class TypedAttributeWithFallback {
 
   void SetValue(const T &v) { _attrib = v; }
 
+  void SetValueEmpty() {
+    _empty = true;
+  }
+
+  bool IsValueEmpty() const {
+    return _empty;
+  }
 
   // TODO: Animation data.
   const T &GetValue() const {
@@ -989,6 +1009,10 @@ class TypedAttributeWithFallback {
 
   // value set?
   bool authored() const {
+
+    if (_empty) { // authored with empty value.
+      return true;
+    }
     if (_attrib) {
       return true;
     }
@@ -1003,6 +1027,7 @@ class TypedAttributeWithFallback {
  private:
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
+  bool _empty{false};
   T _fallback;
   bool _blocked{false}; // for `uniform` attribute.
 };
@@ -1925,7 +1950,7 @@ nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 nonstd::optional<Kind> KindFromString(const std::string &v);
 
-// Return false when invalid character(e.g. '%') exists. 
+// Return false when invalid character(e.g. '%') exists.
 bool ValidatePrimName(const std::string &tok);
 
 namespace value {

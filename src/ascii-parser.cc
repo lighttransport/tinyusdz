@@ -131,6 +131,8 @@ static void RegisterStageMetas(
       AsciiParser::VariableDef(value::kDouble, "metersPerUnit");
   metas["timeCodesPerSecond"] =
       AsciiParser::VariableDef(value::kDouble, "timeCodesPerSecond");
+  metas["framesPerSecond"] =
+      AsciiParser::VariableDef(value::kDouble, "framesPerSecond");
 
   metas["startTimeCode"] =
       AsciiParser::VariableDef(value::kDouble, "startTimeCode");
@@ -3725,6 +3727,14 @@ bool AsciiParser::ParseStageMetaOpt() {
       DCOUT("endTimeCode = " << pvd.value());
       _stage_metas.endTimeCode = pvd.value();
     }
+  } else if (varname == "framesPerSecond") {
+    if (auto pv = var.Get<float>()) {
+      DCOUT("framesPerSecond = " << pv.value());
+      _stage_metas.framesPerSecond = double(pv.value());
+    } else if (auto pvd = var.Get<double>()) {
+      DCOUT("framesPerSecond = " << pvd.value());
+      _stage_metas.framesPerSecond = pvd.value();
+    }
   } else if (varname == "apiSchemas") {
     // TODO: ListEdit qualifer check
     if (auto pv = var.Get<std::vector<value::token>>()) {
@@ -5436,6 +5446,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
       _sr->seek_from_current(-1);
 
       // Still ok. No meta
+      DCOUT("No attribute meta.");
       return true;
     }
   }
@@ -5526,7 +5537,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         DCOUT("Got `elementSize` meta : " << value);
         out_meta->elementSize = value;
       } else if (token == "customData") {
-        std::map<std::string, MetaVariable> dict;
+        CustomDataType dict;
 
         if (!ParseDict(&dict)) {
           return false;
@@ -5674,7 +5685,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     }
   }
 
-  // optional: interpolation parameter
+  // optional: attribute meta.
   AttrMeta meta;
   if (!ParseAttrMeta(&meta)) {
     PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
@@ -5915,6 +5926,14 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     }
 #endif
 
+    Rewind(1);
+
+    // optional: attribute meta.
+    AttrMeta meta;
+    if (!ParseAttrMeta(&meta)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+    }
+
     DCOUT("Define only property = " + primattr_name);
 
     // Empty Attribute. type info only
@@ -5923,6 +5942,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     if (uniform_qual) {
       p.attrib.variability = Variability::Uniform;
     }
+    p.attrib.meta = meta;
 
     (*props)[primattr_name] = p;
 
@@ -6044,7 +6064,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
   } else {
     PrimAttrib attr;
 
-    // TODO: Refactor.
+    // TODO: Refactor. ParseAttrMeta is currently called inside ParseBasicPrimAttr()
     if (type_name == value::kBool) {
       if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
         return false;
@@ -6211,6 +6231,13 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       primvar::PrimVar var;
       var.set_scalar(assetp);
       attr.set_var(std::move(var));
+    
+      // optional: attribute meta.
+      AttrMeta meta;
+      if (!ParseAttrMeta(&meta)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+      }
+      attr.meta = meta;
 
     } else {
       PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
