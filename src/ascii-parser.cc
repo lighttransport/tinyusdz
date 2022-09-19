@@ -215,9 +215,23 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
 
   d.insert(value::kNormal3f);
   d.insert(value::kPoint3f);
+  d.insert(value::kTexCoord2h);
+  d.insert(value::kTexCoord3h);
+  d.insert(value::kTexCoord4h);
   d.insert(value::kTexCoord2f);
+  d.insert(value::kTexCoord3f);
+  d.insert(value::kTexCoord4f);
+  d.insert(value::kTexCoord2d);
+  d.insert(value::kTexCoord3d);
+  d.insert(value::kTexCoord4d);
   d.insert(value::kVector3f);
+  d.insert(value::kVector4f);
+  d.insert(value::kColor3h);
   d.insert(value::kColor3f);
+  d.insert(value::kColor3d);
+  d.insert(value::kColor4h);
+  d.insert(value::kColor4f);
+  d.insert(value::kColor4d);
 
   // It looks no `matrixNf` type for USDA
   // d.insert(value::kMatrix2f);
