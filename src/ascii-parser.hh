@@ -167,16 +167,18 @@ class AsciiParser {
       return true;
     }
 
-    std::string type;
+    std::string type; // e.g. token, color3f
     std::string name;
+    bool allow_array_type{false}; // when true, we accept `type` and `type[]`
 
     PostParseHandler post_parse_handler;
 
     VariableDef() = default;
 
     VariableDef(const std::string &t, const std::string &n,
+                bool a = false,
                 PostParseHandler ph = DefaultPostParseHandler)
-        : type(t), name(n), post_parse_handler(ph) {}
+        : type(t), name(n), allow_array_type(a), post_parse_handler(ph) {}
 
     VariableDef(const VariableDef &rhs) = default;
     VariableDef &operator=(const VariableDef &rhs) = default;
@@ -229,7 +231,7 @@ class AsciiParser {
   ///
   //using PrimMetaProcessFunction = std::function<bool(const PrimMetas &metas)>;
 
-  using PrimMetaInput = std::map<std::string, std::tuple<ListEditQual, MetaVariable>>;
+  using PrimMetaInput = std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
 
 
   ///
@@ -472,7 +474,7 @@ class AsciiParser {
 #endif
 
   bool ParsePrimMetas(
-      std::map<std::string, std::tuple<ListEditQual, MetaVariable>> *args);
+      std::map<std::string, std::pair<ListEditQual, MetaVariable>> *args);
 
   bool ParseMetaValue(const VariableDef &def, MetaVariable *outvar);
 
@@ -563,14 +565,14 @@ class AsciiParser {
   template <typename T>
   nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesOfArray();
 
-  nonstd::optional<std::tuple<ListEditQual, MetaVariable>> ParsePrimMeta();
+  nonstd::optional<std::pair<ListEditQual, MetaVariable>> ParsePrimMeta();
   bool ParsePrimAttr(std::map<std::string, Property> *props);
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
                           PrimAttrib *out_attr);
 
-  bool ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out);
+  bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
   nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
 
   std::string GetCurrentPath();
