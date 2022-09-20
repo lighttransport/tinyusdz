@@ -528,6 +528,7 @@ struct PrimMeta {
   nonstd::optional<StringData> doc; // 'documentation'
   nonstd::optional<StringData> comment; // 'comment'
   nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
+  nonstd::optional<std::pair<ListEditQual, MetaVariable>> variantSets; // 'variantSets'. type `token` or `token[]`
 
   // USDZ extensions
   nonstd::optional<std::string> sceneName; // 'sceneName'
@@ -538,7 +539,7 @@ struct PrimMeta {
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authored() const { return (active || kind || customData || sceneName || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
+  bool authored() const { return (active || kind || customData || variantSets || sceneName || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
 };
 
 // Metadata for Attribute

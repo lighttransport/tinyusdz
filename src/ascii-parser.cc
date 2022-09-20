@@ -157,16 +157,20 @@ static void RegisterPrimMetas(
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
 
   // Composition arcs
+  
   // Type can be array. i.e. path, path[]
   metas["references"] =
-      AsciiParser::VariableDef(value::kAssetPath, "references");
+      AsciiParser::VariableDef(value::kAssetPath, "references", /* allow array type */true);
+
   metas["inherits"] = AsciiParser::VariableDef(value::kAssetPath, "inherits");
   metas["payload"] = AsciiParser::VariableDef(value::kAssetPath, "payload");
 
   metas["specializes"] =
       AsciiParser::VariableDef(value::kRelationship, "specializes");
+
+  // token or token[]
   metas["variantSets"] =
-      AsciiParser::VariableDef(value::kDictionary, "variantSets");
+      AsciiParser::VariableDef(value::kToken, "variantSets", /* allow array type */true);
 
   metas["assetInfo"] =
       AsciiParser::VariableDef(value::kDictionary, "assetInfo");
@@ -5001,6 +5005,17 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
 
   MetaVariable var;
 
+  bool is_array_type{false};
+  if (def.allow_array_type) {
+    // Seek '['
+    char c;
+    if (LookChar1(&c)) {
+      if (c == '[') {
+        is_array_type = true;
+      }      
+    }
+  }
+
   // TODO: Refactor.
   if (vartype == value::kBool) {
     bool value;
@@ -5011,24 +5026,27 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
 
     var.Set(value);
   } else if (vartype == value::kToken) {
-    value::token value;
-    if (!ReadBasicType(&value)) {
-      std::string msg = "Token expected for `" + varname + "`.\n";
-      PushError(msg);
-      return false;
-    }
-    DCOUT("token = " << value);
+    if (is_array_type) {
+      std::vector<value::token> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("token[] expected for `{}`.", varname));
+      }
+      DCOUT("token[] = " << value);
 
-#if 0  // TODO
-    auto ret = def.post_parse_handler(value);
-    if (!ret) {
-      DCOUT("error = " << ret.error());
-      PUSH_ERROR_AND_RETURN("Invalid token for `" + varname + "`. " + ret.error());
-    }
-#endif
+      var.Set(value);
+    } else {
+      value::token value;
+      if (!ReadBasicType(&value)) {
+        std::string msg = "Token expected for `" + varname + "`.\n";
+        PushError(msg);
+        return false;
+      }
+      DCOUT("token = " << value);
 
-    var.Set(value);
+      var.Set(value);
+    }
   } else if (vartype == "token[]") {
+
     std::vector<value::token> value;
     if (!ParseBasicTypeArray(&value)) {
       std::string msg = "Token array expected for `" + varname + "`.\n";
@@ -5094,9 +5112,23 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
 
     var.Set(values);
+  } else if (vartype == "float2[]") {
+    std::vector<std::array<float, 2>> values;
+    if (!ParseTupleArray<float, 2>(&values)) {
+      return false;
+    }
+
+    var.Set(values);
   } else if (vartype == "float3[]") {
     std::vector<std::array<float, 3>> values;
     if (!ParseTupleArray<float, 3>(&values)) {
+      return false;
+    }
+
+    var.Set(values);
+  } else if (vartype == "float4[]") {
+    std::vector<std::array<float, 4>> values;
+    if (!ParseTupleArray<float, 4>(&values)) {
       return false;
     }
 
@@ -5108,8 +5140,22 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
 
     var.Set(values);
+  } else if (vartype == "double2[]") {
+    std::vector<value::double2> values;
+    if (!ParseBasicTypeArray<value::double2>(&values)) {
+      return false;
+    }
+
+    var.Set(values);
   } else if (vartype == "double3[]") {
     std::vector<value::double3> values;
+    if (!ParseTupleArray(&values)) {
+      return false;
+    }
+
+    var.Set(values);
+  } else if (vartype == "double4[]") {
+    std::vector<value::double4> values;
     if (!ParseTupleArray(&values)) {
       return false;
     }
@@ -5143,6 +5189,15 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
 
     var.Set(ret.value());
+  } else if (vartype == "int2") {
+    std::array<int, 2> values;
+    if (!ParseBasicTypeTuple<int, 2>(&values)) {
+      // std::string msg = "Array of int values expected for `" + var.name +
+      // "`.\n"; PushError(msg);
+      return false;
+    }
+
+    var.Set(values);
 
   } else if (vartype == "int3") {
     std::array<int, 3> values;
@@ -5351,7 +5406,7 @@ nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
   return nonstd::nullopt;
 }
 
-bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out) {
+bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
   if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
@@ -5472,7 +5527,7 @@ bool AsciiParser::ParseStageMeta(std::tuple<ListEditQual, MetaVariable> *out) {
   return true;
 }
 
-nonstd::optional<std::tuple<ListEditQual, MetaVariable>>
+nonstd::optional<std::pair<ListEditQual, MetaVariable>>
 AsciiParser::ParsePrimMeta() {
   if (!SkipCommentAndWhitespaceAndNewline()) {
     return nonstd::nullopt;
@@ -5491,14 +5546,14 @@ AsciiParser::ParsePrimMeta() {
       var.name = "";  // empty
       var.Set(sdata);
 
-      return std::make_tuple(qual, var);
+      return std::make_pair(qual, var);
 
     } else if (MaybeString(&sdata)) {
       MetaVariable var;
       var.name = "";  // empty
       var.Set(sdata);
 
-      return std::make_tuple(qual, var);
+      return std::make_pair(qual, var);
     }
   }
 
@@ -5539,11 +5594,11 @@ AsciiParser::ParsePrimMeta() {
   }
   var.name = varname;
 
-  return std::make_tuple(qual, var);
+  return std::make_pair(qual, var);
 }
 
 bool AsciiParser::ParsePrimMetas(
-    std::map<std::string, std::tuple<ListEditQual, MetaVariable>> *args) {
+    std::map<std::string, std::pair<ListEditQual, MetaVariable>> *args) {
   // '(' args ')'
   // args = list of argument, separated by newline.
 
@@ -5599,7 +5654,7 @@ bool AsciiParser::ParsePrimMetas(
 
     DCOUT("Start PrimMeta parse.");
 
-    // ty = std::tuple<ListEditQual, MetaVariable>;
+    // ty = std::pair<ListEditQual, MetaVariable>;
     if (auto m = ParsePrimMeta()) {
       DCOUT("PrimMeta: list-edit qual = "
             << tinyusdz::to_string(std::get<0>(m.value()))
@@ -6563,7 +6618,7 @@ bool AsciiParser::ParseClassBlock(const int64_t primIdx,
     return false;
   }
 
-  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> metas;
+  std::map<std::string, std::pair<ListEditQual, MetaVariable>> metas;
   if (!ParsePrimMetas(&metas)) {
     return false;
   }
@@ -6685,7 +6740,7 @@ bool AsciiParser::ParseOverBlock(const int64_t primIdx,
     return false;
   }
 
-  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> metas;
+  std::map<std::string, std::pair<ListEditQual, MetaVariable>> metas;
   if (!ParsePrimMetas(&metas)) {
     return false;
   }
@@ -6831,7 +6886,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     return false;
   }
 
-  std::map<std::string, std::tuple<ListEditQual, MetaVariable>> in_metas;
+  std::map<std::string, std::pair<ListEditQual, MetaVariable>> in_metas;
   {
     // look ahead
     char c;
@@ -7093,7 +7148,7 @@ bool AsciiParser::Parse(LoadState state) {
 #if 0
 // Extract array of References from Variable.
 ReferenceList GetReferences(
-    const std::tuple<ListEditQual, value::any_value> &_var) {
+    const std::pair<ListEditQual, value::any_value> &_var) {
   ReferenceList result;
 
   ListEditQual qual = std::get<0>(_var);
