@@ -30,6 +30,7 @@ constexpr auto kPointInstancer = "PointInstancer";
 
 struct GPrim : Xformable {
   std::string name;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to parent node
 
@@ -86,6 +87,7 @@ struct GeomSubset {
   };
 
   std::string name;
+  Specifier spec;
 
   int64_t parent_id{-1};  // Index to parent node
 

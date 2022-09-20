@@ -58,13 +58,13 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(double time, TimeSampleI
       return dst;
     }
 
-    if (prop.attrib.get_var().is_timesample()) {
+    if (prop.GetAttrib().get_var().is_timesample()) {
       // TODO:
       return dst;
     }
 
-    if (prop.attrib.type_name() == "normal3f[]") {
-      if (auto pv = prop.attrib.get_value<std::vector<value::normal3f>>()) {
+    if (prop.GetAttrib().type_name() == "normal3f[]") {
+      if (auto pv = prop.GetAttrib().get_value<std::vector<value::normal3f>>()) {
         dst = pv.value();
       }
     }
@@ -95,9 +95,9 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(double time, TimeSampleI
 Interpolation GeomMesh::GetNormalsInterpolation() const {
   if (props.count(kPrimvarsNormals)) {
     const auto &prop = props.at(kPrimvarsNormals);
-    if (prop.attrib.type_name() == "normal3f[]") {
-      if (prop.attrib.meta.interpolation) {
-        return prop.attrib.meta.interpolation.value();
+    if (prop.GetAttrib().type_name() == "normal3f[]") {
+      if (prop.GetAttrib().meta.interpolation) {
+        return prop.GetAttrib().meta.interpolation.value();
       }
     }
   } else if (normals.meta.interpolation) {
@@ -123,7 +123,7 @@ void GeomMesh::Initialize(const GPrim &gprim) {
       continue;
     }
 
-    const PrimAttrib &attr = prop.attrib;
+    const PrimAttrib &attr = prop.GetAttrib();
 
     if (attr_name == "points") {
       //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {

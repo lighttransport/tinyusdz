@@ -21,6 +21,7 @@ constexpr auto kLuxPluginLight = "PluginLight";
 
 struct LuxSphereLight : public Xformable {
   std::string name;
+  Specifier spec;
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -54,6 +55,7 @@ struct LuxSphereLight : public Xformable {
 
 struct LuxCylinderLight : public Xformable {
   std::string name;
+  Specifier spec;
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -91,6 +93,7 @@ struct LuxCylinderLight : public Xformable {
 
 struct LuxRectLight : public Xformable {
   std::string name;
+  Specifier spec;
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -128,6 +131,7 @@ struct LuxRectLight : public Xformable {
 
 struct LuxDiskLight : public Xformable {
   std::string name;
+  Specifier spec;
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -163,6 +167,7 @@ struct LuxDiskLight : public Xformable {
 
 struct LuxDistantLight : public Xformable {
   std::string name;
+  Specifier spec;
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -198,6 +203,7 @@ struct LuxDistantLight : public Xformable {
 
 struct LuxDomeLight : public Xformable {
   std::string name;
+  Specifier spec;
   int64_t parent_id{-1};  // Index to xform node
 
   enum class TextureFormat {
@@ -245,20 +251,24 @@ struct LuxDomeLight : public Xformable {
 
 // TODO:
 struct LuxGeometryLight : public Xformable {
+  Specifier spec;
   nonstd::optional<Relation> geometry; // `rel geometry`
 };
 
 // TODO
 struct LuxPortalLight : public Xformable {
+  Specifier spec;
   TypedAttribute<Animatable<Extent>> extent; // float3[] 
 };
 
 // TODO
 struct LuxPluginLight : public Xformable {
+  Specifier spec;
 };
 
 // TODO
 struct PluginLightFilter {
+  Specifier spec;
 };
 
 

@@ -18,6 +18,7 @@ constexpr auto kBlendShape = "BlendShape";
 // TODO(syoyo): Blendshape
 struct BlendShape {
   std::string name;
+  Specifier spec;
 
   TypedAttribute<std::vector<value::vector3f>> offsets;        // uniform vector3f[]. required property
   TypedAttribute<std::vector<value::vector3f>> normalOffsets;  // uniform vector3f[]. required property
@@ -33,6 +34,7 @@ struct BlendShape {
 // Skeleton
 struct Skeleton {
   std::string name;
+  Specifier spec;
 
   TypedAttribute<Animatable<Extent>> extent;
 
@@ -63,6 +65,7 @@ struct Skeleton {
 // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
 struct SkelRoot {
   std::string name;
+  Specifier spec;
   int64_t parent_id{-1};
 
   Animatable<Extent> extent;
@@ -81,6 +84,7 @@ struct SkelRoot {
 
 struct SkelAnimation {
   std::string name;
+  Specifier spec;
 
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[]
   TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights; // float[]

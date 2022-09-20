@@ -23,6 +23,7 @@ constexpr auto kShader = "Shader";
 //
 struct Material {
   std::string name;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};
 
@@ -39,6 +40,7 @@ struct Material {
 // TODO
 struct NodeGraph {
   std::string name;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};
 
@@ -245,6 +247,7 @@ struct UsdTransform2d {
 
 struct Shader {
   std::string name;
+  Specifier spec{Specifier::Def};
 
   std::string info_id;  // Shader type.
 

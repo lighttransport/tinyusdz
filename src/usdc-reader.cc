@@ -1074,7 +1074,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         // `rel` with no target. e.g. `rel target`
         rel = Relation();
         rel.SetEmpty();
-        (*prop) = Property(rel, /* isConnection */ false, custom);
+        (*prop) = Property(rel, custom);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
       }
@@ -1082,9 +1082,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   } else if (propType == Property::Type::Attrib) {
     (*prop) = Property(attr, custom);
   } else if (propType == Property::Type::Connection) {
-    (*prop) = Property(rel, /* isConnection*/ true, custom);
+    if (!typeName) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing for Attribute Connection.");
+    }
+    (*prop) = Property(rel, typeName.value().str(), custom);
   } else if (propType == Property::Type::Relation) {
-    (*prop) = Property(rel, /* isConnection */ false, custom);
+    (*prop) = Property(rel, custom);
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
   }

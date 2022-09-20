@@ -1490,71 +1490,126 @@ class Property {
     Connection,         // `.connect` suffix
   };
 
-  PrimAttrib attrib;
-  Relation rel;  // Relation(`rel`) or Connection(`.connect`)
-  Type type{Type::EmptyAttrib};
-  ListEditQual listOpQual{ListEditQual::ResetToExplicit}; // List Edit qualifier(Attribute can never be list editable)
-
-  bool has_custom{false};  // Qualified with 'custom' keyword?
 
   Property() = default;
 
-  Property(const std::string &type_name, bool custom) : has_custom(custom) {
-    attrib.set_type_name(type_name);
-    type = Type::EmptyAttrib;
+  Property(const std::string &type_name, bool custom) : _has_custom(custom) {
+    _attrib.set_type_name(type_name);
+    _type = Type::EmptyAttrib;
   }
 
-  Property(const PrimAttrib &a, bool custom) : attrib(a), has_custom(custom) {
-    type = Type::Attrib;
+  Property(const PrimAttrib &a, bool custom) : _attrib(a), _has_custom(custom) {
+    _type = Type::Attrib;
   }
 
   Property(PrimAttrib &&a, bool custom)
-      : attrib(std::move(a)), has_custom(custom) {
-    type = Type::Attrib;
+      : _attrib(std::move(a)), _has_custom(custom) {
+    _type = Type::Attrib;
   }
 
-  Property(const Relation &r, bool isConnection, bool custom)
-      : rel(r), has_custom(custom) {
-    if (isConnection) {
-      type = Type::Connection;
-    } else {
-      type = Type::Relation;
-    }
+  // Relation: typeless
+  Property(const Relation &r, bool custom)
+      : _rel(r), _has_custom(custom) {
+    _type = Type::Relation;
   }
 
-  Property(Relation &&r, bool isConnection, bool custom)
-      : rel(std::move(r)), has_custom(custom) {
-    if (isConnection) {
-      type = Type::Connection;
-    } else {
-      type = Type::Relation;
-    }
+  Property(Relation &&r, bool custom)
+      : _rel(std::move(r)), _has_custom(custom) {
+    _type = Type::Relation;
   }
+
+
+  // Attribute Connection: has type
+  Property(const Relation &r, const std::string &prop_value_type_name, bool custom)
+      : _rel(r), _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
+    _type = Type::Connection;
+  }
+
+  Property(Relation &&r, const std::string &prop_value_type_name, bool custom)
+      : _rel(std::move(r)), _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
+    _type = Type::Connection;
+  }
+
 
   bool IsAttrib() const {
-    return (type == Type::EmptyAttrib) || (type == Type::Attrib);
+    return (_type == Type::EmptyAttrib) || (_type == Type::Attrib);
   }
   bool IsEmpty() const {
-    return (type == Type::EmptyAttrib) || (type == Type::NoTargetsRelation);
+    return (_type == Type::EmptyAttrib) || (_type == Type::NoTargetsRelation);
   }
   bool IsRel() const {
-    return (type == Type::Relation) || (type == Type::NoTargetsRelation);
+    return (_type == Type::Relation) || (_type == Type::NoTargetsRelation);
   }
-  bool IsConnection() const { return type == Type::Connection; }
+  bool IsConnection() const { return _type == Type::Connection; }
 
   nonstd::optional<Path> GetConnectionTarget() const {
     if (!IsConnection()) {
       return nonstd::nullopt;
     }
 
-    if (rel.IsPath()) {
-      return rel.targetPath;
+    if (_rel.IsPath()) {
+      return _rel.targetPath;
     }
 
     return nonstd::nullopt;
   }
 
-  bool HasCustom() const { return has_custom; }
+  std::string value_type_name() const {
+    if (IsConnection()) {
+      return _prop_value_type_name;
+    } else if (IsRel()) {
+      // relation is typeless.
+      return std::string();
+    } else {
+      return _attrib.type_name();
+    }
+  }
+
+  bool HasCustom() const { return _has_custom; }
+
+  void SetPropetryType(Type ty) {
+    _type = ty;
+  }
+
+  Type GetPropertyType() const {
+    return _type;
+  }
+
+  void SetListEditQual(ListEditQual qual) {
+    _listOpQual = qual;
+  }
+  
+  const PrimAttrib &GetAttrib() const {
+    return _attrib;
+  }
+
+  PrimAttrib &GetAttrib() {
+    return _attrib;
+  }
+
+  const Relation &GetRelation() const {
+    return _rel;
+  }
+
+  Relation &GetRelation() {
+    return _rel;
+  }
+
+  ListEditQual GetListEditQual() const {
+    return _listOpQual;
+  }
+ 
+ private:
+  PrimAttrib _attrib;
+
+  // List Edit qualifier(Attribute can never be list editable)
+  // TODO:  Store listEdit qualifier to `Relation`
+  ListEditQual _listOpQual{ListEditQual::ResetToExplicit}; 
+
+  Type _type{Type::EmptyAttrib};
+  Relation _rel;  // Relation(`rel`) or Connection(`.connect`)
+  std::string _prop_value_type_name; // for Connection.
+  bool _has_custom{false};  // Qualified with 'custom' keyword?
 };
 
 // Orient: axis/angle expressed as a quaternion.
@@ -1727,9 +1782,11 @@ struct TimeSamples {
 #endif
 
 
-// `def` with no type.
+// Generic primspec container.
 struct Model {
   std::string name;
+
+  Specifier  spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to parent node
 
@@ -1740,6 +1797,7 @@ struct Model {
   std::map<std::string, Property> props;
 };
 
+#if 0 // TODO: Remove
 // Generic "class" Node
 // Mostly identical to GPrim
 struct Klass {
@@ -1750,6 +1808,7 @@ struct Klass {
 
   std::map<std::string, Property> props;
 };
+#endif
 
 struct MaterialBindingAPI {
   Path binding;            // rel material:binding
@@ -1889,6 +1948,7 @@ struct Volume {
 // the baggage of transformability.
 struct Scope {
   std::string name;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};
 
