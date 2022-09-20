@@ -16,7 +16,13 @@ static void parse_usdc(const uint8_t *data, size_t size)
 
   size_t total_size = content.size() + size;
 
+
   tinyusdz::StreamReader sr(buf.data(), total_size, /* endianswap */false);
+
+  tinyusdz::usdc::USDCReaderConfig config;
+
+  // For fuzzer run
+  config.kMaxAllowedMemoryInMB = 1024*4; // 4GB.
 
   tinyusdz::usdc::USDCReader reader(&sr);
   

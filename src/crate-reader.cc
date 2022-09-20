@@ -3459,20 +3459,17 @@ bool CrateReader::ReadSection(crate::Section *s) {
 
 bool CrateReader::ReadTokens() {
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
-    _err += "Invalid index for `TOKENS` section.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid index for `TOKENS` section.");
   }
 
   if ((_version[0] == 0) && (_version[1] < 4)) {
-    _err += "Version must be 0.4.0 or later, but got " +
-            std::to_string(_version[0]) + "." + std::to_string(_version[1]) +
-            "." + std::to_string(_version[2]) + "\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Version must be 0.4.0 or later, but got {}.{}.{}",
+      _version[0], _version[1], _version[2]));
   }
 
   const crate::Section &sec = _toc.sections[size_t(_tokens_index)];
   if (!_sr->seek_set(uint64_t(sec.start))) {
-    _err += "Failed to move to `TOKENS` section.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to move to `TOKENS` section.");
     return false;
   }
 
@@ -3481,9 +3478,12 @@ bool CrateReader::ReadTokens() {
   // # of tokens.
   uint64_t n;
   if (!_sr->read8(&n)) {
-    _err += "Failed to read # of tokens at `TOKENS` section.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read # of tokens at `TOKENS` section.");
   }
+
+  if (n == 0) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty tokens.");
+  } 
 
   if (n > _config.maxNumTokens) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many Tokens.");
@@ -3494,36 +3494,48 @@ bool CrateReader::ReadTokens() {
   // Compressed token data.
   uint64_t uncompressedSize;
   if (!_sr->read8(&uncompressedSize)) {
-    _err += "Failed to read uncompressedSize at `TOKENS` section.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uncompressedSize at `TOKENS` section.");
+  }
+
+  // At least min size should be 16 both for compress and uncompress.
+
+  if (uncompressedSize < 16) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
   }
 
   // TODO uncompressdSize check.
+  if (uncompressedSize > _sr->size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize exceeds input USDC size.");
+  }
 
   uint64_t compressedSize;
   if (!_sr->read8(&compressedSize)) {
-    _err += "Failed to read compressedSize at `TOKENS` section.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedSize at `TOKENS` section.");
+  }
 
+  if (compressedSize < 16) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "compressedSize is too small or zero bytes.");
   }
 
   if (compressedSize > _sr->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed data size exceeds input file size.");
   }
 
-  CHECK_MEMORY_USAGE(compressedSize);
+  CHECK_MEMORY_USAGE(compressedSize+16);
   CHECK_MEMORY_USAGE(uncompressedSize);
 
   DCOUT("# of tokens = " << n << ", uncompressedSize = " << uncompressedSize
                          << ", compressedSize = " << compressedSize);
 
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
-  std::vector<char> compressed(static_cast<size_t>(compressedSize));
+
+  // Inside of lz4, it does memcpy with 16 bytes stride, so add extra 16 bytes for safety.
+  std::vector<char> compressed(static_cast<size_t>(compressedSize+16));
 
   if (compressedSize !=
       _sr->read(size_t(compressedSize), size_t(compressedSize),
                 reinterpret_cast<uint8_t *>(compressed.data()))) {
-    _err += "Failed to read compressed data at `TOKENS` section.\n";
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressed data at `TOKENS` section.");
     return false;
   }
 
@@ -3531,8 +3543,7 @@ bool CrateReader::ReadTokens() {
       LZ4Compression::DecompressFromBuffer(compressed.data(), chars.data(),
                                            size_t(compressedSize),
                                            size_t(uncompressedSize), &_err)) {
-    _err += "Failed to decompress data of Tokens.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to decompress data of Tokens.");
   }
 
   // Split null terminated string into _tokens.
@@ -4106,6 +4117,14 @@ bool CrateReader::ReadBootStrap() {
     return false;
   }
 
+  // Currently up to 0.9.0
+  if ((version[0] == 0) && (version[1] < 10)) {
+    // ok
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported version {}.{}.{}. TinyUSDZ supports version up to 0.9.0",
+      _version[0], _version[1], _version[2]));
+  }
+
   _toc_offset = 0;
   if (!_sr->read8(&_toc_offset)) {
     PUSH_ERROR("Failed to read TOC offset.");
@@ -4124,6 +4143,9 @@ bool CrateReader::ReadBootStrap() {
 }
 
 bool CrateReader::ReadTOC() {
+
+  DCOUT(fmt::format("Memory budget: {} bytes", _config.maxMemoryBudget));
+
   if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
     PUSH_ERROR("Invalid toc offset.");
     return false;
