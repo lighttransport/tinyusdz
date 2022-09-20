@@ -109,6 +109,7 @@ option(TINYUSDZ_WITH_COLORIO
 
 # -- optional tool --
 option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ON)
+option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" ON)
 # --------------
 
 # -- For developers --
@@ -664,6 +665,14 @@ if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
   add_sanitizers(usda_parser)
   target_include_directories(usda_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
   target_link_libraries(usda_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
+endif()
+
+if(TINYUSDZ_WITH_TOOL_USDC_PARSER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+  add_executable(
+    usdc_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usdc_parser/usdc-parser-main.cc)
+  add_sanitizers(usdc_parser)
+  target_include_directories(usdc_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
+  target_link_libraries(usdc_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif()
 
 if(TINYUSDZ_WITH_BLENDER_ADDON)

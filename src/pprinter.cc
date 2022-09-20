@@ -424,7 +424,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
         ss << paths;
       }
     } else if (attr.IsValueEmpty()) {
-      // nothing to do 
+      // nothing to do
 
     } else {
       auto pv = attr.GetValue();
@@ -499,7 +499,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
       }
 
     } else if (attr.IsValueEmpty()) {
-      // nothing to do 
+      // nothing to do
     } else {
       auto v = attr.GetValue();
 
@@ -695,7 +695,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
 std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent)
 {
   std::stringstream ss;
-  
+
   if (!prop.IsRel()) {
     return ss.str();
   }
@@ -710,7 +710,7 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   if (prop.listOpQual != ListEditQual::ResetToExplicit) {
     ss << to_string(prop.listOpQual) << " ";
   }
-  
+
   ss << "rel " << name;
 
   const Relation &rel = prop.rel;
@@ -893,10 +893,6 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
     }
   }
 
-  // primvars
-  ss << print_typed_attr(gprim.displayColor, "primvars:displayColor", indent);
-  ss << print_typed_attr(gprim.displayOpacity, "primvars:displayOpacity", indent);
-
   ss << print_xformOps(gprim.xformOps, indent);
 
   return ss.str();
@@ -944,7 +940,7 @@ std::string print_customData(const CustomDataType &customData, const std::string
     ss << dict_name << " = {\n";
   } else {
     ss << "{\n";
-  } 
+  }
   for (const auto &item : customData) {
     ss << print_meta(item.second, indent+1);
   }
@@ -1556,12 +1552,12 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
     ss << pprint::Indent(indent+1) << "uniform token wrap = " << quote(to_string(geom.wrap.value())) << "\n";
   }
 
-  ss << print_typed_attr(geom.points, "points", indent);
-  ss << print_typed_attr(geom.normals, "normals", indent);
-  ss << print_typed_attr(geom.widths, "widths", indent);
-  ss << print_typed_attr(geom.velocities, "velocites", indent);
-  ss << print_typed_attr(geom.accelerations, "accelerations", indent);
-  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent);
+  ss << print_typed_attr(geom.points, "points", indent+1);
+  ss << print_typed_attr(geom.normals, "normals", indent+1);
+  ss << print_typed_attr(geom.widths, "widths", indent+1);
+  ss << print_typed_attr(geom.velocities, "velocites", indent+1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent+1);
+  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent+1);
 
   ss << print_gprim_predefined(geom, indent+1);
 
