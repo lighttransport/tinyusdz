@@ -12,6 +12,7 @@
 //    ...
 // }
 
+#include <strings.h>
 #include <string>
 
 #include "tinyusdz.hh"
@@ -98,9 +99,21 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   const auto &attrs = reader.GetAttrib();
 
   PrimAttrib pointsAttr;
-  pointsAttr.set_type_name("float3[]");
-  //pointsAttr.var = primvar::to_vec3(attrs.vertices); // std::vector<float> -> std::vector<value::float3>
-  prim->props["points"].attrib = pointsAttr;
+  if ((attrs.vertices.size() % 3) != 0) {
+    if (err) {
+      (*err) += "[usdObj] Invalid vertices data.\n";
+    }
+    return false;
+  }
+
+  // std::vector<float> -> std::vector<value::float3>
+  std::vector<value::float3> pts(attrs.vertices.size() / 3);
+  memcpy(pts.data(), attrs.vertices.data(), sizeof(float) * 3 * pts.size());
+  primvar::PrimVar ptsVar;
+  ptsVar.set_scalar(pts);
+  pointsAttr.set_var(std::move(ptsVar)); 
+  Property pointsProp(pointsAttr, /* custom */false);
+  prim->props.emplace("points", pointsProp);
 
   const auto &shapes = reader.GetShapes();
 
@@ -108,7 +121,8 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   std::vector<int32_t> vertexIndices;
   std::vector<int32_t> vertexCounts;
 
-  // normals and texcoords are facevarying
+  // Make normals and texcoords facevarying
+  // TODO: provide indices for each normals and uvs 
   std::vector<value::float2> facevaryingTexcoords;
   std::vector<value::float3> facevaryingNormals;
 
@@ -196,35 +210,49 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   }
 
   {
+    primvar::PrimVar var;
+    var.set_scalar(vertexIndices);
     PrimAttrib attr;
-    attr.set_type_name("int[]");
-    //attr.var = vertexIndices;
-    prim->props["faceVertexIndices"].attrib = attr;
+    attr.set_var(std::move(var));
+    Property prop(attr, false);
+    prim->props.emplace("faceVertexIndices", prop);
   }
 
   {
+    primvar::PrimVar var;
+    var.set_scalar(vertexCounts);
     PrimAttrib attr;
-    attr.set_type_name("int[]");
-    //attr.var = vertexCounts;
-    prim->props["faceVertexCounts"].attrib = attr;
+    attr.set_var(std::move(var));
+    Property prop(attr, false);
+    prim->props.emplace("faceVertexCounts", prop);
   }
 
   {
+    primvar::PrimVar var;
+    var.set_scalar(facevaryingNormals);
+
     PrimAttrib normalsAttr;
     normalsAttr.meta.interpolation = Interpolation::FaceVarying;
-    normalsAttr.variability = Variability::Varying;
-    normalsAttr.set_type_name("normal3f[]");
-    //normalsAttr.var = facevaryingNormals;
-    prim->props["normals"].attrib = normalsAttr;
+    normalsAttr.variability = Variability::Varying; // FIXME
+    normalsAttr.set_var(std::move(var));
+    Property prop(normalsAttr, false);
+    
+    // Use primvars::normals?
+    prim->props.emplace("primvars::normals", prop);
   }
 
   {
+    primvar::PrimVar var;
+    var.set_scalar(facevaryingTexcoords);
+
     PrimAttrib texcoordsAttr;
     texcoordsAttr.meta.interpolation = Interpolation::FaceVarying;
     texcoordsAttr.variability = Variability::Varying;
-    texcoordsAttr.set_type_name("texCoord2f[]");
-    //texcoordsAttr.var = facevaryingTexcoords;
-    prim->props["prmvars:uv"].attrib = texcoordsAttr;
+    texcoordsAttr.set_var(std::move(var));
+    Property prop(texcoordsAttr, false);
+
+    
+    prim->props.emplace("prmvars:uv", prop);
   }
 
   // TODO: read skin weight/indices
