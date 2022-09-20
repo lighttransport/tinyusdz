@@ -181,7 +181,7 @@ static void RegisterPrimMetas(
 
   // usdShade?
   metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
-  
+
   // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
       value::Add1DArraySuffix(value::kToken), "apiSchemas");
@@ -5731,7 +5731,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         value::token tok;
         if (!ReadBasicType(&tok)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `colorSpace`");
-        } 
+        }
         // Add as custom meta value.
         MetaVariable metavar;
         metavar.name = "colorSpace";
@@ -5981,8 +5981,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
 
       // No targets. Define only.
       Property p(type_name, custom_qual);
-      p.type = Property::Type::NoTargetsRelation;
-      p.listOpQual = listop_qual;
+      p.SetPropetryType(Property::Type::NoTargetsRelation);
+      p.SetListEditQual(listop_qual);
 
       (*props)[attr_name] = p;
 
@@ -6021,8 +6021,8 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     }
 
     DCOUT("Relationship with target: " << attr_name);
-    Property p(rel, /* isConnection */ false, custom_qual);
-    p.listOpQual = listop_qual;
+    Property p(rel, custom_qual);
+    p.SetListEditQual(listop_qual);
 
     (*props)[attr_name] = p;
 
@@ -6141,9 +6141,9 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     Property p(type_name, custom_qual);
 
     if (uniform_qual) {
-      p.attrib.variability = Variability::Uniform;
+      p.GetAttrib().variability = Variability::Uniform;
     }
-    p.attrib.meta = meta;
+    p.GetAttrib().meta = meta;
 
     (*props)[primattr_name] = p;
 
@@ -6167,12 +6167,11 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
     Relation rel;
     rel.Set(path);
 
-    Property p(rel, /* isConnection*/ true, custom_qual);
-    p.attrib.set_type_name(type_name);
+    Property p(rel, /* value typename */type_name, custom_qual);
 
     (*props)[primattr_name] = p;
 
-    DCOUT(fmt::format("Added {} as a connection.", primattr_name));
+    DCOUT(fmt::format("Added {} as a attribute connection.", primattr_name));
 
     return true;
 
@@ -6260,7 +6259,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
                                           << ", name = " << varname);
 
     Property p(attr, custom_qual);
-    p.type = Property::Type::Attrib;
+    p.SetPropetryType(Property::Type::Attrib);
     (*props)[varname] = p;
 
     return true;
@@ -6435,7 +6434,7 @@ bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
       primvar::PrimVar var;
       var.set_scalar(assetp);
       attr.set_var(std::move(var));
-    
+
       // optional: attribute meta.
       AttrMeta meta;
       if (!ParseAttrMeta(&meta)) {
@@ -6527,6 +6526,7 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
   return _supported_stage_metas.count(name) ? true : false;
 }
 
+#if 0 // TODO: Remove
 ///
 /// Parse `class` block.
 ///
@@ -6718,21 +6718,23 @@ bool AsciiParser::ParseOverBlock(const int64_t primIdx,
 
   return true;
 }
+#endif
 
 ///
-/// Parse `def` block.
+/// Parse block.
 ///
-/// def = `def` prim_type? token metas? { ... }
-///
+/// block = spec prim_type? token metas? { ... }
 /// metas = '(' args ')'
+///
+/// spec = `def`, `over` or `class`
 ///
 /// TODO: Support `def` without type(i.e. actual definition is defined in
 /// another USD file or referenced USD)
 ///
-bool AsciiParser::ParseDefBlock(const int64_t primIdx,
+bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
                                 const int64_t parentPrimIdx,
                                 const uint32_t depth) {
-  DCOUT("ParseDefBlock");
+  DCOUT("ParseBlock");
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
     DCOUT("SkipCommentAndWhitespaceAndNewline failed");
@@ -6744,10 +6746,29 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
     DCOUT("ReadIdentifier failed");
     return false;
   }
-  DCOUT("def = " << def);
+  DCOUT("spec = " << def);
 
-  if (def != "def") {
-    PUSH_ERROR_AND_RETURN("`def` is expected.");
+  if ((def == "def") || (def == "over") || (def == "class")) {
+    // ok
+  } else {
+    PUSH_ERROR_AND_RETURN("Invalid specifier.");
+  }
+
+  // Ensure spec and def is same.
+  if (def == "def") {
+    if (spec != Specifier::Def) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Internal error. Invalid Specifier token combination.");
+    }
+  }
+  if (def == "over") {
+    if (spec != Specifier::Over) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Internal error. Invalid Specifier token combination.");
+    }
+  }
+  if (def == "class") {
+    if (spec != Specifier::Class) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Internal error. Invalid Specifier token combination.");
+    }
   }
 
   if (!SkipWhitespaceAndNewline()) {
@@ -6853,13 +6874,6 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
     // DCOUT("`references.size` = " + std::to_string(references.size()));
   }
 
-#if 0  // TODO
-  if (auto v = ReconstructPrimMetas(in_metas)) {
-    DCOUT("TODO: ");
-  } else {
-    return false;
-  }
-#endif
 
   std::map<std::string, Property> props;
 
@@ -6913,15 +6927,24 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
         return false;
       }
 
+      Specifier child_spec{Specifier::Invalid};
       if (tok == "def") {
+        child_spec = Specifier::Def;
+      } else if (tok == "def") {
+        child_spec = Specifier::Def;
+      } else if (tok == "def") {
+        child_spec = Specifier::Def;
+      }
+
+      if (child_spec != Specifier::Invalid) {
         int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
-        DCOUT("enter parseDef. idx = " << idx << ", rootIdx = " << primIdx);
+        DCOUT("enter parseDef. spec = " << to_string(child_spec) << ", idx = " << idx << ", rootIdx = " << primIdx);
 
         // recusive call
-        if (!ParseDefBlock(idx, primIdx, depth + 1)) {
-          PUSH_ERROR_AND_RETURN("`def` block parse failed.");
+        if (!ParseBlock(child_spec, idx, primIdx, depth + 1)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("`{}` block parse failed.", to_string(child_spec)));
         }
-        DCOUT(fmt::format("Done parse `def` block."));
+        DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
       } else {
         DCOUT("Enter ParsePrimAttr.");
         // Assume PrimAttr
@@ -6944,107 +6967,6 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
 
     pTy = "Model";
 
-#if 0  // TODO
-    if (IsToplevel()) {
-      if (references.size()) {
-        // Infer prim type from referenced asset.
-
-        if (references.size() > 1) {
-          PUSH_ERROR_AND_RETURN("TODO: multiple references\n");
-        }
-
-        auto it = references.begin();
-        const Reference &ref = it->second;
-        std::string filepath = ref.asset_path;
-
-        // usdOBJ?
-        if (endsWith(filepath, ".obj")) {
-          prim_type = "geom_mesh";
-        } else {
-          if (!io::IsAbsPath(filepath)) {
-            filepath = io::JoinPath(_base_dir, ref.asset_path);
-          }
-
-          if (_reference_cache.count(filepath)) {
-            LOG_ERROR("TODO: Use cached info");
-          }
-
-          DCOUT("Reading references: " + filepath);
-
-          std::vector<uint8_t> data;
-          std::string err;
-          if (!io::ReadWholeFile(&data, &err, filepath,
-                                 /* max_filesize */ 0)) {
-            PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
-          }
-
-          tinyusdz::StreamReader sr(data.data(), data.size(),
-                                    /* swap endian */ false);
-#if 0  // TODO
-            tinyusdz::ascii::AsciiParser parser(&sr);
-
-            std::string base_dir = io::GetBaseDir(filepath);
-
-            parser.SetBaseDir(base_dir);
-
-            {
-              bool ret = parser.Parse(tinyusdz::ascii::LOAD_STATE_REFERENCE);
-
-              if (!ret) {
-                PUSH_WARN("Failed to parse .usda: " << parser.GetError());
-              } else {
-                DCOUT("`references` load ok.");
-              }
-            }
-#else
-          USDAReader reader(sr);
-#endif
-
-#if 0  // TODO
-            std::string defaultPrim = parser.GetDefaultPrimName();
-
-            DCOUT("defaultPrim: " + parser.GetDefaultPrimName());
-
-            const std::vector<GPrim> &root_nodes = parser.GetGPrims();
-            if (root_nodes.empty()) {
-              LOG_WARN("USD file does not contain any Prim node.");
-            } else {
-              size_t default_idx =
-                  0;  // Use the first element when corresponding defaultPrim
-                      // node is not found.
-
-              auto node_it = std::find_if(root_nodes.begin(), root_nodes.end(),
-                                          [defaultPrim](const GPrim &a) {
-                                            return !defaultPrim.empty() &&
-                                                   (a.name == defaultPrim);
-                                          });
-
-              if (node_it != root_nodes.end()) {
-                default_idx =
-                    size_t(std::distance(root_nodes.begin(), node_it));
-              }
-
-              DCOUT("defaultPrim node: " + root_nodes[default_idx].name);
-              for (size_t i = 0; i < root_nodes.size(); i++) {
-                DCOUT("root nodes: " + root_nodes[i].name);
-              }
-
-              // Store result to cache
-              _reference_cache[filepath] = {default_idx, root_nodes};
-
-              prim_type = root_nodes[default_idx].prim_type;
-              DCOUT("Infered prim type: " + prim_type);
-            }
-#else
-          PUSH_WARN("TODO: References");
-#endif
-        }
-      }
-    } else {
-      // Unknown or unresolved node type
-      LOG_ERROR("TODO: unresolved node type\n");
-    }
-#endif
   }
 
   if (_prim_construct_fun_map.count(pTy)) {
@@ -7053,7 +6975,7 @@ bool AsciiParser::ParseDefBlock(const int64_t primIdx,
     Path fullpath(GetCurrentPath(), "");
     Path pname(prim_name, "");
     nonstd::expected<bool, std::string> ret = construct_fun(
-        fullpath, pname, primIdx, parentPrimIdx, props, references, in_metas);
+        fullpath, spec, pname, primIdx, parentPrimIdx, props, references, in_metas);
 
     if (!ret) {
       // construction failed.
@@ -7135,35 +7057,24 @@ bool AsciiParser::Parse(LoadState state) {
       return false;
     }
 
+    Specifier spec{Specifier::Invalid};
     if (tok == "def") {
-      int64_t primIdx = _prim_idx_assign_fun(-1);
-      DCOUT("Enter parseDef. primIdx = " << primIdx
-                                         << ", parentPrimIdx = root(-1)");
-      bool block_ok = ParseDefBlock(primIdx, /* parent */ -1);
-      if (!block_ok) {
-        PushError("Failed to parse `def` block.\n");
-        return false;
-      }
+      spec = Specifier::Def;
     } else if (tok == "over") {
-      int64_t primIdx = _prim_idx_assign_fun(-1);
-      DCOUT("Enter parseOver. primIdx = " << primIdx
-                                          << ", parentPrimIdx = root(-1)");
-      bool block_ok = ParseOverBlock(primIdx, /* parent */ -1);
-      if (!block_ok) {
-        PushError("Failed to parse `over` block.\n");
-        return false;
-      }
+      spec = Specifier::Over;
     } else if (tok == "class") {
-      int64_t primIdx = _prim_idx_assign_fun(-1);
-      DCOUT("Enter parseClass. primIdx = " << primIdx
-                                           << ", parentPrimIdx = root(-1)");
-      bool block_ok = ParseClassBlock(primIdx, /* parent */ -1);
-      if (!block_ok) {
-        PushError("Failed to parse `class` block.\n");
-        return false;
-      }
+      spec = Specifier::Class;
     } else {
-      PushError("Unknown token '" + tok + "'");
+      PushError("Invalid specifier token '" + tok + "'");
+      return false;
+    }
+
+    int64_t primIdx = _prim_idx_assign_fun(-1);
+    DCOUT("Enter parseDef. primIdx = " << primIdx
+                                       << ", parentPrimIdx = root(-1)");
+    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1);
+    if (!block_ok) {
+      PushError("Failed to parse `def` block.\n");
       return false;
     }
   }

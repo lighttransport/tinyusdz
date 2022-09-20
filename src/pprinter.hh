@@ -93,7 +93,7 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
 
 std::string to_string(const Model &model, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Scope &scope, const uint32_t indent = 0, bool closing_brace = true);
-std::string to_string(const Klass &klass, const uint32_t indent = 0, bool closing_brace = true);
+//std::string to_string(const Klass &klass, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const GPrim &gprim, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const Xform &xform, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0, bool closing_brace = true);

@@ -235,13 +235,14 @@ class AsciiParser {
   ///
   /// Prim construction callback function
   ///
+  /// @param spec : Specifier(`def`, `over` or `class`)
   /// @param primIdx : primitive index
   /// @param parentPrimIdx : -1 for root
   /// @return true upon success or error message.
   ///
   using PrimConstructFunction =
       std::function<nonstd::expected<bool, std::string>(
-          const Path &full_path, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
+          const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
           std::vector<std::pair<ListEditQual, Reference>> &references, const PrimMetaInput &in_meta)>;
 
@@ -521,9 +522,12 @@ class AsciiParser {
   // primIdx is assigned through `PrimIdxAssignFunctin`
   // parentPrimIdx = -1 => root prim
   // depth = tree level(recursion count)
-  bool ParseClassBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
-  bool ParseOverBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
-  bool ParseDefBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  //bool ParseClassBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  //bool ParseOverBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  //bool ParseDefBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+
+  // Parse `def`, `over` or `class` block
+  bool ParseBlock(const Specifier spec, const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
 
   // --------------------------------------------
 
@@ -583,7 +587,7 @@ class AsciiParser {
   nonstd::optional<VariableDef> GetPrimMeta(const std::string &arg);
 
   // "class" defs
-  std::map<std::string, Klass> _klasses;
+  //std::map<std::string, Klass> _klasses;
   std::stack<std::string> _path_stack;
 
 #if 0

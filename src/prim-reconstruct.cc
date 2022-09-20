@@ -133,7 +133,7 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
 
         dst.value = ext;
         dst.blocked = false;
-      
+
       } else {
         return nonstd::nullopt;
       }
@@ -192,7 +192,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -217,7 +217,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -228,18 +228,18 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       }
     }
 
-    const PrimAttrib &attr = prop.attrib;
+    const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
-      if (prop.type == Property::Type::EmptyAttrib) {
+      if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
-      } else if (prop.type == Property::Type::Attrib) {
+      } else if (prop.GetPropertyType() == Property::Type::Attrib) {
 
         DCOUT("Adding typed prop: " << name);
 
@@ -337,7 +337,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -362,7 +362,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -373,21 +373,21 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       }
     }
 
-    const PrimAttrib &attr = prop.attrib;
+    const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
-      if (prop.type == Property::Type::EmptyAttrib) {
+      if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
-      } else if (prop.type == Property::Type::Attrib) {
+      } else if (prop.GetPropertyType() == Property::Type::Attrib) {
         DCOUT("Adding prop: " << name);
 
-        if (prop.attrib.variability != Variability::Uniform) {
+        if (prop.GetAttrib().variability != Variability::Uniform) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
           ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
           return ret;
@@ -456,7 +456,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -481,7 +481,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -492,18 +492,18 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       }
     }
 
-    const PrimAttrib &attr = prop.attrib;
+    const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
-      if (prop.type == Property::Type::EmptyAttrib) {
+      if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
-      } else if (prop.type == Property::Type::Attrib) {
+      } else if (prop.GetPropertyType() == Property::Type::Attrib) {
 
         DCOUT("Adding typed attribute: " << name);
 
@@ -605,7 +605,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -631,7 +631,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -642,23 +642,23 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       }
     }
 
-    const PrimAttrib &attr = prop.attrib;
+    const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
     DCOUT(fmt::format("prop name {}, type = {}", prop_name, attr_type_name));
     if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
-      if (prop.type == Property::Type::EmptyAttrib) {
+      if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
         target.meta = attr.meta;
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
-      } else if (prop.type == Property::Type::Attrib) {
+      } else if (prop.GetPropertyType() == Property::Type::Attrib) {
 
         DCOUT("Adding typed attribute: " << name);
 
-        if (prop.attrib.variability != Variability::Uniform) {
+        if (prop.GetAttrib().variability != Variability::Uniform) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
           ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
           return ret;
@@ -727,7 +727,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -752,7 +752,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.attrib.meta;
+        target.meta = prop.GetAttrib().meta;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -763,17 +763,17 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       }
     }
 
-    const PrimAttrib &attr = prop.attrib;
+    const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
-    if (prop.type == Property::Type::EmptyAttrib) {
+    if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
       DCOUT("Added prop with empty value: " << name);
       target.SetValueEmpty();
       target.meta = attr.meta;
       table.insert(name);
       ret.code = ParseResult::ResultCode::Success;
       return ret;
-    } else if (prop.type == Property::Type::Attrib) {
+    } else if (prop.GetPropertyType() == Property::Type::Attrib) {
 
       DCOUT("Adding typed attribute: " << name);
 
@@ -1025,14 +1025,14 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       return ret;
     } else {
 
-      const PrimAttrib &attr = prop.attrib;
+      const PrimAttrib &attr = prop.GetAttrib();
 
       std::string attr_type_name = attr.type_name();
       if (value::TypeTrait<T>::type_name() == attr_type_name) {
-        if (prop.type == Property::Type::EmptyAttrib) {
+        if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
           // OK
           target.SetAuthor(true);
-          target.meta = prop.attrib.meta;
+          target.meta = prop.GetAttrib().meta;
           table.insert(name);
           ret.code = ParseResult::ResultCode::Success;
           return ret;
@@ -1075,7 +1075,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     if (auto pv = prop.GetConnectionTarget()) {
       Relation rel;
       rel.Set(pv.value());
-      rel.meta = prop.attrib.meta;
+      rel.meta = prop.GetAttrib().meta;
       target = rel;
       table.insert(propname);
       ret.code = ParseResult::ResultCode::Success;
@@ -1091,7 +1091,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       if (auto pv = prop.GetConnectionTarget()) {
         Relation rel;
         rel.Set(pv.value());
-        rel.meta = prop.attrib.meta;
+        rel.meta = prop.GetAttrib().meta;
         target = rel;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
@@ -1103,14 +1103,14 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       }
     } else {
 
-      const PrimAttrib &attr = prop.attrib;
+      const PrimAttrib &attr = prop.GetAttrib();
 
       std::string attr_type_name = attr.type_name();
       if (value::TypeTrait<value::token>::type_name() == attr_type_name) {
-        if (prop.type == Property::Type::EmptyAttrib) {
+        if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
           Relation rel;
           rel.SetEmpty();
-          rel.meta = prop.attrib.meta;
+          rel.meta = prop.GetAttrib().meta;
           table.insert(name);
           target = rel;
           ret.code = ParseResult::ResultCode::Success;
@@ -1207,7 +1207,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (prop.second.IsRel() && prop.second.IsEmpty()) { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kProxyPrim)); \
     } \
-    const Relation &rel = prop.second.rel; \
+    const Relation &rel = prop.second.GetRelation(); \
     if (rel.IsPath()) { \
       __ptarget->proxyPrim = rel; \
       table.insert(prop.first); \
@@ -1227,7 +1227,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (prop.second.IsRel() && prop.second.IsEmpty()) { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kMaterialBinding)); \
     } \
-    const Relation &rel = prop.second.rel; \
+    const Relation &rel = prop.second.GetRelation(); \
     if (rel.IsPath()) { \
       MaterialBindingAPI m; \
       m.binding = rel.targetPath; \
@@ -1248,7 +1248,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (prop.second.IsRel() && prop.second.IsEmpty()) { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kSkelSkeleton)); \
     } \
-    const Relation &rel = prop.second.rel; \
+    const Relation &rel = prop.second.GetRelation(); \
     if (rel.IsPath()) { \
       __ptarget->skeleton = rel.targetPath; \
       table.insert(prop.first); \
@@ -1501,7 +1501,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
                            __target) {                                      \
   if (__prop.first == __name) {                                              \
     if (__table.count(__name)) { continue; } \
-    const PrimAttrib &attr = __prop.second.attrib;                           \
+    const PrimAttrib &attr = __prop.second.GetAttrib();                           \
     if (auto tok = attr.get_value<value::token>()) {                     \
       auto e = __enum_handler(tok.value().str());                            \
       if (e) {                                                               \
@@ -1625,10 +1625,10 @@ bool ReconstructXformOpsFromProperties(
     if (prop.IsRel()) {
       PUSH_ERROR_AND_RETURN("Relation for `xformOpOrder` is not supported.");
     } else if (auto pv =
-                   prop.attrib.get_value<std::vector<value::token>>()) {
+                   prop.GetAttrib().get_value<std::vector<value::token>>()) {
 
       // 'uniform' check
-      if (prop.attrib.variability != Variability::Uniform) {
+      if (prop.GetAttrib().variability != Variability::Uniform) {
         PUSH_ERROR_AND_RETURN("`xformOpOrder` must have `uniform` variability.");
       }
 
@@ -1677,7 +1677,7 @@ bool ReconstructXformOpsFromProperties(
               "`" +
               tok + "`");
         }
-        const PrimAttrib &attr = it->second.attrib;
+        const PrimAttrib &attr = it->second.GetAttrib();
 
         // Check `xformOp` namespace
         if (auto xfm = SplitXformOpToken(tok, kTransform)) {
@@ -1898,10 +1898,11 @@ bool ReconstructXformOpsFromProperties(
     } else {
       PUSH_ERROR_AND_RETURN(
           "`xformOpOrder` must be type `token[]` but got type `"
-          << prop.attrib.type_name() << "`.");
+          << prop.GetAttrib().type_name() << "`.");
     }
   }
 
+  table.insert("xformOpOrder");
   return true;
 }
 
@@ -1953,7 +1954,7 @@ bool ReconstructPrim<Model>(
     Model *model,
     std::string *warn,
     std::string *err) {
-  DCOUT("Model(`def` with no type)");
+  DCOUT("Model ");
   (void)references;
   (void)model;
   (void)err;
@@ -2036,9 +2037,9 @@ bool ReconstructPrim<Skeleton>(
     if (prop.first == kSkelAnimationSource) {
 
       // Must be relation of type Path.
-      if (prop.second.IsRel() && prop.second.rel.IsPath()) {
+      if (prop.second.IsRel() && prop.second.GetRelation().IsPath()) {
         {
-          const Relation &rel = prop.second.rel;
+          const Relation &rel = prop.second.GetRelation();
           if (rel.IsPath()) {
             DCOUT(kSkelAnimationSource);
             skel->animationSource = rel.targetPath;
@@ -3372,7 +3373,7 @@ bool ReconstructPrim<Shader>(
 
   std::string shader_type;
   if (info_id_prop->second.IsAttrib()) {
-    const PrimAttrib &attr = info_id_prop->second.attrib;
+    const PrimAttrib &attr = info_id_prop->second.GetAttrib();
     if ((attr.type_name() == value::kToken)) {
       if (auto pv = attr.get_value<value::token>()) {
         shader_type = pv.value().str();
