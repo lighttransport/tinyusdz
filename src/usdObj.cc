@@ -12,7 +12,6 @@
 //    ...
 // }
 
-#include <strings.h>
 #include <string>
 
 #include "tinyusdz.hh"
