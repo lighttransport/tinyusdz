@@ -50,7 +50,21 @@ int main(int argc, char **argv) {
       std::cerr << "Failed to load USDC file: " << filepath << "\n";
       return EXIT_FAILURE;
     }
-  } else {  // assume usdz
+  } else if (ext.compare("usda") == 0) {
+    bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      //return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDA file: " << filepath << "\n";
+      return EXIT_FAILURE;
+    }
+  } else if (ext.compare("usdz") == 0) {
     //std::cout << "usdz\n";
     bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
@@ -63,6 +77,21 @@ int main(int argc, char **argv) {
 
     if (!ret) {
       std::cerr << "Failed to load USDZ file: " << filepath << "\n";
+      return EXIT_FAILURE;
+    }
+  } else {
+    // try to auto detect format.
+    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      //return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD file: " << filepath << "\n";
       return EXIT_FAILURE;
     }
   }

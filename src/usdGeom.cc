@@ -169,8 +169,8 @@ void GeomMesh::Initialize(const GPrim &gprim) {
   extent = gprim.extent;
   purpose = gprim.purpose;
 
-  displayColor = gprim.displayColor;
-  displayOpacity = gprim.displayOpacity;
+  //displayColor = gprim.displayColor;
+  //displayOpacity = gprim.displayOpacity;
 
 #if 0  // TODO
 

@@ -1026,6 +1026,118 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
   return true;
 }
 
+bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
+  // read ListOpHeader
+  ListOpHeader h;
+  if (!_sr->read1(&h.bits)) {
+    _err += "Failed to read ListOpHeader\n";
+    return false;
+  }
+
+  if (h.IsExplicit()) {
+    d->ClearAndMakeExplicit();
+  }
+
+  // array data is not compressed
+  auto ReadFn = [this](std::vector<std::string> &result) -> bool {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read # of elements in ListOp.\n";
+      return false;
+    }
+
+    if (n > _config.maxArrayElements) {
+      _err += "Too many ListOp elements.\n";
+      return false;
+    } 
+
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+
+    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
+
+    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                   size_t(n) * sizeof(crate::Index),
+                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+      _err += "Failed to read ListOp data.\n";
+      return false;
+    }
+
+    // reconstruct
+    result.resize(static_cast<size_t>(n));
+    for (size_t i = 0; i < n; i++) {
+      if (auto v = GetStringToken(ivalue[i])) {
+        result[i] = v.value().str();
+      } else {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  if (h.HasExplicitItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::ExplicitItems.\n";
+      return false;
+    }
+
+    d->SetExplicitItems(items);
+  }
+
+  if (h.HasAddedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AddedItems.\n";
+      return false;
+    }
+
+    d->SetAddedItems(items);
+  }
+
+  if (h.HasPrependedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::PrependedItems.\n";
+      return false;
+    }
+
+    d->SetPrependedItems(items);
+  }
+
+  if (h.HasAppendedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AppendedItems.\n";
+      return false;
+    }
+
+    d->SetAppendedItems(items);
+  }
+
+  if (h.HasDeletedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::DeletedItems.\n";
+      return false;
+    }
+
+    d->SetDeletedItems(items);
+  }
+
+  if (h.HasOrderedItems()) {
+    std::vector<std::string> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::OrderedItems.\n";
+      return false;
+    }
+
+    d->SetOrderedItems(items);
+  }
+
+  return true;
+}
+
 bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
   ListOpHeader h;
@@ -2871,6 +2983,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       return true;
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP: {
+      ListOp<std::string> lst;
+
+      if (!ReadStringListOp(&lst)) {
+        PUSH_ERROR("Failed to read StringListOp data");
+        return false;
+      }
+
+      value->Set(lst);
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR: {
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
@@ -2966,13 +3089,16 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       return true;
     }
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP: {
+      // TODO
+      PUSH_WARN("VariantSelectionMap is not yet supported. Skipping...");
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
@@ -3760,9 +3886,18 @@ bool CrateReader::ReadSpecs() {
     return false;
   }
 
+  if (num_specs > _config.maxNumSpecifiers) {
+    PUSH_ERROR("Too many specs in `SPECS` section.");
+    return false;
+  }
+
   DCOUT("num_specs " << num_specs);
 
+  CHECK_MEMORY_USAGE(size_t(num_specs) * sizeof(Spec));
+
   _specs.resize(static_cast<size_t>(num_specs));
+
+  // TODO: Memory size check
 
   // Create temporary space for decompressing.
   std::vector<char> comp_buffer(Usd_IntegerCompression::GetCompressedBufferSize(

@@ -307,8 +307,14 @@ class CrateReader {
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
+  // TODO: Templatize
   bool ReadPathListOp(ListOp<Path> *d);
   bool ReadTokenListOp(ListOp<value::token> *d);
+  bool ReadStringListOp(ListOp<std::string> *d);
+  bool ReadIntListOp(ListOp<int32_t> *d);
+  bool ReadUIntListOp(ListOp<uint32_t> *d);
+  bool ReadInt64ListOp(ListOp<int64_t> *d);
+  bool ReadUInt64ListOp(ListOp<uint64_t> *d);
 
   // Read 64bit uint with range check
   bool ReadNum(uint64_t &n, uint64_t maxnum);

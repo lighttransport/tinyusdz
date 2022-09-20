@@ -189,6 +189,8 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   }
 
 
+  DCOUT("Max length = " << max_length);
+
   if (length > max_length) {
     if (err) {
       (*err) += "USDC data [" + filename +
@@ -868,10 +870,13 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
                         const USDLoadOptions &options) {
 
   if (IsUSDC(addr, length)) {
+    DCOUT("Detected as USDC.");
     return LoadUSDCFromMemory(addr, length, base_dir, stage, warn, err, options);
   } else if (IsUSDA(addr, length)) {
+    DCOUT("Detected as USDA.");
     return LoadUSDAFromMemory(addr, length, base_dir, stage, warn, err, options);
   } else {
+    DCOUT("Detected as USDZ.");
     // Guess USDZ
     return LoadUSDZFromMemory(addr, length, base_dir, stage, warn, err, options);
   }
