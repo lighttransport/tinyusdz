@@ -36,7 +36,7 @@ struct CrateReaderConfig {
   size_t maxTokenLength = 4096; // Maximum allowed length of `token` string
   size_t maxStringLength = 1024*1024*64;
 
-  // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in bytes.
+  // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in [bytes].
   size_t maxMemoryBudget = std::numeric_limits<int32_t>::max(); // Default 2GB
 };
 

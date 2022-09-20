@@ -1587,6 +1587,11 @@ class Property {
     return _attrib;
   }
 
+  void SetAttrib(const PrimAttrib &attrib) {
+    _attrib = attrib;
+    _type = Type::Attrib;
+  }
+
   const Relation &GetRelation() const {
     return _rel;
   }

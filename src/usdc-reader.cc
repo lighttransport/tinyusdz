@@ -2344,7 +2344,20 @@ bool USDCReader::Impl::ReadUSDC() {
 
   // TODO: Setup CrateReaderConfig.
   crate::CrateReaderConfig config;
+
+  // Transfer settings
   config.numThreads = _config.numThreads;
+
+  size_t sz_mb = _config.kMaxAllowedMemoryInMB;
+  if (sizeof(size_t) == 4) {
+    // 32bit
+    // cap to 2GB
+    sz_mb = (std::min)(size_t(1024*2), sz_mb); 
+
+    config.maxMemoryBudget = sz_mb * 1024 * 1024;
+  } else {
+    config.maxMemoryBudget = _config.kMaxAllowedMemoryInMB * 1024ull * 1024ull;
+  }
 
   crate_reader = new crate::CrateReader(_sr, config);
 
