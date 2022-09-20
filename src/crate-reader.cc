@@ -3535,7 +3535,8 @@ bool CrateReader::ReadTokens() {
   // dst
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
 
-  std::vector<char> compressed(static_cast<size_t>(bufSize));
+  // Inside of lz4, it does memcpy with 16 bytes stride, so add extra 16 bytes for safety.
+  std::vector<char> compressed(static_cast<size_t>(compressedSize+16));
 
   if (compressedSize !=
       _sr->read(size_t(compressedSize), size_t(compressedSize),
