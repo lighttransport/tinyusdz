@@ -615,9 +615,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 
     const crate::Spec &spec = _specs[spec_index];
 
-    // Property must be Connection or RelationshipTarget
-    if ((spec.spec_type == SpecType::Connection) ||
-        (spec.spec_type == SpecType::RelationshipTarget)) {
+    // Property must be Attribute or Relationship
+    if ((spec.spec_type == SpecType::Attribute) ||
+        (spec.spec_type == SpecType::Relationship)) {
       // OK
     } else {
       continue;
@@ -1070,7 +1070,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       (*prop) = Property(typeName.value().str(), custom);
     } else {
       DCOUT("spec_type = " << to_string(spec_type));
-      if (spec_type == SpecType::RelationshipTarget) {
+      if (spec_type == SpecType::Relationship) {
         // `rel` with no target. e.g. `rel target`
         rel = Relation();
         rel.SetEmpty();
@@ -1246,7 +1246,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
     std::vector<value::token> *primChildren) {
   /// Stage(toplevel layer) Meta fieldSet example.
   ///
-  ///   specTy = SpecTypeRelationship
+  ///   specTy = SpecTypePseudoRoot
   ///
   ///     - customLayerData(dict)
   ///     - defaultPrim(token)
@@ -1444,7 +1444,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 /// Prim(Model) fieldSet example.
 ///
 ///
-///   specTy = SpecTypePseudoRoot
+///   specTy = SpecTypePrim
 ///
 ///     - specifier(specifier) : e.g. `def`, `over`, ...
 ///     - kind(token) : kind metadataum
@@ -1637,8 +1637,8 @@ bool USDCReader::Impl::ReconstructPrimNode(
   DCOUT(pprint::Indent(uint32_t(level))
         << "  fieldSetIndex = " << spec.fieldset_index.value);
 
-  if ((spec.spec_type == SpecType::Connection) ||
-      (spec.spec_type == SpecType::RelationshipTarget)) {
+  if ((spec.spec_type == SpecType::Attribute) ||
+      (spec.spec_type == SpecType::Relationship)) {
     if (_prim_table.count(parent)) {
       // This node is a Properties node. These are processed in
       // ReconstructPrim(), so nothing to do here.
@@ -1676,10 +1676,10 @@ bool USDCReader::Impl::ReconstructPrimNode(
       PUSH_ERROR_AND_RETURN("(Internal error). Root Element Path not found.");
     }
 
-    // Root layer(Stage) is Relationship for some reaon.
-    if (spec.spec_type != SpecType::Relationship) {
+    // Root layer(Stage) is PseudoRoot spec type.
+    if (spec.spec_type != SpecType::PseudoRoot) {
       PUSH_ERROR_AND_RETURN(
-          "SpecTypeRelationship expected for root layer(Stage) element.");
+          "SpecTypePseudoRoot expected for root layer(Stage) element.");
     }
 
     std::vector<value::token> primChildren;
@@ -1708,7 +1708,7 @@ bool USDCReader::Impl::ReconstructPrimNode(
 
     DCOUT("===");
 
-    if (spec.spec_type == SpecType::PseudoRoot) {
+    if (spec.spec_type == SpecType::Prim) {
       // Prim
 
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
@@ -1721,14 +1721,22 @@ bool USDCReader::Impl::ReconstructPrimNode(
 
       // Sanity check
       if (specifier) {
-        if (specifier.value() != Specifier::Def) {
+        if (specifier.value() == Specifier::Def) {
+          // ok
+        } else if (specifier.value() == Specifier::Class) {
+          PUSH_WARN("TODO: `class` specifier. skipping this model...");
+          return true;
+        } else if (specifier.value() == Specifier::Over) {
+          PUSH_WARN("TODO: `over` specifier. skipping this model...");
+          return true;
+        } else {
           PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "Currently TinyUSDZ only supports `def` for `specifier`.");
+              kTag, "Invalid Specifier.");
         }
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`specifier` field is missing for FieldSets "
-                                  "with SpecType::PseudoRoot.");
+                                  "with SpecType::Prim.");
       }
 
       if (!typeName) {
@@ -1764,6 +1772,15 @@ bool USDCReader::Impl::ReconstructPrimNode(
       } else {
         _prim_table.insert(current);
       }
+    } else if (spec.spec_type == SpecType::VariantSet) {
+      // TODO
+      PUSH_WARN("TODO: SpecTypeVariantSet");
+    } else if (spec.spec_type == SpecType::Variant) {
+      // TODO
+      PUSH_WARN("TODO: SpecTypeVariant");
+    } else if (spec.spec_type == SpecType::Attribute) {
+      // Maybe parent is Class/Over.
+      PUSH_WARN("TODO: SpecTypeAttribute(in conjunction with Class/Over specifier?)");
     } else {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "TODO: specTy = " << to_string(spec.spec_type));
@@ -1904,8 +1921,8 @@ bool USDCReader::Impl::ReconstructPrimTree(
       DCOUT(pprint::Indent(uint32_t(level))
             << "  fieldSetIndex = " << spec.fieldset_index.value);
 
-      if ((spec.spec_type == SpecType::Connection) ||
-          (spec.spec_type == SpecType::RelationshipTarget)) {
+      if ((spec.spec_type == SpecType::Attribute) ||
+          (spec.spec_type == SpecType::Relationship)) {
         if (_prim_table.count(parent)) {
           // This node is a Properties node. These are processed in
           // ReconstructPrim(), so nothing to do here.
@@ -1945,10 +1962,10 @@ bool USDCReader::Impl::ReconstructPrimTree(
           PUSH_ERROR_AND_RETURN("(Internal error). Root Element Path not found.");
         }
 
-        // Root layer(Stage) is Relationship for some reaon.
-        if (spec.spec_type != SpecType::Relationship) {
+        // Root layer(Stage) is PseudoRoot.
+        if (spec.spec_type != SpecType::PseudoRoot) {
           PUSH_ERROR_AND_RETURN(
-              "SpecTypeRelationship expected for root layer(Stage) element.");
+              "SpecTypePseudoRoot expected for root layer(Stage) element.");
         }
 
         if (!ReconstrcutStageMeta(fvs, &stage->GetMetas(), &primChildren)) {
@@ -1973,7 +1990,7 @@ bool USDCReader::Impl::ReconstructPrimTree(
         /// Prim(Model) fieldSet example.
         ///
         ///
-        ///   specTy = SpecTypePseudoRoot
+        ///   specTy = SpecTypePrim
         ///
         ///     - specifier(specifier) : e.g. `def`, `over`, ...
         ///     - kind(token) : kind metadataum
@@ -1986,7 +2003,7 @@ bool USDCReader::Impl::ReconstructPrimTree(
 
         /// Attrib fieldSet example
         ///
-        ///   specTyppe = SpecTypeConnection
+        ///   specTyppe = SpecTypeAttribute
         ///
         ///     - typeName(token) : type name of Attribute(e.g. `float`)
         ///     - custom(bool) : `custom` qualifier
@@ -2150,7 +2167,7 @@ bool USDCReader::Impl::ReconstructPrimTree(
         /* _prim_nodes.push_back(pnode); */                                      \
       } else
 
-        if (spec.spec_type == SpecType::PseudoRoot) {
+        if (spec.spec_type == SpecType::Prim) {
           // Prim
 
           if (const auto &pv = GetElemPath(crate::Index(uint32_t(currentPrimIndex)))) {
@@ -2170,7 +2187,7 @@ bool USDCReader::Impl::ReconstructPrimTree(
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                                       "`specifier` field is missing for FieldSets "
-                                      "with SpecType::PseudoRoot.");
+                                      "with SpecType::Prim.");
           }
 
           if (!typeName) {

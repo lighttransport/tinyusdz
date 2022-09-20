@@ -32,52 +32,23 @@ bool LoadModelFromString(const std::vector<uint8_t> &content,
   std::string warn;
   std::string err;
 
-  if (ext.compare("usdc") == 0) {
-    bool ret = tinyusdz::LoadUSDCFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
+  bool ret = tinyusdz::LoadUSDFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
+  if (!warn.empty()) {
+    std::cerr << "WARN : " << warn << "\n";
+  }
+  if (!err.empty()) {
+    std::cerr << "ERR : " << err << "\n";
+  }
 
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filename << "\n";
-      return false;
-    }
-  } else if (ext.compare("usda") == 0) {
-    //std::cout << "usda\n";
-    bool ret = tinyusdz::LoadUSDAFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDA file: " << filename << "\n";
-      return false;
-    }
-  } else {  // assume usdz
-    //std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromMemory(content.data(), content.size(), filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filename << "\n";
-      return false;
-    }
+  if (!ret) {
+    std::cerr << "Failed to load USD(USDA, USDC or USDZ) file: " << filename << "\n";
+    return false;
   }
 
   return true;
 }
 
+#if 0
 // It looks WASI does not provide fopen(), so use open() to read file content.
 std::vector<uint8_t> ReadFile(const char *arg) {
   std::ostringstream ss;
@@ -108,18 +79,19 @@ std::vector<uint8_t> ReadFile(const char *arg) {
 
   return dst;
 }
+#endif
 
 int main(int argc, char **argv) {
   std::cout << "bora\n";
 
   if (argc > 1) {
     std::string filename = argv[1];
-#if 0
+#if 1
+    tinyusdz::Stage stage;
     {
       std::string warn;
       std::string err;
-      tinyusdz::Stage stage;
-      bool ret = tinyusdz::LoadUSDZFromFile(filename, &stage, &warn, &err);
+      bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
 
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
@@ -132,18 +104,19 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
     }
-#endif
-    std::vector<uint8_t> content = ReadFile(filename.c_str());
-    if (content.empty()) {
-      std::cerr << "File is empty or failed to read: " << filename << "\n";
-    }
+#else
+    //std::vector<uint8_t> content = ReadFile(filename.c_str());
+    //if (content.empty()) {
+    //  std::cerr << "File is empty or failed to read: " << filename << "\n";
+    //}
 
-    tinyusdz::Stage stage;
-    bool ret = LoadModelFromString(content, filename, &stage);
-    if (!ret) {
-      std::cerr << "Load failed.\n";
-      return EXIT_FAILURE;
-    }
+    //tinyusdz::Stage stage;
+    //bool ret = LoadModelFromString(content, filename, &stage);
+    //if (!ret) {
+    //  std::cerr << "Load failed.\n";
+    //  return EXIT_FAILURE;
+    //}
+#endif
 
     std::cout << "Load oK\n";
 

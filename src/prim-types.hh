@@ -42,8 +42,10 @@
 
 namespace tinyusdz {
 
+// SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value is stored in Crate directly)
 enum class SpecType {
-  Attribute,
+  Unknown = 0, // must be 0
+  Attribute, 
   Connection,
   Expression,
   Mapper,
@@ -54,7 +56,7 @@ enum class SpecType {
   RelationshipTarget,
   Variant,
   VariantSet,
-  Invalid,
+  Invalid, // or NumSpecTypes
 };
 
 enum class Orientation {

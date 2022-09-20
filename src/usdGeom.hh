@@ -51,9 +51,11 @@ struct GPrim : Xformable {
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"
 
+#if 0 // TODO: Remove. Please use `props["primvars:displayColor"]`
   TypedAttribute<Animatable<value::color3f>>
       displayColor;                                    // primvars:displayColor
   TypedAttribute<Animatable<float>> displayOpacity;  // primvars:displaOpacity
+#endif
 
   nonstd::optional<Relation> proxyPrim;
   nonstd::optional<MaterialBindingAPI> materialBinding;
