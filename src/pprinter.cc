@@ -233,6 +233,28 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << print_customData(meta.assetInfo.value(), "assetInfo", indent);
   }
 
+  if (meta.variantSets) {
+    ss << pprint::Indent(indent);
+    auto listEditQual = std::get<0>(meta.variantSets.value());
+    auto var = std::get<1>(meta.variantSets.value());
+
+    if (listEditQual != ListEditQual::ResetToExplicit) {
+      ss << to_string(listEditQual) << " ";
+    }
+
+    ss << "variantSets = ";
+
+    if (auto pv = var.Get<value::token>()) {
+      ss << pv.value();
+    } else if (auto pva = var.Get<std::vector<value::token>>()) {
+      ss << pva.value();
+    } else {
+      ss << "[InternalError]";
+    }
+
+    ss << "\n";   
+  }
+
   if (meta.apiSchemas) {
     auto schemas = meta.apiSchemas.value();
 
