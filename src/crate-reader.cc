@@ -3497,6 +3497,11 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uncompressedSize at `TOKENS` section.");
   }
 
+  // 2x = consider '\0' delimiter
+  if ((2 * n) > uncompressedSize) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "`TOKENS` section corrupted.");
+  }
+
   // At least min size should be 16 both for compress and uncompress.
 
   if (uncompressedSize < 16) {
@@ -3523,10 +3528,10 @@ bool CrateReader::ReadTokens() {
 
   // To combat with heap-buffer flow in lz4 cuased by corrupted lz4 compressed data,
   // We allocate same size of uncompressedSize(or larger one),
-  // And further, extra 64 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
+  // And further, extra 128 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
 
   uint64_t bufSize = (std::max)(compressedSize, uncompressedSize);
-  CHECK_MEMORY_USAGE(bufSize+64);
+  CHECK_MEMORY_USAGE(bufSize+128);
   CHECK_MEMORY_USAGE(uncompressedSize);
 
   DCOUT("# of tokens = " << n << ", uncompressedSize = " << uncompressedSize
@@ -3534,8 +3539,10 @@ bool CrateReader::ReadTokens() {
 
   // dst
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
+  memset(chars.data(), 0, chars.size());
 
-  std::vector<char> compressed(static_cast<size_t>(bufSize + 64));
+  std::vector<char> compressed(static_cast<size_t>(bufSize + 128));
+  memset(compressed.data(), 0, compressed.size());
 
   if (compressedSize !=
       _sr->read(size_t(compressedSize), size_t(compressedSize),
