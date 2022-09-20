@@ -3523,10 +3523,10 @@ bool CrateReader::ReadTokens() {
 
   // To combat with heap-buffer flow in lz4 cuased by corrupted lz4 compressed data,
   // We allocate same size of uncompressedSize(or larger one),
-  // And further, extra 16 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
+  // And further, extra 64 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
 
   uint64_t bufSize = (std::max)(compressedSize, uncompressedSize);
-  CHECK_MEMORY_USAGE(bufSize+16);
+  CHECK_MEMORY_USAGE(bufSize+64);
   CHECK_MEMORY_USAGE(uncompressedSize);
 
   DCOUT("# of tokens = " << n << ", uncompressedSize = " << uncompressedSize
@@ -3535,8 +3535,7 @@ bool CrateReader::ReadTokens() {
   // dst
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
 
-  // Inside of lz4, it does memcpy with 16 bytes stride, so add extra 16 bytes for safety.
-  std::vector<char> compressed(static_cast<size_t>(compressedSize+16));
+  std::vector<char> compressed(static_cast<size_t>(bufSize + 64));
 
   if (compressedSize !=
       _sr->read(size_t(compressedSize), size_t(compressedSize),
