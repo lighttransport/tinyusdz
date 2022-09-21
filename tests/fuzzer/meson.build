@@ -69,6 +69,15 @@ executable('fuzz_intcoding',
   cpp_args : '-fsanitize=address,fuzzer',
   link_args : '-fsanitize=address,fuzzer' )
 
+executable('fuzz_lz4_decompress',
+  '../../src/lz4/lz4.c',
+  'lz4_decompress_fuzzmain.cc',
+  '../../src/lz4-compression.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : '-fsanitize=address,fuzzer',
+  link_args : '-fsanitize=address,fuzzer' )
+
 
 executable('fuzz_usdaparser',
   'usdaparser_fuzzmain.cc',
