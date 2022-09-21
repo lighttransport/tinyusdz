@@ -35,13 +35,16 @@
 /*-************************************
 *  Tuning parameters
 **************************************/
+
+
 /*
  * LZ4_HEAPMODE :
  * Select how default compression functions will allocate memory for their hash table,
  * in memory stack (0:default, fastest), or in memory heap (1:requires malloc()).
  */
 #ifndef LZ4_HEAPMODE
-#  define LZ4_HEAPMODE 0
+/* TinyUSDZ modification for security */
+#  define LZ4_HEAPMODE 1
 #endif
 
 /*
@@ -77,9 +80,13 @@
 #  if defined(__GNUC__) && \
   ( defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_6J__) || defined(__ARM_ARCH_6K__) \
   || defined(__ARM_ARCH_6Z__) || defined(__ARM_ARCH_6ZK__) || defined(__ARM_ARCH_6T2__) )
-#    define LZ4_FORCE_MEMORY_ACCESS 2
+/* TinyUSDZ modification for security */
+/*#    define LZ4_FORCE_MEMORY_ACCESS 2 */
+#    define LZ4_FORCE_MEMORY_ACCESS 0
 #  elif (defined(__INTEL_COMPILER) && !defined(_WIN32)) || defined(__GNUC__)
-#    define LZ4_FORCE_MEMORY_ACCESS 1
+/* TinyUSDZ modification for security */
+/*#    define LZ4_FORCE_MEMORY_ACCESS 1 */
+#    define LZ4_FORCE_MEMORY_ACCESS 0
 #  endif
 #endif
 
@@ -454,7 +461,9 @@ static const unsigned inc32table[8] = {0, 1, 2,  1,  0,  4, 4, 4};
 static const int      dec64table[8] = {0, 0, 0, -1, -4,  1, 2, 3};
 
 
+/* TinyUSDZ modification for security */
 #ifndef LZ4_FAST_DEC_LOOP
+#if 0
 #  if defined __i386__ || defined _M_IX86 || defined __x86_64__ || defined _M_X64
 #    define LZ4_FAST_DEC_LOOP 1
 #  elif defined(__aarch64__) && defined(__APPLE__)
@@ -467,6 +476,9 @@ static const int      dec64table[8] = {0, 0, 0, -1, -4,  1, 2, 3};
 #  else
 #    define LZ4_FAST_DEC_LOOP 0
 #  endif
+#else
+#    define LZ4_FAST_DEC_LOOP 0
+#endif
 #endif
 
 #if LZ4_FAST_DEC_LOOP
