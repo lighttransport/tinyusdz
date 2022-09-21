@@ -825,7 +825,7 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
 
     if (n > _config.maxArrayElements) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
-    } 
+    }
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
@@ -876,7 +876,7 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
     if (n > _config.maxArrayElements) {
       _err += "Too many Path array elements.\n";
       return false;
-    } 
+    }
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
@@ -937,7 +937,7 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
     if (n > _config.maxArrayElements) {
       _err += "Too many ListOp elements.\n";
       return false;
-    } 
+    }
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
@@ -1049,7 +1049,7 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
     if (n > _config.maxArrayElements) {
       _err += "Too many ListOp elements.\n";
       return false;
-    } 
+    }
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
@@ -1161,7 +1161,7 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
     if (n > _config.maxArrayElements) {
       _err += "Too many ListOp elements.\n";
       return false;
-    } 
+    }
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
@@ -2163,9 +2163,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::matrix2d));
-      
+
 
         std::vector<value::matrix2d> v(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::matrix2d),
@@ -2209,7 +2209,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::matrix3d));
 
         std::vector<value::matrix3d> v(static_cast<size_t>(n));
@@ -2255,7 +2255,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::matrix4d));
 
         std::vector<value::matrix4d> v(static_cast<size_t>(n));
@@ -2298,7 +2298,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::quatd));
 
         std::vector<value::quatd> v(static_cast<size_t>(n));
@@ -2342,7 +2342,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::quatf));
 
         std::vector<value::quatf> v(static_cast<size_t>(n));
@@ -2386,7 +2386,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::quath));
 
         std::vector<value::quath> v(static_cast<size_t>(n));
@@ -2432,7 +2432,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::double2));
 
         std::vector<value::double2> v(static_cast<size_t>(n));
@@ -2476,7 +2476,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::float2));
 
         std::vector<value::float2> v(static_cast<size_t>(n));
@@ -2520,7 +2520,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::half2));
 
         std::vector<value::half2> v(static_cast<size_t>(n));
@@ -2563,7 +2563,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::int2));
 
         std::vector<value::int2> v(static_cast<size_t>(n));
@@ -2606,7 +2606,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::double3));
 
         std::vector<value::double3> v(static_cast<size_t>(n));
@@ -2649,7 +2649,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::float3));
 
         std::vector<value::float3> v(static_cast<size_t>(n));
@@ -2693,7 +2693,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::half3));
 
         std::vector<value::half3> v(static_cast<size_t>(n));
@@ -2736,7 +2736,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::int3));
 
         std::vector<value::int3> v(static_cast<size_t>(n));
@@ -2779,7 +2779,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::double4));
 
         std::vector<value::double4> v(static_cast<size_t>(n));
@@ -2822,7 +2822,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::float4));
 
         std::vector<value::float4> v(static_cast<size_t>(n));
@@ -2865,7 +2865,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::half4));
 
         std::vector<value::half4> v(static_cast<size_t>(n));
@@ -2908,7 +2908,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (n > _config.maxArrayElements) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
         }
-        
+
         CHECK_MEMORY_USAGE(n * sizeof(value::int4));
 
         std::vector<value::int4> v(static_cast<size_t>(n));
@@ -3021,7 +3021,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (n > _config.maxArrayElements) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
       }
-      
+
       CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
       std::vector<crate::Index> indices(static_cast<size_t>(n));
@@ -3441,7 +3441,7 @@ bool CrateReader::ReadSection(crate::Section *s) {
   }
 
   if (size_t(s->start) > _sr->size()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Section start offset exceeds USDC file size."); 
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Section start offset exceeds USDC file size.");
   }
 
   if (!_sr->read8(&s->size)) {
@@ -3450,7 +3450,7 @@ bool CrateReader::ReadSection(crate::Section *s) {
   }
 
   if (size_t(s->start + s->size) > _sr->size()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Section end offset exceeds USDC file size."); 
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Section end offset exceeds USDC file size.");
   }
 
 
@@ -3473,7 +3473,12 @@ bool CrateReader::ReadTokens() {
     return false;
   }
 
+  if (sec.size < 4) {
+     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`TOKENS` section data size is zero or too small."));
+  }
+
   DCOUT("sec.start = " << sec.start);
+  DCOUT("sec.size = " << sec.size);
 
   // # of tokens.
   uint64_t n;
@@ -3481,9 +3486,11 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read # of tokens at `TOKENS` section.");
   }
 
+  DCOUT("# of tokens = " << n);
+
   if (n == 0) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty tokens.");
-  } 
+  }
 
   if (n > _config.maxNumTokens) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many Tokens.");
@@ -3497,14 +3504,18 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uncompressedSize at `TOKENS` section.");
   }
 
-  // 2x = consider '\0' delimiter
-  if ((2 * n) > uncompressedSize) {
+  DCOUT("uncompressedSize = " << uncompressedSize);
+
+
+  // 3 = ';-)'
+  // consider '\0' delimiter
+  if ((3 + n) > uncompressedSize) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "`TOKENS` section corrupted.");
   }
 
   // At least min size should be 16 both for compress and uncompress.
 
-  if (uncompressedSize < 16) {
+  if (uncompressedSize < 4) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
   }
 
@@ -3518,12 +3529,18 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedSize at `TOKENS` section.");
   }
 
-  if (compressedSize < 16) {
+  DCOUT("compressedSize = " << compressedSize);
+
+  if (compressedSize < 4) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "compressedSize is too small or zero bytes.");
   }
 
   if (compressedSize > _sr->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed data size exceeds input file size.");
+  }
+
+  if (size_t(compressedSize) > size_t(sec.size)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed data size exceeds `TOKENS` section size.");
   }
 
   // To combat with heap-buffer flow in lz4 cuased by corrupted lz4 compressed data,
@@ -3534,8 +3551,6 @@ bool CrateReader::ReadTokens() {
   CHECK_MEMORY_USAGE(bufSize+128);
   CHECK_MEMORY_USAGE(uncompressedSize);
 
-  DCOUT("# of tokens = " << n << ", uncompressedSize = " << uncompressedSize
-                         << ", compressedSize = " << compressedSize);
 
   // dst
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
@@ -3663,7 +3678,7 @@ bool CrateReader::ReadFields() {
   }
 
   if (num_fields > _config.maxNumFields) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section."); 
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section.");
   }
 
 
@@ -4193,7 +4208,34 @@ bool CrateReader::ReadTOC() {
                      << ", start = " << _toc.sections[i].start
                      << ", size = " << _toc.sections[i].size);
 
-    // find index
+    if (_toc.sections[i].start < 0) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid section start byte offset."));
+    }
+
+    if (_toc.sections[i].size <= 0) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid or empty section size."));
+    }
+
+    if (size_t(_toc.sections[i].size) > _sr->size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section size exceeds input USDC data size."));
+    }
+
+    if (size_t(_toc.sections[i].start) > _sr->size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start byte offset exceeds input USDC data size."));
+    }
+
+    // TODO: handle integer overflow.
+    size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
+    if (sizeof(void *) == 4) { // 32bit
+      if (end_offset > std::numeric_limits<int32_t>::max()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section end offset exceeds 32bit max."));
+      }
+    }
+    if (end_offset > _sr->size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section byte offset + size exceeds input USDC data size."));
+    }
+
+
     if (0 == strncmp(_toc.sections[i].name, "TOKENS",
                      crate::kSectionNameMaxLength)) {
       _tokens_index = int64_t(i);
