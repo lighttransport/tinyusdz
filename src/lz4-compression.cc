@@ -137,6 +137,20 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
 
   // Check first byte for # chunks.
   int nChunks = *compressed++;
+  if (nChunks > 127) {
+    if (err) {
+      (*err) =
+          "Too many chunks in LZ4 compressed data.\n";
+    }
+    return 0;
+  }
+
+  //std::cout << "compressedSize = " << compressedSize << "\n";
+  //std::cout << "maxOutputSize = " << maxOutputSize << "\n";
+  //std::cout << "nChunks = " << nChunks << "\n";
+
+  size_t consumedCompressedSize = 1;
+
   if (nChunks == 0) {
     // Just one.
     int nDecompressed = LZ4_decompress_safe(compressed, output,
@@ -154,19 +168,50 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
   } else {
     // Do each chunk.
     size_t totalDecompressed = 0;
-    for (int i = 0; i != nChunks; ++i) {
+    for (int i = 0; i < nChunks; ++i) {
       int32_t chunkSize = 0;
       memcpy(&chunkSize, compressed, sizeof(chunkSize));
+      if (chunkSize > LZ4_MAX_INPUT_SIZE) {
+        if (err) {
+           (*err) += "ChunkSize exceeds LZ4_MAX_INPUT_SIZE.\n";
+        }
+        return 0;
+      }
+      if (chunkSize <= 0) {
+        if (err) {
+           (*err) += "Invalid ChunkSize.\n";
+        }
+        return 0;
+      }
+      //std::cout << "chunkSize = " << chunkSize << "\n";
+      consumedCompressedSize += sizeof(chunkSize);
+      //std::cout << "consumedCompressedSize = " << consumedCompressedSize << "\n";
+      //std::cout << "compressedSize = " << compressedSize << "\n";
+      if (consumedCompressedSize > compressedSize) {
+        if (err) {
+           (*err) += "Total chunk size exceeds input compressedSize.\n";
+        }
+        return 0;
+      }
+
       compressed += sizeof(chunkSize);
       int nDecompressed = LZ4_decompress_safe(
           compressed, output, chunkSize,
           int(std::min<size_t>(LZ4_MAX_INPUT_SIZE, maxOutputSize)));
-      if (nDecompressed < 0) {
+      if (nDecompressed <= 0) {
         if (err) {
           (*err) =
               "Failed to decompress data, possibly corrupt? "
               "LZ4 error code: " +
               std::to_string(nDecompressed) + "\n";
+        }
+        return 0;
+      }
+      //std::cout << "nDecompressed = " << nDecompressed << "\n";
+      if (nDecompressed > maxOutputSize) {
+        if (err) {
+          (*err) =
+              "Failed to decompress data, possibly corrupt?\n";
         }
         return 0;
       }
