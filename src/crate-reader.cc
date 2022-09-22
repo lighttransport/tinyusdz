@@ -283,14 +283,14 @@ bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
 
 template <class Int>
 bool CrateReader::ReadCompressedInts(Int *out,
-                                      size_t size) {
+                                     size_t num_ints) {
   using Compressor =
       typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
                                 Usd_IntegerCompression64>::type;
 
 
-
-  size_t compBufferSize = Compressor::GetCompressedBufferSize(size);
+  // TODO: Read compressed data from _sr directly
+  size_t compBufferSize = Compressor::GetCompressedBufferSize(num_ints);
   CHECK_MEMORY_USAGE(compBufferSize);
 
   uint64_t compSize;
@@ -298,7 +298,13 @@ bool CrateReader::ReadCompressedInts(Int *out,
     return false;
   }
 
-  if ((compSize > _sr->size()) || (compSize > _config.maxMemoryBudget)) {
+  if (compSize > compBufferSize) {
+    // Truncate
+    // TODO: return error? 
+    compSize = compBufferSize;
+  }
+
+  if (compSize > _sr->size()) {
     return false;
   }
 
@@ -309,7 +315,7 @@ bool CrateReader::ReadCompressedInts(Int *out,
   }
 
   bool ret = Compressor::DecompressFromBuffer(
-      compBuffer.data(), size_t(compSize), out, size, &_err);
+      compBuffer.data(), size_t(compSize), out, num_ints, &_err);
 
   REDUCE_MEMORY_USAGE(compBufferSize);
 
@@ -3212,7 +3218,10 @@ bool CrateReader::BuildNodeHierarchy(
     if (parentNodeIndex == -1) {
       // root node.
       // Assume single root node in the scene.
-      assert(thisIndex == 0);
+      //assert(thisIndex == 0);
+      if (thisIndex != 0) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: Multiple root nodes.");
+      }
 
       Node root(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
 
@@ -3230,7 +3239,12 @@ bool CrateReader::BuildNodeHierarchy(
 
       Node node(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
 
-      assert(_nodes[size_t(pathIndexes[thisIndex])].GetParent() == -2);
+      // Ensure parent is not set yet.
+      if (_nodes[size_t(pathIndexes[thisIndex])].GetParent() != -2) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "???: Maybe corrupted path hierarchy?.");
+      }
+
+      //assert(_nodes[size_t(pathIndexes[thisIndex])].GetParent() == -2);
 
       _nodes[size_t(pathIndexes[thisIndex])] = node;
 
@@ -3651,7 +3665,7 @@ bool CrateReader::ReadStrings() {
     return false;
   }
 
-  // Seems indices for `STRINGS` are not compressed.
+  // `STRINGS` are not compressed.
   if (!ReadIndices(&_string_indices)) {
     _err += "Failed to read StringIndex array.\n";
     return false;
@@ -3680,7 +3694,7 @@ bool CrateReader::ReadFields() {
   const crate::Section &s = _toc.sections[size_t(_fields_index)];
 
   if (s.size == 0) {
-    // Empty Fields.
+    // Empty Fields should be not allowed.
     PUSH_ERROR_AND_RETURN_TAG(kTag, "`FIELDS` section is empty.");
   }
 
@@ -3695,6 +3709,8 @@ bool CrateReader::ReadFields() {
     return false;
   }
 
+  DCOUT("num_fields = " << num_fields);
+
   if (num_fields > _config.maxNumFields) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section.");
   }
@@ -3705,78 +3721,46 @@ bool CrateReader::ReadFields() {
 
   // indices
   {
-    uint64_t fields_size;
-    if (!_sr->read8(&fields_size)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read field length at `FIELDS` section.");
-    }
 
-    if (fields_size > size_t(s.size)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid byte size of fields data.");
-    }
+    CHECK_MEMORY_USAGE(size_t(num_fields) * sizeof(uint32_t));
 
-    size_t compBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(
-            static_cast<size_t>(num_fields));
-
-    CHECK_MEMORY_USAGE(compBufferSize);
-
-    std::vector<char> comp_buffer(compBufferSize);
-
-    size_t tempBufferSize = size_t(num_fields) * sizeof(uint32_t);
-    CHECK_MEMORY_USAGE(tempBufferSize);
-
-    // temp buffer for decompress
-    std::vector<uint32_t> tmp;
-    tmp.resize(static_cast<size_t>(num_fields));
-
-
-    if (fields_size !=
-        _sr->read(size_t(fields_size), size_t(fields_size),
-                  reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
-      _err += "Failed to read field data at `FIELDS` section.\n";
-      return false;
-    }
-
-    std::string err;
-    DCOUT("fields_size = " << fields_size << ", tmp.size = " << tmp.size()
-                           << ", num_fields = " << num_fields);
-    Usd_IntegerCompression::DecompressFromBuffer(
-        comp_buffer.data(), size_t(fields_size), tmp.data(), size_t(num_fields),
-        &err);
-
-    if (!err.empty()) {
-      _err += err;
-      return false;
+    std::vector<uint32_t> tmp(num_fields); 
+    if (!ReadCompressedInts(tmp.data(), num_fields)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Field token_index array.");
     }
 
     for (size_t i = 0; i < num_fields; i++) {
       _fields[i].token_index.value = tmp[i];
     }
 
-    REDUCE_MEMORY_USAGE(compBufferSize);
-    REDUCE_MEMORY_USAGE(tempBufferSize);
+    REDUCE_MEMORY_USAGE(size_t(num_fields) * sizeof(uint32_t));
+
   }
 
-  // Value reps
+  // Value reps(LZ4 compressed)
   {
-    uint64_t reps_size;
+    uint64_t reps_size; // compressed size
     if (!_sr->read8(&reps_size)) {
-      _err += "Failed to read reps legnth at `FIELDS` section.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read value reps legnth at `FIELDS` section.");
     }
 
     if (reps_size > size_t(s.size)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid byte size of Value reps data.");
     }
 
+    if (reps_size > _sr->size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed Value reps size exceeds USDC data.");
+    }
+
     CHECK_MEMORY_USAGE(size_t(reps_size));
 
+    // TODO: Decompress from _sr directly.
     std::vector<char> comp_buffer(static_cast<size_t>(reps_size));
 
     if (reps_size !=
         _sr->read(size_t(reps_size), size_t(reps_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
-      _err += "Failed to read reps data at `FIELDS` section.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read reps data at `FIELDS` section.");
     }
 
     // reps datasize = LZ4 compressed. uncompressed size = num_fields * 8 bytes
@@ -3791,7 +3775,7 @@ bool CrateReader::ReadFields() {
                                  comp_buffer.data(),
                                  reinterpret_cast<char *>(reps_data.data()),
                                  size_t(reps_size), uncompressed_size, &_err)) {
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Fields ValueRep data.");
     }
 
     for (size_t i = 0; i < num_fields; i++) {
@@ -3840,33 +3824,55 @@ bool CrateReader::ReadFieldSets() {
     return false;
   }
 
+  CHECK_MEMORY_USAGE(size_t(num_fieldsets) * sizeof(uint32_t));
+
   _fieldset_indices.resize(static_cast<size_t>(num_fieldsets));
 
-  // Create temporary space for decompressing.
-  std::vector<char> comp_buffer(Usd_IntegerCompression::GetCompressedBufferSize(
-      static_cast<size_t>(num_fieldsets)));
+  CHECK_MEMORY_USAGE(size_t(num_fieldsets) * sizeof(uint32_t));
 
-  std::vector<uint32_t> tmp(static_cast<size_t>(num_fieldsets));
-  std::vector<char> working_space(
-      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
-          static_cast<size_t>(num_fieldsets)));
+  // Create temporary space for decompressing.
+  size_t compBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(
+      static_cast<size_t>(num_fieldsets));
+
+  CHECK_MEMORY_USAGE(compBufferSize);
+
+  std::vector<char> comp_buffer;
+  comp_buffer.resize(compBufferSize);
+
+  CHECK_MEMORY_USAGE(sizeof(uint32_t) * size_t(num_fieldsets));
+  std::vector<uint32_t> tmp;
+  tmp.resize(static_cast<size_t>(num_fieldsets));
+
+  size_t workBufferSize = Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
+          static_cast<size_t>(num_fieldsets));
+
+  CHECK_MEMORY_USAGE(compBufferSize);
+  std::vector<char> working_space;
+  working_space.resize(workBufferSize);
 
   uint64_t fsets_size;
   if (!_sr->read8(&fsets_size)) {
-    _err += "Failed to read fieldsets size at `FIELDSETS` section.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read fieldsets size at `FIELDSETS` section.");
   }
 
   DCOUT("num_fieldsets = " << num_fieldsets << ", fsets_size = " << fsets_size
                            << ", comp_buffer.size = " << comp_buffer.size());
 
-  assert(fsets_size < comp_buffer.size());
+  if (fsets_size > comp_buffer.size()) {
+    // Maybe corrupted?
+    fsets_size = comp_buffer.size();
+  }
+
+  if (fsets_size > _sr->size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "FieldSets compressed data exceeds USDC data."); 
+  }
+
+  //assert(fsets_size < comp_buffer.size());
 
   if (fsets_size !=
       _sr->read(size_t(fsets_size), size_t(fsets_size),
                 reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
-    _err += "Failed to read fieldsets data at `FIELDSETS` section.\n";
-    return false;
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read fieldsets data at `FIELDSETS` section.");
   }
 
   std::string err;
@@ -3883,6 +3889,9 @@ bool CrateReader::ReadFieldSets() {
     DCOUT("fieldset_index[" << i << "] = " << tmp[i]);
     _fieldset_indices[i].value = tmp[i];
   }
+
+  REDUCE_MEMORY_USAGE(sizeof(uint32_t) * size_t(num_fieldsets));
+  REDUCE_MEMORY_USAGE(compBufferSize);
 
   return true;
 }
@@ -3998,7 +4007,11 @@ bool CrateReader::ReadSpecs() {
       return false;
     }
 
-    assert(path_indexes_size < comp_buffer.size());
+    if (path_indexes_size > comp_buffer.size()) {
+      // Maybe corrupted?
+      path_indexes_size = comp_buffer.size();
+    }
+    //assert(path_indexes_size < comp_buffer.size());
 
     if (path_indexes_size !=
         _sr->read(size_t(path_indexes_size), size_t(path_indexes_size),
@@ -4029,7 +4042,11 @@ bool CrateReader::ReadSpecs() {
       return false;
     }
 
-    assert(fset_indexes_size < comp_buffer.size());
+    if (fset_indexes_size > comp_buffer.size()) {
+      // Maybe corrupted?
+      fset_indexes_size = comp_buffer.size();
+    }
+    //assert(fset_indexes_size < comp_buffer.size());
 
     if (fset_indexes_size !=
         _sr->read(size_t(fset_indexes_size), size_t(fset_indexes_size),
@@ -4060,7 +4077,11 @@ bool CrateReader::ReadSpecs() {
       return false;
     }
 
-    assert(spectype_size < comp_buffer.size());
+    if (spectype_size > comp_buffer.size()) {
+      // Maybe corrupted?
+      spectype_size = comp_buffer.size();
+    }
+    //assert(spectype_size < comp_buffer.size());
 
     if (spectype_size !=
         _sr->read(size_t(spectype_size), size_t(spectype_size),
