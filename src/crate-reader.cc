@@ -300,7 +300,7 @@ bool CrateReader::ReadCompressedInts(Int *out,
 
   if (compSize > compBufferSize) {
     // Truncate
-    // TODO: return error? 
+    // TODO: return error?
     compSize = compBufferSize;
   }
 
@@ -3715,6 +3715,13 @@ bool CrateReader::ReadFields() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section.");
   }
 
+  if (sizeof(void *) == 4) {
+    // 32bit
+    if (num_fields > std::numeric_limits<int32_t>::max() / sizeof(uint32_t)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section.");
+    }
+  }
+
   CHECK_MEMORY_USAGE(size_t(num_fields) * sizeof(Field));
 
   _fields.resize(static_cast<size_t>(num_fields));
@@ -3724,8 +3731,9 @@ bool CrateReader::ReadFields() {
 
     CHECK_MEMORY_USAGE(size_t(num_fields) * sizeof(uint32_t));
 
-    std::vector<uint32_t> tmp(num_fields); 
-    if (!ReadCompressedInts(tmp.data(), num_fields)) {
+    std::vector<uint32_t> tmp;
+    tmp.resize(size_t(num_fields));
+    if (!ReadCompressedInts(tmp.data(), size_t(num_fields))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Field token_index array.");
     }
 
@@ -3864,7 +3872,7 @@ bool CrateReader::ReadFieldSets() {
   }
 
   if (fsets_size > _sr->size()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "FieldSets compressed data exceeds USDC data."); 
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "FieldSets compressed data exceeds USDC data.");
   }
 
   //assert(fsets_size < comp_buffer.size());
