@@ -650,6 +650,28 @@ class USDAReader::Impl {
       return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
     };
 
+    auto BuildVariants = [](const CustomDataType &dict) -> nonstd::expected<VariantsMap, std::string> {
+
+      // Allow empty dict.
+
+      VariantsMap m;
+
+      for (const auto &item : dict) {
+        // TODO: duplicated key check?
+        if (auto pv = item.second.Get<std::string>()) {
+          m[item.first] = pv.value(); 
+        } else if (auto pvs = item.second.Get<StringData>()) {
+          // TODO: store triple-quote info
+          m[item.first] = pvs.value().value; 
+        } else {
+          return nonstd::make_unexpected(fmt::format("TinyUSDZ only accepts `string` value for `variants` element, but got type `{}`(type_id {}).", item.second.TypeName(), item.second.TypeId())); 
+        }
+      }
+
+      return std::move(m);
+
+    };
+
     DCOUT("ReconstructPrimMeta");
     for (const auto &meta : in_meta) {
       DCOUT("meta.name = " << meta.first);
@@ -741,6 +763,21 @@ class USDAReader::Impl {
               "`dictionary`. got type `"
               << var.type << "`");
         }
+
+      } else if (meta.first == "variants") {
+        if (auto pv = var.Get<CustomDataType>()) {
+          auto pm = BuildVariants(pv.value());
+          if (!pm) {
+            PUSH_ERROR_AND_RETURN(pm.error());
+          }
+          out->variants = (*pm);
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `variants` metadataum is not type "
+              "`dictionary`. got type `"
+              << var.type << "`");
+        }
+  
       } else if (meta.first == "variantSets") {
         if (auto pv = var.Get<value::token>()) {
           out->variantSets = meta.second;
