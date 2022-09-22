@@ -435,6 +435,7 @@ struct StageMetas {
   TypedAttributeWithFallback<double> framesPerSecond {24.0};  // FIXME: default 24 fps
   TypedAttributeWithFallback<double> startTimeCode{0.0}; // FIXME: default = -inf?
   TypedAttributeWithFallback<double> endTimeCode{std::numeric_limits<double>::infinity()};
+  std::vector<value::AssetPath> subLayers; // `subLayers`
   StringData comment; // 'comment'
   StringData doc; // `documentation`
 

@@ -67,7 +67,7 @@ namespace value {
 // See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
 constexpr auto kToken = "token";
 constexpr auto kString = "string";
-constexpr auto kPath = "Path";
+constexpr auto kPath = "Path"; // generic(usually prim) path. internal representation.
 constexpr auto kAssetPath = "asset";  // `asset` in USDA
 constexpr auto kDictionary= "dictionary";
 constexpr auto kTimeCode= "timecode";

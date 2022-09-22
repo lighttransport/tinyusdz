@@ -146,7 +146,7 @@ static void RegisterStageMetas(
 
   // Composition arc.
   // Type can be array. i.e. asset, asset[]
-  metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers");
+  metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers", /* allow array type */true);
 }
 
 static void RegisterPrimMetas(
@@ -161,9 +161,8 @@ static void RegisterPrimMetas(
   // Type can be array. i.e. path, path[]
   metas["references"] =
       AsciiParser::VariableDef(value::kAssetPath, "references", /* allow array type */true);
-
-  metas["inherits"] = AsciiParser::VariableDef(value::kAssetPath, "inherits");
-  metas["payload"] = AsciiParser::VariableDef(value::kAssetPath, "payload");
+  metas["inherits"] = AsciiParser::VariableDef(value::kPath, "inherits", true);
+  metas["payload"] = AsciiParser::VariableDef(value::kAssetPath, "payload", true);
 
   metas["specializes"] =
       AsciiParser::VariableDef(value::kRelationship, "specializes");
@@ -3832,13 +3831,13 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`defaultPrim` isn't a token value.");
     }
   } else if (varname == "subLayers") {
-    if (auto pv = var.Get<std::vector<value::token>>()) {
+    if (auto pv = var.Get<std::vector<value::AssetPath>>()) {
       DCOUT("subLayers = " << pv.value());
       for (const auto &item : pv.value()) {
         _stage_metas.subLayers.push_back(item);
       }
     } else {
-      PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of string values.");
+      PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of asset path");
     }
   } else if (varname == "upAxis") {
     if (auto pv = var.Get<value::token>()) {
@@ -5312,18 +5311,53 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
 
     var.Set(values);
+  } else if (vartype == value::kPath) {
+    if (is_array_type) {
+      std::vector<Path> paths;
+      if (!ParseBasicTypeArray(&paths)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+      }
+      var.Set(paths);
+        
+      var.type = vartype + "[]";
+    } else {
+      Path path;
+      if (!ReadBasicType(&path)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+      }
+    } 
+  
+  } else if (vartype == value::kAssetPath) {
+    if (is_array_type) {
+      std::vector<value::AssetPath> paths;
+      if (!ParseBasicTypeArray(&paths)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      var.Set(paths);
+    } else {
+      value::AssetPath asset_path;
+      if (!ReadBasicType(&asset_path)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      var.Set(asset_path);
+    }
+
   } else if (vartype == value::kDictionary) {
     DCOUT("Parse dict in meta.");
     CustomDataType dict;
     if (!ParseDict(&dict)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` in metadataum.");
+      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` data in metadataum.");
     }
     var.Set(dict);
   } else {
     PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
   }
 
-  var.type = vartype;
+  if (is_array_type) {
+    var.type = vartype + "[]";
+  } else {
+    var.type = vartype;
+  }
 
   (*outvar) = var;
 
