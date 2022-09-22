@@ -216,6 +216,21 @@ std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent
   return ss.str();
 }
 
+std::string print_variantsMap(const VariantsMap &m, const uint32_t indent) {
+  std::stringstream ss;
+
+  if (m.empty()) {
+    return ss.str();
+  }
+
+  ss << pprint::Indent(indent) << "variants = {\n";
+  for (const auto &item: m) {
+    ss << pprint::Indent(indent+1) << "string " << item.first << " = " << quote(item.second) << "\n";
+  }
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
 
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
@@ -231,6 +246,10 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   if (meta.assetInfo) {
     ss << print_customData(meta.assetInfo.value(), "assetInfo", indent);
+  }
+
+  if (meta.variants) {
+    ss << print_variantsMap(meta.variants.value(), indent);
   }
 
   if (meta.variantSets) {
