@@ -354,6 +354,16 @@ class TokenizedPath {
 
 bool operator==(const Path &lhs, const Path &rhs);
 
+// variants in Prim Meta.
+//
+// e.g.
+// variants = {
+//   string variant0 = "bora"
+//   string variant1 = "dora"
+// }
+// pxrUSD uses dict type for the content, but TinyUSDZ only accepts list of strings for now 
+//
+using VariantsMap = std::map<std::string, std::string>;
 
 class MetaVariable;
 
@@ -382,36 +392,6 @@ class MetaVariable {
     name = rhs.name;
     custom = rhs.custom;
     value = rhs.value;
-  }
-
-  static std::string type_name(const MetaVariable &v) {
-    if (!v.type.empty()) {
-      return v.type;
-    }
-
-    // infer type from value content
-    if (v.IsObject()) {
-      return "dictionary";
-    } else if (v.IsTimeSamples()) {
-      std::string ts_type = "TODO: TimeSample type";
-      // FIXME
-#if 0
-      auto ts_struct = v.as_timesamples();
-
-      for (const TimeSampleType &item : ts_struct->values) {
-        auto tname = value::type_name(item);
-        if (tname != "none") {
-          return tname;
-        }
-      }
-#endif
-
-      // ??? TimeSamples data contains all `None` values
-      return ts_type;
-
-    } else {
-      return v.value.type_name();
-    }
   }
 
   // template <typename T>
@@ -448,7 +428,53 @@ class MetaVariable {
     return type_name(*this);
   }
 
+  uint32_t TypeId() const {
+    return type_id(*this);
+  }
+
  private:
+
+  static std::string type_name(const MetaVariable &v) {
+    if (!v.type.empty()) {
+      return v.type;
+    }
+
+    // infer type from value content
+    if (v.IsObject()) {
+      return "dictionary";
+    } else if (v.IsTimeSamples()) {
+      std::string ts_type = "TODO: TimeSample type";
+      // FIXME
+#if 0
+      auto ts_struct = v.as_timesamples();
+
+      for (const TimeSampleType &item : ts_struct->values) {
+        auto tname = value::type_name(item);
+        if (tname != "none") {
+          return tname;
+        }
+      }
+#endif
+
+      // ??? TimeSamples data contains all `None` values
+      return ts_type;
+
+    } else {
+      return v.value.type_name();
+    }
+  }
+
+  static uint32_t type_id(const MetaVariable &v) {
+    // infer type from value content
+    if (v.IsObject()) {
+      return value::TypeId::TYPE_ID_DICT;
+    } else if (v.IsTimeSamples()) {
+      return value::TypeId::TYPE_ID_TIMESAMPLES;
+    } else {
+      return v.value.type_id();
+    }
+  }
+
   value::Value value{nullptr};
 
 };
@@ -530,6 +556,8 @@ struct PrimMeta {
   nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
   nonstd::optional<std::pair<ListEditQual, MetaVariable>> variantSets; // 'variantSets'. type `token` or `token[]`
 
+  nonstd::optional<VariantsMap> variants; // `variants`
+
   // USDZ extensions
   nonstd::optional<std::string> sceneName; // 'sceneName'
 
@@ -539,7 +567,7 @@ struct PrimMeta {
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authored() const { return (active || kind || customData || variantSets || sceneName || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
+  bool authored() const { return (active || kind || customData || variants || variantSets || sceneName || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
 };
 
 // Metadata for Attribute

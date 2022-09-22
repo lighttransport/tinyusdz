@@ -148,6 +148,7 @@ std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t 
 
 std::string print_meta(const MetaVariable &meta, const uint32_t indent);
 std::string print_customData(const CustomDataType &customData, const std::string &name, const uint32_t indent);
+std::string print_variantsMap(const VariantsMap &map, const uint32_t indent);
 
 
 } // namespace tinyusdz

@@ -157,7 +157,7 @@ static void RegisterPrimMetas(
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
 
   // Composition arcs
-  
+
   // Type can be array. i.e. path, path[]
   metas["references"] =
       AsciiParser::VariableDef(value::kAssetPath, "references", /* allow array type */true);
@@ -176,6 +176,8 @@ static void RegisterPrimMetas(
       AsciiParser::VariableDef(value::kDictionary, "assetInfo");
   metas["customData"] =
       AsciiParser::VariableDef(value::kDictionary, "customData");
+
+  // TODO: Use ParseVariants
   metas["variants"] = AsciiParser::VariableDef(value::kDictionary, "variants");
 
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
@@ -3131,6 +3133,108 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
   return true;
 }
 
+bool AsciiParser::ParseVariantsElement(std::string *out_key,
+                                   std::string *out_var) {
+
+  // variants_element: string name '=' value
+  //           ;
+
+  std::string type_name;
+
+  if (!ReadIdentifier(&type_name)) {
+    return false;
+  }
+
+  // must be `string`
+  if (type_name != value::kString) {
+    PUSH_ERROR_AND_RETURN("TinyUSDZ only accepts type `string` for `variants` element.");
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  std::string key_name;
+  if (!ReadIdentifier(&key_name)) {
+    // string literal is also supported. e.g. "0"
+    if (ReadStringLiteral(&key_name)) {
+      // ok
+    } else {
+      PushError("Failed to parse dictionary key identifier.\n");
+      return false;
+    }
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  if (!Expect('=')) {
+    return false;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  std::string var;
+  if (!ReadBasicType(&var)) {
+    PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+  }
+
+  DCOUT("key: " << key_name << ", value: " << var);
+
+  (*out_key) = key_name;
+  (*out_var) = var;
+
+  return true;
+}
+
+bool AsciiParser::ParseVariants(VariantsMap *out_map) {
+  // '{' (string name '=' value)+ '}'
+  if (!Expect('{')) {
+    return false;
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == '}') {
+      break;
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      std::string key;
+      std::string var;
+      if (!ParseVariantsElement(&key, &var)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse an element of `variants`.");
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      DCOUT("Add to variants: " << key);
+      (*out_map)[key] = var;
+    }
+  }
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  return true;
+}
+
 // 'None'
 bool AsciiParser::MaybeNone() {
   std::vector<char> buf;
@@ -5012,7 +5116,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     if (LookChar1(&c)) {
       if (c == '[') {
         is_array_type = true;
-      }      
+      }
     }
   }
 

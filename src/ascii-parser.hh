@@ -373,6 +373,12 @@ class AsciiParser {
   bool ParseDictElement(std::string *out_key, MetaVariable *out_var);
   bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
 
+  ///
+  /// `variants` in Prim meta.
+  ///
+  bool ParseVariantsElement(std::string *out_key, std::string *out_var);
+  bool ParseVariants(VariantsMap *out_map);
+
   bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
 
   ///
