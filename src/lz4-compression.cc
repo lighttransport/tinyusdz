@@ -160,6 +160,16 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
 
   size_t consumedCompressedSize = 1;
 
+  if (maxOutputSize < LZ4_MAX_INPUT_SIZE) {
+    // nChunks must be 0 for < LZ4_MAX_INPUT_SIZE
+    if (nChunks != 0) {
+      if (err) {
+        (*err) = "Corrupted LZ4 compressed data.\n";
+      }
+      return 0;
+    }
+  }
+
   if (nChunks == 0) {
     // Just one.
     int nDecompressed = LZ4_decompress_safe(compressedPtr, outputPtr,
