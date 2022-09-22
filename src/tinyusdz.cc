@@ -1127,6 +1127,11 @@ std::string Stage::ExportToString() const {
     ss << "  endTimeCode = " << stage_metas.endTimeCode.GetValue() << "\n";
   }
 
+  // TODO: Do not print subLayers when consumed(after composition evaluated)
+  if (stage_metas.subLayers.size()) {
+    ss << "  subLayers = " << stage_metas.subLayers << "\n";
+  }
+
   if (stage_metas.defaultPrim.str().size()) {
     ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
        << "\n";
