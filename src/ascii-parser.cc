@@ -7049,6 +7049,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   // expect = '}'
   //        | def_block
   //        | prim_attr+
+  //        | variantSet '{' ... '}'
   while (!Eof()) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
