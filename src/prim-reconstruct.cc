@@ -1915,15 +1915,19 @@ bool ReconstructPrim(
     std::string *warn,
     std::string *err) {
 
+  (void)references;
   (void)warn;
 
+#if 0 // TODO
   //
   // Resolve prepend references
   //
-  for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
+  if (std::get<0>(references) == ListEditQual::Prepend) {
+    for (const auto &ref : std::get<1>(references)) {
+      (void)ref;
     }
   }
+#endif
 
   std::set<std::string> table;
   if (!prim::ReconstructXformOpsFromProperties(table, properties, &xform->xformOps, err)) {
@@ -1935,14 +1939,17 @@ bool ReconstructPrim(
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
+#if 0 // TODO
   //
   // Resolve append references
   // (Overwrite variables with the referenced one).
   //
-  for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
+  if (std::get<0>(references) == ListEditQual::Append) {
+    for (const auto &ref : std::get<1>(references)) {
+      (void)ref;
     }
   }
+#endif
 
   return true;
 }
@@ -2951,6 +2958,7 @@ bool ReconstructPrim<GeomMesh>(
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
+#if 0
   //
   // Resolve append references
   // (Overwrite variables with the referenced one).
@@ -2960,6 +2968,7 @@ bool ReconstructPrim<GeomMesh>(
       // TODO
     }
   }
+#endif
 
   return true;
 }

@@ -4,6 +4,7 @@
 //
 #include "pprinter.hh"
 #include "prim-types.hh"
+#include "prim-pprint.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
@@ -35,6 +36,26 @@ std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v) {
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
   ofs << tinyusdz::pquote(v);
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
+
+  ofs << v.asset_path;
+  if (v.prim_path.IsValid()) {
+    ofs << v.prim_path;
+  }
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
+
+  ofs << v.asset_path;
+  if (v._prim_path.IsValid()) {
+    ofs << v._prim_path;
+  }
 
   return ofs;
 }
@@ -91,14 +112,6 @@ void SetIndentString(const std::string &s) {
 } // namespace pprint
 
 namespace {
-
-
-#if 0
-// TODO: Triple @
-std::string aquote(const value::AssetPath &p) {
-  return wquote(p.GetAssetPath(), "@", "@");
-}
-#endif
 
 
 std::string to_string(const double &v) {
@@ -232,6 +245,53 @@ std::string print_variantsMap(const VariantsMap &m, const uint32_t indent) {
   return ss.str();
 }
 
+std::string print_references(const prim::ReferenceList &references, const uint32_t indent) {
+  std::stringstream ss;
+
+  auto listEditQual = std::get<0>(references);
+  auto vars = std::get<1>(references);
+
+  ss << pprint::Indent(indent);
+
+  if (listEditQual != ListEditQual::ResetToExplicit) {
+    ss << to_string(listEditQual) << " ";
+  }
+
+  ss << "references = ";
+
+  if (vars.empty()) {
+    ss << "None";
+  } else {
+    ss << vars;
+  }
+  ss << "\n";
+
+  return ss.str();
+}
+
+std::string print_payload(const prim::PayloadList &payload, const uint32_t indent) {
+  std::stringstream ss;
+
+  auto listEditQual = std::get<0>(payload);
+  auto vars = std::get<1>(payload);
+
+  ss << pprint::Indent(indent);
+
+  if (listEditQual != ListEditQual::ResetToExplicit) {
+    ss << to_string(listEditQual) << " ";
+  }
+
+  ss << "payload = ";
+  if (vars.empty()) {
+    ss << "None";
+  } else {
+    ss << vars;
+  }
+  ss << "\n";
+
+  return ss.str();
+}
+
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   std::stringstream ss;
@@ -246,6 +306,40 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   if (meta.assetInfo) {
     ss << print_customData(meta.assetInfo.value(), "assetInfo", indent);
+  }
+
+  if (meta.inherits) {
+    ss << pprint::Indent(indent);
+    auto listEditQual = std::get<0>(meta.inherits.value());
+    auto var = std::get<1>(meta.inherits.value());
+
+    if (listEditQual != ListEditQual::ResetToExplicit) {
+      ss << to_string(listEditQual) << " ";
+    }
+
+    ss << "inherits = " << var;
+    ss << "\n";
+  }
+
+  if (meta.specializes) {
+    ss << pprint::Indent(indent);
+    auto listEditQual = std::get<0>(meta.specializes.value());
+    auto var = std::get<1>(meta.specializes.value());
+
+    if (listEditQual != ListEditQual::ResetToExplicit) {
+      ss << to_string(listEditQual) << " ";
+    }
+
+    ss << "specializes = " << var;
+    ss << "\n";
+  }
+
+  if (meta.references) {
+    ss << print_references(meta.references.value(), indent);
+  }
+
+  if (meta.payload) {
+    ss << print_payload(meta.payload.value(), indent);
   }
 
   if (meta.variants) {
@@ -271,7 +365,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
       ss << "[InternalError]";
     }
 
-    ss << "\n";   
+    ss << "\n";
   }
 
   if (meta.apiSchemas) {
