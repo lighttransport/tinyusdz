@@ -300,6 +300,10 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << pprint::Indent(indent) << "active = " << to_string(meta.active.value()) << "\n";
   }
 
+  if (meta.hidden) {
+    ss << pprint::Indent(indent) << "hidden = " << to_string(meta.hidden.value()) << "\n";
+  }
+
   if (meta.kind) {
     ss << pprint::Indent(indent) << "kind = " << quote(to_string(meta.kind.value())) << "\n";
   }

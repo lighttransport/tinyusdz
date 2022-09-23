@@ -42,9 +42,10 @@
 
 namespace tinyusdz {
 
-// SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value is stored in Crate directly)
+// SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value
+// is stored in Crate directly)
 enum class SpecType {
-  Unknown = 0, // must be 0
+  Unknown = 0,  // must be 0
   Attribute,
   Connection,
   Expression,
@@ -56,7 +57,7 @@ enum class SpecType {
   RelationshipTarget,
   Variant,
   VariantSet,
-  Invalid, // or NumSpecTypes
+  Invalid,  // or NumSpecTypes
 };
 
 enum class Orientation {
@@ -73,15 +74,24 @@ enum class Visibility {
 
 enum class Purpose {
   Default,  // 0
-  Render, // "render"
-  Proxy, // "proxy"
-  Guide, // "guide"
+  Render,   // "render"
+  Proxy,    // "proxy"
+  Guide,    // "guide"
 };
 
 //
-// USDZ extension: sceneLibrary https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
+// USDZ extension: sceneLibrary
+// https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
 //
-enum class Kind { Model, Group, Assembly, Component, Subcomponent, SceneLibrary, Invalid };
+enum class Kind {
+  Model,
+  Group,
+  Assembly,
+  Component,
+  Subcomponent,
+  SceneLibrary,
+  Invalid
+};
 
 // Attribute interpolation
 enum class Interpolation {
@@ -131,7 +141,7 @@ enum class Variability {
 struct StringData {
   std::string value;
   bool is_triple_quoted{false};
-  bool single_quote{false}; // true for ', false for "
+  bool single_quote{false};  // true for ', false for "
 
   // optional(for USDA)
   int line_row{0};
@@ -354,7 +364,6 @@ class TokenizedPath {
 
 bool operator==(const Path &lhs, const Path &rhs);
 
-
 // variants in Prim Meta.
 //
 // e.g.
@@ -362,7 +371,8 @@ bool operator==(const Path &lhs, const Path &rhs);
 //   string variant0 = "bora"
 //   string variant1 = "dora"
 // }
-// pxrUSD uses dict type for the content, but TinyUSDZ only accepts list of strings for now
+// pxrUSD uses dict type for the content, but TinyUSDZ only accepts list of
+// strings for now
 //
 using VariantsMap = std::map<std::string, std::string>;
 
@@ -377,7 +387,6 @@ class MetaVariable {
   std::string type;  // Explicit (declared) name of type
   std::string name;
   bool custom{false};
-
 
   MetaVariable &operator=(const MetaVariable &rhs) {
     type = rhs.type;
@@ -411,34 +420,25 @@ class MetaVariable {
 
   MetaVariable() = default;
 
-  template<typename T>
-  void Set(const T& v) {
+  template <typename T>
+  void Set(const T &v) {
     value = v;
   }
 
-  template<typename T>
+  template <typename T>
   nonstd::optional<T> Get() const {
     return value.get_value<T>();
   }
 
-  const value::Value &get_raw() const {
-    return value;
-  }
+  const value::Value &get_raw() const { return value; }
 
-  const std::string TypeName() const {
-    return type_name(*this);
-  }
+  const std::string TypeName() const { return type_name(*this); }
 
-  uint32_t TypeId() const {
-    return type_id(*this);
-  }
+  uint32_t TypeId() const { return type_id(*this); }
 
-  bool IsBlocked() const {
-    return (TypeId() == value::TYPE_ID_VALUEBLOCK);
-  }
+  bool IsBlocked() const { return (TypeId() == value::TYPE_ID_VALUEBLOCK); }
 
  private:
-
   static std::string type_name(const MetaVariable &v) {
     if (!v.type.empty()) {
       return v.type;
@@ -481,7 +481,6 @@ class MetaVariable {
   }
 
   value::Value value{nullptr};
-
 };
 
 // TimeSample interpolation type.
@@ -507,9 +506,8 @@ class MetaVariable {
 //   - time 9.99 = nearly 1.0
 //   - time 10 = 1.0
 //
-enum class TimeSampleInterpolationType
-{
-  Held, // something like nearest-neighbor.
+enum class TimeSampleInterpolationType {
+  Held,  // something like nearest-neighbor.
   Linear,
 };
 
@@ -524,29 +522,28 @@ enum class TimeSampleInterpolationType
 // quath, quatf, quatd
 // (use slerp for quaternion type)
 
-
-struct APISchemas
-{
+struct APISchemas {
   // TinyUSDZ does not allow user-supplied API schema for now
   enum class APIName {
-    MaterialBindingAPI, // "MaterialBindingAPI"
-    SkelBindingAPI, // "SkelBindingAPI"
+    MaterialBindingAPI,  // "MaterialBindingAPI"
+    SkelBindingAPI,      // "SkelBindingAPI"
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,
-    //Preliminary_Trigger,
-    //Preliminary_PhysicsGravitationalForce,
+    // Preliminary_Trigger,
+    // Preliminary_PhysicsGravitationalForce,
     Preliminary_PhysicsMaterialAPI,
     Preliminary_PhysicsRigidBodyAPI,
-    //Preliminary_InfiniteColliderPlane,
-    //Preliminary_ReferenceImage,
-    //Preliminary_Action,
-    //Preliminary_Text,
+    // Preliminary_InfiniteColliderPlane,
+    // Preliminary_ReferenceImage,
+    // Preliminary_Action,
+    // Preliminary_Text,
   };
 
-  ListEditQual listOpQual{ListEditQual::ResetToExplicit}; // must be 'prepend'
+  ListEditQual listOpQual{ListEditQual::ResetToExplicit};  // must be 'prepend'
 
-  // std::get<1>: instance name. For Multi-apply API Schema e.g. `material:MainMaterial` for `CollectionAPI:material:MainMaterial`
+  // std::get<1>: instance name. For Multi-apply API Schema e.g.
+  // `material:MainMaterial` for `CollectionAPI:material:MainMaterial`
   std::vector<std::pair<APIName, std::string>> names;
 };
 
@@ -565,19 +562,20 @@ struct Reference {
   value::AssetPath asset_path;
   Path prim_path;
   LayerOffset layerOffset;
-  //value::dict custom_data;
+  // value::dict custom_data;
   CustomDataType customData;
 };
 
 // Metadata for Prim
 struct PrimMeta {
-  nonstd::optional<bool> active; // 'active'
+  nonstd::optional<bool> active;                // 'active'
+  nonstd::optional<bool> hidden;                // 'hidden'
   nonstd::optional<Kind> kind;                  // 'kind'
-  nonstd::optional<CustomDataType> assetInfo; // 'assetInfo'
+  nonstd::optional<CustomDataType> assetInfo;   // 'assetInfo'
   nonstd::optional<CustomDataType> customData;  // `customData`
-  nonstd::optional<StringData> doc; // 'documentation'
-  nonstd::optional<StringData> comment; // 'comment'
-  nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
+  nonstd::optional<StringData> doc;             // 'documentation'
+  nonstd::optional<StringData> comment;         // 'comment'
+  nonstd::optional<APISchemas> apiSchemas;      // 'apiSchemas'
 
   //
   // Compositions
@@ -585,17 +583,17 @@ struct PrimMeta {
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
   nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload;
   // Currently TinyUSDZ allow single Path
-  nonstd::optional<std::pair<ListEditQual, Path>> inherits; // 'inherits'
-  nonstd::optional<std::pair<ListEditQual, MetaVariable>> variantSets; // 'variantSets'. type `token` or `token[]`
+  nonstd::optional<std::pair<ListEditQual, Path>> inherits;  // 'inherits'
+  nonstd::optional<std::pair<ListEditQual, MetaVariable>>
+      variantSets;  // 'variantSets'. type `token` or `token[]`
 
-  nonstd::optional<VariantsMap> variants; // `variants`
+  nonstd::optional<VariantsMap> variants;  // `variants`
 
   // Currently TinyUSDZ allow single Path
-  nonstd::optional<std::pair<ListEditQual, Path>> specializes; // 'specializes'
-
+  nonstd::optional<std::pair<ListEditQual, Path>> specializes;  // 'specializes'
 
   // USDZ extensions
-  nonstd::optional<std::string> sceneName; // 'sceneName'
+  nonstd::optional<std::string> sceneName;  // 'sceneName'
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
@@ -603,7 +601,13 @@ struct PrimMeta {
   // TODO: Represent as `MetaVariable`?
   std::vector<StringData> stringData;
 
-  bool authored() const { return (active || kind || customData || variants || variantSets || sceneName || doc || comment || meta.size() || apiSchemas || stringData.size() || assetInfo); }
+  // FIXME: Find a better way to detect Prim meta is authored...
+  bool authored() const {
+    return (active || hidden || kind || customData || references || payload ||
+            inherits || variants || variantSets || specializes || sceneName ||
+            doc || comment || meta.size() || apiSchemas || stringData.size() ||
+            assetInfo);
+  }
 };
 
 // Metadata for Attribute
@@ -612,7 +616,7 @@ struct AttrMeta {
   // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
-  nonstd::optional<StringData> comment;    // `comment`
+  nonstd::optional<StringData> comment;           // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
@@ -622,7 +626,8 @@ struct AttrMeta {
   std::vector<StringData> stringData;
 
   bool authored() const {
-    return (interpolation || elementSize || customData || meta.size() || stringData.size());
+    return (interpolation || elementSize || customData || meta.size() ||
+            stringData.size());
   }
 };
 
@@ -632,7 +637,8 @@ inline T lerp(const T &a, const T &b, const double t) {
 }
 
 template <typename T>
-inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b, const double t) {
+inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b,
+                           const double t) {
   std::vector<T> dst;
 
   // Choose shorter one
@@ -655,7 +661,8 @@ inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b, con
 
 // specializations of lerp
 template <>
-inline value::AssetPath lerp(const value::AssetPath &a, const value::AssetPath &b, const double t) {
+inline value::AssetPath lerp(const value::AssetPath &a,
+                             const value::AssetPath &b, const double t) {
   (void)b;
   (void)t;
   // no interpolation
@@ -663,7 +670,9 @@ inline value::AssetPath lerp(const value::AssetPath &a, const value::AssetPath &
 }
 
 template <>
-inline std::vector<value::AssetPath> lerp(const std::vector<value::AssetPath> &a, const std::vector<value::AssetPath> &b, const double t) {
+inline std::vector<value::AssetPath> lerp(
+    const std::vector<value::AssetPath> &a,
+    const std::vector<value::AssetPath> &b, const double t) {
   (void)b;
   (void)t;
   // no interpolation
@@ -683,23 +692,18 @@ inline std::vector<value::AssetPath> lerp(const std::vector<value::AssetPath> &a
 
 template <typename T>
 struct TypedTimeSamples {
-
  public:
-
   struct Sample {
     double t;
     T value;
     bool blocked{false};
   };
 
-  bool empty() const {
-    return _samples.empty();
-  }
+  bool empty() const { return _samples.empty(); }
 
   void Update() {
-    std::sort(_samples.begin(), _samples.end(), [](const Sample &a, const Sample &b) {
-      return a.t < b.t;
-    });
+    std::sort(_samples.begin(), _samples.end(),
+              [](const Sample &a, const Sample &b) { return a.t < b.t; });
 
     _dirty = false;
 
@@ -707,9 +711,11 @@ struct TypedTimeSamples {
   }
 
   // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is Linear.
-  // Returns nullopt when specified time is out-of-range.
-  nonstd::optional<T> TryGet(double t = value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Held) {
+  // Return linearly interpolated value when TimeSampleInterpolationType is
+  // Linear. Returns nullopt when specified time is out-of-range.
+  nonstd::optional<T> TryGet(
+      double t = value::TimeCode::Default(),
+      TimeSampleInterpolationType interp = TimeSampleInterpolationType::Held) {
     if (empty()) {
       return nonstd::nullopt;
     }
@@ -723,19 +729,19 @@ struct TypedTimeSamples {
       // TODO: Handle bloked
       return _samples[0].value;
     } else {
-
-      auto it = std::lower_bound(_samples.begin(), _samples.end(), t, [](const Sample &a, double tval) {
-        return a.t < tval;
-      });
+      auto it = std::lower_bound(
+          _samples.begin(), _samples.end(), t,
+          [](const Sample &a, double tval) { return a.t < tval; });
 
       // TODO: Support other interpolation method for example cubic?
       if (interp == TimeSampleInterpolationType::Linear) {
-
         size_t idx0 = size_t(std::max(
-            int64_t(0), std::min(int64_t(_samples.size() - 1),
-                                 int64_t(std::distance(_samples.begin(), it - 1)))));
-        size_t idx1 = size_t(std::max(
-            int64_t(0), std::min(int64_t(_samples.size() - 1), int64_t(idx0) + 1)));
+            int64_t(0),
+            std::min(int64_t(_samples.size() - 1),
+                     int64_t(std::distance(_samples.begin(), it - 1)))));
+        size_t idx1 =
+            size_t(std::max(int64_t(0), std::min(int64_t(_samples.size() - 1),
+                                                 int64_t(idx0) + 1)));
 
         double tl = _samples[idx0].t;
         double tu = _samples[idx1].t;
@@ -790,17 +796,13 @@ struct TypedTimeSamples {
     _dirty = true;
   }
 
-  const std::vector<Sample> &GetSamples() const {
-    return _samples;
-  }
+  const std::vector<Sample> &GetSamples() const { return _samples; }
 
  private:
   // Need to be sorted when look up the value.
   std::vector<Sample> _samples;
   bool _dirty{false};
-
 };
-
 
 template <typename T>
 struct Animatable {
@@ -811,18 +813,12 @@ struct Animatable {
   // timesamples
   TypedTimeSamples<T> ts;
 
-  bool IsTimeSamples() const {
-    return !ts.empty();
-  }
+  bool IsTimeSamples() const { return !ts.empty(); }
 
-  bool IsScalar() const {
-    return ts.empty();
-  }
+  bool IsScalar() const { return ts.empty(); }
 
   // Scalar
-  bool IsBlocked() const {
-    return blocked;
-  }
+  bool IsBlocked() const { return blocked; }
 
 #if 0  // TODO
   T Get() const { return value; }
@@ -842,7 +838,8 @@ struct Animatable {
 
 ///
 /// Tyeped Attribute without fallback(default) value.
-/// For attribute with `uniform` qualifier or TimeSamples, or have `.connect`(Connection)
+/// For attribute with `uniform` qualifier or TimeSamples, or have
+/// `.connect`(Connection)
 ///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
@@ -852,7 +849,6 @@ struct Animatable {
 template <typename T>
 class TypedAttribute {
  public:
-
   void SetValue(const T &v) { _attrib = v; }
 
   const nonstd::optional<T> GetValue() const {
@@ -863,31 +859,21 @@ class TypedAttribute {
   }
 
   // TODO: Animation data.
-  bool IsBlocked() const {
-    return _blocked;
-  }
+  bool IsBlocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void SetBlock(bool onoff) {
-    _blocked = onoff;
-  }
+  void SetBlock(bool onoff) { _blocked = onoff; }
 
-  bool IsConnection() const {
-    return _paths.size();
-  }
+  bool IsConnection() const { return _paths.size(); }
 
   void SetConnection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
   }
 
-  void SetConnections(const std::vector<Path> &paths) {
-    _paths = paths;
-  }
+  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &GetConnections() const {
-    return _paths;
-  }
+  const std::vector<Path> &GetConnections() const { return _paths; }
 
   const nonstd::optional<Path> GetConnection() const {
     if (_paths.size()) {
@@ -897,13 +883,9 @@ class TypedAttribute {
     return nonstd::nullopt;
   }
 
-  void SetValueEmpty() {
-    _empty = true;
-  }
+  void SetValueEmpty() { _empty = true; }
 
-  bool IsValueEmpty() const {
-    return _empty;
-  }
+  bool IsValueEmpty() const { return _empty; }
 
   // value set?
   bool authored() const {
@@ -926,11 +908,12 @@ class TypedAttribute {
   bool _empty{false};
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
-  bool _blocked{false}; // for `uniform` attribute.
+  bool _blocked{false};  // for `uniform` attribute.
 };
 
 ///
-/// Tyeped Terminal(Output) Attribute(No value assign, no fallback(default) value, no connection)
+/// Tyeped Terminal(Output) Attribute(No value assign, no fallback(default)
+/// value, no connection)
 ///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
@@ -940,28 +923,18 @@ class TypedAttribute {
 template <typename T>
 class TypedTerminalAttribute {
  public:
-
-  void SetAuthor(bool onoff) {
-    _authored = onoff;
-  }
+  void SetAuthor(bool onoff) { _authored = onoff; }
 
   // value set?
-  bool authored() const {
-    return _authored;
-  }
+  bool authored() const { return _authored; }
 
-  std::string type_name() const {
-    return value::TypeTrait<T>::type_name();
-  }
+  std::string type_name() const { return value::TypeTrait<T>::type_name(); }
 
-  uint32_t type_id() const {
-    return value::TypeTrait<T>::type_id;
-  }
+  uint32_t type_id() const { return value::TypeTrait<T>::type_id; }
 
   AttrMeta meta;
 
  private:
-
   bool _authored{false};
 };
 
@@ -970,7 +943,8 @@ class TypedAttributeWithFallback;
 
 ///
 /// Attribute with fallback(default) value.
-/// For attribute with `uniform` qualifier or TimeSamples, but don't have `.connect`(Connection)
+/// For attribute with `uniform` qualifier or TimeSamples, but don't have
+/// `.connect`(Connection)
 ///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
@@ -1023,13 +997,9 @@ class TypedAttributeWithFallback {
 
   void SetValue(const T &v) { _attrib = v; }
 
-  void SetValueEmpty() {
-    _empty = true;
-  }
+  void SetValueEmpty() { _empty = true; }
 
-  bool IsValueEmpty() const {
-    return _empty;
-  }
+  bool IsValueEmpty() const { return _empty; }
 
   // TODO: Animation data.
   const T &GetValue() const {
@@ -1040,31 +1010,21 @@ class TypedAttributeWithFallback {
   }
 
   // TODO: Animation data.
-  bool IsBlocked() const {
-    return _blocked;
-  }
+  bool IsBlocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void SetBlock(bool onoff) {
-    _blocked = onoff;
-  }
+  void SetBlock(bool onoff) { _blocked = onoff; }
 
-  bool IsConnection() const {
-    return _paths.size();
-  }
+  bool IsConnection() const { return _paths.size(); }
 
   void SetConnection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
   }
 
-  void SetConnections(const std::vector<Path> &paths) {
-    _paths = paths;
-  }
+  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &GetConnections() const {
-    return _paths;
-  }
+  const std::vector<Path> &GetConnections() const { return _paths; }
 
   const nonstd::optional<Path> GetConnection() const {
     if (_paths.size()) {
@@ -1076,8 +1036,7 @@ class TypedAttributeWithFallback {
 
   // value set?
   bool authored() const {
-
-    if (_empty) { // authored with empty value.
+    if (_empty) {  // authored with empty value.
       return true;
     }
     if (_attrib) {
@@ -1099,11 +1058,12 @@ class TypedAttributeWithFallback {
   nonstd::optional<T> _attrib;
   bool _empty{false};
   T _fallback;
-  bool _blocked{false}; // for `uniform` attribute.
+  bool _blocked{false};  // for `uniform` attribute.
 };
 
-template<typename T>
-using TypedAnimatableAttributeWithFallback = TypedAttributeWithFallback<Animatable<T>>;
+template <typename T>
+using TypedAnimatableAttributeWithFallback =
+    TypedAttributeWithFallback<Animatable<T>>;
 
 class PrimNode;
 
@@ -1224,7 +1184,6 @@ struct ListOpHeader {
 
   uint8_t bits;
 };
-
 
 //
 // Colum-major order(e.g. employed in OpenGL).
@@ -1356,13 +1315,9 @@ class Relation {
     return r;
   }
 
-  void SetListEditQualifier(ListEditQual q) {
-    listOpQual = q;
-  }
+  void SetListEditQualifier(ListEditQual q) { listOpQual = q; }
 
-  ListEditQual GetListEditQualifier() const {
-    return listOpQual;
-  }
+  ListEditQual GetListEditQualifier() const { return listOpQual; }
 
   void SetEmpty() { type = Type::Empty; }
 
@@ -1408,14 +1363,11 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
 struct PrimAttrib {
   std::string name;  // attrib name
 
-  void set_type_name(const std::string &tname) {
-    _type_name = tname;
-  }
+  void set_type_name(const std::string &tname) { _type_name = tname; }
 
   // `var` may be empty, so store type info with set_type_name and set_type_id.
   std::string type_name() const {
@@ -1427,12 +1379,13 @@ struct PrimAttrib {
     return _var.type_name();
   }
 
-  Variability variability{Variability::Varying}; // 'uniform` qualifier is handled with `variability=uniform`
+  Variability variability{
+      Variability::Varying};  // 'uniform` qualifier is handled with
+                              // `variability=uniform`
 
   // Interpolation interpolation{Interpolation::Invalid};
 
   AttrMeta meta;
-
 
   void set_var(primvar::PrimVar &&v) {
     if (_type_name.empty()) {
@@ -1442,25 +1395,19 @@ struct PrimAttrib {
     _var = std::move(v);
   }
 
-  template<typename T>
+  template <typename T>
   nonstd::optional<T> get_value() const {
     return _var.get_value<T>();
   }
 
-  const primvar::PrimVar &get_var() const {
-    return _var;
-  }
+  const primvar::PrimVar &get_var() const { return _var; }
 
-  void set_blocked(bool onoff) {
-    _blocked = onoff;
-  }
+  void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool blocked() const {
-    return _blocked;
-  }
+  bool blocked() const { return _blocked; }
 
  private:
-  bool _blocked{false}; // Attribute Block('None')
+  bool _blocked{false};  // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
 };
@@ -1523,8 +1470,9 @@ class TypedProperty {
 };
 #endif
 
-// Generic container for Attribute or Relation/Connection. And has this property is custom or not
-// (Need to lookup schema if the property is custom or not for Crate data)
+// Generic container for Attribute or Relation/Connection. And has this property
+// is custom or not (Need to lookup schema if the property is custom or not for
+// Crate data)
 class Property {
  public:
   enum class Type {
@@ -1534,7 +1482,6 @@ class Property {
     NoTargetsRelation,  // `rel` with no targets.
     Connection,         // `.connect` suffix
   };
-
 
   Property() = default;
 
@@ -1553,8 +1500,7 @@ class Property {
   }
 
   // Relation: typeless
-  Property(const Relation &r, bool custom)
-      : _rel(r), _has_custom(custom) {
+  Property(const Relation &r, bool custom) : _rel(r), _has_custom(custom) {
     _type = Type::Relation;
   }
 
@@ -1563,18 +1509,21 @@ class Property {
     _type = Type::Relation;
   }
 
-
   // Attribute Connection: has type
-  Property(const Relation &r, const std::string &prop_value_type_name, bool custom)
-      : _rel(r), _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
+  Property(const Relation &r, const std::string &prop_value_type_name,
+           bool custom)
+      : _rel(r),
+        _prop_value_type_name(prop_value_type_name),
+        _has_custom(custom) {
     _type = Type::Connection;
   }
 
   Property(Relation &&r, const std::string &prop_value_type_name, bool custom)
-      : _rel(std::move(r)), _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
+      : _rel(std::move(r)),
+        _prop_value_type_name(prop_value_type_name),
+        _has_custom(custom) {
     _type = Type::Connection;
   }
-
 
   bool IsAttrib() const {
     return (_type == Type::EmptyAttrib) || (_type == Type::Attrib);
@@ -1612,42 +1561,26 @@ class Property {
 
   bool HasCustom() const { return _has_custom; }
 
-  void SetPropetryType(Type ty) {
-    _type = ty;
-  }
+  void SetPropetryType(Type ty) { _type = ty; }
 
-  Type GetPropertyType() const {
-    return _type;
-  }
+  Type GetPropertyType() const { return _type; }
 
-  void SetListEditQual(ListEditQual qual) {
-    _listOpQual = qual;
-  }
+  void SetListEditQual(ListEditQual qual) { _listOpQual = qual; }
 
-  const PrimAttrib &GetAttrib() const {
-    return _attrib;
-  }
+  const PrimAttrib &GetAttrib() const { return _attrib; }
 
-  PrimAttrib &GetAttrib() {
-    return _attrib;
-  }
+  PrimAttrib &GetAttrib() { return _attrib; }
 
   void SetAttrib(const PrimAttrib &attrib) {
     _attrib = attrib;
     _type = Type::Attrib;
   }
 
-  const Relation &GetRelation() const {
-    return _rel;
-  }
+  const Relation &GetRelation() const { return _rel; }
 
-  Relation &GetRelation() {
-    return _rel;
-  }
+  Relation &GetRelation() { return _rel; }
 
-  ListEditQual GetListEditQual() const {
-    return _listOpQual;
-  }
+  ListEditQual GetListEditQual() const { return _listOpQual; }
 
  private:
   PrimAttrib _attrib;
@@ -1658,13 +1591,13 @@ class Property {
 
   Type _type{Type::EmptyAttrib};
   Relation _rel;  // Relation(`rel`) or Connection(`.connect`)
-  std::string _prop_value_type_name; // for Connection.
-  bool _has_custom{false};  // Qualified with 'custom' keyword?
+  std::string _prop_value_type_name;  // for Connection.
+  bool _has_custom{false};            // Qualified with 'custom' keyword?
 };
 
 // Orient: axis/angle expressed as a quaternion.
 // NOTE: no `quath`, `matrix4f`
-//using XformOpValueType =
+// using XformOpValueType =
 //    tinyusdz::variant<float, value::float3, value::quatf, double,
 //                      value::double3, value::quatd, value::matrix4d>;
 
@@ -1704,7 +1637,7 @@ struct XformOp {
       suffix;  // may contain nested namespaces. e.g. suffix will be
                // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
                // will be empty for "xformOp:translate"
-  //XformOpValueType value_type;
+  // XformOpValueType value_type;
   std::string type_name;
 
   value::TimeSamples var;
@@ -1741,7 +1674,6 @@ struct XformOp {
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_scalar_value() const {
-
     if (IsTimeSamples()) {
       return nonstd::nullopt;
     }
@@ -1767,18 +1699,14 @@ struct XformOp {
     return var.values[0].get_value<T>();
 #endif
   }
-
 };
 
 // Interpolator for TimeSample data
-enum class TimeSampleInterpolation
-{
+enum class TimeSampleInterpolation {
   Nearest,  // nearest neighbor
-  Linear, // lerp
+  Linear,   // lerp
   // TODO: more to support...
 };
-
-
 
 #if 0
 
@@ -1831,12 +1759,11 @@ struct TimeSamples {
 };
 #endif
 
-
 // Generic primspec container.
 struct Model {
   std::string name;
 
-  Specifier  spec{Specifier::Def};
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to parent node
 
@@ -1848,7 +1775,7 @@ struct Model {
   std::map<std::string, Property> props;
 };
 
-#if 0 // TODO: Remove
+#if 0  // TODO: Remove
 // Generic "class" Node
 // Mostly identical to GPrim
 struct Klass {
@@ -2015,7 +1942,6 @@ struct Scope {
 // For usdGeom, usdLux
 //
 struct Xformable {
-
   ///
   /// Evaluate XformOps
   ///
@@ -2099,8 +2025,8 @@ DEFINE_TYPE_TRAIT(Relation, "Relationship", TYPE_ID_RELATIONSHIP, 1);
 // TODO(syoyo): Define PathVector as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
 
-DEFINE_TYPE_TRAIT(std::vector<value::token>, "token[]",
-                  TYPE_ID_TOKEN_VECTOR, 1);
+DEFINE_TYPE_TRAIT(std::vector<value::token>, "token[]", TYPE_ID_TOKEN_VECTOR,
+                  1);
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
@@ -2109,9 +2035,10 @@ DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 
 DEFINE_TYPE_TRAIT(StringData, "string", TYPE_ID_STRING_DATA, 1);
 
-DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA, 1); // TODO: Unify with `dict`?
+DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA,
+                  1);  // TODO: Unify with `dict`?
 
-DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2); // float3[2]
+DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2);  // float3[2]
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
@@ -2124,8 +2051,7 @@ using PropertyMap = std::map<std::string, Property>;
 using ReferenceList = std::pair<ListEditQual, std::vector<Reference>>;
 using PayloadList = std::pair<ListEditQual, std::vector<Payload>>;
 
-} // namespace prim
-
+}  // namespace prim
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
 // and Quaternion?
