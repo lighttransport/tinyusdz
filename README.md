@@ -83,7 +83,7 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
 ## Requirements
 
 * C++14 compiler
-  * [x] gcc 5 or later
+  * [x] gcc 4.9 or later
   * [x] Visual Studio 2019 or later(2017 may compiles)
     * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
   * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
@@ -91,8 +91,8 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
 
 ## USDZ file format
 
-USDZ is actually the uncompressed zip file.
-USDZ(ZIP) contains usdc(binary) and resources(e.g. image/auduo files)
+USDZ is actually an uncompressed zip file.
+USDZ(ZIP) contains usd(binary or ascii) and resources(e.g. image/auduo files)
 
 ## Security and memory budget
 
