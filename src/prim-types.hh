@@ -558,6 +558,9 @@ struct PrimMeta {
 
   nonstd::optional<VariantsMap> variants; // `variants`
 
+  // Currently TinyUSDZ allow single Path
+  nonstd::optional<std::pair<ListEditQual, Path>> inherits; // 'inherits'
+
   // USDZ extensions
   nonstd::optional<std::string> sceneName; // 'sceneName'
 

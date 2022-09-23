@@ -93,7 +93,7 @@ class AsciiParser {
     ///
     /// Predefined Stage metas
     ///
-    std::vector<value::token> subLayers; // 'subLayers'
+    std::vector<value::AssetPath> subLayers; // 'subLayers'
     value::token defaultPrim; // 'defaultPrim'
     StringData doc; // 'doc'
     nonstd::optional<Axis> upAxis;  // not specified = nullopt
@@ -537,6 +537,9 @@ class AsciiParser {
   // Parse `def`, `over` or `class` block
   bool ParseBlock(const Specifier spec, const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
 
+  // Parse `varianntSet` stmt
+  bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+
   // --------------------------------------------
 
  private:
@@ -572,7 +575,7 @@ class AsciiParser {
   nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesOfArray();
 
   nonstd::optional<std::pair<ListEditQual, MetaVariable>> ParsePrimMeta();
-  bool ParsePrimAttr(std::map<std::string, Property> *props);
+  bool ParsePrimProps(std::map<std::string, Property> *props);
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
