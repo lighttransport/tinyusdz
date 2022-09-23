@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cerrno>
 #include <functional>
 #include <stack>
 
@@ -30,6 +31,7 @@
 namespace tinyusdz {
 
 namespace ascii {
+
 
 // keywords
 constexpr auto kUniform = "uniform";
@@ -231,8 +233,7 @@ class AsciiParser {
   ///
   //using PrimMetaProcessFunction = std::function<bool(const PrimMetas &metas)>;
 
-  using PrimMetaInput = std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
-
+  using PrimMetaMap = std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
 
   ///
   /// Prim construction callback function
@@ -246,7 +247,13 @@ class AsciiParser {
       std::function<nonstd::expected<bool, std::string>(
           const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
-          const PrimMetaInput &in_meta)>;
+          const PrimMetaMap &in_meta)>;
+
+  struct VariantContent {
+    PrimMetaMap metas;
+    std::vector<int64_t> primIndices; // primIdx of Reconstrcuted Prim.
+    std::map<std::string, Property> props;
+  };
 
   ///
   /// Register Prim construction callback function.
@@ -474,13 +481,8 @@ class AsciiParser {
   // bool ParseAttributeMeta();
   bool ParseAttrMeta(AttrMeta *out_meta);
 
-#if 0
-  nonstd::optional<PrimMetas> ReconstructPrimMetas(
-      std::map<std::string, std::tuple<ListEditQual, MetaVariable>> &args);
-#endif
-
   bool ParsePrimMetas(
-      std::map<std::string, std::pair<ListEditQual, MetaVariable>> *args);
+      PrimMetaMap *out_metamap);
 
   bool ParseMetaValue(const VariableDef &def, MetaVariable *outvar);
 
@@ -535,7 +537,8 @@ class AsciiParser {
   //bool ParseDefBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
 
   // Parse `def`, `over` or `class` block
-  bool ParseBlock(const Specifier spec, const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  // @param[in] in_variantStmt : true when this Block is parsed within `variantSet` statement. Default true.
+  bool ParseBlock(const Specifier spec, const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth, const bool in_variant = false);
 
   // Parse `varianntSet` stmt
   bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);

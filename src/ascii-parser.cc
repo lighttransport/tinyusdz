@@ -5875,33 +5875,12 @@ AsciiParser::ParsePrimMeta() {
 }
 
 bool AsciiParser::ParsePrimMetas(
-    std::map<std::string, std::pair<ListEditQual, MetaVariable>> *args) {
+    PrimMetaMap *args) {
   // '(' args ')'
   // args = list of argument, separated by newline.
 
-  if (!SkipWhitespaceAndNewline()) {
-    DCOUT("SkipWhitespaceAndNewline failed.");
+  if (!Expect('(')) {
     return false;
-  }
-
-  // The first character.
-  {
-    char c;
-    if (!Char1(&c)) {
-      // this should not happen.
-      return false;
-    }
-
-    DCOUT("c = " << c);
-
-    if (c == '(') {
-      DCOUT("Prim meta start");
-      // ok
-    } else {
-      _sr->seek_from_current(-1);
-      // DCOUT("Unknown c");
-      // return false;
-    }
   }
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -6859,206 +6838,12 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
   return _supported_stage_metas.count(name) ? true : false;
 }
 
-#if 0  // TODO: Remove
-///
-/// Parse `class` block.
-///
-bool AsciiParser::ParseClassBlock(const int64_t primIdx,
-                                  const int64_t parentPrimIdx,
-                                  const uint32_t depth) {
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  {
-    std::string tok;
-    if (!ReadIdentifier(&tok)) {
-      return false;
-    }
-
-    if (tok != "class") {
-      PushError("`class` is expected.");
-      return false;
-    }
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::string target;
-
-  if (!ReadBasicType(&target)) {
-    return false;
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::map<std::string, std::pair<ListEditQual, MetaVariable>> metas;
-  if (!ParsePrimMetas(&metas)) {
-    return false;
-  }
-
-  if (!Expect('{')) {
-    return false;
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  {
-    std::string path = GetCurrentPath();
-    if (path == "/") {
-      path += target;
-    } else {
-      path += "/" + target;
-    }
-    PushPath(path);
-  }
-
-  // TODO: Support nested 'class'?
-
-  // expect = '}'
-  //        | def_block
-  //        | prim_attr+
-  std::map<std::string, Property> props;
-  while (!Eof()) {
-    char c;
-    if (!Char1(&c)) {
-      return false;
-    }
-
-    if (c == '}') {
-      // end block
-      break;
-    } else {
-      if (!Rewind(1)) {
-        return false;
-      }
-
-      Identifier tok;
-      if (!ReadBasicType(&tok)) {
-        return false;
-      }
-
-      if (!Rewind(tok.size())) {
-        return false;
-      }
-
-      if (tok == "def") {
-        // recusive call
-        int64_t idx = _prim_idx_assign_fun(primIdx);
-        DCOUT("Enter parseDef. primIdx = " << idx
-                                           << ", parentPrimIdx = " << primIdx);
-        if (!ParseDefBlock(idx, primIdx, depth + 1)) {
-          return false;
-        }
-      } else {
-        // Assume PrimAttr
-        if (!ParsePrimProps(&props)) {
-          return false;
-        }
-      }
-
-      if (!SkipWhitespaceAndNewline()) {
-        return false;
-      }
-    }
-  }
-
-  Klass klass;
-  for (const auto &prop : props) {
-    // TODO: list-edit qual
-    klass.props[prop.first] = prop.second;
-  }
-
-  // TODO: Check key existance.
-  _klasses[GetCurrentPath()] = klass;
-
-  PopPath();
-
-  return true;
-}
-
-///
-/// Parse `over` block.
-///
-bool AsciiParser::ParseOverBlock(const int64_t primIdx,
-                                 const int64_t parentPrimIdx,
-                                 const uint32_t depth) {
-  std::string tok;
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  if (!ReadIdentifier(&tok)) {
-    return false;
-  }
-
-  if (tok != "over") {
-    PushError("`over` is expected.");
-    return false;
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::string target;
-
-  if (!ReadBasicType(&target)) {
-    return false;
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  std::map<std::string, std::pair<ListEditQual, MetaVariable>> metas;
-  if (!ParsePrimMetas(&metas)) {
-    return false;
-  }
-
-  {
-    std::string path = GetCurrentPath();
-    if (path == "/") {
-      path += target;
-    } else {
-      path += "/" + target;
-    }
-    PushPath(path);
-  }
-
-  if (!Expect('{')) {
-    return false;
-  }
-
-  if (!SkipWhitespaceAndNewline()) {
-    return false;
-  }
-
-  // TODO: Parse block content
-
-  if (!Expect('}')) {
-    return false;
-  }
-
-  PopPath();
-
-  return true;
-}
-#endif
-
 bool AsciiParser::ParseVariantSet(const int64_t primIdx,
                                   const int64_t parentPrimIdx,
                                   const uint32_t depth) {
   // {
-  //   "variantName0" { ... }
-  //   "variantName1" { ... }
+  //   "variantName0" ( metas ) { ... }
+  //   "variantName1" ( metas ) { ... }
   //   ...
   // }
   if (!Expect('{')) {
@@ -7069,6 +6854,9 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
     return false;
   }
 
+  std::map<std::string, VariantContent> variantContentMap;
+
+  // for each variantStatement
   while (!Eof()) {
     {
       char c;
@@ -7095,7 +6883,20 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
       return false;
     }
 
-    // TODO: metadataum?
+    // Optional: PrimSpec meta
+    PrimMetaMap metas;
+    {
+      char mc;
+      if (!LookChar1(&mc)) {
+        return false;
+      }
+
+      if (mc == '(') {
+        if (!ParsePrimMetas(&metas)) {
+          PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse PrimSpec metas in variant statement.");
+        }
+      }
+    }
 
     if (!Expect('{')) {
       return false;
@@ -7104,6 +6905,9 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
     if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
+
+
+    VariantContent variantContent;
 
     while (!Eof()) {
       {
@@ -7148,21 +6952,24 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
       }
 
       if (child_spec != Specifier::Invalid) {
-        // FIXME: Prim index stacking.
+        // FIXME: Assign idx dedicated for variant.
         int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
         DCOUT("enter parseBlock in variantSet. spec = " << to_string(child_spec) << ", idx = "
                                         << idx << ", rootIdx = " << primIdx);
 
         // recusive call
-        if (!ParseBlock(child_spec, idx, primIdx, depth + 1)) {
+        if (!ParseBlock(child_spec, idx, primIdx, depth + 1, /* in_variantStmt */true)) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("`{}` block parse failed.", to_string(child_spec)));
         }
         DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
+
+        DCOUT(fmt::format("Add primIdx {} to variant {}", idx, variantName));
+        variantContent.primIndices.push_back(idx);
+
       } else {
-        std::map<std::string, Property> props;
         DCOUT("Enter ParsePrimProps.");
-        if (!ParsePrimProps(&props)) {
+        if (!ParsePrimProps(&variantContent.props)) {
           PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
         }
         DCOUT(fmt::format("Done parse ParsePrimProps."));
@@ -7177,7 +6984,9 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
       return false;
     }
 
-    DCOUT("variantSet item parsed.");
+    DCOUT(fmt::format("variantSet item {} parsed.", variantName));
+
+    variantContentMap.emplace(variantName, variantContent);
   }
 
   return true;
@@ -7191,12 +7000,11 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
 ///
 /// spec = `def`, `over` or `class`
 ///
-/// TODO: Support `def` without type(i.e. actual definition is defined in
-/// another USD file or referenced USD)
 ///
 bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
                              const int64_t parentPrimIdx,
-                             const uint32_t depth) {
+                             const uint32_t depth,
+                             const bool in_variantStaement) {
   DCOUT("ParseBlock");
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -7328,26 +7136,6 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   if (!SkipWhitespaceAndNewline()) {
     return false;
   }
-
-#if 0
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Reference>> payload;
-  DCOUT("`references.count` = " + std::to_string(in_metas.count("references")));
-
-  // TODO
-  if (in_metas.count("references")) {
-    // TODO
-    // references = GetReferences(args["references"]);
-    // DCOUT("`references.size` = " + std::to_string(references.size()));
-  }
-
-  // TODO
-  if (in_metas.count("payload")) {
-    // TODO
-    // payload = GetReferences(args["payload"]);
-    // DCOUT("`payload.size` = " + std::to_string(payload.size()));
-  }
-#endif
 
   std::map<std::string, Property> props;
 
@@ -7580,7 +7368,7 @@ bool AsciiParser::Parse(LoadState state) {
     int64_t primIdx = _prim_idx_assign_fun(-1);
     DCOUT("Enter parseDef. primIdx = " << primIdx
                                        << ", parentPrimIdx = root(-1)");
-    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1);
+    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */0, /* in_variantStmt */false);
     if (!block_ok) {
       PushError("Failed to parse `def` block.\n");
       return false;
