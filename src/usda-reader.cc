@@ -204,8 +204,6 @@ class VariableDef {
 
 namespace {
 
-using ReferenceList = std::vector<std::pair<ListEditQual, Reference>>;
-
 #if 0
 // Extract array of References from Variable.
 ReferenceList GetReferences(
@@ -461,7 +459,7 @@ class USDAReader::Impl {
   template <typename T>
   bool ReconstructPrim(
       const prim::PropertyMap &properties,
-      const ReferenceList &references,
+      const prim::ReferenceList &references,
       T *out);
 
 #if 0
@@ -484,7 +482,6 @@ class USDAReader::Impl {
         [&](const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const prim::PropertyMap &properties,
-            const ReferenceList &references,
             const ascii::AsciiParser::PrimMetaInput &in_meta)
             -> nonstd::expected<bool, std::string> {
           if (!prim_name.IsValid()) {
@@ -525,6 +522,11 @@ class USDAReader::Impl {
 
           DCOUT("full_path = " << full_path.full_path_name());
           DCOUT("primName = " << prim_name.full_path_name());
+
+          prim::ReferenceList references;
+          if (prim.meta.references) {
+            references = prim.meta.references.value();
+          }
 
           bool ret = ReconstructPrim<T>(properties, references, &prim);
 
@@ -663,12 +665,12 @@ class USDAReader::Impl {
       for (const auto &item : dict) {
         // TODO: duplicated key check?
         if (auto pv = item.second.Get<std::string>()) {
-          m[item.first] = pv.value(); 
+          m[item.first] = pv.value();
         } else if (auto pvs = item.second.Get<StringData>()) {
           // TODO: store triple-quote info
-          m[item.first] = pvs.value().value; 
+          m[item.first] = pvs.value().value;
         } else {
-          return nonstd::make_unexpected(fmt::format("TinyUSDZ only accepts `string` value for `variants` element, but got type `{}`(type_id {}).", item.second.TypeName(), item.second.TypeId())); 
+          return nonstd::make_unexpected(fmt::format("TinyUSDZ only accepts `string` value for `variants` element, but got type `{}`(type_id {}).", item.second.TypeName(), item.second.TypeId()));
         }
       }
 
@@ -800,8 +802,27 @@ class USDAReader::Impl {
               "got type `"
               << var.type << "`");
         }
-  
-  
+
+      } else if (meta.first == "specializes") {
+        if (auto pv = var.Get<std::vector<Path>>()) {
+          if (pv.value().size() == 0) {
+            // empty
+          } else {
+            // Currently no multiple inherits? are supported.
+            if (pv.value().size() > 1) {
+              PUSH_WARN("Multiple paths are not supported for `specializes`. Use the first one.");
+            }
+            out->specializes = std::make_pair(listEditQual, pv.value()[0]);
+          }
+        } else if (auto pvp = var.Get<Path>()) {
+          out->specializes = std::make_pair(listEditQual, pvp.value());
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `specializes` metadataum should be either `path` or `path[]`. "
+              "got type `"
+              << var.type << "`");
+        }
+
       } else if (meta.first == "variantSets") {
         if (auto pv = var.Get<value::token>()) {
           out->variantSets = meta.second;
@@ -813,7 +834,7 @@ class USDAReader::Impl {
               "`token` or `token[]`. got type `"
               << var.type << "`");
         }
-         
+
       } else if (meta.first == "apiSchemas") {
         DCOUT("apiSchemas. type = " << var.type);
         if (var.type == "token[]") {
@@ -845,6 +866,54 @@ class USDAReader::Impl {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
           << var.type << "`");
+        }
+      } else if (meta.first == "references") {
+
+        if (var.IsBlocked()) {
+          // create references with empty array.
+          out->references = std::make_pair(listEditQual, std::vector<Reference>());
+        } else if (auto pv = var.Get<Reference>()) {
+          // To Reference
+          std::vector<Reference> refs;
+          refs.emplace_back(pv.value());
+          out->references = std::make_pair(listEditQual, refs);
+        } else if (auto pva = var.Get<std::vector<Reference>>()) {
+          out->references = std::make_pair(listEditQual, pva.value());
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `references` metadataum is not type "
+              "`path` or `path[]`. got type `"
+              << var.type << "`");
+        }
+      } else if (meta.first == "payload") {
+
+        if (var.IsBlocked()) {
+          // create payload with empty array.
+          out->payload = std::make_pair(listEditQual, std::vector<Payload>());
+        } else if (auto pv = var.Get<Reference>()) {
+          // To Payload
+          std::vector<Payload> refs;
+          Payload ref;
+          ref.asset_path = pv.value().asset_path;
+          ref._prim_path = pv.value().prim_path;
+          // TODO: Other member variables
+          refs.emplace_back(ref);
+          out->payload = std::make_pair(listEditQual, refs);
+        } else if (auto pva = var.Get<std::vector<Reference>>()) {
+          std::vector<Payload> refs;
+          for (const auto &item : pva.value()) {
+            Payload ref;
+            ref.asset_path = item.asset_path;
+            ref._prim_path = item.prim_path;
+            // TODO: Other member variables
+            refs.emplace_back(ref);
+          }
+          out->payload = std::make_pair(listEditQual, refs);
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `references` metadataum is not type "
+              "`path` or `path[]`. got type `"
+              << var.type << "`");
         }
       } else {
         // string-only data?
@@ -1032,7 +1101,7 @@ bool USDAReader::Impl::ReconstructStage() {
 template <>
 bool USDAReader::Impl::ReconstructPrim(
     const prim::PropertyMap &properties,
-    const ReferenceList &references,
+    const prim::ReferenceList &references,
     Xform *xform) {
 
   std::string err;
@@ -1095,7 +1164,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
       [&](const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx,
           const int64_t parentPrimIdx,
           const prim::PropertyMap &properties,
-          const ReferenceList &references,
+          //const prim::ReferenceList &references,
           const ascii::AsciiParser::PrimMetaInput &in_meta)
           -> nonstd::expected<bool, std::string> {
         const Path &parent = full_path.GetParentPrim();
@@ -1334,7 +1403,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
 template <>
 bool USDAReader::Impl::ReconstructPrim(
     const prim::PropertyMap &properties,
-    const ReferenceList &references,
+    const prim::ReferenceList &references,
     GPrim *gprim) {
   (void)gprim;
 
@@ -1349,7 +1418,7 @@ bool USDAReader::Impl::ReconstructPrim(
 template <>
 bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
     const prim::PropertyMap &properties,
-    const ReferenceList &references,
+    const prim::ReferenceList &references,
     NodeGraph *graph) {
   (void)properties;
   (void)references;
@@ -1380,7 +1449,7 @@ bool USDAReader::Impl::ReconstructPrim<Material>(
 template <typename T>
 bool USDAReader::Impl::ReconstructPrim(
     const prim::PropertyMap &properties,
-    const ReferenceList &references,
+    const prim::ReferenceList &references,
     T *prim) {
 
   std::string err;

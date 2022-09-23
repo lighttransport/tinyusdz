@@ -151,6 +151,7 @@ std::string print_customData(const CustomDataType &customData, const std::string
 std::string print_variantsMap(const VariantsMap &map, const uint32_t indent);
 
 
+
 } // namespace tinyusdz
 
 namespace std {

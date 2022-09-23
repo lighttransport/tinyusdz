@@ -45,7 +45,7 @@ namespace tinyusdz {
 // SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value is stored in Crate directly)
 enum class SpecType {
   Unknown = 0, // must be 0
-  Attribute, 
+  Attribute,
   Connection,
   Expression,
   Mapper,
@@ -354,6 +354,7 @@ class TokenizedPath {
 
 bool operator==(const Path &lhs, const Path &rhs);
 
+
 // variants in Prim Meta.
 //
 // e.g.
@@ -361,7 +362,7 @@ bool operator==(const Path &lhs, const Path &rhs);
 //   string variant0 = "bora"
 //   string variant1 = "dora"
 // }
-// pxrUSD uses dict type for the content, but TinyUSDZ only accepts list of strings for now 
+// pxrUSD uses dict type for the content, but TinyUSDZ only accepts list of strings for now
 //
 using VariantsMap = std::map<std::string, std::string>;
 
@@ -373,7 +374,7 @@ using CustomDataType = std::map<std::string, MetaVariable>;
 // TODO: Use unify with PrimVar?
 class MetaVariable {
  public:
-  std::string type;  // Explicit name of type
+  std::string type;  // Explicit (declared) name of type
   std::string name;
   bool custom{false};
 
@@ -430,6 +431,10 @@ class MetaVariable {
 
   uint32_t TypeId() const {
     return type_id(*this);
+  }
+
+  bool IsBlocked() const {
+    return (TypeId() == value::TYPE_ID_VALUEBLOCK);
   }
 
  private:
@@ -545,6 +550,25 @@ struct APISchemas
   std::vector<std::pair<APIName, std::string>> names;
 };
 
+struct LayerOffset {
+  double _offset;
+  double _scale;
+};
+
+struct Payload {
+  value::AssetPath asset_path;
+  Path _prim_path;
+  LayerOffset _layer_offset;
+};
+
+struct Reference {
+  value::AssetPath asset_path;
+  Path prim_path;
+  LayerOffset layerOffset;
+  //value::dict custom_data;
+  CustomDataType customData;
+};
+
 // Metadata for Prim
 struct PrimMeta {
   nonstd::optional<bool> active; // 'active'
@@ -554,12 +578,21 @@ struct PrimMeta {
   nonstd::optional<StringData> doc; // 'documentation'
   nonstd::optional<StringData> comment; // 'comment'
   nonstd::optional<APISchemas> apiSchemas; // 'apiSchemas'
+
+  //
+  // Compositions
+  //
+  nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
+  nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload;
+  // Currently TinyUSDZ allow single Path
+  nonstd::optional<std::pair<ListEditQual, Path>> inherits; // 'inherits'
   nonstd::optional<std::pair<ListEditQual, MetaVariable>> variantSets; // 'variantSets'. type `token` or `token[]`
 
   nonstd::optional<VariantsMap> variants; // `variants`
 
   // Currently TinyUSDZ allow single Path
-  nonstd::optional<std::pair<ListEditQual, Path>> inherits; // 'inherits'
+  nonstd::optional<std::pair<ListEditQual, Path>> specializes; // 'specializes'
+
 
   // USDZ extensions
   nonstd::optional<std::string> sceneName; // 'sceneName'
@@ -863,7 +896,7 @@ class TypedAttribute {
 
     return nonstd::nullopt;
   }
-  
+
   void SetValueEmpty() {
     _empty = true;
   }
@@ -1192,26 +1225,6 @@ struct ListOpHeader {
   uint8_t bits;
 };
 
-
-
-struct LayerOffset {
-  double _offset;
-  double _scale;
-};
-
-struct Payload {
-  std::string _asset_path;
-  Path _prim_path;
-  LayerOffset _layer_offset;
-};
-
-struct Reference {
-  value::AssetPath asset_path;
-  Path prim_path;
-  LayerOffset layerOffset;
-  //value::dict custom_data;
-  CustomDataType customData;
-};
 
 //
 // Colum-major order(e.g. employed in OpenGL).
@@ -1610,7 +1623,7 @@ class Property {
   void SetListEditQual(ListEditQual qual) {
     _listOpQual = qual;
   }
-  
+
   const PrimAttrib &GetAttrib() const {
     return _attrib;
   }
@@ -1635,13 +1648,13 @@ class Property {
   ListEditQual GetListEditQual() const {
     return _listOpQual;
   }
- 
+
  private:
   PrimAttrib _attrib;
 
   // List Edit qualifier(Attribute can never be list editable)
   // TODO:  Store listEdit qualifier to `Relation`
-  ListEditQual _listOpQual{ListEditQual::ResetToExplicit}; 
+  ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 
   Type _type{Type::EmptyAttrib};
   Relation _rel;  // Relation(`rel`) or Connection(`.connect`)
@@ -1829,7 +1842,8 @@ struct Model {
 
   PrimMeta meta;
 
-  std::vector<std::pair<ListEditQual, Reference>> references;
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
 
   std::map<std::string, Property> props;
 };
@@ -2103,6 +2117,15 @@ DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2); // float3[2]
 #undef DEFINE_ROLE_TYPE_TRAIT
 
 }  // namespace value
+
+namespace prim {
+
+using PropertyMap = std::map<std::string, Property>;
+using ReferenceList = std::pair<ListEditQual, std::vector<Reference>>;
+using PayloadList = std::pair<ListEditQual, std::vector<Payload>>;
+
+} // namespace prim
+
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
 // and Quaternion?

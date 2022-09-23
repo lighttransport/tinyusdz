@@ -246,7 +246,7 @@ class AsciiParser {
       std::function<nonstd::expected<bool, std::string>(
           const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
-          std::vector<std::pair<ListEditQual, Reference>> &references, const PrimMetaInput &in_meta)>;
+          const PrimMetaInput &in_meta)>;
 
   ///
   /// Register Prim construction callback function.

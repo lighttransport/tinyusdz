@@ -13,9 +13,6 @@
 namespace tinyusdz {
 namespace prim {
 
-using PropertyMap = std::map<std::string, Property>;
-using ReferenceList = std::vector<std::pair<ListEditQual, Reference>>;
-
 
 ///
 /// Reconstruct property with `xformOp:***` namespace in `properties` to `XformOp` class.
