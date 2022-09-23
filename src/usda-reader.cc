@@ -482,7 +482,7 @@ class USDAReader::Impl {
         [&](const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const prim::PropertyMap &properties,
-            const ascii::AsciiParser::PrimMetaInput &in_meta)
+            const ascii::AsciiParser::PrimMetaMap &in_meta)
             -> nonstd::expected<bool, std::string> {
           if (!prim_name.IsValid()) {
             return nonstd::make_unexpected("Invalid Prim name: " +
@@ -636,7 +636,7 @@ class USDAReader::Impl {
     });
   }
 
-  bool ReconstructPrimMeta(const ascii::AsciiParser::PrimMetaInput &in_meta,
+  bool ReconstructPrimMeta(const ascii::AsciiParser::PrimMetaMap &in_meta,
                            PrimMeta *out) {
 
     auto ApiSchemaHandler = [](const std::string &tok)
@@ -1179,7 +1179,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           const int64_t parentPrimIdx,
           const prim::PropertyMap &properties,
           //const prim::ReferenceList &references,
-          const ascii::AsciiParser::PrimMetaInput &in_meta)
+          const ascii::AsciiParser::PrimMetaMap &in_meta)
           -> nonstd::expected<bool, std::string> {
         const Path &parent = full_path.GetParentPrim();
         if (!parent.IsValid()) {

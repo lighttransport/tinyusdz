@@ -63,6 +63,8 @@ struct GPrim : Xformable {
 
   std::map<std::string, Property> props;
 
+  std::map<std::string, VariantSet> variantSet;
+
   bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
   // Prim metadataum.
