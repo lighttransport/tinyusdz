@@ -146,7 +146,7 @@ static void RegisterStageMetas(
 
   // Composition arc.
   // Type can be array. i.e. asset, asset[]
-  metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers");
+  metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers", /* allow array type */true);
 }
 
 static void RegisterPrimMetas(
@@ -161,9 +161,8 @@ static void RegisterPrimMetas(
   // Type can be array. i.e. path, path[]
   metas["references"] =
       AsciiParser::VariableDef(value::kAssetPath, "references", /* allow array type */true);
-
-  metas["inherits"] = AsciiParser::VariableDef(value::kAssetPath, "inherits");
-  metas["payload"] = AsciiParser::VariableDef(value::kAssetPath, "payload");
+  metas["inherits"] = AsciiParser::VariableDef(value::kPath, "inherits", true);
+  metas["payload"] = AsciiParser::VariableDef(value::kAssetPath, "payload", true);
 
   metas["specializes"] =
       AsciiParser::VariableDef(value::kRelationship, "specializes");
@@ -258,6 +257,9 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.insert(value::kAssetPath);
 
   d.insert(value::kDictionary);
+
+  // variantSet. Require special treatment.
+  d.insert("variantSet");
 
   // TODO: Add more types...
 }
@@ -3832,13 +3834,13 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`defaultPrim` isn't a token value.");
     }
   } else if (varname == "subLayers") {
-    if (auto pv = var.Get<std::vector<value::token>>()) {
+    if (auto pv = var.Get<std::vector<value::AssetPath>>()) {
       DCOUT("subLayers = " << pv.value());
       for (const auto &item : pv.value()) {
         _stage_metas.subLayers.push_back(item);
       }
     } else {
-      PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of string values.");
+      PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of asset path");
     }
   } else if (varname == "upAxis") {
     if (auto pv = var.Get<value::token>()) {
@@ -5312,18 +5314,53 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
 
     var.Set(values);
+  } else if (vartype == value::kPath) {
+    if (is_array_type) {
+      std::vector<Path> paths;
+      if (!ParseBasicTypeArray(&paths)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+      }
+      var.Set(paths);
+        
+      var.type = vartype + "[]";
+    } else {
+      Path path;
+      if (!ReadBasicType(&path)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+      }
+    } 
+  
+  } else if (vartype == value::kAssetPath) {
+    if (is_array_type) {
+      std::vector<value::AssetPath> paths;
+      if (!ParseBasicTypeArray(&paths)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      var.Set(paths);
+    } else {
+      value::AssetPath asset_path;
+      if (!ReadBasicType(&asset_path)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      var.Set(asset_path);
+    }
+
   } else if (vartype == value::kDictionary) {
     DCOUT("Parse dict in meta.");
     CustomDataType dict;
     if (!ParseDict(&dict)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` in metadataum.");
+      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` data in metadataum.");
     }
     var.Set(dict);
   } else {
     PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
   }
 
-  var.type = vartype;
+  if (is_array_type) {
+    var.type = vartype + "[]";
+  } else {
+    var.type = vartype;
+  }
 
   (*outvar) = var;
 
@@ -6063,8 +6100,8 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   return true;
 }
 
-bool AsciiParser::ParsePrimAttr(std::map<std::string, Property> *props) {
-  // prim_attr : (custom?) uniform type (array_qual?) name '=' value
+bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
+  // prim_prop : (custom?) uniform type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
   //           | (custom?) uniform type (array_qual?) name interpolation?
   //           | (custom?) (listeditqual?) rel attr_name = None
@@ -6646,7 +6683,7 @@ bool AsciiParser::ParseProperty(std::map<std::string, Property> *props) {
   }
 
   // attribute
-  return ParsePrimAttr(props);
+  return ParsePrimProps(props);
 }
 
 std::string AsciiParser::GetCurrentPath() {
@@ -6784,7 +6821,7 @@ bool AsciiParser::ParseClassBlock(const int64_t primIdx,
         }
       } else {
         // Assume PrimAttr
-        if (!ParsePrimAttr(&props)) {
+        if (!ParsePrimProps(&props)) {
           return false;
         }
       }
@@ -6878,6 +6915,137 @@ bool AsciiParser::ParseOverBlock(const int64_t primIdx,
   return true;
 }
 #endif
+
+bool AsciiParser::ParseVariantSet(const int64_t primIdx,
+                                const int64_t parentPrimIdx,
+                                const uint32_t depth) {
+  // {
+  //   "variantName0" { ... }
+  //   "variantName1" { ... }
+  //   ...
+  // }
+  if (!Expect('{')) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+
+  while (!Eof()) {
+    {
+      char c;
+      if (!Char1(&c)) {
+        return false;
+      }
+
+      if (c == '}') {
+        // end
+        break;
+      }
+
+      Rewind(1);
+    }
+
+    // string
+    std::string variantName;
+    if (!ReadBasicType(&variantName)) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse variant name for `variantSet` statement.");
+    }
+
+    if (!SkipWhitespace()) {
+      return false;
+    }
+
+    // TODO: metadataum?
+
+    if (!Expect('{')) {
+      return false;
+    }
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    while (!Eof()) {
+
+      {
+        char c;
+        if (!Char1(&c)) {
+          return false;
+        }
+
+        if (c == '}') {
+          DCOUT("End block in variantSet stmt.");
+          // end block
+          break;
+        }
+      }
+
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      DCOUT("Read first token in VariantSet stmt");
+      Identifier tok;
+      if (!ReadBasicType(&tok)) {
+        PUSH_ERROR_AND_RETURN(
+            "Failed to parse an identifier in variantSet block statement.");
+      }
+
+      if (!Rewind(tok.size())) {
+        return false;
+      }
+
+      if (tok == "variantSet") {
+          PUSH_ERROR_AND_RETURN(
+              "Nested `variantSet` is not supported yet.");
+      }
+
+      Specifier child_spec{Specifier::Invalid};
+      if (tok == "def") {
+        child_spec = Specifier::Def;
+      } else if (tok == "over") {
+        child_spec = Specifier::Def;
+      } else if (tok == "class") {
+        child_spec = Specifier::Def;
+      }
+
+      if (child_spec != Specifier::Invalid) {
+        // FIXME: Prim index stacking.
+        int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
+        DCOUT("enter parseDef. spec = " << to_string(child_spec) << ", idx = " << idx << ", rootIdx = " << primIdx);
+
+        // recusive call
+        if (!ParseBlock(child_spec, idx, primIdx, depth + 1)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("`{}` block parse failed.", to_string(child_spec)));
+        }
+        DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
+      } else {
+        std::map<std::string, Property> props;
+        DCOUT("Enter ParsePrimProps.");
+        if (!ParsePrimProps(&props)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
+        }
+        DCOUT(fmt::format("Done parse ParsePrimProps."));
+      }
+
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    DCOUT("variantSet item parsed.");
+
+  }    
+
+  return true;
+}
 
 ///
 /// Parse block.
@@ -7083,17 +7251,51 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
             "Failed to parse an identifier in `def` block statement.");
       }
 
+      if (tok == "variantSet") {
+        if (!SkipWhitespace()) {
+          return false;
+        }
+
+        std::string variantName;
+        if (!ReadBasicType(&variantName)) {
+          PUSH_ERROR_AND_RETURN(
+              "Failed to parse `variantSet` statement.");
+        }
+
+        DCOUT("variantName = " << variantName);
+
+        if (!SkipWhitespace()) {
+          return false;
+        }
+
+        if (!Expect('=')) {
+          return false;
+        }
+
+        if (!SkipWhitespace()) {
+          return false;
+        }
+
+        if (!ParseVariantSet(primIdx, parentPrimIdx, depth)) {
+          PUSH_ERROR_AND_RETURN(
+              "Failed to parse `variantSet` statement.");
+        }
+
+        continue;
+      }
+
       if (!Rewind(tok.size())) {
         return false;
       }
 
+
       Specifier child_spec{Specifier::Invalid};
       if (tok == "def") {
         child_spec = Specifier::Def;
-      } else if (tok == "def") {
-        child_spec = Specifier::Def;
-      } else if (tok == "def") {
-        child_spec = Specifier::Def;
+      } else if (tok == "over") {
+        child_spec = Specifier::Over;
+      } else if (tok == "class") {
+        child_spec = Specifier::Class;
       }
 
       if (child_spec != Specifier::Invalid) {
@@ -7106,9 +7308,9 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
         }
         DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
       } else {
-        DCOUT("Enter ParsePrimAttr.");
+        DCOUT("Enter ParsePrimProps.");
         // Assume PrimAttr
-        if (!ParsePrimAttr(&props)) {
+        if (!ParsePrimProps(&props)) {
           PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
         }
       }

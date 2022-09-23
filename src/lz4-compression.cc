@@ -4,15 +4,21 @@
 #endif
 #endif 
 
-/* Suppress DEPRECATE macro warnings */
-#define LZ4_DISABLE_DEPRECATE_WARNINGS
-
-#include "lz4-compression.hh"
-
+//
 #include <cstring>
 #include <cstdlib>
 #include <memory>
 #include <algorithm>
+#include <iostream>
+
+//
+
+/* Suppress DEPRECATE macro warnings */
+#define LZ4_DISABLE_DEPRECATE_WARNINGS
+
+#include "lz4-compression.hh"
+#include "common-macros.inc"
+
 
 
 
@@ -122,8 +128,8 @@ size_t LZ4Compression::CompressToBuffer(char const *input, char *compressed,
   return size_t(compressed - origCompressed);
 }
 
-size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
-                                               char *output,
+size_t LZ4Compression::DecompressFromBuffer(char const *compressedPtr,
+                                               char *outputPtr,
                                                size_t compressedSize,
                                                size_t maxOutputSize,
                                                std::string *err) {
@@ -136,7 +142,7 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
   }
 
   // Check first byte for # chunks.
-  int nChunks = *compressed++;
+  int nChunks = *compressedPtr++;
   if (nChunks > 127) {
     if (err) {
       (*err) =
@@ -145,15 +151,28 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
     return 0;
   }
 
+  DCOUT("compressedSize = " << compressedSize);
+  DCOUT("maxOutputSize = " << maxOutputSize);
+  DCOUT("nChunks = " << nChunks);
   //std::cout << "compressedSize = " << compressedSize << "\n";
   //std::cout << "maxOutputSize = " << maxOutputSize << "\n";
   //std::cout << "nChunks = " << nChunks << "\n";
 
   size_t consumedCompressedSize = 1;
 
+  if (maxOutputSize < LZ4_MAX_INPUT_SIZE) {
+    // nChunks must be 0 for < LZ4_MAX_INPUT_SIZE
+    if (nChunks != 0) {
+      if (err) {
+        (*err) = "Corrupted LZ4 compressed data.\n";
+      }
+      return 0;
+    }
+  }
+
   if (nChunks == 0) {
     // Just one.
-    int nDecompressed = LZ4_decompress_safe(compressed, output,
+    int nDecompressed = LZ4_decompress_safe(compressedPtr, outputPtr,
                                             int(compressedSize - 1), int(maxOutputSize));
     if (nDecompressed < 0) {
       if (err) {
@@ -170,7 +189,16 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
     size_t totalDecompressed = 0;
     for (int i = 0; i < nChunks; ++i) {
       int32_t chunkSize = 0;
-      memcpy(&chunkSize, compressed, sizeof(chunkSize));
+      if (consumedCompressedSize + sizeof(chunkSize) > compressedSize) {
+        if (err) {
+           (*err) += "Corrupted chunk data.";
+        }
+        return 0;
+          
+      }
+
+      memcpy(&chunkSize, compressedPtr, sizeof(chunkSize));
+
       if (chunkSize > LZ4_MAX_INPUT_SIZE) {
         if (err) {
            (*err) += "ChunkSize exceeds LZ4_MAX_INPUT_SIZE.\n";
@@ -183,6 +211,9 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
         }
         return 0;
       }
+
+      DCOUT("chunk[" << i << "] size = " << chunkSize);
+
       //std::cout << "chunkSize = " << chunkSize << "\n";
       consumedCompressedSize += sizeof(chunkSize);
       //std::cout << "consumedCompressedSize = " << consumedCompressedSize << "\n";
@@ -194,9 +225,9 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
         return 0;
       }
 
-      compressed += sizeof(chunkSize);
+      compressedPtr += sizeof(chunkSize);
       int nDecompressed = LZ4_decompress_safe(
-          compressed, output, chunkSize,
+          compressedPtr, outputPtr, chunkSize,
           int(std::min<size_t>(LZ4_MAX_INPUT_SIZE, maxOutputSize)));
       if (nDecompressed <= 0) {
         if (err) {
@@ -215,8 +246,8 @@ size_t LZ4Compression::DecompressFromBuffer(char const *compressed,
         }
         return 0;
       }
-      compressed += chunkSize;
-      output += nDecompressed;
+      compressedPtr += chunkSize;
+      outputPtr += nDecompressed;
       maxOutputSize -= size_t(nDecompressed);
       totalDecompressed += size_t(nDecompressed);
     }
