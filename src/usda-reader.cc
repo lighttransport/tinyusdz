@@ -699,6 +699,20 @@ class USDAReader::Impl {
               "(Internal error?) `active` metadataum is not type `bool`. got `"
               << var.type << "`.");
         }
+      } else if (meta.first == "hidden") {
+        DCOUT("hidden. type = " << var.type);
+        if (var.type == "bool") {
+          if (auto pv = var.Get<bool>()) {
+            out->hidden = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "(Internal error?) `hidden` metadataum is not type `bool`.");
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `hidden` metadataum is not type `bool`. got `"
+              << var.type << "`.");
+        }
 
       } else if (meta.first == "kind") {
         // std::tuple<ListEditQual, MetaVariable>
