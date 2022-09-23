@@ -1759,6 +1759,14 @@ struct TimeSamples {
 };
 #endif
 
+// Prim metas, Prim tree and properties.
+struct VariantSet
+{
+  PrimMeta metas;
+  std::vector<int64_t> primIndices;
+  std::map<std::string, Property> props;
+};
+
 // Generic primspec container.
 struct Model {
   std::string name;
@@ -1771,6 +1779,8 @@ struct Model {
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
+
+  std::map<std::string, VariantSet> variantSet;
 
   std::map<std::string, Property> props;
 };
@@ -1934,6 +1944,8 @@ struct Scope {
 
   Animatable<Visibility> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
+
+  std::map<std::string, VariantSet> variantSet;
 
   std::map<std::string, Property> props;
 };
