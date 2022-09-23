@@ -182,6 +182,7 @@ static void RegisterPrimMetas(
       AsciiParser::VariableDef(value::kDictionary, "customData");
 
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
+  metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
 
   // usdSkel
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
@@ -7141,15 +7142,15 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
       if (tok == "def") {
         child_spec = Specifier::Def;
       } else if (tok == "over") {
-        child_spec = Specifier::Def;
+        child_spec = Specifier::Over;
       } else if (tok == "class") {
-        child_spec = Specifier::Def;
+        child_spec = Specifier::Class;
       }
 
       if (child_spec != Specifier::Invalid) {
         // FIXME: Prim index stacking.
         int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
-        DCOUT("enter parseDef. spec = " << to_string(child_spec) << ", idx = "
+        DCOUT("enter parseBlock in variantSet. spec = " << to_string(child_spec) << ", idx = "
                                         << idx << ", rootIdx = " << primIdx);
 
         // recusive call
@@ -7220,19 +7221,17 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   if (def == "def") {
     if (spec != Specifier::Def) {
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination.");
+          kAscii, "Internal error. Invalid Specifier token combination. def = " << def << ", spec = " << to_string(spec));
     }
-  }
-  if (def == "over") {
+  } else if (def == "over") {
     if (spec != Specifier::Over) {
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination.");
+          kAscii, "Internal error. Invalid Specifier token combination. def = " << def << ", spec = " << to_string(spec));
     }
-  }
-  if (def == "class") {
+  } else if (def == "class") {
     if (spec != Specifier::Class) {
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination.");
+          kAscii, "Internal error. Invalid Specifier token combination. def = " << def << ", spec = " << to_string(spec));
     }
   }
 
