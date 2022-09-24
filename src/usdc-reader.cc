@@ -1508,7 +1508,16 @@ bool USDCReader::Impl::ParsePrimFields(
           DCOUT("active = " << to_string(primMeta.active.value()));
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`properties` must be type `token[]`, but got type `"
+              kTag, "`active` must be type `bool`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "hidden") {
+        if (auto pv = fv.second.as<bool>()) {
+          primMeta.hidden = (*pv);
+          DCOUT("hidden = " << to_string(primMeta.hidden.value()));
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`hidden` must be type `bool`, but got type `"
                         << fv.second.type_name() << "`");
         }
       } else if (fv.first == "assetInfo") {
@@ -1579,6 +1588,14 @@ bool USDCReader::Impl::ParsePrimFields(
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "`customData` must be type `dictionary`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "variantSelection") {
+        if (auto pv = fv.second.as<VariantSelectionMap>()) {
+          primMeta.variants = (*pv);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`variantSelection` must be type `variants`, but got type `"
                         << fv.second.type_name() << "`");
         }
       } else if (fv.first == "sceneName") { // USDZ extension
@@ -1982,6 +1999,7 @@ bool USDCReader::Impl::ReconstructPrimTree(
         nonstd::optional<Specifier> specifier;
         std::vector<value::token> properties;
         nonstd::optional<bool> active;
+        nonstd::optional<bool> hidden;
         nonstd::optional<APISchemas> apiSchemas;
         nonstd::optional<Kind> kind;
         nonstd::optional<CustomDataType> assetInfo;
@@ -2064,7 +2082,16 @@ bool USDCReader::Impl::ReconstructPrimTree(
               DCOUT("active = " << to_string(active.value()));
             } else {
               PUSH_ERROR_AND_RETURN_TAG(
-                  kTag, "`properties` must be type `token[]`, but got type `"
+                  kTag, "`active` must be type `bool, but got type `"
+                            << fv.second.type_name() << "`");
+            }
+          } else if (fv.first == "hidden") {
+            if (auto pv = fv.second.get_value<bool>()) {
+              hidden = pv.value();
+              DCOUT("hidden = " << to_string(hidden.value()));
+            } else {
+              PUSH_ERROR_AND_RETURN_TAG(
+                  kTag, "`hidden` must be type `bool`, but got type `"
                             << fv.second.type_name() << "`");
             }
           } else if (fv.first == "assetInfo") {
@@ -2146,6 +2173,9 @@ bool USDCReader::Impl::ReconstructPrimTree(
         /* TODO: Better Prim meta handling */                                    \
         if (active) {                                                            \
           typed_prim.meta.active = active.value();                               \
+        }                                                                        \
+        if (hidden) {                                                            \
+          typed_prim.meta.hidden = hidden.value();                               \
         }                                                                        \
         if (apiSchemas) {                                                        \
           typed_prim.meta.apiSchemas = apiSchemas.value();                       \
@@ -2361,6 +2391,9 @@ bool USDCReader::Impl::ReadUSDC() {
 
   crate_reader = new crate::CrateReader(_sr, config);
 
+  _warn.clear();
+  _err.clear();
+
   if (!crate_reader->ReadBootStrap()) {
     _warn = crate_reader->GetWarning();
     _err = crate_reader->GetError();
@@ -2423,6 +2456,9 @@ bool USDCReader::Impl::ReadUSDC() {
 
     return false;
   }
+
+  _warn += crate_reader->GetWarning();
+  _err += crate_reader->GetError();
 
   DCOUT("Read Crate.\n");
 

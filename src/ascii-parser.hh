@@ -384,7 +384,7 @@ class AsciiParser {
   /// `variants` in Prim meta.
   ///
   bool ParseVariantsElement(std::string *out_key, std::string *out_var);
-  bool ParseVariants(VariantsMap *out_map);
+  bool ParseVariants(VariantSelectionMap *out_map);
 
   bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
 
