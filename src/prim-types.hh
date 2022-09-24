@@ -374,7 +374,7 @@ bool operator==(const Path &lhs, const Path &rhs);
 // pxrUSD uses dict type for the content, but TinyUSDZ only accepts list of
 // strings for now
 //
-using VariantsMap = std::map<std::string, std::string>;
+using VariantSelectionMap = std::map<std::string, std::string>;
 
 class MetaVariable;
 
@@ -591,7 +591,7 @@ struct PrimMeta {
   nonstd::optional<std::pair<ListEditQual, MetaVariable>>
       variantSets;  // 'variantSets'. type `token` or `token[]`
 
-  nonstd::optional<VariantsMap> variants;  // `variants`
+  nonstd::optional<VariantSelectionMap> variants;  // `variants`
 
   // Currently TinyUSDZ allow single Path
   nonstd::optional<std::pair<ListEditQual, Path>> specializes;  // 'specializes'
@@ -2019,6 +2019,8 @@ DEFINE_TYPE_TRAIT(Reference, "ref", TYPE_ID_REFERENCE, 1);
 DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
 DEFINE_TYPE_TRAIT(Permission, "permission", TYPE_ID_PERMISSION, 1);
 DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
+
+DEFINE_TYPE_TRAIT(VariantSelectionMap, "variants", TYPE_ID_VARIANT_SELECION_MAP, 0);
 
 DEFINE_TYPE_TRAIT(Payload, "payload", TYPE_ID_PAYLOAD, 1);
 DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);

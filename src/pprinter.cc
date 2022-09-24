@@ -239,21 +239,6 @@ std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent
   return ss.str();
 }
 
-std::string print_variantsMap(const VariantsMap &m, const uint32_t indent) {
-  std::stringstream ss;
-
-  if (m.empty()) {
-    return ss.str();
-  }
-
-  ss << pprint::Indent(indent) << "variants = {\n";
-  for (const auto &item: m) {
-    ss << pprint::Indent(indent+1) << "string " << item.first << " = " << quote(item.second) << "\n";
-  }
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
 
 std::string print_references(const prim::ReferenceList &references, const uint32_t indent) {
   std::stringstream ss;
@@ -357,7 +342,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.variants) {
-    ss << print_variantsMap(meta.variants.value(), indent);
+    ss << print_variantSelectionMap(meta.variants.value(), indent);
   }
 
   if (meta.variantSets) {
@@ -1078,6 +1063,22 @@ std::string to_string(const StringData &s) {
   } else {
     return quote(s.value);
   }
+}
+
+std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32_t indent) {
+  std::stringstream ss;
+
+  if (m.empty()) {
+    return ss.str();
+  }
+
+  ss << pprint::Indent(indent) << "variants = {\n";
+  for (const auto &item: m) {
+    ss << pprint::Indent(indent+1) << "string " << item.first << " = " << quote(item.second) << "\n";
+  }
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
 }
 
 

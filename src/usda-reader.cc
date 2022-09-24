@@ -656,11 +656,11 @@ class USDAReader::Impl {
       return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
     };
 
-    auto BuildVariants = [](const CustomDataType &dict) -> nonstd::expected<VariantsMap, std::string> {
+    auto BuildVariants = [](const CustomDataType &dict) -> nonstd::expected<VariantSelectionMap, std::string> {
 
       // Allow empty dict.
 
-      VariantsMap m;
+      VariantSelectionMap m;
 
       for (const auto &item : dict) {
         // TODO: duplicated key check?
