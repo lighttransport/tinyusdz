@@ -547,23 +547,27 @@ struct APISchemas {
   std::vector<std::pair<APIName, std::string>> names;
 };
 
+// SdfLayerOffset
 struct LayerOffset {
   double _offset;
   double _scale;
 };
 
-struct Payload {
-  value::AssetPath asset_path;
-  Path _prim_path;
-  LayerOffset _layer_offset;
-};
 
+// SdfReference
 struct Reference {
   value::AssetPath asset_path;
   Path prim_path;
   LayerOffset layerOffset;
-  // value::dict custom_data;
   CustomDataType customData;
+};
+
+// SdfPayload
+struct Payload {
+  value::AssetPath asset_path; // std::string in SdfPayload
+  Path _prim_path;
+  LayerOffset _layer_offset; // from 0.8.0
+  // No customData for Payload
 };
 
 // Metadata for Prim
