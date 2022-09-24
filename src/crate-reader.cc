@@ -444,7 +444,8 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
 
     if (code == 'i') {
       // Compressed integers.
-      std::vector<int32_t> ints(length);
+      std::vector<int32_t> ints;
+      ints.resize(length);
       if (!ReadCompressedInts(ints.data(), ints.size())) {
         _err += "Failed to read compressed ints in ReadHalfArray.\n";
         return false;
@@ -462,14 +463,16 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
         return false;
       }
 
-      std::vector<value::half> lut(lutSize);
+      std::vector<value::half> lut;
+      lut.resize(lutSize);
       if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadHalfArray.\n";
         return false;
       }
 
-      std::vector<uint32_t> indexes(length);
+      std::vector<uint32_t> indexes;
+      indexes.resize(length);
       if (!ReadCompressedInts(indexes.data(), indexes.size())) {
         _err += "Failed to read lut indices in ReadHalfArray.\n";
         return false;
@@ -554,7 +557,8 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
     if (code == 'i') {
       // Compressed integers.
-      std::vector<int32_t> ints(length);
+      std::vector<int32_t> ints;
+      ints.resize(length);
       if (!ReadCompressedInts(ints.data(), ints.size())) {
         _err += "Failed to read compressed ints in ReadFloatArray.\n";
         return false;
@@ -568,14 +572,16 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
         return false;
       }
 
-      std::vector<float> lut(lutSize);
+      std::vector<float> lut;
+      lut.resize(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadFloatArray.\n";
         return false;
       }
 
-      std::vector<uint32_t> indexes(length);
+      std::vector<uint32_t> indexes;
+      indexes.resize(length);
       if (!ReadCompressedInts(indexes.data(), indexes.size())) {
         _err += "Failed to read lut indices in ReadFloatArray.\n";
         return false;
@@ -662,7 +668,8 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
     if (code == 'i') {
       // Compressed integers.
-      std::vector<int32_t> ints(length);
+      std::vector<int32_t> ints;
+      ints.resize(length);
       if (!ReadCompressedInts(ints.data(), ints.size())) {
         _err += "Failed to read compressed ints in ReadDoubleArray.\n";
         return false;
@@ -676,14 +683,16 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
         return false;
       }
 
-      std::vector<double> lut(lutSize);
+      std::vector<double> lut;
+      lut.resize(lutSize);
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadDoubleArray.\n";
         return false;
       }
 
-      std::vector<uint32_t> indexes(length);
+      std::vector<uint32_t> indexes;
+      indexes.resize(length);
       if (!ReadCompressedInts(indexes.data(), indexes.size())) {
         _err += "Failed to read lut indices in ReadDoubleArray.\n";
         return false;

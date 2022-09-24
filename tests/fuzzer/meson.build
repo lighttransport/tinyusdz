@@ -59,14 +59,14 @@ executable('fuzz_tinyusdz',
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
-executable('fuzz_intcoding',
+executable('fuzz_intcoding_decompress',
   '../../src/lz4/lz4.c',
-  'intCoding_fuzzmain.cc',
+  'intCoding_decompress_fuzzmain.cc',
   '../../src/lz4-compression.cc',
   '../../src/integerCoding.cpp',
   install: true,
   include_directories : incdirs,
-  cpp_args : '-fsanitize=address,fuzzer',
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 executable('fuzz_lz4_decompress',
@@ -75,7 +75,7 @@ executable('fuzz_lz4_decompress',
   '../../src/lz4-compression.cc',
   install: true,
   include_directories : incdirs,
-  cpp_args : '-fsanitize=address,fuzzer',
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
 
