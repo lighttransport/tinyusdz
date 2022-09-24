@@ -760,6 +760,11 @@ if(TINYUSDZ_BUILD_TESTS)
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/unit)
 
   #
+  # Compression tester
+  #
+  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
+
+  #
   # USDA parser tester
   #
   if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
