@@ -284,6 +284,10 @@ bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
 template <class Int>
 bool CrateReader::ReadCompressedInts(Int *out,
                                      size_t num_ints) {
+  if (num_ints > _config.maxInts) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of ints too large.");
+  }
+
   using Compressor =
       typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
                                 Usd_IntegerCompression64>::type;
@@ -308,7 +312,13 @@ bool CrateReader::ReadCompressedInts(Int *out,
     return false;
   }
 
-  std::vector<char> compBuffer(compBufferSize);
+  if (compSize < 4) {
+    // Too small
+    return false;
+  }
+
+  std::vector<char> compBuffer;
+  compBuffer.resize(compBufferSize);
   if (!_sr->read(size_t(compSize), size_t(compSize),
                 reinterpret_cast<uint8_t *>(compBuffer.data()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedInts.");
@@ -751,6 +761,17 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // Save offset
   auto values_offset = _sr->tell();
 
+  // TODO: Enable Check if  type `double[]`
+#if 0
+  if (times_rep.GetType() == crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR) {
+    // ok
+  } else if ((times_rep.GetType() == crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBOLE) && times_rep.IsArray()) {
+    // ok
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`times` value must be type `double[]`, but got type `{}`", times_rep.GetTypeName()));
+  }
+#endif
+
   crate::CrateValue times_value;
   if (!UnpackValueRep(times_rep, &times_value)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's `times` element.");
@@ -882,6 +903,87 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   }
 
   (*d) = items;
+
+  return true;
+}
+
+bool CrateReader::ReadPayload(Payload *d) {
+
+  if (!d) {
+    return false;
+  }
+
+  // assetPath : string
+  // primPath : Path
+  
+  std::string assetPath;
+  if (!ReadString(&assetPath)) {
+    return false;
+  }
+
+
+  crate::PathIndex index;
+  if (!ReadIndex(&index)) {
+    return false;
+  }
+  
+  auto path = GetPath(index);
+  if (!path) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Path index in Payload ValueRep.");
+  }
+
+  // LayerOffset from 0.8.0 
+  if (VersionGreaterThanOrEqualTo_0_8_0()) {
+    LayerOffset layerOffset;
+    if (!ReadLayerOffset(&layerOffset)) {
+      return false;
+    } 
+    d->_layer_offset = layerOffset;
+  }
+  
+  d->asset_path = assetPath;
+  d->_prim_path = path.value();
+
+  return true;
+}
+
+bool CrateReader::ReadLayerOffset(LayerOffset *d) {
+  static_assert(sizeof(LayerOffset) == 8 * 2, "LayerOffset must be 16bytes");
+
+  // double x 2
+  if (!_sr->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_offset)))) {
+    return false;
+  }
+  if (!_sr->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_scale)))) {
+    return false;
+  }
+
+  return true;
+}
+
+bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
+  // array data is not compressed
+
+  uint64_t n;
+  if (!_sr->read8(&n)) {
+    PUSH_ERROR("Failed to read # of elements.");
+    return false;
+  }
+
+  if (n > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(size_t(n) * sizeof(LayerOffset));
+
+  d->resize(n);
+
+  if (!_sr->read(size_t(n) * sizeof(LayerOffset),
+                 size_t(n) * sizeof(LayerOffset),
+                 reinterpret_cast<uint8_t *>(d->data()))) {
+    PUSH_ERROR("Failed to read LayerOffset[] data.");
+    return false;
+  }
 
   return true;
 }
@@ -1262,6 +1364,107 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
 
   if (h.HasOrderedItems()) {
     std::vector<Path> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::OrderedItems.\n";
+      return false;
+    }
+
+    d->SetOrderedItems(items);
+  }
+
+  return true;
+}
+
+bool CrateReader::ReadPayloadListOp(ListOp<Payload> *d) {
+  // read ListOpHeader
+  ListOpHeader h;
+  if (!_sr->read1(&h.bits)) {
+    PUSH_ERROR("Failed to read ListOpHeader.");
+    return false;
+  }
+
+  if (h.IsExplicit()) {
+    d->ClearAndMakeExplicit();
+  }
+
+  // array data is not compressed
+  auto ReadFn = [this](std::vector<Payload> &result) -> bool {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      PUSH_ERROR("Failed to read # of elements in ListOp.");
+      return false;
+    }
+
+    if (n > _config.maxArrayElements) {
+      _err += "Too many ListOp elements.\n";
+      return false;
+    }
+
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(Payload));
+
+    for (size_t i = 0; i < size_t(n); i++) {
+      Payload p;
+      if (!ReadPayload(&p)) {
+        return false;
+      }
+      result.emplace_back(p);
+    }
+
+    return true;
+  };
+
+  if (h.HasExplicitItems()) {
+    std::vector<Payload> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::ExplicitItems.\n";
+      return false;
+    }
+
+    d->SetExplicitItems(items);
+  }
+
+  if (h.HasAddedItems()) {
+    std::vector<Payload> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AddedItems.\n";
+      return false;
+    }
+
+    d->SetAddedItems(items);
+  }
+
+  if (h.HasPrependedItems()) {
+    std::vector<Payload> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::PrependedItems.\n";
+      return false;
+    }
+
+    d->SetPrependedItems(items);
+  }
+
+  if (h.HasAppendedItems()) {
+    std::vector<Payload> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AppendedItems.\n";
+      return false;
+    }
+
+    d->SetAppendedItems(items);
+  }
+
+  if (h.HasDeletedItems()) {
+    std::vector<Payload> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::DeletedItems.\n";
+      return false;
+    }
+
+    d->SetDeletedItems(items);
+  }
+
+  if (h.HasOrderedItems()) {
+    std::vector<Payload> items;
     if (!ReadFn(items)) {
       _err += "Failed to read ListOp::OrderedItems.\n";
       return false;
@@ -1740,7 +1943,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP: 
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
@@ -3113,7 +3316,49 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP: {
       // TODO
+      // map<std::string, std::string>
       PUSH_WARN("VariantSelectionMap is not yet supported. Skipping...");
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      // LayerOffset[]
+
+      std::vector<LayerOffset> v;
+      if (!ReadLayerOffsetArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read LayerOffsetVector value");
+      }
+
+      DCOUT("LayerOffsetVector = " << v);
+
+      value->Set(v);
+
+      return true;
+
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      // Payload
+      Payload v;
+      if (!ReadPayload(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Payload value");
+      }
+
+      DCOUT("Payload = " << v);
+
+      value->Set(v);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP: {
+      ListOp<Payload> lst;
+
+      if (!ReadPayloadListOp(&lst)) {
+        PUSH_ERROR("Failed to read PayloadListOp data");
+        return false;
+      }
+
+      value->Set(lst);
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
@@ -3121,17 +3366,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
-          "Inlined value: " +
+          "Uninlined value: " +
           crate::GetCrateDataTypeName(dty.dtype_id));
       return false;
     }

@@ -16,6 +16,7 @@ class Path;
 struct StringData;
 struct Reference;
 struct Payload;
+struct LayerOffset;
 
 } // namespace tinyusdz
 
@@ -89,6 +90,7 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::StringData &v);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::Reference &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::Payload &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::LayerOffset &v);
 
 // 1D array
 template <typename T>

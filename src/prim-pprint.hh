@@ -15,6 +15,7 @@ namespace prim {
 //
 std::string print_references(const ReferenceList &references, const uint32_t indent);
 std::string print_payload(const PayloadList &payload, const uint32_t indent);
+std::string print_layeroffset(const LayerOffset &layeroffset, const uint32_t indent);
 
 
 } // namespace prim

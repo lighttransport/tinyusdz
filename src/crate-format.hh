@@ -441,6 +441,7 @@ class CrateValue {
   // vector<double> is defined in SET_TYPE_LIST(SET_TYPE_1D)
   //SET_TYPE_SCALAR(std::vector<double>)
   SET_TYPE_SCALAR(std::vector<LayerOffset>)
+  SET_TYPE_SCALAR(Payload)
 
   SET_TYPE_SCALAR(value::TimeSamples)
   SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist
