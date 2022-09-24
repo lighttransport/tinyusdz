@@ -60,6 +60,16 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
+
+  // TODO: Do not print offset when it is 0.0
+  // TODO: Do not print scale when it is 1.0
+   
+  ofs << "(offset = " << v._offset << ", scale = " << v._scale << ")";
+
+  return ofs;
+}
+
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::StringData &v) {
 
   std::string delim = v.single_quote ? "'" : "\"";

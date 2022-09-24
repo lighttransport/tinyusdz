@@ -36,6 +36,8 @@ struct CrateReaderConfig {
   size_t maxTokenLength = 4096; // Maximum allowed length of `token` string
   size_t maxStringLength = 1024*1024*64;
 
+  size_t maxInts = 1024*1024*4;
+
   // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in [bytes].
   size_t maxMemoryBudget = std::numeric_limits<int32_t>::max(); // Default 2GB
 };
@@ -260,6 +262,18 @@ class CrateReader {
   //                                  PrimAttrib *attr,
   //                                  const std::string &prop_name);
 
+  bool VersionGreaterThanOrEqualTo_0_8_0() const {
+    if (_version[0] > 0) {
+      return true;
+    }
+
+    if (_version[1] >= 8) {
+      return true;
+    }
+
+    return false;
+  }
+
  private:
 
 
@@ -293,6 +307,10 @@ class CrateReader {
 
   bool ReadPathArray(std::vector<Path> *d);
   bool ReadStringArray(std::vector<std::string> *d);
+  bool ReadLayerOffsetArray(std::vector<LayerOffset> *d);
+
+  bool ReadPayload(Payload *d);
+  bool ReadLayerOffset(LayerOffset *d);
 
   // customData(Dictionary)
   bool ReadCustomData(CustomDataType *d);
@@ -315,6 +333,7 @@ class CrateReader {
   bool ReadUIntListOp(ListOp<uint32_t> *d);
   bool ReadInt64ListOp(ListOp<int64_t> *d);
   bool ReadUInt64ListOp(ListOp<uint64_t> *d);
+  bool ReadPayloadListOp(ListOp<Payload> *d);
 
   // Read 64bit uint with range check
   bool ReadNum(uint64_t &n, uint64_t maxnum);
