@@ -72,6 +72,16 @@ namespace crate {
   } while(0)
 
 
+#if 0
+//
+// Impl(TODO)
+//
+class CrateReader::Impl
+{
+ public:
+  Impl();
+};
+#endif
 
 //
 // --
@@ -96,9 +106,14 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _s
   _config.numThreads = (std::min)(1024, _config.numThreads);
 #endif
 
+  //_impl = new Impl();
+
 }
 
-CrateReader::~CrateReader() {}
+CrateReader::~CrateReader() {
+  //delete _impl;
+  //_impl = nullptr;
+}
 
 std::string CrateReader::GetError() { return _err; }
 
@@ -976,7 +991,7 @@ bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
 
   CHECK_MEMORY_USAGE(size_t(n) * sizeof(LayerOffset));
 
-  d->resize(n);
+  d->resize(size_t(n));
 
   if (!_sr->read(size_t(n) * sizeof(LayerOffset),
                  size_t(n) * sizeof(LayerOffset),
@@ -1471,6 +1486,45 @@ bool CrateReader::ReadPayloadListOp(ListOp<Payload> *d) {
     }
 
     d->SetOrderedItems(items);
+  }
+
+  return true;
+}
+
+bool CrateReader::ReadVariantSelectionMap(VariantSelectionMap *d) {
+
+  if (!d) {
+    return false;
+  }
+
+  // map<string, string>
+ 
+  // n
+  // [key, value] * n
+ 
+  uint64_t sz;
+  if (!_sr->read8(&sz)) {
+    _err += "Failed to read the number of elements for VariantsMap data.\n";
+    return false;
+  }
+
+  if (sz > _config.maxVariantsMapElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "The number of elements for VariantsMap data is too large. Max = " << std::to_string(_config.maxVariantsMapElements) << ", but got " << std::to_string(sz));
+  }
+
+  for (size_t i = 0; i < sz; i++) {
+    std::string key;
+    if (!ReadString(&key)) {
+      return false;
+    }
+
+    std::string value;
+    if (!ReadString(&value)) {
+      return false;
+    }
+
+    // TODO: Duplicate key check?
+    d->emplace(key, value);
   }
 
   return true;
@@ -3304,8 +3358,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       std::vector<std::string> v;
       if (!ReadStringArray(&v)) {
-        _err += "Failed to read StringVector value\n";
-        return false;
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read StringVector value");
       }
 
       DCOUT("StringArray = " << v);
@@ -3315,9 +3368,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP: {
-      // TODO
-      // map<std::string, std::string>
-      PUSH_WARN("VariantSelectionMap is not yet supported. Skipping...");
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+
+      VariantSelectionMap m;
+      if (!ReadVariantSelectionMap(&m)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read VariantSelectionMap value");
+      }
+
+      DCOUT("VariantSelectionMap = " << print_variantSelectionMap(m, 0));
+
+      value->Set(m);
+
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR: {

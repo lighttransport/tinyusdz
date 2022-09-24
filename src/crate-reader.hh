@@ -9,6 +9,7 @@
 #include "nonstd/optional.hpp"
 //
 #include "crate-format.hh"
+#include "prim-types.hh"
 #include "stream-reader.hh"
 
 namespace tinyusdz {
@@ -36,6 +37,9 @@ struct CrateReaderConfig {
   size_t maxTokenLength = 4096; // Maximum allowed length of `token` string
   size_t maxStringLength = 1024*1024*64;
 
+  size_t maxVariantsMapElements = 128;
+
+  // Generic int[] data
   size_t maxInts = 1024*1024*4;
 
   // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in [bytes].
@@ -335,6 +339,8 @@ class CrateReader {
   bool ReadUInt64ListOp(ListOp<uint64_t> *d);
   bool ReadPayloadListOp(ListOp<Payload> *d);
 
+  bool ReadVariantSelectionMap(VariantSelectionMap *d);
+
   // Read 64bit uint with range check
   bool ReadNum(uint64_t &n, uint64_t maxnum);
 
@@ -369,8 +375,6 @@ class CrateReader {
   std::map<crate::Index, FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
-  // class Impl;
-  // Impl *_impl;
 
   const StreamReader *_sr{};
 
@@ -387,6 +391,9 @@ class CrateReader {
 
   // Approximated uncompressed memory usage(vertices, `tokens`, ...) in bytes. 
   uint64_t _memoryUsage{0};
+
+  class Impl;
+  Impl *_impl;
 };
 
 }  // namespace crate

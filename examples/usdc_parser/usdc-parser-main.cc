@@ -39,6 +39,11 @@ int main(int argc, char **argv) {
     bool ret = reader.ReadUSDC();
 
     if (!ret) {
+
+      if (reader.GetWarning().size()) {
+        std::cout << "WARN: " << reader.GetWarning() << "\n";
+      }
+
       std::cerr << "Failed to parse .usdc: \n";
       std::cerr << reader.GetError() << "\n";
       return -1;
@@ -52,9 +57,23 @@ int main(int argc, char **argv) {
     tinyusdz::Stage stage;
     bool ret = reader.ReconstructStage(&stage);
     if (!ret) {
+
+      if (reader.GetWarning().size()) {
+        std::cout << "WARN: " << reader.GetWarning() << "\n";
+      }
+
       std::cerr << "Failed to reconstruct Stage: \n";
       std::cerr << reader.GetError() << "\n";
       return -1;
+    }
+
+    if (reader.GetWarning().size()) {
+      std::cout << "WARN: " << reader.GetWarning() << "\n";
+    }
+
+    // There may be error but not fatal.
+    if (reader.GetError().size()) {
+      std::cerr << reader.GetError() << "\n";
     }
 
     std::cout << stage.ExportToString() << "\n";

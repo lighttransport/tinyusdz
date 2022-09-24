@@ -3298,7 +3298,7 @@ bool AsciiParser::ParseVariantsElement(std::string *out_key,
   return true;
 }
 
-bool AsciiParser::ParseVariants(VariantsMap *out_map) {
+bool AsciiParser::ParseVariants(VariantSelectionMap *out_map) {
   // '{' (string name '=' value)+ '}'
   if (!Expect('{')) {
     return false;
