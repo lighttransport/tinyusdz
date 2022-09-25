@@ -798,18 +798,14 @@ class USDAReader::Impl {
               << var.type << "`");
         }
       } else if (meta.first == "inherits") {
-        if (auto pv = var.Get<std::vector<Path>>()) {
-          if (pv.value().size() == 0) {
-            // empty
-          } else {
-            // Currently no multiple inherits? are supported.
-            if (pv.value().size() > 1) {
-              PUSH_WARN("Multiple paths are not supported for `inherits`. Use the first one.");
-            }
-            out->inherits = std::make_pair(listEditQual, pv.value()[0]);
-          }
+        if (auto pvb = var.Get<value::ValueBlock>()) {
+          out->inherits = std::make_pair(listEditQual, std::vector<Path>());
+        } else if (auto pv = var.Get<std::vector<Path>>()) {
+          out->inherits = std::make_pair(listEditQual, pv.value());
         } else if (auto pvp = var.Get<Path>()) {
-          out->inherits = std::make_pair(listEditQual, pvp.value());
+          std::vector<Path> vs;
+          vs.push_back(pvp.value());
+          out->inherits = std::make_pair(listEditQual, vs);
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `inherits` metadataum should be either `path` or `path[]`. "
@@ -818,18 +814,14 @@ class USDAReader::Impl {
         }
 
       } else if (meta.first == "specializes") {
-        if (auto pv = var.Get<std::vector<Path>>()) {
-          if (pv.value().size() == 0) {
-            // empty
-          } else {
-            // Currently no multiple inherits? are supported.
-            if (pv.value().size() > 1) {
-              PUSH_WARN("Multiple paths are not supported for `specializes`. Use the first one.");
-            }
-            out->specializes = std::make_pair(listEditQual, pv.value()[0]);
-          }
+        if (auto pvb = var.Get<value::ValueBlock>()) {
+          out->specializes = std::make_pair(listEditQual, std::vector<Path>());
+        } else if (auto pv = var.Get<std::vector<Path>>()) {
+          out->specializes = std::make_pair(listEditQual, pv.value());
         } else if (auto pvp = var.Get<Path>()) {
-          out->specializes = std::make_pair(listEditQual, pvp.value());
+          std::vector<Path> vs;
+          vs.push_back(pvp.value());
+          out->specializes = std::make_pair(listEditQual, vs);
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `specializes` metadataum should be either `path` or `path[]`. "
