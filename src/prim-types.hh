@@ -586,15 +586,13 @@ struct PrimMeta {
   //
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
   nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload;
-  // Currently TinyUSDZ allow single Path
-  nonstd::optional<std::pair<ListEditQual, Path>> inherits;  // 'inherits'
+  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inherits;  // 'inherits'
   nonstd::optional<std::pair<ListEditQual, MetaVariable>>
       variantSets;  // 'variantSets'. type `token` or `token[]`
 
   nonstd::optional<VariantSelectionMap> variants;  // `variants`
 
-  // Currently TinyUSDZ allow single Path
-  nonstd::optional<std::pair<ListEditQual, Path>> specializes;  // 'specializes'
+  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> specializes;  // 'specializes'
 
   // USDZ extensions
   nonstd::optional<std::string> sceneName;  // 'sceneName'
@@ -612,6 +610,11 @@ struct PrimMeta {
             doc || comment || meta.size() || apiSchemas || stringData.size() ||
             assetInfo);
   }
+
+  //
+  // Crate only. Only used internally.
+  //
+  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inheritPaths;
 };
 
 // Metadata for Attribute
