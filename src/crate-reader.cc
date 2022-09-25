@@ -4006,8 +4006,8 @@ bool CrateReader::ReadFields() {
   const crate::Section &s = _toc.sections[size_t(_fields_index)];
 
   if (s.size == 0) {
-    // Empty Fields should be not allowed.
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "`FIELDS` section is empty.");
+    // accepts Empty FIELDS size.
+    return true;
   }
 
   if (!_sr->seek_set(uint64_t(s.start))) {
@@ -4022,6 +4022,11 @@ bool CrateReader::ReadFields() {
   }
 
   DCOUT("num_fields = " << num_fields);
+
+  if (num_fields == 0) {
+    // OK
+    return true;
+  }
 
   if (num_fields > _config.maxNumFields) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many fields in `FIELDS` section.");
