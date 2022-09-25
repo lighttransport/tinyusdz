@@ -1607,6 +1607,88 @@ bool USDCReader::Impl::ParsePrimFields(
               kTag, "`sceneName` must be type `string`, but got type `"
                         << fv.second.type_name() << "`");
         }
+      } else if (fv.first == "inherits") { // `inherits` composition
+        if (auto pvb = fv.second.as<value::ValueBlock>()) {
+          // make empty array
+          primMeta.inherits = std::make_pair(ListEditQual::ResetToExplicit, std::vector<Path>());
+        } else if (auto pv = fv.second.as<ListOp<Path>>()) {
+
+          const ListOp<Path> &p = *pv;
+          DCOUT("inherits = " << to_string(p));
+
+          auto ps = DecodeListOp<Path>(p);
+
+
+          if (ps.size() > 1) {
+            // This should not happen though.
+            PUSH_WARN(
+                "ListOp with multiple ListOpType is not supported for now. Use "
+                "the first one: " +
+                to_string(std::get<0>(ps[0])));
+          }
+
+          auto qual = std::get<0>(ps[0]);
+          auto items = std::get<1>(ps[0]);
+          primMeta.inherits = std::make_pair(qual, items);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`inherits` must be type `path` o `path[]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+
+      } else if (fv.first == "specializes") { // `specializes` composition
+        if (auto pv = fv.second.as<ListOp<Path>>()) {
+
+          const ListOp<Path> &p = *pv;
+          DCOUT("specializes = " << to_string(p));
+
+          auto ps = DecodeListOp<Path>(p);
+
+
+          if (ps.size() > 1) {
+            // This should not happen though.
+            PUSH_WARN(
+                "ListOp with multiple ListOpType is not supported for now. Use "
+                "the first one: " +
+                to_string(std::get<0>(ps[0])));
+          }
+
+          auto qual = std::get<0>(ps[0]);
+          auto items = std::get<1>(ps[0]);
+          auto listop = (*pv);
+          primMeta.specializes = std::make_pair(qual, items);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`specializes` must be type `ListOp[Path]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else if (fv.first == "inheritPaths") { // `specializes` composition
+        if (auto pv = fv.second.as<ListOp<Path>>()) {
+
+          const ListOp<Path> &p = *pv;
+          DCOUT("inheritPaths = " << to_string(p));
+
+          auto ps = DecodeListOp<Path>(p);
+
+
+          if (ps.size() > 1) {
+            // This should not happen though.
+            PUSH_WARN(
+                "ListOp with multiple ListOpType is not supported for now. Use "
+                "the first one: " +
+                to_string(std::get<0>(ps[0])));
+          }
+
+          auto qual = std::get<0>(ps[0]);
+          auto items = std::get<1>(ps[0]);
+          auto listop = (*pv);
+          primMeta.inheritPaths = std::make_pair(qual, items);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`inheritPaths` must be type `ListOp[Path]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+
       } else {
         DCOUT("PrimProp TODO: " << fv.first);
         PUSH_WARN("PrimProp TODO: " << fv.first);
@@ -1799,8 +1881,8 @@ bool USDCReader::Impl::ReconstructPrimNode(
       // TODO
       PUSH_WARN("TODO: SpecTypeVariant");
     } else if (spec.spec_type == SpecType::Attribute) {
-      // Maybe parent is Class/Over.
-      PUSH_WARN("TODO: SpecTypeAttribute(in conjunction with Class/Over specifier?)");
+      // Maybe parent is Class/Over, or inherited
+      PUSH_WARN("TODO: SpecTypeAttribute(in conjunction with Class/Over specifier, or inherited?)");
     } else {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "TODO: specTy = " << to_string(spec.spec_type));
