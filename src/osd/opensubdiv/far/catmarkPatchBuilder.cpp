@@ -22,10 +22,6 @@
 //   language governing permissions and limitations under the Apache License.
 //
 
-#ifdef _WIN32
-#define _USE_MATH_DEFINES
-#endif
-
 #include "../far/catmarkPatchBuilder.h"
 #include "../vtr/stackBuffer.h"
 

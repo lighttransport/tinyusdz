@@ -31,9 +31,6 @@
 #include <cassert>
 #include <cmath>
 
-
-#define kPI (3.14159265358979323846)
-
 namespace OpenSubdiv {
 namespace OPENSUBDIV_VERSION {
 namespace Sdc {
@@ -202,8 +199,7 @@ Scheme<SCHEME_LOOP>::assignSmoothMaskForVertex(VERTEX const& vertex, MASK& mask)
 
         double dValence   = (double) valence;
         double invValence = 1.0f / dValence;
-        double cosTheta =
-            std::cos(3.14159265358979323846f * 2.0f * invValence);
+        double cosTheta   = std::cos(M_PI * 2.0f * invValence);
 
         double beta = 0.25f * cosTheta + 0.375f;
 
@@ -302,7 +298,7 @@ Scheme<SCHEME_LOOP>::assignSmoothLimitMask(VERTEX const& vertex, MASK& posMask) 
     } else {
         double dValence   = (double) valence;
         double invValence = 1.0f / dValence;
-        double cosTheta   = std::cos(kPI * 2.0f * invValence);
+        double cosTheta   = std::cos(M_PI * 2.0f * invValence);
 
         double beta  = 0.25f * cosTheta + 0.375f;
         double gamma = (0.625f - (beta * beta)) * invValence;
@@ -496,7 +492,7 @@ Scheme<SCHEME_LOOP>::assignCreaseLimitTangentMasks(VERTEX const& vertex,
         //  2.0 for considering the region as a half-disk, and 1.5 in keeping
         //  with the crease tangent):
 
-        double theta = kPI / (interiorEdgeCount + 1);
+        double theta = M_PI / (interiorEdgeCount + 1);
 
         tan2Mask.VertexWeight(0) = 0.0f;
 
@@ -570,7 +566,7 @@ Scheme<SCHEME_LOOP>::assignSmoothLimitTangentMasks(VERTEX const& vertex,
         tan2Mask.EdgeWeight(4) = -Root3by2;
         tan2Mask.EdgeWeight(5) = -Root3by2;
     } else {
-        double alpha = 2.0f * kPI / valence;
+        double alpha = 2.0f * M_PI / valence;
         for (int i = 0; i < valence; ++i) {
             double alphaI = alpha * i;
             tan1Mask.EdgeWeight(i) = (Weight) std::cos(alphaI);
