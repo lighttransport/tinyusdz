@@ -38,11 +38,11 @@ $ ./fuzz_tinyusdz -max_len=128m
 for fuzzing `fuzz_intcoding_decompress`, capping max memory is required(otherwise oom happens).
 (Currently `fuzz_intcoding_decompress` does HARD limit of compressed data up to 2GB)
 
-Use `-rss_limit_mb=4000`(or more if you have enough memory) to limit memory usage.
+Use `-rss_limit_mb=8192`(or more if you encounter oom and have enough memory) to limit memory usage.
 
 
 ```
-$ ./fuzz_intcoding_decompress -rss_limit_mb=4000 -jobs 4
+$ ./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
 ```
 
 ## PoC and regressesions
