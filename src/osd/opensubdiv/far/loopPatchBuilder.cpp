@@ -22,10 +22,6 @@
 //   language governing permissions and limitations under the Apache License.
 //
 
-#ifdef _WIN32
-#define _USE_MATH_DEFINES
-#endif
-
 #include "../far/loopPatchBuilder.h"
 #include "../vtr/stackBuffer.h"
 #include "../sdc/loopScheme.h"
@@ -1622,6 +1618,7 @@ namespace {
         }
     }
 
+#ifdef FAR_DEBUG_LOOP_PATCH_BUILDER
     void
     _printSourcePatch(SourcePatch const & patch, bool printCornerInfo = true,
                                                  bool printRingPoints = true) {
@@ -1654,6 +1651,7 @@ namespace {
             }
         }
     }
+#endif
 }
 
 
