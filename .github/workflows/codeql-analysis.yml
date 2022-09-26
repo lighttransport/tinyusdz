@@ -11,6 +11,12 @@
 #
 name: "CodeQL"
 
+paths-ignore:
+  - src/external/*
+  - src/osd/*
+  - src/lz4/*
+  - src/blender/*
+
 on:
   push:
     branches: [ "dev" ]
