@@ -44,7 +44,8 @@ option(
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 
-option(TINYUSDZ_WITH_AUDIO "Build with Audio support(WAV and MP3)" ON)
+option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
+option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
 
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
@@ -340,6 +341,21 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
 
 endif()
 
+if(TINYUSDZ_WITH_ALAC_AUDIO)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/EndianPortable.c
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/ALACBitUtilities.c
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/ALACDecoder.cpp
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/ALACEncoder.cpp
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/ag_dec.c
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/ag_enc.c
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/dp_dec.c
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/dp_enc.c
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/matrix_dec.c
+       ${PROJECT_SOURCE_DIR}/src/external/alac/codec/matrix_enc.c
+  )
+endif(TINYUSDZ_WITH_ALAC_AUDIO)
+
 if(TINYUSDZ_WITH_OPENSUBDIV)
 
   # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
@@ -572,6 +588,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_AUDIO)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_AUDIO")
+  endif(TINYUSDZ_WITH_AUDIO)
+
+  if(TINYUSDZ_WITH_ALAC_AUDIO)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
   endif(TINYUSDZ_WITH_AUDIO)
 
   if(TINYUSDZ_WITH_OPENSUBDIV)

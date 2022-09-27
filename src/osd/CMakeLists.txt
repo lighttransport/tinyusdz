@@ -22,9 +22,9 @@
 #   language governing permissions and limitations under the Apache License.
 #
 
-project(OpenSubdiv)
+cmake_minimum_required(VERSION 3.12)
 
-cmake_minimum_required(VERSION 2.8.6)
+project(OpenSubdiv)
 
 # Turn on folder support
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -53,10 +53,17 @@ endif()
 
 #-------------------------------------------------------------------------------
 
-message(STATUS "Compiling ${CMAKE_PROJECT_NAME} version ${OpenSubdiv_VERSION}")
+message(STATUS "Compiling ${PROJECT_NAME} version ${OpenSubdiv_VERSION}")
 message(STATUS "Using cmake version ${CMAKE_VERSION}")
 
 #-------------------------------------------------------------------------------
+# Determine if the project is built as a subproject (using add_subdirectory)
+# or if it is the main project.
+set(MAIN_PROJECT OFF)
+if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    set(MAIN_PROJECT ON)
+endif()
+
 # Specify the default install path
 if (NOT DEFINED CMAKE_INSTALL_PREFIX)
     SET( CMAKE_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/" )
@@ -97,19 +104,21 @@ if(LIBRARY_OUTPUT_PATH_ROOT)
     SET( CMAKE_INSTALL_PREFIX "${LIBRARY_OUTPUT_PATH_ROOT}/" )
 endif()
 
-# Set the directory where the executables will be stored.
-set(EXECUTABLE_OUTPUT_PATH
-    "${PROJECT_BINARY_DIR}/bin"
-    CACHE PATH
-    "Directory where executables will be stored"
-)
+if (MAIN_PROJECT)
+    # Set the directory where the executables will be stored.
+    set(EXECUTABLE_OUTPUT_PATH
+        "${PROJECT_BINARY_DIR}/bin"
+        CACHE PATH
+        "Directory where executables will be stored"
+    )
 
-# Set the directory where the libraries will be stored.
-set(LIBRARY_OUTPUT_PATH
-    "${PROJECT_BINARY_DIR}/lib"
-    CACHE PATH
-    "Directory where all libraries will be stored"
-)
+    # Set the directory where the libraries will be stored.
+    set(LIBRARY_OUTPUT_PATH
+        "${PROJECT_BINARY_DIR}/lib"
+        CACHE PATH
+        "Directory where all libraries will be stored"
+    )
+endif()
 
 # Specify the list of directories to search for cmake modules.
 set(CMAKE_MODULE_PATH
@@ -218,8 +227,7 @@ elseif(MSVC)
 
     list(APPEND OSD_COMPILER_FLAGS
                     /W3     # Use warning level recommended for production purposes.
-                    # Disable since OSD fails to compile on VS2019.
-                    #/WX     # Treat all compiler warnings as errors.
+                    /WX     # Treat all compiler warnings as errors.
 
                     # warning C4005: macro redefinition
                     /wd4005
@@ -303,7 +311,6 @@ option(NO_CUDA "Disable CUDA backend" OFF)
 option(NO_OPENCL "Disable OpenCL backend" OFF)
 option(NO_CLEW "Disable CLEW wrapper library" OFF)
 option(NO_OPENGL "Disable OpenGL support")
-option(NO_GLES "Disable GLES support" ON)
 option(NO_METAL "Disable Metal support" OFF)
 option(NO_DX "Disable DirectX support")
 option(NO_TESTS "Disable all tests")
@@ -311,6 +318,7 @@ option(NO_GLTESTS "Disable GL tests")
 option(NO_GLEW "Disable use of GLEW" ON)
 option(NO_GLFW "Disable components depending on GLFW" OFF)
 option(NO_GLFW_X11 "Disable GLFW components depending on X11" OFF)
+option(NO_MACOS_FRAMEWORK "Disable generation of framework on macOS" OFF)
 
 option(OPENSUBDIV_GREGORY_EVAL_TRUE_DERIVATIVES "Enable true derivative evaluation for Gregory basis patches" OFF)
 
@@ -333,7 +341,7 @@ endif()
 if (NOT NO_OPENGL)
     find_package(OpenGL)
 endif()
-#find_package(OpenGLES)
+find_package(OpenGLES)
 if(NOT NO_OPENCL)
     if(NOT NO_CLEW)
         find_package(CLEW)
@@ -357,9 +365,7 @@ endif()
 if(APPLE AND NOT NO_METAL)
     find_package(Metal)
 endif()
-
-# Win32 may report OPENGL_FOUND even if `NO_OPENGL` is set
-if (OPENGL_FOUND AND NOT NO_OPENGL AND NOT IOS)
+if (OPENGL_FOUND AND NOT IOS)
     add_definitions(
         -DOPENSUBDIV_HAS_OPENGL
     )
@@ -387,6 +393,9 @@ if (NOT NO_DOC)
 else()
     set(DOXYGEN_EXECUTABLE )
 endif()
+
+# Python is used optionally to process source and documentation source files.
+find_package(Python COMPONENTS Interpreter)
 
 set(BUILD_SHARED_LIBS "${build_shared_libs}")
 
@@ -472,7 +481,8 @@ if(GLEW_FOUND AND GLEW_INCLUDE_DIR)
         ${PROJECT_SOURCE_DIR}/glLoader)
     set(OPENGL_LOADER_LIBRARIES
         ${GLEW_LIBRARY}
-        ${OPENGL_gl_LIBRARY})
+        ${OPENGL_gl_LIBRARY}
+        ${CMAKE_DL_LIBS})
 
 elseif(OPENGL_FOUND)
 
@@ -481,7 +491,8 @@ elseif(OPENGL_FOUND)
         ${OPENGL_INCLUDE_DIR}
         ${PROJECT_SOURCE_DIR}/glLoader)
     set(OPENGL_LOADER_LIBRARIES
-        ${OPENGL_gl_LIBRARY})
+        ${OPENGL_gl_LIBRARY}
+        ${CMAKE_DL_LIBS})
 
 endif()
 
@@ -515,7 +526,7 @@ else()
     endif()
 endif()
 
-if(OPENGLES_FOUND AND NOT NO_GLES)
+if(OPENGLES_FOUND)
     add_definitions(
         -DOPENSUBDIV_HAS_OPENGLES
     )
@@ -704,23 +715,39 @@ macro(osd_add_doxy_headers headers)
             list(APPEND headerfiles ${targetname} )
         endforeach()
 
-        add_dependencies( public_headers DEPENDS ${headerfiles} )
+        add_dependencies( public_headers ${headerfiles} )
     endif()
 endmacro()
 
 # Kernel Stringification
-# We want to use preprocessor include directives to include GLSL and OpenCL
+# We want to use preprocessor include directives to include GLSL, OpenCL, etc.
 # kernel source files in cpp files, but since the sources contain newline
 # characters we would need raw string literals from C++11 to do this directly.
-# To avoid depending on C++11 we instead use a small tool called "line_quote"
+# To avoid depending on C++11 we instead use a small tool called "stringify"
 # to generate source files that are suitable for direct inclusion.
+
+# We provide a Python implementation for configurability, e.g. to
+# use when cross compiling or building multi-architecture binaries.
+# We also provide a C++ binary implementation so that Python is not
+# required (for backward compatibility).
+if (OPENGL_FOUND OR OPENCL_FOUND OR DXSDK_FOUND OR METAL_FOUND)
+    if(Python_Interpreter_FOUND)
+        set(OSD_STRINGIFY_TOOL ${CMAKE_CURRENT_SOURCE_DIR}/tools/stringify/stringify.py)
+        set(OSD_STRINGIFY ${Python_EXECUTABLE} ${OSD_STRINGIFY_TOOL})
+    else()
+        set(OSD_STRINGIFY_TOOL stringify)
+        set(OSD_STRINGIFY ${OSD_STRINGIFY_TOOL})
+        set(OSD_USES_STRINGIFY_TOOL_BINARY TRUE)
+    endif()
+endif()
+
 function(osd_stringify src_files varname)
 
     set(inc_files "")
 
     foreach(src_file ${src_files})
 
-    string(REGEX REPLACE ".*[.](.*)" "\\1" extension "${src_file}")
+        string(REGEX REPLACE ".*[.](.*)" "\\1" extension "${src_file}")
 
         string(REGEX REPLACE "(.*)[.].*" "\\1.gen.h" inc_file "${src_file}")
         list(APPEND inc_files "${CMAKE_CURRENT_BINARY_DIR}/${inc_file}")
@@ -729,9 +756,9 @@ function(osd_stringify src_files varname)
             OUTPUT
                 "${CMAKE_CURRENT_BINARY_DIR}/${inc_file}"
             COMMAND
-                stringify "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}" "${CMAKE_CURRENT_BINARY_DIR}/${inc_file}"
+                ${OSD_STRINGIFY} "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}" "${CMAKE_CURRENT_BINARY_DIR}/${inc_file}"
             DEPENDS
-                stringify "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}"
+                ${OSD_STRINGIFY_TOOL} "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}"
         )
 
     endforeach()
@@ -821,28 +848,64 @@ if (NOT OPENSUBDIV_INCLUDE_DIR)
     set(OPENSUBDIV_INCLUDE_DIR "${PROJECT_SOURCE_DIR}")
 endif()
 
-#if (NOT NO_TESTS)
-#    enable_testing()
-#endif()
-#
-#if (NOT NO_OPENGL)
-#    add_subdirectory(glLoader)
-#endif()
+if (NOT NO_TESTS)
+    enable_testing()
+endif()
+
+if (NOT NO_OPENGL)
+    add_subdirectory(glLoader)
+endif()
+
+if (OSD_USES_STRINGIFY_TOOL_BINARY)
+    add_subdirectory(tools/stringify)
+endif()
 
 add_subdirectory(opensubdiv)
 
-#if (NOT ANDROID) # XXXdyu
-#    add_subdirectory(regression)
-#endif()
+if (NOT ANDROID) # XXXdyu
+    add_subdirectory(regression)
+endif()
 
-#if (NOT NO_EXAMPLES)
-#    add_subdirectory(examples)
-#endif()
-#
-#if (NOT NO_TUTORIALS)
-#    add_subdirectory(tutorials)
-#endif()
-#
-#if (NOT NO_DOC)
-#    add_subdirectory(documentation)
-#endif()
+if (NOT NO_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
+if (NOT NO_TUTORIALS)
+    add_subdirectory(tutorials)
+endif()
+
+if (NOT NO_DOC)
+    add_subdirectory(documentation)
+endif()
+
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.0.2)
+    #
+    # CMake Config.
+    #
+    include(GNUInstallDirs)
+    include(CMakePackageConfigHelpers)
+
+    set(OPENSUBDIV_CONFIG_PATH "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+
+    configure_package_config_file(
+        opensubdiv-config.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSubdivConfig.cmake
+        INSTALL_DESTINATION ${OPENSUBDIV_CONFIG_PATH}
+    )
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSubdivConfigVersion.cmake
+        VERSION ${OSD_SONAME}
+        COMPATIBILITY SameMajorVersion
+    )
+
+    install(EXPORT opensubdiv-targets
+        NAMESPACE OpenSubdiv::
+        FILE OpenSubdivTargets.cmake
+        DESTINATION ${OPENSUBDIV_CONFIG_PATH})
+
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSubdivConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/OpenSubdivConfigVersion.cmake
+        DESTINATION ${OPENSUBDIV_CONFIG_PATH}
+    )
+endif()
