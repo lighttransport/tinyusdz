@@ -236,7 +236,7 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
   * [ ] Play audio using SoLoud or miniaudio(or Oboe for Android)
   * [ ] wav(dr_wav)
   * [ ] mp3(dr_mp3)
-  * [ ] m4a?
+  * [ ] m4a(ALAC?)
 * [ ] Viewer with Vulkan API.
 * [ ] Replace OpenSubdiv with our own subdiv library.
 * [ ] Write parser based on the schema definition.
