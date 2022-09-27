@@ -168,8 +168,10 @@ struct Field {
 struct Spec {
   Index path_index;
   Index fieldset_index;
-  SpecType spec_type;
+  SpecType spec_type; // Must be 32bit
 };
+
+static_assert(sizeof(Spec) == (4 * 3), "sizeof(Spec) must be 12");
 
 struct Section {
   Section() { memset(this, 0, sizeof(*this)); }

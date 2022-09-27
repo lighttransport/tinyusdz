@@ -31,8 +31,6 @@
 #include <cassert>
 #include <cmath>
 
-#define kPI (3.14159265358979323846)
-
 namespace OpenSubdiv {
 namespace OPENSUBDIV_VERSION {
 
@@ -279,9 +277,11 @@ Scheme<SCHEME_CATMARK>::assignSmoothLimitMask(VERTEX const& vertex, MASK& posMas
         posMask.FaceWeight(2) = fWeight;
         posMask.FaceWeight(3) = fWeight;
     } else {
-        Weight fWeight = 1.0f / (Weight)(valence * (valence + 5.0f));
+        Weight Valence = (Weight) valence;
+
+        Weight fWeight = 1.0f / (Valence * (Valence + 5.0f));
         Weight eWeight = 4.0f * fWeight;
-        Weight vWeight = (Weight)(1.0f - valence * (eWeight + fWeight));
+        Weight vWeight = 1.0f - Valence * (eWeight + fWeight);
 
         posMask.VertexWeight(0) = vWeight;
         for (int i = 0; i < valence; ++i) {
@@ -399,7 +399,7 @@ Scheme<SCHEME_CATMARK>::assignCreaseLimitTangentMasks(VERTEX const& vertex,
         //  The irregular case -- formulae from Biermann et al:
 
         double k     = (double) (interiorEdgeCount + 1);
-        double theta = kPI / k;
+        double theta = M_PI / k;
 
         double cosTheta = std::cos(theta);
         double sinTheta = std::sin(theta);
@@ -480,7 +480,7 @@ Scheme<SCHEME_CATMARK>::assignSmoothLimitTangentMasks(VERTEX const& vertex,
         tan1Mask.FaceWeight(2) = -1.0f;
         tan1Mask.FaceWeight(3) =  1.0f;
     } else {
-        double theta = 2.0f * kPI / (double)valence;
+        double theta = 2.0f * M_PI / (double)valence;
 
         double cosTheta     = std::cos(theta);
         double cosHalfTheta = std::cos(theta * 0.5f);
