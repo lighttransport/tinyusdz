@@ -26,9 +26,23 @@ Remaining task is to write a examples, demo and scene/render delegate(Tydra)
 * [ ] Web demo with Three.js?
   * [ ] Three.js started to support USDZ with Ascii format, but no USDC support yet: https://github.com/mrdoob/three.js/issues/14219
 
-### Web platform and sandboxed environment
+### Security and memory budget
+
+TinyUSDZ has first priority of considering security and stability.
+
+USDZ(USDC) is a binary format and data are compressed. To avoid out-of-bounds access, out-of-memory, and other security issues when loading malcious USDZ(e.g. USDZ file from unknown origin), TinyUSDZ has a memory budget feature to avoid out-of-memory issue.
+
+To limit a memory usage when loading USDZ file, Please set a value `max_memory_limit_in_mb` in USDLoadOptions.
+
+TinyUSDZ source codes(and some external third party codes) are also checked by Address Sanitizer, CodeQL and Fuzzer.
+
+If you need to deal with arbitrary USD files from unknown origin(e.g. from internet, NFT storage. Whose may contain malcious data), it is recommended to use TinyUSDZ in sandboxed environment(RunC, FlatPak, WASI(WASM)). Run in WASI is recommended at the moment(please see next section).
+
+### Web platform(WASM) and sandboxed environment(WASI)
 
 TinyUSDZ does not use C++ exceptions and can be built without threads. TinyUSDZ supports WASM and WASI build. So TinyUSDZ should runs well on various Web platform(WebAssembly. No SharedArrayBuffer, Atomics and WebAssembly SIMD(which is not yet available on iOS Safari) required) and sandboxed environment(WASI. Users who need to read various USD file which possibly could contain malcious data from Internet, IPFS or blockchain storage). 
+
+See [sandbox/wasi/](sandbox/wasi) for Building TinyUSDZ with WASI toolchain.
 
 ### Tydra
 
@@ -41,6 +55,7 @@ Tydra may be something like Tiny version of pxrUSD Hydra, but its API is complet
   * Linear
   * Rec.709
   * [ ] Partial support of OCIO(OpenColor IO) through TinyColorIO https://github.com/syoyo/tinycolorio . Currently SPI3DLut only.
+* More details are T.B.W.
 
 ## Notice
 
@@ -94,15 +109,6 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
 USDZ is actually an uncompressed zip file.
 USDZ(ZIP) contains usd(binary or ascii) and resources(e.g. image/auduo files)
 
-## Security and memory budget
-
-USDZ(USDC) is a binary format and data are compressed. To avoid out-of-bounds access, out-of-memory, and other security issues when loading malcious USDZ(e.g. USDZ file from unknown origin), TinyUSDZ has a memory budget feature to avoid out-of-memory issue.
-
-To limit a memory usage when loading USDZ file, Please set a value `max_memory_limit_in_mb` in USDLoadOptions.
-
-TinyUSDZ source codes are also checked by Address Sanitizer, CodeQL and Fuzzer.
-
-If you need to deal with arbitrary USD files from unknown origin(e.g. from internet, NFT storage. Whose may contain malcious data), it is recommended to use TinyUSDZ in sandboxed environment(RunC, FlatPak, WASI(WASM)). Run in WASI is recommended at the moment. See [sandbox/wasi/](sandbox/wasi) for Building TinyUSDZ with WASI toolchain.
 
 ## Build
 
