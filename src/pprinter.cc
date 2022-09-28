@@ -356,12 +356,10 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
     ss << "variantSets = ";
 
-    if (auto pv = var.Get<value::token>()) {
-      ss << pv.value();
-    } else if (auto pva = var.Get<std::vector<value::token>>()) {
-      ss << pva.value();
+    if (var.empty()) {
+      ss << "None";
     } else {
-      ss << "[InternalError]";
+      ss << var;
     }
 
     ss << "\n";
@@ -1064,6 +1062,12 @@ std::string to_string(const StringData &s) {
     return quote(s.value);
   }
 }
+
+std::string to_string(const std::string &v) {
+  // TODO: Escape `"` character.
+  return quote(v);
+}
+
 
 std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32_t indent) {
   std::stringstream ss;

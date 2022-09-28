@@ -830,17 +830,21 @@ class USDAReader::Impl {
         }
 
       } else if (meta.first == "variantSets") {
-        if (auto pv = var.Get<value::token>()) {
-          out->variantSets = meta.second;
-        } else if (auto pva = var.Get<std::vector<value::token>>()) {
-          out->variantSets = meta.second;
+        // treat as `string`
+        if (auto pvb = var.Get<value::ValueBlock>()) {
+          out->variantSets = std::make_pair(listEditQual, std::vector<std::string>());
+        } else if (auto pv = var.Get<std::string>()) {
+          std::vector<std::string> vs;
+          vs.push_back(pv.value());
+          out->variantSets = std::make_pair(listEditQual, vs);
+        } else if (auto pva = var.Get<std::vector<std::string>>()) {
+          out->variantSets = std::make_pair(listEditQual, pva.value());
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `variantSets` metadataum is not type "
-              "`token` or `token[]`. got type `"
+              "`string` or `string[]`. got type `"
               << var.type << "`");
         }
-
       } else if (meta.first == "apiSchemas") {
         DCOUT("apiSchemas. type = " << var.type);
         if (var.type == "token[]") {

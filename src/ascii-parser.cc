@@ -168,7 +168,9 @@ static void RegisterPrimMetas(
   metas["payload"] = AsciiParser::VariableDef("Reference", "payload", true);
   metas["specializes"] =
       AsciiParser::VariableDef(value::kPath, "specializes", true);
-  metas["variantSets"] = AsciiParser::VariableDef(value::kToken, "variantSets",
+
+  // Use `string`
+  metas["variantSets"] = AsciiParser::VariableDef(value::kString, "variantSets",
                                                   /* allow array type */ true);
 
   // Parse as dict. TODO: Use ParseVariants()

@@ -490,6 +490,19 @@ class Stage {
     return stage_metas;
   }
 
+  ///
+  /// Compose scene.
+  ///
+  bool Compose(bool addSourceFileComment = true) const;
+
+  ///
+  /// pxrUSD Compat API
+  ///
+  bool Flatten(bool addSourceFileComment = true) const {
+    return Compose(addSourceFileComment);
+  }
+
+
  private:
   // Root nodes
   std::vector<Prim> root_nodes;
