@@ -1,4 +1,6 @@
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 
 static int parse_m4a_alac(const uint8_t* data, size_t size) {
   if (size > 1024 * 1024 * 128 * 4) {
