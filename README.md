@@ -278,7 +278,8 @@ then build TinyUSDZ by linking with this local Python build.
 
 ## License
 
-TinyUSDZ is licensed under MIT license.
+TinyUSDZ is licensed under MIT license and Apache 2.0 license.
+(Doing relicensing. Will be relicensed to Apache 2.0)
 
 ### Third party licenses
 

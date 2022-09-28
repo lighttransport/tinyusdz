@@ -587,8 +587,8 @@ struct PrimMeta {
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
   nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload;
   nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inherits;  // 'inherits'
-  nonstd::optional<std::pair<ListEditQual, MetaVariable>>
-      variantSets;  // 'variantSets'. type `token` or `token[]`
+  nonstd::optional<std::pair<ListEditQual, std::vector<std::string>>>
+      variantSets;  // 'variantSets'. Could be `token` but treat as `string`(Crate format uses `string`)
 
   nonstd::optional<VariantSelectionMap> variants;  // `variants`
 

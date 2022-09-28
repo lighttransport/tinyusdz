@@ -56,6 +56,7 @@ std::string to_string(const StringData &s);
 // TODO: move to value-types.hh
 std::string to_string(const value::token &s);
 
+std::string to_string(const std::string &s);
 
 template<typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
