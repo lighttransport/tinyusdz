@@ -594,7 +594,7 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_ALAC_AUDIO)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
-  endif(TINYUSDZ_WITH_AUDIO)
+  endif(TINYUSDZ_WITH_ALAC_AUDIO)
 
   if(TINYUSDZ_WITH_OPENSUBDIV)
     target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
