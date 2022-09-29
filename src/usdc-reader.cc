@@ -250,8 +250,23 @@ class USDCReader::Impl {
                             std::vector<value::token> *primChildrenOut);
 
 
-  bool AddVariantChildrenToPrimNode(uint32_t prim_idx,
-    const std::vector<value::token> &variantChildren);
+  bool AddVariantChildrenToPrimNode(int32_t prim_idx,
+    const std::vector<value::token> &variantChildren) {
+    if (prim_idx < 0) {
+      return false;
+    }
+
+    if (_variantChildren.count(uint32_t(prim_idx))) {
+      PUSH_WARN("Multiple Field with VariantSet SpecType detected.");
+    } 
+
+    _variantChildren[uint32_t(prim_idx)] = variantChildren;
+
+    return true;
+  }
+
+  bool AddVariantToPrimNode(int32_t prim_idx,
+    const value::Value &variant);
 
   crate::CrateReader *crate_reader{nullptr};
 
@@ -293,7 +308,10 @@ class USDCReader::Impl {
   std::map<crate::Index, crate::FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
-  std::vector<PrimNode> _prim_nodes;
+  //std::vector<PrimNode> _prim_nodes;
+
+  // VariantSet Spec. variantChildren
+  std::map<uint32_t, std::vector<value::token>> _variantChildren;
 
   // Check if given node_id is a prim node.
   std::set<int32_t> _prim_table;
@@ -1758,21 +1776,6 @@ bool USDCReader::Impl::ParsePrimFields(
   return true;
 }
 
-bool USDCReader::Impl::AddVariantChildrenToPrimNode(uint32_t prim_idx,
-    const std::vector<value::token> &variantChildren) {
-  if (!_prim_table.count(int32_t(prim_idx))) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Prim idx [{}] not reconstructed.", prim_idx));
-  }
-
-  if (prim_idx > _prim_nodes.size()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("[InternalError] Prim idx [{}] not assigned.", prim_idx));
-  }
-  
-  _prim_nodes[size_t(prim_idx)].variantChildren = variantChildren;
-
-  return true;
-}
-
 ///
 ///
 /// VariantSet fieldSet example.
@@ -1903,24 +1906,26 @@ bool USDCReader::Impl::ReconstructPrimNode(
     _prim_table.insert(current);
 
   } else {
-    nonstd::optional<std::string> typeName;
-    nonstd::optional<Specifier> specifier;
-    std::vector<value::token> properties;
-
-    PrimMeta primMeta;
-
-
-    DCOUT("== PrimFields begin ==> ");
-
-    if (!ParsePrimFields( fvs, typeName, specifier, properties, primMeta)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
-      return false;
-    }
-
-    DCOUT("<== PrimFields end ===");
 
     if (spec.spec_type == SpecType::Prim) {
       // Prim
+
+      nonstd::optional<std::string> typeName;
+      nonstd::optional<Specifier> specifier;
+      std::vector<value::token> properties;
+
+      PrimMeta primMeta;
+
+
+      DCOUT("== PrimFields begin ==> ");
+
+      if (!ParsePrimFields( fvs, typeName, specifier, properties, primMeta)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
+        return false;
+      }
+
+      DCOUT("<== PrimFields end ===");
+
 
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
         elemPath = pv.value();
@@ -2004,13 +2009,18 @@ bool USDCReader::Impl::ReconstructPrimNode(
 
       DCOUT("<== VariantSetFields endn === ");
 
-      // variantChildren to prim.
+      // Add variantChildren to prim node.
+      if (!AddVariantChildrenToPrimNode(parent, variantChildren)) {
+        return false;
+      }
 
-      // TODO
-      PUSH_WARN("TODO: SpecTypeVariantSet");
     } else if (spec.spec_type == SpecType::Variant) {
+
+      DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}", current, parent, _prim_table.count(current)));
+  
       // TODO
       PUSH_WARN("TODO: SpecTypeVariant");
+
     } else if (spec.spec_type == SpecType::Attribute) {
       // Maybe parent is Class/Over, or inherited
       PUSH_WARN("TODO: SpecTypeAttribute(in conjunction with Class/Over specifier, or inherited?)");
@@ -2408,9 +2418,6 @@ bool USDCReader::Impl::ReconstructPrimTree(
         typed_prim.name = __prim_name;                                           \
         value::Value primdata = typed_prim;                                      \
         prim = Prim(primdata);                                                   \
-        /* PrimNode pnode; */                                                    \
-        /* pnode.prim = prim; */                                                 \
-        /* _prim_nodes.push_back(pnode); */                                      \
       } else
 
         if (spec.spec_type == SpecType::Prim) {

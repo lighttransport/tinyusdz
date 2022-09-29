@@ -64,7 +64,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
 
   // TODO: Do not print offset when it is 0.0
   // TODO: Do not print scale when it is 1.0
-   
+
   ofs << "(offset = " << v._offset << ", scale = " << v._scale << ")";
 
   return ofs;
@@ -121,43 +121,17 @@ void SetIndentString(const std::string &s) {
 
 } // namespace pprint
 
+
 namespace {
 
+//std::string to_string(const double &v) {
+//  std::stringstream ss;
+//  ss << v;
+//  return ss.str();
+//}
 
-std::string to_string(const double &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
+} // namespace local
 
-#if 0
-template<typename T>
-std::string to_string(const std::vector<T> &v) {
-  std::stringstream ss;
-
-  ss << "[";
-  for (size_t i = 0; i < v.size(); i++) {
-    ss << v[i];
-    if (i != (v.size() - 1)) {
-      ss << ", ";
-    }
-  }
-  ss << "]";
-
-  return ss.str();
-}
-#endif
-
-
-#if 0
-template<typename T>
-std::string prefix(const Animatable<T> &v) {
-  if (v.IsTimeSamples()) {
-    return ".timeSamples";
-  }
-  return "";
-}
-#endif
 
 template<typename T>
 std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t indent = 0) {
@@ -240,6 +214,8 @@ std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent
 }
 
 
+namespace {
+
 std::string print_references(const prim::ReferenceList &references, const uint32_t indent) {
   std::stringstream ss;
 
@@ -263,6 +239,8 @@ std::string print_references(const prim::ReferenceList &references, const uint32
 
   return ss.str();
 }
+
+} // namespce local
 
 std::string print_payload(const prim::PayloadList &payload, const uint32_t indent) {
   std::stringstream ss;
@@ -348,7 +326,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   if (meta.variantSets) {
     ss << pprint::Indent(indent);
     auto listEditQual = std::get<0>(meta.variantSets.value());
-    auto var = std::get<1>(meta.variantSets.value());
+    const std::vector<std::string> &vs = std::get<1>(meta.variantSets.value()); // string[]
 
     if (listEditQual != ListEditQual::ResetToExplicit) {
       ss << to_string(listEditQual) << " ";
@@ -356,10 +334,10 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
     ss << "variantSets = ";
 
-    if (var.empty()) {
+    if (vs.empty()) {
       ss << "None";
     } else {
-      ss << var;
+      ss << to_string(vs);
     }
 
     ss << "\n";
@@ -1030,14 +1008,36 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   return ss.str();
 }
 
-} // namespace local
-
 std::string to_string(bool v) {
   if (v) {
     return "true";
   } else {
     return "false";
   }
+}
+
+std::string to_string(int32_t v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(uint32_t v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(int64_t v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(uint64_t v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
 }
 
 std::string to_string(const APISchemas::APIName &name) {

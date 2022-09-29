@@ -29,6 +29,10 @@ std::string Indent(uint32_t level);
 //constexpr char kIndentString[] = "  ";
 
 std::string to_string(bool v);
+std::string to_string(int32_t v);
+std::string to_string(uint32_t v);
+std::string to_string(int64_t v);
+std::string to_string(uint64_t v);
 std::string to_string(Visibility v);
 std::string to_string(Orientation o);
 std::string to_string(Extent e);
@@ -55,7 +59,6 @@ std::string to_string(const StringData &s);
 
 // TODO: move to value-types.hh
 std::string to_string(const value::token &s);
-
 std::string to_string(const std::string &s);
 
 template<typename T>
@@ -63,7 +66,7 @@ std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
   std::stringstream ss;
   ss << pprint::Indent(level) << "[";
 
-  // TODO(syoyo): indent
+  // TODO(syoyo): indent for large array
   for (size_t i = 0; i < v.size(); i++) {
     ss << to_string(v[i]);
     if (i != (v.size() -1)) {
@@ -73,6 +76,24 @@ std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
   ss << "]";
   return ss.str();
 }
+
+#if 0
+template<>
+std::string to_string(const std::vector<std::string> &v, const uint32_t level) {
+  std::stringstream ss;
+  ss << pprint::Indent(level) << "[";
+
+  // TODO(syoyo): indent for large array
+  for (size_t i = 0; i < v.size(); i++) {
+    ss << quote(v[i]);
+    if (i != (v.size() -1)) {
+      ss << ", ";
+    }
+  }
+  ss << "]";
+  return ss.str();
+}
+#endif
 
 template<typename T>
 std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
@@ -147,9 +168,17 @@ std::string to_string(const GeomCamera::StereoRole &role);
 
 std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent);
+std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t indent);
+std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
 std::string print_meta(const MetaVariable &meta, const uint32_t indent);
+std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_customData(const CustomDataType &customData, const std::string &name, const uint32_t indent);
 std::string print_variantSelectionMap(const VariantSelectionMap &map, const uint32_t indent);
+std::string print_payload(const prim::PayloadList &payload, const uint32_t indent);
+std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent);
+std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent);
+std::string print_props(const std::map<std::string, Property> &props, uint32_t indent);
 
 
 
