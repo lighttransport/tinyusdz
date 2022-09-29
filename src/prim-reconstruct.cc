@@ -1235,6 +1235,16 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       table.insert(prop.first); \
       DCOUT("Added rel material:binding."); \
       continue; \
+    } else if (rel.IsPathVector()) { \
+      if (rel.targetPathVector.size() == 1) { \
+        MaterialBindingAPI m; \
+        m.binding = rel.targetPathVector[0]; \
+        __ptarget->materialBinding = m; \
+        table.insert(prop.first); \
+        DCOUT("Added rel material:binding."); \
+        continue; \
+      } \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", kMaterialBinding)); \
     } else { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kMaterialBinding)); \
     } \
@@ -1253,6 +1263,13 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       __ptarget->skeleton = rel.targetPath; \
       table.insert(prop.first); \
       continue; \
+    } else if (rel.IsPathVector()) { \
+      if (rel.targetPathVector.size() == 1) { \
+        __ptarget->skeleton = rel.targetPathVector[0]; \
+        table.insert(prop.first); \
+        continue; \
+      } \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", kSkelSkeleton)); \
     } else { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kSkelSkeleton)); \
     } \
