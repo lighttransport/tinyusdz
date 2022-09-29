@@ -833,9 +833,13 @@ class USDAReader::Impl {
         // treat as `string`
         if (auto pvb = var.Get<value::ValueBlock>()) {
           out->variantSets = std::make_pair(listEditQual, std::vector<std::string>());
-        } else if (auto pv = var.Get<std::string>()) {
+        } else if (auto pv = var.Get<StringData>()) {
           std::vector<std::string> vs;
-          vs.push_back(pv.value());
+          vs.push_back(pv.value().value);
+          out->variantSets = std::make_pair(listEditQual, vs);
+        } else if (auto pvs = var.Get<std::string>()) {
+          std::vector<std::string> vs;
+          vs.push_back(pvs.value());
           out->variantSets = std::make_pair(listEditQual, vs);
         } else if (auto pva = var.Get<std::vector<std::string>>()) {
           out->variantSets = std::make_pair(listEditQual, pva.value());
