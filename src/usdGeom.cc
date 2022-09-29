@@ -213,7 +213,8 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
   }
 
   if (faceVertexCounts.GetValue()) {
-    const auto &fv = faceVertexCounts.GetValue().value().value;
+    const auto fvp = faceVertexCounts.GetValue();
+    const auto &fv = fvp.value().value;
     size_t n = fv.size();
 
     // Currently we only check if face ids are valid.
