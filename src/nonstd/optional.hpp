@@ -20,11 +20,18 @@
 #define optional_STRINGIFY(  x )  optional_STRINGIFY_( x )
 #define optional_STRINGIFY_( x )  #x
 
+
 // optional-lite configuration:
 
 #define optional_OPTIONAL_DEFAULT  0
 #define optional_OPTIONAL_NONSTD   1
 #define optional_OPTIONAL_STD      2
+
+// TinyUSDZ mod. Force use nonstd implementation even on C++17 to avoid possible linkage issue.
+#if defined( optional_CONFIG_SELECT_OPTIONAL )
+#undef optional_CONFIG_SELECT_OPTIONAL
+#endif
+#define optional_CONFIG_SELECT_OPTIONAL (optional_OPTIONAL_NONSTD)
 
 // tweak header support:
 
