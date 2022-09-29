@@ -108,6 +108,12 @@ struct PrimNode {
 
   int64_t parent{-1};            // -1 = root node
   std::vector<size_t> children;  // index to USDCReader::Impl::._prim_nodes[]
+
+  // SpecType::VariantSet
+  std::vector<value::token> variantChildren;
+
+  // TODO: Variants
+  std::map<std::string, value::Value> variants;
 };
 
 class USDCReader::Impl {
@@ -165,6 +171,10 @@ class USDCReader::Impl {
     nonstd::optional<Specifier> &specifier, /* out */
     std::vector<value::token> &properties, /* out */
     PrimMeta &primMeta); /* out */
+
+  bool ParseVariantSetFields(
+    const crate::FieldValuePairVector &fvs,
+    std::vector<value::token> &variantChildren); /* out */
 
   template <typename T>
   bool ReconstructPrim(const crate::CrateReader::Node &node,
@@ -238,6 +248,10 @@ class USDCReader::Impl {
   bool ReconstrcutStageMeta(const crate::FieldValuePairVector &fvs,
                             StageMetas *out,
                             std::vector<value::token> *primChildrenOut);
+
+
+  bool AddVariantChildrenToPrimNode(uint32_t prim_idx,
+    const std::vector<value::token> &variantChildren);
 
   crate::CrateReader *crate_reader{nullptr};
 
@@ -1494,9 +1508,9 @@ bool USDCReader::Impl::ParsePrimFields(
                         << fv.second.type_name() << "`");
         }
       } else if (fv.first == "primChildren") {
+        // Crate only
         if (auto pv = fv.second.as<std::vector<value::token>>()) {
-          // We can ignore primChildren for now
-          // PUSH_WARN("We can ignore `primChildren` for now");
+          primMeta.primChildren = (*pv);
         } else {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "`primChildren` must be type `token[]`, but got type `"
@@ -1598,6 +1612,26 @@ bool USDCReader::Impl::ParsePrimFields(
               kTag, "`variantSelection` must be type `variants`, but got type `"
                         << fv.second.type_name() << "`");
         }
+      } else if (fv.first == "variantChildren") {
+        // Used internally
+        if (auto pv = fv.second.as<std::vector<value::token>>()) {
+          primMeta.variantChildren = (*pv);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`variantChildren` must be type `token[]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+
+      } else if (fv.first == "variantSetChildren") {
+        // Used internally
+        if (auto pv = fv.second.as<std::vector<value::token>>()) {
+          primMeta.variantSetChildren = (*pv);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`variantSetChildren` must be type `token[]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+
       } else if (fv.first == "variantSetNames") {
         // ListOp<string>
         if (auto pv = fv.second.as<ListOp<std::string>>()) {
@@ -1724,6 +1758,55 @@ bool USDCReader::Impl::ParsePrimFields(
   return true;
 }
 
+bool USDCReader::Impl::AddVariantChildrenToPrimNode(uint32_t prim_idx,
+    const std::vector<value::token> &variantChildren) {
+  if (!_prim_table.count(int32_t(prim_idx))) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Prim idx [{}] not reconstructed.", prim_idx));
+  }
+
+  if (prim_idx > _prim_nodes.size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("[InternalError] Prim idx [{}] not assigned.", prim_idx));
+  }
+  
+  _prim_nodes[size_t(prim_idx)].variantChildren = variantChildren;
+
+  return true;
+}
+
+///
+///
+/// VariantSet fieldSet example.
+///
+///
+///   specTy = SpecTypeVariantSet
+///
+///     - variantChildren(token[])
+///
+///
+bool USDCReader::Impl::ParseVariantSetFields(
+  const crate::FieldValuePairVector &fvs,
+  std::vector<value::token> &variantChildren) {
+
+    // Fields for Prim and Prim metas.
+    for (const auto &fv : fvs) {
+      if (fv.first == "variantChildren") {
+        if (auto pv = fv.second.as<std::vector<value::token>>()) {
+          variantChildren = (*pv);
+          DCOUT("variantChildren: " << variantChildren);
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "`variantChildren` must be type `token[]`, but got type `"
+                        << fv.second.type_name() << "`");
+        }
+      } else {
+        DCOUT("VariantSet field TODO: " << fv.first);
+        PUSH_WARN("VariantSet field TODO: " << fv.first);
+      }
+    }
+
+  return true;
+}
+
 bool USDCReader::Impl::ReconstructPrimNode(
   int parent, int current, int level,
   const PathIndexToSpecIndexMap &psmap, Stage *stage,
@@ -1827,14 +1910,14 @@ bool USDCReader::Impl::ReconstructPrimNode(
     PrimMeta primMeta;
 
 
-    DCOUT("---");
+    DCOUT("== PrimFields begin ==> ");
 
     if (!ParsePrimFields( fvs, typeName, specifier, properties, primMeta)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
       return false;
     }
 
-    DCOUT("===");
+    DCOUT("<== PrimFields end ===");
 
     if (spec.spec_type == SpecType::Prim) {
       // Prim
@@ -1901,6 +1984,28 @@ bool USDCReader::Impl::ReconstructPrimNode(
         _prim_table.insert(current);
       }
     } else if (spec.spec_type == SpecType::VariantSet) {
+
+      // Assume parent(Prim) already exists(parsed)
+      // TODO: Confirm Crate format allow defining Prim after VariantSet serialization.
+      if (!_prim_table.count(parent)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Prim for this VariantSet not found.");
+      }
+
+      DCOUT(fmt::format("[{}] is a Variantset node(parent = {}). prim_idx? = {}", current, parent, _prim_table.count(current)));
+
+      std::vector<value::token> variantChildren;
+
+      DCOUT("== VariantSetFields begin ==> ");
+
+      if (!ParseVariantSetFields( fvs, variantChildren)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse VariantSet fields.");
+        return false;
+      }
+
+      DCOUT("<== VariantSetFields endn === ");
+
+      // variantChildren to prim.
+
       // TODO
       PUSH_WARN("TODO: SpecTypeVariantSet");
     } else if (spec.spec_type == SpecType::Variant) {
