@@ -134,16 +134,16 @@ endif()
 
 # Currently TinyUSDZ does not claim CXX version when TinyUSDZ is added as add_subdirectory()
 # of toplevel(root) project.
-# TODO: Property inherit CXX compiler settings
+# TODO: Property inherit CXX compiler settings from toplevel(root) project.
 if (PROJECT_IS_TOP_LEVEL)
   if(TINYUSDZ_WITH_PYTHON)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
     # for pybind11
-    #set(CMAKE_CXX_STANDARD 14)
+    set(CMAKE_CXX_STANDARD 14)
   else()
     # Require strict C++14 mode(e.g. `-std=c++14`)
-    #set(CMAKE_CXX_STANDARD 14)
+    set(CMAKE_CXX_STANDARD 14)
   endif()
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
