@@ -189,6 +189,9 @@ static void RegisterPrimMetas(
   // usdSkel
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
 
+  // usdSkel?
+  metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
+
   // usdShade?
   metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
 
@@ -196,6 +199,27 @@ static void RegisterPrimMetas(
   metas["apiSchemas"] = AsciiParser::VariableDef(
       value::Add1DArraySuffix(value::kToken), "apiSchemas");
 }
+
+static void RegisterPropMetas(
+    std::map<std::string, AsciiParser::VariableDef> &metas) {
+  metas.clear();
+
+  metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
+  metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
+  metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
+  metas["customData"] =
+      AsciiParser::VariableDef(value::kDictionary, "customData");
+
+  // usdSkel
+  metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
+
+  // usdSkel?
+  metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
+
+  // usdShade?
+  metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
+}
+
 
 static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.clear();
@@ -783,7 +807,7 @@ bool AsciiParser::ParseTupleArray(
 
     Rewind(1);
   }
-  
+
   if (!SepBy1TupleType<T, N>(',', result)) {
     return false;
   }
@@ -5685,6 +5709,35 @@ nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
   return nonstd::nullopt;
 }
 
+bool AsciiParser::ParseMetadataVariable(
+  const AsciiParser::VariableDef &vardef,
+  MetaVariable *varout) {
+
+
+  MetaVariable var;
+
+  // TODO:
+
+  if (vardef.type == "path") {
+    std::string value;
+    if (!ReadPathIdentifier(&value)) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse path identifier");
+    }
+
+    Path p(value, "");
+    var.Set(p);
+  } else {
+
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Unknown/unsupported Metadata type {}", vardef.type));
+  }
+
+  if (varout) {
+    (*varout) = var;
+  }
+
+  return true;
+}
+
 bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
   if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
@@ -6002,6 +6055,8 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       DCOUT("Attribute meta name: " << token);
 
+#if 0
+      // TODO: Allow token in registered
       if ((token != "interpolation") && (token != "customData") &&
           (token != "elementSize") && (token != "colorSpace")) {
         PUSH_ERROR_AND_RETURN(
@@ -6011,6 +6066,13 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
             "got: " +
             token);
       }
+#else
+      bool supported = _supported_prop_metas.count(token);
+      if (!supported) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Unsupported Property metadatum name: {}", token));
+      }
+#endif
 
       if (!SkipWhitespaceAndNewline()) {
         return false;
@@ -6061,8 +6123,8 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         out_meta->customData = dict;
 
       } else {
-        // ???
-        return false;
+        // add to custom meta
+        out_meta->meta.emplace(token, metavar);
       }
 
       if (!SkipWhitespaceAndNewline()) {
@@ -6823,6 +6885,7 @@ AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) { Setup(); }
 void AsciiParser::Setup() {
   RegisterStageMetas(_supported_stage_metas);
   RegisterPrimMetas(_supported_prim_metas);
+  RegisterPropMetas(_supported_prop_metas);
   RegisterPrimAttrTypes(_supported_prim_attr_types);
   RegisterPrimTypes(_supported_prim_types);
   RegisterAPISchemas(_supported_api_schemas);

@@ -627,6 +627,7 @@ struct AttrMeta {
   // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
+  nonstd::optional<bool> hidden;         // 'hidden'
   nonstd::optional<StringData> comment;           // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
@@ -637,7 +638,7 @@ struct AttrMeta {
   std::vector<StringData> stringData;
 
   bool authored() const {
-    return (interpolation || elementSize || customData || meta.size() ||
+    return (interpolation || elementSize || hidden || customData || meta.size() ||
             stringData.size());
   }
 };

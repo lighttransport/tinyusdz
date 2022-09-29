@@ -810,6 +810,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<value::token> typeName;
   nonstd::optional<Interpolation> interpolation;
   nonstd::optional<int> elementSize;
+  nonstd::optional<bool> hidden;
   nonstd::optional<CustomDataType> customData;
   nonstd::optional<StringData> comment;
   Property::Type propType{Property::Type::EmptyAttrib};
@@ -969,6 +970,18 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`targetPaths` field is not `ListOp[Path]` type.");
       }
 
+    } else if (fv.first == "hidden") {
+      // Attribute hidden param
+      if (auto pv = fv.second.get_value<bool>()) {
+        auto p = pv.value();
+        DCOUT("hidden = " << to_string(p));
+
+        hidden = p;
+
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`elementSize` field is not `int` type.");
+      }
     } else if (fv.first == "elementSize") {
       // Attribute Meta
       if (auto pv = fv.second.get_value<int>()) {
@@ -1088,6 +1101,9 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   }
   if (elementSize) {
     attr.meta.elementSize = elementSize.value();
+  }
+  if (hidden) {
+    attr.meta.hidden = hidden.value();
   }
   if (customData) {
     attr.meta.customData = customData.value();
@@ -1462,6 +1478,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
         RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name)
         RECONSTRUCT_PRIM(Skeleton, typeName, prim_name)
         RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name)
+        RECONSTRUCT_PRIM(BlendShape, typeName, prim_name)
         RECONSTRUCT_PRIM(Shader, typeName, prim_name)
         RECONSTRUCT_PRIM(Material, typeName, prim_name)
         {
