@@ -186,6 +186,7 @@ static void RegisterPrimMetas(
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
   metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
 
+#if 0
   // usdSkel
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
 
@@ -194,6 +195,7 @@ static void RegisterPrimMetas(
 
   // usdShade?
   metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
+#endif
 
   // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
@@ -218,6 +220,8 @@ static void RegisterPropMetas(
 
   // usdShade?
   metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
+
+  metas["interpolation"] = AsciiParser::VariableDef(value::kToken, "interpolation");
 }
 
 
@@ -3435,6 +3439,7 @@ bool AsciiParser::IsSupportedPrimType(const std::string &ty) {
   return _supported_prim_types.count(ty);
 }
 
+
 bool AsciiParser::IsSupportedPrimAttrType(const std::string &ty) {
   return _supported_prim_attr_types.count(ty);
 }
@@ -3958,6 +3963,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     PushError("Failed to parse meta value.\n");
     return false;
   }
+  var.name = varname;
 
   if (varname == "defaultPrim") {
     if (auto pv = var.Get<value::token>()) {
@@ -3999,6 +4005,11 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (auto pv = var.Get<StringData>()) {
       DCOUT("doc = " << to_string(pv.value()));
       _stage_metas.doc = pv.value();
+    } else if (auto pvs = var.Get<std::string>()) {
+      StringData sdata;
+      sdata.value = pvs.value();
+      sdata.is_triple_quoted = false;
+      _stage_metas.doc = sdata;
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
@@ -5298,21 +5309,15 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   } else if (vartype == value::kString) {
     StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
+      var.Set(sdata);
     } else {
       std::string value;
-      auto lineinfo = _curr_cursor;
       if (!ReadStringLiteral(&value)) {
         PUSH_ERROR_AND_RETURN("String literal expected for `" + varname + "`.");
       }
-
-      sdata.value = value;
-      sdata.is_triple_quoted = false;
-      sdata.line_row = lineinfo.row;
-      sdata.line_col = lineinfo.col;
+      var.Set(value);
     }
-    DCOUT("string = " << sdata.value);
 
-    var.Set(sdata);
   } else if (vartype == "string[]") {
     // TODO: Support multi-line string?
     std::vector<std::string> values;
@@ -5709,33 +5714,22 @@ nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
   return nonstd::nullopt;
 }
 
-bool AsciiParser::ParseMetadataVariable(
-  const AsciiParser::VariableDef &vardef,
-  MetaVariable *varout) {
-
-
-  MetaVariable var;
-
-  // TODO:
-
-  if (vardef.type == "path") {
-    std::string value;
-    if (!ReadPathIdentifier(&value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse path identifier");
-    }
-
-    Path p(value, "");
-    var.Set(p);
-  } else {
-
-    PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Unknown/unsupported Metadata type {}", vardef.type));
+nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetPrimMetaDefinition(
+    const std::string &name) {
+  if (_supported_prim_metas.count(name)) {
+    return _supported_prim_metas.at(name);
   }
 
-  if (varout) {
-    (*varout) = var;
+  return nonstd::nullopt;
+}
+
+nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetPropMetaDefinition(
+    const std::string &name) {
+  if (_supported_prop_metas.count(name)) {
+    return _supported_prop_metas.at(name);
   }
 
-  return true;
+  return nonstd::nullopt;
 }
 
 bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
@@ -5786,6 +5780,9 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
   }
 
   auto vardef = (*pvardef);
+
+#if 0
+  // TODO: Use ParseMetaValue()
 
   MetaVariable var;
   var.name = varname;
@@ -5852,6 +5849,13 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
   } else {
     PUSH_ERROR_AND_RETURN("TODO: varname " + varname + ", type " + vardef.type);
   }
+#else
+  MetaVariable var;
+  if (!ParseMetaValue(vardef, &var)) {
+    return false;
+  }
+  var.name = varname;
+#endif
 
   std::get<0>(*out) = qual;
   std::get<1>(*out) = var;
@@ -5918,15 +5922,21 @@ AsciiParser::ParsePrimMeta() {
   }
   SkipWhitespace();
 
-  const VariableDef &vardef = _supported_prim_metas.at(varname);
-  MetaVariable var;
-  if (!ParseMetaValue(vardef, &var)) {
-    PushError("Failed to parse Prim meta value.\n");
+  if (auto pv = GetPrimMetaDefinition(varname)) {
+    MetaVariable var;
+    const auto vardef = pv.value();
+    if (!ParseMetaValue(vardef, &var)) {
+      PushError("Failed to parse Prim meta value.\n");
+      return nonstd::nullopt;
+    }
+    var.name = varname;
+
+    return std::make_pair(qual, var);
+  } else {
+    PushError(fmt::format("Unsupported/unimplemented PrimSpec metadata {}", varname));
     return nonstd::nullopt;
   }
-  var.name = varname;
 
-  return std::make_pair(qual, var);
 }
 
 bool AsciiParser::ParsePrimMetas(
@@ -6048,31 +6058,18 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         }
       }
 
-      std::string token;
-      if (!ReadIdentifier(&token)) {
+      std::string varname;
+      if (!ReadIdentifier(&varname)) {
         return false;
       }
 
-      DCOUT("Attribute meta name: " << token);
+      DCOUT("Property/Attribute meta name: " << varname);
 
-#if 0
-      // TODO: Allow token in registered
-      if ((token != "interpolation") && (token != "customData") &&
-          (token != "elementSize") && (token != "colorSpace")) {
-        PUSH_ERROR_AND_RETURN(
-            "Currently only string-only data, `interpolation`, `elementSize` "
-            ", `colorSpace` or `customData` "
-            "are supported but "
-            "got: " +
-            token);
-      }
-#else
-      bool supported = _supported_prop_metas.count(token);
+      bool supported = _supported_prop_metas.count(varname);
       if (!supported) {
         PUSH_ERROR_AND_RETURN_TAG(kAscii,
-            fmt::format("Unsupported Property metadatum name: {}", token));
+            fmt::format("Unsupported Property metadatum name: {}", varname));
       }
-#endif
 
       if (!SkipWhitespaceAndNewline()) {
         return false;
@@ -6086,7 +6083,10 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         return false;
       }
 
-      if (token == "interpolation") {
+      //
+      // First-class predefind prop metas.
+      //    
+      if (varname == "interpolation") {
         std::string value;
         if (!ReadStringLiteral(&value)) {
           return false;
@@ -6094,7 +6094,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
         DCOUT("Got `interpolation` meta : " << value);
         out_meta->interpolation = InterpolationFromString(value);
-      } else if (token == "elementSize") {
+      } else if (varname == "elementSize") {
         uint32_t value;
         if (!ReadBasicType(&value)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `elementSize`");
@@ -6102,7 +6102,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
         DCOUT("Got `elementSize` meta : " << value);
         out_meta->elementSize = value;
-      } else if (token == "colorSpace") {
+      } else if (varname == "colorSpace") {
         value::token tok;
         if (!ReadBasicType(&tok)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `colorSpace`");
@@ -6112,7 +6112,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         metavar.name = "colorSpace";
         metavar.Set(tok);
         out_meta->meta.emplace("colorSpace", metavar);
-      } else if (token == "customData") {
+      } else if (varname == "customData") {
         CustomDataType dict;
 
         if (!ParseDict(&dict)) {
@@ -6122,9 +6122,24 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         DCOUT("Got `customData` meta");
         out_meta->customData = dict;
 
-      } else {
-        // add to custom meta
-        out_meta->meta.emplace(token, metavar);
+      } else { 
+        if (auto pv = GetPropMetaDefinition(varname)) {
+          // Parse as generic metadata variable
+          MetaVariable metavar;
+          const auto &vardef = pv.value();
+
+          if (!ParseMetaValue(vardef, &metavar)) {
+            return false;
+          }
+          metavar.name = varname;
+
+          // add to custom meta
+          out_meta->meta.emplace(varname, metavar);
+
+        } else {
+          // This should not happen though.
+          PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("[InternalErrror] Failed to parse Property metadataum `{}`", varname));
+        }
       }
 
       if (!SkipWhitespaceAndNewline()) {
@@ -7368,6 +7383,11 @@ bool AsciiParser::Parse(LoadState state) {
   }
 
   SkipCommentAndWhitespaceAndNewline();
+
+  if (Eof()) {
+    // Empty USDA
+    return true;
+  }
 
   {
     char c;
