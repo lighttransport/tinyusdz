@@ -1754,6 +1754,85 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
 }
 
 ///
+/// Parses 1 or more occurences of value with basic type 'T', separated by
+/// `sep`.
+/// Allow `sep` character in the last item of the array.
+///
+template <typename T>
+bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::vector<T> *result) {
+  result->clear();
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  {
+    T value;
+    if (!ReadBasicType(&value)) {
+      PushError("Not starting with the value of requested type.\n");
+      return false;
+    }
+
+    result->push_back(value);
+  }
+
+  while (!Eof()) {
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    // sep
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == sep) {
+      // Look next token
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
+
+      char nc;
+      if (!LookChar1(&nc)) {
+        return false;
+      }
+
+      if (nc == end_symbol) {
+        // end
+        break;
+      }
+    }
+
+    if (c != sep) {
+      // end
+      _sr->seek_from_current(-1);  // unwind single char
+      break;
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    T value;
+    if (!ReadBasicType(&value)) {
+      break;
+    }
+
+    result->push_back(value);
+
+
+  }
+
+  if (result->empty()) {
+    PushError("Empty array.\n");
+    return false;
+  }
+
+  return true;
+}
+
+///
 /// Parses 1 or more occurences of value with tuple type 'T', separated by
 /// `sep`
 ///
@@ -1905,7 +1984,7 @@ bool AsciiParser::ParseBasicTypeArray(
     Rewind(1);
   }
 
-  if (!SepBy1BasicType<T>(',', result)) {
+  if (!SepBy1BasicType<T>(',', ']', result)) {
     return false;
   }
 
@@ -1925,7 +2004,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
     return false;
   }
 
-  if (!SepBy1BasicType<T>(',', result)) {
+  if (!SepBy1BasicType<T>(',', ']', result)) {
     return false;
   }
 
@@ -1942,6 +2021,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
 ///
 template <>
 bool AsciiParser::SepBy1BasicType(const char sep,
+                                  const char end_symbol,
                                   std::vector<Reference> *result) {
   result->clear();
 
@@ -1972,6 +2052,19 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     char c;
     if (!Char1(&c)) {
       return false;
+    }
+
+    if (c == sep) {
+
+      char nc;
+      if (!LookChar1(&nc)) {
+        return false;
+      }
+      
+      if (nc == end_symbol) {
+        break;
+      }
+      
     }
 
     if (c != sep) {
@@ -2193,7 +2286,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result) {
     Rewind(1);
   }
 
-  if (!SepBy1BasicType(',', result)) {
+  if (!SepBy1BasicType(',', ']', result)) {
     return false;
   }
 
