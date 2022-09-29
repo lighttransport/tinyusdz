@@ -345,6 +345,13 @@ class AsciiParser {
   bool SepBy1BasicType(const char sep, std::vector<T> *result);
 
   ///
+  /// Allow the appearance of `sep` in the last item of array.
+  /// (e.g. `[1, 2, 3,]`)
+  ///
+  template <typename T>
+  bool SepBy1BasicType(const char sep, const char end_symbol, std::vector<T> *result);
+
+  ///
   /// Parse '[', Sep1By(','), ']'
   ///
   template <typename T>
