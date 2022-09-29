@@ -2,8 +2,6 @@
 // Copyright 2021 - Present, Syoyo Fujita.
 //
 // TODO:
-//   - [x] Parse here document in Stage metadataum.
-//   - [x] Pars document-only line in Stage metadatum.
 //   - [ ] List up more TODOs.
 
 #include <cstdio>
@@ -6454,9 +6452,21 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       return false;
     }
 
+    nonstd::optional<AttrMeta> metap;
+
     if (c == '(') {
-      // TODO:
-      PUSH_ERROR_AND_RETURN("TODO: Support parsing Property meta.");
+      // FIXME: Implement Relation specific metadatum parser?
+      AttrMeta meta;
+      if (!ParseAttrMeta(&meta)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse metadataum.");
+      }
+
+      metap = meta;
+
+      if (!LookChar1(&c)) {
+        return false;
+      }
+      
     }
 
     if (c != '=') {
@@ -6467,6 +6477,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       p.SetPropetryType(Property::Type::NoTargetsRelation);
       p.SetListEditQual(listop_qual);
 
+      if (metap) {
+        // TODO: metadataum for Rel
+        p.GetAttrib().meta = metap.value();
+      }
+
       (*props)[attr_name] = p;
 
       return true;
@@ -6475,6 +6490,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     // has targets
     if (!Expect('=')) {
       return false;
+    }
+
+    if (metap) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Syntax error. Property metadatum must be defined after `=` and relationship target(s).");
     }
 
     if (!SkipWhitespaceAndNewline()) {
@@ -6499,13 +6518,29 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
 
     // TODO: Parse Meta.
     if (c == '(') {
-      PUSH_ERROR_AND_RETURN("TODO: Parse metadatum of property \"" + attr_name +
-                            "\"");
+
+      if (metap) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] parser error.");
+      }
+
+      AttrMeta meta;
+
+      // FIXME: Implement Relation specific metadatum parser?
+      if (!ParseAttrMeta(&meta)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse metadataum.");
+      }
+
+      metap = meta;
+      
     }
 
     DCOUT("Relationship with target: " << attr_name);
     Property p(rel, custom_qual);
     p.SetListEditQual(listop_qual);
+
+    if (metap) {
+      p.GetAttrib().meta = metap.value();
+    }
 
     (*props)[attr_name] = p;
 
