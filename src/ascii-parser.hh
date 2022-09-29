@@ -32,7 +32,6 @@ namespace tinyusdz {
 
 namespace ascii {
 
-
 // keywords
 constexpr auto kUniform = "uniform";
 constexpr auto kToken = "token";
@@ -52,11 +51,11 @@ enum class LoadState {
 // https://graphics.pixar.com/usd/release/glossary.html#usdglossary-kind
 #if 1
 enum class Kind {
-  Model,  // "model"
-  Group,  // "group"
-  Assembly, // "assembly"
-  Component, // "component"
-  Subcomponent, // "subcomponent"
+  Model,         // "model"
+  Group,         // "group"
+  Assembly,      // "assembly"
+  Component,     // "component"
+  Subcomponent,  // "subcomponent"
 };
 #else
 
@@ -80,14 +79,13 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
  public:
-
   // TODO: refactor
   struct PrimMetas {
     // Frequently used prim metas
     nonstd::optional<Kind> kind;
 
-    value::dict customData;  // `customData`
-    std::vector<StringData> strings; // String only unregistered metadata.
+    value::dict customData;           // `customData`
+    std::vector<StringData> strings;  // String only unregistered metadata.
   };
 
   // TODO: Unifity class with StageMetas in prim-types.hh
@@ -95,10 +93,10 @@ class AsciiParser {
     ///
     /// Predefined Stage metas
     ///
-    std::vector<value::AssetPath> subLayers; // 'subLayers'
-    value::token defaultPrim; // 'defaultPrim'
-    StringData doc; // 'doc'
-    nonstd::optional<Axis> upAxis;  // not specified = nullopt
+    std::vector<value::AssetPath> subLayers;  // 'subLayers'
+    value::token defaultPrim;                 // 'defaultPrim'
+    StringData doc;                           // 'doc'
+    nonstd::optional<Axis> upAxis;            // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
     nonstd::optional<double> startTimeCode;
@@ -106,7 +104,7 @@ class AsciiParser {
     nonstd::optional<double> framesPerSecond;
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
-    std::vector<StringData> strings; // String only unregistered metadata.
+    std::vector<StringData> strings;  // String only unregistered metadata.
   };
 
   struct ParseState {
@@ -169,16 +167,15 @@ class AsciiParser {
       return true;
     }
 
-    std::string type; // e.g. token, color3f
+    std::string type;  // e.g. token, color3f
     std::string name;
-    bool allow_array_type{false}; // when true, we accept `type` and `type[]`
+    bool allow_array_type{false};  // when true, we accept `type` and `type[]`
 
     PostParseHandler post_parse_handler;
 
     VariableDef() = default;
 
-    VariableDef(const std::string &t, const std::string &n,
-                bool a = false,
+    VariableDef(const std::string &t, const std::string &n, bool a = false,
                 PostParseHandler ph = DefaultPostParseHandler)
         : type(t), name(n), allow_array_type(a), post_parse_handler(ph) {}
 
@@ -203,7 +200,8 @@ class AsciiParser {
   ~AsciiParser();
 
   ///
-  /// Callback functions which is called from a class outside of AsciiParser(i.e. USDAReader)
+  /// Callback functions which is called from a class outside of
+  /// AsciiParser(i.e. USDAReader)
   ///
 
   ///
@@ -231,9 +229,11 @@ class AsciiParser {
   ///
   /// Prim Meta construction callback function
   ///
-  //using PrimMetaProcessFunction = std::function<bool(const PrimMetas &metas)>;
+  // using PrimMetaProcessFunction = std::function<bool(const PrimMetas
+  // &metas)>;
 
-  using PrimMetaMap = std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
+  using PrimMetaMap =
+      std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
 
   ///
   /// Prim construction callback function
@@ -245,13 +245,14 @@ class AsciiParser {
   ///
   using PrimConstructFunction =
       std::function<nonstd::expected<bool, std::string>(
-          const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
+          const Path &full_path, const Specifier spec, const Path &prim_name,
+          const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
           const PrimMetaMap &in_meta)>;
 
   struct VariantContent {
     PrimMetaMap metas;
-    std::vector<int64_t> primIndices; // primIdx of Reconstrcuted Prim.
+    std::vector<int64_t> primIndices;  // primIdx of Reconstrcuted Prim.
     std::map<std::string, Property> props;
   };
 
@@ -267,13 +268,14 @@ class AsciiParser {
   ///
   /// Callbacks called at closing `def` block.
   ///
-  using PostPrimConstructFunction = std::function<nonstd::expected<bool, std::string>(
-          const Path &path, const int64_t primIdx, const int64_t parentPrimIdx)>;
+  using PostPrimConstructFunction =
+      std::function<nonstd::expected<bool, std::string>(
+          const Path &path, const int64_t primIdx,
+          const int64_t parentPrimIdx)>;
   void RegisterPostPrimConstructFunction(const std::string &prim_type,
-                                     PostPrimConstructFunction fun) {
+                                         PostPrimConstructFunction fun) {
     _post_prim_construct_fun_map[prim_type] = fun;
   }
-
 
   ///
   /// Base filesystem directory to search asset files.
@@ -391,7 +393,7 @@ class AsciiParser {
   ///
   /// Try parsing single-quoted(`"`) string
   ///
-  bool MaybeString(StringData*str);
+  bool MaybeString(StringData *str);
 
   ///
   /// Try parsing triple-quited(`"""`) multi-line string.
@@ -399,7 +401,7 @@ class AsciiParser {
   bool MaybeTripleQuotedString(StringData *str);
 
   ///
-  /// Parse assset path identifier. 
+  /// Parse assset path identifier.
   ///
   bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
 
@@ -460,7 +462,9 @@ class AsciiParser {
 
   bool Expect(char expect_c);
 
-  bool ReadStringLiteral(std::string *literal);  // identifier wrapped with " or '. result contains quote chars.
+  bool ReadStringLiteral(
+      std::string *literal);  // identifier wrapped with " or '. result contains
+                              // quote chars.
   bool ReadPrimAttrIdentifier(std::string *token);
   bool ReadIdentifier(std::string *token);  // no '"'
   bool ReadPathIdentifier(
@@ -472,7 +476,8 @@ class AsciiParser {
 
   bool SkipWhitespace();
 
-  // skip_semicolon true: ';' can be used as a separator. this flag is for statement block.
+  // skip_semicolon true: ';' can be used as a separator. this flag is for
+  // statement block.
   bool SkipWhitespaceAndNewline(bool allow_semicolon = true);
 
   bool SkipCommentAndWhitespaceAndNewline();
@@ -481,8 +486,7 @@ class AsciiParser {
   // bool ParseAttributeMeta();
   bool ParseAttrMeta(AttrMeta *out_meta);
 
-  bool ParsePrimMetas(
-      PrimMetaMap *out_metamap);
+  bool ParsePrimMetas(PrimMetaMap *out_metamap);
 
   bool ParseMetaValue(const VariableDef &def, MetaVariable *outvar);
 
@@ -519,7 +523,7 @@ class AsciiParser {
 
   bool Rewind(size_t offset);
   uint64_t CurrLoc();
-  bool SeekTo(uint64_t pos); // Move to absolute `pos` bytes location
+  bool SeekTo(uint64_t pos);  // Move to absolute `pos` bytes location
 
   bool PushParserState();
   bool PopParserState(ParseState *state);
@@ -532,16 +536,21 @@ class AsciiParser {
   // primIdx is assigned through `PrimIdxAssignFunctin`
   // parentPrimIdx = -1 => root prim
   // depth = tree level(recursion count)
-  //bool ParseClassBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
-  //bool ParseOverBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
-  //bool ParseDefBlock(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  // bool ParseClassBlock(const int64_t primIdx, const int64_t parentPrimIdx,
+  // const uint32_t depth = 0); bool ParseOverBlock(const int64_t primIdx, const
+  // int64_t parentPrimIdx, const uint32_t depth = 0); bool ParseDefBlock(const
+  // int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
 
   // Parse `def`, `over` or `class` block
-  // @param[in] in_variantStmt : true when this Block is parsed within `variantSet` statement. Default true.
-  bool ParseBlock(const Specifier spec, const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth, const bool in_variant = false);
+  // @param[in] in_variantStmt : true when this Block is parsed within
+  // `variantSet` statement. Default true.
+  bool ParseBlock(const Specifier spec, const int64_t primIdx,
+                  const int64_t parentPrimIdx, const uint32_t depth,
+                  const bool in_variant = false);
 
   // Parse `varianntSet` stmt
-  bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth = 0);
+  bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx,
+                       const uint32_t depth = 0);
 
   // --------------------------------------------
 
@@ -557,8 +566,9 @@ class AsciiParser {
   template <typename T>
   using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
 
-  //template <typename T>
-  //using TimeSampleDataArray = std::vector<std::pair<double, nonstd::optional<std::vector<T>>>>;
+  // template <typename T>
+  // using TimeSampleDataArray = std::vector<std::pair<double,
+  // nonstd::optional<std::vector<T>>>>;
 
   ///
   /// Convert TimeSampleData<T> to TimeSamples(type-erased TimeSample Sdata
@@ -568,7 +578,8 @@ class AsciiParser {
   value::TimeSamples ConvertToTimeSamples(const TimeSampleData<T> &in);
 
   template <typename T>
-  value::TimeSamples ConvertToTimeSamples(const TimeSampleData<std::vector<T>> &in);
+  value::TimeSamples ConvertToTimeSamples(
+      const TimeSampleData<std::vector<T>> &in);
 
   // T = scalar(e.g. `float`)
   template <typename T>
@@ -587,6 +598,10 @@ class AsciiParser {
   bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
   nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
 
+  bool ParseMetadataVariable(
+      const AsciiParser::VariableDef &vardef,
+      MetaVariable *varout);
+
   std::string GetCurrentPath();
   bool PathStackDepth() { return _path_stack.size(); }
   void PushPath(const std::string &p) { _path_stack.push(p); }
@@ -601,7 +616,7 @@ class AsciiParser {
   nonstd::optional<VariableDef> GetPrimMeta(const std::string &arg);
 
   // "class" defs
-  //std::map<std::string, Klass> _klasses;
+  // std::map<std::string, Klass> _klasses;
   std::stack<std::string> _path_stack;
 
 #if 0
@@ -629,6 +644,9 @@ class AsciiParser {
   // Supported metadataum for Prim.
   std::map<std::string, VariableDef> _supported_prim_metas;
 
+  // Supported metadataum for Property(Attribute and Relation).
+  std::map<std::string, VariableDef> _supported_prop_metas;
+
   std::stack<ErrorDiagnositc> err_stack;
   std::stack<ErrorDiagnositc> warn_stack;
   std::stack<ParseState> parse_stack;
@@ -649,7 +667,7 @@ class AsciiParser {
   //
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
-  //PrimMetaProcessFunction _prim_meta_process_fun;
+  // PrimMetaProcessFunction _prim_meta_process_fun;
   std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
   std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
