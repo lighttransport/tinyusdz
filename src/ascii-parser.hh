@@ -596,11 +596,10 @@ class AsciiParser {
                           PrimAttrib *out_attr);
 
   bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
-  nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
 
-  bool ParseMetadataVariable(
-      const AsciiParser::VariableDef &vardef,
-      MetaVariable *varout);
+  nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
+  nonstd::optional<VariableDef> GetPrimMetaDefinition(const std::string &arg);
+  nonstd::optional<VariableDef> GetPropMetaDefinition(const std::string &arg);
 
   std::string GetCurrentPath();
   bool PathStackDepth() { return _path_stack.size(); }
@@ -613,7 +612,6 @@ class AsciiParser {
 
   const tinyusdz::StreamReader *_sr = nullptr;
 
-  nonstd::optional<VariableDef> GetPrimMeta(const std::string &arg);
 
   // "class" defs
   // std::map<std::string, Klass> _klasses;
