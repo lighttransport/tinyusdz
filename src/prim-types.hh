@@ -612,9 +612,13 @@ struct PrimMeta {
   }
 
   //
-  // Crate only. Only used internally.
+  // Crate only. Only used internally&debugging.
   //
+
   nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inheritPaths;
+  nonstd::optional<std::vector<value::token>> primChildren;
+  nonstd::optional<std::vector<value::token>> variantChildren;
+  nonstd::optional<std::vector<value::token>> variantSetChildren;
 };
 
 // Metadata for Attribute
