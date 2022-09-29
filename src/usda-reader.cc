@@ -853,8 +853,8 @@ class USDAReader::Impl {
         DCOUT("apiSchemas. type = " << var.type);
         if (var.type == "token[]") {
           APISchemas apiSchemas;
-          if (listEditQual != ListEditQual::Prepend) {
-            PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be `prepend` in TinyUSDZ, but got `" << to_string(listEditQual) << "`");
+          if ((listEditQual != ListEditQual::Prepend) && (listEditQual != ListEditQual::ResetToExplicit)) {
+            PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be empty or `prepend` in TinyUSDZ, but got `" << to_string(listEditQual) << "`");
           }
           apiSchemas.listOpQual = listEditQual;
 
