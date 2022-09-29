@@ -1539,7 +1539,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   // members
   ss << print_typed_attr(sphere.radius, "radius", indent+1);
 
-  ss << print_gprim_predefined(sphere, indent);
+  ss << print_gprim_predefined(sphere, indent+1);
 
   ss << print_props(sphere.props, indent+1);
 
