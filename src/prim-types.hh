@@ -1964,40 +1964,52 @@ struct Scope {
 
 //
 // For usdGeom, usdLux
+// TODO: Move to `xform.hh`?
 //
 struct Xformable {
   ///
-  /// Evaluate XformOps
+  /// Evaluate XformOps and output evaluated(concatenated) matrix to `out_matrix`
+  /// `resetXformStack` become true when xformOps[0] is !resetXformStack!
+  /// Return error message when failed.
   ///
-  bool EvaluateXformOps(value::matrix4d *out_matrix) const;
+  bool EvaluateXformOps(value::matrix4d *out_matrix, bool *resetXformStack, std::string *err) const;
 
   ///
-  /// Get concatenated matrix.
+  /// Global = Parent x Local
   ///
-  nonstd::optional<value::matrix4d> GetGlobalMatrix(
+  nonstd::expected<value::matrix4d, std::string> GetGlobalMatrix(
       const value::matrix4d &parentMatrix) const {
-    if (auto m = GetLocalMatrix()) {
-      // TODO: Inherit transform from parent node.
-      value::matrix4d cm =
-          Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
-      return cm;
-    }
+    bool resetXformStack{false};
 
-    return nonstd::nullopt;
+    auto m = GetLocalMatrix(&resetXformStack);
+
+    if (m) {
+      if (resetXformStack) {
+        // Ignore parent's transform
+        // FIXME: Validate this is the correct way of handling !resetXformStack! op.
+        return m.value();
+      } else {
+        value::matrix4d cm =
+            Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
+        return cm;
+      }
+    } else {
+      return nonstd::make_unexpected(m.error());
+    }
   }
 
   ///
   /// Evaluate xformOps and get local matrix.
   ///
-  nonstd::optional<value::matrix4d> GetLocalMatrix() const {
+  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(bool *resetTransformStack = nullptr) const {
     if (_dirty) {
       value::matrix4d m;
-      if (EvaluateXformOps(&m)) {
+      std::string err;
+      if (EvaluateXformOps(&m, resetTransformStack, &err)) {
         _matrix = m;
         _dirty = false;
       } else {
-        // TODO: Report an error.
-        return nonstd::nullopt;
+        return nonstd::make_unexpected(err);
       }
     }
 

@@ -92,6 +92,12 @@ constexpr auto kHalf2= "half2";
 constexpr auto kHalf3= "half3";
 constexpr auto kHalf4= "half4";
 
+// Seems primarily used in usdSkel.
+// float precision matrix is not directly used in XformOp
+constexpr auto kMatrix2f= "matrix2f";
+constexpr auto kMatrix3f= "matrix3f";
+constexpr auto kMatrix4f= "matrix4f";
+
 constexpr auto kMatrix2d= "matrix2d";
 constexpr auto kMatrix3d= "matrix3d";
 constexpr auto kMatrix4d= "matrix4d";
@@ -267,6 +273,10 @@ enum TypeId {
   TYPE_ID_QUATH,
   TYPE_ID_QUATF,
   TYPE_ID_QUATD,
+
+  TYPE_ID_MATRIX2F,
+  TYPE_ID_MATRIX3F,
+  TYPE_ID_MATRIX4F,
 
   TYPE_ID_MATRIX2D,
   TYPE_ID_MATRIX3D,
@@ -498,6 +508,9 @@ using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
+//
+// OpenGL-like Column-major order
+//
 struct matrix2f {
   matrix2f() {
     m[0][0] = 1.0f;
@@ -1013,6 +1026,10 @@ DEFINE_TYPE_TRAIT(double4, kDouble4, TYPE_ID_DOUBLE4, 4);
 DEFINE_TYPE_TRAIT(quath, kQuath, TYPE_ID_QUATH, 1);
 DEFINE_TYPE_TRAIT(quatf, kQuatf, TYPE_ID_QUATF, 1);
 DEFINE_TYPE_TRAIT(quatd, kQuatd, TYPE_ID_QUATD, 1);
+
+DEFINE_TYPE_TRAIT(matrix2f, kMatrix2f, TYPE_ID_MATRIX2F, 1);
+DEFINE_TYPE_TRAIT(matrix3f, kMatrix3f, TYPE_ID_MATRIX3F, 1);
+DEFINE_TYPE_TRAIT(matrix4f, kMatrix4f, TYPE_ID_MATRIX4F, 1);
 
 DEFINE_TYPE_TRAIT(matrix2d, kMatrix2d, TYPE_ID_MATRIX2D, 1);
 DEFINE_TYPE_TRAIT(matrix3d, kMatrix3d, TYPE_ID_MATRIX3D, 1);
