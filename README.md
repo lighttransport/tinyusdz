@@ -176,8 +176,9 @@ For building fuzzer tests, you'll need Meson and Ninja.
 
 ### Examples
 
-* [usda_parser](xamples/usda_parser/) Parse USDA and print it as Ascii.
-* [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDC and print it as Ascii.
+* [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
+* [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
+* [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDZ/USDA/USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
 
@@ -222,7 +223,7 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 
 * [ ] Built-in usdObj(wavefront .obj mesh) support.
   * Through tinyobjloader.
-* [ ] Support Crate(binary) version 0.8.0(USD v20.11 default)
+* [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
 * [ ] Animation
   * [ ] Skinning(usdSkel)
   * [ ] Blend shapes
