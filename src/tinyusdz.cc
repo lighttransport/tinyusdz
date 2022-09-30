@@ -1099,7 +1099,7 @@ std::string Stage::ExportToString() const {
   ss << "(\n";
   if (stage_metas.doc.value.empty()) {
     ss << "  doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
-       << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
+       << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro << tinyusdz::version_rev
        << "\"\n";
   } else {
     ss << "  doc = " << to_string(stage_metas.doc) << "\n";

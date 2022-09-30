@@ -70,7 +70,7 @@ inline value::matrix3d RotateX(double theta)
   return m;
 }
 
-#if 0 // TODO
+#if 0 // matrix inverse is implemented in xform.cc
 template<typename T>
 void MatrixInverse(T m[4][4]) {
   /*
