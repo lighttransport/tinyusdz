@@ -162,6 +162,21 @@ value::matrix4d invert(const value::matrix4d &_m) {
   return outm;
 }
 
+value::matrix3d invert3x3(const value::matrix3d &_m) {
+
+  matrix33d m;
+  // memory layout is same
+  memcpy(&m[0][0], _m.m, sizeof(double) * 3 * 3);
+
+  matrix33d inv_m = linalg::inverse(m);
+
+  value::matrix3d outm;
+
+  memcpy(outm.m, &inv_m[0][0], sizeof(double) * 3 * 3);
+
+  return outm;
+}
+
 double determinant(const value::matrix4d &_m) {
 
   matrix44d m;
