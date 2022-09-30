@@ -135,7 +135,16 @@ endif()
 # Currently TinyUSDZ does not claim CXX version when TinyUSDZ is added as add_subdirectory()
 # of toplevel(root) project.
 # TODO: Property inherit CXX compiler settings from toplevel(root) project.
+
+# PROJECT_IS_TOP_LEVEL is available from cmake 3.21
+if (CMAKE_VERSION VERSION_LESS 3.21)
+  if ("${CMAKE_PROJECT_NAME}" STREQUAL "${TINYUSDZ_TARGET}")
+    set(PROJECT_IS_TOP_LEVEL ON)
+  endif()
+endif ()
+
 if (PROJECT_IS_TOP_LEVEL)
+  message(STATUS "TinyUSDZ is being built as toplevel project so set CXX standard here.")
   if(TINYUSDZ_WITH_PYTHON)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
