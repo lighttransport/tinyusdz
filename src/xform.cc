@@ -20,6 +20,7 @@
 namespace tinyusdz {
 
 using matrix44d = linalg::aliases::double4x4;
+using matrix33d = linalg::aliases::double3x3;
 using double3x3 = linalg::aliases::double3x3;
 
 // linalg quat: (x, y, z, w)
@@ -166,6 +167,17 @@ double determinant(const value::matrix4d &_m) {
   matrix44d m;
   // memory layout is same
   memcpy(&m[0][0], _m.m, sizeof(double) * 4 * 4);
+
+  double det = linalg::determinant(m);
+
+  return det;
+}
+
+double determinant3x3(const value::matrix3d &_m) {
+
+  matrix33d m;
+  // memory layout is same
+  memcpy(&m[0][0], _m.m, sizeof(double) * 3 * 3);
 
   double det = linalg::determinant(m);
 
