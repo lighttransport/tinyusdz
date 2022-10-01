@@ -1607,12 +1607,6 @@ class Property {
   bool _has_custom{false};            // Qualified with 'custom' keyword?
 };
 
-// Orient: axis/angle expressed as a quaternion.
-// NOTE: no `quath`, `matrix4f`
-// using XformOpValueType =
-//    tinyusdz::variant<float, value::float3, value::quatf, double,
-//                      value::double3, value::quatd, value::matrix4d>;
-
 struct XformOp {
   enum class OpType {
     // matrix
@@ -1650,9 +1644,23 @@ struct XformOp {
                // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
                // will be empty for "xformOp:translate"
   // XformOpValueType value_type;
-  std::string type_name;
+  //std::string type_name;
 
   value::TimeSamples var;
+
+  std::string get_value_type_name() const {
+    if (var.values.size() > 0) {
+      return var.values[0].type_name();
+    }
+    return "[InternalError] XformOp value type name";
+  }
+
+  uint32_t get_value_type_id() const {
+    if (var.values.size() > 0) {
+      return var.values[0].type_id();
+    }
+    return uint32_t(value::TypeId::TYPE_ID_INVALID);
+  }
 
   // TODO: Check if T is valid type.
   template <class T>
@@ -1661,32 +1669,39 @@ struct XformOp {
     var.values.clear();
 
     var.values.push_back(v);
-    type_name = value::TypeTrait<T>::type_name();
+    //type_name = value::TypeTrait<T>::type_name();
   }
 
   void set_timesamples(const value::TimeSamples &v) {
     var = v;
 
-    if (var.values.size()) {
-      type_name = var.values[0].type_name();
-    }
+    //if (var.values.size()) {
+    //  type_name = var.values[0].type_name();
+    //}
   }
 
   void set_timesamples(value::TimeSamples &&v) {
     var = std::move(v);
-    if (var.values.size()) {
-      type_name = var.values[0].type_name();
-    }
+    //if (var.values.size()) {
+    //  type_name = var.values[0].type_name();
+    //}
   }
 
-  bool IsTimeSamples() const {
+  bool is_timesamples() const {
     return (var.times.size() > 0) && (var.times.size() == var.values.size());
+  }
+
+  nonstd::optional<value::TimeSamples> get_timesamples() const {
+    if (is_timesamples()) {
+      return var;
+    }
+    return nonstd::nullopt;
   }
 
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_scalar_value() const {
-    if (IsTimeSamples()) {
+    if (is_timesamples()) {
       return nonstd::nullopt;
     }
 
@@ -1960,68 +1975,6 @@ struct Scope {
   std::map<std::string, VariantSet> variantSet;
 
   std::map<std::string, Property> props;
-};
-
-//
-// For usdGeom, usdLux
-// TODO: Move to `xform.hh`?
-//
-struct Xformable {
-  ///
-  /// Evaluate XformOps and output evaluated(concatenated) matrix to `out_matrix`
-  /// `resetXformStack` become true when xformOps[0] is !resetXformStack!
-  /// Return error message when failed.
-  ///
-  bool EvaluateXformOps(value::matrix4d *out_matrix, bool *resetXformStack, std::string *err) const;
-
-  ///
-  /// Global = Parent x Local
-  ///
-  nonstd::expected<value::matrix4d, std::string> GetGlobalMatrix(
-      const value::matrix4d &parentMatrix) const {
-    bool resetXformStack{false};
-
-    auto m = GetLocalMatrix(&resetXformStack);
-
-    if (m) {
-      if (resetXformStack) {
-        // Ignore parent's transform
-        // FIXME: Validate this is the correct way of handling !resetXformStack! op.
-        return m.value();
-      } else {
-        value::matrix4d cm =
-            Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
-        return cm;
-      }
-    } else {
-      return nonstd::make_unexpected(m.error());
-    }
-  }
-
-  ///
-  /// Evaluate xformOps and get local matrix.
-  ///
-  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(bool *resetTransformStack = nullptr) const {
-    if (_dirty) {
-      value::matrix4d m;
-      std::string err;
-      if (EvaluateXformOps(&m, resetTransformStack, &err)) {
-        _matrix = m;
-        _dirty = false;
-      } else {
-        return nonstd::make_unexpected(err);
-      }
-    }
-
-    return _matrix;
-  }
-
-  void SetDirty(bool onoff) { _dirty = onoff; }
-
-  std::vector<XformOp> xformOps;
-
-  mutable bool _dirty{true};
-  mutable value::matrix4d _matrix;  // Matrix of this Xform(local matrix)
 };
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);

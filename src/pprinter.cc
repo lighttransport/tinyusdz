@@ -961,15 +961,14 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
 
       ss << pprint::Indent(indent);
 
-      // TODO: Check if `type_name` is set correctly.
-      ss << xformOp.type_name << " " ;
+      ss << xformOp.get_value_type_name() << " " ;
 
       ss << to_string(xformOp.op);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
 
-      if (xformOp.IsTimeSamples()) {
+      if (xformOp.is_timesamples()) {
         ss << ".timeSamples";
       }
 
