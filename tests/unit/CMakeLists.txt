@@ -5,6 +5,7 @@ set(TEST_SOURCES
 	unit-prim-types.cc
 	unit-primvar.cc
 	unit-value-types.cc
+	unit-xform.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

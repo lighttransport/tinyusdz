@@ -6,6 +6,7 @@
 
 #include "prim-types.hh"
 #include "value-types.hh"
+#include "xform.hh"
 
 namespace tinyusdz {
 
