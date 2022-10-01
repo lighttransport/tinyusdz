@@ -5,6 +5,7 @@
 #pragma once
 
 #include "prim-types.hh"
+#include "xform.hh"
 
 namespace tinyusdz {
 
@@ -41,7 +42,7 @@ struct LuxSphereLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   //
   // Properties
@@ -76,7 +77,7 @@ struct LuxCylinderLight : public Xformable {
 
   TypedAttributeWithFallback<Animatable<float>> length{1.0f}; // inputs:length size in Y axis
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius  size in X axis
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -115,7 +116,7 @@ struct LuxRectLight : public Xformable {
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
   TypedAttributeWithFallback<Animatable<float>> width{1.0f}; // inputs:width  size in X axis
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -151,7 +152,7 @@ struct LuxDiskLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -187,7 +188,7 @@ struct LuxDistantLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> angle{0.53f}; // inputs:angle in degrees
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -234,7 +235,7 @@ struct LuxDomeLight : public Xformable {
   TypedAttributeWithFallback<Animatable<float>> guideRadius{1.0e5f};
   // asset inputs:texture:file
   TextureFormat textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
   // rel portals
   // rel proxyPrim
 
@@ -258,7 +259,7 @@ struct LuxGeometryLight : public Xformable {
 // TODO
 struct LuxPortalLight : public Xformable {
   Specifier spec;
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 };
 
 // TODO
