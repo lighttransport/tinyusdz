@@ -307,8 +307,6 @@ class XformEvaluator {
 bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
                                  bool *resetXformStack,
                                  std::string *err) const {
-  value::matrix4d cm;
-
   const auto RotateABC = [](const XformOp &x) -> nonstd::expected<value::matrix4d, std::string>  {
 
     value::double3 v;
@@ -412,12 +410,22 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
 
 
   // Concat matrices
+  //
+  // Matrix concatenation ordering is its appearance order(right to left)
+  // This is same with a notation in math equation: i.e,
+  //
+  // xformOpOrder = [A, B, C]
+  //
+  // M = A x B x C
+  //
+  value::matrix4d cm;
+  Identity(&cm);
+
   for (size_t i = 0; i < xformOps.size(); i++) {
     const auto x = xformOps[i];
 
-    value::matrix4d m;
+    value::matrix4d m; // local matrix
     Identity(&m);
-    (void)x;
 
     if (x.is_timesamples()) {
       if (err) {
