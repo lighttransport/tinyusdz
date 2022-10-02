@@ -782,9 +782,17 @@ int main(int argc, char** argv) {
     //}
   }
 
+#if defined(__APPLE__)
+  // For some reason, HIGHDPI does not work well on Retina Display for SDLRenderer backend.
+  // Disable it for a while.
+  SDL_WindowFlags window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_RESIZABLE);
+#else
+  SDL_WindowFlags window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+#endif
+
   SDL_Window* window = SDL_CreateWindow(
       "Simple USDZ viewer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-      1600, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+      1600, 800, window_flags);
   if (!window) {
     std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
                  "probably X11 Display is not setup correctly. Check your "
