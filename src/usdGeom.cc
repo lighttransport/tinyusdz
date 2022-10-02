@@ -12,8 +12,8 @@
 #include "tiny-format.hh"
 #include "xform.hh"
 //
-#include "math-util.inc"
 #include "common-macros.inc"
+#include "math-util.inc"
 
 namespace tinyusdz {
 
@@ -107,6 +107,42 @@ Interpolation GeomMesh::GetNormalsInterpolation() const {
   }
 
   return Interpolation::Vertex;  // default 'vertex'
+}
+
+const std::vector<int32_t> GeomMesh::GetFaceVertexCounts() const {
+  std::vector<int32_t> dst;
+
+  if (!faceVertexCounts.authored() || faceVertexCounts.IsBlocked()) {
+    return dst;
+  }
+
+  if (faceVertexCounts.IsConnection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = faceVertexCounts.GetValue()) {
+    dst = pv.value().value;
+  }
+  return dst;
+}
+
+const std::vector<int32_t> GeomMesh::GetFaceVertexIndices() const {
+  std::vector<int32_t> dst;
+
+  if (!faceVertexIndices.authored() || faceVertexIndices.IsBlocked()) {
+    return dst;
+  }
+
+  if (faceVertexIndices.IsConnection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = faceVertexIndices.GetValue()) {
+    dst = pv.value().value;
+  }
+  return dst;
 }
 
 void GeomMesh::Initialize(const GPrim &gprim) {
