@@ -189,7 +189,10 @@ class USDCReader::Impl {
                                 TypedProperty<T> *attr);
 #endif
 
-  bool ParsePrimFields(const crate::FieldValuePairVector &fvs,
+  ///
+  /// Parse Prim spec from FieldValuePairs
+  ///
+  bool ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                        nonstd::optional<std::string> &typeName, /* out */
                        nonstd::optional<Specifier> &specifier,  /* out */
                        std::vector<value::token> &properties,   /* out */
@@ -208,7 +211,7 @@ class USDCReader::Impl {
   /// Reconstrcut Prim node.
   /// Returns reconstruct Prim to `primOut`
   /// When `current` is 0(StageMeta), `primOut` is not set.
-  /// `is_parent_variant` : True when parent path is Variant  
+  /// `is_parent_variant` : True when parent path is Variant
   ///
   bool ReconstructPrimNode(int parent, int current, int level, bool is_parent_variant,
                            const PathIndexToSpecIndexMap &psmap, Stage *stage,
@@ -1523,7 +1526,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 ///     - optional: primChildren(token[]): List of child prims.
 ///
 ///
-bool USDCReader::Impl::ParsePrimFields(const crate::FieldValuePairVector &fvs,
+bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                                        nonstd::optional<std::string> &typeName,
                                        nonstd::optional<Specifier> &specifier,
                                        std::vector<value::token> &properties,
@@ -1949,7 +1952,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       DCOUT("== PrimFields begin ==> ");
 
-      if (!ParsePrimFields(fvs, typeName, specifier, properties, primMeta)) {
+      if (!ParsePrimSpec(fvs, typeName, specifier, properties, primMeta)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
         return false;
       }
@@ -2042,7 +2045,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           // ok
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
-          
+
         }
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -2084,7 +2087,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       DCOUT("== VariantFields begin ==> ");
 
-      if (!ParsePrimFields(fvs, typeName, specifier, properties, primMeta)) {
+      if (!ParsePrimSpec(fvs, typeName, specifier, properties, primMeta)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "Failed to parse Prim fields under Variant.");
         return false;
@@ -2101,6 +2104,24 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     case SpecType::Attribute: {
       if (is_parent_variant) {
         PUSH_WARN( "TODO: Parse Attribute and add it to parent node.");
+
+        nonstd::optional<Path> path = GetPath(spec.path_index);
+
+        if (!path) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
+        }
+
+        Property prop;
+        if (!ParseProperty(spec.spec_type, fvs, &prop)) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, fmt::format("Failed to parse Attribut: {}.", path.value().GetPropPart()));
+
+        }
+
+        DCOUT(fmt::format("Parsed Attribute: {}", path.value().GetPropPart()));
+
+        PUSH_WARN("TODO: Attribute under VariantSet.");
+
       } else {
         // Maybe parent is Class/Over, or inherited
         PUSH_WARN(
@@ -2164,12 +2185,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   }
 
   // TODO: Refactor
-  
+
   // null : parent node is Property or other Spec type.
   // non-null : parent node is Prim
   Prim *currPrimPtr = nullptr;
   nonstd::optional<Prim> prim;
-  
+
   bool is_parent_variant = _variant_prim_table.count(parent);
 
   if (!ReconstructPrimNode(parent, current, level, is_parent_variant, psmap, stage, &prim)) {
