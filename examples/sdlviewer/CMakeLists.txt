@@ -3,7 +3,11 @@ cmake_minimum_required(VERSION 3.5.1)
 
 set(BUILD_TARGET "usdz_view")
 
+if (APPLE)
+project(${BUILD_TARGET} CXX C OBJC OBJCXX)
+else()
 project(${BUILD_TARGET} CXX C)
+endif()
 
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(
@@ -114,7 +118,7 @@ function(ADD_SDL2_LIB)
   set(SDL_STATIC
       ON
       CACHE INTERNAL "" FORCE)
-  add_subdirectory(../common/SDL2-2.0.22/ SDL2)
+  add_subdirectory(../common/SDL2-2.24.0/ SDL2)
 endfunction()
 
 if(EMSCRIPTEN)
