@@ -33,6 +33,8 @@
 namespace tinyusdz {
 namespace prim {
 
+constexpr auto kTag = "[PrimReconstruct]";
+
 constexpr auto kProxyPrim = "proxyPrim";
 constexpr auto kMaterialBinding = "material:binding";
 constexpr auto kSkelSkeleton = "skel:skeleton";
@@ -2086,6 +2088,38 @@ bool ReconstructPrim<Skeleton>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
     ADD_PROPERTY(table, prop, Skeleton, skel->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+  // usdview and Houdini USD importer expects both `bindTransforms` and `restTransforms` are authored in USD
+  if (!table.count("bindTransforms")) {
+    // usdview and Houdini allow `bindTransforms` is not authord in USD, but it cannot compute skinning correctly without it,
+    // so report an error in TinyUSDZ for a while.
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "`bindTransforms` is missing in Skeleton. Currently TinyUSDZ expects `bindTransforms` must exist in Skeleton.");
+  }
+
+  if (!table.count("restTransforms")) {
+    // usdview and Houdini allow `restTransforms` is not authord in USD(usdview warns it), but it cannot compute skinning correctly without it,
+    // (even SkelAnimation supplies trasnforms for all joints)
+    // so report an error in TinyUSDZ for a while.
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "`restTransforms`(local joint matrices at rest state) is missing in Skeleton. Currently TinyUSDZ expects `restTransforms` must exist in Skeleton.");
+  }
+
+  // len(bindTransforms) must be equal to len(restTransforms)
+  // TODO: Support connection
+  {
+    bool valid = false;
+    if (auto bt = skel->bindTransforms.GetValue()) {
+      if (auto rt = skel->restTransforms.GetValue()) {
+        if (bt.value().size() == rt.value().size()) {
+          // ok
+          valid = true;
+        }
+      }
+    }
+
+    if (!valid) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array length must be same for `bindTransforms` and `restTransforms`.");
+    }
   }
 
   return true;
