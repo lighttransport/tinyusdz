@@ -104,16 +104,18 @@ namespace usdc {
 constexpr auto kTag = "[USDC]";
 
 struct PrimNode {
-  value::Value prim; // Usually stores reconstructed(composed) concrete Prim(e.g. Xform)
+  value::Value
+      prim;  // Usually stores reconstructed(composed) concrete Prim(e.g. Xform)
 
   int64_t parent{-1};            // -1 = root node
   std::vector<size_t> children;  // index to USDCReader::Impl::._prim_nodes[]
 
   //
-  // 
+  //
   //
   std::vector<value::token> primChildren;
 
+#if 0
   //
   // For Variants
   ///
@@ -122,6 +124,21 @@ struct PrimNode {
 
   // TODO: Variants
   std::map<std::string, value::Value> variants;
+#else
+
+#endif
+};
+
+struct VariantPrimNode {
+  int64_t parent{-1};  // -1 = root node
+
+  //
+  // For Variants
+  ///
+  // SpecType::VariantSet
+  std::vector<value::token> variantChildren;
+
+  value::Value prim;  // Usually stores reconstructed Prim(e.g. Xform)
 };
 
 class USDCReader::Impl {
@@ -172,17 +189,15 @@ class USDCReader::Impl {
                                 TypedProperty<T> *attr);
 #endif
 
-
-  bool ParsePrimFields(
-    const crate::FieldValuePairVector &fvs,
-    nonstd::optional<std::string> &typeName, /* out */
-    nonstd::optional<Specifier> &specifier, /* out */
-    std::vector<value::token> &properties, /* out */
-    PrimMeta &primMeta); /* out */
+  bool ParsePrimFields(const crate::FieldValuePairVector &fvs,
+                       nonstd::optional<std::string> &typeName, /* out */
+                       nonstd::optional<Specifier> &specifier,  /* out */
+                       std::vector<value::token> &properties,   /* out */
+                       PrimMeta &primMeta);                     /* out */
 
   bool ParseVariantSetFields(
-    const crate::FieldValuePairVector &fvs,
-    std::vector<value::token> &variantChildren); /* out */
+      const crate::FieldValuePairVector &fvs,
+      std::vector<value::token> &variantChildren); /* out */
 
   template <typename T>
   bool ReconstructPrim(const crate::CrateReader::Node &node,
@@ -193,30 +208,27 @@ class USDCReader::Impl {
   /// Reconstrcut Prim node.
   /// Returns reconstruct Prim to `primOut`
   /// When `current` is 0(StageMeta), `primOut` is not set.
+  /// `is_parent_variant` : True when parent path is Variant  
   ///
-  bool ReconstructPrimNode(
-    int parent, int current, int level,
-    const PathIndexToSpecIndexMap &psmap, Stage *stage,
-    nonstd::optional<Prim> *primOut);
+  bool ReconstructPrimNode(int parent, int current, int level, bool is_parent_variant,
+                           const PathIndexToSpecIndexMap &psmap, Stage *stage,
+                           nonstd::optional<Prim> *primOut);
 
   ///
   /// Reconstruct Prim from given `typeName` string(e.g. "Xform")
   ///
   nonstd::optional<Prim> ReconstructPrimFromTypeName(
-    const std::string &typeName,
-    const std::string &prim_name,
-    const crate::CrateReader::Node &node,
-    const crate::FieldValuePairVector &fvs,
-    const PathIndexToSpecIndexMap &psmap,
-    const PrimMeta &meta);
+      const std::string &typeName, const std::string &prim_name,
+      const crate::CrateReader::Node &node,
+      const crate::FieldValuePairVector &fvs,
+      const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta);
 
   bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrim,
                                   int level,
                                   const PathIndexToSpecIndexMap &psmap,
                                   Stage *stage);
 
-  bool ReconstructPrimTree(Prim *rootPrim,
-                           const PathIndexToSpecIndexMap &psmap,
+  bool ReconstructPrimTree(Prim *rootPrim, const PathIndexToSpecIndexMap &psmap,
                            Stage *stage);
 
   bool ReconstructStage(Stage *stage);
@@ -257,24 +269,22 @@ class USDCReader::Impl {
                             StageMetas *out,
                             std::vector<value::token> *primChildrenOut);
 
-
-  bool AddVariantChildrenToPrimNode(int32_t prim_idx,
-    const std::vector<value::token> &variantChildren) {
+  bool AddVariantChildrenToPrimNode(
+      int32_t prim_idx, const std::vector<value::token> &variantChildren) {
     if (prim_idx < 0) {
       return false;
     }
 
     if (_variantChildren.count(uint32_t(prim_idx))) {
       PUSH_WARN("Multiple Field with VariantSet SpecType detected.");
-    } 
+    }
 
     _variantChildren[uint32_t(prim_idx)] = variantChildren;
 
     return true;
   }
 
-  bool AddVariantToPrimNode(int32_t prim_idx,
-    const value::Value &variant);
+  bool AddVariantToPrimNode(int32_t prim_idx, const value::Value &variant);
 
   crate::CrateReader *crate_reader{nullptr};
 
@@ -316,13 +326,19 @@ class USDCReader::Impl {
   std::map<crate::Index, crate::FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
-  //std::vector<PrimNode> _prim_nodes;
+  // std::vector<PrimNode> _prim_nodes;
 
   // VariantSet Spec. variantChildren
   std::map<uint32_t, std::vector<value::token>> _variantChildren;
 
+  // key = parent path index.
+  std::map<uint32_t, VariantPrimNode> _variantPrimNodes;
+
+  // For Prim/Props defined as Variant(SpecType::VariantSet)
+
   // Check if given node_id is a prim node.
   std::set<int32_t> _prim_table;
+  std::set<int32_t> _variant_prim_table;
 };
 
 //
@@ -1059,7 +1075,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                       << fv.second.type_name() << "`");
       }
 
-
     } else {
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);
@@ -1139,7 +1154,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     (*prop) = Property(attr, custom);
   } else if (propType == Property::Type::Connection) {
     if (!typeName) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing for Attribute Connection.");
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "`typeName` field is missing for Attribute Connection.");
     }
     (*prop) = Property(rel, typeName.value().str(), custom);
   } else if (propType == Property::Type::Relation) {
@@ -1444,59 +1460,52 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 }
 
 nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
-  const std::string &typeName,
-  const std::string &prim_name,
-  const crate::CrateReader::Node &node,
-  const crate::FieldValuePairVector &fvs,
-  const PathIndexToSpecIndexMap &psmap,
-  const PrimMeta &meta)
-{
-
-#define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name)                   \
-  if (__node_ty == value::TypeTrait<__primty>::type_name()) {                \
-    __primty typed_prim;                                     \
-    if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {                   \
+    const std::string &typeName, const std::string &prim_name,
+    const crate::CrateReader::Node &node,
+    const crate::FieldValuePairVector &fvs,
+    const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta) {
+#define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name)    \
+  if (__node_ty == value::TypeTrait<__primty>::type_name()) { \
+    __primty typed_prim;                                      \
+    if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {    \
       PUSH_ERROR("Failed to reconstruct Prim " << __node_ty); \
-      return nonstd::nullopt; \
-    }                                                                        \
-    typed_prim.meta = meta; \
-    typed_prim.name = __prim_name;                                           \
-    value::Value primdata = typed_prim;                                      \
-    return Prim(primdata);                                                   \
+      return nonstd::nullopt;                                 \
+    }                                                         \
+    typed_prim.meta = meta;                                   \
+    typed_prim.name = __prim_name;                            \
+    value::Value primdata = typed_prim;                       \
+    return Prim(primdata);                                    \
   } else
 
-        RECONSTRUCT_PRIM(Xform, typeName, prim_name)
-        RECONSTRUCT_PRIM(Model, typeName, prim_name)
-        RECONSTRUCT_PRIM(Scope, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomMesh, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomPoints, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomCylinder, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomCube, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomCone, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomSphere, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomCapsule, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name)
-        RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name)
-        // RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name)
-        RECONSTRUCT_PRIM(LuxSphereLight, typeName, prim_name)
-        RECONSTRUCT_PRIM(LuxDomeLight, typeName, prim_name)
-        RECONSTRUCT_PRIM(LuxCylinderLight, typeName, prim_name)
-        RECONSTRUCT_PRIM(LuxDiskLight, typeName, prim_name)
-        RECONSTRUCT_PRIM(LuxDistantLight, typeName, prim_name)
-        RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name)
-        RECONSTRUCT_PRIM(Skeleton, typeName, prim_name)
-        RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name)
-        RECONSTRUCT_PRIM(BlendShape, typeName, prim_name)
-        RECONSTRUCT_PRIM(Shader, typeName, prim_name)
-        RECONSTRUCT_PRIM(Material, typeName, prim_name)
-        {
-          PUSH_WARN(
-              "TODO or unsupported prim type: " << typeName);
-          return nonstd::nullopt;
-        }
+  RECONSTRUCT_PRIM(Xform, typeName, prim_name)
+  RECONSTRUCT_PRIM(Model, typeName, prim_name)
+  RECONSTRUCT_PRIM(Scope, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomMesh, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomPoints, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomCylinder, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomCube, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomCone, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomSphere, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomCapsule, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name)
+  RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name)
+  // RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name)
+  RECONSTRUCT_PRIM(LuxSphereLight, typeName, prim_name)
+  RECONSTRUCT_PRIM(LuxDomeLight, typeName, prim_name)
+  RECONSTRUCT_PRIM(LuxCylinderLight, typeName, prim_name)
+  RECONSTRUCT_PRIM(LuxDiskLight, typeName, prim_name)
+  RECONSTRUCT_PRIM(LuxDistantLight, typeName, prim_name)
+  RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name)
+  RECONSTRUCT_PRIM(Skeleton, typeName, prim_name)
+  RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name)
+  RECONSTRUCT_PRIM(BlendShape, typeName, prim_name)
+  RECONSTRUCT_PRIM(Shader, typeName, prim_name)
+  RECONSTRUCT_PRIM(Material, typeName, prim_name) {
+    PUSH_WARN("TODO or unsupported prim type: " << typeName);
+    return nonstd::nullopt;
+  }
 
 #undef RECONSTRUCT_PRIM
-
 }
 
 ///
@@ -1514,289 +1523,283 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 ///     - optional: primChildren(token[]): List of child prims.
 ///
 ///
-bool USDCReader::Impl::ParsePrimFields(
-  const crate::FieldValuePairVector &fvs,
-  nonstd::optional<std::string> &typeName,
-  nonstd::optional<Specifier> &specifier,
-  std::vector<value::token> &properties,
-  PrimMeta &primMeta) {
-
-    // Fields for Prim and Prim metas.
-    for (const auto &fv : fvs) {
-      if (fv.first == "typeName") {
-        if (auto pv = fv.second.as<value::token>()) {
-          typeName = pv->str();
-          DCOUT("typeName = " << typeName.value());
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`typeName` must be type `token`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "specifier") {
-        if (auto pv = fv.second.as<Specifier>()) {
-          specifier = (*pv);
-          DCOUT("specifier = " << to_string(specifier.value()));
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`specifier` must be type `Specifier`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "properties") {
-        if (auto pv = fv.second.as<std::vector<value::token>>()) {
-          properties = (*pv);
-          DCOUT("properties = " << properties);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`properties` must be type `token[]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "primChildren") {
-        // Crate only
-        if (auto pv = fv.second.as<std::vector<value::token>>()) {
-          primMeta.primChildren = (*pv);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`primChildren` must be type `token[]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "active") {
-        if (auto pv = fv.second.as<bool>()) {
-          primMeta.active = (*pv);
-          DCOUT("active = " << to_string(primMeta.active.value()));
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`active` must be type `bool`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "hidden") {
-        if (auto pv = fv.second.as<bool>()) {
-          primMeta.hidden = (*pv);
-          DCOUT("hidden = " << to_string(primMeta.hidden.value()));
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`hidden` must be type `bool`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "assetInfo") {
-        // CustomData(dict)
-        if (auto pv = fv.second.as<CustomDataType>()) {
-          primMeta.assetInfo = (*pv);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`assetInfo` must be type `dictionary`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "kind") {
-        if (auto pv = fv.second.as<value::token>()) {
-          if (auto kv = KindFromString(pv->str())) {
-            primMeta.kind = kv.value();
-          } else {
-            PUSH_ERROR_AND_RETURN_TAG(
-                kTag, fmt::format("Invalid token for `kind` Prim metadata: `{}`", pv->str()));
-          }
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`kind` must be type `token`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "apiSchemas") {
-        if (auto pv = fv.second.as<ListOp<value::token>>()) {
-          auto listop = (*pv);
-
-          auto ret = ToAPISchemas(listop);
-          if (!ret) {
-            PUSH_ERROR_AND_RETURN_TAG(
-                kTag, "Failed to validate `apiSchemas`: " + ret.error());
-          } else {
-            primMeta.apiSchemas = (*ret);
-          }
-          // DCOUT("apiSchemas = " << to_string(listop));
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`apiSchemas` must be type `ListOp[Token]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "documentation") {
-        if (auto pv = fv.second.as<std::string>()) {
-          StringData s;
-          s.value = (*pv);
-          s.is_triple_quoted = hasNewline(s.value);
-          primMeta.doc = s;
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`documentation` must be type `string`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "comment") {
-        if (auto pv = fv.second.as<std::string>()) {
-          StringData s;
-          s.value = (*pv);
-          s.is_triple_quoted = hasNewline(s.value);
-          primMeta.comment = s;
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`comment` must be type `string`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "customData") {
-        // CustomData(dict)
-        if (auto pv = fv.second.as<CustomDataType>()) {
-          primMeta.customData = (*pv);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`customData` must be type `dictionary`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "variantSelection") {
-        if (auto pv = fv.second.as<VariantSelectionMap>()) {
-          primMeta.variants = (*pv);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`variantSelection` must be type `variants`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "variantChildren") {
-        // Used internally
-        if (auto pv = fv.second.as<std::vector<value::token>>()) {
-          primMeta.variantChildren = (*pv);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`variantChildren` must be type `token[]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-
-      } else if (fv.first == "variantSetChildren") {
-        // Used internally
-        if (auto pv = fv.second.as<std::vector<value::token>>()) {
-          primMeta.variantSetChildren = (*pv);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`variantSetChildren` must be type `token[]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-
-      } else if (fv.first == "variantSetNames") {
-        // ListOp<string>
-        if (auto pv = fv.second.as<ListOp<std::string>>()) {
-
-          const ListOp<std::string> &p = *pv;
-          DCOUT("variantSetNames = " << to_string(p));
-
-          auto ps = DecodeListOp<std::string>(p);
-
-          if (ps.size() > 1) {
-            // This should not happen though.
-            PUSH_WARN(
-                "ListOp with multiple ListOpType is not supported for now. Use "
-                "the first one: " +
-                to_string(std::get<0>(ps[0])));
-          }
-
-          auto qual = std::get<0>(ps[0]);
-          auto items = std::get<1>(ps[0]);
-          auto listop = (*pv);
-          primMeta.variantSets = std::make_pair(qual, items);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`variantSetNames` must be type `ListOp[String]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "sceneName") { // USDZ extension
-        // CustomData(dict)
-        if (auto pv = fv.second.as<std::string>()) {
-          primMeta.sceneName = (*pv);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`sceneName` must be type `string`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "inherits") { // `inherits` composition
-        if (auto pvb = fv.second.as<value::ValueBlock>()) {
-          // make empty array
-          primMeta.inherits = std::make_pair(ListEditQual::ResetToExplicit, std::vector<Path>());
-        } else if (auto pv = fv.second.as<ListOp<Path>>()) {
-
-          const ListOp<Path> &p = *pv;
-          DCOUT("inherits = " << to_string(p));
-
-          auto ps = DecodeListOp<Path>(p);
-
-
-          if (ps.size() > 1) {
-            // This should not happen though.
-            PUSH_WARN(
-                "ListOp with multiple ListOpType is not supported for now. Use "
-                "the first one: " +
-                to_string(std::get<0>(ps[0])));
-          }
-
-          auto qual = std::get<0>(ps[0]);
-          auto items = std::get<1>(ps[0]);
-          primMeta.inherits = std::make_pair(qual, items);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`inherits` must be type `path` o `path[]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-
-      } else if (fv.first == "specializes") { // `specializes` composition
-        if (auto pv = fv.second.as<ListOp<Path>>()) {
-
-          const ListOp<Path> &p = *pv;
-          DCOUT("specializes = " << to_string(p));
-
-          auto ps = DecodeListOp<Path>(p);
-
-
-          if (ps.size() > 1) {
-            // This should not happen though.
-            PUSH_WARN(
-                "ListOp with multiple ListOpType is not supported for now. Use "
-                "the first one: " +
-                to_string(std::get<0>(ps[0])));
-          }
-
-          auto qual = std::get<0>(ps[0]);
-          auto items = std::get<1>(ps[0]);
-          auto listop = (*pv);
-          primMeta.specializes = std::make_pair(qual, items);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`specializes` must be type `ListOp[Path]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-      } else if (fv.first == "inheritPaths") { // `specializes` composition
-        if (auto pv = fv.second.as<ListOp<Path>>()) {
-
-          const ListOp<Path> &p = *pv;
-          DCOUT("inheritPaths = " << to_string(p));
-
-          auto ps = DecodeListOp<Path>(p);
-
-
-          if (ps.size() > 1) {
-            // This should not happen though.
-            PUSH_WARN(
-                "ListOp with multiple ListOpType is not supported for now. Use "
-                "the first one: " +
-                to_string(std::get<0>(ps[0])));
-          }
-
-          auto qual = std::get<0>(ps[0]);
-          auto items = std::get<1>(ps[0]);
-          auto listop = (*pv);
-          primMeta.inheritPaths = std::make_pair(qual, items);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`inheritPaths` must be type `ListOp[Path]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
-
+bool USDCReader::Impl::ParsePrimFields(const crate::FieldValuePairVector &fvs,
+                                       nonstd::optional<std::string> &typeName,
+                                       nonstd::optional<Specifier> &specifier,
+                                       std::vector<value::token> &properties,
+                                       PrimMeta &primMeta) {
+  // Fields for Prim and Prim metas.
+  for (const auto &fv : fvs) {
+    if (fv.first == "typeName") {
+      if (auto pv = fv.second.as<value::token>()) {
+        typeName = pv->str();
+        DCOUT("typeName = " << typeName.value());
       } else {
-        DCOUT("PrimProp TODO: " << fv.first);
-        PUSH_WARN("PrimProp TODO: " << fv.first);
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`typeName` must be type `token`, but got type `"
+                      << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "specifier") {
+      if (auto pv = fv.second.as<Specifier>()) {
+        specifier = (*pv);
+        DCOUT("specifier = " << to_string(specifier.value()));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`specifier` must be type `Specifier`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "properties") {
+      if (auto pv = fv.second.as<std::vector<value::token>>()) {
+        properties = (*pv);
+        DCOUT("properties = " << properties);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`properties` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "primChildren") {
+      // Crate only
+      if (auto pv = fv.second.as<std::vector<value::token>>()) {
+        primMeta.primChildren = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`primChildren` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "active") {
+      if (auto pv = fv.second.as<bool>()) {
+        primMeta.active = (*pv);
+        DCOUT("active = " << to_string(primMeta.active.value()));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`active` must be type `bool`, but got type `"
+                                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "hidden") {
+      if (auto pv = fv.second.as<bool>()) {
+        primMeta.hidden = (*pv);
+        DCOUT("hidden = " << to_string(primMeta.hidden.value()));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`hidden` must be type `bool`, but got type `"
+                                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "assetInfo") {
+      // CustomData(dict)
+      if (auto pv = fv.second.as<CustomDataType>()) {
+        primMeta.assetInfo = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`assetInfo` must be type `dictionary`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "kind") {
+      if (auto pv = fv.second.as<value::token>()) {
+        if (auto kv = KindFromString(pv->str())) {
+          primMeta.kind = kv.value();
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, fmt::format("Invalid token for `kind` Prim metadata: `{}`",
+                                pv->str()));
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`kind` must be type `token`, but got type `"
+                                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "apiSchemas") {
+      if (auto pv = fv.second.as<ListOp<value::token>>()) {
+        auto listop = (*pv);
+
+        auto ret = ToAPISchemas(listop);
+        if (!ret) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, "Failed to validate `apiSchemas`: " + ret.error());
+        } else {
+          primMeta.apiSchemas = (*ret);
+        }
+        // DCOUT("apiSchemas = " << to_string(listop));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`apiSchemas` must be type `ListOp[Token]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "documentation") {
+      if (auto pv = fv.second.as<std::string>()) {
+        StringData s;
+        s.value = (*pv);
+        s.is_triple_quoted = hasNewline(s.value);
+        primMeta.doc = s;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`documentation` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "comment") {
+      if (auto pv = fv.second.as<std::string>()) {
+        StringData s;
+        s.value = (*pv);
+        s.is_triple_quoted = hasNewline(s.value);
+        primMeta.comment = s;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`comment` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "customData") {
+      // CustomData(dict)
+      if (auto pv = fv.second.as<CustomDataType>()) {
+        primMeta.customData = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`customData` must be type `dictionary`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "variantSelection") {
+      if (auto pv = fv.second.as<VariantSelectionMap>()) {
+        primMeta.variants = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`variantSelection` must be type `variants`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "variantChildren") {
+      // Used internally
+      if (auto pv = fv.second.as<std::vector<value::token>>()) {
+        primMeta.variantChildren = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`variantChildren` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+
+    } else if (fv.first == "variantSetChildren") {
+      // Used internally
+      if (auto pv = fv.second.as<std::vector<value::token>>()) {
+        primMeta.variantSetChildren = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`variantSetChildren` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+
+    } else if (fv.first == "variantSetNames") {
+      // ListOp<string>
+      if (auto pv = fv.second.as<ListOp<std::string>>()) {
+        const ListOp<std::string> &p = *pv;
+        DCOUT("variantSetNames = " << to_string(p));
+
+        auto ps = DecodeListOp<std::string>(p);
+
+        if (ps.size() > 1) {
+          // This should not happen though.
+          PUSH_WARN(
+              "ListOp with multiple ListOpType is not supported for now. Use "
+              "the first one: " +
+              to_string(std::get<0>(ps[0])));
+        }
+
+        auto qual = std::get<0>(ps[0]);
+        auto items = std::get<1>(ps[0]);
+        auto listop = (*pv);
+        primMeta.variantSets = std::make_pair(qual, items);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag,
+            "`variantSetNames` must be type `ListOp[String]`, but got type `"
+                << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "sceneName") {  // USDZ extension
+      // CustomData(dict)
+      if (auto pv = fv.second.as<std::string>()) {
+        primMeta.sceneName = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`sceneName` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "inherits") {  // `inherits` composition
+      if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        // make empty array
+        primMeta.inherits =
+            std::make_pair(ListEditQual::ResetToExplicit, std::vector<Path>());
+      } else if (auto pv = fv.second.as<ListOp<Path>>()) {
+        const ListOp<Path> &p = *pv;
+        DCOUT("inherits = " << to_string(p));
+
+        auto ps = DecodeListOp<Path>(p);
+
+        if (ps.size() > 1) {
+          // This should not happen though.
+          PUSH_WARN(
+              "ListOp with multiple ListOpType is not supported for now. Use "
+              "the first one: " +
+              to_string(std::get<0>(ps[0])));
+        }
+
+        auto qual = std::get<0>(ps[0]);
+        auto items = std::get<1>(ps[0]);
+        primMeta.inherits = std::make_pair(qual, items);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`inherits` must be type `path` o `path[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+
+    } else if (fv.first == "specializes") {  // `specializes` composition
+      if (auto pv = fv.second.as<ListOp<Path>>()) {
+        const ListOp<Path> &p = *pv;
+        DCOUT("specializes = " << to_string(p));
+
+        auto ps = DecodeListOp<Path>(p);
+
+        if (ps.size() > 1) {
+          // This should not happen though.
+          PUSH_WARN(
+              "ListOp with multiple ListOpType is not supported for now. Use "
+              "the first one: " +
+              to_string(std::get<0>(ps[0])));
+        }
+
+        auto qual = std::get<0>(ps[0]);
+        auto items = std::get<1>(ps[0]);
+        auto listop = (*pv);
+        primMeta.specializes = std::make_pair(qual, items);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`specializes` must be type `ListOp[Path]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "inheritPaths") {  // `specializes` composition
+      if (auto pv = fv.second.as<ListOp<Path>>()) {
+        const ListOp<Path> &p = *pv;
+        DCOUT("inheritPaths = " << to_string(p));
+
+        auto ps = DecodeListOp<Path>(p);
+
+        if (ps.size() > 1) {
+          // This should not happen though.
+          PUSH_WARN(
+              "ListOp with multiple ListOpType is not supported for now. Use "
+              "the first one: " +
+              to_string(std::get<0>(ps[0])));
+        }
+
+        auto qual = std::get<0>(ps[0]);
+        auto items = std::get<1>(ps[0]);
+        auto listop = (*pv);
+        primMeta.inheritPaths = std::make_pair(qual, items);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`inheritPaths` must be type `ListOp[Path]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+
+    } else {
+      DCOUT("PrimProp TODO: " << fv.first);
+      PUSH_WARN("PrimProp TODO: " << fv.first);
     }
+  }
 
   return true;
 }
@@ -1812,34 +1815,33 @@ bool USDCReader::Impl::ParsePrimFields(
 ///
 ///
 bool USDCReader::Impl::ParseVariantSetFields(
-  const crate::FieldValuePairVector &fvs,
-  std::vector<value::token> &variantChildren) {
-
-    // Fields for Prim and Prim metas.
-    for (const auto &fv : fvs) {
-      if (fv.first == "variantChildren") {
-        if (auto pv = fv.second.as<std::vector<value::token>>()) {
-          variantChildren = (*pv);
-          DCOUT("variantChildren: " << variantChildren);
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "`variantChildren` must be type `token[]`, but got type `"
-                        << fv.second.type_name() << "`");
-        }
+    const crate::FieldValuePairVector &fvs,
+    std::vector<value::token> &variantChildren) {
+  // Fields for Prim and Prim metas.
+  for (const auto &fv : fvs) {
+    if (fv.first == "variantChildren") {
+      if (auto pv = fv.second.as<std::vector<value::token>>()) {
+        variantChildren = (*pv);
+        DCOUT("variantChildren: " << variantChildren);
       } else {
-        DCOUT("VariantSet field TODO: " << fv.first);
-        PUSH_WARN("VariantSet field TODO: " << fv.first);
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`variantChildren` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
       }
+    } else {
+      DCOUT("VariantSet field TODO: " << fv.first);
+      PUSH_WARN("VariantSet field TODO: " << fv.first);
     }
+  }
 
   return true;
 }
 
-bool USDCReader::Impl::ReconstructPrimNode(
-  int parent, int current, int level,
-  const PathIndexToSpecIndexMap &psmap, Stage *stage,
-  nonstd::optional<Prim> *primOut) {
-
+bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
+                                           bool is_parent_variant,
+                                           const PathIndexToSpecIndexMap &psmap,
+                                           Stage *stage,
+                                           nonstd::optional<Prim> *primOut) {
   const crate::CrateReader::Node &node = _nodes[size_t(current)];
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -1853,7 +1855,7 @@ bool USDCReader::Impl::ReconstructPrimNode(
       std::cout << ", ";
     }
   }
-  std::cout << "]\n";
+  std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
 #endif
 
   if (!psmap.count(uint32_t(current))) {
@@ -1930,27 +1932,29 @@ bool USDCReader::Impl::ReconstructPrimNode(
 
     _prim_table.insert(current);
 
-  } else {
+    return true;
+  }
 
-    if (spec.spec_type == SpecType::Prim) {
-      // Prim
-
+  switch (spec.spec_type) {
+    case SpecType::PseudoRoot: {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "SpecType PseudoRoot in a child node is not supported(yet)");
+    }
+    case SpecType::Prim: {
       nonstd::optional<std::string> typeName;
       nonstd::optional<Specifier> specifier;
       std::vector<value::token> properties;
 
       PrimMeta primMeta;
 
-
       DCOUT("== PrimFields begin ==> ");
 
-      if (!ParsePrimFields( fvs, typeName, specifier, properties, primMeta)) {
+      if (!ParsePrimFields(fvs, typeName, specifier, properties, primMeta)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
         return false;
       }
 
       DCOUT("<== PrimFields end ===");
-
 
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
         elemPath = pv.value();
@@ -1971,8 +1975,7 @@ bool USDCReader::Impl::ReconstructPrimNode(
           PUSH_WARN("TODO: `over` specifier. skipping this model...");
           return true;
         } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, "Invalid Specifier.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
         }
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -1985,17 +1988,17 @@ bool USDCReader::Impl::ReconstructPrimNode(
         typeName = "Model";
       }
 
-
       if (typeName) {
-
         std::string prim_name = elemPath.GetPrimPart();
 
-        // Validation check should be already done in crate-reader, so no further validation required.
+        // Validation check should be already done in crate-reader, so no
+        // further validation required.
         if (!ValidatePrimName(prim_name)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
         }
 
-        auto prim = ReconstructPrimFromTypeName(typeName.value(), prim_name, node, fvs, psmap, primMeta);
+        auto prim = ReconstructPrimFromTypeName(typeName.value(), prim_name,
+                                                node, fvs, psmap, primMeta);
 
         if (prim) {
           // Prim name
@@ -2013,21 +2016,46 @@ bool USDCReader::Impl::ReconstructPrimNode(
       } else {
         _prim_table.insert(current);
       }
-    } else if (spec.spec_type == SpecType::VariantSet) {
 
+      break;
+    }
+    case SpecType::VariantSet: {
       // Assume parent(Prim) already exists(parsed)
-      // TODO: Confirm Crate format allow defining Prim after VariantSet serialization.
+      // TODO: Confirm Crate format allow defining Prim after VariantSet
+      // serialization.
       if (!_prim_table.count(parent)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Prim for this VariantSet not found.");
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "Parent Prim for this VariantSet not found.");
       }
 
-      DCOUT(fmt::format("[{}] is a Variantset node(parent = {}). prim_idx? = {}", current, parent, _prim_table.count(current)));
+      DCOUT(
+          fmt::format("[{}] is a Variantset node(parent = {}). prim_idx? = {}",
+                      current, parent, _prim_table.count(current)));
+
+      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
+        elemPath = pv.value();
+
+        DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
+
+        // Ensure ElementPath is quoted with '{' and '}'
+        if (startsWith(elemPath.full_path_name(), "{") && endsWith(elemPath.full_path_name(), "}")) {
+          // ok
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+          
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "(Internal errror) Element path not found.");
+      }
 
       std::vector<value::token> variantChildren;
 
+      // Only contains `variantChildren` field with type `token[]`
+
       DCOUT("== VariantSetFields begin ==> ");
 
-      if (!ParseVariantSetFields( fvs, variantChildren)) {
+      if (!ParseVariantSetFields(fvs, variantChildren)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse VariantSet fields.");
         return false;
       }
@@ -2039,19 +2067,67 @@ bool USDCReader::Impl::ReconstructPrimNode(
         return false;
       }
 
-    } else if (spec.spec_type == SpecType::Variant) {
+      break;
+    }
+    case SpecType::Variant: {
+      // Since the Prim this Variant node belongs to is not yet reconstructed
+      // during the Prim tree traversal, We manage variant node separately
 
-      DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}", current, parent, _prim_table.count(current)));
-  
+      DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}",
+                        current, parent, _prim_table.count(current)));
+
+      nonstd::optional<std::string> typeName;
+      nonstd::optional<Specifier> specifier;
+      std::vector<value::token> properties;
+
+      PrimMeta primMeta;
+
+      DCOUT("== VariantFields begin ==> ");
+
+      if (!ParsePrimFields(fvs, typeName, specifier, properties, primMeta)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "Failed to parse Prim fields under Variant.");
+        return false;
+      }
+
+      DCOUT("<== VariantFields end === ");
+
+      _variant_prim_table.insert(current);
+
       // TODO
       PUSH_WARN("TODO: SpecTypeVariant");
-
-    } else if (spec.spec_type == SpecType::Attribute) {
-      // Maybe parent is Class/Over, or inherited
-      PUSH_WARN("TODO: SpecTypeAttribute(in conjunction with Class/Over specifier, or inherited?)");
-    } else {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "TODO: specTy = " << to_string(spec.spec_type));
+      break;
+    }
+    case SpecType::Attribute: {
+      if (is_parent_variant) {
+        PUSH_WARN( "TODO: Parse Attribute and add it to parent node.");
+      } else {
+        // Maybe parent is Class/Over, or inherited
+        PUSH_WARN(
+            "TODO: SpecTypeAttribute(in conjunction with Class/Over specifier, "
+            "or inherited?)");
+      }
+      break;
+    }
+    case SpecType::Connection:
+    case SpecType::Relationship:
+    case SpecType::RelationshipTarget: {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, fmt::format("TODO: Unsupported/Unimplemented SpecType: {}.",
+                            to_string(spec.spec_type)));
+      break;
+    }
+    case SpecType::Expression:
+    case SpecType::Mapper:
+    case SpecType::MapperArg: {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported SpecType: {}.",
+                                                  to_string(spec.spec_type)));
+      break;
+    }
+    case SpecType::Unknown:
+    case SpecType::Invalid: {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] Invalid SpecType.");
+      break;
     }
   }
 
@@ -2061,7 +2137,6 @@ bool USDCReader::Impl::ReconstructPrimNode(
 bool USDCReader::Impl::ReconstructPrimRecursively(
     int parent, int current, Prim *rootPrim, int level,
     const PathIndexToSpecIndexMap &psmap, Stage *stage) {
-
   if (level > int32_t(_config.kMaxPrimNestLevel)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Prim hierarchy is too deep.");
   }
@@ -2075,15 +2150,32 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     return false;
   }
 
-  nonstd::optional<Prim> prim;
+  crate::Spec spec;
+  {
+    uint32_t spec_index = psmap.at(uint32_t(current));
 
-  if (!ReconstructPrimNode(parent, current, level, psmap, stage, &prim)) {
-    return false;
+    if (spec_index >= _specs.size()) {
+      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
+                 ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
+      return false;
+    }
+
+    spec = _specs[spec_index];
   }
 
+  // TODO: Refactor
+  
   // null : parent node is Property or other Spec type.
   // non-null : parent node is Prim
   Prim *currPrimPtr = nullptr;
+  nonstd::optional<Prim> prim;
+  
+  bool is_parent_variant = _variant_prim_table.count(parent);
+
+  if (!ReconstructPrimNode(parent, current, level, is_parent_variant, psmap, stage, &prim)) {
+    return false;
+  }
+
   if (prim) {
     currPrimPtr = &(prim.value());
   }
@@ -2092,12 +2184,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     const crate::CrateReader::Node &node = _nodes[size_t(current)];
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
-      DCOUT("Reconstuct Prim children: " << i << " / " << node.GetChildren().size());
+      DCOUT("Reconstuct Prim children: " << i << " / "
+                                         << node.GetChildren().size());
       if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]),
                                       currPrimPtr, level + 1, psmap, stage)) {
         return false;
       }
-      DCOUT("DONE Reconstuct Prim children: " << i << " / " << node.GetChildren().size());
+      DCOUT("DONE Reconstuct Prim children: " << i << " / "
+                                              << node.GetChildren().size());
     }
   }
 
@@ -2114,7 +2208,6 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
   return true;
 }
-
 
 bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   (void)stage;
@@ -2184,7 +2277,7 @@ bool USDCReader::Impl::ReadUSDC() {
   if (sizeof(size_t) == 4) {
     // 32bit
     // cap to 2GB
-    sz_mb = (std::min)(size_t(1024*2), sz_mb);
+    sz_mb = (std::min)(size_t(1024 * 2), sz_mb);
 
     config.maxMemoryBudget = sz_mb * 1024 * 1024;
   } else {
