@@ -207,8 +207,20 @@ struct GeomMesh : GPrim {
   ///
   Interpolation GetNormalsInterpolation() const;
 
-  const std::vector<int32_t> GetFaceVertexCounts(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
-  const std::vector<int32_t> GetFaceVertexIndices(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
+  ///
+  /// @brief Returns `faceVertexCounts`.
+  ///
+  /// @return face vertex counts vector(copied)
+  ///
+  const std::vector<int32_t> GetFaceVertexCounts() const;
+
+  ///
+  /// @brief Returns `faceVertexIndices`.
+  ///
+  /// @return face vertex indices vector(copied)
+  ///
+  const std::vector<int32_t> GetFaceVertexIndices() const;
+
 
   //
   // SubD attribs.
