@@ -398,6 +398,7 @@ class Prim {
  public:
   Path path;
   Path elementPath;
+  Specifier specifier{Specifier::Invalid};
 
   Prim(const value::Value &rhs);
 
@@ -408,6 +409,50 @@ class Prim {
   std::vector<Prim> children;  // child nodes
 };
 
+///
+/// Contains concrete Prim object and composition elements.
+///
+/// PrimNode is near to final state of `Prim`.
+/// Doing one further step(Composition, Flatten, select Variant) to get `Prim`. 
+///
+/// Similar to `PrimIndex` in pxrUSD
+///
+class PrimNode {
+
+  Path path;
+  Path elementPath;
+
+  PrimNode(const value::Value &rhs);
+
+  PrimNode(value::Value &&rhs);
+
+  value::Value prim; // GPrim, Xform, ...
+
+  std::vector<PrimNode> children;  // child nodes
+
+  ///
+  /// Variants
+  ///
+  /// variant element = Property or Prim
+  ///
+  using PropertyMap = std::map<std::string, Property>;
+  using PrimNodeMap = std::map<std::string, PrimNode>;
+
+  VariantSelectionMap vsmap; 
+
+  // key = variant_name
+  std::map<std::string, PropertyMap> variantAttributeMap;
+  std::map<std::string, PrimNodeMap> variantPrimNodeMap;
+
+  ///
+  /// Information for Crate(USDC binary)
+  ///
+  std::vector<value::token> primChildren;
+  std::vector<value::token> variantChildren;
+
+};
+
+#if 0 // TODO: Remove
 //
 // For low-level scene graph representation, something like Vulkan.
 // Less abstraction, and scene graph is representated by indices.
@@ -425,6 +470,7 @@ struct Node {
   int64_t parent{-1};          // parent node index
   std::vector<Node> children;  // child nodes
 };
+#endif
 
 struct StageMetas {
   // TODO: Support more predefined properties: reference = <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp
