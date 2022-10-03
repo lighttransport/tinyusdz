@@ -103,6 +103,7 @@ namespace usdc {
 
 constexpr auto kTag = "[USDC]";
 
+#if 0
 struct PrimNode {
   value::Value
       prim;  // Usually stores reconstructed(composed) concrete Prim(e.g. Xform)
@@ -140,6 +141,7 @@ struct VariantPrimNode {
 
   value::Value prim;  // Usually stores reconstructed Prim(e.g. Xform)
 };
+#endif
 
 class USDCReader::Impl {
  public:
@@ -334,14 +336,15 @@ class USDCReader::Impl {
   // VariantSet Spec. variantChildren
   std::map<uint32_t, std::vector<value::token>> _variantChildren;
 
-  // key = parent path index.
-  std::map<uint32_t, VariantPrimNode> _variantPrimNodes;
-
   // For Prim/Props defined as Variant(SpecType::VariantSet)
+  // key = path index.
+  std::map<int32_t, Prim> _variantPrims;
+  std::map<uint32_t, Property> _variantAttributeNodes;
+
+  std::set<int32_t> _variant_prim_table;
 
   // Check if given node_id is a prim node.
   std::set<int32_t> _prim_table;
-  std::set<int32_t> _variant_prim_table;
 };
 
 //
@@ -2095,15 +2098,92 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       DCOUT("<== VariantFields end === ");
 
-      _variant_prim_table.insert(current);
+      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
+        elemPath = pv.value();
+        DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "(Internal errror) Element path not found.");
+      }
 
-      // TODO
-      PUSH_WARN("TODO: SpecTypeVariant");
+      // Sanity check
+      if (specifier) {
+        if (specifier.value() == Specifier::Def) {
+          // ok
+        } else if (specifier.value() == Specifier::Class) {
+          PUSH_WARN("TODO: `class` specifier. skipping this model...");
+          return true;
+        } else if (specifier.value() == Specifier::Over) {
+          PUSH_WARN("TODO: `over` specifier. skipping this model...");
+          return true;
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
+        }
+      } else {
+        // Seems Variant is only composed of Properties.
+        // Create pseudo `def` Prim
+        specifier = Specifier::Def;
+      }
+
+      if (!typeName) {
+        PUSH_WARN("Treat this node as Model(where `typeName` is missing.");
+        typeName = "Model";
+      }
+
+      nonstd::optional<Prim> variantPrim;
+      if (typeName) {
+        std::string prim_name = elemPath.GetPrimPart();
+        DCOUT("elemPath.primPart = " << prim_name);
+
+        // Something like '{shapeVariant=Capsule}'
+
+        // Ensure prim_name is quoted with '{' and '}'
+        if (startsWith(prim_name, "{") && endsWith(prim_name, "}")) {
+          // ok
+        } else {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+        }
+
+        // Remove variant quotation
+        prim_name = unwrap(prim_name, "{", "}");
+
+        // Decompose to variantName, '=', variantValue
+        std::vector<std::string> toks = split(prim_name, "=");
+        if (toks.size() != 2) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath name: `{}`", elemPath));
+        }
+
+        std::string variantSetName = toks[0];
+        std::string variantPrimName = toks[1];
+
+        if (!ValidatePrimName(variantPrimName)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Prim name in Variant: `{}`", variantPrimName));
+        }
+
+        variantPrim = ReconstructPrimFromTypeName(typeName.value(), variantPrimName,
+                                                node, fvs, psmap, primMeta);
+
+        if (variantPrim) {
+          // Prim name
+          variantPrim.value().elementPath = elemPath; // FIXME: Use variantPrimName?
+
+          // Prim Specifier
+          variantPrim.value().specifier = specifier.value();
+
+          // Store variantPrim to temporary buffer.
+          DCOUT("add prim idx as variant" << current);
+          if (_variantPrims.count(current)) {
+            DCOUT("??? prim idx already set " << current);
+          } else {
+            _variantPrims.emplace(current, variantPrim.value());
+          }
+        }
+      }
+
       break;
     }
     case SpecType::Attribute: {
       if (is_parent_variant) {
-        PUSH_WARN( "TODO: Parse Attribute and add it to parent node.");
 
         nonstd::optional<Path> path = GetPath(spec.path_index);
 
@@ -2118,9 +2198,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         }
 
-        DCOUT(fmt::format("Parsed Attribute: {}", path.value().GetPropPart()));
+        // Parent Prim is not yet reconstructed, so store info to temporary buffer _variantAttributeNodes.
+        _variantAttributeNodes.emplace(current, prop);
 
-        PUSH_WARN("TODO: Attribute under VariantSet.");
+        DCOUT(fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}", current, path.value().GetPropPart(), spec.path_index));
 
       } else {
         // Maybe parent is Class/Over, or inherited

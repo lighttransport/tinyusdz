@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#include <string>
 #include <algorithm>
+#include <limits>
 #include <sstream>
+#include <string>
 #include <vector>
 
 namespace tinyusdz {
@@ -28,16 +29,16 @@ inline bool endsWith(const std::string &str, const std::string &suffix) {
          (str.find(suffix, str.size() - suffix.size()) != std::string::npos);
 }
 
-inline std::string removePrefix(const std::string &str, const std::string &prefix) {
-
+inline std::string removePrefix(const std::string &str,
+                                const std::string &prefix) {
   if (startsWith(str, prefix)) {
     return str.substr(prefix.length());
   }
   return str;
 }
 
-inline std::string removeSuffix(const std::string &str, const std::string &suffix) {
-
+inline std::string removeSuffix(const std::string &str,
+                                const std::string &suffix) {
   if (endsWith(str, suffix)) {
     return str.substr(0, str.length() - suffix.length());
   }
@@ -61,7 +62,8 @@ inline size_t counts(const std::string &str, char c) {
 // Remove the beginning and the ending delimiter(s) from input string
 // e.g. "mystring" -> mystring
 // no error for an input string which does not contain `delim` in both side.
-inline std::string unwrap(const std::string &str, const std::string &delim = "\"") {
+inline std::string unwrap(const std::string &str,
+                          const std::string &delim = "\"") {
   size_t n = delim.size();
 
   if (str.size() < n) {
@@ -81,15 +83,23 @@ inline std::string unwrap(const std::string &str, const std::string &delim = "\"
   return s;
 }
 
+inline std::string unwrap(const std::string &str, const std::string &l,
+                          const std::string &r) {
+  return removePrefix(removeSuffix(str, r), l);
+}
+
 inline std::string quote(const char *s, const std::string &quote_str = "\"") {
   return quote_str + std::string(s) + quote_str;
 }
 
-inline std::string quote(const std::string &s, const std::string &quote_str = "\"") {
+inline std::string quote(const std::string &s,
+                         const std::string &quote_str = "\"") {
   return quote_str + s + quote_str;
 }
 
-inline std::string wquote(const std::string &s, const std::string &quote_lstr = "\"", const std::string &quote_rstr = "\"") {
+inline std::string wquote(const std::string &s,
+                          const std::string &quote_lstr = "\"",
+                          const std::string &quote_rstr = "\"") {
   return quote_lstr + s + quote_rstr;
 }
 
@@ -106,8 +116,8 @@ inline It quote(const It& v, const std::string &quote_str = "\"") {
   return dst;
 }
 #else
-inline std::vector<std::string> quote(const std::vector<std::string>& vs, const std::string &quote_str = "\"") {
-
+inline std::vector<std::string> quote(const std::vector<std::string> &vs,
+                                      const std::string &quote_str = "\"") {
   std::vector<std::string> dst;
 
   for (const auto &item : vs) {
@@ -119,9 +129,8 @@ inline std::vector<std::string> quote(const std::vector<std::string>& vs, const 
 #endif
 
 // Python like join  ", ".join(v)
-template<typename It>
-inline std::string join(const std::string& sep, const It& v)
-{
+template <typename It>
+inline std::string join(const std::string &sep, const It &v) {
   std::ostringstream oss;
   if (!v.empty()) {
     typename It::const_iterator it = v.begin();
@@ -130,6 +139,27 @@ inline std::string join(const std::string& sep, const It& v)
       oss << sep << *it;
   }
   return oss.str();
+}
+
+// To avoid splitting toooo large input text(e.g. few GB).
+inline std::vector<std::string> split(
+    const std::string &str, const std::string &sep,
+    const uint32_t kMaxItems = std::numeric_limits<int32_t>::max() / 100) {
+  size_t s;
+  size_t e = 0;
+
+  size_t count = 0;
+  std::vector<std::string> result;
+
+  while ((s = str.find_first_not_of(sep, e)) != std::string::npos) {
+    e = str.find(sep, s);
+    result.push_back(str.substr(s, e - s));
+    if (count > kMaxItems) {
+      break;
+    }
+  }
+
+  return result;
 }
 
 #if 0
@@ -162,5 +192,4 @@ inline std::string join(const std::string& sep, It& v)
 }
 #endif
 
-
-} // namespace tinyusdz
+}  // namespace tinyusdz
