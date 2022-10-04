@@ -38,13 +38,8 @@ tinyusdz_sources=[
   #'../../src/external/string_id/string_id.cpp',
   #'../../src/external/string_id/error.cpp',
   #'../../src/external/string_id/database.cpp',
-  #'../../src/external/ryu/ryu/d2s.c',
-  #'../../src/external/ryu/ryu/f2s.c',
-  #'../../src/external/ryu/ryu/s2f.c',
-  #'../../src/external/ryu/ryu/s2d.c'
   ]
 
-#incdirs = include_directories(['../../src','../../src/external/ryu'])
 incdirs = include_directories(['../../src',
   #'../../src/external/fast_float/include',
   #'../../src/external/simple_match/include',
