@@ -26,8 +26,11 @@
 // THE SOFTWARE.
 
 // Version:
-//  - v2.6.0 Disable expanding file path for security(no use of awkward `wordexp` anymore).
-//           Support serializing sparse accessor(Thanks to @fynv).
+//  - v2.6.3 Fix GLB file with empty BIN chunk was not handled. PR#382 and PR#383.
+//  - v2.6.2 Fix out-of-bounds access of accessors. PR#379.
+//  - v2.6.1 Better GLB validation check when loading.
+//  - v2.6.0 Support serializing sparse accessor(Thanks to @fynv).
+//           Disable expanding file path for security(no use of awkward `wordexp` anymore).
 //  - v2.5.0 Add SetPreserveImageChannels() option to load image data as is.
 //  - v2.4.3 Fix null object output when when material has all default
 //  parameters.
@@ -65,6 +68,11 @@
 #include <map>
 #include <string>
 #include <vector>
+
+//Auto-detect C++14 standard version
+#if !defined(TINYGLTF_USE_CPP14) && defined(__cplusplus) && (__cplusplus >= 201402L)
+#define TINYGLTF_USE_CPP14
+#endif
 
 #ifndef TINYGLTF_USE_CPP14
 #include <functional>
@@ -2589,7 +2597,7 @@ bool FileExists(const std::string &abs_filename, void *) {
   }
 #else
 #ifdef _WIN32
-#if defined(_MSC_VER) || defined(__GLIBCXX__)
+#if defined(_MSC_VER) || defined(__GLIBCXX__) || defined(_LIBCPP_VERSION)
   FILE *fp = nullptr;
   errno_t err = _wfopen_s(&fp, UTF8ToWchar(abs_filename).c_str(), L"rb");
   if (err != 0) {
@@ -3229,9 +3237,11 @@ static bool ParseJsonAsValue(Value *ret, const json &o) {
       break;
   }
 #endif
+  const bool isNotNull = val.Type() != NULL_TYPE;
+
   if (ret) *ret = std::move(val);
 
-  return val.Type() != NULL_TYPE;
+  return isNotNull;
 }
 
 static bool ParseExtrasProperty(Value *ret, const json &o) {
@@ -3671,7 +3681,8 @@ static bool ParseParameterProperty(Parameter *param, std::string *err,
     // Found a number array.
     return true;
   } else if (ParseNumberProperty(&param->number_value, err, o, prop, false)) {
-    return param->has_number_value = true;
+    param->has_number_value = true;
+    return true;
   } else if (ParseJSONProperty(&param->json_double_value, err, o, prop,
                                false)) {
     return true;
@@ -3864,7 +3875,7 @@ static bool ParseImage(Image *image, const int image_idx, std::string *err,
     image->uri = uri;
 #ifdef TINYGLTF_NO_EXTERNAL_IMAGE
     return true;
-#endif
+#else
     std::string decoded_uri = dlib::urldecode(uri);
     if (!LoadExternalFile(&img, err, warn, decoded_uri, basedir,
                           /* required */ false, /* required bytes */ 0,
@@ -3886,6 +3897,7 @@ static bool ParseImage(Image *image, const int image_idx, std::string *err,
       }
       return false;
     }
+#endif
   }
 
   if (*LoadImageData == nullptr) {
@@ -4102,7 +4114,7 @@ static bool ParseBuffer(Buffer *buffer, std::string *err, const json &o,
 
       if ((bin_size == 0) || (bin_data == nullptr)) {
         if (err) {
-          (*err) += "Invalid binary data in `Buffer'.\n";
+          (*err) += "Invalid binary data in `Buffer', or GLB with empty BIN chunk.\n";
         }
         return false;
       }
@@ -5794,20 +5806,27 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
       }
 
       for (auto &attribute : primitive.attributes) {
-        model
-            ->bufferViews[size_t(
-                model->accessors[size_t(attribute.second)].bufferView)]
-            .target = TINYGLTF_TARGET_ARRAY_BUFFER;
+        const auto accessorsIndex = size_t(attribute.second);
+        if (accessorsIndex < model->accessors.size()) {
+          const auto bufferView = model->accessors[accessorsIndex].bufferView;
+          // bufferView could be null(-1) for sparse morph target
+          if (bufferView >= 0 && bufferView < model->bufferViews.size()) {
+            model->bufferViews[size_t(bufferView)].target =
+                TINYGLTF_TARGET_ARRAY_BUFFER;
+          }
+        }
       }
 
       for (auto &target : primitive.targets) {
         for (auto &attribute : target) {
-          auto bufferView =
-              model->accessors[size_t(attribute.second)].bufferView;
-          // bufferView could be null(-1) for sparse morph target
-          if (bufferView >= 0) {
-            model->bufferViews[size_t(bufferView)].target =
-                TINYGLTF_TARGET_ARRAY_BUFFER;
+          const auto accessorsIndex = size_t(attribute.second);
+          if (accessorsIndex < model->accessors.size()) {
+            const auto bufferView = model->accessors[accessorsIndex].bufferView;
+            // bufferView could be null(-1) for sparse morph target
+            if (bufferView >= 0 && bufferView < model->bufferViews.size()) {
+              model->bufferViews[size_t(bufferView)].target =
+                  TINYGLTF_TARGET_ARRAY_BUFFER;
+            }
           }
         }
       }
@@ -6248,44 +6267,125 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
 
   unsigned int version;       // 4 bytes
   unsigned int length;        // 4 bytes
-  unsigned int model_length;  // 4 bytes
-  unsigned int model_format;  // 4 bytes;
+  unsigned int chunk0_length;  // 4 bytes
+  unsigned int chunk0_format;  // 4 bytes;
 
-  // @todo { Endian swap for big endian machine. }
   memcpy(&version, bytes + 4, 4);
   swap4(&version);
   memcpy(&length, bytes + 8, 4);
   swap4(&length);
-  memcpy(&model_length, bytes + 12, 4);
-  swap4(&model_length);
-  memcpy(&model_format, bytes + 16, 4);
-  swap4(&model_format);
+  memcpy(&chunk0_length, bytes + 12, 4); // JSON data length
+  swap4(&chunk0_length);
+  memcpy(&chunk0_format, bytes + 16, 4);
+  swap4(&chunk0_format);
 
+  // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#binary-gltf-layout
+  //
   // In case the Bin buffer is not present, the size is exactly 20 + size of
   // JSON contents,
   // so use "greater than" operator.
-  if ((20 + model_length > size) || (model_length < 1) || (length > size) ||
-      (20 + model_length > length) ||
-      (model_format != 0x4E4F534A)) {  // 0x4E4F534A = JSON format.
+  //
+  // https://github.com/syoyo/tinygltf/issues/372
+  // Use 64bit uint to avoid integer overflow.
+  uint64_t header_and_json_size = 20ull + uint64_t(chunk0_length);
+
+  if (header_and_json_size > std::numeric_limits<uint32_t>::max()) {
+    // Do not allow 4GB or more GLB data.
+   (*err) = "Invalid glTF binary. GLB data exceeds 4GB.";
+  }
+
+  if ((header_and_json_size > uint64_t(size)) || (chunk0_length < 1) || (length > size) ||
+      (header_and_json_size > uint64_t(length)) ||
+      (chunk0_format != 0x4E4F534A)) {  // 0x4E4F534A = JSON format.
     if (err) {
       (*err) = "Invalid glTF binary.";
     }
     return false;
   }
 
+  // Padding check
+  // The start and the end of each chunk must be aligned to a 4-byte boundary.
+  // No padding check for chunk0 start since its 4byte-boundary is ensured.
+  if ((header_and_json_size % 4) != 0) {
+    if (err) {
+      (*err) = "JSON Chunk end does not aligned to a 4-byte boundary.";
+    }
+  }
+
+  //std::cout << "header_and_json_size = " << header_and_json_size << "\n";
+  //std::cout << "length = " << length << "\n";
+
+  // Chunk1(BIN) data
+  // The spec says: When the binary buffer is empty or when it is stored by other means, this chunk SHOULD be omitted.
+  // So when header + JSON data == binary size, Chunk1 is omitted.
+  if (header_and_json_size == uint64_t(length)) {
+
+    bin_data_ = nullptr;
+    bin_size_ = 0;
+  } else {
+    // Read Chunk1 info(BIN data)
+    // At least Chunk1 should have 12 bytes(8 bytes(header) + 4 bytes(bin payload could be 1~3 bytes, but need to be aliged to 4 bytes)
+    if ((header_and_json_size + 12ull) > uint64_t(length)) {
+      if (err) {
+        (*err) = "Insufficient storage space for Chunk1(BIN data). At least Chunk1 Must have 4 bytes or more bytes, but got " + std::to_string((header_and_json_size + 12ull) - uint64_t(length)) + ".\n";
+      }
+      return false;
+    }
+
+    unsigned int chunk1_length;  // 4 bytes
+    unsigned int chunk1_format;  // 4 bytes;
+    memcpy(&chunk1_length, bytes + header_and_json_size, 4); // JSON data length
+    swap4(&chunk1_length);
+    memcpy(&chunk1_format, bytes + header_and_json_size + 4, 4);
+    swap4(&chunk1_format);
+
+    //std::cout << "chunk1_length = " << chunk1_length << "\n";
+
+    if (chunk1_length < 4) {
+      if (err) {
+        (*err) = "Insufficient Chunk1(BIN) data size.";
+      }
+      return false;
+    }
+
+    if ((chunk1_length % 4) != 0) {
+      if (err) {
+        (*err) = "BIN Chunk end does not aligned to a 4-byte boundary.";
+      }
+      return false;
+    }
+
+    if (uint64_t(chunk1_length) + header_and_json_size > uint64_t(length)) {
+      if (err) {
+        (*err) = "BIN Chunk data length exceeds the GLB size.";
+      }
+      return false;
+    }
+
+    if (chunk1_format != 0x004e4942) {
+      if (err) {
+        (*err) = "Invlid type for chunk1 data.";
+      }
+      return false;
+    }
+
+    //std::cout << "chunk1_length = " << chunk1_length << "\n";
+
+    bin_data_ = bytes + header_and_json_size +
+                8;  // 4 bytes (bin_buffer_length) + 4 bytes(bin_buffer_format)
+
+    bin_size_ = size_t(chunk1_length);
+  }
+
   // Extract JSON string.
   std::string jsonString(reinterpret_cast<const char *>(&bytes[20]),
-                         model_length);
+                         chunk0_length);
 
   is_binary_ = true;
-  bin_data_ = bytes + 20 + model_length +
-              8;  // 4 bytes (buffer_length) + 4 bytes(buffer_format)
-  bin_size_ =
-      length - (20 + model_length);  // extract header + JSON scene data.
 
   bool ret = LoadFromString(model, err, warn,
                             reinterpret_cast<const char *>(&bytes[20]),
-                            model_length, base_dir, check_sections);
+                            chunk0_length, base_dir, check_sections);
   if (!ret) {
     return ret;
   }
