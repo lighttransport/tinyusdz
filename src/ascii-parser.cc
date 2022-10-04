@@ -44,14 +44,11 @@
 #endif
 
 // external
-//#include "ryu/ryu.h"
-//#include "ryu/ryu_parse.h"
 
 #include "external/fast_float/include/fast_float/fast_float.h"
 #include "external/jsteemann/atoi.h"
 #include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
-//#include "nonstd/optional.hpp"
 
 //
 

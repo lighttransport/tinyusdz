@@ -330,16 +330,36 @@ class CrateReader {
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
+  //template <class T>
+  //struct IsIntType {
+  //  static const bool value =
+  //    std::is_same<T, int32_t>::value ||
+  //    std::is_same<T, uint32_t>::value ||
+  //    std::is_same<T, int64_t>::value ||
+  //    std::is_same<T, uint64_t>::value;
+  //};
+
+  template<typename T>
+  bool ReadArray(std::vector<T> *d);
+
+  //template <typename T,
+  //typename std::enable_if<IsIntType<T>::value, bool>::type>
+  //bool ReadArray(std::vector<T> *d);
+
+
+  template<typename T>
+  bool ReadListOp(ListOp<T> *d);
+
   // TODO: Templatize
   bool ReadPathListOp(ListOp<Path> *d);
   bool ReadTokenListOp(ListOp<value::token> *d);
   bool ReadStringListOp(ListOp<std::string> *d);
-  bool ReadIntListOp(ListOp<int32_t> *d);
-  bool ReadUIntListOp(ListOp<uint32_t> *d);
-  bool ReadInt64ListOp(ListOp<int64_t> *d);
-  bool ReadUInt64ListOp(ListOp<uint64_t> *d);
-  bool ReadReferenceListOp(ListOp<Reference> *d);
-  bool ReadPayloadListOp(ListOp<Payload> *d);
+  //bool ReadIntListOp(ListOp<int32_t> *d);
+  //bool ReadUIntListOp(ListOp<uint32_t> *d);
+  //bool ReadInt64ListOp(ListOp<int64_t> *d);
+  //bool ReadUInt64ListOp(ListOp<uint64_t> *d);
+  //bool ReadReferenceListOp(ListOp<Reference> *d);
+  //bool ReadPayloadListOp(ListOp<Payload> *d);
 
   bool ReadVariantSelectionMap(VariantSelectionMap *d);
 
