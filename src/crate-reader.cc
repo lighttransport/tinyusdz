@@ -1434,6 +1434,177 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
+template<>
+bool CrateReader::ReadArray(std::vector<Reference> *d) {
+
+  if (!d) {
+    return false;
+  }
+
+  uint64_t n;
+  if (!_sr->read8(&n)) {
+    return false;
+  }
+
+  if (n > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(sizeof(Reference) * n);
+
+  for (size_t i = 0; i < n; i++) {
+    Reference p;
+    if (!ReadReference(&p)) {
+      return false;
+    }
+    d->emplace_back(p);
+  }
+
+  return true;
+}
+
+template<>
+bool CrateReader::ReadArray(std::vector<Payload> *d) {
+
+  if (!d) {
+    return false;
+  }
+
+  uint64_t n;
+  if (!_sr->read8(&n)) {
+    return false;
+  }
+
+  if (n > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(sizeof(Payload) * n);
+
+  for (size_t i = 0; i < n; i++) {
+    Payload p;
+    if (!ReadPayload(&p)) {
+      return false;
+    }
+    d->emplace_back(p);
+  }
+
+  return true;
+}
+
+// T = int, uint, int64, uint64
+template<typename T>
+//typename std::enable_if<CrateReader::IsIntType<T>::value, bool>::type
+bool CrateReader::ReadArray(std::vector<T> *d) {
+
+  if (!d) {
+    return false;
+  }
+
+  uint64_t n;
+  if (!_sr->read8(&n)) {
+    return false;
+  }
+
+  if (n > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  if (n == 0) {
+    return true;
+  }
+
+  CHECK_MEMORY_USAGE(sizeof(T) * n);
+
+  d->resize(n);
+  if (_sr->read(sizeof(T) * n, sizeof(T) * n, reinterpret_cast<uint8_t *>(d->data()))) {
+    return false;
+  }
+
+  return true;
+}
+
+template<typename T>
+bool CrateReader::ReadListOp(ListOp<T> *d) {
+  // read ListOpHeader
+  ListOpHeader h;
+  if (!_sr->read1(&h.bits)) {
+    PUSH_ERROR("Failed to read ListOpHeader.");
+    return false;
+  }
+
+  if (h.IsExplicit()) {
+    d->ClearAndMakeExplicit();
+  }
+
+  //
+  // NOTE: array data is not compressed even for Int type
+  //
+
+  if (h.HasExplicitItems()) {
+    std::vector<T> items;
+    if (!ReadArray(&items)) {
+      _err += "Failed to read ListOp::ExplicitItems.\n";
+      return false;
+    }
+
+    d->SetExplicitItems(items);
+  }
+
+  if (h.HasAddedItems()) {
+    std::vector<T> items;
+    if (!ReadArray(&items)) {
+      _err += "Failed to read ListOp::AddedItems.\n";
+      return false;
+    }
+
+    d->SetAddedItems(items);
+  }
+
+  if (h.HasPrependedItems()) {
+    std::vector<T> items;
+    if (!ReadArray(&items)) {
+      _err += "Failed to read ListOp::PrependedItems.\n";
+      return false;
+    }
+
+    d->SetPrependedItems(items);
+  }
+
+  if (h.HasAppendedItems()) {
+    std::vector<T> items;
+    if (!ReadArray(&items)) {
+      _err += "Failed to read ListOp::AppendedItems.\n";
+      return false;
+    }
+
+    d->SetAppendedItems(items);
+  }
+
+  if (h.HasDeletedItems()) {
+    std::vector<T> items;
+    if (!ReadArray(&items)) {
+      _err += "Failed to read ListOp::DeletedItems.\n";
+      return false;
+    }
+
+    d->SetDeletedItems(items);
+  }
+
+  if (h.HasOrderedItems()) {
+    std::vector<T> items;
+    if (!ReadArray(&items)) {
+      _err += "Failed to read ListOp::OrderedItems.\n";
+      return false;
+    }
+
+    d->SetOrderedItems(items);
+  }
+
+  return true;
+}
+
+#if 0
 bool CrateReader::ReadReferenceListOp(ListOp<Reference> *d) {
   // read ListOpHeader
   ListOpHeader h;
@@ -1459,7 +1630,7 @@ bool CrateReader::ReadReferenceListOp(ListOp<Reference> *d) {
       return false;
     }
 
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(Payload));
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(Reference));
 
     for (size_t i = 0; i < size_t(n); i++) {
       Reference p;
@@ -1635,6 +1806,7 @@ bool CrateReader::ReadPayloadListOp(ListOp<Payload> *d) {
 
   return true;
 }
+#endif
 
 bool CrateReader::ReadVariantSelectionMap(VariantSelectionMap *d) {
 
@@ -2139,19 +2311,25 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP: {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("ListOp data type `{}` cannot be inlined.",
+          crate::GetCrateDataTypeName(dty.dtype_id)));
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR: {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Data type `{}` cannot be inlined.",
+          crate::GetCrateDataTypeName(dty.dtype_id)));
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
@@ -3559,7 +3737,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP: {
       ListOp<Payload> lst;
 
-      if (!ReadPayloadListOp(&lst)) {
+      if (!ReadListOp(&lst)) {
         PUSH_ERROR("Failed to read PayloadListOp data");
         return false;
       }
@@ -3570,7 +3748,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP: {
       ListOp<Reference> lst;
 
-      if (!ReadReferenceListOp(&lst)) {
+      if (!ReadListOp(&lst)) {
         PUSH_ERROR("Failed to read ReferenceListOp data");
         return false;
       }
@@ -3578,11 +3756,55 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       value->Set(lst);
       return true;
     }
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP: {
+      ListOp<int32_t> lst;
+
+      if (!ReadListOp(&lst)) {
+        PUSH_ERROR("Failed to read IntListOp data");
+        return false;
+      }
+
+      value->Set(lst);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP: {
+      ListOp<int64_t> lst;
+
+      if (!ReadListOp(&lst)) {
+        PUSH_ERROR("Failed to read Int64ListOp data");
+        return false;
+      }
+
+      value->Set(lst);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP: {
+      ListOp<uint32_t> lst;
+
+      if (!ReadListOp(&lst)) {
+        PUSH_ERROR("Failed to read UIntListOp data");
+        return false;
+      }
+
+      value->Set(lst);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP: {
+      ListOp<uint64_t> lst;
+
+      if (!ReadListOp(&lst)) {
+        PUSH_ERROR("Failed to read UInt64ListOp data");
+        return false;
+      }
+
+      value->Set(lst);
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK: {
+      PUSH_ERROR(
+          "ValueBlock must be defined in Inlined ValueRep.");
+      return false;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
