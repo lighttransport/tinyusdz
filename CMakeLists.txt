@@ -553,12 +553,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  #target_include_directories(${TINYUSDZ_LIB_TARGET}
-  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
-  #target_include_directories(${TINYUSDZ_LIB_TARGET}
-  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/fast_float/include)
-  #target_include_directories(${TINYUSDZ_LIB_TARGET}
-  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/simple_match/include)
 
   #if(TINYUSDZ_WITH_JSON)
   ##target_include_directories(
