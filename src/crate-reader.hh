@@ -313,6 +313,7 @@ class CrateReader {
   bool ReadStringArray(std::vector<std::string> *d);
   bool ReadLayerOffsetArray(std::vector<LayerOffset> *d);
 
+  bool ReadReference(Reference *d);
   bool ReadPayload(Payload *d);
   bool ReadLayerOffset(LayerOffset *d);
 
@@ -337,6 +338,7 @@ class CrateReader {
   bool ReadUIntListOp(ListOp<uint32_t> *d);
   bool ReadInt64ListOp(ListOp<int64_t> *d);
   bool ReadUInt64ListOp(ListOp<uint64_t> *d);
+  bool ReadReferenceListOp(ListOp<Reference> *d);
   bool ReadPayloadListOp(ListOp<Payload> *d);
 
   bool ReadVariantSelectionMap(VariantSelectionMap *d);

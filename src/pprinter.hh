@@ -45,6 +45,7 @@ std::string to_string(Permission permission);
 std::string to_string(Variability variability);
 std::string to_string(SpecType spec_type);
 std::string to_string(Kind kind);
+std::string to_string(const Reference &reference);
 
 std::string to_string(const XformOp::OpType &ty);
 
