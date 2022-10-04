@@ -922,6 +922,50 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   return true;
 }
 
+bool CrateReader::ReadReference(Reference *d) {
+
+  if (!d) {
+    return false;
+  }
+
+  // assetPath : string
+  // primPath : Path
+  // layerOffset : LayerOffset
+  // customData : Dict
+
+  std::string assetPath;
+  if (!ReadString(&assetPath)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read assetPath in Reference ValueRep.");
+  }
+
+  crate::PathIndex index;
+  if (!ReadIndex(&index)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read primPath Index in Reference ValueRep.");
+  }
+
+  auto path = GetPath(index);
+  if (!path) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Path index in Reference ValueRep.");
+  }
+
+  LayerOffset layerOffset;
+  if (!ReadLayerOffset(&layerOffset)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read LayerOffset in Reference ValueRep.");
+  }
+
+  CustomDataType customData;
+  if (!ReadCustomData(&customData)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read CustomData(Dict) in Reference ValueRep.");
+  }
+
+  d->asset_path = assetPath;
+  d->prim_path = path.value();
+  d->layerOffset = layerOffset;
+  d->customData = customData;
+
+  return true;
+}
+
 bool CrateReader::ReadPayload(Payload *d) {
 
   if (!d) {
@@ -930,7 +974,7 @@ bool CrateReader::ReadPayload(Payload *d) {
 
   // assetPath : string
   // primPath : Path
-  
+
   std::string assetPath;
   if (!ReadString(&assetPath)) {
     return false;
@@ -941,21 +985,21 @@ bool CrateReader::ReadPayload(Payload *d) {
   if (!ReadIndex(&index)) {
     return false;
   }
-  
+
   auto path = GetPath(index);
   if (!path) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Path index in Payload ValueRep.");
   }
 
-  // LayerOffset from 0.8.0 
+  // LayerOffset from 0.8.0
   if (VersionGreaterThanOrEqualTo_0_8_0()) {
     LayerOffset layerOffset;
     if (!ReadLayerOffset(&layerOffset)) {
       return false;
-    } 
+    }
     d->_layer_offset = layerOffset;
   }
-  
+
   d->asset_path = assetPath;
   d->_prim_path = path.value();
 
@@ -1390,6 +1434,107 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   return true;
 }
 
+bool CrateReader::ReadReferenceListOp(ListOp<Reference> *d) {
+  // read ListOpHeader
+  ListOpHeader h;
+  if (!_sr->read1(&h.bits)) {
+    PUSH_ERROR("Failed to read ListOpHeader.");
+    return false;
+  }
+
+  if (h.IsExplicit()) {
+    d->ClearAndMakeExplicit();
+  }
+
+  // array data is not compressed
+  auto ReadFn = [this](std::vector<Reference> &result) -> bool {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      PUSH_ERROR("Failed to read # of elements in ListOp.");
+      return false;
+    }
+
+    if (n > _config.maxArrayElements) {
+      _err += "Too many ListOp elements.\n";
+      return false;
+    }
+
+    CHECK_MEMORY_USAGE(size_t(n) * sizeof(Payload));
+
+    for (size_t i = 0; i < size_t(n); i++) {
+      Reference p;
+      if (!ReadReference(&p)) {
+        return false;
+      }
+      result.emplace_back(p);
+    }
+
+    return true;
+  };
+
+  if (h.HasExplicitItems()) {
+    std::vector<Reference> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::ExplicitItems.\n";
+      return false;
+    }
+
+    d->SetExplicitItems(items);
+  }
+
+  if (h.HasAddedItems()) {
+    std::vector<Reference> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AddedItems.\n";
+      return false;
+    }
+
+    d->SetAddedItems(items);
+  }
+
+  if (h.HasPrependedItems()) {
+    std::vector<Reference> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::PrependedItems.\n";
+      return false;
+    }
+
+    d->SetPrependedItems(items);
+  }
+
+  if (h.HasAppendedItems()) {
+    std::vector<Reference> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::AppendedItems.\n";
+      return false;
+    }
+
+    d->SetAppendedItems(items);
+  }
+
+  if (h.HasDeletedItems()) {
+    std::vector<Reference> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::DeletedItems.\n";
+      return false;
+    }
+
+    d->SetDeletedItems(items);
+  }
+
+  if (h.HasOrderedItems()) {
+    std::vector<Reference> items;
+    if (!ReadFn(items)) {
+      _err += "Failed to read ListOp::OrderedItems.\n";
+      return false;
+    }
+
+    d->SetOrderedItems(items);
+  }
+
+  return true;
+}
+
 bool CrateReader::ReadPayloadListOp(ListOp<Payload> *d) {
   // read ListOpHeader
   ListOpHeader h;
@@ -1498,10 +1643,10 @@ bool CrateReader::ReadVariantSelectionMap(VariantSelectionMap *d) {
   }
 
   // map<string, string>
- 
+
   // n
   // [key, value] * n
- 
+
   uint64_t sz;
   if (!_sr->read8(&sz)) {
     _err += "Failed to read the number of elements for VariantsMap data.\n";
@@ -1997,7 +2142,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP: 
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR:
@@ -3422,7 +3567,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       value->Set(lst);
       return true;
     }
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP: {
+      ListOp<Reference> lst;
+
+      if (!ReadReferenceListOp(&lst)) {
+        PUSH_ERROR("Failed to read ReferenceListOp data");
+        return false;
+      }
+
+      value->Set(lst);
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP:
@@ -3555,8 +3710,6 @@ bool CrateReader::BuildNodeHierarchy(
       if (_nodes[size_t(pathIndexes[thisIndex])].GetParent() != -2) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "???: Maybe corrupted path hierarchy?.");
       }
-
-      //assert(_nodes[size_t(pathIndexes[thisIndex])].GetParent() == -2);
 
       _nodes[size_t(pathIndexes[thisIndex])] = node;
 
@@ -3943,7 +4096,6 @@ bool CrateReader::ReadTokens() {
 
     p += len + 1;  // +1 = '\0'
     n_remain = size_t(pe - p);
-    //assert(p <= pe);
     if (p > pe) {
       _err += "Invalid token string array.\n";
       return false;
@@ -4024,7 +4176,7 @@ bool CrateReader::ReadFields() {
   DCOUT("num_fields = " << num_fields);
 
   if (num_fields == 0) {
-    // OK
+    // Fields may be empty, so OK
     return true;
   }
 
@@ -4149,11 +4301,19 @@ bool CrateReader::ReadFieldSets() {
     return false;
   }
 
+  if (num_fieldsets == 0) {
+    // At least 1 FieldIndex(separator(~0)) must exist.
+    PUSH_ERROR("`FIELDSETS` is empty.");
+    return false;
+  }
+
+  if (num_fieldsets > _config.maxNumFieldSets) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many FieldSets");
+  }
+
   CHECK_MEMORY_USAGE(size_t(num_fieldsets) * sizeof(uint32_t));
 
   _fieldset_indices.resize(static_cast<size_t>(num_fieldsets));
-
-  CHECK_MEMORY_USAGE(size_t(num_fieldsets) * sizeof(uint32_t));
 
   // Create temporary space for decompressing.
   size_t compBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(
@@ -4171,7 +4331,7 @@ bool CrateReader::ReadFieldSets() {
   size_t workBufferSize = Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
           static_cast<size_t>(num_fieldsets));
 
-  CHECK_MEMORY_USAGE(compBufferSize);
+  CHECK_MEMORY_USAGE(workBufferSize);
   std::vector<char> working_space;
   working_space.resize(workBufferSize);
 
@@ -4191,8 +4351,6 @@ bool CrateReader::ReadFieldSets() {
   if (fsets_size > _sr->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "FieldSets compressed data exceeds USDC data.");
   }
-
-  //assert(fsets_size < comp_buffer.size());
 
   if (fsets_size !=
       _sr->read(size_t(fsets_size), size_t(fsets_size),
@@ -4215,7 +4373,7 @@ bool CrateReader::ReadFieldSets() {
     _fieldset_indices[i].value = tmp[i];
   }
 
-  REDUCE_MEMORY_USAGE(sizeof(uint32_t) * size_t(num_fieldsets));
+  REDUCE_MEMORY_USAGE(workBufferSize);
   REDUCE_MEMORY_USAGE(compBufferSize);
 
   return true;
@@ -4307,6 +4465,12 @@ bool CrateReader::ReadSpecs() {
     return false;
   }
 
+  if (num_specs == 0) {
+    // At least 1 Spec(Root Prim '/') must exist.
+    PUSH_ERROR("`SPECS` is empty.");
+    return false;
+  }
+
   DCOUT("num_specs " << num_specs);
 
   CHECK_MEMORY_USAGE(size_t(num_specs) * sizeof(Spec));
@@ -4316,13 +4480,24 @@ bool CrateReader::ReadSpecs() {
   // TODO: Memory size check
 
   // Create temporary space for decompressing.
-  std::vector<char> comp_buffer(Usd_IntegerCompression::GetCompressedBufferSize(
-      static_cast<size_t>(num_specs)));
+  size_t compBufferSize= Usd_IntegerCompression::GetCompressedBufferSize(
+      static_cast<size_t>(num_specs));
+
+  CHECK_MEMORY_USAGE(compBufferSize);
+
+  std::vector<char> comp_buffer;
+  comp_buffer.resize(compBufferSize);
+
+  CHECK_MEMORY_USAGE(size_t(num_specs) * sizeof(uint32_t)); // tmp
 
   std::vector<uint32_t> tmp(static_cast<size_t>(num_specs));
-  std::vector<char> working_space(
-      Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
-          static_cast<size_t>(num_specs)));
+
+  size_t workBufferSize= Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
+          static_cast<size_t>(num_specs));
+
+  CHECK_MEMORY_USAGE(workBufferSize);
+  std::vector<char> working_space;
+  working_space.resize(workBufferSize);
 
   // path indices
   {
@@ -4336,7 +4511,6 @@ bool CrateReader::ReadSpecs() {
       // Maybe corrupted?
       path_indexes_size = comp_buffer.size();
     }
-    //assert(path_indexes_size < comp_buffer.size());
 
     if (path_indexes_size !=
         _sr->read(size_t(path_indexes_size), size_t(path_indexes_size),
@@ -4371,7 +4545,6 @@ bool CrateReader::ReadSpecs() {
       // Maybe corrupted?
       fset_indexes_size = comp_buffer.size();
     }
-    //assert(fset_indexes_size < comp_buffer.size());
 
     if (fset_indexes_size !=
         _sr->read(size_t(fset_indexes_size), size_t(fset_indexes_size),
@@ -4406,7 +4579,6 @@ bool CrateReader::ReadSpecs() {
       // Maybe corrupted?
       spectype_size = comp_buffer.size();
     }
-    //assert(spectype_size < comp_buffer.size());
 
     if (spectype_size !=
         _sr->read(size_t(spectype_size), size_t(spectype_size),
@@ -4441,6 +4613,10 @@ bool CrateReader::ReadSpecs() {
   }
 #endif
 
+  REDUCE_MEMORY_USAGE(compBufferSize);
+  REDUCE_MEMORY_USAGE(workBufferSize);
+  REDUCE_MEMORY_USAGE(size_t(num_specs) * sizeof(uint32_t)); // tmp
+
   return true;
 }
 
@@ -4468,6 +4644,11 @@ bool CrateReader::ReadPaths() {
   if (!_sr->read8(&num_paths)) {
     PUSH_ERROR("Failed to read # of paths at `PATHS` section.");
     return false;
+  }
+
+  if (num_paths == 0) {
+    // At least root path exits.
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "`PATHS` is empty.");
   }
 
   if (num_paths > _config.maxNumPaths) {
@@ -4708,218 +4889,6 @@ CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
   return nonstd::make_unexpected("FieldValuePair not found with name: `" +
                                  name + "`");
 }
-
-#if 0
-bool CrateReader::ParseAttribute(const FieldValuePairVector &fvs,
-                                 PrimAttrib *attr,
-                                 const std::string &prop_name) {
-  bool success = false;
-
-  DCOUT("fvs.size = " << fvs.size());
-
-  bool has_connection{false};
-
-  Variability variability{Variability::Varying};
-  Interpolation interpolation{Interpolation::Invalid};
-
-  // Check if required field exists.
-  if (!HasFieldValuePair(fvs, kTypeName, kToken)) {
-    PUSH_ERROR(
-        "\"typeName\" field with `token` type must exist for Attribute data.");
-    return false;
-  }
-
-  if (!HasField(kDefault)) {
-    PUSH_ERROR("\"default\" field must exist for Attribute data.");
-    return false;
-  }
-
-  //
-  // Parse properties
-  //
-  for (const auto &fv : fvs) {
-    DCOUT("===  fvs.first " << fv.first
-                            << ", second: " << fv.second.type_name());
-    if ((fv.first == "typeName") && (fv.second.type_name() == "Token")) {
-      attr->set_type_name(fv.second.value<value::token>().str());
-      DCOUT("typeName: " << attr->type_name());
-    } else if (fv.first == "default") {
-      // Nothing to do at there. Process `default` in the later
-      continue;
-    } else if (fv.first == "targetPaths") {
-      // e.g. connection to Material.
-      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
-
-      DCOUT("ListOp<Path> = " << to_string(paths));
-      // Currently we only support single explicit path.
-      if ((paths.GetExplicitItems().size() == 1)) {
-        const Path &path = paths.GetExplicitItems()[0];
-        (void)path;
-
-        DCOUT("full path: " << path.full_path_name());
-        //DCOUT("local path: " << path.local_path_name());
-
-        primvar::PrimVar var;
-        var.set_scalar(path);
-        attr->set_var(std::move(var));
-
-        has_connection = true;
-
-      } else {
-        return false;
-      }
-    } else if (fv.first == "connectionPaths") {
-      // e.g. connection to texture file.
-      const ListOp<Path> paths = fv.second.value<ListOp<Path>>();
-
-      DCOUT("ListOp<Path> = " << to_string(paths));
-
-      // Currently we only support single explicit path.
-      if ((paths.GetExplicitItems().size() == 1)) {
-        const Path &path = paths.GetExplicitItems()[0];
-        (void)path;
-
-        DCOUT("full path: " << path.full_path_name());
-        //DCOUT("local path: " << path.local_path_name());
-
-        primvar::PrimVar var;
-        var.set_scalar(path);
-        attr->set_var(std::move(var));
-
-        has_connection = true;
-
-      } else {
-        return false;
-      }
-    } else if ((fv.first == "variablity") &&
-               (fv.second.type_name() == "Variability")) {
-      variability = fv.second.value<Variability>();
-    } else if ((fv.first == "interpolation") &&
-               (fv.second.type_name() == "Token")) {
-      interpolation =
-          InterpolationFromString(fv.second.value<value::token>().str());
-    } else {
-      DCOUT("TODO: name: " << fv.first
-                           << ", type: " << fv.second.type_name());
-    }
-  }
-
-  attr->variability = variability;
-  attr->meta.interpolation = interpolation;
-
-  //
-  // Decode value(stored in "default" field)
-  //
-  const auto fvRet = GetFieldValuePair(fvs, kDefault);
-  if (!fvRet) {
-    // This code path should not happen. Just in case.
-    PUSH_ERROR("`default` field not found.");
-    return false;
-  }
-  const auto fv = fvRet.value();
-
-  auto add1DArraySuffix = [](const std::string &a) -> std::string {
-    return a + "[]";
-  };
-
-  {
-    if (fv.first == "default") {
-      attr->name = prop_name;
-
-      DCOUT("fv.second.type_name = " << fv.second.type_name());
-
-#define PROC_SCALAR(__tyname, __ty)                             \
-  }                                                             \
-  else if (fv.second.type_name() == __tyname) {               \
-    auto ret = fv.second.get_value<__ty>();                     \
-    if (!ret) {                                                 \
-      PUSH_ERROR("Failed to decode " << __tyname << " value."); \
-      return false;                                             \
-    }                                                           \
-    primvar::PrimVar var; \
-    var.set_scalar(ret.value()); \
-    attr->set_var(std::move(var));                          \
-    success = true;
-
-#define PROC_ARRAY(__tyname, __ty)                                  \
-  }                                                                 \
-  else if (fv.second.type_name() == add1DArraySuffix(__tyname)) { \
-    auto ret = fv.second.get_value<std::vector<__ty>>();            \
-    if (!ret) {                                                     \
-      PUSH_ERROR("Failed to decode " << __tyname << "[] value.");   \
-      return false;                                                 \
-    }                                                               \
-    primvar::PrimVar var; \
-    var.set_scalar(ret.value()); \
-    attr->set_var(std::move(var));                          \
-    success = true;
-
-      if (0) {  // dummy
-        PROC_SCALAR(value::kFloat, float)
-        PROC_SCALAR(value::kBool, bool)
-        PROC_SCALAR(value::kInt, int)
-        PROC_SCALAR(value::kFloat2, value::float2)
-        PROC_SCALAR(value::kFloat3, value::float3)
-        PROC_SCALAR(value::kFloat4, value::float4)
-        PROC_SCALAR(value::kHalf2, value::half2)
-        PROC_SCALAR(value::kHalf3, value::half3)
-        PROC_SCALAR(value::kHalf4, value::half4)
-        PROC_SCALAR(value::kToken, value::token)
-        PROC_SCALAR(value::kAssetPath, value::AssetPath)
-
-        PROC_SCALAR(value::kMatrix2d, value::matrix2d)
-        PROC_SCALAR(value::kMatrix3d, value::matrix3d)
-        PROC_SCALAR(value::kMatrix4d, value::matrix4d)
-
-        // It seems `token[]` is defined as `TokenVector` in CrateData.
-        // We tret it as scalar
-        PROC_SCALAR("TokenVector", std::vector<value::token>)
-
-        // TODO(syoyo): Use constexpr concat
-        PROC_ARRAY(value::kInt, int32_t)
-        PROC_ARRAY(value::kUInt, uint32_t)
-        PROC_ARRAY(value::kFloat, float)
-        PROC_ARRAY(value::kFloat2, value::float2)
-        PROC_ARRAY(value::kFloat3, value::float3)
-        PROC_ARRAY(value::kFloat4, value::float4)
-        PROC_ARRAY(value::kToken, value::token)
-
-        PROC_ARRAY(value::kMatrix2d, value::matrix2d)
-        PROC_ARRAY(value::kMatrix3d, value::matrix3d)
-        PROC_ARRAY(value::kMatrix4d, value::matrix4d)
-
-        PROC_ARRAY(value::kPoint3h, value::point3h)
-        PROC_ARRAY(value::kPoint3f, value::point3f)
-        PROC_ARRAY(value::kPoint3d, value::point3d)
-
-        PROC_ARRAY(value::kVector3h, value::vector3h)
-        PROC_ARRAY(value::kVector3f, value::vector3f)
-        PROC_ARRAY(value::kVector3d, value::vector3d)
-
-        PROC_ARRAY(value::kNormal3h, value::normal3h)
-        PROC_ARRAY(value::kNormal3f, value::normal3f)
-        PROC_ARRAY(value::kNormal3d, value::normal3d)
-
-        // PROC_ARRAY("Vec2fArray", value::float2)
-        // PROC_ARRAY("Vec3fArray", value::float3)
-        // PROC_ARRAY("Vec4fArray", value::float4)
-        // PROC_ARRAY("IntArray", int)
-        // PROC_ARRAY(kTokenArray, value::token)
-
-      } else {
-        PUSH_ERROR("TODO: " + fv.second.type_name());
-      }
-    }
-  }
-
-  if (!success && has_connection) {
-    // Attribute has a connection(has a path and no `default` field)
-    success = true;
-  }
-
-  return success;
-}
-#endif
 
 
 }  // namespace crate

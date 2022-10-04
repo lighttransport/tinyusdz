@@ -1752,6 +1752,34 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                       << fv.second.type_name() << "`");
       }
 
+    } else if (fv.first == "references") {  // `references` composition
+      if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        // make empty array
+        primMeta.references =
+            std::make_pair(ListEditQual::ResetToExplicit, std::vector<Reference>());
+      } else if (auto pv = fv.second.as<ListOp<Reference>>()) {
+        const ListOp<Reference> &p = *pv;
+        DCOUT("references = " << to_string(p));
+
+        auto ps = DecodeListOp<Reference>(p);
+
+        if (ps.size() > 1) {
+          // This should not happen though.
+          PUSH_WARN(
+              "ListOp with multiple ListOpType is not supported for now. Use "
+              "the first one: " +
+              to_string(std::get<0>(ps[0])));
+        }
+
+        auto qual = std::get<0>(ps[0]);
+        auto items = std::get<1>(ps[0]);
+        auto listop = (*pv);
+        primMeta.references = std::make_pair(qual, items);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`references` must be type `ListOp[Reference]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "specializes") {  // `specializes` composition
       if (auto pv = fv.second.as<ListOp<Path>>()) {
         const ListOp<Path> &p = *pv;
