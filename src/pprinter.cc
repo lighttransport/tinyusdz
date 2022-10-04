@@ -40,11 +40,48 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
   return ofs;
 }
 
+
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
+
+  bool print_offset{true};
+  bool print_scale{true};
+
+  if (std::fabs(v._offset) < std::numeric_limits<double>::epsilon()) {
+    print_offset = false;
+  }
+
+  if (std::fabs(v._scale - 1.0) < std::numeric_limits<double>::epsilon()) {
+    print_scale = false;
+  }
+
+  if (!print_offset && !print_scale) {
+    // No need to print LayerOffset.
+    return ofs;
+  }
+
+  // TODO: Do not print scale when it is 1.0
+  ofs << "(";
+  if (print_offset && print_scale) {
+    ofs << "offset = " << v._offset << ", scale = " << v._scale;
+  } else if (print_offset) {
+    ofs << "offset = " << v._offset;
+  } else { // print_scale
+    ofs << "scale = " << v._scale;
+  }
+  ofs << ")";
+
+  return ofs;
+}
+
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
 
   ofs << v.asset_path;
   if (v.prim_path.IsValid()) {
     ofs << v.prim_path;
+  }
+  ofs << v.layerOffset;
+  if (!v.customData.empty()) {
+    ofs << tinyusdz::print_customData(v.customData, "customData", /* indent */ 0);
   }
 
   return ofs;
@@ -56,16 +93,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   if (v._prim_path.IsValid()) {
     ofs << v._prim_path;
   }
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
-
-  // TODO: Do not print offset when it is 0.0
-  // TODO: Do not print scale when it is 1.0
-
-  ofs << "(offset = " << v._offset << ", scale = " << v._scale << ")";
+  ofs << v._layer_offset;
 
   return ofs;
 }
@@ -1067,6 +1095,23 @@ std::string to_string(const std::string &v) {
   return quote(v);
 }
 
+std::string to_string(const Reference &v) {
+  std::stringstream ss;
+
+  ss << v.asset_path;
+  if (v.prim_path.IsValid()) {
+    ss << v.prim_path;
+  }
+
+  ss << v.layerOffset;
+
+  if (!v.customData.empty()) {
+    // TODO: Indent
+    ss << print_customData(v.customData, "customData", /* indent */0);
+  }
+
+  return ss.str();
+}
 
 std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32_t indent) {
   std::stringstream ss;
