@@ -1514,10 +1514,10 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
     return true;
   }
 
-  CHECK_MEMORY_USAGE(sizeof(T) * n);
+  CHECK_MEMORY_USAGE(sizeof(T) * size_t(n));
 
-  d->resize(n);
-  if (_sr->read(sizeof(T) * n, sizeof(T) * n, reinterpret_cast<uint8_t *>(d->data()))) {
+  d->resize(size_t(n));
+  if (_sr->read(sizeof(T) * n, sizeof(T) * size_t(n), reinterpret_cast<uint8_t *>(d->data()))) {
     return false;
   }
 
