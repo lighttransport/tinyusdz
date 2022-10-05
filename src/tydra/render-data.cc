@@ -14,7 +14,7 @@
 #endif
 
 // For triangulation.
-// TODO: Use tinyobjloader's triangulation 
+// TODO: Use tinyobjloader's triangulation
 #include "external/mapbox/earcut/earcut.hpp"
 
 #ifdef __clang__
@@ -146,7 +146,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
     }
   }
 
-  return vattr;
+  return std::move(vattr);
 }
 
 }  // namespace
