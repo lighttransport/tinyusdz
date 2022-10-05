@@ -3,6 +3,8 @@
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"
+#include "tinyusdz.hh"
+#include "usdShade.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -149,11 +151,31 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
   return std::move(vattr);
 }
 
+
 }  // namespace
+
+// Currently float2 only
+std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node)
+{
+  std::vector<UsdPrimvarReader_float2> dst;
+
+  if (!node.data.as<Material>()) {
+    return dst;
+  }
+
+  for (const auto &child : node.children) {
+    (void)child;
+  }
+
+  // Traverse and find PrimvarReader_float2 shader.
+  return dst;
+}
 
 nonstd::expected<Node, std::string> Convert(const Stage &stage,
                                             const Xform &xform) {
   (void)stage;
+
+  // TODO: timeSamples
 
   Node node;
   if (auto m = xform.GetLocalMatrix()) {
@@ -164,8 +186,10 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage,
 }
 
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
-                                                  const GeomMesh &mesh) {
+                                                  const GeomMesh &mesh, bool triangulate) {
   RenderMesh dst;
+
+  // TODO: timeSamples
 
   if (mesh.GetPoints().size()) {
     dst.points.resize(mesh.GetPoints().size());
@@ -198,6 +222,8 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
     if (materialBinding.binding.IsValid()) {
       const Path &matPath = materialBinding.binding;
       DCOUT("materialBinding = " << to_string(matPath));
+    } else {
+      return nonstd::make_unexpected(fmt::format("material:binding has invalid Path."));
     }
 
     // stage.GetPrimAtPath
@@ -256,7 +282,68 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
     }
   }
 
-  // TODO: Triangulate.
+  if (triangulate) {
+    // TODO: Triangulate.
+
+    using Point = std::array<float, 2>;
+    std::vector<std::vector<Point>> polygon;
+    std::vector<Point> polyline;
+
+    // Fill polygon data(facevarying vertices).
+    for (size_t k = 0; k < npolys; k++) {
+      i0 = face.vertex_indices[k];
+      size_t vi0 = size_t(i0.v_idx);
+
+      // Find the normal axis of the polygon using Newell's method
+      using Point3 = std::array<real_t, 3>;
+      Point3 n = {0, 0, 0};
+      for (size_t k = 0; k < npolys; ++k) {
+        i0 = face.vertex_indices[k % npolys];
+        size_t vi0 = size_t(i0.v_idx);
+  
+        size_t j = (k + 1) % npolys;
+        i0_2 = face.vertex_indices[j];
+        size_t vi0_2 = size_t(i0_2.v_idx);
+  
+        real_t v0x = v[vi0 * 3 + 0];
+        real_t v0y = v[vi0 * 3 + 1];
+        real_t v0z = v[vi0 * 3 + 2];
+  
+        real_t v0x_2 = v[vi0_2 * 3 + 0];
+        real_t v0y_2 = v[vi0_2 * 3 + 1];
+        real_t v0z_2 = v[vi0_2 * 3 + 2];
+  
+        const Point3 point1 = {v0x,v0y,v0z};
+        const Point3 point2 = {v0x_2,v0y_2,v0z_2};
+  
+        Point3 a = {point1[0] - point2[0], point1[1] - point2[1], point1[2] - point2[2]};
+        Point3 b = {point1[0] + point2[0], point1[1] + point2[1], point1[2] + point2[2]};
+  
+        n[0] += (a[1] * b[2]);
+        n[1] += (a[2] * b[0]);
+        n[2] += (a[0] * b[1]);
+      }
+      real_t length_n = GetLength(n);
+
+  
+      assert(((3 * vi0 + 2) < v.size()));
+  
+      real_t v0x = v[vi0 * 3 + 0];
+      real_t v0y = v[vi0 * 3 + 1];
+      real_t v0z = v[vi0 * 3 + 2];
+  
+      Point3 polypoint = {v0x,v0y,v0z};
+      Point3 loc = WorldToLocal(polypoint, axis_u, axis_v, axis_w);
+  
+      polyline.push_back({loc[0], loc[1]});
+    }
+
+
+    
+
+    std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon);
+
+  }
 
   return std::move(dst);
 }
