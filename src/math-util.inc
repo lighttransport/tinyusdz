@@ -243,6 +243,16 @@ inline value::double3 geometric_normal(const value::double3 &p0, const value::do
   return vnormalize(n);
 }
 
+inline float vdot(const value::float3 &a, const value::float3 &b)
+{
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+inline double vdot(const value::double3 &a, const value::double3 &b)
+{
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
 } // namespace math
 
 } // namespace tinyusdz
