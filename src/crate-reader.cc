@@ -3856,12 +3856,14 @@ bool CrateReader::BuildDecompressedPathsImpl(
         PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
         return false;
       }
-      int32_t tokenIndex = elementTokenIndexes[thisIndex];
-      bool isPrimPropertyPath = tokenIndex < 0;
-      tokenIndex = std::abs(tokenIndex);
+      int32_t _tokenIndex = elementTokenIndexes[thisIndex];
+      DCOUT("elementTokenIndex = " << _tokenIndex);
+      bool isPrimPropertyPath = _tokenIndex < 0;
+      // ~0 returns -2147483648, so cast to uint32
+      uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
 
-      DCOUT("tokenIndex = " << tokenIndex);
-      if (tokenIndex >= int32_t(_tokens.size())) {
+      DCOUT("tokenIndex = " << tokenIndex << ", _tokens.size = " << _tokens.size());
+      if (tokenIndex >= _tokens.size()) {
         PUSH_ERROR("Invalid tokenIndex in BuildDecompressedPathsImpl.");
         return false;
       }
