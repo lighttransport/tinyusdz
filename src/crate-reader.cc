@@ -3838,8 +3838,24 @@ bool CrateReader::BuildDecompressedPathsImpl(
       DCOUT("paths[" << pathIndexes[thisIndex]
                      << "] is parent. name = " << parentPath.full_path_name());
       parentPath = Path::RootPath();
+
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR("Index exceeds pathIndexes.size()");
+        return false;
+      }
+
+      size_t idx = pathIndexes[thisIndex];
+      if (idx >= _paths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+      
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
+      if (thisIndex >= elementTokenIndexes.size()) {
+        PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
+        return false;
+      }
       int32_t tokenIndex = elementTokenIndexes[thisIndex];
       bool isPrimPropertyPath = tokenIndex < 0;
       tokenIndex = std::abs(tokenIndex);
@@ -3853,13 +3869,24 @@ bool CrateReader::BuildDecompressedPathsImpl(
       DCOUT("elemToken = " << elemToken);
       DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
 
+      size_t idx = pathIndexes[thisIndex];
+      if (idx >= _paths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+
+      if (idx >= _elemPaths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+
       // full path
-      _paths[pathIndexes[thisIndex]] =
+      _paths[idx] =
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
                              : parentPath.AppendElement(elemToken.str());
 
       // also set leaf path for 'primChildren' check
-      _elemPaths[pathIndexes[thisIndex]] = Path(elemToken.str(), "");
+      _elemPaths[idx] = Path(elemToken.str(), "");
       //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
     }
 
@@ -3867,6 +3894,11 @@ bool CrateReader::BuildDecompressedPathsImpl(
     // continue to the neighbor.  If we have both then spawn a task for the
     // sibling and do the child ourself.  We think that our path trees tend
     // to be broader more often than deep.
+
+    if (thisIndex >= jumps.size()) {
+      PUSH_ERROR("Index is out-of-range");
+      return false;
+    }
 
     hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
     hasSibling = (jumps[thisIndex] >= 0);
@@ -3880,8 +3912,15 @@ bool CrateReader::BuildDecompressedPathsImpl(
           return false;
         }
       }
+
+      size_t idx = pathIndexes[thisIndex];
+      if (idx >= _paths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+
       // Have a child (may have also had a sibling). Reset parent path.
-      parentPath = _paths[pathIndexes[thisIndex]];
+      parentPath = _paths[idx];
     }
     // If we had only a sibling, we just continue since the parent path is
     // unchanged and the next thing in the reader stream is the sibling's
@@ -3912,34 +3951,83 @@ bool CrateReader::BuildNodeHierarchy(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO: Multiple root nodes.");
       }
 
-      Node root(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Index out-of-range.");
+      }
 
-      _nodes[pathIndexes[thisIndex]] = root;
+      size_t pathIdx = pathIndexes[thisIndex];
+      if (pathIdx >= _paths.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
+
+      if (pathIdx >= _nodes.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
+
+      Node root(parentNodeIndex, _paths[pathIdx]);
+
+      _nodes[pathIdx] = root;
 
       parentNodeIndex = int64_t(thisIndex);
 
     } else {
       if (parentNodeIndex >= int64_t(_nodes.size())) {
-        return false;
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Index out-of-range.");
+      }
+
+      if (parentNodeIndex >= int64_t(pathIndexes.size())) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Parent Index out-of-range.");
+      }
+
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Index out-of-range.");
       }
 
       DCOUT("Hierarchy. parent[" << pathIndexes[size_t(parentNodeIndex)]
                                  << "].add_child = " << pathIndexes[thisIndex]);
 
-      Node node(parentNodeIndex, _paths[pathIndexes[thisIndex]]);
+      size_t pathIdx = pathIndexes[thisIndex];
+      if (pathIdx >= _paths.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
+
+      if (pathIdx >= _nodes.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
+
+      Node node(parentNodeIndex, _paths[pathIdx]);
 
       // Ensure parent is not set yet.
-      if (_nodes[size_t(pathIndexes[thisIndex])].GetParent() != -2) {
+      if (_nodes[pathIdx].GetParent() != -2) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "???: Maybe corrupted path hierarchy?.");
       }
 
-      _nodes[size_t(pathIndexes[thisIndex])] = node;
+      _nodes[pathIdx] = node;
+
+      if (pathIdx >= _elemPaths.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
 
       //std::string name = _paths[pathIndexes[thisIndex]].local_path_name();
-      std::string name = _elemPaths[pathIndexes[thisIndex]].full_path_name();
+      std::string name = _elemPaths[pathIdx].full_path_name();
       DCOUT("childName = " << name);
-      _nodes[size_t(pathIndexes[size_t(parentNodeIndex)])].AddChildren(
-          name, pathIndexes[thisIndex]);
+
+      size_t parentNodeIdx = size_t(parentNodeIndex);
+      if (parentNodeIdx >= pathIndexes.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "ParentNodeIdx out-of-range.");
+      }
+
+      size_t parentPathIdx = pathIndexes[parentNodeIdx];
+      if (parentPathIdx >= _nodes.size()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
+      }
+
+      _nodes[parentPathIdx].AddChildren(
+          name, pathIdx);
+    }
+
+    if (thisIndex >= jumps.size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Index is out-of-range");
     }
 
     hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
