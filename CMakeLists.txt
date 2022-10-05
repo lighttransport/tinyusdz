@@ -720,6 +720,7 @@ endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_usdz_dump)
+  add_subdirectory(examples/tydra_convert)
   if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()
