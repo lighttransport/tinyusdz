@@ -23,6 +23,16 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using mat2 = value::matrix2f;  // float precision
 
+enum class VertexVariability
+{
+  //Constant,
+  //Uniform,
+  //Varying,
+  Vertex,
+  FaceVarying,
+  Indexed, // Need to supply index buffer
+};
+
 // Geometric, light and camera
 enum class NodeType {
   Xform,
@@ -30,6 +40,7 @@ enum class NodeType {
   PointLight,
   DomeLight,
   Camera,
+  // TODO...
 };
 
 // glTF-like BufferData
@@ -46,6 +57,13 @@ struct Attribute {
   uint32_t slot_id{0};  // slot ID.
 
   int64_t buffer_id{-1};  // index to buffer_id
+};
+
+template<typename T>
+struct VertexAttribute {
+  std::vector<T> data;
+  std::vector<uint32_t> indices; // indexed primvar(vertex attribute). Used when variability == Indexed
+  VertexVariability variability;
 };
 
 enum class ColorSpace {
