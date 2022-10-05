@@ -12,8 +12,14 @@ namespace tinyusdz {
 
 // forward decl
 class Stage;
+class Prim;
 struct GeomMesh;
 struct Xform;
+
+template<typename T>
+struct UsdPrimvarReader;
+
+using UsdPrimvarReader_float2 = UsdPrimvarReader<value::float2>;
 
 namespace tydra {
 
@@ -182,7 +188,7 @@ struct PreviewSurfaceShader {
 };
 
 // Material + Shader
-struct Material {
+struct RenderMaterial {
   std::string name;
 
   PreviewSurfaceShader shader;
@@ -192,7 +198,7 @@ struct Material {
 class RenderScene {
   std::vector<Node> nodes;
   std::vector<LDRImage> images;
-  std::vector<Material> materials;
+  std::vector<RenderMaterial> materials;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
   std::vector<BufferData>
@@ -284,7 +290,10 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage,
                                                   const Xform &xform);
 
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
-                                                  const GeomMesh &mesh);
+                                                  const GeomMesh &mesh, bool triangulate=false);
+
+// Currently float2 only
+std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
 
 }  // namespace tydra
 }  // namespace tinyusdz
