@@ -464,7 +464,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
     ss << pprint::Indent(indent);
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.IsBlocked()) {
       ss << " = None";
@@ -545,7 +545,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
 
     ss << "uniform ";
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
 
     if (attr.IsBlocked()) {
@@ -622,7 +622,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
 
     ss << pprint::Indent(indent);
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.IsConnection()) {
       ss << ".connect = ";
@@ -666,7 +666,7 @@ std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, con
 
     ss << pprint::Indent(indent);
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.meta.authored()) {
       ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
@@ -688,7 +688,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
 
     ss << "uniform ";
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.IsBlocked()) {
       ss << " = None";

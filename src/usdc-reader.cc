@@ -1207,10 +1207,10 @@ bool USDCReader::Impl::ReconstructSimpleAttribute(
     } else if (fv.first == "typeName") {
       if (auto pv = fv.second.get_value<value::token>()) {
         DCOUT("typeName = " << pv.value().str());
-        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
+        if (value::TypeTraits<T>::type_name() != pv.value().str()) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "Property type mismatch. `"
-                        << value::TypeTrait<T>::type_name()
+                        << value::TypeTraits<T>::type_name()
                         << "` expected but got `" << pv.value().str() << "`.");
         }
       } else {
@@ -1218,9 +1218,9 @@ bool USDCReader::Impl::ReconstructSimpleAttribute(
                                   "`typeName` field is not `token` type.");
       }
     } else if (fv.first == "default") {
-      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
+      if (fv.second.type_id() != value::TypeTraits<T>::type_id) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `"
-                                            << value::TypeTrait<T>::type_name()
+                                            << value::TypeTraits<T>::type_name()
                                             << "` expected but got `"
                                             << fv.second.type_name() << "`.");
       }
@@ -1266,10 +1266,10 @@ bool USDCReader::Impl::ReconstructTypedProperty(
     } else if (fv.first == "typeName") {
       if (auto pv = fv.second.get_value<value::token>()) {
         DCOUT("typeName = " << pv.value().str());
-        if (value::TypeTrait<T>::type_name() != pv.value().str()) {
+        if (value::TypeTraits<T>::type_name() != pv.value().str()) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "Property type mismatch. `"
-                        << value::TypeTrait<T>::type_name()
+                        << value::TypeTraits<T>::type_name()
                         << "` expected but got `" << pv.value().str() << "`.");
         }
       } else {
@@ -1277,9 +1277,9 @@ bool USDCReader::Impl::ReconstructTypedProperty(
                                   "`typeName` field is not `token` type.");
       }
     } else if (fv.first == "default") {
-      if (fv.second.type_id() != value::TypeTrait<T>::type_id) {
+      if (fv.second.type_id() != value::TypeTraits<T>::type_id) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `"
-                                            << value::TypeTrait<T>::type_name()
+                                            << value::TypeTraits<T>::type_name()
                                             << "` expected but got `"
                                             << fv.second.type_name() << "`.");
       }
@@ -1471,7 +1471,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     const crate::FieldValuePairVector &fvs,
     const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta) {
 #define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name)    \
-  if (__node_ty == value::TypeTrait<__primty>::type_name()) { \
+  if (__node_ty == value::TypeTraits<__primty>::type_name()) { \
     __primty typed_prim;                                      \
     if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {    \
       PUSH_ERROR("Failed to reconstruct Prim " << __node_ty); \

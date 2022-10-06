@@ -213,7 +213,7 @@ class TimeCode {
 static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 
 //
-// Type ID for TypeTrait<T>::type_id.
+// Type ID for TypeTraits<T>::type_id.
 //
 // These type IDs are internally used and can be changed arbitrary.
 //
@@ -222,9 +222,10 @@ static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 //
 // TODO(syoyo): Support 3D and 4D?
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 20;  // 1024
-constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21;  // 2048
+//constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21;  // 2048
 // constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 22;
 // constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 23;
+constexpr uint32_t TYPE_ID_TERMINATOR_BIT = 1 << 24;
 
 enum TypeId {
   TYPE_ID_INVALID,  // = 0
@@ -425,7 +426,7 @@ enum TypeId {
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 1 << 16,
 
-  TYPE_ID_ALL = (TYPE_ID_2D_ARRAY_BIT - 1)  // terminator.
+  TYPE_ID_ALL = (TYPE_ID_TERMINATOR_BIT - 1)  // terminator.
 };
 
 struct timecode {
@@ -968,14 +969,14 @@ using double4 = std::array<double, 4>;
 using dict = std::map<std::string, linb::any>;
 
 template <class dtype>
-struct TypeTrait;
+struct TypeTraits;
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
 // `void` hash no sizeof(void), so define it manually.
 template <>
-struct TypeTrait<void> {
+struct TypeTraits<void> {
   using value_type = void;
   using value_underlying_type = void;
   static constexpr uint32_t ndim = 0; /* array dim */
@@ -1088,45 +1089,47 @@ DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 // 1D Array
 template <typename T>
-struct TypeTrait<std::vector<T>> {
+struct TypeTraits<std::vector<T>> {
   using value_type = std::vector<T>;
   static constexpr uint32_t ndim = 1; /* array dim */
-  static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
+  static constexpr uint32_t ncomp = TypeTraits<T>::ncomp;
   static constexpr uint32_t type_id =
-      TypeTrait<T>::type_id | TYPE_ID_1D_ARRAY_BIT;
+      TypeTraits<T>::type_id | TYPE_ID_1D_ARRAY_BIT;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id | TYPE_ID_1D_ARRAY_BIT;
-  static std::string type_name() { return TypeTrait<T>::type_name() + "[]"; }
+      TypeTraits<T>::underlying_type_id | TYPE_ID_1D_ARRAY_BIT;
+  static std::string type_name() { return TypeTraits<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
-    return TypeTrait<T>::underlying_type_name() + "[]";
+    return TypeTraits<T>::underlying_type_name() + "[]";
   }
 };
 
+#if 0 // Current pxrUSD does not support 2D array 
 // 2D Array
 // TODO(syoyo): support 3D array?
 template <typename T>
-struct TypeTrait<std::vector<std::vector<T>>> {
+struct TypeTraits<std::vector<std::vector<T>>> {
   using value_type = std::vector<std::vector<T>>;
   static constexpr uint32_t ndim = 2; /* array dim */
-  static constexpr uint32_t ncomp = TypeTrait<T>::ncomp;
+  static constexpr uint32_t ncomp = TypeTraits<T>::ncomp;
   static constexpr uint32_t type_id =
-      TypeTrait<T>::type_id | TYPE_ID_2D_ARRAY_BIT;
+      TypeTraits<T>::type_id | TYPE_ID_2D_ARRAY_BIT;
   static constexpr uint32_t underlying_type_id =
-      TypeTrait<T>::underlying_type_id | TYPE_ID_2D_ARRAY_BIT;
-  static std::string type_name() { return TypeTrait<T>::type_name() + "[][]"; }
+      TypeTraits<T>::underlying_type_id | TYPE_ID_2D_ARRAY_BIT;
+  static std::string type_name() { return TypeTraits<T>::type_name() + "[][]"; }
   static std::string underlying_type_name() {
-    return TypeTrait<T>::underlying_type_name() + "[][]";
+    return TypeTraits<T>::underlying_type_name() + "[][]";
   }
 };
+#endif
 
-// Lookup TypeTrait<T>::type_name from type_id
+// Lookup TypeTraits<T>::type_name from type_id
 // Return nullopt when the input is invalid type id.
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid);
 
 // Return error string when the input is invalid type id
 std::string GetTypeName(uint32_t tyid);
 
-// Lookup TypeTrait<T>::type_id from string
+// Lookup TypeTraits<T>::type_id from string
 // Return nullopt when the input is invalid type name.
 nonstd::optional<uint32_t> TryGetTypeId(const std::string &tyname);
 
@@ -1179,9 +1182,9 @@ class Value {
   // Return nullptr when type conversion failed.
   template <class T>
   const T *as() const {
-    if (TypeTrait<T>::type_id == v_.type_id()) {
+    if (TypeTraits<T>::type_id == v_.type_id()) {
       return linb::any_cast<const T>(&v_);
-    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+    } else if (TypeTraits<T>::underlying_type_id == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       return linb::any_cast<const T>(&v_);
@@ -1204,7 +1207,7 @@ class Value {
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
-    if (TypeTrait<T>::type_id == v_.type_id()) {
+    if (TypeTraits<T>::type_id == v_.type_id()) {
       const T *pv = linb::any_cast<const T>(&v_);
       if (!pv) {
         // ???
@@ -1212,7 +1215,7 @@ class Value {
       }
 
       return std::move(*pv);
-    } else if (TypeTrait<T>::underlying_type_id == v_.underlying_type_id()) {
+    } else if (TypeTraits<T>::underlying_type_id == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       // Use force cast
