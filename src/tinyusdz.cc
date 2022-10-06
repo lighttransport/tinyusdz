@@ -27,7 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
 #include <atomic>
-#include <cassert>
+//#include <cassert>
 #include <cctype>  // std::tolower
 #include <chrono>
 #include <fstream>
@@ -118,10 +118,15 @@ class Node {
   ///
   /// child_name is used when reconstructing scene graph.
   ///
-  void AddChildren(const std::string &child_name, size_t node_index) {
-    assert(_primChildren.count(child_name) == 0);
+  bool AddChildren(const std::string &child_name, size_t node_index) {
+    if (_primChildren.count(child_name)) {
+      return false;
+    }
+    //assert(_primChildren.count(child_name) == 0);
     _primChildren.emplace(child_name);
     _children.push_back(node_index);
+
+    return true;
   }
 
   ///
