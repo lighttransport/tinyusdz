@@ -12,7 +12,7 @@
 //#include "external/stb_image.h"
 
 // common
-#include "mapbox/earcut.hpp"  // For polygon triangulation
+//#include "mapbox/earcut.hpp"  // For polygon triangulation
 #include "matrix.h"
 #include "trackball.h"
 
