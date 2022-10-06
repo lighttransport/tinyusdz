@@ -2916,7 +2916,7 @@ bool ReconstructPrim<GeomMesh>(
       -> nonstd::expected<GeomMesh::SubdivisionScheme, std::string> {
     using EnumTy = std::pair<GeomMesh::SubdivisionScheme, const char *>;
     const std::vector<EnumTy> enums = {
-        std::make_pair(GeomMesh::SubdivisionScheme::None, "none"),
+        std::make_pair(GeomMesh::SubdivisionScheme::SubdivisionSchemeNone, "none"),
         std::make_pair(GeomMesh::SubdivisionScheme::CatmullClark,
                        "catmullClark"),
         std::make_pair(GeomMesh::SubdivisionScheme::Loop, "loop"),
@@ -2930,7 +2930,7 @@ bool ReconstructPrim<GeomMesh>(
       -> nonstd::expected<GeomMesh::InterpolateBoundary, std::string> {
     using EnumTy = std::pair<GeomMesh::InterpolateBoundary, const char *>;
     const std::vector<EnumTy> enums = {
-        std::make_pair(GeomMesh::InterpolateBoundary::None, "none"),
+        std::make_pair(GeomMesh::InterpolateBoundary::InterpolateBoundaryNone, "none"),
         std::make_pair(GeomMesh::InterpolateBoundary::EdgeAndCorner,
                        "edgeAndCorner"),
         std::make_pair(GeomMesh::InterpolateBoundary::EdgeOnly, "edgeOnly"),
@@ -2953,7 +2953,7 @@ bool ReconstructPrim<GeomMesh>(
                        "cornersOnly"),
         std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::Boundaries,
                        "boundaries"),
-        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::None, "none"),
+        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::FaceVaryingLinearInterpolationNone, "none"),
         std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::All, "all"),
     };
     return EnumHandler<GeomMesh::FaceVaryingLinearInterpolation>(
