@@ -1977,6 +1977,242 @@ struct Scope {
   std::map<std::string, Property> props;
 };
 
+//
+// For `Stage` scene graph.
+// Similar to `Prim` in pxrUSD.
+// This class uses tree-representation of `Prim`. Easy to use, but may not be performant.
+//
+class Prim {
+ public:
+  Path path;
+  Path elementPath;
+  Specifier specifier{Specifier::Invalid};
+
+  Prim(const value::Value &rhs);
+
+  Prim(value::Value &&rhs);
+
+  value::Value data; // GPrim, Xform, ...
+
+  std::vector<Prim> children;  // child nodes
+};
+
+///
+/// Contains concrete Prim object and composition elements.
+///
+/// PrimNode is near to final state of `Prim`.
+/// Doing one further step(Composition, Flatten, select Variant) to get `Prim`. 
+///
+/// Similar to `PrimIndex` in pxrUSD
+///
+class PrimNode {
+
+  Path path;
+  Path elementPath;
+
+  PrimNode(const value::Value &rhs);
+
+  PrimNode(value::Value &&rhs);
+
+  value::Value prim; // GPrim, Xform, ...
+
+  std::vector<PrimNode> children;  // child nodes
+
+  ///
+  /// Select variant.
+  ///
+  bool select_variant(const std::string &target_name, const std::string &variant_name) {
+
+    const auto m = vsmap.find(target_name);
+    if (m != vsmap.end()) {
+      current_vsmap[target_name] = variant_name;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  ///
+  /// List variants in this Prim
+  /// key = variant prim name
+  /// value = variats
+  ///
+  const VariantSelectionMap &get_variant_selection_map() const {
+    return vsmap;
+  }
+
+  ///
+  /// Variants
+  ///
+  /// variant element = Property or Prim
+  ///
+  using PropertyMap = std::map<std::string, Property>;
+  using PrimNodeMap = std::map<std::string, PrimNode>;
+
+  VariantSelectionMap vsmap; // Original variant selections
+  VariantSelectionMap current_vsmap; // Currently selected variants 
+
+  // key = variant_name
+  std::map<std::string, PropertyMap> variantAttributeMap;
+  std::map<std::string, PrimNodeMap> variantPrimNodeMap;
+
+  ///
+  /// Information for Crate(USDC binary)
+  ///
+  std::vector<value::token> primChildren;
+  std::vector<value::token> variantChildren;
+
+};
+
+#if 0 // TODO: Remove
+//
+// For low-level scene graph representation, something like Vulkan.
+// Less abstraction, and scene graph is representated by indices.
+//
+struct Node {
+  std::string name;
+
+  value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
+
+  //
+  // index to a `Scene::node_indices`
+  //
+  int64_t index{-1};
+
+  int64_t parent{-1};          // parent node index
+  std::vector<Node> children;  // child nodes
+};
+#endif
+
+struct StageMetas {
+  // TODO: Support more predefined properties: reference = <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp
+  // Scene global setting
+  TypedAttributeWithFallback<Axis> upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
+  value::token defaultPrim;           // prim node name
+  TypedAttributeWithFallback<double> metersPerUnit{1.0};        // default [m]
+  TypedAttributeWithFallback<double> timeCodesPerSecond {24.0};  // default 24 fps
+  TypedAttributeWithFallback<double> framesPerSecond {24.0};  // FIXME: default 24 fps
+  TypedAttributeWithFallback<double> startTimeCode{0.0}; // FIXME: default = -inf?
+  TypedAttributeWithFallback<double> endTimeCode{std::numeric_limits<double>::infinity()};
+  std::vector<value::AssetPath> subLayers; // `subLayers`
+  StringData comment; // 'comment'
+  StringData doc; // `documentation`
+
+  CustomDataType customLayerData; // customLayerData
+
+  // String only metadataum.
+  // TODO: Represent as `MetaVariable`?
+  std::vector<StringData> stringData;
+};
+
+class PrimRange;
+
+// Similar to UsdStage, but much more something like a Scene(scene graph)
+class Stage {
+ public:
+
+  static Stage CreateInMemory() {
+    return Stage();
+  }
+
+  ///
+  /// Traverse by depth-first order.
+  ///
+  PrimRange Traverse();
+
+  ///
+  /// Get Prim at a Path.
+  ///
+  /// @returns pointer to Prim(to avoid a copy). Assume no scene item removal/addition until the end of use of the pointer of `Prim` data.
+  ///
+  nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path);
+
+  ///
+  /// Dump Stage as ASCII(USDA) representation.
+  ///
+  std::string ExportToString() const;
+
+
+  const std::vector<Prim> &GetRootPrims() const {
+    return root_nodes;
+  }
+
+  std::vector<Prim> &GetRootPrims() {
+    return root_nodes;
+  }
+
+  const StageMetas &GetMetas() const {
+    return stage_metas;
+  }
+
+  StageMetas &GetMetas() {
+    return stage_metas;
+  }
+
+  ///
+  /// Compose scene.
+  ///
+  bool Compose(bool addSourceFileComment = true) const;
+
+  ///
+  /// pxrUSD Compat API
+  ///
+  bool Flatten(bool addSourceFileComment = true) const {
+    return Compose(addSourceFileComment);
+  }
+
+
+ private:
+  // Root nodes
+  std::vector<Prim> root_nodes;
+
+  std::string name;       // Scene name
+  int64_t default_root_node{-1};  // index to default root node
+
+  StageMetas stage_metas;
+
+  mutable std::string _err;
+  mutable std::string _warn;
+
+};
+
+// Simple bidirectional Path(string) <-> index lookup
+struct StringAndIdMap {
+  void add(int32_t key, const std::string &val) {
+    _i_to_s[key] = val;
+    _s_to_i[val] = key;
+  }
+
+  void add(const std::string &key, int32_t val) {
+    _s_to_i[key] = val;
+    _i_to_s[val] = key;
+  }
+
+  size_t count(int32_t i) const { return _i_to_s.count(i); }
+
+  size_t count(const std::string &s) const { return _s_to_i.count(s); }
+
+  std::string at(int32_t i) const { return _i_to_s.at(i); }
+
+  int32_t at(std::string s) const { return _s_to_i.at(s); }
+
+  std::map<int32_t, std::string> _i_to_s;  // index -> string
+  std::map<std::string, int32_t> _s_to_i;  // string -> index
+};
+
+
+
+struct NodeIndex {
+  std::string name;
+
+  // TypeTraits<T>::type_id
+  value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
+
+  int64_t
+      index{-1};  // array index to `Scene::xforms`, `Scene::geom_cameras`, ...
+                  // -1 = invlid(or not set)
+};
+
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 nonstd::optional<Kind> KindFromString(const std::string &v);
