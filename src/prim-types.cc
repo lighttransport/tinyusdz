@@ -308,7 +308,7 @@ Path Path::GetParentPrim() const {
 
 bool MetaVariable::IsObject() const {
   return (value.type_id() ==
-          value::TypeTrait<tinyusdz::CustomDataType>::type_id);
+          value::TypeTraits<tinyusdz::CustomDataType>::type_id);
 }
 
 nonstd::optional<Kind> KindFromString(const std::string &str) {

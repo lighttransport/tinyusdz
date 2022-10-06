@@ -77,7 +77,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
         } else {
           return nonstd::make_unexpected(
               fmt::format("UV Primvar must be type `{}`, but got `{}` for {}",
-                          value::TypeTrait<T>::type_name(),
+                          value::TypeTraits<T>::type_name(),
                           prop.GetAttrib().type_name(), primvar_name));
         }
       } else if (prop.IsConnection()) {

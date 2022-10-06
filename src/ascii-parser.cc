@@ -2055,11 +2055,11 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       if (!LookChar1(&nc)) {
         return false;
       }
-      
+
       if (nc == end_symbol) {
         break;
       }
-      
+
     }
 
     if (c != sep) {
@@ -6175,7 +6175,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       //
       // First-class predefind prop metas.
-      //    
+      //
       if (varname == "interpolation") {
         std::string value;
         if (!ReadStringLiteral(&value)) {
@@ -6212,7 +6212,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         DCOUT("Got `customData` meta");
         out_meta->customData = dict;
 
-      } else { 
+      } else {
         if (auto pv = GetPropMetaDefinition(varname)) {
           // Parse as generic metadata variable
           MetaVariable metavar;
@@ -6312,20 +6312,20 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   bool blocked{false};
 
   if (array_qual) {
-    if (value::TypeTrait<T>::type_name() == "bool") {
+    if (value::TypeTraits<T>::type_name() == "bool") {
       PushError("Array of bool type is not supported.");
       return false;
     } else {
       std::vector<T> value;
       if (!ParseBasicTypeArray(&value)) {
         PUSH_ERROR_AND_RETURN("Failed to parse " +
-                              std::string(value::TypeTrait<T>::type_name()) +
+                              std::string(value::TypeTraits<T>::type_name()) +
                               " array.");
         return false;
       }
 
       if (value.size()) {
-        DCOUT("Got it: ty = " + std::string(value::TypeTrait<T>::type_name()) +
+        DCOUT("Got it: ty = " + std::string(value::TypeTraits<T>::type_name()) +
               ", sz = " + std::to_string(value.size()));
         var.set_scalar(value);
       } else {
@@ -6345,12 +6345,12 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse " +
-                            std::string(value::TypeTrait<T>::type_name()));
+                            std::string(value::TypeTraits<T>::type_name()));
       return false;
     }
 
     if (value) {
-      DCOUT("ParseBasicPrimAttr: " << value::TypeTrait<T>::type_name() << " = "
+      DCOUT("ParseBasicPrimAttr: " << value::TypeTraits<T>::type_name() << " = "
                                    << (*value));
 
       // TODO: TimeSampled
@@ -6361,7 +6361,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     } else {
       blocked = true;
       // std::cout << "ParseBasicPrimAttr: " <<
-      // value::TypeTrait<T>::type_name()
+      // value::TypeTraits<T>::type_name()
       //           << " = None\n";
     }
   }
@@ -6465,7 +6465,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       if (!LookChar1(&c)) {
         return false;
       }
-      
+
     }
 
     if (c != '=') {
@@ -6530,7 +6530,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       }
 
       metap = meta;
-      
+
     }
 
     DCOUT("Relationship with target: " << attr_name);
@@ -6705,20 +6705,20 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
 
 // 1D and scalar
 #define PARSE_TYPE(__type)                                                    \
-  if ((type_name == value::TypeTrait<__type>::type_name()) && array_qual) {   \
+  if ((type_name == value::TypeTraits<__type>::type_name()) && array_qual) {   \
     if (auto pv = TryParseTimeSamplesOfArray<__type>()) {                     \
       ts = ConvertToTimeSamples<std::vector<__type>>(pv.value());             \
     } else {                                                                  \
       PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `"     \
-                            << value::TypeTrait<__type>::type_name()          \
+                            << value::TypeTraits<__type>::type_name()          \
                             << "[]`");                                        \
     }                                                                         \
-  } else if (type_name == value::TypeTrait<__type>::type_name()) {            \
+  } else if (type_name == value::TypeTraits<__type>::type_name()) {            \
     if (auto pv = TryParseTimeSamples<__type>()) {                            \
       ts = ConvertToTimeSamples<__type>(pv.value());                          \
     } else {                                                                  \
       PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `"     \
-                            << value::TypeTrait<__type>::type_name() << "`"); \
+                            << value::TypeTraits<__type>::type_name() << "`"); \
     }                                                                         \
   } else
 

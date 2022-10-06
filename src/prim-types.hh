@@ -410,7 +410,7 @@ class MetaVariable {
   // }
 
   bool Valid() const {
-    return value.type_id() != value::TypeTrait<std::nullptr_t>::type_id;
+    return value.type_id() != value::TypeTraits<std::nullptr_t>::type_id;
   }
 
   bool IsObject() const;
@@ -940,9 +940,9 @@ class TypedTerminalAttribute {
   // value set?
   bool authored() const { return _authored; }
 
-  std::string type_name() const { return value::TypeTrait<T>::type_name(); }
+  std::string type_name() const { return value::TypeTraits<T>::type_name(); }
 
-  uint32_t type_id() const { return value::TypeTrait<T>::type_id; }
+  uint32_t type_id() const { return value::TypeTraits<T>::type_id; }
 
   AttrMeta meta;
 
@@ -1365,9 +1365,9 @@ class Relation {
 template <typename T>
 class Connection {
  public:
-  using type = typename value::TypeTrait<T>::value_type;
+  using type = typename value::TypeTraits<T>::value_type;
 
-  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
 
   // Connection() = delete;
   // Connection(const T &v) : fallback(v) {}
@@ -1437,16 +1437,16 @@ class TypedProperty {
 
   explicit TypedProperty(const T &fv) : fallback(fv) {}
 
-  using type = typename value::TypeTrait<T>::value_type;
+  using type = typename value::TypeTraits<T>::value_type;
 
-  static std::string type_name() { return value::TypeTrait<T>::type_name(); }
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
 
   // TODO: Use variant?
   nonstd::optional<Animatable<T>> value; // T or TimeSamples<T>
   nonstd::optional<Path> target;
 
   //bool IsRel() const {
-  //  return (value::TypeTrait<T>::type_id == value::TypeTrait<Relation>::type_id)
+  //  return (value::TypeTraits<T>::type_id == value::TypeTraits<Relation>::type_id)
   //}
 
   bool IsConnection() const {
@@ -1669,7 +1669,7 @@ struct XformOp {
     var.values.clear();
 
     var.values.push_back(v);
-    //type_name = value::TypeTrait<T>::type_name();
+    //type_name = value::TypeTraits<T>::type_name();
   }
 
   void set_timesamples(const value::TimeSamples &v) {
@@ -1706,14 +1706,14 @@ struct XformOp {
     }
 
 #if 0
-    if (value::TypeTrait<T>::type_id == var.values[0].type_id()) {
+    if (value::TypeTraits<T>::type_id == var.values[0].type_id()) {
       //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
       auto pv = linb::any_cast<const T>(&var.values[0]);
       if (pv) {
         return (*pv);
       }
       return nonstd::nullopt;
-    } else if (value::TypeTrait<T>::underlying_type_id == var.values[0].underlying_type_id()) {
+    } else if (value::TypeTraits<T>::underlying_type_id == var.values[0].underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       //return *reinterpret_cast<const T *>(var.values[0].value());

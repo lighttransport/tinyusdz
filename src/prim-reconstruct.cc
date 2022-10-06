@@ -233,7 +233,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
-    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
+    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
       if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
@@ -303,11 +303,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
+      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTrait<T>::type_name()
+              << value::TypeTraits<T>::type_name()
               << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
@@ -378,7 +378,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
-    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
+    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
       if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
@@ -422,11 +422,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
+      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTrait<T>::type_name()
+              << value::TypeTraits<T>::type_name()
               << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
@@ -497,7 +497,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     const PrimAttrib &attr = prop.GetAttrib();
 
     std::string attr_type_name = attr.type_name();
-    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
+    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
       if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
@@ -569,11 +569,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
+      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTrait<T>::type_name()
+              << value::TypeTraits<T>::type_name()
               << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
@@ -648,7 +648,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
     std::string attr_type_name = attr.type_name();
     DCOUT(fmt::format("prop name {}, type = {}", prop_name, attr_type_name));
-    if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
+    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
       if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.SetValueEmpty();
@@ -693,11 +693,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
+      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
       ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTrait<T>::type_name()
+              << value::TypeTraits<T>::type_name()
               << "` but defined as type `" << attr_type_name << "`";
       ret.err = ss.str();
       return ret;
@@ -908,11 +908,11 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
 
     } else if (prop.IsAttrib()) {
 
-      DCOUT("attrib.type = " << value::TypeTrait<T>::type_name() << ", attr.var.type= " << attr.type_name());
+      DCOUT("attrib.type = " << value::TypeTraits<T>::type_name() << ", attr.var.type= " << attr.type_name());
 
       std::string attr_type_name = attr.type_name();
 
-      if ((value::TypeTrait<T>::type_name() == attr_type_name) || (value::TypeTrait<T>::underlying_type_name() == attr_type_name)) {
+      if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
         if (prop.type == Property::Type::EmptyAttrib) {
           target.define_only = true;
           target.variability = attr.variability;
@@ -952,11 +952,11 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
           return ret;
         }
       } else {
-        DCOUT("tyname = " << value::TypeTrait<T>::type_name() << ", attr.type = " << attr_type_name);
+        DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
         ret.code = ParseResult::ResultCode::TypeMismatch;
         std::stringstream ss;
         ss  << "Property type mismatch. " << name << " expects type `"
-                << value::TypeTrait<T>::type_name()
+                << value::TypeTraits<T>::type_name()
                 << "` but defined as type `" << attr_type_name << "`";
         ret.err = ss.str();
         return ret;
@@ -1030,7 +1030,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       const PrimAttrib &attr = prop.GetAttrib();
 
       std::string attr_type_name = attr.type_name();
-      if (value::TypeTrait<T>::type_name() == attr_type_name) {
+      if (value::TypeTraits<T>::type_name() == attr_type_name) {
         if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
           // OK
           target.SetAuthor(true);
@@ -1047,7 +1047,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       } else {
         DCOUT("attr.type = " << attr_type_name);
         ret.code = ParseResult::ResultCode::TypeMismatch;
-        ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTrait<T>::type_name(), attr_type_name);
+        ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
         return ret;
       }
     }
@@ -1108,7 +1108,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       const PrimAttrib &attr = prop.GetAttrib();
 
       std::string attr_type_name = attr.type_name();
-      if (value::TypeTrait<value::token>::type_name() == attr_type_name) {
+      if (value::TypeTraits<value::token>::type_name() == attr_type_name) {
         if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
           Relation rel;
           rel.SetEmpty();
@@ -1441,7 +1441,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
         (*result) = e.value();
         return true;
       } else {
-        return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTrait<T>::type_name(), e.error()));
+        return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
       }
     } else {
       return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
@@ -1458,7 +1458,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
           (*result) = e.value();
           return true;
         } else {
-          return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTrait<T>::type_name(), e.error()));
+          return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
         }
       } else {
         return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
@@ -1494,7 +1494,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
           if (e) {
             samples.AddSample(sample_time, e.value());
           } else {
-            return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTrait<T>::type_name(), e.error()));
+            return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
           }
         } else {
           return nonstd::make_unexpected(fmt::format("Property `{}`'s TimeSample value must be type `token`, but got invalid type", prop_name));
@@ -1528,11 +1528,11 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
         /* TODO: attr meta __target.meta = attr.meta;  */                    \
         __table.insert(__name);                                              \
       } else {                                                               \
-        PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()  \
+        PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()  \
                                   << ") " << e.error());                     \
       }                                                                      \
     } else {                                                                 \
-      PUSH_ERROR_AND_RETURN("(" << value::TypeTrait<__klass>::type_name()    \
+      PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()    \
                                 << ") Property type mismatch. " << __name    \
                                 << " must be type `token`, but got `"        \
                                 << attr.type_name() << "`.");            \

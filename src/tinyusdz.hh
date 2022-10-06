@@ -567,7 +567,7 @@ class Stage {
 struct NodeIndex {
   std::string name;
 
-  // TypeTrait<T>::type_id
+  // TypeTraits<T>::type_id
   value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
 
   int64_t
