@@ -341,8 +341,6 @@ class USDCReader::Impl {
   std::map<int32_t, Prim> _variantPrims;
   std::map<uint32_t, Property> _variantAttributeNodes;
 
-  std::set<int32_t> _variant_prim_table;
-
   // Check if given node_id is a prim node.
   std::set<int32_t> _prim_table;
 };
@@ -2199,7 +2197,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           variantPrim.value().specifier = specifier.value();
 
           // Store variantPrim to temporary buffer.
-          DCOUT("add prim idx as variant" << current);
+          DCOUT("add prim idx as variant: " << current);
           if (_variantPrims.count(current)) {
             DCOUT("??? prim idx already set " << current);
           } else {
@@ -2272,7 +2270,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   }
 
   DCOUT("ReconstructPrimRecursively: parent = "
-        << std::to_string(current) << ", level = " << std::to_string(level));
+        << std::to_string(parent) << ", current = " << current << ", level = " << std::to_string(level));
 
   if ((current < 0) || (current >= int(_nodes.size()))) {
     PUSH_ERROR("Invalid current node id: " + std::to_string(current) +
@@ -2300,7 +2298,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   Prim *currPrimPtr = nullptr;
   nonstd::optional<Prim> prim;
 
-  bool is_parent_variant = _variant_prim_table.count(parent);
+  // Assume parent node is already processed.
+  bool is_parent_variant = _variantPrims.count(parent);
 
   if (!ReconstructPrimNode(parent, current, level, is_parent_variant, psmap, stage, &prim)) {
     return false;
