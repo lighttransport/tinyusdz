@@ -13,7 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cassert>
+//#include <cassert>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -4420,7 +4420,9 @@ bool AsciiParser::SeekTo(uint64_t pos) {
 
 bool AsciiParser::PushParserState() {
   // Stack size must be less than the number of input bytes.
-  assert(parse_stack.size() < _sr->size());
+  if (parse_stack.size() >= _sr->size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Parser state stack become too deep.");
+  }
 
   uint64_t loc = _sr->tell();
 

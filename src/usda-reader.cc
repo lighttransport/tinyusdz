@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cassert>
 #include <cerrno>
 #include <cstdlib>
 #include <fstream>
