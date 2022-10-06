@@ -4024,8 +4024,10 @@ bool CrateReader::BuildNodeHierarchy(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
       }
 
-      _nodes[parentPathIdx].AddChildren(
-          name, pathIdx);
+      if (!_nodes[parentPathIdx].AddChildren(
+          name, pathIdx)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid path index.");
+      }
     }
 
     if (thisIndex >= jumps.size()) {

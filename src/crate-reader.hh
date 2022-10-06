@@ -69,11 +69,16 @@ class CrateReader {
 
     ///
     /// child_name is used when reconstructing scene graph.
+    /// Return false when `child_name` is already added to a children.
     ///
-    void AddChildren(const std::string &child_name, size_t node_index) {
-      assert(_primChildren.count(child_name) == 0);
+    bool AddChildren(const std::string &child_name, size_t node_index) {
+      if (_primChildren.count(child_name)) {
+        return false;
+      }
+      //assert(_primChildren.count(child_name) == 0);
       _primChildren.emplace(child_name);
       _children.push_back(node_index);
+      return true;
     }
 
     ///
