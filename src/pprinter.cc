@@ -1170,7 +1170,7 @@ std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::InterpolateBoundary::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: { s = "none"; break; }
     case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: {s = "edgeAndCorner"; break; }
     case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: { s = "edgeOnly"; break; }
   }
@@ -1185,7 +1185,7 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
     case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: { s = "catmullClark"; break; }
     case tinyusdz::GeomMesh::SubdivisionScheme::Loop: { s = "loop"; break; }
     case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: { s = "bilinear"; break; }
-    case tinyusdz::GeomMesh::SubdivisionScheme::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: { s = "none"; break; }
   }
 
   return s;
@@ -1199,7 +1199,7 @@ std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: { s = "cornersPlus2"; break; }
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: { s = "cornersOnly"; break; }
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: { s = "boundaries"; break; }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::FaceVaryingLinearInterpolationNone: { s = "none"; break; }
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::All: { s = "all"; break; }
   }
 

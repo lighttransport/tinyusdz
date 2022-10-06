@@ -132,9 +132,10 @@ struct GeomSubset {
 };
 
 // Polygon mesh geometry
+// X11's X.h uses `None` macro, so add extra prefix to `None` enum
 struct GeomMesh : GPrim {
   enum class InterpolateBoundary {
-    None,           // "none"
+    InterpolateBoundaryNone,           // "none"
     EdgeAndCorner,  // "edgeAndCorner"
     EdgeOnly        // "edgeOnly"
   };
@@ -144,7 +145,7 @@ struct GeomMesh : GPrim {
     CornersPlus2,  // "cornersPlus2"
     CornersOnly,   // "cornersOnly"
     Boundaries,    // "boundaries"
-    None,          // "none"
+    FaceVaryingLinearInterpolationNone,          // "none"
     All,           // "all"
   };
 
@@ -152,7 +153,7 @@ struct GeomMesh : GPrim {
     CatmullClark,  // "catmullClark"
     Loop,          // "loop"
     Bilinear,      // "bilinear"
-    None,          // "none"
+    SubdivisionSchemeNone,          // "none"
   };
 
   //
