@@ -20,21 +20,21 @@ bool Reconstructor::reconstruct(AttribMap &amap) {
   staticstruct::Reader r;
 
 #define CONVERT_TYPE_SCALAR(__ty, __value)       \
-  case TypeTrait<__ty>::type_id: {               \
+  case TypeTraits<__ty>::type_id: {               \
     __ty *p = reinterpret_cast<__ty *>(__value); \
     staticstruct::Handler<__ty> _h(p);           \
     return _h.write(&handler);                   \
   }
 
 #define CONVERT_TYPE_1D(__ty, __value)                                     \
-  case (TypeTrait<__ty>::type_id | TYPE_ID_1D_ARRAY_BIT): {                \
+  case (TypeTraits<__ty>::type_id | TYPE_ID_1D_ARRAY_BIT): {                \
     std::vector<__ty> *p = reinterpret_cast<std::vector<__ty> *>(__value); \
     staticstruct::Handler<std::vector<__ty>> _h(p);                        \
     return _h.write(&handler);                                             \
   }
 
 #define CONVERT_TYPE_2D(__ty, __value)                               \
-  case (TypeTrait<__ty>::type_id | TYPE_ID_2D_ARRAY_BIT): {          \
+  case (TypeTraits<__ty>::type_id | TYPE_ID_2D_ARRAY_BIT): {          \
     std::vector<std::vector<__ty>> *p =                              \
         reinterpret_cast<std::vector<std::vector<__ty>> *>(__value); \
     staticstruct::Handler<std::vector<std::vector<__ty>>> _h(p);     \
