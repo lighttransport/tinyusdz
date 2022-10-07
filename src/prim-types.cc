@@ -360,4 +360,5 @@ bool ValidatePrimName(const std::string &name)
 
 }
 
+
 }  // namespace tinyusdz

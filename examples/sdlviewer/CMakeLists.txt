@@ -301,6 +301,7 @@ list(
   ../../src/usdLux.cc
   ../../src/usdShade.cc
   ../../src/xform.cc
+  ../../src/stage.cc
   ../../src/tydra/render-data.cc
 )
 
