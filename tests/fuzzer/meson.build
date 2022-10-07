@@ -29,6 +29,7 @@ tinyusdz_sources=[
   '../../src/image-loader.cc',
   '../../src/image-writer.cc',
   '../../src/xform.cc',
+  '../../src/stage.cc',
   '../../src/tiny-format.cc',
   # deps
   '../../src/external/fpng.cpp',

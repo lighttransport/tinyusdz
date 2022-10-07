@@ -2084,6 +2084,8 @@ struct Node {
 };
 #endif
 
+#if 0
+
 struct StageMetas {
   // TODO: Support more predefined properties: reference = <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp
   // Scene global setting
@@ -2123,7 +2125,7 @@ class Stage {
   ///
   /// Get Prim at a Path.
   ///
-  /// @returns pointer to Prim(to avoid a copy). Assume no scene item removal/addition until the end of use of the pointer of `Prim` data.
+  /// @returns pointer to Prim(to avoid a copy). Never return nullptr upon success.
   ///
   nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path);
 
@@ -2163,6 +2165,7 @@ class Stage {
 
 
  private:
+
   // Root nodes
   std::vector<Prim> root_nodes;
 
@@ -2174,7 +2177,12 @@ class Stage {
   mutable std::string _err;
   mutable std::string _warn;
 
+  // Cache prim path.
+  std::map<Path, const Prim *> _prim_path_cache;
+  bool _dirty{false};
+
 };
+#endif
 
 // Simple bidirectional Path(string) <-> index lookup
 struct StringAndIdMap {
