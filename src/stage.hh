@@ -46,10 +46,19 @@ class Stage {
 
   ///
   /// Get Prim at a Path.
+  /// Path must be absolute Path.
   ///
   /// @returns pointer to Prim(to avoid a copy). Never return nullptr upon success.
   ///
   nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path);
+
+  ///
+  /// Get Prim from a children of given root Prim.
+  /// Path must be relative Path.
+  ///
+  /// @returns pointer to Prim(to avoid a copy). Never return nullptr upon success.
+  ///
+  nonstd::expected<const Prim *, std::string> GetPrimFromRelativePath(const Prim &root, const Path &path);
 
   ///
   /// Dump Stage as ASCII(USDA) representation.
@@ -100,7 +109,8 @@ class Stage {
   mutable std::string _warn;
 
   // Cached prim path.
-  std::map<Path, const Prim *> _prim_path_cache;
+  // key : prim_part string (e.g. "/path/bora")
+  std::map<std::string, const Prim *> _prim_path_cache;
 
   bool _dirty{false}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
 
