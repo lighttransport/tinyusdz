@@ -152,6 +152,197 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
   return std::move(vattr);
 }
 
+///
+/// Input: points, faceVertexCounts, faceVertexIndices
+/// Output: triangulated faceVertexCounts(all filled with 3), triangulated faceVertexIndices, indexMap
+/// (length = triangulated faceVertexIndices. indexMap[i] stores array index in original faceVertexIndices.
+/// For remapping primvar attributes.)
+///
+/// Return false when a polygon is degenerated. 
+/// No overlap check at the moment
+///
+/// T = value::float3 or value::double3
+/// BaseTy = float or double
+template<typename T, typename BaseTy>
+bool TriangulatePolygon(
+    const std::vector<T> &points,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices,
+    std::vector<uint32_t> &triangulatedFaceVertexCounts,
+    std::vector<uint32_t> &triangulatedFaceVertexIndices,
+    std::vector<size_t> &faceVertexIndexMap,
+    std::string &err) {
+
+    triangulatedFaceVertexCounts.clear();
+    triangulatedFaceVertexIndices.clear();
+
+    faceVertexIndexMap.clear();
+
+    size_t faceIndexOffset = 0;
+
+    // For each polygon(face)
+    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+      uint32_t npolys = faceVertexCounts[i];
+
+      if (npolys < 3) {
+        err = fmt::format("faceVertex count must be 3(triangle) or "
+                        "more(polygon), but got faceVertexCounts[{}] = {}",
+                        i, npolys);
+        return false;
+      }
+
+      if (faceIndexOffset + npolys > faceVertexIndices.size()) {
+        err = fmt::format(
+            "Invalid faceVertexIndices or faceVertexCounts. faceVertex index "
+            "exceeds faceVertexIndices.size() at [{}]",
+            i);
+        return false;
+      }
+
+      if (npolys == 3) {
+        // No need for triangulation.
+        triangulatedFaceVertexCounts.push_back(3);
+        triangulatedFaceVertexIndices.push_back(
+            faceVertexIndices[faceIndexOffset + 0]);
+        triangulatedFaceVertexIndices.push_back(
+            faceVertexIndices[faceIndexOffset + 1]);
+        triangulatedFaceVertexIndices.push_back(
+            faceVertexIndices[faceIndexOffset + 2]);
+        faceVertexIndexMap.push_back(i);
+#if 0
+      } else if (npolys == 4) {
+        // Use simple split
+        // TODO: Split at shortest edge?
+        triangulatedFaceVertexCounts.push_back(3);
+        triangulatedFaceVertexCounts.push_back(3);
+
+        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 0]);
+        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 1]);
+        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 2]);
+
+        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 0]);
+        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 2]);
+        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 3]);
+
+        faceVertexIndexMap.push_back(i);
+        faceVertexIndexMap.push_back(i);
+#endif
+      } else {
+        // Find the normal axis of the polygon using Newell's method
+        T n = {BaseTy(0), BaseTy(0), BaseTy(0)};
+
+        size_t vi0;
+        size_t vi0_2;
+
+        for (size_t k = 0; k < npolys; ++k) {
+          vi0 = faceVertexIndices[faceIndexOffset + k];
+
+          size_t j = (k + 1) % npolys;
+          vi0_2 = faceVertexIndices[faceIndexOffset + j];
+
+          if (vi0 >= points.size()) {
+            err = 
+                fmt::format("Invalid vertex index.");
+            return false;
+          }
+
+          if (vi0_2 >= points.size()) {
+            err = 
+                fmt::format("Invalid vertex index.");
+            return false;
+          }
+
+          T v0 = points[vi0];
+          T v1 = points[vi0_2];
+
+          const T point1 = {v0[0], v0[1], v0[2]};
+          const T point2 = {v1[0], v1[1], v1[2]};
+
+          T a = {point1[0] - point2[0], point1[1] - point2[1],
+                             point1[2] - point2[2]};
+          T b = {point1[0] + point2[0], point1[1] + point2[1],
+                             point1[2] + point2[2]};
+
+          n[0] += (a[1] * b[2]);
+          n[1] += (a[2] * b[0]);
+          n[2] += (a[0] * b[1]);
+        }
+        BaseTy length_n = math::vlength(n);
+        // Check if zero length normal
+        if (std::fabs(length_n) < std::numeric_limits<BaseTy>::epsilon()) {
+          err = "Degenerated polygon found.";
+          return false;
+        }
+
+        // Negative is to flip the normal to the correct direction
+        n = math::vnormalize(n);
+
+        T axis_w, axis_v, axis_u;
+        axis_w = n;
+        T a;
+        if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
+          a = {BaseTy(0), BaseTy(1), BaseTy(0)};
+        } else {
+          a = {BaseTy(1), BaseTy(0), BaseTy(0)};
+        }
+        axis_v = math::vnormalize(math::vcross(axis_w, a));
+        axis_u = math::vcross(axis_w, axis_v);
+
+        using Point3D = std::array<BaseTy, 3>;
+        using Point2D = std::array<BaseTy, 2>;
+        std::vector<Point2D> polyline;
+
+        // TMW change: Find best normal and project v0x and v0y to those
+        // coordinates, instead of picking a plane aligned with an axis (which
+        // can flip polygons).
+
+        // Fill polygon data.
+        for (size_t k = 0; k < npolys; k++) {
+          size_t vidx = faceVertexIndices[faceIndexOffset + k];
+
+          value::float3 v = points[vidx];
+          // Point3 polypoint = {v0[0],v0[1],v0[2]};
+
+          // world to local
+          Point3D loc = {math::vdot(v, axis_u), math::vdot(v, axis_v),
+                         math::vdot(v, axis_w)};
+
+          polyline.push_back({loc[0], loc[1]});
+        }
+
+        std::vector<std::vector<Point2D>> polygon_2d;
+        // Single polygon only(no holes)
+
+        std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
+        //  => result = 3 * faces, clockwise
+
+        if ((indices.size() % 3) != 0) {
+          // This should not be happen, though.
+          err = "Failed to triangulate.\n";
+          return false;
+        }
+
+        size_t ntris = indices.size() / 3;
+
+        for (size_t k = 0; k < ntris; k++) {
+          triangulatedFaceVertexCounts.push_back(3);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+
+          faceVertexIndexMap.push_back(i);
+        }
+      }
+
+      faceIndexOffset += npolys;
+    }
+
+  return true;
+}
+
 }  // namespace
 
 // Currently float2 only
@@ -289,174 +480,17 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   if (triangulate) {
     // TODO: Triangulate.
 
-    // using Point = std::array<float, 2>;
-    // using Point3 = std::array<float, 3>;
-
-    std::vector<uint32_t>
-        triangulatedFaceVertexCounts;  // simply filled with 3.
+    std::string err;
+    
+    std::vector<uint32_t> triangulatedFaceVertexCounts;
     std::vector<uint32_t> triangulatedFaceVertexIndices;
-
-    // Stores array index in original faceVertexIndices.
-    // len = triangulatedFaceVertexCounts.size()
-    // For remapping primvar attributes.
     std::vector<size_t> faceVertexIndexMap;
+    if (!TriangulatePolygon<value::float3, float>(dst.points, dst.faceVertexCounts, dst.faceVertexIndices, 
+      triangulatedFaceVertexCounts, triangulatedFaceVertexIndices, faceVertexIndexMap, err)) {
 
-    size_t faceIndexOffset = 0;
-
-    // For each polygon(face)
-    for (size_t i = 0; i < dst.faceVertexIndices.size(); i++) {
-      uint32_t npolys = dst.faceVertexCounts[i];
-
-      if (npolys < 3) {
-        return nonstd::make_unexpected(
-            fmt::format("faceVertex count must be 3(triangle) or "
-                        "more(polygon), but got faceVertexCounts[{}] = {}",
-                        i, npolys));
-      }
-
-      if (faceIndexOffset + npolys > dst.faceVertexIndices.size()) {
-        return nonstd::make_unexpected(fmt::format(
-            "Invalid faceVertexIndices or faceVertexCounts. faceVertex index "
-            "exceeds faceVertexIndices.size() at [{}]",
-            i));
-      }
-
-      if (npolys == 3) {
-        // No need for triangulation.
-        triangulatedFaceVertexCounts.push_back(3);
-        triangulatedFaceVertexIndices.push_back(
-            dst.faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(
-            dst.faceVertexIndices[faceIndexOffset + 1]);
-        triangulatedFaceVertexIndices.push_back(
-            dst.faceVertexIndices[faceIndexOffset + 2]);
-        faceVertexIndexMap.push_back(i);
-#if 0
-      } else if (npolys == 4) {
-        // Use simple split
-        // TODO: Split at shortest edge?
-        triangulatedFaceVertexCounts.push_back(3);
-        triangulatedFaceVertexCounts.push_back(3);
-
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 1]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 2]);
-
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 2]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 3]);
-
-        faceVertexIndexMap.push_back(i);
-        faceVertexIndexMap.push_back(i);
-#endif
-      } else {
-        // Find the normal axis of the polygon using Newell's method
-        value::float3 n = {0.0f, 0.0f, 0.0f};
-
-        size_t vi0;
-        size_t vi0_2;
-
-        for (size_t k = 0; k < npolys; ++k) {
-          vi0 = dst.faceVertexIndices[faceIndexOffset + k];
-
-          size_t j = (k + 1) % npolys;
-          vi0_2 = dst.faceVertexIndices[faceIndexOffset + j];
-
-          if (vi0 >= dst.points.size()) {
-            return nonstd::make_unexpected(
-                fmt::format("Invalid vertex index."));
-          }
-
-          if (vi0_2 >= dst.points.size()) {
-            return nonstd::make_unexpected(
-                fmt::format("Invalid vertex index."));
-          }
-
-          value::float3 v0 = dst.points[vi0];
-          value::float3 v1 = dst.points[vi0_2];
-
-          const value::float3 point1 = {v0[0], v0[1], v0[2]};
-          const value::float3 point2 = {v1[0], v1[1], v1[2]};
-
-          value::float3 a = {point1[0] - point2[0], point1[1] - point2[1],
-                             point1[2] - point2[2]};
-          value::float3 b = {point1[0] + point2[0], point1[1] + point2[1],
-                             point1[2] + point2[2]};
-
-          n[0] += (a[1] * b[2]);
-          n[1] += (a[2] * b[0]);
-          n[2] += (a[0] * b[1]);
-        }
-        float length_n = math::vlength(n);
-        // Check if zero length normal
-        if (std::fabs(length_n) < std::numeric_limits<float>::epsilon()) {
-          return nonstd::make_unexpected("Degenerated polygon found.");
-        }
-
-        // Negative is to flip the normal to the correct direction
-        n = math::vnormalize(n);
-
-        value::float3 axis_w, axis_v, axis_u;
-        axis_w = n;
-        value::float3 a;
-        if (std::fabs(axis_w[0]) > 0.9999999f) {  // TODO: use 1.0 - eps?
-          a = {0.0, 1.0, 0.0};
-        } else {
-          a = {1.0, 0.0, 0.0};
-        }
-        axis_v = math::vnormalize(math::vcross(axis_w, a));
-        axis_u = math::vcross(axis_w, axis_v);
-
-        using Point3D = std::array<float, 3>;
-        using Point2D = std::array<float, 2>;
-        std::vector<Point2D> polyline;
-
-        // TMW change: Find best normal and project v0x and v0y to those
-        // coordinates, instead of picking a plane aligned with an axis (which
-        // can flip polygons).
-
-        // Fill polygon data.
-        for (size_t k = 0; k < npolys; k++) {
-          size_t vidx = dst.faceVertexIndices[faceIndexOffset + k];
-
-          value::float3 v = dst.points[vidx];
-          // Point3 polypoint = {v0[0],v0[1],v0[2]};
-
-          // world to local
-          Point3D loc = {math::vdot(v, axis_u), math::vdot(v, axis_v),
-                         math::vdot(v, axis_w)};
-
-          polyline.push_back({loc[0], loc[1]});
-        }
-
-        std::vector<std::vector<Point2D>> polygon_2d;
-        // Single polygon only(no holes)
-
-        std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
-        //  => result = 3 * faces, clockwise
-
-        if ((indices.size() % 3) != 0) {
-          // This should not be happen, though.
-          return nonstd::make_unexpected("Failed to triangulate");
-        }
-
-        size_t ntris = indices.size() / 3;
-
-        for (size_t k = 0; k < ntris; k++) {
-          triangulatedFaceVertexCounts.push_back(3);
-          triangulatedFaceVertexIndices.push_back(
-              dst.faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
-          triangulatedFaceVertexIndices.push_back(
-              dst.faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
-          triangulatedFaceVertexIndices.push_back(
-              dst.faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
-
-          faceVertexIndexMap.push_back(i);
-        }
-      }
-
-      faceIndexOffset += npolys;
+      return nonstd::make_unexpected("Triangulation failed: " + err);
     }
+
   }  // triangulate
 
   return std::move(dst);
