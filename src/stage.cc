@@ -34,25 +34,23 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <sstream>
 
-#include "usdLux.hh"
-
+//
 #ifndef __wasi__
 #include <thread>
 #endif
-
+//
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include "io-util.hh"
-#include "lz4-compression.hh"
-#include "pprinter.hh"
-#include "str-util.hh"
-#include "tiny-format.hh"
 #include "tinyusdz.hh"
+#include "usdLux.hh"
+#include "usdShade.hh"
+#include "pprinter.hh"
 #include "value-pprint.hh"
-
+#include "str-util.hh"
+//
 #include "common-macros.inc"
 
 namespace tinyusdz {
