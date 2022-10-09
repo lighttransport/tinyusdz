@@ -148,6 +148,7 @@ struct StringData {
   int line_col{0};
 };
 
+
 ///
 /// Simlar to SdfPath.
 ///
@@ -174,6 +175,20 @@ struct StringData {
 ///
 class Path {
  public:
+
+  // Similar to SdfPathNode
+  enum class PathType {
+    Prim,
+    PrimProperty,
+    RelationalAttribute,
+    MapperArg,
+    Target,
+    Mapper,
+    PrimVariantSelection,
+    Expression,
+    Root,
+  };
+
   Path() : valid(false) {}
 
   // `p` is split into prim_part and prop_part
@@ -212,8 +227,48 @@ class Path {
   }
 
   std::string GetPrimPart() const { return prim_part; }
-
   std::string GetPropPart() const { return prop_part; }
+
+  void set_path_type(const PathType ty) {
+    path_type_ = ty;
+  }
+
+  nonstd::optional<PathType> get_path_type() const {
+    return path_type_;
+  }
+
+  // IsPropertyPath: PrimProperty or RelationalAttribute
+  bool IsPropertyPath() const {
+    if (path_type_) {
+      if ((path_type_.value() == PathType::PrimProperty ||
+          (path_type_.value() == PathType::RelationalAttribute))) {
+        return true;
+      }
+    }
+
+    // TODO: RelationalAttribute
+    if (prim_part.empty()) {
+      return false;
+    }
+
+    if (prop_part.size()) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // Is Prim's property path?
+  // True when both PrimPart and PropPart are not empty. 
+  bool IsPrimPropertyPath() const {
+    if (prim_part.empty()) {
+      return false;
+    }
+    if (prop_part.size()) {
+      return true;
+    }
+    return false;
+  }
 
   bool IsValid() const { return valid; }
 
@@ -320,6 +375,10 @@ class Path {
  private:
   std::string prim_part;  // e.g. /Model/MyMesh, MySphere
   std::string prop_part;  // e.g. .visibility
+  std::string element_; // Element name
+
+  nonstd::optional<PathType> path_type_; // Currently optional.
+  
   bool valid{false};
 };
 

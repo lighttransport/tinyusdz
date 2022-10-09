@@ -259,7 +259,7 @@ Path Path::AppendElement(const std::string &elem) {
   }
 
   if (elem[0] == '{') {
-    // variant chars are not supported
+    // variant chars are not supported yet.
     p.valid = false;
     return p;
   } else if (elem[0] == '[') {
