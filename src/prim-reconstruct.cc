@@ -2039,6 +2039,11 @@ bool ReconstructPrim<SkelRoot>(
   // custom props only
   for (const auto &prop : properties) {
     ADD_PROPERTY(table, prop, SkelRoot, root->props)
+    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, SkelRoot,
+                   root->visibility)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, SkelRoot,
+                       root->purpose)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", SkelRoot, root->extent)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2086,6 +2091,11 @@ bool ReconstructPrim<Skeleton>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "joints", Skeleton, skel->joints)
     PARSE_TYPED_ATTRIBUTE(table, prop, "jointNames", Skeleton, skel->jointNames)
     PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
+    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, Skeleton,
+                   skel->visibility)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Skeleton,
+                       skel->purpose)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", Skeleton, skel->extent)
     ADD_PROPERTY(table, prop, Skeleton, skel->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -2310,6 +2320,8 @@ bool ReconstructPrim<LuxSphereLight>(
                    light->intensity)
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, LuxSphereLight,
                    light->visibility)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxSphereLight,
+                       light->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
     ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -2342,7 +2354,9 @@ bool ReconstructPrim<LuxRectLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:width", LuxRectLight, light->width)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxRectLight,
                    light->intensity)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxRectLight, light->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxRectLight,
+                       light->purpose)
     ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2370,6 +2384,8 @@ bool ReconstructPrim<LuxDiskLight>(
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxDiskLight, light->radius)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxDiskLight, light->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxDiskLight,
+                       light->purpose)
     ADD_PROPERTY(table, prop, LuxDiskLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2398,6 +2414,8 @@ bool ReconstructPrim<LuxCylinderLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", LuxCylinderLight, light->length)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxCylinderLight, light->radius)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxCylinderLight, light->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxCylinderLight,
+                       light->purpose)
     ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2424,6 +2442,8 @@ bool ReconstructPrim<LuxDistantLight>(
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", LuxDistantLight, light->angle)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxDistantLight,
+                       light->purpose)
     ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2457,6 +2477,8 @@ bool ReconstructPrim<LuxDomeLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxDomeLight, light->color)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxDomeLight,
                    light->intensity)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxDomeLight,
+                       light->purpose)
     ADD_PROPERTY(table, prop, LuxDomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -3555,6 +3577,8 @@ bool ReconstructPrim<Material>(
                                   Material, material->surface)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
                                   Material, material->volume)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Material,
+                       material->purpose)
     ADD_PROPERTY(table, prop, Material, material->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
