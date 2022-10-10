@@ -268,6 +268,34 @@ std::string print_references(const prim::ReferenceList &references, const uint32
   return ss.str();
 }
 
+std::string print_rel(const Relation &rel, const std::string &name, uint32_t indent)
+{
+  std::stringstream ss;
+
+  ss << "rel " << name;
+
+  if (rel.IsEmpty()) {
+    // nothing todo
+  } else if (rel.IsPath()) {
+    ss << " = " << rel.targetPath;
+  } else if (rel.IsPathVector()) {
+    ss << " = " << rel.targetPathVector;
+  } else if (rel.IsString()) {
+    ss << " = " << quote(rel.targetString);
+  } else {
+    ss << "[InternalErrror]";
+  }
+
+  // Metadata is stored in attrib.meta.
+  if (rel.meta.authored()) {
+    ss << " (\n" << print_attr_metas(rel.meta, indent+1) << pprint::Indent(indent) << ")";
+  }
+
+  ss << "\n";
+
+  return ss.str();
+}
+
 } // namespce local
 
 std::string print_payload(const prim::PayloadList &payload, const uint32_t indent) {
@@ -830,6 +858,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
   return ss.str();
 }
 
+
 std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent)
 {
   std::stringstream ss;
@@ -849,10 +878,10 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
     ss << to_string(prop.GetListEditQual()) << " ";
   }
 
+#if 0
   ss << "rel " << name;
 
   const Relation &rel = prop.GetRelation();
-
 
   if (rel.IsEmpty()) {
     // nothing todo
@@ -872,6 +901,10 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   }
 
   ss << "\n";
+#else
+  const Relation &rel = prop.GetRelation();
+  ss << print_rel(rel, name, indent);
+#endif
 
   return ss.str();
 }
@@ -1019,6 +1052,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   // properties
   ss << print_typed_attr(gprim.doubleSided, "doubleSided", indent);
   ss << print_typed_token_attr(gprim.orientation, "orientation", indent);
+  ss << print_typed_token_attr(gprim.purpose, "purpose", indent);
   ss << print_typed_attr(gprim.extent, "extent", indent);
 
   ss << print_typed_token_attr(gprim.visibility, "visibility", indent);
@@ -1154,7 +1188,7 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
 
   if (auto pv = meta.Get<CustomDataType>()) {
     // dict
-    ss << pprint::Indent(indent) << "dictionary " << meta.name << " {\n";
+    ss << pprint::Indent(indent) << "dictionary " << meta.name << " = {\n";
     for (const auto &item : pv.value()) {
       ss << print_meta(item.second, indent+1);
     }
@@ -1366,6 +1400,26 @@ std::string to_string(tinyusdz::Permission s) {
   } else {
     return "[[PermissionInvalid]]";
   }
+}
+
+std::string to_string(tinyusdz::Purpose purpose) {
+  switch (purpose) {
+    case Purpose::Default: {
+      return "default";
+    }
+    case Purpose::Render: {
+      return "render";
+    }
+    case Purpose::Guide: {
+      return "render";
+    }
+    case Purpose::Proxy: {
+      return "proxy";
+    }
+  }
+
+  // Never reach here though
+  return "[[Invalid Purpose value]]";
 }
 
 std::string to_string(tinyusdz::Variability v) {
@@ -1907,13 +1961,21 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
+  ss << print_typed_token_attr(root.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(root.purpose, "purpose", indent+1);
+  ss << print_typed_attr(root.extent, "extent", indent+1);
+
+  if (root.proxyPrim) {
+    ss << print_rel(root.proxyPrim.value(), "proxyPrim", indent+1);
+  }
+
   // TODO
   // Skeleton id
   //ss << pprint::Indent(indent) << "skelroot.skeleton_id << "\n"
 
   ss << print_xformOps(root.xformOps, indent+1);
 
-  //ss << print_props(root.props, indent+1);
+  ss << print_props(root.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1940,6 +2002,16 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
     ss << pprint::Indent(indent+1) << "rel skel:animationSource = " << pquote(skel.animationSource.value()) << "\n";
   }
 
+  if (skel.proxyPrim) {
+    ss << print_rel(skel.proxyPrim.value(), "proxyPrim", indent+1);
+  }
+
+  ss << print_typed_token_attr(skel.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(skel.purpose, "purpose", indent+1);
+  ss << print_typed_attr(skel.extent, "extent", indent+1);
+
+  ss << print_props(skel.props, indent+1);
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
@@ -1963,6 +2035,8 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool
   ss << print_typed_attr(skelanim.scales, "scales", indent+1);
   ss << print_typed_attr(skelanim.translations, "translations", indent+1);
 
+  ss << print_props(skelanim.props, indent+1);
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
@@ -1983,6 +2057,8 @@ std::string to_string(const BlendShape &prim, const uint32_t indent, bool closin
   ss << print_typed_attr(prim.offsets, "offsets", indent+1);
   ss << print_typed_attr(prim.normalOffsets, "normalOffsets", indent+1);
   ss << print_typed_attr(prim.pointIndices, "pointIndices", indent+1);
+
+  ss << print_props(prim.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

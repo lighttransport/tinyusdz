@@ -225,6 +225,7 @@ class USDCReader::Impl {
   nonstd::optional<Prim> ReconstructPrimFromTypeName(
       const std::string &typeName, const std::string &prim_name,
       const crate::CrateReader::Node &node,
+      const Specifier spec,
       const crate::FieldValuePairVector &fvs,
       const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta);
 
@@ -1466,9 +1467,10 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     const std::string &typeName, const std::string &prim_name,
     const crate::CrateReader::Node &node,
+    const Specifier spec,
     const crate::FieldValuePairVector &fvs,
     const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta) {
-#define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name)    \
+#define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec)    \
   if (__node_ty == value::TypeTraits<__primty>::type_name()) { \
     __primty typed_prim;                                      \
     if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {    \
@@ -1477,34 +1479,35 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     }                                                         \
     typed_prim.meta = meta;                                   \
     typed_prim.name = __prim_name;                            \
+    typed_prim.spec = __spec;                            \
     value::Value primdata = typed_prim;                       \
     return Prim(primdata);                                    \
   } else
 
-  RECONSTRUCT_PRIM(Xform, typeName, prim_name)
-  RECONSTRUCT_PRIM(Model, typeName, prim_name)
-  RECONSTRUCT_PRIM(Scope, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomMesh, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomPoints, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomCylinder, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomCube, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomCone, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomSphere, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomCapsule, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name)
-  RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name)
-  // RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name)
-  RECONSTRUCT_PRIM(LuxSphereLight, typeName, prim_name)
-  RECONSTRUCT_PRIM(LuxDomeLight, typeName, prim_name)
-  RECONSTRUCT_PRIM(LuxCylinderLight, typeName, prim_name)
-  RECONSTRUCT_PRIM(LuxDiskLight, typeName, prim_name)
-  RECONSTRUCT_PRIM(LuxDistantLight, typeName, prim_name)
-  RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name)
-  RECONSTRUCT_PRIM(Skeleton, typeName, prim_name)
-  RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name)
-  RECONSTRUCT_PRIM(BlendShape, typeName, prim_name)
-  RECONSTRUCT_PRIM(Shader, typeName, prim_name)
-  RECONSTRUCT_PRIM(Material, typeName, prim_name) {
+  RECONSTRUCT_PRIM(Xform, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Model, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Scope, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomMesh, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomPoints, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCylinder, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCube, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCone, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomSphere, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCapsule, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name, spec)
+  // RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(LuxSphereLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(LuxDomeLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(LuxCylinderLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(LuxDiskLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(LuxDistantLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Skeleton, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(BlendShape, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Shader, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(Material, typeName, prim_name, spec) {
     PUSH_WARN("TODO or unsupported prim type: " << typeName);
     return nonstd::nullopt;
   }
@@ -2030,7 +2033,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         auto prim = ReconstructPrimFromTypeName(typeName.value(), prim_name,
-                                                node, fvs, psmap, primMeta);
+                                                node, specifier.value(), fvs, psmap, primMeta);
 
         if (prim) {
           // Prim name
@@ -2187,7 +2190,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         variantPrim = ReconstructPrimFromTypeName(typeName.value(), variantPrimName,
-                                                node, fvs, psmap, primMeta);
+                                                node, specifier.value(), fvs, psmap, primMeta);
 
         if (variantPrim) {
           // Prim name
