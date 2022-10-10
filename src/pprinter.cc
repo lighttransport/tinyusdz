@@ -1411,7 +1411,7 @@ std::string to_string(tinyusdz::Purpose purpose) {
       return "render";
     }
     case Purpose::Guide: {
-      return "render";
+      return "guide";
     }
     case Purpose::Proxy: {
       return "proxy";
