@@ -33,6 +33,9 @@ struct Material {
   nonstd::optional<Connection<Path>> surface; // "token outputs:surface.connect"
   nonstd::optional<Connection<Path>> volume; // "token outputs:volume.connect"
 
+  TypedAttributeWithFallback<Purpose> purpose{
+      Purpose::Default};  // "uniform token purpose"
+
   // Custom properties
   std::map<std::string, Property> props;
 };
@@ -43,6 +46,9 @@ struct NodeGraph {
   Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};
+
+  TypedAttributeWithFallback<Purpose> purpose{
+      Purpose::Default};  // "uniform token purpose"
 
   // Custom properties
   std::map<std::string, Property> props;

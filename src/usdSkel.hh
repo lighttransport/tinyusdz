@@ -18,7 +18,7 @@ constexpr auto kBlendShape = "BlendShape";
 // TODO(syoyo): Blendshape
 struct BlendShape {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   TypedAttribute<std::vector<value::vector3f>> offsets;        // uniform vector3f[]. required property
   TypedAttribute<std::vector<value::vector3f>> normalOffsets;  // uniform vector3f[]. required property
@@ -26,7 +26,7 @@ struct BlendShape {
   TypedAttribute<std::vector<int>>
       pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
                      // values in `offsets` and `normalOffsets`.
-                    
+
   std::map<std::string, Property> props;
   PrimMeta meta;
 };
@@ -34,9 +34,7 @@ struct BlendShape {
 // Skeleton
 struct Skeleton {
   std::string name;
-  Specifier spec;
-
-  TypedAttribute<Animatable<Extent>> extent;
+  Specifier spec{Specifier::Def};
 
   TypedAttribute<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
 
@@ -46,15 +44,20 @@ struct Skeleton {
   TypedAttribute<std::vector<value::matrix4d>> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                                                 // joint in local coordinate.
 
-  // rel proxyPrim
-  
+  nonstd::optional<Relation> proxyPrim; // rel proxyPrim
+
 
   // SkelBindingAPI
   nonstd::optional<Path> animationSource; // rel skel:animationSource = </path/...>
   
 
-  Purpose purpose{Purpose::Default};
-  Animatable<Visibility> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{
+      Visibility::Inherited};  // "token visibility"
+  TypedAttribute<Animatable<Extent>>
+      extent;  // bounding extent. When authorized, the extent is the bounding
+               // box of whole its children.
+  TypedAttributeWithFallback<Purpose> purpose{
+      Purpose::Default};  // "uniform token purpose"
 
   std::map<std::string, Property> props;
   std::vector<value::token> xformOpOrder;
@@ -65,14 +68,18 @@ struct Skeleton {
 // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
 struct SkelRoot {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
   int64_t parent_id{-1};
 
-  Animatable<Extent> extent;
-  Purpose purpose{Purpose::Default};
-  Animatable<Visibility> visibility{Visibility::Inherited};
+  TypedAttribute<Animatable<Extent>>
+      extent;  // bounding extent. When authorized, the extent is the bounding
+               // box of whole its children.
+  TypedAttributeWithFallback<Purpose> purpose{
+      Purpose::Default};  // "uniform token purpose"
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{
+      Visibility::Inherited};  // "token visibility"
 
-  // ref proxyPrim
+  nonstd::optional<Relation> proxyPrim; // rel proxyPrim
   std::vector<XformOp> xformOps;
 
   std::map<std::string, Property> props;
@@ -84,7 +91,7 @@ struct SkelRoot {
 
 struct SkelAnimation {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[]
   TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights; // float[]
