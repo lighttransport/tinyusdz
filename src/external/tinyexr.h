@@ -149,9 +149,9 @@ extern "C" {
 #define TINYEXR_ERROR_INVALID_HEADER (-9)
 #define TINYEXR_ERROR_UNSUPPORTED_FEATURE (-10)
 #define TINYEXR_ERROR_CANT_WRITE_FILE (-11)
-#define TINYEXR_ERROR_SERIALZATION_FAILED (-12)
+#define TINYEXR_ERROR_SERIALIZATION_FAILED (-12)
 #define TINYEXR_ERROR_LAYER_NOT_FOUND (-13)
-#define TINYEXR_ERROR_DATA_TO_LARGE (-14)
+#define TINYEXR_ERROR_DATA_TOO_LARGE (-14)
 
 // @note { OpenEXR file format: http://www.openexr.com/openexrfilelayout.pdf }
 
@@ -1262,7 +1262,7 @@ static void WriteChannelInfo(std::vector<unsigned char> &data,
   (*p) = '\0';
 }
 
-static void CompressZip(unsigned char *dst,
+static bool CompressZip(unsigned char *dst,
                         tinyexr::tinyexr_uint64 &compressedSize,
                         const unsigned char *src, unsigned long src_size) {
   std::vector<unsigned char> tmpBuf(src_size);
@@ -1322,23 +1322,28 @@ static void CompressZip(unsigned char *dst,
   int ret = mz_compress(
       dst, &outSize, static_cast<const unsigned char *>(&tmpBuf.at(0)),
       src_size);
-  assert(ret == MZ_OK);
-  (void)ret;
+  if (ret != MZ_OK) {
+    return false;
+  }
 
   compressedSize = outSize;
 #elif TINYEXR_USE_STB_ZLIB
   int outSize;
-  unsigned char* r = stbi_zlib_compress(const_cast<unsigned char*>(&tmpBuf.at(0)), src_size, &outSize, 8);
-  assert(ret);
-  memcpy(dst, r, outSize);
-  free(r);
+  unsigned char* ret = stbi_zlib_compress(const_cast<unsigned char*>(&tmpBuf.at(0)), src_size, &outSize, 8);
+  if (!ret) {
+    return false;
+  }
+  memcpy(dst, ret, outSize);
+  free(ret);
 
   compressedSize = outSize;
 #else
   uLong outSize = compressBound(static_cast<uLong>(src_size));
   int ret = compress(dst, &outSize, static_cast<const Bytef *>(&tmpBuf.at(0)),
                      src_size);
-  assert(ret == Z_OK);
+  if (ret != Z_OK) {
+    return false;
+  }
 
   compressedSize = outSize;
 #endif
@@ -1349,6 +1354,8 @@ static void CompressZip(unsigned char *dst,
     compressedSize = src_size;
     memcpy(dst, src, src_size);
   }
+
+  return true;
 }
 
 static bool DecompressZip(unsigned char *dst,
@@ -2503,7 +2510,7 @@ static bool hufBuildDecTable(const long long *hcode,  // i : encoding table
         unsigned int *p = pl->p;
         pl->p = new unsigned int[pl->lit];
 
-        for (int i = 0; i < pl->lit - 1; ++i) pl->p[i] = p[i];
+        for (unsigned int i = 0; i < pl->lit - 1; ++i) pl->p[i] = p[i];
 
         delete[] p;
       } else {
@@ -2758,7 +2765,7 @@ static bool hufDecode(const long long *hcode,  // i : encoding table
         // Search long code
         //
 
-        int j;
+        unsigned int j;
 
         for (j = 0; j < pl.lit; j++) {
           int l = hufLength(hcode[pl.p[j]]);
@@ -3611,8 +3618,8 @@ static bool DecodePixelData(/* out */ unsigned char **out_images,
         assert(requested_pixel_types[c] == TINYEXR_PIXELTYPE_FLOAT);
         for (size_t v = 0; v < static_cast<size_t>(num_lines); v++) {
           const float *line_ptr = reinterpret_cast<float *>(&outBuf.at(
-              v * pixel_data_size * static_cast<size_t>(x_stride) +
-              channel_offset_list[c] * static_cast<size_t>(x_stride)));
+              v * pixel_data_size * static_cast<size_t>(width) +
+              channel_offset_list[c] * static_cast<size_t>(width)));
           for (size_t u = 0; u < static_cast<size_t>(width); u++) {
             float val;
             // val = line_ptr[u];
@@ -4501,6 +4508,7 @@ static int ParseEXRHeader(HeaderInfo *info, bool *empty_header,
 #endif
         attrib.name[255] = '\0';
         attrib.type[255] = '\0';
+        //std::cout << "i = " << info->attributes.size() << ", dsize = " << data.size() << "\n";
         attrib.size = static_cast<int>(data.size());
         attrib.value = static_cast<unsigned char *>(malloc(data.size()));
         memcpy(reinterpret_cast<char *>(attrib.value), &data.at(0),
@@ -4567,6 +4575,7 @@ static int ParseEXRHeader(HeaderInfo *info, bool *empty_header,
       if (err) {
         (*err) += ss_err.str();
       }
+
       return TINYEXR_ERROR_INVALID_HEADER;
     }
   }
@@ -4691,7 +4700,7 @@ static bool ConvertHeader(EXRHeader *exr_header, const HeaderInfo &info, std::st
     exr_header->custom_attributes = static_cast<EXRAttribute *>(malloc(
         sizeof(EXRAttribute) * size_t(exr_header->num_custom_attributes)));
 
-    for (size_t i = 0; i < info.attributes.size(); i++) {
+    for (size_t i = 0; i < size_t(exr_header->num_custom_attributes); i++) {
       memcpy(exr_header->custom_attributes[i].name, info.attributes[i].name,
              256);
       memcpy(exr_header->custom_attributes[i].type, info.attributes[i].type,
@@ -6201,6 +6210,12 @@ int ParseEXRHeaderFromMemory(EXRHeader *exr_header, const EXRVersion *version,
     std::string err_str;
 
     if (!ConvertHeader(exr_header, info, &warn, &err_str)) {
+      // release mem
+      for (size_t i = 0; i < info.attributes.size(); i++) {
+        if (info.attributes[i].value) {
+          free(info.attributes[i].value);
+        }
+      }
       if (err && !err_str.empty()) {
         tinyexr::SetErrorMessage(err_str, err);
       }
@@ -6504,6 +6519,7 @@ static bool EncodePixelData(/* out */ std::vector<unsigned char>& out_data,
                             size_t pixel_data_size,
                             const std::vector<ChannelInfo>& channels,
                             const std::vector<size_t>& channel_offset_list,
+                            std::string *err,
                             const void* compression_param = 0) // zfp compression param
 {
   size_t buf_size = static_cast<size_t>(width) *
@@ -6556,7 +6572,10 @@ static bool EncodePixelData(/* out */ std::vector<unsigned char>& out_data,
           }
         }
       } else {
-        assert(0);
+        if (err) {
+          (*err) += "Invalid requested_pixel_type.\n";
+        }
+        return false;
       }
 
     } else if (channels[c].pixel_type == TINYEXR_PIXELTYPE_FLOAT) {
@@ -6600,7 +6619,10 @@ static bool EncodePixelData(/* out */ std::vector<unsigned char>& out_data,
           }
         }
       } else {
-        assert(0);
+        if (err) {
+          (*err) += "Invalid requested_pixel_type.\n";
+        }
+        return false;
       }
     } else if (channels[c].pixel_type == TINYEXR_PIXELTYPE_UINT) {
       for (int y = 0; y < num_lines; y++) {
@@ -6642,9 +6664,14 @@ static bool EncodePixelData(/* out */ std::vector<unsigned char>& out_data,
 #endif
     tinyexr::tinyexr_uint64 outSize = block.size();
 
-    tinyexr::CompressZip(&block.at(0), outSize,
+    if (!tinyexr::CompressZip(&block.at(0), outSize,
                          reinterpret_cast<const unsigned char *>(&buf.at(0)),
-                         static_cast<unsigned long>(buf.size()));
+                         static_cast<unsigned long>(buf.size()))) {
+      if (err) {
+        (*err) += "Zip compresssion failed.\n";
+      }
+      return false;
+    }
 
     // 4 byte: scan line
     // 4 byte: data size
@@ -6689,7 +6716,10 @@ static bool EncodePixelData(/* out */ std::vector<unsigned char>& out_data,
     out_data.insert(out_data.end(), block.begin(), block.begin() + data_len);
 
 #else
-    assert(0);
+    if (err) {
+      (*err) += "PIZ compression is disabled in this build.\n";
+    }
+    return false;
 #endif
   } else if (compression_type == TINYEXR_COMPRESSIONTYPE_ZFP) {
 #if TINYEXR_USE_ZFP
@@ -6708,11 +6738,13 @@ static bool EncodePixelData(/* out */ std::vector<unsigned char>& out_data,
     out_data.insert(out_data.end(), block.begin(), block.begin() + data_len);
 
 #else
+    if (err) {
+      (*err) += "ZFP compression is disabled in this build.\n";
+    }
     (void)compression_param;
-    assert(0);
+    return false;
 #endif
   } else {
-    assert(0);
     return false;
   }
 
@@ -6794,7 +6826,7 @@ static int EncodeTiledLevel(const EXRImage* level_image, const EXRHeader* exr_he
                                pixel_data_size,
                                channels,
                                channel_offset_list,
-                               compression_param);
+                               err, compression_param);
     if (!ret) {
       invalid_data = true;
       continue;
@@ -7011,6 +7043,7 @@ static int EncodeChunk(const EXRImage* exr_image, const EXRHeader* exr_header,
                                  pixel_data_size,
                                  channels,
                                  channel_offset_list,
+                                 err,
                                  compression_param);
       if (!ret) {
         invalid_data = true;
@@ -7342,7 +7375,7 @@ static size_t SaveEXRNPartImageToMemory(const EXRImage* exr_images,
     tinyexr::SetErrorMessage("Output memory size is zero", err);
     return 0;
   }
-  (*memory_out) = static_cast<unsigned char*>(malloc(total_size));
+  (*memory_out) = static_cast<unsigned char*>(malloc(size_t(total_size)));
 
   // Writing header
   memcpy((*memory_out), &memory[0], memory.size());
@@ -7395,7 +7428,7 @@ static size_t SaveEXRNPartImageToMemory(const EXRImage* exr_images,
     }
   }
   assert(sum == total_size);
-  return total_size;  // OK
+  return size_t(total_size);  // OK
 }
 
 #ifdef __clang__
@@ -7460,7 +7493,7 @@ int SaveEXRImageToFile(const EXRImage *exr_image, const EXRHeader *exr_header,
   unsigned char *mem = NULL;
   size_t mem_size = SaveEXRImageToMemory(exr_image, exr_header, &mem, err);
   if (mem_size == 0) {
-    return TINYEXR_ERROR_SERIALZATION_FAILED;
+    return TINYEXR_ERROR_SERIALIZATION_FAILED;
   }
 
   size_t written_size = 0;
@@ -7529,7 +7562,7 @@ int SaveEXRMultipartImageToFile(const EXRImage* exr_images,
   unsigned char *mem = NULL;
   size_t mem_size = SaveEXRMultipartImageToMemory(exr_images, exr_headers, num_parts, &mem, err);
   if (mem_size == 0) {
-    return TINYEXR_ERROR_SERIALZATION_FAILED;
+    return TINYEXR_ERROR_SERIALIZATION_FAILED;
   }
 
   size_t written_size = 0;
@@ -8149,6 +8182,14 @@ int ParseEXRMultipartHeaderFromMemory(EXRHeader ***exr_headers,
                              marker, marker_size);
 
     if (ret != TINYEXR_SUCCESS) {
+
+      // Free malloc-allocated memory here.
+      for (size_t i = 0; i < info.attributes.size(); i++) {
+        if (info.attributes[i].value) {
+          free(info.attributes[i].value);
+        }
+      }
+
       tinyexr::SetErrorMessage(err_str, err);
       return ret;
     }
@@ -8160,6 +8201,14 @@ int ParseEXRMultipartHeaderFromMemory(EXRHeader ***exr_headers,
 
     // `chunkCount` must exist in the header.
     if (info.chunk_count == 0) {
+
+      // Free malloc-allocated memory here.
+      for (size_t i = 0; i < info.attributes.size(); i++) {
+        if (info.attributes[i].value) {
+          free(info.attributes[i].value);
+        }
+      }
+
       tinyexr::SetErrorMessage(
           "`chunkCount' attribute is not found in the header.", err);
       return TINYEXR_ERROR_INVALID_DATA;
@@ -8186,6 +8235,14 @@ int ParseEXRMultipartHeaderFromMemory(EXRHeader ***exr_headers,
     std::string warn;
     std::string _err;
     if (!ConvertHeader(exr_header, infos[i], &warn, &_err)) {
+
+      // Free malloc-allocated memory here.
+      for (size_t k = 0; k < infos[i].attributes.size(); i++) {
+        if (infos[i].attributes[k].value) {
+          free(infos[i].attributes[k].value);
+        }
+      }
+
       if (!_err.empty()) {
         tinyexr::SetErrorMessage(
             _err, err);
@@ -8671,16 +8728,16 @@ int SaveEXRToMemory(const float *data, int width, int height, int components,
   size_t mem_size = SaveEXRImageToMemory(&image, &header, &mem_buf, err);
 
   if (mem_size == 0) {
-    return TINYEXR_ERROR_SERIALZATION_FAILED;
+    return TINYEXR_ERROR_SERIALIZATION_FAILED;
   }
 
   free(header.channels);
   free(header.pixel_types);
   free(header.requested_pixel_types);
 
-  if (mem_size > std::numeric_limits<int>::max()) {
+  if (mem_size > size_t(std::numeric_limits<int>::max())) {
     free(mem_buf);
-    return TINYEXR_ERROR_DATA_TO_LARGE;
+    return TINYEXR_ERROR_DATA_TOO_LARGE;
   }
 
   (*outbuf) = mem_buf;
