@@ -2070,15 +2070,13 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
         elemPath = pv.value();
 
-        DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
+        DCOUT(fmt::format("Element path: {}", dump_path(elemPath)));
 
-        // Ensure ElementPath is quoted with '{' and '}'
-        if (startsWith(elemPath.full_path_name(), "{") && endsWith(elemPath.full_path_name(), "}")) {
-          // ok
-        } else {
+        // Ensure ElementPath is variant
+        if (!tokenize_variantElement(elemPath.full_path_name())) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
-
         }
+
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "(Internal errror) Element path not found.");
@@ -2162,28 +2160,18 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       nonstd::optional<Prim> variantPrim;
       if (typeName) {
         std::string prim_name = elemPath.GetPrimPart();
-        DCOUT("elemPath.primPart = " << prim_name);
+        DCOUT("elemPath = " << dump_path(elemPath));
+        DCOUT("prim_name = " << prim_name);
 
         // Something like '{shapeVariant=Capsule}'
 
-        // Ensure prim_name is quoted with '{' and '}'
-        if (startsWith(prim_name, "{") && endsWith(prim_name, "}")) {
-          // ok
-        } else {
+        std::array<std::string, 2> variantPair;
+        if (!tokenize_variantElement(prim_name, &variantPair)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
         }
 
-        // Remove variant quotation
-        prim_name = unwrap(prim_name, "{", "}");
-
-        // Decompose to variantName, '=', variantValue
-        std::vector<std::string> toks = split(prim_name, "=");
-        if (toks.size() != 2) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath name: `{}`", elemPath));
-        }
-
-        std::string variantSetName = toks[0];
-        std::string variantPrimName = toks[1];
+        std::string variantSetName = variantPair[0];
+        std::string variantPrimName = variantPair[1];
 
         if (!ValidatePrimName(variantPrimName)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Prim name in Variant: `{}`", variantPrimName));

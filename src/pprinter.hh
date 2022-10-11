@@ -56,6 +56,9 @@ std::string to_string(GeomMesh::FaceVaryingLinearInterpolation fv);
 std::string to_string(const Path &path, bool show_full_path = true);
 std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
 
+// For debugging
+std::string dump_path(const Path &p);
+
 std::string to_string(const StringData &s);
 
 // TODO: move to value-types.hh
