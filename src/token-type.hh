@@ -1,25 +1,27 @@
 // SPDX-License-Identifier: MIT
-// C binding for TinyUSD(Z) 
+// `token` type
 #pragma once
 
 //
 // a class for `token` type.
 //
-// `token` is a short-length string and composed of alphanum + limited symbols(e.g. '@', '{', ...).
-// It should not contain newline.
+// `token` is primarily used for a short-length string.
+//
+// Unlike pxrUSD, `Token` class does not acquire a lock by default. This means
+// there is a potential hash collision for the hash value of `Token` string, but
+// TinyUSDZ does not require token(string) hashes are unique inside of TinyUSDZ
+// library. If you need pxrUSD-like behavior of `Token` class(i.e, you want a
+// token hash with no collision), you can compile TinyUSDZ with
+// TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE.
+// (Also you need to include foonathan/string_id c++ files(Please see <tinyusdz>/CMakeLists.txt) to your project)
 //
 // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
-//
-// Use foonathan/string_id to implement Token class.
-//
-// NOTE: database(token storage) is accessed with mutex,
-// so an application should not frequently construct Token class
-// among threads.
+//   - Use foonathan/string_id to implement Token class.
+//   - database(token storage) is accessed with mutex so an application should
+//   not frequently construct Token class among threads.
 //
 // ---
 //
-// Seems there is no beneficial usecase in TinyUSDZ to use hash for token,
-// so use naiive implementation by default.
 //
 
 #include <iostream>
@@ -27,7 +29,7 @@
 
 #include "nonstd/optional.hpp"
 
-#if 0 // defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
+#if defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -42,9 +44,9 @@
 #pragma clang diagnostic pop
 #endif
 
-#else // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#else  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
 #include <functional>
-#endif // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#endif  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
 
 namespace tinyusdz {
 
@@ -58,22 +60,21 @@ namespace sid = foonathan::string_id;
 #endif
 
 // Singleton
-class TokenStorage
-{
-  public:
-    TokenStorage(const TokenStorage &) = delete;
-    TokenStorage& operator=(const TokenStorage&) = delete;
-    TokenStorage(TokenStorage&&) = delete;
-    TokenStorage& operator=(TokenStorage&&) = delete;
+class TokenStorage {
+ public:
+  TokenStorage(const TokenStorage &) = delete;
+  TokenStorage &operator=(const TokenStorage &) = delete;
+  TokenStorage(TokenStorage &&) = delete;
+  TokenStorage &operator=(TokenStorage &&) = delete;
 
-    static sid::default_database &GetInstance() {
-      static sid::default_database s_database;
-      return s_database;
-    }
+  static sid::default_database &GetInstance() {
+    static sid::default_database s_database;
+    return s_database;
+  }
 
-  private:
-    TokenStorage() = default;
-    ~TokenStorage() = default; 
+ private:
+  TokenStorage() = default;
+  ~TokenStorage() = default;
 };
 
 #ifdef __clang__
@@ -81,7 +82,6 @@ class TokenStorage
 #endif
 
 class Token {
-
  public:
   Token() {}
 
@@ -125,38 +125,31 @@ inline bool operator==(const Token &tok, const std::string &rhs) {
 struct TokenHasher {
   inline size_t operator()(const Token &tok) const {
     return size_t(tok.hash());
-  } 
+  }
 };
 
 struct TokenKeyEqual {
   bool operator()(const Token &lhs, const Token &rhs) const {
     return lhs.str() == rhs.str();
-  } 
+  }
 };
 
-#else // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+#else  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
 
 class Token {
-
  public:
   Token() {}
 
-  explicit Token(const std::string &str) {
-    str_ = str;
-  }
+  explicit Token(const std::string &str) { str_ = str; }
 
-  explicit Token(const char *str) {
-    str_ = str;
-  }
+  explicit Token(const char *str) { str_ = str; }
 
-  const std::string &str() const {
-    return str_;
-  }
+  const std::string &str() const { return str_; }
 
   bool valid() const {
     // TODO
     return true;
-  } 
+  }
 
   // No string hash for TinyUSDZ
 #if 0
@@ -170,7 +163,6 @@ class Token {
   }
 #endif
 
-
  private:
   std::string str_;
 };
@@ -178,16 +170,15 @@ class Token {
 struct TokenHasher {
   inline size_t operator()(const Token &tok) const {
     return std::hash<std::string>()(tok.str());
-  } 
+  }
 };
 
 struct TokenKeyEqual {
   bool operator()(const Token &lhs, const Token &rhs) const {
     return lhs.str() == rhs.str();
-  } 
+  }
 };
 
+#endif  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
 
-#endif // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
-
-} // namespace tinyusdz
+}  // namespace tinyusdz
