@@ -462,6 +462,10 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
     ss << pprint::Indent(indent) << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
   }
 
+  if (meta.hidden) {
+    ss << pprint::Indent(indent) << "hidden = " << to_string(meta.hidden.value()) << "\n";
+  }
+
   if (meta.comment) {
     ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
   }
