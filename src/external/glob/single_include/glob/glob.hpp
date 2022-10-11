@@ -273,8 +273,9 @@ std::vector<fs::path> rlistdir(const fs::path &dirname, bool dironly) {
 // This helper function recursively yields relative pathnames inside a literal
 // directory.
 static inline
-std::vector<fs::path> glob2(const fs::path &dirname, [[maybe_unused]] const std::string &pattern,
+std::vector<fs::path> glob2(const fs::path &dirname, const std::string &pattern,
                             bool dironly) {
+  (void)pattern;
   // std::cout << "In glob2\n";
   std::vector<fs::path> result;
   assert(is_recursive(pattern));
