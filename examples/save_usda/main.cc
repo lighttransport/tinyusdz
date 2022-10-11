@@ -10,6 +10,10 @@ void SimpleScene(tinyusdz::Stage *stage)
   //
   // tinyusdz currently does not provide scene construction API yet, so edit parameters directly.
   //
+  // TinyUSDZ does not use mutex, smart pointers(e.g. shared_ptr) and C++ exception.
+  // API is not multi-thread safe, thus if you need to manipulate a scene in multi-threaded context,
+  // The app must take care of resource locks in app layer.
+  //
   tinyusdz::Xform xform;
   xform.name = "root";
 
@@ -56,6 +60,77 @@ void SimpleScene(tinyusdz::Stage *stage)
     indices.push_back(3);
 
     mesh.faceVertexIndices.SetValue(indices);
+  }
+
+  // primvar and custom attribute can be added to generic Property container `props`
+  {
+    // primvar is simply an attribute with prefix `primvars:`
+    //
+    // texCoord2f[] primvars:uv = [ ... ] ( interpolation = "vertex" )
+    // int[] primvars:uv:indices = [ ... ] 
+    //
+    {
+      tinyusdz::PrimAttrib uvAttr;
+      std::vector<tinyusdz::value::texcoord2f> uvs;
+
+      uvs.push_back({0.0f, 0.0f});
+      uvs.push_back({1.0f, 0.0f});
+      uvs.push_back({1.0f, 1.0f});
+      uvs.push_back({0.0f, 1.0f});
+
+      tinyusdz::primvar::PrimVar uvVar;
+      uvVar.set_scalar(uvs);
+      uvAttr.set_var(std::move(uvVar));
+
+      // Currently `interpolation` is described in Attribute metadataum.
+      tinyusdz::AttrMeta meta;
+      meta.interpolation = tinyusdz::Interpolation::Vertex;
+      uvAttr.meta = meta;
+
+      tinyusdz::Property uvProp(uvAttr, /* custom*/false);
+
+      mesh.props.emplace("primvars:uv", uvProp);
+
+      // ----------------------
+      
+      tinyusdz::PrimAttrib uvIndexAttr;
+      std::vector<int> uvIndices;
+
+      // FIXME: Validate
+      uvIndices.push_back(0);
+      uvIndices.push_back(1);
+      uvIndices.push_back(2);
+      uvIndices.push_back(3);
+
+
+      tinyusdz::primvar::PrimVar uvIndexVar;
+      uvIndexVar.set_scalar(uvIndices);
+      uvIndexAttr.set_var(std::move(uvIndexVar));
+
+      tinyusdz::Property uvIndexProp(uvIndexAttr, /* custom*/false);
+      mesh.props.emplace("primvars:uv:indices", uvIndexProp);
+
+    }
+
+    // `custom uniform double myvalue = 3.0 ( hidden = 0 )`
+    {
+      tinyusdz::PrimAttrib attrib;
+      double myvalue = 3.0;
+      tinyusdz::primvar::PrimVar var;
+      var.set_scalar(myvalue);
+      attrib.set_var(std::move(var));
+
+      attrib.variability = tinyusdz::Variability::Uniform;
+      
+      tinyusdz::AttrMeta meta;
+      meta.hidden = false;
+      attrib.meta = meta;
+
+      tinyusdz::Property prop(attrib, /* custom*/true);
+
+      mesh.props.emplace("myvalue", prop);
+    }
+
   }
 
   tinyusdz::Prim meshPrim(mesh);
