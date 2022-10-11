@@ -557,25 +557,25 @@ namespace value {
 std::string pprint_any(const linb::any &v, const uint32_t indent,
                        bool closing_brace) {
 #define BASETYPE_CASE_EXPR(__ty)         \
-  case TypeTrait<__ty>::type_id: {       \
+  case TypeTraits<__ty>::type_id: {       \
     os << linb::any_cast<const __ty>(v); \
     break;                               \
   }
 
 #define PRIMTYPE_CASE_EXPR(__ty)                                           \
-  case TypeTrait<__ty>::type_id: {                                         \
+  case TypeTraits<__ty>::type_id: {                                         \
     os << to_string(linb::any_cast<const __ty>(v), indent, closing_brace); \
     break;                                                                 \
   }
 
 #define ARRAY1DTYPE_CASE_EXPR(__ty)                   \
-  case TypeTrait<std::vector<__ty>>::type_id: {       \
+  case TypeTraits<std::vector<__ty>>::type_id: {       \
     os << linb::any_cast<const std::vector<__ty>>(v); \
     break;                                            \
   }
 
 #define ARRAY2DTYPE_CASE_EXPR(__ty)                                \
-  case TypeTrait<std::vector<std::vector<__ty>>>::type_id: {       \
+  case TypeTraits<std::vector<std::vector<__ty>>>::type_id: {       \
     os << linb::any_cast<const std::vector<std::vector<__ty>>>(v); \
     break;                                                         \
   }
@@ -603,11 +603,11 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
     CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
 
     // token, str: wrap with '"'
-    case TypeTrait<value::token>::type_id: {
+    case TypeTraits<value::token>::type_id: {
       os << quote(linb::any_cast<const value::token>(v).str());
       break;
     }
-    case TypeTrait<std::vector<value::token>>::type_id: {
+    case TypeTraits<std::vector<value::token>>::type_id: {
       const std::vector<value::token> &lst =
           linb::any_cast<const std::vector<value::token>>(v);
       std::vector<std::string> vs;
@@ -617,17 +617,17 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
       os << quote(vs);
       break;
     }
-    case TypeTrait<std::string>::type_id: {
+    case TypeTraits<std::string>::type_id: {
       os << quote(linb::any_cast<const std::string>(v));
       break;
     }
-    case TypeTrait<std::vector<std::string>>::type_id: {
+    case TypeTraits<std::vector<std::string>>::type_id: {
       const std::vector<std::string> &vs =
           linb::any_cast<const std::vector<std::string>>(v);
       os << quote(vs);
       break;
     }
-    case TypeTrait<value::ValueBlock>::type_id: {
+    case TypeTraits<value::ValueBlock>::type_id: {
       os << "None";
       break;
     }
@@ -650,7 +650,7 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
 std::string pprint_value(const value::Value &v, const uint32_t indent,
                          bool closing_brace) {
 #define BASETYPE_CASE_EXPR(__ty)   \
-  case TypeTrait<__ty>::type_id: { \
+  case TypeTraits<__ty>::type_id: { \
     auto p = v.as<__ty>(); \
     if (p) { \
       os << (*p);         \
@@ -661,7 +661,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
   }
 
 #define PRIMTYPE_CASE_EXPR(__ty)                             \
-  case TypeTrait<__ty>::type_id: {                           \
+  case TypeTraits<__ty>::type_id: {                           \
     auto p = v.as<__ty>(); \
     if (p) { \
       os << to_string(*p, indent, closing_brace);     \
@@ -672,7 +672,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
   }
 
 #define ARRAY1DTYPE_CASE_EXPR(__ty)             \
-  case TypeTrait<std::vector<__ty>>::type_id: { \
+  case TypeTraits<std::vector<__ty>>::type_id: { \
     auto p = v.as<std::vector<__ty>>(); \
     if (p) { \
       os << (*p); \
@@ -704,7 +704,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     CASE_GPRIM_LIST(PRIMTYPE_CASE_EXPR)
 
     // dict and customData
-    case TypeTrait<CustomDataType>::type_id: {
+    case TypeTraits<CustomDataType>::type_id: {
       auto p = v.as<CustomDataType>();
       if (p) {
         os << print_customData(*p, "", indent);
@@ -714,7 +714,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       break;
     }
 
-    case TypeTrait<value::token>::type_id: {
+    case TypeTraits<value::token>::type_id: {
       auto p = v.as<value::token>();
       if (p) {
         os << quote(p->str());
@@ -723,7 +723,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTrait<std::vector<value::token>>::type_id: {
+    case TypeTraits<std::vector<value::token>>::type_id: {
       auto p = v.get_value<std::vector<value::token>>();
       if (p) {
         std::vector<std::string> vs;
@@ -736,7 +736,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTrait<std::string>::type_id: {
+    case TypeTraits<std::string>::type_id: {
       auto p = v.as<std::string>();
       if (p) {
         os << quote(*p);
@@ -745,7 +745,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTrait<StringData>::type_id: {
+    case TypeTraits<StringData>::type_id: {
       auto p = v.as<StringData>();
       if (p) {
         os << (*p);
@@ -754,7 +754,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTrait<std::vector<std::string>>::type_id: {
+    case TypeTraits<std::vector<std::string>>::type_id: {
       auto p = v.as<std::vector<std::string>>();
       if (p) {
         os << quote(*p);
@@ -763,7 +763,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTrait<std::vector<StringData>>::type_id: {
+    case TypeTraits<std::vector<StringData>>::type_id: {
       auto p = v.as<std::vector<StringData>>();
       if (p) {
         os << (*p);
@@ -772,7 +772,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTrait<value::ValueBlock>::type_id: {
+    case TypeTraits<value::ValueBlock>::type_id: {
       if (v.as<value::ValueBlock>()) {
         os << "None";
       } else {

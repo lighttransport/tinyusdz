@@ -10,7 +10,7 @@ def Xform "Marble" (
 	def Sphere "marble_geom"
 	{
 		# Ok to have ',' in last item
-		rel material:binding = [</Marble/GlassMaterial>, </bora>,]
+		rel myrels = [</Marble/GlassMaterial>, </bora>,]
 		color3f[] primvars:displayColor = [ (0, 1, 0) ]
 	}
  

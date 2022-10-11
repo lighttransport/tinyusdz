@@ -36,9 +36,14 @@ To limit a memory usage when loading USDZ file, Please set a value `max_memory_l
 
 TinyUSDZ source codes(and some external third party codes) are also checked by Address Sanitizer, CodeQL and Fuzzer.
 
+#### Fuzzer 
+
+See [tests/fuzzer](tests/fuzzer) .
+For building fuzzer tests, you'll need Meson and Ninja.
+
 If you need to deal with arbitrary USD files from unknown origin(e.g. from internet, NFT storage. Whose may contain malcious data), it is recommended to use TinyUSDZ in sandboxed environment(RunC, FlatPak, WASI(WASM)). Run in WASI is recommended at the moment(please see next section).
 
-### Web platform(WASM) and sandboxed environment(WASI)
+#### Web platform(WASM) and sandboxed environment(WASI)
 
 TinyUSDZ does not use C++ exceptions and can be built without threads. TinyUSDZ supports WASM and WASI build. So TinyUSDZ should runs well on various Web platform(WebAssembly. No SharedArrayBuffer, Atomics and WebAssembly SIMD(which is not yet available on iOS Safari) required) and sandboxed environment(WASI. Users who need to read various USD file which possibly could contain malcious data from Internet, IPFS or blockchain storage). 
 
@@ -169,15 +174,12 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 > ninja.exe
 ```
 
-### Fuzzer 
-
-See [tests/fuzzer](tests/fuzzer) .
-For building fuzzer tests, you'll need Meson and Ninja.
 
 ### Examples
 
-* [usda_parser](xamples/usda_parser/) Parse USDA and print it as Ascii.
-* [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDC and print it as Ascii.
+* [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
+* [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
+* [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDZ/USDA/USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
 
@@ -222,7 +224,7 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 
 * [ ] Built-in usdObj(wavefront .obj mesh) support.
   * Through tinyobjloader.
-* [ ] Support Crate(binary) version 0.8.0(USD v20.11 default)
+* [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
 * [ ] Animation
   * [ ] Skinning(usdSkel)
   * [ ] Blend shapes

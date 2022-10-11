@@ -5,6 +5,7 @@
 #pragma once
 
 #include "prim-types.hh"
+#include "xform.hh"
 
 namespace tinyusdz {
 
@@ -21,7 +22,7 @@ constexpr auto kLuxPluginLight = "PluginLight";
 
 struct LuxSphereLight : public Xformable {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -41,7 +42,7 @@ struct LuxSphereLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   //
   // Properties
@@ -55,7 +56,7 @@ struct LuxSphereLight : public Xformable {
 
 struct LuxCylinderLight : public Xformable {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -76,7 +77,7 @@ struct LuxCylinderLight : public Xformable {
 
   TypedAttributeWithFallback<Animatable<float>> length{1.0f}; // inputs:length size in Y axis
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius  size in X axis
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -93,7 +94,7 @@ struct LuxCylinderLight : public Xformable {
 
 struct LuxRectLight : public Xformable {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -115,7 +116,7 @@ struct LuxRectLight : public Xformable {
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
   TypedAttributeWithFallback<Animatable<float>> width{1.0f}; // inputs:width  size in X axis
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -131,7 +132,7 @@ struct LuxRectLight : public Xformable {
 
 struct LuxDiskLight : public Xformable {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -151,7 +152,7 @@ struct LuxDiskLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -167,7 +168,7 @@ struct LuxDiskLight : public Xformable {
 
 struct LuxDistantLight : public Xformable {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to xform node
 
@@ -187,7 +188,7 @@ struct LuxDistantLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> angle{0.53f}; // inputs:angle in degrees
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
   // asset inputs:texture:file
 
@@ -203,7 +204,7 @@ struct LuxDistantLight : public Xformable {
 
 struct LuxDomeLight : public Xformable {
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
   int64_t parent_id{-1};  // Index to xform node
 
   enum class TextureFormat {
@@ -234,7 +235,7 @@ struct LuxDomeLight : public Xformable {
   TypedAttributeWithFallback<Animatable<float>> guideRadius{1.0e5f};
   // asset inputs:texture:file
   TextureFormat textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
   // rel portals
   // rel proxyPrim
 
@@ -251,24 +252,24 @@ struct LuxDomeLight : public Xformable {
 
 // TODO:
 struct LuxGeometryLight : public Xformable {
-  Specifier spec;
+  Specifier spec{Specifier::Def};
   nonstd::optional<Relation> geometry; // `rel geometry`
 };
 
 // TODO
 struct LuxPortalLight : public Xformable {
-  Specifier spec;
-  TypedAttribute<Animatable<Extent>> extent; // float3[] 
+  Specifier spec{Specifier::Def};
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
 };
 
 // TODO
 struct LuxPluginLight : public Xformable {
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 };
 
 // TODO
 struct PluginLightFilter {
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 };
 
 

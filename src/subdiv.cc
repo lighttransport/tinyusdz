@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2020-Present Syoyo Fujita.
+
 #ifdef _MSC_VER
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
@@ -67,7 +70,8 @@ struct FVarVertexColor {
   float r, g, b, a;
 };
 
-void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *out_mesh,
+bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *out_mesh,
+               std::string *err,
                bool dump) {
   if (subd_level < 0) {
     subd_level = 0;
@@ -249,7 +253,12 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
 
       // all refined Catmark faces should be quads
       // assert(fverts.size()==4 && fuvs.size()==4);
-      assert(fverts.size() == 4);
+      if (fverts.size() != 4) {
+        if (err) {
+          (*err) += "All refined Catmark faces should be quads.\n";
+        }
+        return false;
+      }
 
       out_mesh->face_index_offsets.push_back(uint32_t(out_mesh->face_num_verts.size()));
 
@@ -303,6 +312,8 @@ void subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
   if (dump) {
     std::cout << "dumped subdivided mesh as `subd.obj`\n";
   }
+
+  return true;
 }
 
 }  // namespace tinyusdz

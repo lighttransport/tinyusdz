@@ -2,7 +2,7 @@
 // https://gist.github.com/calebh/fd00632d9c616d4b0c14e7c2865f3085
 //
 // Modification by Syoyo Fujita.
-// - Use tinyusdz::value::TypeTrait for type_id
+// - Use tinyusdz::value::TypeTraits for type_id
 // - Disable exception
 // - Implement set and get, get_if
 //
@@ -34,7 +34,7 @@ For more information, please refer to <http://unlicense.org/>
 #include <iostream>
 #include <string>
 
-#include "value-types.hh" // import TypeTrait
+#include "value-types.hh" // import TypeTraits
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -90,7 +90,7 @@ struct variant_helper_rec;
 template <typename F, typename... Ts>
 struct variant_helper_rec<F, Ts...> {
   inline static void destroy(uint32_t id, void* data) {
-    if (value::TypeTrait<F>::type_id == id) {
+    if (value::TypeTraits<F>::type_id == id) {
       reinterpret_cast<F*>(data)->~F();
     } else {
       variant_helper_rec<Ts...>::destroy(id, data);
@@ -98,7 +98,7 @@ struct variant_helper_rec<F, Ts...> {
   }
 
   inline static void move(uint32_t id, void* from, void* to) {
-    if (value::TypeTrait<F>::type_id == id) {
+    if (value::TypeTraits<F>::type_id == id) {
       // This static_cast and use of remove_reference is equivalent to the use
       // of std::move
       new (to) F(static_cast<typename remove_reference<F>::type&&>(
@@ -109,7 +109,7 @@ struct variant_helper_rec<F, Ts...> {
   }
 
   inline static void copy(uint32_t id, const void* from, void* to) {
-    if (value::TypeTrait<F>::type_id == id) {
+    if (value::TypeTraits<F>::type_id == id) {
       new (to) F(*reinterpret_cast<const F*>(from));
     } else {
       variant_helper_rec<Ts...>::copy(id, from, to);
@@ -210,7 +210,7 @@ struct variant {
   // using alternative = typename variant_alternative<i, Ts...>::type;
 
   static inline uint32_t invalid_type() {
-    return value::TypeTrait<void>::type_id;
+    return value::TypeTraits<void>::type_id;
   }
 
   uint32_t variant_id;
@@ -249,7 +249,7 @@ struct variant {
 
   template <typename T>
   bool is() const {
-    return variant_id == value::TypeTrait<T>::type_id;
+    return variant_id == value::TypeTraits<T>::type_id;
   }
 
   uint32_t id() const { return variant_id; }
@@ -261,7 +261,7 @@ struct variant {
   void set(Args&&... args) {
     helper_t::destroy(variant_id, &data);
     new (&data) T(std::forward<Args>(args)...);
-    variant_id = value::TypeTrait<T>::type_id;
+    variant_id = value::TypeTraits<T>::type_id;
     // variant_helper_static<alternative<i>>::copy(&value, &data);
   }
 
@@ -277,7 +277,7 @@ struct variant {
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
   T& cast() {
     // It is a dynamic_cast-like behaviour
-    if (variant_id == value::TypeTrait<T>::type_id) {
+    if (variant_id == value::TypeTraits<T>::type_id) {
       return *reinterpret_cast<T*>(&data);
     }
 
@@ -291,7 +291,7 @@ struct variant {
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
   const nonstd::optional<T> get() {
     // It is a dynamic_cast-like behaviour
-    if (variant_id == value::TypeTrait<T>::type_id) {
+    if (variant_id == value::TypeTraits<T>::type_id) {
       return *reinterpret_cast<T*>(&data);
     }
 
@@ -303,7 +303,7 @@ struct variant {
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
   const nonstd::optional<T> get() const {
     // It is a dynamic_cast-like behaviour
-    if (variant_id == value::TypeTrait<T>::type_id) {
+    if (variant_id == value::TypeTraits<T>::type_id) {
       return *reinterpret_cast<const T*>(&data);
     }
 
@@ -315,7 +315,7 @@ struct variant {
                 typename std::enable_if<is_one_of<T, Ts...>::value, void>::type>
   const T* get_if() const {
     // It is a dynamic_cast-like behaviour
-    if (variant_id == value::TypeTrait<T>::type_id) {
+    if (variant_id == value::TypeTraits<T>::type_id) {
       return reinterpret_cast<const T*>(&data);
     }
 
@@ -331,7 +331,7 @@ namespace value {
 
 #define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)           \
   template <>                                                    \
-  struct TypeTrait<__dty> {                                      \
+  struct TypeTraits<__dty> {                                      \
     using value_type = __dty;                                    \
     using value_underlying_type = __dty;                         \
     static constexpr uint32_t ndim = 0; /* array dim */          \

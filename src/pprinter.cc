@@ -40,11 +40,48 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
   return ofs;
 }
 
+
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
+
+  bool print_offset{true};
+  bool print_scale{true};
+
+  if (std::fabs(v._offset) < std::numeric_limits<double>::epsilon()) {
+    print_offset = false;
+  }
+
+  if (std::fabs(v._scale - 1.0) < std::numeric_limits<double>::epsilon()) {
+    print_scale = false;
+  }
+
+  if (!print_offset && !print_scale) {
+    // No need to print LayerOffset.
+    return ofs;
+  }
+
+  // TODO: Do not print scale when it is 1.0
+  ofs << "(";
+  if (print_offset && print_scale) {
+    ofs << "offset = " << v._offset << ", scale = " << v._scale;
+  } else if (print_offset) {
+    ofs << "offset = " << v._offset;
+  } else { // print_scale
+    ofs << "scale = " << v._scale;
+  }
+  ofs << ")";
+
+  return ofs;
+}
+
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
 
   ofs << v.asset_path;
   if (v.prim_path.IsValid()) {
     ofs << v.prim_path;
+  }
+  ofs << v.layerOffset;
+  if (!v.customData.empty()) {
+    ofs << tinyusdz::print_customData(v.customData, "customData", /* indent */ 0);
   }
 
   return ofs;
@@ -56,16 +93,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   if (v._prim_path.IsValid()) {
     ofs << v._prim_path;
   }
-
-  return ofs;
-}
-
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
-
-  // TODO: Do not print offset when it is 0.0
-  // TODO: Do not print scale when it is 1.0
-
-  ofs << "(offset = " << v._offset << ", scale = " << v._scale << ")";
+  ofs << v._layer_offset;
 
   return ofs;
 }
@@ -235,6 +263,34 @@ std::string print_references(const prim::ReferenceList &references, const uint32
   } else {
     ss << vars;
   }
+  ss << "\n";
+
+  return ss.str();
+}
+
+std::string print_rel(const Relation &rel, const std::string &name, uint32_t indent)
+{
+  std::stringstream ss;
+
+  ss << "rel " << name;
+
+  if (rel.IsEmpty()) {
+    // nothing todo
+  } else if (rel.IsPath()) {
+    ss << " = " << rel.targetPath;
+  } else if (rel.IsPathVector()) {
+    ss << " = " << rel.targetPathVector;
+  } else if (rel.IsString()) {
+    ss << " = " << quote(rel.targetString);
+  } else {
+    ss << "[InternalErrror]";
+  }
+
+  // Metadata is stored in attrib.meta.
+  if (rel.meta.authored()) {
+    ss << " (\n" << print_attr_metas(rel.meta, indent+1) << pprint::Indent(indent) << ")";
+  }
+
   ss << "\n";
 
   return ss.str();
@@ -436,7 +492,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
     ss << pprint::Indent(indent);
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.IsBlocked()) {
       ss << " = None";
@@ -517,7 +573,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
 
     ss << "uniform ";
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
 
     if (attr.IsBlocked()) {
@@ -594,7 +650,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
 
     ss << pprint::Indent(indent);
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.IsConnection()) {
       ss << ".connect = ";
@@ -638,7 +694,7 @@ std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, con
 
     ss << pprint::Indent(indent);
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.meta.authored()) {
       ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
@@ -660,7 +716,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
 
     ss << "uniform ";
 
-    ss << value::TypeTrait<T>::type_name() << " " << name;
+    ss << value::TypeTraits<T>::type_name() << " " << name;
 
     if (attr.IsBlocked()) {
       ss << " = None";
@@ -802,6 +858,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
   return ss.str();
 }
 
+
 std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent)
 {
   std::stringstream ss;
@@ -821,10 +878,10 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
     ss << to_string(prop.GetListEditQual()) << " ";
   }
 
+#if 0
   ss << "rel " << name;
 
   const Relation &rel = prop.GetRelation();
-
 
   if (rel.IsEmpty()) {
     // nothing todo
@@ -844,6 +901,10 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   }
 
   ss << "\n";
+#else
+  const Relation &rel = prop.GetRelation();
+  ss << print_rel(rel, name, indent);
+#endif
 
   return ss.str();
 }
@@ -961,15 +1022,14 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
 
       ss << pprint::Indent(indent);
 
-      // TODO: Check if `type_name` is set correctly.
-      ss << xformOp.type_name << " " ;
+      ss << xformOp.get_value_type_name() << " " ;
 
       ss << to_string(xformOp.op);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
 
-      if (xformOp.IsTimeSamples()) {
+      if (xformOp.is_timesamples()) {
         ss << ".timeSamples";
       }
 
@@ -992,6 +1052,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   // properties
   ss << print_typed_attr(gprim.doubleSided, "doubleSided", indent);
   ss << print_typed_token_attr(gprim.orientation, "orientation", indent);
+  ss << print_typed_token_attr(gprim.purpose, "purpose", indent);
   ss << print_typed_attr(gprim.extent, "extent", indent);
 
   ss << print_typed_token_attr(gprim.visibility, "visibility", indent);
@@ -1068,6 +1129,23 @@ std::string to_string(const std::string &v) {
   return quote(v);
 }
 
+std::string to_string(const Reference &v) {
+  std::stringstream ss;
+
+  ss << v.asset_path;
+  if (v.prim_path.IsValid()) {
+    ss << v.prim_path;
+  }
+
+  ss << v.layerOffset;
+
+  if (!v.customData.empty()) {
+    // TODO: Indent
+    ss << print_customData(v.customData, "customData", /* indent */0);
+  }
+
+  return ss.str();
+}
 
 std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32_t indent) {
   std::stringstream ss;
@@ -1110,7 +1188,7 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
 
   if (auto pv = meta.Get<CustomDataType>()) {
     // dict
-    ss << pprint::Indent(indent) << "dictionary " << meta.name << " {\n";
+    ss << pprint::Indent(indent) << "dictionary " << meta.name << " = {\n";
     for (const auto &item : pv.value()) {
       ss << print_meta(item.second, indent+1);
     }
@@ -1126,7 +1204,7 @@ std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::InterpolateBoundary::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: { s = "none"; break; }
     case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: {s = "edgeAndCorner"; break; }
     case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: { s = "edgeOnly"; break; }
   }
@@ -1141,7 +1219,7 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
     case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: { s = "catmullClark"; break; }
     case tinyusdz::GeomMesh::SubdivisionScheme::Loop: { s = "loop"; break; }
     case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: { s = "bilinear"; break; }
-    case tinyusdz::GeomMesh::SubdivisionScheme::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: { s = "none"; break; }
   }
 
   return s;
@@ -1155,7 +1233,7 @@ std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: { s = "cornersPlus2"; break; }
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: { s = "cornersOnly"; break; }
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: { s = "boundaries"; break; }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::None: { s = "none"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::FaceVaryingLinearInterpolationNone: { s = "none"; break; }
     case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::All: { s = "all"; break; }
   }
 
@@ -1322,6 +1400,26 @@ std::string to_string(tinyusdz::Permission s) {
   } else {
     return "[[PermissionInvalid]]";
   }
+}
+
+std::string to_string(tinyusdz::Purpose purpose) {
+  switch (purpose) {
+    case Purpose::Default: {
+      return "default";
+    }
+    case Purpose::Render: {
+      return "render";
+    }
+    case Purpose::Guide: {
+      return "guide";
+    }
+    case Purpose::Proxy: {
+      return "proxy";
+    }
+  }
+
+  // Never reach here though
+  return "[[Invalid Purpose value]]";
 }
 
 std::string to_string(tinyusdz::Variability v) {
@@ -1863,13 +1961,21 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
+  ss << print_typed_token_attr(root.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(root.purpose, "purpose", indent+1);
+  ss << print_typed_attr(root.extent, "extent", indent+1);
+
+  if (root.proxyPrim) {
+    ss << print_rel(root.proxyPrim.value(), "proxyPrim", indent+1);
+  }
+
   // TODO
   // Skeleton id
   //ss << pprint::Indent(indent) << "skelroot.skeleton_id << "\n"
 
   ss << print_xformOps(root.xformOps, indent+1);
 
-  //ss << print_props(root.props, indent+1);
+  ss << print_props(root.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1896,6 +2002,16 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
     ss << pprint::Indent(indent+1) << "rel skel:animationSource = " << pquote(skel.animationSource.value()) << "\n";
   }
 
+  if (skel.proxyPrim) {
+    ss << print_rel(skel.proxyPrim.value(), "proxyPrim", indent+1);
+  }
+
+  ss << print_typed_token_attr(skel.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(skel.purpose, "purpose", indent+1);
+  ss << print_typed_attr(skel.extent, "extent", indent+1);
+
+  ss << print_props(skel.props, indent+1);
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
@@ -1919,6 +2035,8 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool
   ss << print_typed_attr(skelanim.scales, "scales", indent+1);
   ss << print_typed_attr(skelanim.translations, "translations", indent+1);
 
+  ss << print_props(skelanim.props, indent+1);
+
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
@@ -1939,6 +2057,8 @@ std::string to_string(const BlendShape &prim, const uint32_t indent, bool closin
   ss << print_typed_attr(prim.offsets, "offsets", indent+1);
   ss << print_typed_attr(prim.normalOffsets, "normalOffsets", indent+1);
   ss << print_typed_attr(prim.pointIndices, "pointIndices", indent+1);
+
+  ss << print_props(prim.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2351,6 +2471,19 @@ std::string to_string(const XformOp::OpType &op) {
 std::string to_string(const tinyusdz::value::token &v) {
   return v.str();
 }
+
+std::string dump_path(const Path &path) {
+  std::stringstream ss;
+  ss << "Path: Prim part = " << path.GetPrimPart();
+  ss << ", Prop part = " << path.GetPropPart();
+  ss << ", elementName = " << path.GetElementName();
+  ss << ", isValid = " << path.IsValid();
+  ss << ", isAbsolute = " << path.IsAbsolutePath();
+  ss << ", isRelative = " << path.IsRelativePath();
+
+  return ss.str();
+}
+
 
 } // tinyusdz
 
