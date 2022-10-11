@@ -45,6 +45,7 @@ std::string to_string(Permission permission);
 std::string to_string(Variability variability);
 std::string to_string(SpecType spec_type);
 std::string to_string(Kind kind);
+std::string to_string(const Reference &reference);
 
 std::string to_string(const XformOp::OpType &ty);
 
@@ -54,6 +55,9 @@ std::string to_string(GeomMesh::FaceVaryingLinearInterpolation fv);
 
 std::string to_string(const Path &path, bool show_full_path = true);
 std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
+
+// For debugging
+std::string dump_path(const Path &p);
 
 std::string to_string(const StringData &s);
 

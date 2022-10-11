@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cassert>
 #include <cerrno>
 #include <cstdlib>
 #include <fstream>
@@ -127,7 +126,7 @@ struct PrimNode {
 // TODO: Move to prim-types.hh?
 
 template <typename T>
-struct PrimTypeTrait;
+struct PrimTypeTraits;
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -136,7 +135,7 @@ struct PrimTypeTrait;
 
 #define DEFINE_PRIM_TYPE(__dty, __name, __tyid)    \
   template <>                                      \
-  struct PrimTypeTrait<__dty> {                    \
+  struct PrimTypeTraits<__dty> {                    \
     using primt_type = __dty;                      \
     static constexpr uint32_t type_id = __tyid;    \
     static constexpr auto prim_type_name = __name; \
@@ -478,7 +477,7 @@ class USDAReader::Impl {
   template <typename T>
   bool RegisterReconstructCallback() {
     _parser.RegisterPrimConstructFunction(
-        PrimTypeTrait<T>::prim_type_name,
+        PrimTypeTraits<T>::prim_type_name,
         [&](const Path &full_path, const Specifier spec, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const prim::PropertyMap &properties,
@@ -514,7 +513,7 @@ class USDAReader::Impl {
                 "Failed to process Prim metadataum.");
           }
 
-          DCOUT("primType = " << value::TypeTrait<T>::type_name()
+          DCOUT("primType = " << value::TypeTraits<T>::type_name()
                               << ", node.size "
                               << std::to_string(_prim_nodes.size())
                               << ", primIdx = " << primIdx
@@ -1133,7 +1132,7 @@ template <>
 bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
   // TODO: Move to ReconstructPrim
   _parser.RegisterPrimConstructFunction(
-      PrimTypeTrait<GPrim>::prim_type_name,
+      PrimTypeTraits<GPrim>::prim_type_name,
       [&](const Path &path, const PropertyMap &properties,
           ReferenceList &references) {
         // TODO: Implement
@@ -1468,7 +1467,7 @@ bool USDAReader::Impl::ReconstructPrim(
 
   std::string err;
   if (!prim::ReconstructPrim(properties, references, prim, &_warn, &err)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to reconstruct {} Prim: {}", value::TypeTrait<T>::type_name(), err));
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to reconstruct {} Prim: {}", value::TypeTraits<T>::type_name(), err));
   }
   return true;
 }

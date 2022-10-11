@@ -27,7 +27,7 @@
 
 #include "nonstd/optional.hpp"
 
-#if defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
+#if 0 // defined(TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE)
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -149,7 +149,7 @@ class Token {
     str_ = str;
   }
 
-  const std::string str() const {
+  const std::string &str() const {
     return str_;
   }
 

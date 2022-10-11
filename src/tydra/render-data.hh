@@ -12,8 +12,14 @@ namespace tinyusdz {
 
 // forward decl
 class Stage;
+class Prim;
 struct GeomMesh;
 struct Xform;
+
+template<typename T>
+struct UsdPrimvarReader;
+
+using UsdPrimvarReader_float2 = UsdPrimvarReader<value::float2>;
 
 namespace tydra {
 
@@ -23,6 +29,16 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using mat2 = value::matrix2f;  // float precision
 
+enum class VertexVariability
+{
+  //Constant,
+  //Uniform,
+  //Varying,
+  Vertex,
+  FaceVarying,
+  Indexed, // Need to supply index buffer
+};
+
 // Geometric, light and camera
 enum class NodeType {
   Xform,
@@ -30,6 +46,7 @@ enum class NodeType {
   PointLight,
   DomeLight,
   Camera,
+  // TODO...
 };
 
 // glTF-like BufferData
@@ -46,6 +63,13 @@ struct Attribute {
   uint32_t slot_id{0};  // slot ID.
 
   int64_t buffer_id{-1};  // index to buffer_id
+};
+
+template<typename T>
+struct VertexAttribute {
+  std::vector<T> data;
+  std::vector<uint32_t> indices; // indexed primvar(vertex attribute). Used when variability == Indexed
+  VertexVariability variability;
 };
 
 enum class ColorSpace {
@@ -164,7 +188,7 @@ struct PreviewSurfaceShader {
 };
 
 // Material + Shader
-struct Material {
+struct RenderMaterial {
   std::string name;
 
   PreviewSurfaceShader shader;
@@ -174,7 +198,7 @@ struct Material {
 class RenderScene {
   std::vector<Node> nodes;
   std::vector<LDRImage> images;
-  std::vector<Material> materials;
+  std::vector<RenderMaterial> materials;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
   std::vector<BufferData>
@@ -266,7 +290,10 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage,
                                                   const Xform &xform);
 
 nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
-                                                  const GeomMesh &mesh);
+                                                  const GeomMesh &mesh, bool triangulate=false);
+
+// Currently float2 only
+std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
 
 }  // namespace tydra
 }  // namespace tinyusdz

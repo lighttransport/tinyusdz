@@ -103,7 +103,7 @@ struct Vertex {
 /// @param[out] out_mesh Subdivided mesh.
 /// @param[in] dump Dump .obj for debugging.
 ///
-void subdivide(int level, const ControlQuadMesh &in_mesh,
-               SubdividedMesh *out_mesh, bool dump = false);
+bool subdivide(int level, const ControlQuadMesh &in_mesh,
+               SubdividedMesh *out_mesh, std::string *err, bool dump = false);
 
 }  // namespace tinyusdz
