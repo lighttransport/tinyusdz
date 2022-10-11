@@ -1187,7 +1187,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
   // std::cout << "ReadInt token: " << ss.str() << "\n";
 
-#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+#if 0 // defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
     (*value) = std::stoull(ss.str());
   } catch (const std::invalid_argument &e) {
@@ -1291,8 +1291,7 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 
   // std::cout << "ReadInt token: " << ss.str() << "\n";
 
-  // TODO(syoyo): Use ryu parse.
-#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+#if 0 // defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
     (*value) = std::stoull(ss.str());
   } catch (const std::invalid_argument &e) {
