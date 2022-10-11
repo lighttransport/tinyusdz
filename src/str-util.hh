@@ -2,6 +2,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -160,6 +161,50 @@ inline std::vector<std::string> split(
   }
 
   return result;
+}
+
+//
+// "{name=varname}"
+//
+// => ["name", "varname"]
+//
+// "{name=}"
+//
+// => ["name", ""]
+//
+// Return false when input string is not a variant element
+//
+inline bool tokenize_variantElement(const std::string &elementName, std::array<std::string, 2> *result = nullptr) {
+
+  std::vector<std::string> toks;
+
+  // Ensure ElementPath is quoted with '{' and '}'
+  if (startsWith(elementName, "{") && endsWith(elementName, "}")) {
+    // ok
+  } else {
+    return false;
+  }
+
+  // Remove variant quotation
+  std::string name = unwrap(elementName, "{", "}");
+
+  toks = split(name, "=");
+  if (toks.size() == 1) {
+    if (result) {
+      (*result)[0] = toks[0];
+      (*result)[1] = std::string();
+    }
+    return true;
+  } else if (toks.size() == 2) {
+    if (result) {
+      (*result)[0] = toks[0];
+      (*result)[1] = toks[1];
+    }
+    return true;
+  } else {
+    return false;
+  } 
+
 }
 
 #if 0

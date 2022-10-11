@@ -281,6 +281,10 @@ class Path {
 
   Path AppendElement(const std::string &elem);
 
+  std::string GetElementName() const {
+    return element_;
+  }
+
   ///
   /// Split a path to the root(common ancestor) and its siblings
   ///

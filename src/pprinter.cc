@@ -2472,5 +2472,18 @@ std::string to_string(const tinyusdz::value::token &v) {
   return v.str();
 }
 
+std::string dump_path(const Path &path) {
+  std::stringstream ss;
+  ss << "Path: Prim part = " << path.GetPrimPart();
+  ss << ", Prop part = " << path.GetPropPart();
+  ss << ", elementName = " << path.GetElementName();
+  ss << ", isValid = " << path.IsValid();
+  ss << ", isAbsolute = " << path.IsAbsolutePath();
+  ss << ", isRelative = " << path.IsRelativePath();
+
+  return ss.str();
+}
+
+
 } // tinyusdz
 
