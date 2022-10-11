@@ -1,8 +1,10 @@
-#include "prim-types.hh"
-//#include "pprinter.hh"
-
+// SPDX-License-Identifier: MIT
+// Copyright 2021 - Present, Syoyo Fujita.
 #include <algorithm>
 #include <limits>
+//
+#include "prim-types.hh"
+#include "str-util.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -190,22 +192,27 @@ Path Path::AppendProperty(const std::string &elem) {
     p.valid = false;
     return p;
   }
-
-  if (elem[0] == '{') {
-    // variant chars are not supported
+  
+  if (!tokenize_variantElement(elem)) {
+    // variant chars are not supported yet.
     p.valid = false;
     return p;
-  } else if (elem[0] == '[') {
+  }
+
+  if (elem[0] == '[') {
     // relational attrib are not supported
     p.valid = false;
     return p;
   } else if (elem[0] == '.') {
+    // Relative
     // std::cerr << "???. elem[0] is '.'\n";
     // For a while, make this valid.
     p.valid = false;
     return p;
   } else {
+    // TODO: Validate property path.
     p.prop_part = elem;
+    p.element_ = elem;
 
     return p;
   }
@@ -258,16 +265,19 @@ Path Path::AppendElement(const std::string &elem) {
     return p;
   }
 
-  if (elem[0] == '{') {
-    // variant chars are not supported
+  std::array<std::string, 2> variant;
+  if (tokenize_variantElement(elem, &variant)) {
+    // variant is not supported yet.
     p.valid = false;
     return p;
-  } else if (elem[0] == '[') {
+  }
+
+  if (elem[0] == '[') {
     // relational attrib are not supported
     p.valid = false;
     return p;
   } else if (elem[0] == '.') {
-    // std::cerr << "???. elem[0] is '.'\n";
+    // Relative path
     // For a while, make this valid.
     p.valid = false;
     return p;
@@ -276,8 +286,12 @@ Path Path::AppendElement(const std::string &elem) {
     if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
       p.prim_part += elem;
     } else {
+      // TODO: Validate element name.
       p.prim_part += '/' + elem;
     }
+
+    // Also store raw element name
+    p.element_ = elem;
 
     return p;
   }
@@ -308,7 +322,7 @@ Path Path::GetParentPrim() const {
 
 bool MetaVariable::IsObject() const {
   return (value.type_id() ==
-          value::TypeTrait<tinyusdz::CustomDataType>::type_id);
+          value::TypeTraits<tinyusdz::CustomDataType>::type_id);
 }
 
 nonstd::optional<Kind> KindFromString(const std::string &str) {
@@ -359,5 +373,6 @@ bool ValidatePrimName(const std::string &name)
   return true;
 
 }
+
 
 }  // namespace tinyusdz

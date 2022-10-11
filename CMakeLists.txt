@@ -135,7 +135,16 @@ endif()
 # Currently TinyUSDZ does not claim CXX version when TinyUSDZ is added as add_subdirectory()
 # of toplevel(root) project.
 # TODO: Property inherit CXX compiler settings from toplevel(root) project.
+
+# PROJECT_IS_TOP_LEVEL is available from cmake 3.21
+if (CMAKE_VERSION VERSION_LESS 3.21)
+  if ("${CMAKE_PROJECT_NAME}" STREQUAL "${TINYUSDZ_TARGET}")
+    set(PROJECT_IS_TOP_LEVEL ON)
+  endif()
+endif ()
+
 if (PROJECT_IS_TOP_LEVEL)
+  message(STATUS "TinyUSDZ is being built as toplevel project so set CXX standard here.")
   if(TINYUSDZ_WITH_PYTHON)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
@@ -257,6 +266,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
+    ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc)
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -544,12 +554,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  #target_include_directories(${TINYUSDZ_LIB_TARGET}
-  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/ryu/)
-  #target_include_directories(${TINYUSDZ_LIB_TARGET}
-  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/fast_float/include)
-  #target_include_directories(${TINYUSDZ_LIB_TARGET}
-  #                           PRIVATE ${PROJECT_SOURCE_DIR}/src/external/simple_match/include)
 
   #if(TINYUSDZ_WITH_JSON)
   ##target_include_directories(
@@ -717,6 +721,7 @@ endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_usdz_dump)
+  add_subdirectory(examples/tydra_convert)
   if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()
