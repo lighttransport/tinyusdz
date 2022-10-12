@@ -705,6 +705,10 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 
     {
       std::string prop_name = path.value().GetPropPart();
+      if (prop_name.empty()) {
+        // ???
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
+      }
 
       Property prop;
       if (!ParseProperty(spec.spec_type, child_fvs, &prop)) {

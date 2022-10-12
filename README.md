@@ -109,17 +109,15 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
   * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
   * [x] llvm-mingw(clang) supported
 
-## USDZ file format
-
-USDZ is actually an uncompressed zip file.
-USDZ(ZIP) contains usd(binary or ascii) and resources(e.g. image/auduo files)
-
-
 ## Build
 
 ### Integrate to your app
 
-Recomended way is simply copy `src` and `include` folder to your app, and add `*.cc` files to your app's build system.
+If you are using CMake, just include tinyusdz repo with `add_subdirectory`. 
+
+Another way is simply copy `src` folder to your app, and add `*.cc` files to your app's build system.
+All include paths are set relative from `src` folder, so you can just add include directory to `src` folder.
+
 See `<tinyusdz>/CMakeLists.txt` and [examples/sdlviewer/CMakeLists.txt](examples/sdlviewer/CMakeLists.txt) for details.
 
 It may not be recommend to use tinyusdz as a git submodule, since the repo contains lots of codes required to build TinyUSDZ examples but these are not required for your app.
@@ -130,9 +128,9 @@ Please see `CMake build options` and `CMakeLists.txt`. In most case same identif
 
 ### CMake
 
-cmake build is still provided for CI build. `CMakeSettings.json` is provided for Visual Studio 2019.
+Cmake build is provided.
 
-Cmake project is not recommended for embedding TinyUSDZ to your app.
+#### Linux and macOS
 
 ```
 $ mkdir build
@@ -140,6 +138,15 @@ $ cd build
 $ cmake ..
 $ make
 ```
+
+Please take a look at `scripts/bootstrap-cmake-*.sh` for some build configuraions.
+
+#### Visual Studio
+
+Visual Studio 2019 and 2022 are supported.
+
+`CMakeSettings.json` is provided for Visual Studio 2019, but reccommended way is to invoke `vcsetup.bat`.
+(Edit VS version in `vcsetup.bat` as you with)
 
 #### LLVM-MinGW build
 
@@ -281,7 +288,7 @@ then build TinyUSDZ by linking with this local Python build.
 ## License
 
 TinyUSDZ is licensed under MIT license and Apache 2.0 license.
-(Doing relicensing. Will be relicensed to Apache 2.0)
+(Doing relicensing from MIT to Apache 2.0. Will be fully relicensed to Apache 2.0 at some point)
 
 ### Third party licenses
 
