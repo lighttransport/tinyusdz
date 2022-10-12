@@ -193,7 +193,7 @@ Path Path::AppendProperty(const std::string &elem) {
     return p;
   }
   
-  if (!tokenize_variantElement(elem)) {
+  if (tokenize_variantElement(elem)) {
     // variant chars are not supported yet.
     p.valid = false;
     return p;
