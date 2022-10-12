@@ -3,8 +3,8 @@
 #include <sstream>
 
 #include "tinyusdz.hh"
-#include "usdShade.hh"
 #include "tydra/render-data.hh"
+#include "usdShade.hh"
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
@@ -22,44 +22,98 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
+// key = Full absolute prim path(e.g. `/bora/dora`)
 using MaterialMap = std::map<std::string, const tinyusdz::Material *>;
+using PreviewSurfaceMap =
+    std::map<std::string, const tinyusdz::UsdPreviewSurface *>;
+using UVTextureMap = std::map<std::string, const tinyusdz::UsdUVTexture *>;
+using PrimvarReader_float2Map =
+    std::map<std::string, const tinyusdz::UsdPrimvarReader_float2 *>;
 
-
-static bool TraverseMaterialRec(const std::string &path_prefix, const tinyusdz::Prim &prim, uint32_t depth, MaterialMap &matmap) {
-  if (depth > 1024*128) {
+template <typename T>
+static bool TraverseRec(const std::string &path_prefix,
+                        const tinyusdz::Prim &prim, uint32_t depth,
+                        std::map<std::string, const T *> &itemmap) {
+  if (depth > 1024 * 128) {
     // Too deep
     return false;
   }
 
-  (void)matmap;
-  (void)prim;
-
   std::string prim_abs_path = path_prefix + "/" + prim.path.full_path_name();
 
   if (prim.data.type_id() == tinyusdz::value::TYPE_ID_MATERIAL) {
-    if (const tinyusdz::Material *pv = prim.data.as<tinyusdz::Material>()) {
-      std::cout << "Path : <" << prim_abs_path << "> is Material.\n";
-      matmap[prim_abs_path] = pv;
+    if (const T *pv = prim.data.as<T>()) {
+      std::cout << "Path : <" << prim_abs_path << "> is "
+                << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
+      itemmap[prim_abs_path] = pv;
     }
   }
 
   for (const auto &child : prim.children) {
-    if (!TraverseMaterialRec(prim_abs_path, child, depth+1, matmap)) {
+    if (!TraverseRec(prim_abs_path, child, depth + 1, itemmap)) {
       return false;
     }
-  } 
+  }
 
   return true;
 }
 
-static void TraverseMaterial(const tinyusdz::Stage &stage)
-{
-  MaterialMap matmap;
+template <typename T>
+static bool TraverseShaderRec(const std::string &path_prefix,
+                        const tinyusdz::Prim &prim, uint32_t depth,
+                        std::map<std::string, const T *> &itemmap) {
+  if (depth > 1024 * 128) {
+    // Too deep
+    return false;
+  }
 
+  std::string prim_abs_path = path_prefix + "/" + prim.path.full_path_name();
+
+  // First test if Shader prim.
+  if (prim.data.type_id() == tinyusdz::value::TYPE_ID_SHADER) {
+    if (const tinyusdz::Shader *ps = prim.data.as<tinyusdz::Shader>()) {
+      // Concrete Shader object(e.g. UsdUVTexture) is stored in .data.
+      if (const T *s = ps->value.as<T>()) {
+        std::cout << "Path : <" << prim_abs_path << "> is "
+                  << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
+        itemmap[prim_abs_path] = s;
+      }
+    }
+  }
+
+  for (const auto &child : prim.children) {
+    if (!TraverseShaderRec(prim_abs_path, child, depth + 1, itemmap)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static void TraverseMaterial(const tinyusdz::Stage &stage, MaterialMap &m) {
   for (const auto &prim : stage.GetRootPrims()) {
-    TraverseMaterialRec(/* root */"", prim, 0, matmap);    
-  } 
+    TraverseRec(/* root */ "", prim, 0, m);
+  }
+}
 
+static void TraversePreviewSurface(const tinyusdz::Stage &stage,
+                                   PreviewSurfaceMap &m) {
+  for (const auto &prim : stage.GetRootPrims()) {
+    TraverseShaderRec(/* root */ "", prim, 0, m);
+  }
+}
+
+static void TraverseUVTexture(const tinyusdz::Stage &stage, UVTextureMap &m) {
+  for (const auto &prim : stage.GetRootPrims()) {
+    TraverseShaderRec(/* root */ "", prim, 0, m);
+  }
+}
+
+static void TraversePrimvarReader_float2(const tinyusdz::Stage &stage,
+                                         PrimvarReader_float2Map &m) {
+  for (const auto &prim : stage.GetRootPrims()) {
+    TraverseShaderRec(/* root */ "", prim, 0, m);
+  }
 }
 
 int main(int argc, char **argv) {
@@ -139,8 +193,20 @@ int main(int argc, char **argv) {
 
   std::string s = stage.ExportToString();
   std::cout << s << "\n";
+  std::cout << "--------------------------------------"
+            << "\n";
 
-  TraverseMaterial(stage);
+  // Mapping hold the pointer to concrete Prim object,
+  // So stage content should not be changed(no Prim addition/deletion).
+  MaterialMap matmap;
+  PreviewSurfaceMap surfacemap;
+  UVTextureMap texmap;
+  PrimvarReader_float2Map preadermap;
+
+  TraverseMaterial(stage, matmap);
+  TraversePreviewSurface(stage, surfacemap);
+  TraverseUVTexture(stage, texmap);
+  TraversePrimvarReader_float2(stage, preadermap);
 
   return 0;
 }
