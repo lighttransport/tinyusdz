@@ -220,7 +220,7 @@ nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
   if (v.as<__ty>()) {                      \
     Path p(v.as<__ty>()->name, "");   \
     p.element_name() = v.as<__ty>()->name; \
-    return p; \
+    return std::move(p); \
   }
 
   EXTRACT_NAME_AND_RETURN_PATH(Model)
