@@ -204,12 +204,15 @@ int main(int argc, char **argv) {
   UVTextureMap texmap;
   PrimvarReader_float2Map preadermap;
 
+  // Collect and make full path <-> Prim mapping
   TraverseMaterial(stage, matmap);
   TraversePreviewSurface(stage, surfacemap);
   TraverseUVTexture(stage, texmap);
   TraversePrimvarReader_float2(stage, preadermap);
 
+  //
   // Query example
+  //
   for (const auto &item : matmap) {
     nonstd::expected<const tinyusdz::Prim*, std::string> mat = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
     if (mat) {
@@ -230,11 +233,10 @@ int main(int argc, char **argv) {
     
       const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
       if (sp) { // this should be true though.
-        std::cout << tinyusdz::to_string(*sp) << "\n";
 
         if (const tinyusdz::UsdPreviewSurface *surf = sp->value.as<tinyusdz::UsdPreviewSurface>()) {
           // TODO: ppriter for UsdPreviewSurface
-          (void)surf;
+          std::cout << tinyusdz::to_string(*surf) << "\n";
         }
       }
 
@@ -251,11 +253,8 @@ int main(int argc, char **argv) {
     
       const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
       if (sp) { // this should be true though.
-        std::cout << tinyusdz::to_string(*sp) << "\n";
-
-        if (const tinyusdz::UsdUVTexture *tex = sp->value.as<tinyusdz::UsdUVTexture>()) {
-          // TODO: ppriter for UsdUVTexture
-          (void)tex;
+        if (const tinyusdz::UsdUVTexture *tex = sp->value.as<tinyusdz::UsdUVTexture>()) { 
+          std::cout << tinyusdz::to_string(*tex);
         }
       }
 
@@ -272,11 +271,10 @@ int main(int argc, char **argv) {
     
       const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
       if (sp) { // this should be true though.
-        std::cout << tinyusdz::to_string(*sp) << "\n";
 
-        if (const tinyusdz::UsdPrimvarReader_float2 *tex = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
-          // TODO: ppriter for UsdUVTexture
-          (void)tex;
+        if (const tinyusdz::UsdPrimvarReader_float2 *preader = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
+          // TODO: ppriter for UsdPrimvarReader_float2
+          std::cout << tinyusdz::to_string(*preader) << "\n";
         }
       }
 

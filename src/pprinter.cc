@@ -2278,6 +2278,46 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
 
 }
 
+std::string to_string(const UsdPreviewSurface &surf, const uint32_t indent, bool closing_brace) {
+  // TODO: Print spec and meta?
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_shader_params(surf, indent); 
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const UsdUVTexture &tex, const uint32_t indent, bool closing_brace) {
+  // TODO: Print spec and meta?
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_shader_params(tex, indent); 
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const UsdPrimvarReader_float2 &preader, const uint32_t indent, bool closing_brace) {
+  // TODO: Print spec and meta?
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_shader_params(preader, indent); 
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+
 
 std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
