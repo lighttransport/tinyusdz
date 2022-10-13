@@ -150,11 +150,10 @@ std::string to_string(const LuxDistantLight &light, const uint32_t indent = 0, b
 std::string to_string(const LuxCylinderLight &light, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const Material &material, const uint32_t indent = 0, bool closing_brace = true);
+
+// It will delegate to to_string() of concrete Shader type(e.g. UsdPreviewSurface)
 std::string to_string(const Shader &shader, const uint32_t indent = 0, bool closing_brace = true);
 
-std::string to_string(const APISchemas::APIName &name);
-
-#if 0
 std::string to_string(const UsdPreviewSurface &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdUVTexture &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdPrimvarReader_float &shader, const uint32_t indent = 0, bool closing_brace = true);
@@ -162,7 +161,6 @@ std::string to_string(const UsdPrimvarReader_float2 &shader, const uint32_t inde
 std::string to_string(const UsdPrimvarReader_float3 &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdPrimvarReader_float4 &shader, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const UsdPrimvarReader_int &shader, const uint32_t indent = 0, bool closing_brace = true);
-#endif
 
 std::string to_string(const UsdUVTexture::SourceColorSpace v);
 std::string to_string(const UsdUVTexture::Wrap v);
@@ -172,6 +170,7 @@ std::string to_string(const GeomCamera::StereoRole &role);
 
 std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const APISchemas::APIName &name);
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent);
 std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t indent);
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
