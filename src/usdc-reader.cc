@@ -1945,8 +1945,6 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                     << fv.first << "(type = " << fv.second.type_name() << ")");
   }
 
-  Path elemPath;
-
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
   if (current == 0) {
@@ -1995,9 +1993,11 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       DCOUT("<== PrimFields end ===");
 
+      Path elemPath;
+
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
+        DCOUT(fmt::format("Element path: {}", pv.value().full_path_name()));
         elemPath = pv.value();
-        DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "(Internal errror) Element path not found.");
@@ -2041,7 +2041,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         if (prim) {
           // Prim name
-          prim.value().elementPath = elemPath;
+          prim.value().element_path() = elemPath;
         }
 
         if (primOut) {
@@ -2070,6 +2070,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       DCOUT(
           fmt::format("[{}] is a Variantset node(parent = {}). prim_idx? = {}",
                       current, parent, _prim_table.count(current)));
+
+      Path elemPath;
 
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
         elemPath = pv.value();
@@ -2100,6 +2102,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       DCOUT("<== VariantSetFields endn === ");
 
       // Add variantChildren to prim node.
+      // TODO: elemPath
       if (!AddVariantChildrenToPrimNode(parent, variantChildren)) {
         return false;
       }
@@ -2129,6 +2132,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       DCOUT("<== VariantFields end === ");
 
+      Path elemPath;
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
         elemPath = pv.value();
         DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
@@ -2186,10 +2190,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         if (variantPrim) {
           // Prim name
-          variantPrim.value().elementPath = elemPath; // FIXME: Use variantPrimName?
+          variantPrim.value().element_path() = elemPath; // FIXME: Use variantPrimName?
 
           // Prim Specifier
-          variantPrim.value().specifier = specifier.value();
+          variantPrim.value().specifier() = specifier.value();
 
           // Store variantPrim to temporary buffer.
           DCOUT("add prim idx as variant: " << current);
@@ -2326,7 +2330,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   } else {
     // Add to root prim.
     if (prim && rootPrim) {
-      rootPrim->children.emplace_back(std::move(prim.value()));
+      rootPrim->children().emplace_back(std::move(prim.value()));
     }
   }
 

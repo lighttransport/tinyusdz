@@ -67,7 +67,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     // primvar is simply an attribute with prefix `primvars:`
     //
     // texCoord2f[] primvars:uv = [ ... ] ( interpolation = "vertex" )
-    // int[] primvars:uv:indices = [ ... ] 
+    // int[] primvars:uv:indices = [ ... ]
     //
     {
       tinyusdz::PrimAttrib uvAttr;
@@ -92,7 +92,7 @@ void SimpleScene(tinyusdz::Stage *stage)
       mesh.props.emplace("primvars:uv", uvProp);
 
       // ----------------------
-      
+
       tinyusdz::PrimAttrib uvIndexAttr;
       std::vector<int> uvIndices;
 
@@ -121,7 +121,7 @@ void SimpleScene(tinyusdz::Stage *stage)
       attrib.set_var(std::move(var));
 
       attrib.variability = tinyusdz::Variability::Uniform;
-      
+
       tinyusdz::AttrMeta meta;
       meta.hidden = false;
       attrib.meta = meta;
@@ -140,7 +140,7 @@ void SimpleScene(tinyusdz::Stage *stage)
   //  |
   //  +- [Mesh]
   //
-  xformPrim.children.emplace_back(std::move(meshPrim));
+  xformPrim.children().emplace_back(std::move(meshPrim));
 
   stage->GetRootPrims().emplace_back(std::move(xformPrim));
 }

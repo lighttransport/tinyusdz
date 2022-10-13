@@ -5,6 +5,9 @@
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "usdShade.hh"
+#include "pprinter.hh"
+#include "prim-pprint.hh"
+#include "value-pprint.hh"
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
@@ -39,17 +42,17 @@ static bool TraverseRec(const std::string &path_prefix,
     return false;
   }
 
-  std::string prim_abs_path = path_prefix + "/" + prim.path.full_path_name();
+  std::string prim_abs_path = path_prefix + "/" + prim.local_path().full_path_name();
 
-  if (prim.data.type_id() == tinyusdz::value::TYPE_ID_MATERIAL) {
-    if (const T *pv = prim.data.as<T>()) {
+  if (prim.is<tinyusdz::Material>()) {
+    if (const T *pv = prim.as<T>()) {
       std::cout << "Path : <" << prim_abs_path << "> is "
                 << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
       itemmap[prim_abs_path] = pv;
     }
   }
 
-  for (const auto &child : prim.children) {
+  for (const auto &child : prim.children()) {
     if (!TraverseRec(prim_abs_path, child, depth + 1, itemmap)) {
       return false;
     }
@@ -67,21 +70,19 @@ static bool TraverseShaderRec(const std::string &path_prefix,
     return false;
   }
 
-  std::string prim_abs_path = path_prefix + "/" + prim.path.full_path_name();
+  std::string prim_abs_path = path_prefix + "/" + prim.local_path().full_path_name();
 
   // First test if Shader prim.
-  if (prim.data.type_id() == tinyusdz::value::TYPE_ID_SHADER) {
-    if (const tinyusdz::Shader *ps = prim.data.as<tinyusdz::Shader>()) {
-      // Concrete Shader object(e.g. UsdUVTexture) is stored in .data.
-      if (const T *s = ps->value.as<T>()) {
-        std::cout << "Path : <" << prim_abs_path << "> is "
-                  << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
-        itemmap[prim_abs_path] = s;
-      }
+  if (const tinyusdz::Shader *ps = prim.as<tinyusdz::Shader>()) {
+    // Concrete Shader object(e.g. UsdUVTexture) is stored in .data.
+    if (const T *s = ps->value.as<T>()) {
+      std::cout << "Path : <" << prim_abs_path << "> is "
+                << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
+      itemmap[prim_abs_path] = s;
     }
   }
 
-  for (const auto &child : prim.children) {
+  for (const auto &child : prim.children()) {
     if (!TraverseShaderRec(prim_abs_path, child, depth + 1, itemmap)) {
       return false;
     }
@@ -207,6 +208,82 @@ int main(int argc, char **argv) {
   TraversePreviewSurface(stage, surfacemap);
   TraverseUVTexture(stage, texmap);
   TraversePrimvarReader_float2(stage, preadermap);
+
+  // Query example
+  for (const auto &item : matmap) {
+    nonstd::expected<const tinyusdz::Prim*, std::string> mat = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    if (mat) {
+      std::cout << "Found Material <" << item.first << "> from Stage:\n";
+      if (const tinyusdz::Material *mp = mat.value()->as<tinyusdz::Material>()) { // this should be true though.
+        std::cout << tinyusdz::to_string(*mp) << "\n";
+      }
+    } else {
+      std::cerr << "Err: " << mat.error() << "\n";
+    }
+  }
+
+  for (const auto &item : surfacemap) {
+    // Returned Prim is Shader class
+    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    if (shader) {
+      std::cout << "Found Shader(UsdPreviewSurface) <" << item.first << "> from Stage:\n";
+    
+      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      if (sp) { // this should be true though.
+        std::cout << tinyusdz::to_string(*sp) << "\n";
+
+        if (const tinyusdz::UsdPreviewSurface *surf = sp->value.as<tinyusdz::UsdPreviewSurface>()) {
+          // TODO: ppriter for UsdPreviewSurface
+          (void)surf;
+        }
+      }
+
+    } else {
+      std::cerr << "Err: " << shader.error() << "\n";
+    }
+  }
+
+  for (const auto &item : texmap) {
+    // Returned Prim is Shader class
+    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    if (shader) {
+      std::cout << "Found Shader(UsdUVTexture) <" << item.first << "> from Stage:\n";
+    
+      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      if (sp) { // this should be true though.
+        std::cout << tinyusdz::to_string(*sp) << "\n";
+
+        if (const tinyusdz::UsdUVTexture *tex = sp->value.as<tinyusdz::UsdUVTexture>()) {
+          // TODO: ppriter for UsdUVTexture
+          (void)tex;
+        }
+      }
+
+    } else {
+      std::cerr << "Err: " << shader.error() << "\n";
+    }
+  }
+
+  for (const auto &item : preadermap) {
+    // Returned Prim is Shader class
+    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    if (shader) {
+      std::cout << "Found Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
+    
+      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      if (sp) { // this should be true though.
+        std::cout << tinyusdz::to_string(*sp) << "\n";
+
+        if (const tinyusdz::UsdPrimvarReader_float2 *tex = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
+          // TODO: ppriter for UsdUVTexture
+          (void)tex;
+        }
+      }
+
+    } else {
+      std::cerr << "Err: " << shader.error() << "\n";
+    }
+  }
 
   return 0;
 }
