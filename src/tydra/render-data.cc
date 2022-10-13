@@ -158,7 +158,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
 /// (length = triangulated faceVertexIndices. indexMap[i] stores array index in original faceVertexIndices.
 /// For remapping primvar attributes.)
 ///
-/// Return false when a polygon is degenerated. 
+/// Return false when a polygon is degenerated.
 /// No overlap check at the moment
 ///
 /// T = value::float3 or value::double3
@@ -241,13 +241,13 @@ bool TriangulatePolygon(
           vi0_2 = faceVertexIndices[faceIndexOffset + j];
 
           if (vi0 >= points.size()) {
-            err = 
+            err =
                 fmt::format("Invalid vertex index.");
             return false;
           }
 
           if (vi0_2 >= points.size()) {
-            err = 
+            err =
                 fmt::format("Invalid vertex index.");
             return false;
           }
@@ -343,6 +343,40 @@ bool TriangulatePolygon(
   return true;
 }
 
+#if 0
+//
+// `Shader` may be nested, so first list up all Shader nodes under Material.
+//
+struct ShaderNode
+{
+  std::name
+};
+
+nonstd::optional<UsdPrimvarReader_float2> FindPrimvarReader_float2Rec(
+  const Prim &root,
+  RenderMesh &mesh)
+{
+  if (auto sv = root.data.as<Shader>()) {
+    const Shader &shader = (*sv);
+
+    if (auto pv = shader.value.as<UsdUVTexture>()) {
+      const UsdUVTexture &tex = (*pv);
+      (void)tex;
+    }
+  }
+
+  for (const auto &child : root.children) {
+    auto ret = ListUpShaderGraphRec(child, mesh);
+    if (!ret) {
+      return nonstd::make_unexpected(ret.error());
+    }
+  }
+
+  return true;
+}
+#endif
+
+
 }  // namespace
 
 // Currently float2 only
@@ -350,11 +384,11 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(
     const Prim &node) {
   std::vector<UsdPrimvarReader_float2> dst;
 
-  if (!node.data.as<Material>()) {
+  if (!node.is<Material>()) {
     return dst;
   }
 
-  for (const auto &child : node.children) {
+  for (const auto &child : node.children()) {
     (void)child;
   }
 
@@ -481,11 +515,11 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
     // TODO: Triangulate.
 
     std::string err;
-    
+
     std::vector<uint32_t> triangulatedFaceVertexCounts;
     std::vector<uint32_t> triangulatedFaceVertexIndices;
     std::vector<size_t> faceVertexIndexMap;
-    if (!TriangulatePolygon<value::float3, float>(dst.points, dst.faceVertexCounts, dst.faceVertexIndices, 
+    if (!TriangulatePolygon<value::float3, float>(dst.points, dst.faceVertexCounts, dst.faceVertexIndices,
       triangulatedFaceVertexCounts, triangulatedFaceVertexIndices, faceVertexIndexMap, err)) {
 
       return nonstd::make_unexpected("Triangulation failed: " + err);
