@@ -145,7 +145,7 @@ class Node {
 
 namespace {
 
-nonstd::optional<Path> GetPath(const value::Value &v) {
+nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
   // Since multiple get_value() call consumes lots of stack size(depends on
   // sizeof(T)?), Following code would produce 100KB of stack in debug build. So
   // use as() instead(as() => roughly 2000 bytes for stack size).
@@ -214,9 +214,13 @@ nonstd::optional<Path> GetPath(const value::Value &v) {
   // }
 #else
 
+  // Lookup name field of Prim class
+
 #define EXTRACT_NAME_AND_RETURN_PATH(__ty) \
   if (v.as<__ty>()) {                      \
-    return Path(v.as<__ty>()->name, "");   \
+    Path p(v.as<__ty>()->name, "");   \
+    p.element_name() = v.as<__ty>()->name; \
+    return p; \
   }
 
   EXTRACT_NAME_AND_RETURN_PATH(Model)
@@ -259,11 +263,11 @@ Prim::Prim(const value::Value &rhs) {
   // Check if Prim type is Model(GPrim)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
-    if (auto pv = GetPath(rhs)) {
-      path = pv.value();
+    if (auto pv = GetPrimElementName(rhs)) {
+      _path = pv.value();
     }
 
-    data = rhs;
+    _data = rhs;
   } else {
     // TODO: Raise an error if rhs is not an Prim
   }
@@ -273,10 +277,10 @@ Prim::Prim(value::Value &&rhs) {
   // Check if Prim type is Model(GPrim)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
-    data = std::move(rhs);
+    _data = std::move(rhs);
 
-    if (auto pv = GetPath(data)) {
-      path = pv.value();
+    if (auto pv = GetPrimElementName(_data)) {
+      _path = pv.value();
     }
 
   } else {
@@ -287,19 +291,30 @@ Prim::Prim(value::Value &&rhs) {
 namespace {
 
 nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
-                                                const Path &path) {
-  //// TODO: Find better way to get path name from any value.
-  // if (auto pv = parent.get_value<Xform>)
-  if (auto pv = GetPath(parent->data)) {
-    DCOUT("Prim Path = " << pv.value());
-    DCOUT("Given Path = " << path);
-    if (path == pv.value()) {
+                                                const std::string &parent_path,
+                                                const Path &path, const uint32_t depth) {
+  std::string abs_path;
+  // if (auto pv = GetPrimElementName(parent->data())) {
+  {
+    // TODO: Use elementPath
+    std::string elementName = parent->local_path().GetPrimPart();
+    DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
+    DCOUT(pprint::Indent(depth) << "Given Path = " << path);
+    // fully absolute path
+    abs_path = parent_path + "/" + elementName;
+    DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
+    DCOUT(pprint::Indent(depth) << "queriying path = " << path.full_path_name());
+    if (abs_path == path.full_path_name()) {
+      DCOUT(pprint::Indent(depth) << "Got it! Found Prim at Path = " << abs_path);
       return parent;
     }
   }
 
-  for (const auto &child : parent->children) {
-    if (auto pv = GetPrimAtPathRec(&child, path)) {
+  DCOUT(pprint::Indent(depth) << "# of children : " << parent->children().size());
+  for (const auto &child : parent->children()) {
+    //const std::string &p = parent->elementPath.full_path_name();
+    DCOUT(pprint::Indent(depth+1) << "Parent path : " << abs_path);
+    if (auto pv = GetPrimAtPathRec(&child, abs_path, path, depth+1)) {
       return pv.value();
     }
   }
@@ -342,7 +357,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
   // Brute-force search.
   for (const auto &parent : root_nodes) {
-    if (auto pv = GetPrimAtPathRec(&parent, path)) {
+    if (auto pv = GetPrimAtPathRec(&parent, /* root */"", path, /* depth */0)) {
       // Add to cache.
       // Assume pointer address does not change unless dirty state.
       _prim_path_cache[path.GetPrimPart()] = pv.value();
@@ -356,6 +371,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
     const Prim &root, const Path &path) {
+  // TODO: Resolve "../"
   // TODO: cache path
 
   if (!path.IsValid()) {
@@ -373,30 +389,35 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
     return nonstd::make_unexpected("Invalid Path.\n");
   }
 
-  Path abs_path = root.path;
+#if 0 // TODO
+  Path abs_path = root.local_path();
   abs_path.AppendElement(path.GetPrimPart());
 
-  DCOUT("root path = " << root.path);
+  DCOUT("root path = " << root.path());
   DCOUT("abs path = " << abs_path);
 
-  // Brute-force search.
-  if (auto pv = GetPrimAtPathRec(&root, abs_path)) {
+  // Brute-force search from Stage root.
+  if (auto pv = GetPrimAtPathRec(&root, /* root */"", abs_path, /* depth */0)) {
     return pv.value();
   }
 
   return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
                                  "> under Prim: " + to_string(root.path) +
                                  "\n");
+#else
+  (void)root;
+  return nonstd::make_unexpected("GetPrimFromRelativePath is TODO");
+#endif
 }
 
 namespace {
 
 void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   ss << "\n";
-  ss << pprint_value(prim.data, indent, /* closing_brace */ false);
+  ss << pprint_value(prim.data(), indent, /* closing_brace */ false);
 
-  DCOUT("num_children = " << prim.children.size());
-  for (const auto &child : prim.children) {
+  DCOUT("num_children = " << prim.children().size());
+  for (const auto &child : prim.children()) {
     PrimPrintRec(ss, child, indent + 1);
   }
 

@@ -1071,7 +1071,7 @@ void ReconstructNodeRec(const size_t idx,
     ReconstructNodeRec(cidx, prim_nodes, prim);
   }
 
-  parent.children.emplace_back(std::move(prim));
+  parent.children().emplace_back(std::move(prim));
 }
 
 }  // namespace
@@ -1100,12 +1100,16 @@ bool USDAReader::Impl::ReconstructStage() {
 #endif
     }
 
-    DCOUT("prim[" << idx << "].num_children = " << prim.children.size());
+    // root's elementPath is empty"/"
+    prim.element_path() = Path("", "");
+
+    DCOUT("root prim[" << idx << "].elementPath = " << dump_path(prim.element_path()));
+    DCOUT("root prim[" << idx << "].num_children = " << prim.children().size());
 
     size_t sz = _stage.GetRootPrims().size();
     _stage.GetRootPrims().emplace_back(std::move(prim));
 
-    DCOUT("num_children = " << _stage.GetRootPrims()[sz].children.size());
+    DCOUT("num_children = " << _stage.GetRootPrims()[sz].children().size());
   }
 
   return true;

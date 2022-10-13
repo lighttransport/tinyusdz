@@ -3837,7 +3837,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       // Assume single root node in the scene.
       DCOUT("paths[" << pathIndexes[thisIndex]
                      << "] is parent. name = " << parentPath.full_path_name());
-      parentPath = Path::RootPath();
+      parentPath = Path::make_root_path();
 
       if (thisIndex >= pathIndexes.size()) {
         PUSH_ERROR("Index exceeds pathIndexes.size()");
@@ -3849,7 +3849,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
         PUSH_ERROR("Index is out-of-range");
         return false;
       }
-      
+
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
       if (thisIndex >= elementTokenIndexes.size()) {
@@ -4201,8 +4201,17 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     std::cout << "pathIndexes[" << i << "] = " << pathIndexes[i] << "\n";
   }
 
-  for (auto item : elementTokenIndexes) {
-    std::cout << "elementTokenIndexes " << item << "\n";
+  for (size_t i = 0; i < elementTokenIndexes.size(); i++) {
+    std::cout << "elementTokenIndexes[" << i << "] = " << elementTokenIndexes[i];
+    int32_t tokIdx = elementTokenIndexes[i];
+    if (tokIdx < 0) {
+      // Property Path. Need to negate it.
+      tokIdx = -tokIdx;
+    }
+    if (auto tokv = GetToken(crate::Index(uint32_t(tokIdx)))) {
+      std:: cout << "(" << tokv.value() << ")";
+    }
+    std::cout << "\n";
   }
 
   for (auto item : jumps) {
