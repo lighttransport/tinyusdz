@@ -4,6 +4,7 @@
 
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
+#include "tydra/scene-access.hh"
 #include "usdShade.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -28,11 +29,12 @@ static std::string str_tolower(std::string s) {
 // key = Full absolute prim path(e.g. `/bora/dora`)
 using MaterialMap = std::map<std::string, const tinyusdz::Material *>;
 using PreviewSurfaceMap =
-    std::map<std::string, const tinyusdz::UsdPreviewSurface *>;
-using UVTextureMap = std::map<std::string, const tinyusdz::UsdUVTexture *>;
+    std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPreviewSurface *>>;
+using UVTextureMap = std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdUVTexture *>>;
 using PrimvarReader_float2Map =
-    std::map<std::string, const tinyusdz::UsdPrimvarReader_float2 *>;
+    std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPrimvarReader_float2 *>>;
 
+#if 0
 template <typename T>
 static bool TraverseRec(const std::string &path_prefix,
                         const tinyusdz::Prim &prim, uint32_t depth,
@@ -116,6 +118,7 @@ static void TraversePrimvarReader_float2(const tinyusdz::Stage &stage,
     TraverseShaderRec(/* root */ "", prim, 0, m);
   }
 }
+#endif
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -204,11 +207,11 @@ int main(int argc, char **argv) {
   UVTextureMap texmap;
   PrimvarReader_float2Map preadermap;
 
-  // Collect and make full path <-> Prim mapping
-  TraverseMaterial(stage, matmap);
-  TraversePreviewSurface(stage, surfacemap);
-  TraverseUVTexture(stage, texmap);
-  TraversePrimvarReader_float2(stage, preadermap);
+  // Collect and make full path <-> Prim/Shader mapping
+  tinyusdz::tydra::ListPrims(stage, matmap);
+  tinyusdz::tydra::ListShaders(stage, surfacemap);
+  tinyusdz::tydra::ListShaders(stage, texmap);
+  tinyusdz::tydra::ListShaders(stage, preadermap);
 
   //
   // Query example
@@ -235,8 +238,8 @@ int main(int argc, char **argv) {
       if (sp) { // this should be true though.
 
         if (const tinyusdz::UsdPreviewSurface *surf = sp->value.as<tinyusdz::UsdPreviewSurface>()) {
-          // TODO: ppriter for UsdPreviewSurface
-          std::cout << tinyusdz::to_string(*surf) << "\n";
+          // Print Shader
+          std::cout << tinyusdz::to_string(*sp) << "\n";
         }
       }
 
@@ -254,7 +257,7 @@ int main(int argc, char **argv) {
       const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
       if (sp) { // this should be true though.
         if (const tinyusdz::UsdUVTexture *tex = sp->value.as<tinyusdz::UsdUVTexture>()) { 
-          std::cout << tinyusdz::to_string(*tex);
+          std::cout << tinyusdz::to_string(*sp);
         }
       }
 
@@ -273,8 +276,7 @@ int main(int argc, char **argv) {
       if (sp) { // this should be true though.
 
         if (const tinyusdz::UsdPrimvarReader_float2 *preader = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
-          // TODO: ppriter for UsdPrimvarReader_float2
-          std::cout << tinyusdz::to_string(*preader) << "\n";
+          std::cout << tinyusdz::to_string(*sp) << "\n";
         }
       }
 

@@ -89,11 +89,11 @@ RECONSTRUCT_PRIM_DECL(Skeleton);
 RECONSTRUCT_PRIM_DECL(SkelRoot);
 RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(BlendShape);
-RECONSTRUCT_PRIM_DECL(LuxDomeLight);
-RECONSTRUCT_PRIM_DECL(LuxSphereLight);
-RECONSTRUCT_PRIM_DECL(LuxCylinderLight);
-RECONSTRUCT_PRIM_DECL(LuxDiskLight);
-RECONSTRUCT_PRIM_DECL(LuxDistantLight);
+RECONSTRUCT_PRIM_DECL(DomeLight);
+RECONSTRUCT_PRIM_DECL(SphereLight);
+RECONSTRUCT_PRIM_DECL(CylinderLight);
+RECONSTRUCT_PRIM_DECL(DiskLight);
+RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
@@ -154,11 +154,11 @@ DEFINE_PRIM_TYPE(GeomCylinder, kGeomCylinder, value::TYPE_ID_GEOM_CYLINDER);
 DEFINE_PRIM_TYPE(GeomBasisCurves, kGeomBasisCurves,
                  value::TYPE_ID_GEOM_BASIS_CURVES);
 DEFINE_PRIM_TYPE(GeomSubset, kGeomSubset, value::TYPE_ID_GEOM_GEOMSUBSET);
-DEFINE_PRIM_TYPE(LuxSphereLight, kLuxSphereLight, value::TYPE_ID_LUX_SPHERE);
-DEFINE_PRIM_TYPE(LuxDomeLight, kLuxDomeLight, value::TYPE_ID_LUX_DOME);
-DEFINE_PRIM_TYPE(LuxDiskLight, kLuxDiskLight, value::TYPE_ID_LUX_DISK);
-DEFINE_PRIM_TYPE(LuxDistantLight, kLuxDistantLight, value::TYPE_ID_LUX_DISTANT);
-DEFINE_PRIM_TYPE(LuxCylinderLight,  kLuxCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
+DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
+DEFINE_PRIM_TYPE(DiskLight, kDiskLight, value::TYPE_ID_LUX_DISK);
+DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
+DEFINE_PRIM_TYPE(CylinderLight,  kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(SkelRoot, kSkelRoot, value::TYPE_ID_SKEL_ROOT);
@@ -1513,11 +1513,11 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
 
   RegisterReconstructCallback<Scope>();
 
-  RegisterReconstructCallback<LuxSphereLight>();
-  RegisterReconstructCallback<LuxDomeLight>();
-  RegisterReconstructCallback<LuxDiskLight>();
-  RegisterReconstructCallback<LuxDistantLight>();
-  RegisterReconstructCallback<LuxCylinderLight>();
+  RegisterReconstructCallback<SphereLight>();
+  RegisterReconstructCallback<DomeLight>();
+  RegisterReconstructCallback<DiskLight>();
+  RegisterReconstructCallback<DistantLight>();
+  RegisterReconstructCallback<CylinderLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();

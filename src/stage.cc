@@ -193,14 +193,14 @@ nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
     return Path(pv.value().name, "");
   }
 
-  if (auto pv = v.get_value<LuxDomeLight>()) {
+  if (auto pv = v.get_value<DomeLight>()) {
     return Path(pv.value().name, "");
   }
-  if (auto pv = v.get_value<LuxSphereLight>()) {
+  if (auto pv = v.get_value<SphereLight>()) {
     return Path(pv.value().name, "");
   }
-  // if (auto pv = v.get_value<LuxCylinderLight>()) { return
-  // Path(pv.value().name); } if (auto pv = v.get_value<LuxDiskLight>()) {
+  // if (auto pv = v.get_value<CylinderLight>()) { return
+  // Path(pv.value().name); } if (auto pv = v.get_value<DiskLight>()) {
   // return Path(pv.value().name); }
 
   if (auto pv = v.get_value<Material>()) {
@@ -237,11 +237,11 @@ nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(GeomSubset)
   EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
   EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
-  EXTRACT_NAME_AND_RETURN_PATH(LuxDomeLight)
-  EXTRACT_NAME_AND_RETURN_PATH(LuxSphereLight)
-  EXTRACT_NAME_AND_RETURN_PATH(LuxCylinderLight)
-  EXTRACT_NAME_AND_RETURN_PATH(LuxDiskLight)
-  EXTRACT_NAME_AND_RETURN_PATH(LuxRectLight)
+  EXTRACT_NAME_AND_RETURN_PATH(DomeLight)
+  EXTRACT_NAME_AND_RETURN_PATH(SphereLight)
+  EXTRACT_NAME_AND_RETURN_PATH(CylinderLight)
+  EXTRACT_NAME_AND_RETURN_PATH(DiskLight)
+  EXTRACT_NAME_AND_RETURN_PATH(RectLight)
   EXTRACT_NAME_AND_RETURN_PATH(Material)
   EXTRACT_NAME_AND_RETURN_PATH(Shader)
   EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
@@ -260,7 +260,7 @@ nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
 }  // namespace
 
 Prim::Prim(const value::Value &rhs) {
-  // Check if Prim type is Model(GPrim)
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
     if (auto pv = GetPrimElementName(rhs)) {
@@ -274,7 +274,7 @@ Prim::Prim(const value::Value &rhs) {
 }
 
 Prim::Prim(value::Value &&rhs) {
-  // Check if Prim type is Model(GPrim)
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
     _data = std::move(rhs);
