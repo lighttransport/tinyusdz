@@ -1184,7 +1184,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           //const prim::ReferenceList &references,
           const ascii::AsciiParser::PrimMetaMap &in_meta)
           -> nonstd::expected<bool, std::string> {
-        const Path &parent = full_path.GetParentPrim();
+        const Path &parent = full_path.GetParentPrimPath();
         if (!parent.IsValid()) {
           return nonstd::make_unexpected("Invalid Prim path.");
         }
