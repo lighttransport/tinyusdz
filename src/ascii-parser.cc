@@ -181,17 +181,6 @@ static void RegisterPrimMetas(
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
   metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
 
-#if 0
-  // usdSkel
-  metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
-
-  // usdSkel?
-  metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
-
-  // usdShade?
-  metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
-#endif
-
   // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
       value::Add1DArraySuffix(value::kToken), "apiSchemas");
@@ -450,24 +439,6 @@ inline bool is_digit(char x) {
 }
 
 static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
-#if 0
-  // Pase with Ryu.
-  float value;
-  Status stat = s2f_n(s.data(), int(s.size()), &value);
-  if (stat == SUCCESS) {
-    return value;
-  }
-
-  if (stat == INPUT_TOO_SHORT) {
-    return nonstd::make_unexpected("Input floating point literal is too short");
-  } else if (stat == INPUT_TOO_LONG) {
-    return nonstd::make_unexpected("Input floating point literal is too long");
-  } else if (stat == MALFORMED_INPUT) {
-    return nonstd::make_unexpected("Malformed input floating point literal");
-  }
-
-  return nonstd::make_unexpected("Unexpected error in ParseFloat");
-#else
   // Parse with fast_float
   float result;
   auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
@@ -477,32 +448,9 @@ static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
   }
 
   return result;
-#endif
 }
 
 static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
-#if 0
-  // Pase with Ryu.
-  double value;
-  Status stat = s2d_n(s.data(), int(s.size()), &value);
-  if (stat == SUCCESS) {
-    return value;
-  }
-
-  if (stat == INPUT_TOO_SHORT) {
-    return nonstd::make_unexpected("Input floating point literal is too short");
-  } else if (stat == INPUT_TOO_LONG) {
-    // fallback to our float parser.
-  } else if (stat == MALFORMED_INPUT) {
-    return nonstd::make_unexpected("Malformed input floating point literal");
-  }
-
-  if (tryParseDouble(s.c_str(), s.c_str() + s.size(), &value)) {
-    return value;
-  }
-
-  return nonstd::make_unexpected("Failed to parse floating-point value.");
-#else
   // Parse with fast_float
   double result;
   auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
@@ -512,7 +460,6 @@ static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
   }
 
   return result;
-#endif
 }
 
 void AsciiParser::SetBaseDir(const std::string &str) { _base_dir = str; }
@@ -4174,121 +4121,6 @@ bool AsciiParser::ParseStageMetaOpt() {
     PUSH_WARN("TODO: Stage meta: " << varname);
   }
 
-#if 0  // Load subLayers in usda-reader
-  // Load subLayers
-  if (sublayers.size()) {
-    // Create another USDA parser.
-
-    for (size_t i = 0; i < sublayers.size(); i++) {
-      std::string filepath = io::JoinPath(_base_dir, sublayers[i]);
-
-      std::vector<uint8_t> data;
-      std::string err;
-      if (!io::ReadWholeFile(&data, &err, filepath, /* max_filesize */ 0)) {
-        PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
-      }
-
-      tinyusdz::StreamReader sr(data.data(), data.size(),
-                                /* swap endian */ false);
-      tinyusdz::ascii::AsciiParser parser(&sr);
-
-      std::string base_dir = io::GetBaseDir(filepath);
-
-      parser.SetBaseDir(base_dir);
-
-      {
-        bool ret = parser.Parse(tinyusdz::ascii::LOAD_STATE_SUBLAYER);
-
-        if (!ret) {
-          PUSH_WARN("Failed to parse .usda: " << parser.GetError());
-        }
-      }
-    }
-
-    // TODO: Merge/Import subLayer.
-  }
-#endif
-
-#if 0  // TODO
-    if (var.type == "string") {
-      std::string value;
-      std::cout << "read string literal\n";
-      if (!ReadStringLiteral(&value)) {
-        std::string msg = "String literal expected for `" + var.name + "`.\n";
-        PushError(msg);
-        return false;
-      }
-    } else if (var.type == "int[]") {
-      std::vector<int> values;
-      if (!ParseBasicTypeArray<int>(&values)) {
-        // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; PushError(msg);
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "int[" << i << "] = " << values[i] << "\n";
-      }
-    } else if (var.type == "float[]") {
-      std::vector<float> values;
-      if (!ParseBasicTypeArray<float>(&values)) {
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "float[" << i << "] = " << values[i] << "\n";
-      }
-    } else if (var.type == "float3[]") {
-      std::vector<std::array<float, 3>> values;
-      if (!ParseTupleArray<float, 3>(&values)) {
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "float[" << i << "] = " << values[i][0] << ", "
-                  << values[i][1] << ", " << values[i][2] << "\n";
-      }
-    } else if (var.type == "float") {
-      std::string fval;
-      std::string ferr;
-      if (!LexFloat(&fval, &ferr)) {
-        std::string msg =
-            "Floating point literal expected for `" + var.name + "`.\n";
-        if (!ferr.empty()) {
-          msg += ferr;
-        }
-        PushError(msg);
-        return false;
-      }
-      std::cout << "float : " << fval << "\n";
-      float value;
-      if (!ParseFloat(fval, &value, &ferr)) {
-        std::string msg =
-            "Failed to parse floating point literal for `" + var.name + "`.\n";
-        if (!ferr.empty()) {
-          msg += ferr;
-        }
-        PushError(msg);
-        return false;
-      }
-      std::cout << "parsed float : " << value << "\n";
-
-    } else if (var.type == "int3") {
-      std::array<int, 3> values;
-      if (!ParseBasicTypeTuple<int, 3>(&values)) {
-        // std::string msg = "Array of int values expected for `" + var.name +
-        // "`.\n"; PushError(msg);
-        return false;
-      }
-
-      for (size_t i = 0; i < values.size(); i++) {
-        std::cout << "int[" << i << "] = " << values[i] << "\n";
-      }
-    } else if (var.type == "object") {
-      // TODO: support nested parameter.
-    }
-#endif
-
   return true;
 }
 
@@ -4878,219 +4710,6 @@ value::TimeSamples AsciiParser::ConvertToTimeSamples(
 
   return dst;
 }
-
-#if 0
-template<>
-bool AsciiParser::ParseTimeSamples(
-    nonstd::optional<value::float2> *out_value) {
-  nonstd::optional<std::array<float, 2>> value;
-  if (!ParseBasicTypeTuple(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<value::float3> *out_value) {
-  nonstd::optional<std::array<float, 3>> value;
-  if (!ParseBasicTypeTuple(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<value::float4> *out_value) {
-  nonstd::optional<std::array<float, 4>> value;
-  if (!ParseBasicTypeTuple(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(nonstd::optional<float> *out_value) {
-  nonstd::optional<float> value;
-  if (!ReadBasicType(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<double> *out_value) {
-  nonstd::optional<double> value;
-  if (!ReadBasicType(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<value::double2> *out_value) {
-  nonstd::optional<value::double2> value;
-  if (!ParseBasicTypeTuple(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<value::double3> *out_value) {
-  nonstd::optional<value::double3> value;
-  if (!ParseBasicTypeTuple(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<value::double4> *out_value) {
-  nonstd::optional<value::double4> value;
-  if (!ParseBasicTypeTuple(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<std::vector<value::float3>> *out_value) {
-  if (MaybeNone()) {
-    (*out_value) = nonstd::nullopt;
-    return true;
-  }
-
-  std::vector<std::array<float, 3>> value;
-  if (!ParseTupleArray(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<std::vector<value::double3>> *out_value) {
-  if (MaybeNone()) {
-    (*out_value) = nonstd::nullopt;
-    return true;
-  }
-
-  std::vector<std::array<double, 3>> value;
-  if (!ParseTupleArray(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<std::vector<float>> *out_value) {
-  if (MaybeNone()) {
-    (*out_value) = nonstd::nullopt;
-    return true;
-  }
-
-  std::vector<float> value;
-  if (!ParseBasicTypeArray(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<std::vector<double>> *out_value) {
-  if (MaybeNone()) {
-    (*out_value) = nonstd::nullopt;
-    return true;
-  }
-
-  std::vector<double> value;
-  if (!ParseBasicTypeArray(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<std::vector<value::matrix4d>> *out_value) {
-  if (MaybeNone()) {
-    (*out_value) = nonstd::nullopt;
-  }
-
-  std::vector<value::matrix4d> value;
-  if (!ParseBasicTypeArray(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-  return true;
-}
-
-template<>
-bool AsciiParser::ParseTimeSampleData(
-    nonstd::optional<value::matrix4d> *out_value) {
-  if (MaybeNone()) {
-    (*out_value) = nonstd::nullopt;
-  }
-
-  value::matrix4d value;
-  if (!ReadBasicType(&value)) {
-    return false;
-  }
-
-  (*out_value) = value;
-
-
-  return true;
-}
-#endif
 
 // Parse magic
 // #usda FLOAT
@@ -5871,81 +5490,11 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
 
   auto vardef = (*pvardef);
 
-#if 0
-  // TODO: Use ParseMetaValue()
-
-  MetaVariable var;
-  var.name = varname;
-
-  if (vardef.type == "path") {
-    std::string value;
-    if (!ReadPathIdentifier(&value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse path identifier");
-    }
-
-    Path p(value, "");
-    var.Set(p);
-
-  } else if (vardef.type == "path[]") {
-    std::vector<PathIdentifier> values;
-    if (!ParseBasicTypeArray(&values)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii,
-                                "Failed to parse array of path identifiers");
-    }
-
-    std::vector<Path> pvs;
-    for (const auto &v : values) {
-      pvs.push_back(Path(v, ""));
-    }
-
-    var.Set(pvs);
-
-  } else if (vardef.type == "ref[]") {
-    std::vector<Reference> value;
-    if (!ParseBasicTypeArray(&value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii,
-                                "Failed to parse array of assert reference");
-    }
-
-    var.Set(value);
-
-  } else if (vardef.type == "string") {
-    std::string value;
-    if (!ReadStringLiteral(&value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, " ReadStringLiteral failed");
-      return false;
-    }
-
-    var.Set(value);
-  } else if (vardef.type == "string[]") {
-    std::vector<std::string> value;
-    if (!ParseBasicTypeArray(&value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "ReadStringArray failed.");
-      return false;
-    }
-
-    DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
-    var.Set(value);
-
-  } else if (vardef.type == value::kBool) {
-    bool value;
-    if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "ReadBool failed.");
-    }
-
-    DCOUT("vardef.type: " << vardef.type << ", name = " << varname);
-    var.Set(value);
-
-  } else {
-    PUSH_ERROR_AND_RETURN("TODO: varname " + varname + ", type " + vardef.type);
-  }
-#else
   MetaVariable var;
   if (!ParseMetaValue(vardef, &var)) {
     return false;
   }
   var.name = varname;
-#endif
 
   std::get<0>(*out) = qual;
   std::get<1>(*out) = var;
@@ -7594,53 +7143,5 @@ bool AsciiParser::Parse(LoadState state) {
 }  // namespace tinyusdz
 
 #else  // TINYUSDZ_DISABLE_MODULE_USDA_READER
-
-#if 0
-#endif
-
-#if 0
-// Extract array of References from Variable.
-ReferenceList GetReferences(
-    const std::pair<ListEditQual, value::any_value> &_var) {
-  ReferenceList result;
-
-  ListEditQual qual = std::get<0>(_var);
-
-  auto var = std::get<1>(_var);
-
-  SDCOUT << "GetReferences. var.name = " << var.name << "\n";
-
-  if (var.IsArray()) {
-    DCOUT("IsArray");
-    auto parr = var.as_array();
-    if (parr) {
-      DCOUT("parr");
-      for (const auto &v : parr->values) {
-        DCOUT("Maybe Value");
-        if (v.IsValue()) {
-          DCOUT("Maybe Reference");
-          if (auto pref = nonstd::get_if<Reference>(v.as_value())) {
-            DCOUT("Got it");
-            result.push_back({qual, *pref});
-          }
-        }
-      }
-    }
-  } else if (var.IsValue()) {
-    DCOUT("IsValue");
-    if (auto pv = var.as_value()) {
-      DCOUT("Maybe Reference");
-      if (auto pas = nonstd::get_if<Reference>(pv)) {
-        DCOUT("Got it");
-        result.push_back({qual, *pas});
-      }
-    }
-  } else {
-    DCOUT("Unknown var type: " + Variable::type_name(var));
-  }
-
-  return result;
-}
-#endif
 
 #endif  // TINYUSDZ_DISABLE_MODULE_USDA_READER
