@@ -6,24 +6,43 @@
 #pragma once
 
 #include <map>
+
 #include "prim-types.hh"
+#include "stage.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
-#include "stage.hh"
 
 namespace tinyusdz {
 namespace tydra {
 
+// key = fully absolute Prim path in string(e.g. "/xform/geom0")
+template <typename T>
+using PathPrimMap = std::map<std::string, const T *>;
+
 //
-// Find and make a map of specified concrete Prim type from Stage.
+// value = pair of Shader Prim which contains the Shader type T("info:id") and
+// its concrete Shader type(UsdPreviewSurface)
 //
+template <typename T>
+using PathShaderMap =
+    std::map<std::string, std::pair<const Shader *, const T *>>;
 
-// key = fully absolute Prim path
-using PathMaterialMap = std::map<std::string, const tinyusdz::Material *>;
-bool ListMaterials(const tinyusdz::Stage &stage, PathMaterialMap &m);
+///
+/// List Prim of type T from the Stage.
+/// Returns false when unsupported/unimplemented Prim type T is given.
+///
+template <typename T>
+bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */);
 
+///
+/// List Shader of shader type T from the Stage.
+/// Returns false when unsupported/unimplemented Shader type T is given.
+/// TODO: User defined shader type("info:id")
+///
+template <typename T>
+bool ListShaders(const tinyusdz::Stage &stage,
+                 PathShaderMap<T> &m /* output */);
 
-} // namespace tydra
-} // namespace tinyusdz
-
+}  // namespace tydra
+}  // namespace tinyusdz
