@@ -83,11 +83,11 @@ RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
-RECONSTRUCT_PRIM_DECL(LuxSphereLight);
-RECONSTRUCT_PRIM_DECL(LuxDomeLight);
-RECONSTRUCT_PRIM_DECL(LuxDiskLight);
-RECONSTRUCT_PRIM_DECL(LuxDistantLight);
-RECONSTRUCT_PRIM_DECL(LuxCylinderLight);
+RECONSTRUCT_PRIM_DECL(SphereLight);
+RECONSTRUCT_PRIM_DECL(DomeLight);
+RECONSTRUCT_PRIM_DECL(DiskLight);
+RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(SkelRoot);
 RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(Skeleton);
@@ -1501,11 +1501,11 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name, spec)
   // RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name, spec)
-  RECONSTRUCT_PRIM(LuxSphereLight, typeName, prim_name, spec)
-  RECONSTRUCT_PRIM(LuxDomeLight, typeName, prim_name, spec)
-  RECONSTRUCT_PRIM(LuxCylinderLight, typeName, prim_name, spec)
-  RECONSTRUCT_PRIM(LuxDiskLight, typeName, prim_name, spec)
-  RECONSTRUCT_PRIM(LuxDistantLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(SphereLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(DomeLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(CylinderLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(DiskLight, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(DistantLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(SkelRoot, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Skeleton, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name, spec)

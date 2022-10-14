@@ -2297,10 +2297,10 @@ bool ReconstructPrim(
 }
 
 template <>
-bool ReconstructPrim<LuxSphereLight>(
+bool ReconstructPrim<SphereLight>(
     const PropertyMap &properties,
     const ReferenceList &references,
-    LuxSphereLight *light,
+    SphereLight *light,
     std::string *warn,
     std::string *err) {
 
@@ -2314,16 +2314,16 @@ bool ReconstructPrim<LuxSphereLight>(
 
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxSphereLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxSphereLight, light->radius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxSphereLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", SphereLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", SphereLight, light->radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", SphereLight,
                    light->intensity)
-    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, LuxSphereLight,
+    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, SphereLight,
                    light->visibility)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxSphereLight,
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, SphereLight,
                        light->purpose)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxSphereLight, light->extent)
-    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", SphereLight, light->extent)
+    ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2331,10 +2331,10 @@ bool ReconstructPrim<LuxSphereLight>(
 }
 
 template <>
-bool ReconstructPrim<LuxRectLight>(
+bool ReconstructPrim<RectLight>(
     const PropertyMap &properties,
     const ReferenceList &references,
-    LuxRectLight *light,
+    RectLight *light,
     std::string *warn,
     std::string *err) {
 
@@ -2349,15 +2349,15 @@ bool ReconstructPrim<LuxRectLight>(
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxRectLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:height", LuxRectLight, light->height)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:width", LuxRectLight, light->width)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxRectLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", RectLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:height", RectLight, light->height)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:width", RectLight, light->width)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", RectLight,
                    light->intensity)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxRectLight, light->extent)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxRectLight,
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", RectLight, light->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, RectLight,
                        light->purpose)
-    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
+    ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2365,10 +2365,10 @@ bool ReconstructPrim<LuxRectLight>(
 }
 
 template <>
-bool ReconstructPrim<LuxDiskLight>(
+bool ReconstructPrim<DiskLight>(
     const PropertyMap &properties,
     const ReferenceList &references,
-    LuxDiskLight *light,
+    DiskLight *light,
     std::string *warn,
     std::string *err) {
 
@@ -2382,11 +2382,11 @@ bool ReconstructPrim<LuxDiskLight>(
 
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxDiskLight, light->radius)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxDiskLight, light->extent)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxDiskLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", DiskLight, light->radius)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", DiskLight, light->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DiskLight,
                        light->purpose)
-    ADD_PROPERTY(table, prop, LuxDiskLight, light->props)
+    ADD_PROPERTY(table, prop, DiskLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2394,10 +2394,10 @@ bool ReconstructPrim<LuxDiskLight>(
 }
 
 template <>
-bool ReconstructPrim<LuxCylinderLight>(
+bool ReconstructPrim<CylinderLight>(
     const PropertyMap &properties,
     const ReferenceList &references,
-    LuxCylinderLight *light,
+    CylinderLight *light,
     std::string *warn,
     std::string *err) {
 
@@ -2411,12 +2411,12 @@ bool ReconstructPrim<LuxCylinderLight>(
 
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", LuxCylinderLight, light->length)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", LuxCylinderLight, light->radius)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", LuxCylinderLight, light->extent)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxCylinderLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", CylinderLight, light->length)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", CylinderLight, light->radius)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", CylinderLight, light->extent)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, CylinderLight,
                        light->purpose)
-    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
+    ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2424,10 +2424,10 @@ bool ReconstructPrim<LuxCylinderLight>(
 }
 
 template <>
-bool ReconstructPrim<LuxDistantLight>(
+bool ReconstructPrim<DistantLight>(
     const PropertyMap &properties,
     const ReferenceList &references,
-    LuxDistantLight *light,
+    DistantLight *light,
     std::string *warn,
     std::string *err) {
 
@@ -2441,10 +2441,10 @@ bool ReconstructPrim<LuxDistantLight>(
 
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", LuxDistantLight, light->angle)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxDistantLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", DistantLight, light->angle)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DistantLight,
                        light->purpose)
-    ADD_PROPERTY(table, prop, LuxSphereLight, light->props)
+    ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2452,10 +2452,10 @@ bool ReconstructPrim<LuxDistantLight>(
 }
 
 template <>
-bool ReconstructPrim<LuxDomeLight>(
+bool ReconstructPrim<DomeLight>(
     const PropertyMap &properties,
     const ReferenceList &references,
-    LuxDomeLight *light,
+    DomeLight *light,
     std::string *warn,
     std::string *err) {
 
@@ -2468,18 +2468,18 @@ bool ReconstructPrim<LuxDomeLight>(
   }
 
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "guideRadius", LuxDomeLight, light->guideRadius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", LuxDomeLight, light->diffuse)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", LuxDomeLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "guideRadius", DomeLight, light->guideRadius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", DomeLight, light->diffuse)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", DomeLight,
                    light->specular)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", LuxDomeLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", DomeLight,
                    light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", LuxDomeLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", LuxDomeLight,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", DomeLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", DomeLight,
                    light->intensity)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, LuxDomeLight,
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DomeLight,
                        light->purpose)
-    ADD_PROPERTY(table, prop, LuxDomeLight, light->props)
+    ADD_PROPERTY(table, prop, DomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
