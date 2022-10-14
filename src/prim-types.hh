@@ -302,7 +302,7 @@ class Path {
   ///
   std::pair<Path, Path> SplitAtRoot() const;
 
-  Path GetParentPrim() const;
+  Path GetParentPrimPath() const;
 
   ///
   /// @returns true if a path is '/' only

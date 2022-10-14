@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
     nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdPreviewSurface) <" << item.first << "> from Stage:\n";
-    
+
       const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
       if (sp) { // this should be true though.
 
@@ -253,10 +253,10 @@ int main(int argc, char **argv) {
     nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdUVTexture) <" << item.first << "> from Stage:\n";
-    
+
       const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
       if (sp) { // this should be true though.
-        if (const tinyusdz::UsdUVTexture *tex = sp->value.as<tinyusdz::UsdUVTexture>()) { 
+        if (const tinyusdz::UsdUVTexture *tex = sp->value.as<tinyusdz::UsdUVTexture>()) {
           std::cout << tinyusdz::to_string(*sp);
         }
       }
@@ -271,7 +271,7 @@ int main(int argc, char **argv) {
     nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
     if (shader) {
       std::cout << "Found Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
-    
+
       const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
       if (sp) { // this should be true though.
 
@@ -282,6 +282,20 @@ int main(int argc, char **argv) {
 
     } else {
       std::cerr << "Err: " << shader.error() << "\n";
+    }
+  }
+
+  //
+  // -- Querying Parent Prim
+  //
+  for (const auto &item : surfacemap) {
+    // Usually Parent is Material
+    std::string err;
+    if (const tinyusdz::Prim *p = tinyusdz::tydra::GetParentPrim(stage, tinyusdz::Path(item.first, /* property */""), &err)) {
+      std::cout << "Input path = " << tinyusdz::to_string(item.first) << "\n";
+      std::cout << "Parent prim = " << tinyusdz::prim::print_prim(*p) << "\n";
+    } else {
+      std::cerr << err;
     }
   }
 

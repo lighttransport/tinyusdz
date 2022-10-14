@@ -4,6 +4,9 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "pprinter.hh"
+#include "prim-pprint.hh"
+#include "value-pprint.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -113,8 +116,51 @@ bool ListShaders(const tinyusdz::Stage &stage, PathShaderMap<T> &m /* output */)
   return true;
 }
 
+const Prim *GetParentPrim(const tinyusdz::Stage &stage, const tinyusdz::Path &path, std::string *err) {
+  if (!path.IsValid()) {
+    if (err) {
+      (*err) = "Input Path " + tinyusdz::to_string(path) + " is invalid.\n";
+    }
+    return nullptr;
+  }
+
+  if (path.IsRootPath()) {
+    if (err) {
+      (*err) = "Input Path is root(\"/\").\n";
+    }
+    return nullptr;
+  }
+
+  if (path.IsRootPrim()) {
+    if (err) {
+      (*err) = "Input Path is root Prim, so no parent Prim exists.\n";
+    }
+    return nullptr;
+  }
+
+  if (!path.IsAbsolutePath()) {
+    if (err) {
+      (*err) = "Input Path must be absolute path(i.e. starts with \"/\").\n";
+    }
+    return nullptr;
+  }
+
+  tinyusdz::Path parentPath = path.GetParentPrimPath();
+
+  nonstd::expected<const Prim *, std::string> ret = stage.GetPrimAtPath(parentPath);
+  if (ret) {
+    return ret.value();
+  } else {
+    if (err) {
+      (*err) += "Failed to get parent Prim from Path " + tinyusdz::to_string(path) + ". Reason = " + ret.error() + "\n";
+    }
+    return nullptr;
+  }
+
+}
+
 //
-// Tempalte Instanciations
+// Template Instanciations
 //
 template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Model> &m);
 template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Scope> &m);
@@ -128,6 +174,7 @@ template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCylinder> 
 template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCapsule> &m);
 template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCube> &m);
 template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomPoints> &m);
+template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomSubset> &m);
 template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCamera> &m);
 
 template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<DomeLight> &m);

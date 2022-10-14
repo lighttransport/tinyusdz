@@ -325,7 +325,7 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
 }  // namespace
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
-    const Path &path) {
+    const Path &path) const {
   DCOUT("GerPrimAtPath : " << path);
 
   if (_dirty) {
@@ -370,7 +370,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 }
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
-    const Prim &root, const Path &path) {
+    const Prim &root, const Path &path) const {
   // TODO: Resolve "../"
   // TODO: cache path
 
