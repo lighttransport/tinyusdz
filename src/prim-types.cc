@@ -297,7 +297,7 @@ Path Path::AppendElement(const std::string &elem) {
   }
 }
 
-Path Path::GetParentPrim() const {
+Path Path::GetParentPrimPath() const {
   if (!valid) {
     return Path();
   }

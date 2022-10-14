@@ -2529,5 +2529,19 @@ std::string dump_path(const Path &path) {
 }
 
 
+// prim-pprint.hh
+namespace prim {
+
+std::string print_prim(const Prim &prim, const uint32_t indent) {
+  
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << value::pprint_value(prim.data());
+
+  return ss.str();
+}
+
+} // namespace prim
+
 } // tinyusdz
 

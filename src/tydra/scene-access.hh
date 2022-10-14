@@ -3,6 +3,8 @@
 //
 // Scene access API
 //
+// NOTE: Tydra API does not use nonstd::optional and nonstd::expected for easier language bindings.
+//
 #pragma once
 
 #include <map>
@@ -43,6 +45,16 @@ bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */);
 template <typename T>
 bool ListShaders(const tinyusdz::Stage &stage,
                  PathShaderMap<T> &m /* output */);
+
+///
+/// Get parent Prim from Path.
+/// Path must be fully expanded absolute path.
+///
+/// Example: Return "/xform" Prim for "/xform/mesh0" path
+///
+/// Returns nullptr when the given Path is a root Prim or invalid Path(`err` will be filled when failed).
+///
+const Prim *GetParentPrim(const tinyusdz::Stage &stage, const tinyusdz::Path &path, std::string *err);
 
 }  // namespace tydra
 }  // namespace tinyusdz
