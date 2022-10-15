@@ -40,6 +40,15 @@ constexpr auto kToken = "token";
 constexpr auto kKind = "kind";
 constexpr auto kInterpolation = "interpolation";
 
+struct Identifier : std::string {
+  // using std::string;
+};
+
+// FIXME: Not used? remove.
+struct PathIdentifier : std::string {
+  // using std::string;
+};
+
 enum class LoadState {
   TOPLEVEL,   // toplevel .usda input
   SUBLAYER,   // .usda is read by 'subLayers'
@@ -78,6 +87,7 @@ BETTER_ENUM(Kind, int, model, group, assembly, component, subcomponent);
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
+
  public:
   // TODO: refactor
   struct PrimMetas {
@@ -303,11 +313,132 @@ class AsciiParser {
   ///
   /// Return true but `value` is set to nullopt for `None`(Attribute Blocked)
   ///
-  template <typename T>
-  bool ReadBasicType(nonstd::optional<T> *value);
+  //template <typename T>
+  //bool ReadBasicType(nonstd::optional<T> *value);
 
-  template <typename T>
-  bool ReadBasicType(T *value);
+  bool ReadBasicType(nonstd::optional<bool> *value);
+  bool ReadBasicType(nonstd::optional<value::half> *value);
+  bool ReadBasicType(nonstd::optional<value::half2> *value);
+  bool ReadBasicType(nonstd::optional<value::half3> *value);
+  bool ReadBasicType(nonstd::optional<value::half4> *value);
+  bool ReadBasicType(nonstd::optional<int32_t> *value);
+  bool ReadBasicType(nonstd::optional<value::int2> *value);
+  bool ReadBasicType(nonstd::optional<value::int3> *value);
+  bool ReadBasicType(nonstd::optional<value::int4> *value);
+  bool ReadBasicType(nonstd::optional<uint32_t> *value);
+  bool ReadBasicType(nonstd::optional<value::uint2> *value);
+  bool ReadBasicType(nonstd::optional<value::uint3> *value);
+  bool ReadBasicType(nonstd::optional<value::uint4> *value);
+  bool ReadBasicType(nonstd::optional<int64_t> *value);
+  bool ReadBasicType(nonstd::optional<uint64_t> *value);
+  bool ReadBasicType(nonstd::optional<float> *value);
+  bool ReadBasicType(nonstd::optional<value::float2> *value);
+  bool ReadBasicType(nonstd::optional<value::float3> *value);
+  bool ReadBasicType(nonstd::optional<value::float4> *value);
+  bool ReadBasicType(nonstd::optional<double> *value);
+  bool ReadBasicType(nonstd::optional<value::double2> *value);
+  bool ReadBasicType(nonstd::optional<value::double3> *value);
+  bool ReadBasicType(nonstd::optional<value::double4> *value);
+  bool ReadBasicType(nonstd::optional<value::quath> *value);
+  bool ReadBasicType(nonstd::optional<value::quatf> *value);
+  bool ReadBasicType(nonstd::optional<value::quatd> *value);
+  bool ReadBasicType(nonstd::optional<value::point3h> *value);
+  bool ReadBasicType(nonstd::optional<value::point3f> *value);
+  bool ReadBasicType(nonstd::optional<value::point3d> *value);
+  bool ReadBasicType(nonstd::optional<value::vector3h> *value);
+  bool ReadBasicType(nonstd::optional<value::vector3f> *value);
+  bool ReadBasicType(nonstd::optional<value::vector3d> *value);
+  bool ReadBasicType(nonstd::optional<value::normal3h> *value);
+  bool ReadBasicType(nonstd::optional<value::normal3f> *value);
+  bool ReadBasicType(nonstd::optional<value::normal3d> *value);
+  bool ReadBasicType(nonstd::optional<value::color3h> *value);
+  bool ReadBasicType(nonstd::optional<value::color3f> *value);
+  bool ReadBasicType(nonstd::optional<value::color3d> *value);
+  bool ReadBasicType(nonstd::optional<value::color4h> *value);
+  bool ReadBasicType(nonstd::optional<value::color4f> *value);
+  bool ReadBasicType(nonstd::optional<value::color4d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord2h> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord2f> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord2d> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord3h> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord3f> *value);
+  bool ReadBasicType(nonstd::optional<value::texcoord3d> *value);
+  bool ReadBasicType(nonstd::optional<StringData> *value);
+  bool ReadBasicType(nonstd::optional<std::string> *value);
+  bool ReadBasicType(nonstd::optional<value::token> *value);
+  bool ReadBasicType(nonstd::optional<Path> *value);
+  bool ReadBasicType(nonstd::optional<value::AssetPath> *value);
+  bool ReadBasicType(nonstd::optional<Reference> *value);
+  bool ReadBasicType(nonstd::optional<Identifier> *value);
+  bool ReadBasicType(nonstd::optional<PathIdentifier> *value);
+
+
+
+  //template <typename T>
+  //bool ReadBasicType(T *value);
+
+  bool ReadBasicType(bool *value);
+  bool ReadBasicType(value::half *value);
+  bool ReadBasicType(value::half2 *value);
+  bool ReadBasicType(value::half3 *value);
+  bool ReadBasicType(value::half4 *value);
+  bool ReadBasicType(int32_t *value);
+  bool ReadBasicType(value::int2 *value);
+  bool ReadBasicType(value::int3 *value);
+  bool ReadBasicType(value::int4 *value);
+  bool ReadBasicType(uint32_t *value);
+  bool ReadBasicType(value::uint2 *value);
+  bool ReadBasicType(value::uint3 *value);
+  bool ReadBasicType(value::uint4 *value);
+  bool ReadBasicType(int64_t *value);
+  bool ReadBasicType(uint64_t *value);
+  bool ReadBasicType(float *value);
+  bool ReadBasicType(value::float2 *value);
+  bool ReadBasicType(value::float3 *value);
+  bool ReadBasicType(value::float4 *value);
+  bool ReadBasicType(double *value);
+  bool ReadBasicType(value::double2 *value);
+  bool ReadBasicType(value::double3 *value);
+  bool ReadBasicType(value::double4 *value);
+  bool ReadBasicType(value::quath *value);
+  bool ReadBasicType(value::quatf *value);
+  bool ReadBasicType(value::quatd *value);
+  bool ReadBasicType(value::point3h *value);
+  bool ReadBasicType(value::point3f *value);
+  bool ReadBasicType(value::point3d *value);
+  bool ReadBasicType(value::vector3h *value);
+  bool ReadBasicType(value::vector3f *value);
+  bool ReadBasicType(value::vector3d *value);
+  bool ReadBasicType(value::normal3h *value);
+  bool ReadBasicType(value::normal3f *value);
+  bool ReadBasicType(value::normal3d *value);
+  bool ReadBasicType(value::color3h *value);
+  bool ReadBasicType(value::color3f *value);
+  bool ReadBasicType(value::color3d *value);
+  bool ReadBasicType(value::color4h *value);
+  bool ReadBasicType(value::color4f *value);
+  bool ReadBasicType(value::color4d *value);
+  bool ReadBasicType(value::texcoord2h *value);
+  bool ReadBasicType(value::texcoord2f *value);
+  bool ReadBasicType(value::texcoord2d *value);
+  bool ReadBasicType(value::texcoord3h *value);
+  bool ReadBasicType(value::texcoord3f *value);
+  bool ReadBasicType(value::texcoord3d *value);
+  bool ReadBasicType(value::matrix2d *value);
+  bool ReadBasicType(value::matrix3d *value);
+  bool ReadBasicType(value::matrix4d *value);
+  bool ReadBasicType(StringData *value);
+  bool ReadBasicType(std::string *value);
+  bool ReadBasicType(value::token *value);
+  bool ReadBasicType(Path *value);
+  bool ReadBasicType(value::AssetPath *value);
+  bool ReadBasicType(Reference *value);
+  bool ReadBasicType(Identifier *value);
+  bool ReadBasicType(PathIdentifier *value);
+
 
   template <typename T>
   bool ReadBasicType(nonstd::optional<std::vector<T>> *value);
@@ -315,8 +446,10 @@ class AsciiParser {
   template <typename T>
   bool ReadBasicType(std::vector<T> *value);
 
-  template <typename T>
-  bool ParseMatrix(T *result);
+  // Apprently, No float precision matrix in USDA
+  bool ParseMatrix(value::matrix2d *result);
+  bool ParseMatrix(value::matrix3d *result);
+  bool ParseMatrix(value::matrix4d *result);
 
   ///
   /// Parse '(', Sep1By(','), ')'
@@ -334,12 +467,30 @@ class AsciiParser {
   template <typename T, size_t N>
   bool ParseTupleArray(std::vector<std::array<T, N>> *result);
 
+#if 0
+  template<> bool ParseTupleArray(std::vector<std::array<float, 2>> *result);
+  template<> bool ParseTupleArray(std::vector<std::array<float, 3>> *result);
+  template<> bool ParseTupleArray(std::vector<std::array<float, 4>> *result);
+  template<> bool ParseTupleArray(std::vector<std::array<double, 2>> *result);
+  template<> bool ParseTupleArray(std::vector<std::array<double, 3>> *result);
+  template<> bool ParseTupleArray(std::vector<std::array<double, 4>> *result);
+#endif
+
   ///
   /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
   /// None, (2, 3, 4), ...] )
   ///
   template <typename T, size_t N>
   bool ParseTupleArray(std::vector<nonstd::optional<std::array<T, N>>> *result);
+
+#if 0
+  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<float, 2>>> *result);
+  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<float, 3>>> *result);
+  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<float, 4>>> *result);
+  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<double, 2>>> *result);
+  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<double, 3>>> *result);
+  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<double, 4>>> *result);
+#endif
 
   template <typename T>
   bool SepBy1BasicType(const char sep, std::vector<T> *result);
@@ -362,6 +513,56 @@ class AsciiParser {
   ///
   template <typename T>
   bool ParseBasicTypeArray(std::vector<T> *result);
+
+#if 0
+  template<> bool ParseBasicTypeArray(std::vector<bool> *result);
+  template<> bool ParseBasicTypeArray(std::vector<int32_t> *result);
+  template<> bool ParseBasicTypeArray(std::vector<uint32_t> *result);
+  template<> bool ParseBasicTypeArray(std::vector<int64_t> *result);
+  template<> bool ParseBasicTypeArray(std::vector<uint64_t> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::half> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::half2> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::half3> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::half4> *result);
+  template<> bool ParseBasicTypeArray(std::vector<float> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::float2> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::float3> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::float4> *result);
+  template<> bool ParseBasicTypeArray(std::vector<double> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::double2> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::double3> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::double4> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::texcoord2h> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::texcoord2f> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::texcoord2d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::texcoord3h> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::texcoord3f> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::texcoord3d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::point3h> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::point3f> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::point3d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::normal3h> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::normal3f> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::normal3d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::vector3h> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::vector3f> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::vector3d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::color3h> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::color3f> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::color3d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::color4h> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::color4f> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::color4d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::matrix2d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::matrix3d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::matrix4d> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::token> *result);
+  template<> bool ParseBasicTypeArray(std::vector<StringData> *result);
+  template<> bool ParseBasicTypeArray(std::vector<std::string> *result);
+  template<> bool ParseBasicTypeArray(std::vector<Reference> *result);
+  template<> bool ParseBasicTypeArray(std::vector<Path> *result);
+  template<> bool ParseBasicTypeArray(std::vector<value::AssetPath> *result);
+#endif
 
   ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
