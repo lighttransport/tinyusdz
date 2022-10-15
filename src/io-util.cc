@@ -305,7 +305,7 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
       return false;
     }
 
-    size = (std::min)(max_read_bytes, size);
+    size = (std::min)(size_t(max_read_bytes), size);
     out->resize(size);
     AAsset_read(asset, reinterpret_cast<char *>(&out->at(0)), size);
     AAsset_close(asset);

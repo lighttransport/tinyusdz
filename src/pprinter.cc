@@ -2278,8 +2278,48 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
 
 }
 
+std::string to_string(const UsdPreviewSurface &surf, const uint32_t indent, bool closing_brace) {
+  // TODO: Print spec and meta?
+  std::stringstream ss;
 
-std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool closing_brace) {
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_shader_params(surf, indent);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const UsdUVTexture &tex, const uint32_t indent, bool closing_brace) {
+  // TODO: Print spec and meta?
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_shader_params(tex, indent);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const UsdPrimvarReader_float2 &preader, const uint32_t indent, bool closing_brace) {
+  // TODO: Print spec and meta?
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "{\n";
+  ss << print_shader_params(preader, indent);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+
+
+std::string to_string(const SphereLight &light, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " SphereLight \"" << light.name << "\"\n";
@@ -2303,7 +2343,7 @@ std::string to_string(const LuxSphereLight &light, const uint32_t indent, bool c
   return ss.str();
 }
 
-std::string to_string(const LuxDistantLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const DistantLight &light, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " DistantLight \"" << light.name << "\"\n";
@@ -2328,7 +2368,7 @@ std::string to_string(const LuxDistantLight &light, const uint32_t indent, bool 
   return ss.str();
 }
 
-std::string to_string(const LuxCylinderLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const CylinderLight &light, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " CylinderLight \"" << light.name << "\"\n";
@@ -2355,7 +2395,7 @@ std::string to_string(const LuxCylinderLight &light, const uint32_t indent, bool
   return ss.str();
 }
 
-std::string to_string(const LuxDiskLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const DiskLight &light, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " DiskLight \"" << light.name << "\"\n";
@@ -2381,7 +2421,7 @@ std::string to_string(const LuxDiskLight &light, const uint32_t indent, bool clo
   return ss.str();
 }
 
-std::string to_string(const LuxDomeLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const DomeLight &light, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " DomeLight \"" << light.name << "\"\n";
@@ -2480,7 +2520,7 @@ std::string dump_path(const Path &path) {
   std::stringstream ss;
   ss << "Path: Prim part = " << path.GetPrimPart();
   ss << ", Prop part = " << path.GetPropPart();
-  ss << ", elementName = " << path.GetElementName();
+  ss << ", elementName = " << path.element_name();
   ss << ", isValid = " << path.IsValid();
   ss << ", isAbsolute = " << path.IsAbsolutePath();
   ss << ", isRelative = " << path.IsRelativePath();
@@ -2488,6 +2528,20 @@ std::string dump_path(const Path &path) {
   return ss.str();
 }
 
+
+// prim-pprint.hh
+namespace prim {
+
+std::string print_prim(const Prim &prim, const uint32_t indent) {
+  
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << value::pprint_value(prim.data());
+
+  return ss.str();
+}
+
+} // namespace prim
 
 } // tinyusdz
 

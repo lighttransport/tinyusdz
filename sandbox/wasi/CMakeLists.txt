@@ -37,12 +37,16 @@ list(
   ../../src/crate-writer.cc
   ../../src/crate-pprint.cc
   ../../src/ascii-parser.cc
+  ../../src/ascii-parser-basetype.cc
+  ../../src/ascii-parser-timesamples.cc
+  ../../src/ascii-parser-timesamples-array.cc
   ../../src/usda-reader.cc
   ../../src/usda-writer.cc
   ../../src/usdc-reader.cc
   ../../src/usdc-writer.cc
   ../../src/image-loader.cc
   ../../src/prim-reconstruct.cc
+  ../../src/prim-composition.cc
   ../../src/tiny-format.cc
   ../../src/xform.cc
   ../../src/usdGeom.cc
@@ -52,6 +56,8 @@ list(
   ../../src/usdMtlx.cc
   ../../src/usdObj.cc
   ../../src/tydra/render-data.cc
+  ../../src/tydra/scene-access.cc
+  ../../src/stage.cc
 )
 
 set(TINYUSDZ_DEP_SOURCES

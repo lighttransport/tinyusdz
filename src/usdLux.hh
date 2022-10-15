@@ -9,18 +9,18 @@
 
 namespace tinyusdz {
 
-constexpr auto kLuxSphereLight = "SphereLight";
-constexpr auto kLuxCylinderLight = "CylinderLight";
-constexpr auto kLuxDomeLight = "DomeLight";
-constexpr auto kLuxDiskLight = "DiskLight";
-constexpr auto kLuxRectLight = "RectLight";
-constexpr auto kLuxDistantLight = "DistantLight";
-constexpr auto kLuxGeometryLight = "GeometryLight";
-constexpr auto kLuxPortalLight = "PortalLight";
-constexpr auto kLuxPluginLight = "PluginLight";
+constexpr auto kSphereLight = "SphereLight";
+constexpr auto kCylinderLight = "CylinderLight";
+constexpr auto kDomeLight = "DomeLight";
+constexpr auto kDiskLight = "DiskLight";
+constexpr auto kRectLight = "RectLight";
+constexpr auto kDistantLight = "DistantLight";
+constexpr auto kGeometryLight = "GeometryLight";
+constexpr auto kPortalLight = "PortalLight";
+constexpr auto kPluginLight = "PluginLight";
 
 
-struct LuxSphereLight : public Xformable {
+struct SphereLight : public Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -54,7 +54,7 @@ struct LuxSphereLight : public Xformable {
   PrimMeta meta;
 };
 
-struct LuxCylinderLight : public Xformable {
+struct CylinderLight : public Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -92,7 +92,7 @@ struct LuxCylinderLight : public Xformable {
 };
 
 
-struct LuxRectLight : public Xformable {
+struct RectLight : public Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -130,7 +130,7 @@ struct LuxRectLight : public Xformable {
   PrimMeta meta;
 };
 
-struct LuxDiskLight : public Xformable {
+struct DiskLight : public Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -166,7 +166,7 @@ struct LuxDiskLight : public Xformable {
   PrimMeta meta;
 };
 
-struct LuxDistantLight : public Xformable {
+struct DistantLight : public Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -202,7 +202,7 @@ struct LuxDistantLight : public Xformable {
   PrimMeta meta;
 };
 
-struct LuxDomeLight : public Xformable {
+struct DomeLight : public Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
   int64_t parent_id{-1};  // Index to xform node
@@ -251,19 +251,19 @@ struct LuxDomeLight : public Xformable {
 };
 
 // TODO:
-struct LuxGeometryLight : public Xformable {
+struct GeometryLight : public Xformable {
   Specifier spec{Specifier::Def};
   nonstd::optional<Relation> geometry; // `rel geometry`
 };
 
 // TODO
-struct LuxPortalLight : public Xformable {
+struct PortalLight : public Xformable {
   Specifier spec{Specifier::Def};
   TypedAttribute<Animatable<Extent>> extent; // float3[]
 };
 
 // TODO
-struct LuxPluginLight : public Xformable {
+struct PluginLight : public Xformable {
   Specifier spec{Specifier::Def};
 };
 
@@ -278,15 +278,15 @@ struct PluginLightFilter {
 
 namespace value {
 
-DEFINE_TYPE_TRAIT(LuxDomeLight, kLuxDomeLight, TYPE_ID_LUX_DOME, 1);
-DEFINE_TYPE_TRAIT(LuxCylinderLight, kLuxCylinderLight, TYPE_ID_LUX_CYLINDER, 1);
-DEFINE_TYPE_TRAIT(LuxSphereLight, kLuxSphereLight, TYPE_ID_LUX_SPHERE, 1);
-DEFINE_TYPE_TRAIT(LuxDiskLight, kLuxDiskLight, TYPE_ID_LUX_DISK, 1);
-DEFINE_TYPE_TRAIT(LuxDistantLight, kLuxDistantLight, TYPE_ID_LUX_DISTANT, 1);
-DEFINE_TYPE_TRAIT(LuxRectLight, kLuxRectLight, TYPE_ID_LUX_RECT, 1);
-DEFINE_TYPE_TRAIT(LuxGeometryLight, kLuxGeometryLight, TYPE_ID_LUX_GEOMETRY, 1);
-DEFINE_TYPE_TRAIT(LuxPortalLight, kLuxPortalLight, TYPE_ID_LUX_PORTAL, 1);
-DEFINE_TYPE_TRAIT(LuxPluginLight, kLuxPluginLight, TYPE_ID_LUX_PLUGIN, 1);
+DEFINE_TYPE_TRAIT(DomeLight, kDomeLight, TYPE_ID_LUX_DOME, 1);
+DEFINE_TYPE_TRAIT(CylinderLight, kCylinderLight, TYPE_ID_LUX_CYLINDER, 1);
+DEFINE_TYPE_TRAIT(SphereLight, kSphereLight, TYPE_ID_LUX_SPHERE, 1);
+DEFINE_TYPE_TRAIT(DiskLight, kDiskLight, TYPE_ID_LUX_DISK, 1);
+DEFINE_TYPE_TRAIT(DistantLight, kDistantLight, TYPE_ID_LUX_DISTANT, 1);
+DEFINE_TYPE_TRAIT(RectLight, kRectLight, TYPE_ID_LUX_RECT, 1);
+DEFINE_TYPE_TRAIT(GeometryLight, kGeometryLight, TYPE_ID_LUX_GEOMETRY, 1);
+DEFINE_TYPE_TRAIT(PortalLight, kPortalLight, TYPE_ID_LUX_PORTAL, 1);
+DEFINE_TYPE_TRAIT(PluginLight, kPluginLight, TYPE_ID_LUX_PLUGIN, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

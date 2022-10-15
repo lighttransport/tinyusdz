@@ -3837,7 +3837,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       // Assume single root node in the scene.
       DCOUT("paths[" << pathIndexes[thisIndex]
                      << "] is parent. name = " << parentPath.full_path_name());
-      parentPath = Path::RootPath();
+      parentPath = Path::make_root_path();
 
       if (thisIndex >= pathIndexes.size()) {
         PUSH_ERROR("Index exceeds pathIndexes.size()");
@@ -3849,7 +3849,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
         PUSH_ERROR("Index is out-of-range");
         return false;
       }
-      
+
       _paths[pathIndexes[thisIndex]] = parentPath;
     } else {
       if (thisIndex >= elementTokenIndexes.size()) {
@@ -4198,15 +4198,26 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   for (size_t i = 0; i < pathIndexes.size(); i++) {
-    std::cout << "pathIndexes[" << i << "] = " << pathIndexes[i] << "\n";
+    DCOUT("pathIndexes[" << i << "] = " << pathIndexes[i]);
   }
 
-  for (auto item : elementTokenIndexes) {
-    std::cout << "elementTokenIndexes " << item << "\n";
+  for (size_t i = 0; i < elementTokenIndexes.size(); i++) {
+    std::stringstream ss;
+    ss << "elementTokenIndexes[" << i << "] = " << elementTokenIndexes[i];
+    int32_t tokIdx = elementTokenIndexes[i];
+    if (tokIdx < 0) {
+      // Property Path. Need to negate it.
+      tokIdx = -tokIdx;
+    }
+    if (auto tokv = GetToken(crate::Index(uint32_t(tokIdx)))) {
+      ss << "(" << tokv.value() << ")";
+    }
+    ss << "\n";
+    DCOUT(ss.str());
   }
 
-  for (auto item : jumps) {
-    std::cout << "jumps " << item << "\n";
+  for (size_t i = 0; i < jumps.size(); i++) {
+    DCOUT(fmt::format("jumps[{}] = {}", i, jumps[i]));
   }
 #endif
 
@@ -4983,10 +4994,10 @@ bool CrateReader::ReadPaths() {
   }
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << "# of paths " << _paths.size() << "\n";
+  DCOUT("# of paths " << _paths.size());
 
   for (size_t i = 0; i < _paths.size(); i++) {
-    std::cout << "path[" << i << "] = " << _paths[i].full_path_name() << "\n";
+    DCOUT("path[" << i << "] = " << _paths[i].full_path_name());
   }
 #endif
 

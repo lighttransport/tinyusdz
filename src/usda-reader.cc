@@ -89,11 +89,11 @@ RECONSTRUCT_PRIM_DECL(Skeleton);
 RECONSTRUCT_PRIM_DECL(SkelRoot);
 RECONSTRUCT_PRIM_DECL(SkelAnimation);
 RECONSTRUCT_PRIM_DECL(BlendShape);
-RECONSTRUCT_PRIM_DECL(LuxDomeLight);
-RECONSTRUCT_PRIM_DECL(LuxSphereLight);
-RECONSTRUCT_PRIM_DECL(LuxCylinderLight);
-RECONSTRUCT_PRIM_DECL(LuxDiskLight);
-RECONSTRUCT_PRIM_DECL(LuxDistantLight);
+RECONSTRUCT_PRIM_DECL(DomeLight);
+RECONSTRUCT_PRIM_DECL(SphereLight);
+RECONSTRUCT_PRIM_DECL(CylinderLight);
+RECONSTRUCT_PRIM_DECL(DiskLight);
+RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
@@ -154,11 +154,11 @@ DEFINE_PRIM_TYPE(GeomCylinder, kGeomCylinder, value::TYPE_ID_GEOM_CYLINDER);
 DEFINE_PRIM_TYPE(GeomBasisCurves, kGeomBasisCurves,
                  value::TYPE_ID_GEOM_BASIS_CURVES);
 DEFINE_PRIM_TYPE(GeomSubset, kGeomSubset, value::TYPE_ID_GEOM_GEOMSUBSET);
-DEFINE_PRIM_TYPE(LuxSphereLight, kLuxSphereLight, value::TYPE_ID_LUX_SPHERE);
-DEFINE_PRIM_TYPE(LuxDomeLight, kLuxDomeLight, value::TYPE_ID_LUX_DOME);
-DEFINE_PRIM_TYPE(LuxDiskLight, kLuxDiskLight, value::TYPE_ID_LUX_DISK);
-DEFINE_PRIM_TYPE(LuxDistantLight, kLuxDistantLight, value::TYPE_ID_LUX_DISTANT);
-DEFINE_PRIM_TYPE(LuxCylinderLight,  kLuxCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
+DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
+DEFINE_PRIM_TYPE(DiskLight, kDiskLight, value::TYPE_ID_LUX_DISK);
+DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
+DEFINE_PRIM_TYPE(CylinderLight,  kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(SkelRoot, kSkelRoot, value::TYPE_ID_SKEL_ROOT);
@@ -1071,7 +1071,7 @@ void ReconstructNodeRec(const size_t idx,
     ReconstructNodeRec(cidx, prim_nodes, prim);
   }
 
-  parent.children.emplace_back(std::move(prim));
+  parent.children().emplace_back(std::move(prim));
 }
 
 }  // namespace
@@ -1100,12 +1100,16 @@ bool USDAReader::Impl::ReconstructStage() {
 #endif
     }
 
-    DCOUT("prim[" << idx << "].num_children = " << prim.children.size());
+    // root's elementPath is empty"/"
+    prim.element_path() = Path("", "");
+
+    DCOUT("root prim[" << idx << "].elementPath = " << dump_path(prim.element_path()));
+    DCOUT("root prim[" << idx << "].num_children = " << prim.children().size());
 
     size_t sz = _stage.GetRootPrims().size();
     _stage.GetRootPrims().emplace_back(std::move(prim));
 
-    DCOUT("num_children = " << _stage.GetRootPrims()[sz].children.size());
+    DCOUT("num_children = " << _stage.GetRootPrims()[sz].children().size());
   }
 
   return true;
@@ -1180,7 +1184,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           //const prim::ReferenceList &references,
           const ascii::AsciiParser::PrimMetaMap &in_meta)
           -> nonstd::expected<bool, std::string> {
-        const Path &parent = full_path.GetParentPrim();
+        const Path &parent = full_path.GetParentPrimPath();
         if (!parent.IsValid()) {
           return nonstd::make_unexpected("Invalid Prim path.");
         }
@@ -1509,11 +1513,11 @@ bool USDAReader::Impl::Read(ascii::LoadState state) {
 
   RegisterReconstructCallback<Scope>();
 
-  RegisterReconstructCallback<LuxSphereLight>();
-  RegisterReconstructCallback<LuxDomeLight>();
-  RegisterReconstructCallback<LuxDiskLight>();
-  RegisterReconstructCallback<LuxDistantLight>();
-  RegisterReconstructCallback<LuxCylinderLight>();
+  RegisterReconstructCallback<SphereLight>();
+  RegisterReconstructCallback<DomeLight>();
+  RegisterReconstructCallback<DiskLight>();
+  RegisterReconstructCallback<DistantLight>();
+  RegisterReconstructCallback<CylinderLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
