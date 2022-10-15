@@ -289,6 +289,9 @@ list(
   ../../src/crate-pprint.cc
   ../../src/audio-loader.cc
   ../../src/ascii-parser.cc
+  ../../src/ascii-parser-basetype.cc
+  ../../src/ascii-parser-timesamples.cc
+  ../../src/ascii-parser-timesamples-array.cc
   ../../src/usdc-reader.cc
   ../../src/usda-reader.cc
   #../../src/usda-writer.cc
