@@ -233,9 +233,10 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 * [ ] Built-in usdObj(wavefront .obj mesh) support.
   * Through tinyobjloader.
 * [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
-* [ ] Animation
-  * [ ] Skinning(usdSkel)
+* [ ] usdSkel utilities
+  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
   * [ ] Blend shapes
+    * [x] Basic Blendshapes support
     * [ ] In-between blend shapes
 * [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
 * [ ] USDC writer
@@ -243,6 +244,11 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 * [ ] UDIM texture support
 * [ ] MaterialX support
   * Parse XML file
+
+### Middle priority
+
+* [ ] Composition arcs
+* [ ] Code optimization
 
 ### Lower priority
 
@@ -317,7 +323,6 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * fast_float: Apache 2.0/MIT dual license. https://github.com/fastfloat/fast_float
 * jsteeman/atoi: Apache 2.0 license. https://github.com/jsteemann/atoi
 * formatxx: unlicense. https://github.com/seanmiddleditch/formatxx
-* mapbox/variant: BSD-3 or BSL-1.0 license. https://github.com/mapbox/variant
 * ubench.h: Unlicense. https://github.com/sheredom/ubench.h
 * thelink2012/any : BSL-1.0 license. https://github.com/thelink2012/any
 * simple_match : BSL-1.0 license. https://github.com/jbandela/simple_match
