@@ -238,6 +238,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/xform.cc
     ${PROJECT_SOURCE_DIR}/src/performance.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
