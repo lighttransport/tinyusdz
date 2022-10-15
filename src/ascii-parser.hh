@@ -306,6 +306,17 @@ class AsciiParser {
   ///
   bool Parse(LoadState state = LoadState::TOPLEVEL);
 
+
+  ///
+  /// Parse TimeSample value with specified `type_name`(Appears in USDA. .e.g. "float", "matrix2d")
+  ///
+  bool ParseTimeSampleValue(const std::string &type_name, value::Value *result);
+
+  ///
+  /// Parse TimeSample value with specified array type of `type_name`("[]" omiotted. .e.g. "float" for "float[]")
+  ///
+  bool ParseTimeSampleValueOfArrayType(const std::string &type_name, value::Value *result);
+
   // TODO: ParseBasicType?
   bool ParsePurpose(Purpose *result);
 
@@ -463,30 +474,12 @@ class AsciiParser {
   template <typename T, size_t N>
   bool ParseTupleArray(std::vector<std::array<T, N>> *result);
 
-#if 0
-  template<> bool ParseTupleArray(std::vector<std::array<float, 2>> *result);
-  template<> bool ParseTupleArray(std::vector<std::array<float, 3>> *result);
-  template<> bool ParseTupleArray(std::vector<std::array<float, 4>> *result);
-  template<> bool ParseTupleArray(std::vector<std::array<double, 2>> *result);
-  template<> bool ParseTupleArray(std::vector<std::array<double, 3>> *result);
-  template<> bool ParseTupleArray(std::vector<std::array<double, 4>> *result);
-#endif
-
   ///
   /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
   /// None, (2, 3, 4), ...] )
   ///
   template <typename T, size_t N>
   bool ParseTupleArray(std::vector<nonstd::optional<std::array<T, N>>> *result);
-
-#if 0
-  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<float, 2>>> *result);
-  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<float, 3>>> *result);
-  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<float, 4>>> *result);
-  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<double, 2>>> *result);
-  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<double, 3>>> *result);
-  template<> bool ParseTupleArray(std::vector<nonstd::optional<std::array<double, 4>>> *result);
-#endif
 
   template <typename T>
   bool SepBy1BasicType(const char sep, std::vector<T> *result);
@@ -510,56 +503,6 @@ class AsciiParser {
   ///
   template <typename T>
   bool ParseBasicTypeArray(std::vector<T> *result);
-
-#if 0
-  template<> bool ParseBasicTypeArray(std::vector<bool> *result);
-  template<> bool ParseBasicTypeArray(std::vector<int32_t> *result);
-  template<> bool ParseBasicTypeArray(std::vector<uint32_t> *result);
-  template<> bool ParseBasicTypeArray(std::vector<int64_t> *result);
-  template<> bool ParseBasicTypeArray(std::vector<uint64_t> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::half> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::half2> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::half3> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::half4> *result);
-  template<> bool ParseBasicTypeArray(std::vector<float> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::float2> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::float3> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::float4> *result);
-  template<> bool ParseBasicTypeArray(std::vector<double> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::double2> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::double3> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::double4> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::texcoord2h> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::texcoord2f> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::texcoord2d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::texcoord3h> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::texcoord3f> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::texcoord3d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::point3h> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::point3f> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::point3d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::normal3h> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::normal3f> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::normal3d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::vector3h> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::vector3f> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::vector3d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::color3h> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::color3f> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::color3d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::color4h> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::color4f> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::color4d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::matrix2d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::matrix3d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::matrix4d> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::token> *result);
-  template<> bool ParseBasicTypeArray(std::vector<StringData> *result);
-  template<> bool ParseBasicTypeArray(std::vector<std::string> *result);
-  template<> bool ParseBasicTypeArray(std::vector<Reference> *result);
-  template<> bool ParseBasicTypeArray(std::vector<Path> *result);
-  template<> bool ParseBasicTypeArray(std::vector<value::AssetPath> *result);
-#endif
 
   ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
@@ -655,13 +598,6 @@ class AsciiParser {
   ///
   std::string GetWarning();
 
-#if 0
-  ///
-  /// Get as scene
-  ///
-  const HighLevelScene& GetHighLevelScene() const;
-#endif
-
   // Return the flag if the .usda is read from `references`
   bool IsReferenced() { return _referenced; }
 
@@ -720,7 +656,7 @@ class AsciiParser {
 
   bool ParseCustomMetaValue();
 
-  // TODO: Return Path
+  // TODO: Return Path?
   bool ParseReference(Reference *out, bool *triple_deliminated);
 
   // `#` style comment
@@ -789,8 +725,8 @@ class AsciiParser {
 
   // -- [TimeSamples] -------------------
 
-  template <typename T>
-  using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
+  //template <typename T>
+  //using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
 
   // template <typename T>
   // using TimeSampleDataArray = std::vector<std::pair<double,
@@ -800,19 +736,19 @@ class AsciiParser {
   /// Convert TimeSampleData<T> to TimeSamples(type-erased TimeSample Sdata
   /// struct)
   ///
-  template <typename T>
-  value::TimeSamples ConvertToTimeSamples(const TimeSampleData<T> &in);
+  //template <typename T>
+  //value::TimeSamples ConvertToTimeSamples(const TimeSampleData<T> &in);
 
-  template <typename T>
-  value::TimeSamples ConvertToTimeSamples(
-      const TimeSampleData<std::vector<T>> &in);
+  //template <typename T>
+  //value::TimeSamples ConvertToTimeSamples(
+  //    const TimeSampleData<std::vector<T>> &in);
 
-  // T = scalar(e.g. `float`)
-  template <typename T>
-  nonstd::optional<TimeSampleData<T>> TryParseTimeSamples();
+  //// T = scalar(e.g. `float`)
+  //template <typename T>
+  //nonstd::optional<TimeSampleData<T>> TryParseTimeSamples();
 
-  template <typename T>
-  nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesOfArray();
+  //template <typename T>
+  //nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesOfArray();
 
   // ---------------------------------------
 
