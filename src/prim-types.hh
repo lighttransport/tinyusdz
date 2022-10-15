@@ -148,19 +148,21 @@ struct StringData {
   int line_col{0};
 };
 
-
 ///
 /// Simlar to SdfPath.
+/// NOTE: We are doging refactoring of Path class, so the following comment may not be correct.
 ///
 /// We don't need the performance for USDZ, so use naiive implementation
 /// to represent Path.
 /// Path is something like Unix path, delimited by `/`, ':' and '.'
 /// Square brackets('<', '>' is not included)
 ///
+/// Root path is represented as prim path "/" and elementPath ""(empty).
+///
 /// Example:
 ///
 /// - `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
-/// - `bora` : Relative path
+/// - `bora` : Could be Element(leaf) path or Relative path
 ///
 /// ':' is a namespce delimiter(example `input:muda`).
 ///
@@ -168,14 +170,13 @@ struct StringData {
 ///
 /// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
 /// supported.
-/// - Variant chars('{' '}') is not supported.
+/// - Variant chars('{' '}') is not supported(yet0.
 /// - '../' is TODO
 ///
 /// and have more limitatons.
 ///
 class Path {
  public:
-
   // Similar to SdfPathNode
   enum class PathType {
     Prim,
@@ -190,6 +191,14 @@ class Path {
   };
 
   Path() : valid(false) {}
+
+  static Path make_root_path() {
+    Path p =  Path("/", "");
+    // elementPath is empty for root.
+    p.element_ = "";
+    p.valid = true;
+    return p;
+  }
 
   // `p` is split into prim_part and prop_part
   // Path(const std::string &p);
@@ -206,6 +215,7 @@ class Path {
 
     this->prim_part = rhs.prim_part;
     this->prop_part = rhs.prop_part;
+    this->element_ = rhs.element_;
 
     return (*this);
   }
@@ -229,19 +239,15 @@ class Path {
   std::string GetPrimPart() const { return prim_part; }
   std::string GetPropPart() const { return prop_part; }
 
-  void set_path_type(const PathType ty) {
-    path_type_ = ty;
-  }
+  void set_path_type(const PathType ty) { path_type_ = ty; }
 
-  nonstd::optional<PathType> get_path_type() const {
-    return path_type_;
-  }
+  nonstd::optional<PathType> get_path_type() const { return path_type_; }
 
   // IsPropertyPath: PrimProperty or RelationalAttribute
   bool IsPropertyPath() const {
     if (path_type_) {
       if ((path_type_.value() == PathType::PrimProperty ||
-          (path_type_.value() == PathType::RelationalAttribute))) {
+           (path_type_.value() == PathType::RelationalAttribute))) {
         return true;
       }
     }
@@ -259,7 +265,7 @@ class Path {
   }
 
   // Is Prim's property path?
-  // True when both PrimPart and PropPart are not empty. 
+  // True when both PrimPart and PropPart are not empty.
   bool IsPrimPropertyPath() const {
     if (prim_part.empty()) {
       return false;
@@ -274,16 +280,13 @@ class Path {
 
   bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
 
-  static Path RootPath() { return Path("/", ""); }
   // static Path RelativePath() { return Path("."); }
 
   Path AppendProperty(const std::string &elem);
 
   Path AppendElement(const std::string &elem);
 
-  std::string GetElementName() const {
-    return element_;
-  }
+  std::string element_name() const { return element_; }
 
   ///
   /// Split a path to the root(common ancestor) and its siblings
@@ -299,7 +302,7 @@ class Path {
   ///
   std::pair<Path, Path> SplitAtRoot() const;
 
-  Path GetParentPrim() const;
+  Path GetParentPrimPath() const;
 
   ///
   /// @returns true if a path is '/' only
@@ -379,10 +382,10 @@ class Path {
  private:
   std::string prim_part;  // e.g. /Model/MyMesh, MySphere
   std::string prop_part;  // e.g. .visibility
-  std::string element_; // Element name
+  std::string element_;   // Element name
 
-  nonstd::optional<PathType> path_type_; // Currently optional.
-  
+  nonstd::optional<PathType> path_type_;  // Currently optional.
+
   bool valid{false};
 };
 
@@ -612,10 +615,9 @@ struct APISchemas {
 
 // SdfLayerOffset
 struct LayerOffset {
-  double _offset;
-  double _scale;
+  double _offset{0.0};
+  double _scale{1.0};
 };
-
 
 // SdfReference
 struct Reference {
@@ -627,9 +629,9 @@ struct Reference {
 
 // SdfPayload
 struct Payload {
-  value::AssetPath asset_path; // std::string in SdfPayload
+  value::AssetPath asset_path;  // std::string in SdfPayload
   Path _prim_path;
-  LayerOffset _layer_offset; // from 0.8.0
+  LayerOffset _layer_offset;  // from 0.8.0
   // No customData for Payload
 };
 
@@ -649,13 +651,16 @@ struct PrimMeta {
   //
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
   nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload;
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inherits;  // 'inherits'
+  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
+      inherits;  // 'inherits'
   nonstd::optional<std::pair<ListEditQual, std::vector<std::string>>>
-      variantSets;  // 'variantSets'. Could be `token` but treat as `string`(Crate format uses `string`)
+      variantSets;  // 'variantSets'. Could be `token` but treat as
+                    // `string`(Crate format uses `string`)
 
   nonstd::optional<VariantSelectionMap> variants;  // `variants`
 
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> specializes;  // 'specializes'
+  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
+      specializes;  // 'specializes'
 
   // USDZ extensions
   nonstd::optional<std::string> sceneName;  // 'sceneName'
@@ -690,7 +695,7 @@ struct AttrMeta {
   // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
-  nonstd::optional<bool> hidden;         // 'hidden'
+  nonstd::optional<bool> hidden;                  // 'hidden'
   nonstd::optional<StringData> comment;           // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
@@ -701,8 +706,8 @@ struct AttrMeta {
   std::vector<StringData> stringData;
 
   bool authored() const {
-    return (interpolation || elementSize || hidden || customData || meta.size() ||
-            stringData.size());
+    return (interpolation || elementSize || hidden || customData ||
+            meta.size() || stringData.size());
   }
 };
 
@@ -1707,7 +1712,7 @@ struct XformOp {
                // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
                // will be empty for "xformOp:translate"
   // XformOpValueType value_type;
-  //std::string type_name;
+  // std::string type_name;
 
   value::TimeSamples var;
 
@@ -1732,22 +1737,22 @@ struct XformOp {
     var.values.clear();
 
     var.values.push_back(v);
-    //type_name = value::TypeTraits<T>::type_name();
+    // type_name = value::TypeTraits<T>::type_name();
   }
 
   void set_timesamples(const value::TimeSamples &v) {
     var = v;
 
-    //if (var.values.size()) {
-    //  type_name = var.values[0].type_name();
-    //}
+    // if (var.values.size()) {
+    //   type_name = var.values[0].type_name();
+    // }
   }
 
   void set_timesamples(value::TimeSamples &&v) {
     var = std::move(v);
-    //if (var.values.size()) {
-    //  type_name = var.values[0].type_name();
-    //}
+    // if (var.values.size()) {
+    //   type_name = var.values[0].type_name();
+    // }
   }
 
   bool is_timesamples() const {
@@ -1850,8 +1855,7 @@ struct TimeSamples {
 #endif
 
 // Prim metas, Prim tree and properties.
-struct VariantSet
-{
+struct VariantSet {
   PrimMeta metas;
   std::vector<int64_t> primIndices;
   std::map<std::string, Property> props;
@@ -2043,33 +2047,98 @@ struct Scope {
 //
 // For `Stage` scene graph.
 // Similar to `Prim` in pxrUSD.
-// This class uses tree-representation of `Prim`. Easy to use, but may not be performant.
+// This class uses tree-representation of `Prim`. Easy to use, but may not be
+// performant than flattened Prim array + index representation of Prim tree(Index-based scene graph such like glTF).
 //
 class Prim {
  public:
-  Path path;
-  Path elementPath;
-  Specifier specifier{Specifier::Invalid};
 
   Prim(const value::Value &rhs);
-
   Prim(value::Value &&rhs);
 
-  value::Value data; // GPrim, Xform, ...
+  template<typename T>
+  Prim(const T &prim) {
+    // Check if T is Prim class type.
+    static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) && (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id), "T is not a Prim class type");
+    _data = prim;
+  }
 
-  std::vector<Prim> children;  // child nodes
+  std::vector<Prim> &children() {
+    return _children;
+  }
+
+  const std::vector<Prim> &children() const {
+    return _children;
+  }
+
+  const value::Value &data() const {
+    return _data;
+  }
+
+  Specifier &specifier() {
+    return _specifier;
+  }
+
+  Specifier specifier() const {
+    return _specifier;
+  }
+
+  Path &local_path() {
+    return _path;
+  }
+
+  const Path &local_path() const {
+    return _path;
+  }
+
+
+  Path &element_path() {
+    return _elementPath;
+  }
+
+  const Path &element_path() const {
+    return _elementPath;
+  }
+
+  template<typename T>
+  bool is() const {
+    return (_data.type_id() == value::TypeTraits<T>::type_id);
+  }
+
+  // Return a pointer of a concrete Prim class(Xform, Material, ...)
+  // Return nullptr when failed to cast or T is not a Prim type.
+  template<typename T>
+  const T* as() const {
+    // Check if T is Prim type. e.g. Xform, Material, ...
+    if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
+        (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id)) {
+      return _data.as<T>();
+    }
+
+    return nullptr;
+  }
+
+ private:
+  Path _path;  // Prim's local path name. May contain Property, Relation and
+              // other infos, but do not include parent's path. To get fully absolute path of a Prim(e.g. "/xform0/mymesh0", You need to traverse Prim tree and concatename `elementPath` or use ***(T.B.D>) method in `Stage` class
+  Path _elementPath;  // leaf("terminal") Prim name.(e.g. "myxform" for `def
+                     // Xform "myform"`). For root node, elementPath name is
+                     // empty string("").
+  Specifier _specifier{
+      Specifier::Invalid};  // `def`, `over` or `class`. Usually `def`
+  value::Value _data;  // Generic container for concrete Prim object. GPrim, Xform, ...
+  std::vector<Prim> _children;  // child Prim nodes
 };
 
 ///
 /// Contains concrete Prim object and composition elements.
 ///
-/// PrimNode is near to final state of `Prim`.
-/// Doing one further step(Composition, Flatten, select Variant) to get `Prim`. 
+/// PrimNode is near to the final state of `Prim`.
+/// Doing one further step(Composition, Flatten, select Variant) to get `Prim`.
 ///
 /// Similar to `PrimIndex` in pxrUSD
 ///
 class PrimNode {
-
   Path path;
   Path elementPath;
 
@@ -2077,15 +2146,15 @@ class PrimNode {
 
   PrimNode(value::Value &&rhs);
 
-  value::Value prim; // GPrim, Xform, ...
+  value::Value prim;  // GPrim, Xform, ...
 
   std::vector<PrimNode> children;  // child nodes
 
   ///
   /// Select variant.
   ///
-  bool select_variant(const std::string &target_name, const std::string &variant_name) {
-
+  bool select_variant(const std::string &target_name,
+                      const std::string &variant_name) {
     const auto m = vsmap.find(target_name);
     if (m != vsmap.end()) {
       current_vsmap[target_name] = variant_name;
@@ -2100,9 +2169,7 @@ class PrimNode {
   /// key = variant prim name
   /// value = variats
   ///
-  const VariantSelectionMap &get_variant_selection_map() const {
-    return vsmap;
-  }
+  const VariantSelectionMap &get_variant_selection_map() const { return vsmap; }
 
   ///
   /// Variants
@@ -2112,8 +2179,8 @@ class PrimNode {
   using PropertyMap = std::map<std::string, Property>;
   using PrimNodeMap = std::map<std::string, PrimNode>;
 
-  VariantSelectionMap vsmap; // Original variant selections
-  VariantSelectionMap current_vsmap; // Currently selected variants 
+  VariantSelectionMap vsmap;          // Original variant selections
+  VariantSelectionMap current_vsmap;  // Currently selected variants
 
   // key = variant_name
   std::map<std::string, PropertyMap> variantAttributeMap;
@@ -2124,10 +2191,9 @@ class PrimNode {
   ///
   std::vector<value::token> primChildren;
   std::vector<value::token> variantChildren;
-
 };
 
-#if 0 // TODO: Remove
+#if 0  // TODO: Remove
 //
 // For low-level scene graph representation, something like Vulkan.
 // Less abstraction, and scene graph is representated by indices.
@@ -2271,17 +2337,14 @@ struct StringAndIdMap {
   std::map<std::string, int32_t> _s_to_i;  // string -> index
 };
 
-
-
 struct NodeIndex {
   std::string name;
 
   // TypeTraits<T>::type_id
   value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
 
-  int64_t
-      index{-1};  // array index to `Scene::xforms`, `Scene::geom_cameras`, ...
-                  // -1 = invlid(or not set)
+  int64_t index{-1};  // array index to `Scene::xforms`, `Scene::geom_cameras`,
+                      // ... -1 = invlid(or not set)
 };
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
@@ -2300,7 +2363,8 @@ DEFINE_TYPE_TRAIT(Specifier, "specifier", TYPE_ID_SPECIFIER, 1);
 DEFINE_TYPE_TRAIT(Permission, "permission", TYPE_ID_PERMISSION, 1);
 DEFINE_TYPE_TRAIT(Variability, "variability", TYPE_ID_VARIABILITY, 1);
 
-DEFINE_TYPE_TRAIT(VariantSelectionMap, "variants", TYPE_ID_VARIANT_SELECION_MAP, 0);
+DEFINE_TYPE_TRAIT(VariantSelectionMap, "variants", TYPE_ID_VARIANT_SELECION_MAP,
+                  0);
 
 DEFINE_TYPE_TRAIT(Payload, "payload", TYPE_ID_PAYLOAD, 1);
 DEFINE_TYPE_TRAIT(LayerOffset, "LayerOffset", TYPE_ID_LAYER_OFFSET, 1);
