@@ -240,6 +240,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
@@ -516,10 +517,11 @@ endif()
 #
 foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
-  # /bigobj is required to avoid : fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
-  if(MSVC)
-    target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
-  endif()
+  # Current TinyUSDZ now should compile well without /bigobj flag.
+  # Uncommend if you encounter the following errror: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
+  #if(MSVC)
+  #  target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
+  #endif()
 
   if(TINYUSDZ_PRODUCTION_BUILD)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

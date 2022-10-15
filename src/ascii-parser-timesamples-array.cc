@@ -186,14 +186,15 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetP
 // -- impl ParseTimeSampleData
 //
 
+
 // TODO: Share code with array version as much as possible.
 template <typename T>
-nonstd::optional<AsciiParser::TimeSampleData<T>>
-AsciiParser::TryParseTimeSamples() {
-  // timeSamples = '{' ((int : T) sep)+ '}'
+nonstd::optional<AsciiParser::TimeSampleData<std::vector<T>>>
+AsciiParser::TryParseTimeSamplesOfArray() {
+  // timeSamples = '{' ((int : [T]) sep)+ '}'
   // sep = ','(may ok to omit for the last element.
 
-  TimeSampleData<T> data;
+  TimeSampleData<std::vector<T>> data;
 
   if (!Expect('{')) {
     return nonstd::nullopt;
@@ -234,9 +235,18 @@ AsciiParser::TryParseTimeSamples() {
       return nonstd::nullopt;
     }
 
-    nonstd::optional<T> value;
-    if (!ReadBasicType(&value)) {
-      return nonstd::nullopt;
+    // None(nullopt) or T[]
+    nonstd::optional<std::vector<T>> tsValue;
+
+    if (MaybeNone()) {
+      tsValue = nonstd::nullopt;
+    } else {
+      std::vector<T> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PushError("Failed to parse array value.");
+        return nonstd::nullopt;
+      }
+      tsValue = value;
     }
 
     // The last element may have separator ','
@@ -255,7 +265,7 @@ AsciiParser::TryParseTimeSamples() {
       DCOUT("sep = " << sep);
       if (sep == '}') {
         // End of item
-        data.push_back({timeVal, value});
+        data.push_back({timeVal, tsValue});
         break;
       } else if (sep == ',') {
         // ok
@@ -273,7 +283,7 @@ AsciiParser::TryParseTimeSamples() {
 
           if (nc == '}') {
             // End of item
-            data.push_back({timeVal, value});
+            data.push_back({timeVal, tsValue});
             break;
           }
         }
@@ -287,10 +297,11 @@ AsciiParser::TryParseTimeSamples() {
       return nonstd::nullopt;
     }
 
-    data.push_back({timeVal, value});
+    data.push_back({timeVal, tsValue});
   }
 
-  DCOUT("Parse TimeSamples success. # of items = " << data.size());
+  DCOUT(
+      "Parse TimeSamples of array type success. # of items = " << data.size());
 
   return std::move(data);
 }
@@ -314,17 +325,17 @@ value::TimeSamples AsciiParser::ConvertToTimeSamples(
   return dst;
 }
 
-
-bool AsciiParser::ParseTimeSamples(const std::string &type_name,
+bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
                                    value::TimeSamples *ts_out) {
 // 1D and scalar
 #define PARSE_TYPE(__tyname, __type, __ts)                       \
-  if (__tyname == value::TypeTraits<__type>::type_name()) {             \
-    if (auto pv = TryParseTimeSamples<__type>()) {                             \
-      __ts = ConvertToTimeSamples<__type>(pv.value());                         \
+  if ((__tyname == value::TypeTraits<__type>::type_name())) {  \
+    if (auto pv = TryParseTimeSamplesOfArray<__type>()) {                      \
+      __ts = ConvertToTimeSamples<std::vector<__type>>(pv.value());            \
     } else {                                                                   \
       PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `"      \
-                            << value::TypeTraits<__type>::type_name() << "`"); \
+                            << value::TypeTraits<__type>::type_name()          \
+                            << "[]`");                                         \
     }                                                                          \
   } else
 

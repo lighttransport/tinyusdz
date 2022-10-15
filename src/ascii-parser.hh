@@ -87,7 +87,6 @@ BETTER_ENUM(Kind, int, model, group, assembly, component, subcomponent);
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
-
  public:
   // TODO: refactor
   struct PrimMetas {
@@ -313,8 +312,8 @@ class AsciiParser {
   ///
   /// Return true but `value` is set to nullopt for `None`(Attribute Blocked)
   ///
-  //template <typename T>
-  //bool ReadBasicType(nonstd::optional<T> *value);
+  // template <typename T>
+  // bool ReadBasicType(nonstd::optional<T> *value);
 
   bool ReadBasicType(nonstd::optional<bool> *value);
   bool ReadBasicType(nonstd::optional<value::half> *value);
@@ -375,10 +374,8 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<Identifier> *value);
   bool ReadBasicType(nonstd::optional<PathIdentifier> *value);
 
-
-
-  //template <typename T>
-  //bool ReadBasicType(T *value);
+  // template <typename T>
+  // bool ReadBasicType(T *value);
 
   bool ReadBasicType(bool *value);
   bool ReadBasicType(value::half *value);
@@ -438,7 +435,6 @@ class AsciiParser {
   bool ReadBasicType(Reference *value);
   bool ReadBasicType(Identifier *value);
   bool ReadBasicType(PathIdentifier *value);
-
 
   template <typename T>
   bool ReadBasicType(nonstd::optional<std::vector<T>> *value);
@@ -500,7 +496,8 @@ class AsciiParser {
   /// (e.g. `[1, 2, 3,]`)
   ///
   template <typename T>
-  bool SepBy1BasicType(const char sep, const char end_symbol, std::vector<T> *result);
+  bool SepBy1BasicType(const char sep, const char end_symbol,
+                       std::vector<T> *result);
 
   ///
   /// Parse '[', Sep1By(','), ']'
@@ -589,6 +586,25 @@ class AsciiParser {
 
   bool ParseDictElement(std::string *out_key, MetaVariable *out_var);
   bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
+
+  ///
+  /// Parse TimeSample data(scalar type) and store it to type-erased data
+  /// structure value::TimeSamples.
+  ///
+  /// @param[in] type_name Name of TimeSamples type(seen in .usda file. e.g.
+  /// "float" for `float var.timeSamples = ..`)
+  ///
+  bool ParseTimeSamples(const std::string &type_name, value::TimeSamples *ts);
+
+  ///
+  /// Parse TimeSample data(array type) and store it to type-erased data
+  /// structure value::TimeSamples.
+  ///
+  /// @param[in] type_name Name of TimeSamples type(seen in .usda file. array
+  /// suffix `[]` is omitted. e.g. "float" for `float[] var.timeSamples = ..`)
+  ///
+  bool ParseTimeSamplesOfArray(const std::string &type_name,
+                               value::TimeSamples *ts);
 
   ///
   /// `variants` in Prim meta.
@@ -771,6 +787,8 @@ class AsciiParser {
   // template<typename T>
   // bool ParseTimeSampleData(nonstd::optional<T> *out_value);
 
+  // -- [TimeSamples] -------------------
+
   template <typename T>
   using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
 
@@ -796,6 +814,8 @@ class AsciiParser {
   template <typename T>
   nonstd::optional<TimeSampleData<std::vector<T>>> TryParseTimeSamplesOfArray();
 
+  // ---------------------------------------
+
   nonstd::optional<std::pair<ListEditQual, MetaVariable>> ParsePrimMeta();
   bool ParsePrimProps(std::map<std::string, Property> *props);
 
@@ -819,7 +839,6 @@ class AsciiParser {
   }
 
   const tinyusdz::StreamReader *_sr = nullptr;
-
 
   // "class" defs
   // std::map<std::string, Klass> _klasses;
