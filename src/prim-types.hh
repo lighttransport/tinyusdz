@@ -615,8 +615,8 @@ struct APISchemas {
 
 // SdfLayerOffset
 struct LayerOffset {
-  double _offset;
-  double _scale;
+  double _offset{0.0};
+  double _scale{1.0};
 };
 
 // SdfReference
