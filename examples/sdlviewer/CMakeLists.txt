@@ -306,6 +306,7 @@ list(
   ../../src/xform.cc
   ../../src/stage.cc
   ../../src/tydra/render-data.cc
+  ../../src/tydra/scene-access.cc
 )
 
 set(TINYUSDZ_DEP_SOURCES
@@ -313,11 +314,11 @@ set(TINYUSDZ_DEP_SOURCES
     ../../src/lz4-compression.cc
     ../../src/lz4/lz4.c
     ../../src/external/pystring.cpp
-    ../../src/external/string_id/string_id.cpp
-    ../../src/external/string_id/database.cpp
-    ../../src/external/string_id/error.cpp
+    #../../src/external/string_id/string_id.cpp
+    #../../src/external/string_id/database.cpp
+    #../../src/external/string_id/error.cpp
     ../../src/external/fpng.cpp
-    ../../src/external/staticstruct.cc
+    #../../src/external/staticstruct.cc
     ../../src/external/tinyxml2/tinyxml2.cpp
     )
 
