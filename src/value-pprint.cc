@@ -15,7 +15,7 @@
 
 // For fast int/float to ascii
 // Disabled for a while(need to write a test).
-//#include "external/jeaiii_to_text.h" 
+//#include "external/jeaiii_to_text.h"
 
 #include "external/dtoa_milo.h"
 
@@ -539,11 +539,11 @@ namespace value {
   __FUNC(GeomCone)              \
   __FUNC(GeomBasisCurves)       \
   __FUNC(GeomCamera)            \
-  __FUNC(LuxSphereLight)        \
-  __FUNC(LuxDomeLight)          \
-  __FUNC(LuxDiskLight)          \
-  __FUNC(LuxDistantLight)          \
-  __FUNC(LuxCylinderLight)          \
+  __FUNC(SphereLight)        \
+  __FUNC(DomeLight)          \
+  __FUNC(DiskLight)          \
+  __FUNC(DistantLight)          \
+  __FUNC(CylinderLight)          \
   __FUNC(SkelRoot)              \
   __FUNC(Skeleton)              \
   __FUNC(SkelAnimation)         \

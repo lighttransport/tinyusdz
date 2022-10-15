@@ -41,6 +41,7 @@ class Stage {
 
   ///
   /// Traverse by depth-first order.
+  /// NOTE: Not yet implementd
   ///
   PrimRange Traverse();
 
@@ -50,7 +51,7 @@ class Stage {
   ///
   /// @returns pointer to Prim(to avoid a copy). Never return nullptr upon success.
   ///
-  nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path);
+  nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path) const;
 
   ///
   /// Get Prim from a children of given root Prim.
@@ -58,7 +59,7 @@ class Stage {
   ///
   /// @returns pointer to Prim(to avoid a copy). Never return nullptr upon success.
   ///
-  nonstd::expected<const Prim *, std::string> GetPrimFromRelativePath(const Prim &root, const Path &path);
+  nonstd::expected<const Prim *, std::string> GetPrimFromRelativePath(const Prim &root, const Path &path) const;
 
   ///
   /// Dump Stage as ASCII(USDA) representation.
@@ -110,9 +111,9 @@ class Stage {
 
   // Cached prim path.
   // key : prim_part string (e.g. "/path/bora")
-  std::map<std::string, const Prim *> _prim_path_cache;
+  mutable std::map<std::string, const Prim *> _prim_path_cache;
 
-  bool _dirty{false}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
+  mutable bool _dirty{false}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
 
 };
 
