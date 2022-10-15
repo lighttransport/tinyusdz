@@ -19,6 +19,7 @@ tinyusdz_sources=[
   '../../src/ascii-parser.cc',
   '../../src/ascii-parser-basetype.cc',
   '../../src/ascii-parser-timesamples.cc',
+  '../../src/ascii-parser-timesamples-array.cc',
   '../../src/usda-reader.cc',
   '../../src/usda-writer.cc',
   '../../src/usdc-reader.cc',
