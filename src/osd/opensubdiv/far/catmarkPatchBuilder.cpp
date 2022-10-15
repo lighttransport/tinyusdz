@@ -22,13 +22,6 @@
 //   language governing permissions and limitations under the Apache License.
 //
 
-#ifdef _MSC_VER
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
-#endif
-
-
 #include "../far/catmarkPatchBuilder.h"
 #include "../vtr/stackBuffer.h"
 
@@ -45,8 +38,11 @@ using Vtr::internal::StackBuffer;
 
 namespace Far {
 
+constexpr auto kPI = 3.14159265358979323846;
+constexpr auto kPI_2 = kPI/2.0;
+
 //
-//  Core functions for computing Catmark limit properties that are used 
+//  Core functions for computing Catmark limit properties that are used
 //  in the conversion to multiple patch types.
 //
 //  This struct/class is just a means of grouping common functions.
@@ -62,7 +58,7 @@ namespace Far {
 //
 //  Regarding support for multiple precision, like Sdc, some intermediate
 //  calculations are performed in double and cast to float.  Historically
-//  this conversion code has been purely float and later extended to 
+//  this conversion code has been purely float and later extended to
 //  support template <typename REAL>.  For math functions such as cos(),
 //  sin(), etc., we rely on overloading via <cmath> through the use of
 //  std::cos(), std::sin(), etc.
@@ -92,7 +88,7 @@ inline double
 CatmarkLimits<REAL>::computeCoefficient(int valence) {
 
     static double const efTable[] = {
-        0.0,                    0.0,                    0.0,                   
+        0.0,                    0.0,                    0.0,
         8.1281572906372312e-01, 0.5,                    3.6364406329142801e-01,
         2.8751379706077085e-01, 2.3868786685851678e-01, 2.0454364190756097e-01,
         1.7922903958061159e-01, 1.5965737079986253e-01, 1.4404233443011302e-01,
@@ -107,7 +103,7 @@ CatmarkLimits<REAL>::computeCoefficient(int valence) {
     if (valence < 30) return efTable[valence];
 
     double invValence = 1.0 / valence;
-    double cosT = std::cos(2.0 * M_PI * invValence);
+    double cosT = std::cos(2.0 * kPI * invValence);
     double divisor = (cosT + 5.0) + std::sqrt((cosT + 9.0) * (cosT + 1.0));
 
     return (16.0 * invValence / divisor);
@@ -149,7 +145,7 @@ CatmarkLimits<REAL>::ComputeInteriorPointWeights(int valence, int faceInRing,
     double pCoeff   = oneOverValence * oneOverValPlus5;
     double tanCoeff = computeCoefficient(valence) * 0.5f * oneOverValPlus5;
 
-    double faceAngle = 2.0 * M_PI * oneOverValence;
+    double faceAngle = 2.0 * kPI * oneOverValence;
 
     //
     //  Assign position weights directly while accumulating an intermediate set
@@ -211,7 +207,7 @@ CatmarkLimits<REAL>::ComputeBoundaryPointWeights(int valence, int faceInRing,
                 Weight* pWeights, Weight* epWeights, Weight* emWeights) {
 
     int    numFaces  = valence - 1;
-    double faceAngle = M_PI / numFaces;
+    double faceAngle = kPI / numFaces;
 
     int weightWidth = 2 * valence;
 
@@ -472,7 +468,7 @@ namespace {
     template <typename REAL>
     void
     _matrixPrintDensity(const char* prefix, SparseMatrix<REAL> const & M) {
-    
+
         int fullSize = M.GetNumRows() * M.GetNumColumns();
         int sparseSize = M.GetNumElements();
 
@@ -766,12 +762,12 @@ GregoryConverter<REAL>::Initialize(SourcePatch const & sourcePatch) {
         corner.isRegular = ((corner.numFaces << corner.isBoundary) == 4)
                          && !corner.isSharp;
         if (corner.isRegular) {
-            corner.faceAngle    = REAL(M_PI_2);
+            corner.faceAngle    = REAL(kPI_2);
             corner.cosFaceAngle = 0.0f;
             corner.sinFaceAngle = 1.0f;
         } else {
             corner.faceAngle =
-                (corner.isBoundary ? REAL(M_PI) : (2.0f * REAL(M_PI)))
+                (corner.isBoundary ? REAL(kPI) : (2.0f * REAL(kPI)))
                     / REAL(corner.numFaces);
             corner.cosFaceAngle = std::cos(corner.faceAngle);
             corner.sinFaceAngle = std::sin(corner.faceAngle);
@@ -1609,7 +1605,7 @@ BSplineConverter<REAL>::convertIrregularCorner(int irregularCorner,
     //    (P5)   P4----P15---P14          X0----X2----X4----X6
     //   .        |     |     |            |     |     |     |
     //   .        |     |     |            |     |     |     |
-    //     P6----P0*---P3----P13          X1----P0*---P3----P13 
+    //     P6----P0*---P3----P13          X1----P0*---P3----P13
     //      |     |P' Em|     |    --->    |     |     |     |
     //      |     |Ep   |     |            |     |     |     |
     //     P7----P1----P2----P12          X3----P1----P2----P12
@@ -1959,7 +1955,7 @@ CatmarkPatchBuilder::convertSourcePatch(SourcePatch const &   sourcePatch,
     //  with the additional corner information that it initializes.  That
     //  can then be used for conversion to all destination patch types...
     //
-    
+
     if (patchType == PatchDescriptor::GREGORY_BASIS) {
         GregoryConverter<REAL>(sourcePatch, matrix);
     } else if (patchType == PatchDescriptor::REGULAR) {
