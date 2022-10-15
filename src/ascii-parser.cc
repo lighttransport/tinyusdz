@@ -45,9 +45,9 @@
 
 // external
 
-#include "external/fast_float/include/fast_float/fast_float.h"
-#include "external/jsteemann/atoi.h"
-#include "external/simple_match/include/simple_match/simple_match.hpp"
+//#include "external/fast_float/include/fast_float/fast_float.h"
+//#include "external/jsteemann/atoi.h"
+//#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
 
 //
@@ -3512,69 +3512,16 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       DCOUT("timeSample data. type = " << type_name);
     }
 
-#if 0 // TODO
-
-// 1D and scalar
-#define PARSE_TYPE(__type)                                                    \
-  if ((type_name == value::TypeTraits<__type>::type_name()) && array_qual) {   \
-    if (auto pv = TryParseTimeSamplesOfArray<__type>()) {                     \
-      ts = ConvertToTimeSamples<std::vector<__type>>(pv.value());             \
-    } else {                                                                  \
-      PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `"     \
-                            << value::TypeTraits<__type>::type_name()          \
-                            << "[]`");                                        \
-    }                                                                         \
-  } else if (type_name == value::TypeTraits<__type>::type_name()) {            \
-    if (auto pv = TryParseTimeSamples<__type>()) {                            \
-      ts = ConvertToTimeSamples<__type>(pv.value());                          \
-    } else {                                                                  \
-      PUSH_ERROR_AND_RETURN("Failed to parse timeSample data with type `"     \
-                            << value::TypeTraits<__type>::type_name() << "`"); \
-    }                                                                         \
-  } else
-
     value::TimeSamples ts;
-
-    // NOTE: `string` does not support multi-line string.
-
-    PARSE_TYPE(value::AssetPath)
-    PARSE_TYPE(value::token)
-    PARSE_TYPE(std::string)
-    PARSE_TYPE(float)
-    PARSE_TYPE(int)
-    PARSE_TYPE(uint32_t)
-    PARSE_TYPE(int64_t)
-    PARSE_TYPE(uint64_t)
-    PARSE_TYPE(value::half)
-    PARSE_TYPE(value::half2)
-    PARSE_TYPE(value::half3)
-    PARSE_TYPE(value::half4)
-    PARSE_TYPE(float)
-    PARSE_TYPE(value::float2)
-    PARSE_TYPE(value::float3)
-    PARSE_TYPE(value::float4)
-    PARSE_TYPE(double)
-    PARSE_TYPE(value::double2)
-    PARSE_TYPE(value::double3)
-    PARSE_TYPE(value::double4)
-    PARSE_TYPE(value::quath)
-    PARSE_TYPE(value::quatf)
-    PARSE_TYPE(value::quatd)
-    PARSE_TYPE(value::color3f)
-    PARSE_TYPE(value::color4f)
-    PARSE_TYPE(value::color3d)
-    PARSE_TYPE(value::color4d)
-    PARSE_TYPE(value::vector3f)
-    PARSE_TYPE(value::normal3f)
-    PARSE_TYPE(value::point3f)
-    PARSE_TYPE(value::texcoord2f)
-    PARSE_TYPE(value::texcoord3f)
-    PARSE_TYPE(value::matrix4d) {
-      PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + type_name);
+    if (array_qual) {
+      if (!ParseTimeSamplesOfArray(type_name, &ts)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse TimeSamples of type {}[]", type_name));
+      }
+    } else {
+      if (!ParseTimeSamples(type_name, &ts)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse TimeSamples of type {}", type_name));
+      }
     }
-
-#undef PARSE_TYPE
-
 
     std::string varname = removeSuffix(primattr_name, ".timeSamples");
     PrimAttrib attr;
@@ -3592,9 +3539,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     (*props)[varname] = p;
 
     return true;
-#else
-    return false;
-#endif
 
   } else {
     PrimAttrib attr;

@@ -47,7 +47,7 @@
 
 #include "external/fast_float/include/fast_float/fast_float.h"
 #include "external/jsteemann/atoi.h"
-#include "external/simple_match/include/simple_match/simple_match.hpp"
+//#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
 
 //
@@ -2931,6 +2931,9 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<StringData> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
