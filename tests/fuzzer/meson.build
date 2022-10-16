@@ -34,6 +34,9 @@ tinyusdz_sources=[
   '../../src/xform.cc',
   '../../src/stage.cc',
   '../../src/tiny-format.cc',
+  '../../src/tydra/render-data.cc',
+  '../../src/tydra/shader-network.cc',
+  '../../src/tydra/scene-access.cc',
   # deps
   '../../src/external/fpng.cpp',
   '../../src/external/pystring.cpp',
