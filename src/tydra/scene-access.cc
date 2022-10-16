@@ -204,5 +204,33 @@ template bool ListShaders(const tinyusdz::Stage &stage, PathShaderMap<UsdPrimvar
 template bool ListShaders(const tinyusdz::Stage &stage, PathShaderMap<UsdPrimvarReader_float3> &m);
 template bool ListShaders(const tinyusdz::Stage &stage, PathShaderMap<UsdPrimvarReader_float4> &m);
 
+
+namespace {
+
+bool VisitPrimsRec(const tinyusdz::Prim &root, int32_t level, VisitPrimFunction visitor_fun, void *userdata){
+  bool ret = visitor_fun(root, level, userdata);
+  if (!ret) {
+    return false;
+  }
+
+  for (const auto &child : root.children()) {
+    if (!VisitPrimsRec(child, level+1, visitor_fun, userdata)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+} // namespace local
+
+void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, void *userdata) {
+  for (const auto &root : stage.GetRootPrims()) {
+    if (!VisitPrimsRec(root, /* root level */0, visitor_fun, userdata)) {
+      return;
+    }
+  }
+}
+
 } // namespace tydra
 } // namespace tinyusdz
