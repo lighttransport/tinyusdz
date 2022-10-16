@@ -41,9 +41,9 @@ class Stage {
 
   ///
   /// Traverse by depth-first order.
-  /// NOTE: Not yet implementd
+  /// NOTE: Not yet implementd. Use tydra::VisitPrims() for a while.
   ///
-  PrimRange Traverse();
+  // PrimRange Traverse();
 
   ///
   /// Get Prim at a Path.
