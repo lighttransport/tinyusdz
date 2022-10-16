@@ -200,6 +200,27 @@ int main(int argc, char **argv) {
   std::cout << "--------------------------------------"
             << "\n";
 
+  // Visit all Prims in the Stage.
+  auto prim_visit_fun = [](const tinyusdz::Prim &prim, const int32_t level, void *userdata) -> bool {
+    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().GetPrimPart() << "\n";
+
+    // Use as() or is() for Prim specific processing.
+    if (const tinyusdz::Material *pm = prim.as<tinyusdz::Material>()) {
+      (void)pm;
+      std::cout << tinyusdz::pprint::Indent(level) << "  Got Material!\n";
+    }
+
+    return true; // return false if you want to terminate traversal earlier.
+  };
+
+  void *userdata = nullptr;
+
+  tinyusdz::tydra::VisitPrims(stage, prim_visit_fun, userdata);
+  
+
+  std::cout << "--------------------------------------"
+            << "\n";
+
   // Mapping hold the pointer to concrete Prim object,
   // So stage content should not be changed(no Prim addition/deletion).
   MaterialMap matmap;
