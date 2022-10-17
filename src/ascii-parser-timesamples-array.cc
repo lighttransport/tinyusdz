@@ -135,9 +135,7 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetP
 // -- impl ParseTimeSampleData
 //
 
-
-// `type_name` does not contain "[]"
-bool AsciiParser::ParseTimeSampleValueOfArrayType(const std::string &type_name, value::Value *result) {
+bool AsciiParser::ParseTimeSampleValueOfArrayType(const uint32_t type_id, value::Value *result) {
 
   if (!result) {
     return false;
@@ -150,50 +148,50 @@ bool AsciiParser::ParseTimeSampleValueOfArrayType(const std::string &type_name, 
 
   value::Value val;
 
-#define PARSE_TYPE(__tyname, __type)                       \
-  if (__tyname == value::TypeTraits<__type>::type_name()) {             \
+#define PARSE_TYPE(__tyid, __type)                       \
+  if (__tyid == value::TypeTraits<__type>::type_id) {             \
     std::vector<__type> typed_val; \
     if (!ParseBasicTypeArray(&typed_val)) {                             \
-      PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + __tyname + "[]`"); \
+      PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + value::GetTypeName(__tyid) + "[]`"); \
     }                                                                  \
     val = value::Value(typed_val); \
   } else
 
   // NOTE: `string` does not support multi-line string.
-  PARSE_TYPE(type_name, value::AssetPath)
-  PARSE_TYPE(type_name, value::token)
-  PARSE_TYPE(type_name, std::string)
-  PARSE_TYPE(type_name, float)
-  PARSE_TYPE(type_name, int32_t)
-  PARSE_TYPE(type_name, uint32_t)
-  PARSE_TYPE(type_name, int64_t)
-  PARSE_TYPE(type_name, uint64_t)
-  PARSE_TYPE(type_name, value::half)
-  PARSE_TYPE(type_name, value::half2)
-  PARSE_TYPE(type_name, value::half3)
-  PARSE_TYPE(type_name, value::half4)
-  PARSE_TYPE(type_name, float)
-  PARSE_TYPE(type_name, value::float2)
-  PARSE_TYPE(type_name, value::float3)
-  PARSE_TYPE(type_name, value::float4)
-  PARSE_TYPE(type_name, double)
-  PARSE_TYPE(type_name, value::double2)
-  PARSE_TYPE(type_name, value::double3)
-  PARSE_TYPE(type_name, value::double4)
-  PARSE_TYPE(type_name, value::quath)
-  PARSE_TYPE(type_name, value::quatf)
-  PARSE_TYPE(type_name, value::quatd)
-  PARSE_TYPE(type_name, value::color3f)
-  PARSE_TYPE(type_name, value::color4f)
-  PARSE_TYPE(type_name, value::color3d)
-  PARSE_TYPE(type_name, value::color4d)
-  PARSE_TYPE(type_name, value::vector3f)
-  PARSE_TYPE(type_name, value::normal3f)
-  PARSE_TYPE(type_name, value::point3f)
-  PARSE_TYPE(type_name, value::texcoord2f)
-  PARSE_TYPE(type_name, value::texcoord3f)
-  PARSE_TYPE(type_name, value::matrix4d) {
-    PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + type_name);
+  PARSE_TYPE(type_id, value::AssetPath)
+  PARSE_TYPE(type_id, value::token)
+  PARSE_TYPE(type_id, std::string)
+  PARSE_TYPE(type_id, float)
+  PARSE_TYPE(type_id, int32_t)
+  PARSE_TYPE(type_id, uint32_t)
+  PARSE_TYPE(type_id, int64_t)
+  PARSE_TYPE(type_id, uint64_t)
+  PARSE_TYPE(type_id, value::half)
+  PARSE_TYPE(type_id, value::half2)
+  PARSE_TYPE(type_id, value::half3)
+  PARSE_TYPE(type_id, value::half4)
+  PARSE_TYPE(type_id, float)
+  PARSE_TYPE(type_id, value::float2)
+  PARSE_TYPE(type_id, value::float3)
+  PARSE_TYPE(type_id, value::float4)
+  PARSE_TYPE(type_id, double)
+  PARSE_TYPE(type_id, value::double2)
+  PARSE_TYPE(type_id, value::double3)
+  PARSE_TYPE(type_id, value::double4)
+  PARSE_TYPE(type_id, value::quath)
+  PARSE_TYPE(type_id, value::quatf)
+  PARSE_TYPE(type_id, value::quatd)
+  PARSE_TYPE(type_id, value::color3f)
+  PARSE_TYPE(type_id, value::color4f)
+  PARSE_TYPE(type_id, value::color3d)
+  PARSE_TYPE(type_id, value::color4d)
+  PARSE_TYPE(type_id, value::vector3f)
+  PARSE_TYPE(type_id, value::normal3f)
+  PARSE_TYPE(type_id, value::point3f)
+  PARSE_TYPE(type_id, value::texcoord2f)
+  PARSE_TYPE(type_id, value::texcoord3f)
+  PARSE_TYPE(type_id, value::matrix4d) {
+    PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
   }
 
 #undef PARSE_TYPE
@@ -201,6 +199,17 @@ bool AsciiParser::ParseTimeSampleValueOfArrayType(const std::string &type_name, 
   (*result) = val;
 
   return true;
+
+}
+
+// `type_name` does not contain "[]"
+bool AsciiParser::ParseTimeSampleValueOfArrayType(const std::string &type_name, value::Value *result) {
+  nonstd::optional<uint32_t> type_id = value::TryGetTypeId(type_name);
+  if (!type_id) {
+    PUSH_ERROR_AND_RETURN("Unsupported/invalid type name: " + type_name);
+  }
+
+  return ParseTimeSampleValueOfArrayType(type_id.value(), result);
 }
 
 bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
