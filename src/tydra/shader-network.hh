@@ -34,14 +34,17 @@ using mat2 = value::matrix2f;  // float precision
 
 
 ///
-/// Evaluate and return terminal value of the shader connection.
-/// It follows the value producing Attribute and copy its value.
+/// Evaluate and return COPIED terminal value of the shader attribute
+///
+/// If specified attribute has a value(including timeSamples value), returns the value of it.
+/// If specified attribute is a connection, it follows the value producing Attribute and returns the value of it.
+///
 /// Since the type of shader connection is known in advance, we return the value by template type T, not by `value::Value`
 /// NOTE: The returned value is COPIED. This should be OK for Shader network since usually it does not hold large data...
 ///
 /// @param[in] stage Stage
 /// @param[in] shader Shader node in `stage`.
-/// @param[in] prop_name Property name
+/// @param[in] attr_name Attribute name
 /// @param[out] out_val Output evaluated value.
 /// @param[out] err Error message
 /// @param[in] timeCode (Optional) Evaluate the value at specified time(for timeSampled value)
@@ -49,9 +52,9 @@ using mat2 = value::matrix2f;  // float precision
 /// @return true when specified `prop_name` exists in the given `shader` and can resolve the connection and retrieve "terminal" value.
 ///
 template<typename T>
-bool EvaluateShaderConnection(
+bool EvaluateShaderAttribute(
   const Stage &stage,
-  const Shader &shader, const std::string &prop_name,
+  const Shader &shader, const std::string &attr_name,
   T * out_val,
   std::string *err,
   const value::TimeCode timeCode = value::TimeCode::Default());
