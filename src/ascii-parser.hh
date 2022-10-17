@@ -308,9 +308,21 @@ class AsciiParser {
 
 
   ///
+  /// Parse TimeSample value with specified array type of `type_id`(value::TypeId)
+  /// (You can obrain type_id from string using value::GetTypeId())
+  ///
+  bool ParseTimeSampleValue(const uint32_t type_id, value::Value *result);
+
+  ///
   /// Parse TimeSample value with specified `type_name`(Appears in USDA. .e.g. "float", "matrix2d")
   ///
   bool ParseTimeSampleValue(const std::string &type_name, value::Value *result);
+
+  ///
+  /// Parse TimeSample value with specified base type of `type_id`(value::TypeId)
+  /// (You can obrain type_id from string using value::GetTypeId())
+  ///
+  bool ParseTimeSampleValueOfArrayType(const uint32_t base_type_id, value::Value *result);
 
   ///
   /// Parse TimeSample value with specified array type of `type_name`("[]" omiotted. .e.g. "float" for "float[]")
