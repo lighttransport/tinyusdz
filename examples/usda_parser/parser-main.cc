@@ -31,7 +31,9 @@ int main(int argc, char **argv) {
   tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
 
+#if !defined(TINYUSDZ_PRODUCTION_BUILD)
   std::cout << "Basedir = " << base_dir << "\n";
+#endif
   reader.SetBaseDir(base_dir);
 
   {
@@ -42,7 +44,9 @@ int main(int argc, char **argv) {
       std::cerr << reader.GetError() << "\n";
       return -1;
     } else {
+#if !defined(TINYUSDZ_PRODUCTION_BUILD)
       std::cout << "ok\n";
+#endif
     }
   }
 

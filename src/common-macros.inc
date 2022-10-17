@@ -32,7 +32,7 @@
     ss_e << "[error]"                                    \
          << ":" << __func__ << "():" << __LINE__ << " "; \
     ss_e << s << "\n";                                   \
-    PushError(ss_w.str());                               \
+    PushError(ss_e.str());                               \
   } while (0)
 
 #define PUSH_WARN(s)                                     \
