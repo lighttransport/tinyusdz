@@ -47,8 +47,6 @@ int main(int argc, char **argv) {
       std::cerr << "Failed to parse .usdc: \n";
       std::cerr << reader.GetError() << "\n";
       return -1;
-    } else {
-      std::cout << "ok\n";
     }
   }
 
