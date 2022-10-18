@@ -446,8 +446,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   if (mesh.materialBinding) {
     const MaterialBindingAPI &materialBinding = mesh.materialBinding.value();
     if (materialBinding.binding.IsValid()) {
-      const Path &matPath = materialBinding.binding;
-      DCOUT("materialBinding = " << to_string(matPath));
+      DCOUT("materialBinding = " << to_string(materialBinding.binding));
     } else {
       return nonstd::make_unexpected(
           fmt::format("material:binding has invalid Path."));

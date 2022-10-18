@@ -1106,10 +1106,9 @@ bool USDAReader::Impl::ReconstructStage() {
     DCOUT("root prim[" << idx << "].elementPath = " << dump_path(prim.element_path()));
     DCOUT("root prim[" << idx << "].num_children = " << prim.children().size());
 
-    size_t sz = _stage.GetRootPrims().size();
     _stage.GetRootPrims().emplace_back(std::move(prim));
 
-    DCOUT("num_children = " << _stage.GetRootPrims()[sz].children().size());
+    DCOUT("num_children = " << _stage.GetRootPrims()[size_t(_stage.GetRootPrims().size() - 1)].children().size());
   }
 
   return true;
