@@ -132,7 +132,8 @@ bool CrateReader::HasField(const std::string &key) const {
 }
 
 nonstd::optional<crate::Field> CrateReader::GetField(crate::Index index) const {
-  if (index.value <= _fields.size()) {
+
+  if (index.value < _fields.size()) {
     return _fields[index.value];
   } else {
     return nonstd::nullopt;
@@ -141,7 +142,7 @@ nonstd::optional<crate::Field> CrateReader::GetField(crate::Index index) const {
 
 const nonstd::optional<value::token> CrateReader::GetToken(
     crate::Index token_index) const {
-  if (token_index.value <= _tokens.size()) {
+  if (token_index.value < _tokens.size()) {
     return _tokens[token_index.value];
   } else {
     return nonstd::nullopt;
@@ -151,7 +152,8 @@ const nonstd::optional<value::token> CrateReader::GetToken(
 // Get string token from string index.
 const nonstd::optional<value::token> CrateReader::GetStringToken(
     crate::Index string_index) const {
-  if (string_index.value <= _string_indices.size()) {
+
+  if (string_index.value < _string_indices.size()) {
     crate::Index s_idx = _string_indices[string_index.value];
     return GetToken(s_idx);
   } else {
@@ -162,7 +164,8 @@ const nonstd::optional<value::token> CrateReader::GetStringToken(
 }
 
 nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
-  if (index.value <= _paths.size()) {
+
+  if (index.value < _paths.size()) {
     // ok
   } else {
     return nonstd::nullopt;
@@ -172,7 +175,7 @@ nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
 }
 
 nonstd::optional<Path> CrateReader::GetElementPath(crate::Index index) const {
-  if (index.value <= _elemPaths.size()) {
+  if (index.value < _elemPaths.size()) {
     // ok
   } else {
     return nonstd::nullopt;
@@ -183,7 +186,7 @@ nonstd::optional<Path> CrateReader::GetElementPath(crate::Index index) const {
 
 nonstd::optional<std::string> CrateReader::GetPathString(
     crate::Index index) const {
-  if (index.value <= _paths.size()) {
+  if (index.value < _paths.size()) {
     // ok
   } else {
     return nonstd::nullopt;
