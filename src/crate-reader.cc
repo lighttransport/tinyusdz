@@ -3831,10 +3831,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 bool CrateReader::BuildDecompressedPathsImpl(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath) {
+    std::vector<int32_t> const &jumps,
+    std::vector<bool> &visit_table,
+    size_t curIndex, Path parentPath) {
   bool hasChild = false, hasSibling = false;
   do {
     auto thisIndex = curIndex++;
+    DCOUT("thisIndex = " << thisIndex << ", pathIndexes.size = " << pathIndexes.size());
     if (parentPath.IsEmpty()) {
       // root node.
       // Assume single root node in the scene.
@@ -3853,7 +3856,14 @@ bool CrateReader::BuildDecompressedPathsImpl(
         return false;
       }
 
-      _paths[pathIndexes[thisIndex]] = parentPath;
+      if (idx < visit_table.size()) {
+        if (visit_table[idx]) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
+        }
+      }
+
+      _paths[idx] = parentPath;
+      visit_table[idx] = true;
     } else {
       if (thisIndex >= elementTokenIndexes.size()) {
         PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
@@ -3885,6 +3895,12 @@ bool CrateReader::BuildDecompressedPathsImpl(
         return false;
       }
 
+      if (idx < visit_table.size()) {
+        if (visit_table[idx]) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
+        }
+      }
+
       // full path
       _paths[idx] =
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
@@ -3893,6 +3909,8 @@ bool CrateReader::BuildDecompressedPathsImpl(
       // also set leaf path for 'primChildren' check
       _elemPaths[idx] = Path(elemToken.str(), "");
       //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
+
+      visit_table[idx] = true;
     }
 
     // If we have either a child or a sibling but not both, then just
@@ -3912,7 +3930,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       if (hasSibling) {
         // NOTE(syoyo): This recursive call can be parallelized
         auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps,
+        if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                         siblingIndex, parentPath)) {
           return false;
         }
@@ -4224,8 +4242,18 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 #endif
 
+  // For circular tree check
+  std::vector<bool> visit_table;
+  CHECK_MEMORY_USAGE(_paths.size()); // TODO: divide by 8?
+
+  // `_paths` is already initialized just before calling this ReadCompressedPaths
+  visit_table.resize(_paths.size());
+  for (size_t i = 0; i < visit_table.size(); i++) {
+    visit_table[i] = false;
+  }
+
   // Now build the paths.
-  if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps,
+  if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                   /* curIndex */ 0, Path())) {
     return false;
   }
