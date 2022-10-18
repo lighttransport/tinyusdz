@@ -8,8 +8,11 @@
 
 ## Status
 
-TinyUSDZ is near to release first working version.
-Remaining task is to write a examples, demo and scene/render delegate(Tydra)
+TinyUSDZ is near to release first version v0.8.0.
+Core loading feature(both USDA and USDC) is production-grade.
+(Flattened scene only(i.e, USDZ). Composition features are not supported yet)
+
+Remaining task is to write a examples, demo and scene/render delegate(Tydra).
 
 * [x] USDZ/USDC(Crate) parser
 * [ ] USDZ/USDC(Crate) writer (Work-in-progress)
@@ -19,10 +22,11 @@ Remaining task is to write a examples, demo and scene/render delegate(Tydra)
 
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
-* [ ] Write simple SDL viewer example(2022 Fall expected)
-* [ ] Write iOS and Android example(2022 Fall expected)
+* [ ] Write simple SDL viewer example(2022 Fall/Winter expected)
+* [ ] Write iOS and Android example(2022 Fall/Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] USD <-> glTF converter example
+  * There is an independent work of USDC to gTF binary GLB converter: https://github.com/fynv/usd2glb
 * [ ] Web demo with Three.js?
   * [ ] Three.js started to support USDZ with Ascii format, but no USDC support yet: https://github.com/mrdoob/three.js/issues/14219
 
