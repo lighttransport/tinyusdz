@@ -289,7 +289,9 @@ class CrateReader {
   bool BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
+      std::vector<int32_t> const &jumps,
+      std::vector<bool> &visit_table, // mark visited pathIndex to prevent circular referencing
+      size_t curIndex, Path parentPath);
 
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
