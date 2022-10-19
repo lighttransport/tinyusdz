@@ -6,11 +6,14 @@
 
 [![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)](https://github.com/syoyo/tinyusdz/actions/)
 
+[![Total alerts](https://img.shields.io/lgtm/alerts/g/syoyo/tinyusdz.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/syoyo/tinyusdz/alerts/)
+
+## Supported platforms
+
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM                          |
 |:-------:|:----------------------------------------:|:-------------------------------------:|:---------:|:------:|:-------:|:------------------------------:|
-|   dev   | 64bit ✅ </br> 32bit ✅ </br> aarc64 ✅  | 64bit ✅ </br> 32bit ✅ </br> ARM 🤔  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) |
+|   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> 🤔 ARM  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) |
 
-[![Total alerts](https://img.shields.io/lgtm/alerts/g/syoyo/tinyusdz.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/syoyo/tinyusdz/alerts/)
 
 ## Status
 
