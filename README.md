@@ -2,7 +2,13 @@
 
 `TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
+## Build status
+
 [![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)](https://github.com/syoyo/tinyusdz/actions/)
+
+|         |   Linux   |  Linux(aarch64) |  Windows  |   macOS   |  iOS   | Android(arm64v8a) |  WASM                          |
+|:-------:|:---------:|:---------------:|:---------:|:---------:|:------:|:-----------------:|:------------------------------:|
+|   dev   | ✅        |✅               |✅         |✅         |✅      |✅                 |✅ [sandbox/wasi](sandbox/wasi) |
 
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/syoyo/tinyusdz.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/syoyo/tinyusdz/alerts/)
 
@@ -26,7 +32,7 @@ Remaining task is to write a examples, demo and scene/render delegate(Tydra).
 * [ ] Write iOS and Android example(2022 Fall/Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] USD <-> glTF converter example
-  * There is an independent work of USDC to gTF binary GLB converter: https://github.com/fynv/usd2glb
+  * There is an independent work of USD to glTF binary GLB converter: https://github.com/fynv/usd2glb
 * [ ] Web demo with Three.js?
   * [ ] Three.js started to support USDZ with Ascii format, but no USDC support yet: https://github.com/mrdoob/three.js/issues/14219
 
@@ -79,7 +85,11 @@ Currently TinyUSDZ project is run as personal project by `syoyo` and `syoyo` doe
 If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
 
 
-## Other related projects
+## Projects using TinyUSDZ
+
+* usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
+
+### Other related projects
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
