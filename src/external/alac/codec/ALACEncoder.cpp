@@ -45,7 +45,7 @@
 typedef int16_t (*SearchCoefs)[kALACMaxCoefs];
 
 // defines/constants
-const uint32_t kALACEncoderMagic	= 'dpge';
+//const uint32_t kALACEncoderMagic	= 'dpge';
 const uint32_t kMaxSampleSize		= 32;			// max allowed bit width is 32
 const uint32_t kDefaultMixBits	= 2;
 const uint32_t kDefaultMixRes		= 0;
@@ -91,10 +91,10 @@ static const uint32_t	sChannelMaps[kALACMaxChannels] =
 	(ID_SCE << 21) | (ID_CPE << 15) | (ID_CPE << 9) | (ID_CPE << 3) | (ID_SCE)
 };
 
-static const uint32_t sSupportediPodSampleRates[] =
-{
-	8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
-};
+//static const uint32_t sSupportediPodSampleRates[] =
+//{
+//	8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
+//};
 
 /*
 	Constructor
@@ -276,7 +276,7 @@ int32_t ALACEncoder::EncodeStereo( BitBuffer * bitstream, void * inputBuffer, ui
 	uint32_t			mode;
 	uint32_t			pbFactor;
 	uint32_t			chanBits;
-	uint32_t			denShift;
+	//uint32_t			denShift;
 	uint8_t			bytesShifted;
 	SearchCoefs		coefsU;
 	SearchCoefs		coefsV;
@@ -317,7 +317,7 @@ int32_t ALACEncoder::EncodeStereo( BitBuffer * bitstream, void * inputBuffer, ui
 	mixBits		= kDefaultMixBits;
 	maxRes		= kMaxRes;
 	numU = numV = kDefaultNumUV;
-	denShift	= DENSHIFT_DEFAULT;
+	//denShift	= DENSHIFT_DEFAULT;
 	mode		= 0;
 	pbFactor	= 4;
 	dilate		= 8;
@@ -556,7 +556,7 @@ int32_t ALACEncoder::EncodeStereoFast( BitBuffer * bitstream, void * inputBuffer
 	uint32_t			mode;
 	uint32_t			pbFactor;
 	uint32_t			chanBits;
-	uint32_t			denShift;
+	//uint32_t			denShift;
 	uint8_t			bytesShifted;
 	SearchCoefs		coefsU;
 	SearchCoefs		coefsV;
@@ -596,7 +596,7 @@ int32_t ALACEncoder::EncodeStereoFast( BitBuffer * bitstream, void * inputBuffer
 	mixBits		= kDefaultMixBits;
 	mixRes		= kDefaultMixRes;
 	numU = numV = kDefaultNumUV;
-	denShift	= DENSHIFT_DEFAULT;
+	//denShift	= DENSHIFT_DEFAULT;
 	mode		= 0;
 	pbFactor	= 4;
 
