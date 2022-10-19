@@ -22,28 +22,29 @@ struct CrateReaderConfig {
   // Set limits to prevent infinite-loop, buffer-overrun, out-of-memory, etc.
   size_t maxTOCSections = 32;
 
-  size_t maxNumTokens = 1024*1024;
-  size_t maxNumStrings = 1024*1024;
-  size_t maxNumFields = 1024*1024;
-  size_t maxNumFieldSets = 1024*1024;
-  size_t maxNumSpecifiers = 1024*1024;
-  size_t maxNumPaths = 1024*1024;
+  size_t maxNumTokens = 1024 * 1024;
+  size_t maxNumStrings = 1024 * 1024;
+  size_t maxNumFields = 1024 * 1024;
+  size_t maxNumFieldSets = 1024 * 1024;
+  size_t maxNumSpecifiers = 1024 * 1024;
+  size_t maxNumPaths = 1024 * 1024;
 
-  size_t maxNumIndices = 1024*1024*16;
+  size_t maxNumIndices = 1024 * 1024 * 16;
   size_t maxDictElements = 256;
-  size_t maxArrayElements = 1024*1024*1024; // 1G
+  size_t maxArrayElements = 1024 * 1024 * 1024;  // 1G
   size_t maxAssetPathElements = 512;
 
-  size_t maxTokenLength = 4096; // Maximum allowed length of `token` string
-  size_t maxStringLength = 1024*1024*64;
+  size_t maxTokenLength = 4096;  // Maximum allowed length of `token` string
+  size_t maxStringLength = 1024 * 1024 * 64;
 
   size_t maxVariantsMapElements = 128;
 
   // Generic int[] data
-  size_t maxInts = 1024*1024*4;
+  size_t maxInts = 1024 * 1024 * 4;
 
-  // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in [bytes].
-  size_t maxMemoryBudget = std::numeric_limits<int32_t>::max(); // Default 2GB
+  // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in
+  // [bytes].
+  size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();  // Default 2GB
 };
 
 ///
@@ -51,7 +52,6 @@ struct CrateReaderConfig {
 ///
 class CrateReader {
  public:
-
   ///
   /// Intermediate Node data structure for scene graph.
   /// This does not contain actual prim/property data.
@@ -75,7 +75,7 @@ class CrateReader {
       if (_primChildren.count(child_name)) {
         return false;
       }
-      //assert(_primChildren.count(child_name) == 0);
+      // assert(_primChildren.count(child_name) == 0);
       _primChildren.emplace(child_name);
       _children.push_back(node_index);
       return true;
@@ -92,15 +92,13 @@ class CrateReader {
     ///
     std::string GetLocalPath() const { return _path.full_path_name(); }
 
-
     ///
-    /// Element Path(= name of Prim. Tokens in `primChildren` field). Prim node only.
+    /// Element Path(= name of Prim. Tokens in `primChildren` field). Prim node
+    /// only.
     ///
-    void SetElementPath(Path &path) {
-      _elemPath = path;
-    }
+    void SetElementPath(Path &path) { _elemPath = path; }
 
-    nonstd::optional<std::string> GetElementName() const  {
+    nonstd::optional<std::string> GetElementName() const {
       if (_elemPath.IsRelativePath()) {
         return _elemPath.full_path_name();
       } else {
@@ -109,9 +107,7 @@ class CrateReader {
     }
 
     // Element path(e.g. `geom0`)
-    const Path &GetElementPath() const  {
-      return _elemPath;
-    }
+    const Path &GetElementPath() const { return _elemPath; }
 
     // Full path(e.g. `/root/geom0`
     const Path &GetPath() const { return _path; }
@@ -122,8 +118,8 @@ class CrateReader {
       return _primChildren;
     }
 
-    //void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
-    //const value::dict &GetAssetInfo() const { return _assetInfo; }
+    // void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
+    // const value::dict &GetAssetInfo() const { return _assetInfo; }
 
    private:
     int64_t
@@ -133,7 +129,7 @@ class CrateReader {
         _primChildren;  // List of name of child nodes
 
     Path _path;  // local path
-    //value::dict _assetInfo;
+    // value::dict _assetInfo;
     Path _elemPath;
 
     // value::TypeId _node_type;
@@ -141,12 +137,12 @@ class CrateReader {
   };
 
  public:
-
  private:
   CrateReader() = delete;
 
  public:
-  CrateReader(StreamReader *sr, const CrateReaderConfig &config = CrateReaderConfig());
+  CrateReader(StreamReader *sr,
+              const CrateReaderConfig &config = CrateReaderConfig());
   ~CrateReader();
 
   bool ReadBootStrap();
@@ -178,43 +174,28 @@ class CrateReader {
   /// -------------------------------------
   /// Following Methods are valid after successfull parsing of Crate data.
   ///
-  size_t NumNodes() const {
-    return _nodes.size();
-  }
+  size_t NumNodes() const { return _nodes.size(); }
 
-  const std::vector<Node> GetNodes() const {
-    return _nodes;
-  }
+  const std::vector<Node> GetNodes() const { return _nodes; }
 
-  const std::vector<value::token> GetTokens() const {
-    return _tokens;
-  }
+  const std::vector<value::token> GetTokens() const { return _tokens; }
 
   const std::vector<crate::Index> GetStringIndices() const {
     return _string_indices;
   }
 
-  const std::vector<crate::Field> &GetFields() const {
-    return _fields;
-  }
+  const std::vector<crate::Field> &GetFields() const { return _fields; }
 
   const std::vector<crate::Index> &GetFieldsetIndices() const {
     return _fieldset_indices;
   }
 
-  const std::vector<Path> &GetPaths() const {
-    return _paths;
-  }
+  const std::vector<Path> &GetPaths() const { return _paths; }
 
-  const std::vector<Path> &GetElemPaths() const {
-    return _elemPaths;
-  }
+  const std::vector<Path> &GetElemPaths() const { return _elemPaths; }
 
-  const std::vector<crate::Spec> &GetSpecs() const {
-    return _specs;
-  }
+  const std::vector<crate::Spec> &GetSpecs() const { return _specs; }
 
-  
   const std::map<crate::Index, FieldValuePairVector> &GetLiveFieldSets() const {
     return _live_fieldsets;
   }
@@ -226,8 +207,6 @@ class CrateReader {
   }
 #endif
 
-
-
   const nonstd::optional<value::token> GetToken(crate::Index token_index) const;
   const nonstd::optional<value::token> GetStringToken(
       crate::Index string_index) const;
@@ -237,15 +216,11 @@ class CrateReader {
   nonstd::optional<std::string> GetFieldString(crate::Index index) const;
   nonstd::optional<std::string> GetSpecString(crate::Index index) const;
 
-  size_t NumPaths() const {
-    return _paths.size();
-  }
+  size_t NumPaths() const { return _paths.size(); }
 
   nonstd::optional<Path> GetPath(crate::Index index) const;
   nonstd::optional<Path> GetElementPath(crate::Index index) const;
   nonstd::optional<std::string> GetPathString(crate::Index index) const;
-
-
 
   ///
   /// Find if a field with (`name`, `tyname`) exists in FieldValuePairVector.
@@ -267,9 +242,9 @@ class CrateReader {
   nonstd::expected<FieldValuePair, std::string> GetFieldValuePair(
       const FieldValuePairVector &fvs, const std::string &name);
 
-  //bool ParseAttribute(const FieldValuePairVector &fvs,
-  //                                  PrimAttrib *attr,
-  //                                  const std::string &prop_name);
+  // bool ParseAttribute(const FieldValuePairVector &fvs,
+  //                                   PrimAttrib *attr,
+  //                                   const std::string &prop_name);
 
   bool VersionGreaterThanOrEqualTo_0_8_0() const {
     if (_version[0] > 0) {
@@ -284,12 +259,13 @@ class CrateReader {
   }
 
  private:
-
-
   bool BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
-      std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath);
+      std::vector<int32_t> const &jumps,
+      std::vector<bool> &visit_table,  // track visited pathIndex to prevent
+                                       // circular referencing
+      size_t curIndex, Path parentPath);
 
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
@@ -298,13 +274,15 @@ class CrateReader {
   //
   // Construct node hierarchy.
   //
-  bool BuildNodeHierarchy(std::vector<uint32_t> const &pathIndexes,
-                          std::vector<int32_t> const &elementTokenIndexes,
-                          std::vector<int32_t> const &jumps, size_t curIndex,
-                          int64_t parentNodeIndex);
+  bool BuildNodeHierarchy(
+      std::vector<uint32_t> const &pathIndexes,
+      std::vector<int32_t> const &elementTokenIndexes,
+      std::vector<int32_t> const &jumps,
+      std::vector<bool> &visit_table,  // track visited pathIndex to prevent
+                                       // circular referencing
+      size_t curIndex, int64_t parentNodeIndex);
 
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
-
 
   template <class Int>
   bool ReadCompressedInts(Int *out, size_t num_elements);
@@ -335,36 +313,35 @@ class CrateReader {
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
-  //template <class T>
-  //struct IsIntType {
-  //  static const bool value =
-  //    std::is_same<T, int32_t>::value ||
-  //    std::is_same<T, uint32_t>::value ||
-  //    std::is_same<T, int64_t>::value ||
-  //    std::is_same<T, uint64_t>::value;
-  //};
+  // template <class T>
+  // struct IsIntType {
+  //   static const bool value =
+  //     std::is_same<T, int32_t>::value ||
+  //     std::is_same<T, uint32_t>::value ||
+  //     std::is_same<T, int64_t>::value ||
+  //     std::is_same<T, uint64_t>::value;
+  // };
 
-  template<typename T>
+  template <typename T>
   bool ReadArray(std::vector<T> *d);
 
-  //template <typename T,
-  //typename std::enable_if<IsIntType<T>::value, bool>::type>
-  //bool ReadArray(std::vector<T> *d);
+  // template <typename T,
+  // typename std::enable_if<IsIntType<T>::value, bool>::type>
+  // bool ReadArray(std::vector<T> *d);
 
-
-  template<typename T>
+  template <typename T>
   bool ReadListOp(ListOp<T> *d);
 
   // TODO: Templatize
   bool ReadPathListOp(ListOp<Path> *d);
   bool ReadTokenListOp(ListOp<value::token> *d);
   bool ReadStringListOp(ListOp<std::string> *d);
-  //bool ReadIntListOp(ListOp<int32_t> *d);
-  //bool ReadUIntListOp(ListOp<uint32_t> *d);
-  //bool ReadInt64ListOp(ListOp<int64_t> *d);
-  //bool ReadUInt64ListOp(ListOp<uint64_t> *d);
-  //bool ReadReferenceListOp(ListOp<Reference> *d);
-  //bool ReadPayloadListOp(ListOp<Payload> *d);
+  // bool ReadIntListOp(ListOp<int32_t> *d);
+  // bool ReadUIntListOp(ListOp<uint32_t> *d);
+  // bool ReadInt64ListOp(ListOp<int64_t> *d);
+  // bool ReadUInt64ListOp(ListOp<uint64_t> *d);
+  // bool ReadReferenceListOp(ListOp<Reference> *d);
+  // bool ReadPayloadListOp(ListOp<Payload> *d);
 
   bool ReadVariantSelectionMap(VariantSelectionMap *d);
 
@@ -392,7 +369,7 @@ class CrateReader {
   std::vector<crate::Index> _fieldset_indices;
   std::vector<crate::Spec> _specs;
   std::vector<Path> _paths;
-  std::vector<Path> _elemPaths; 
+  std::vector<Path> _elemPaths;
 
   std::vector<Node> _nodes;  // [0] = root node
                              //
@@ -402,21 +379,16 @@ class CrateReader {
   std::map<crate::Index, FieldValuePairVector>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
-
   const StreamReader *_sr{};
 
-  void PushError(const std::string &s) const {
-    _err += s;
-  }
-  void PushWarn(const std::string &s) const {
-    _warn += s;
-  }
+  void PushError(const std::string &s) const { _err += s; }
+  void PushWarn(const std::string &s) const { _warn += s; }
   mutable std::string _err;
   mutable std::string _warn;
 
   CrateReaderConfig _config;
 
-  // Approximated uncompressed memory usage(vertices, `tokens`, ...) in bytes. 
+  // Approximated uncompressed memory usage(vertices, `tokens`, ...) in bytes.
   uint64_t _memoryUsage{0};
 
   class Impl;

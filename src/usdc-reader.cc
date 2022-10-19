@@ -1939,11 +1939,13 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
   }
 
+#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
   // DBG
   for (auto &fv : fvs) {
     DCOUT("parent[" << current << "] level [" << level << "] fv name "
                     << fv.first << "(type = " << fv.second.type_name() << ")");
   }
+#endif
 
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
@@ -2277,8 +2279,13 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     return false;
   }
 
+#if 0 // not used
   crate::Spec spec;
   {
+    if (!psmap.count(uint32_t(current))) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Spec index {} not found in parent Prim index {}", current, parent));
+    }
+
     uint32_t spec_index = psmap.at(uint32_t(current));
 
     if (spec_index >= _specs.size()) {
@@ -2289,6 +2296,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     spec = _specs[spec_index];
   }
+#endif
 
   // TODO: Refactor
 
@@ -2371,6 +2379,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
         PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
       }
 
+      DCOUT(fmt::format("path index[{}] -> spec index [{}]", _specs[i].path_index.value, uint32_t(i)));
       path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
     }
   }
