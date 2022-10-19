@@ -3953,11 +3953,13 @@ bool CrateReader::BuildDecompressedPathsImpl(
   return true;
 }
 
-// TODO(syoyo): Refactor
+// TODO(syoyo): Refactor. Code is mostly identical to BuildDecompressedPathsImpl
 bool CrateReader::BuildNodeHierarchy(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps, size_t curIndex,
+    std::vector<int32_t> const &jumps,
+    std::vector<bool> &visit_table, /* inout */
+    size_t curIndex,
     int64_t parentNodeIndex) {
   bool hasChild = false, hasSibling = false;
 
@@ -3987,9 +3989,19 @@ bool CrateReader::BuildNodeHierarchy(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
       }
 
+      if (pathIdx >= visit_table.size()) {
+        // This should not be happan though
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
+      }
+
+      if (visit_table[pathIdx]) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
+      }
+
       Node root(parentNodeIndex, _paths[pathIdx]);
 
       _nodes[pathIdx] = root;
+      visit_table[pathIdx] = true;
 
       parentNodeIndex = int64_t(thisIndex);
 
@@ -4018,6 +4030,15 @@ bool CrateReader::BuildNodeHierarchy(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
       }
 
+      if (pathIdx >= visit_table.size()) {
+        // This should not be happan though
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
+      }
+
+      if (visit_table[pathIdx]) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
+      }
+
       Node node(parentNodeIndex, _paths[pathIdx]);
 
       // Ensure parent is not set yet.
@@ -4026,6 +4047,7 @@ bool CrateReader::BuildNodeHierarchy(
       }
 
       _nodes[pathIdx] = node;
+      visit_table[pathIdx] = true;
 
       if (pathIdx >= _elemPaths.size()) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
@@ -4061,7 +4083,7 @@ bool CrateReader::BuildNodeHierarchy(
     if (hasChild) {
       if (hasSibling) {
         auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+        if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                 siblingIndex, parentNodeIndex)) {
           return false;
         }
@@ -4259,7 +4281,13 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 
   // Now build node hierarchy.
-  if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+
+  // Circular referencing check should be done in BuildDecompressedPathsImpl,
+  // but do check it again just in case.
+  for (size_t i = 0; i < visit_table.size(); i++) {
+    visit_table[i] = false;
+  }
+  if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, visit_table,
                           /* curIndex */ 0, /* parent node index */ -1)) {
     return false;
   }
