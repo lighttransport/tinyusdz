@@ -132,7 +132,8 @@ bool CrateReader::HasField(const std::string &key) const {
 }
 
 nonstd::optional<crate::Field> CrateReader::GetField(crate::Index index) const {
-  if (index.value <= _fields.size()) {
+
+  if (index.value < _fields.size()) {
     return _fields[index.value];
   } else {
     return nonstd::nullopt;
@@ -141,7 +142,7 @@ nonstd::optional<crate::Field> CrateReader::GetField(crate::Index index) const {
 
 const nonstd::optional<value::token> CrateReader::GetToken(
     crate::Index token_index) const {
-  if (token_index.value <= _tokens.size()) {
+  if (token_index.value < _tokens.size()) {
     return _tokens[token_index.value];
   } else {
     return nonstd::nullopt;
@@ -151,7 +152,8 @@ const nonstd::optional<value::token> CrateReader::GetToken(
 // Get string token from string index.
 const nonstd::optional<value::token> CrateReader::GetStringToken(
     crate::Index string_index) const {
-  if (string_index.value <= _string_indices.size()) {
+
+  if (string_index.value < _string_indices.size()) {
     crate::Index s_idx = _string_indices[string_index.value];
     return GetToken(s_idx);
   } else {
@@ -162,7 +164,8 @@ const nonstd::optional<value::token> CrateReader::GetStringToken(
 }
 
 nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
-  if (index.value <= _paths.size()) {
+
+  if (index.value < _paths.size()) {
     // ok
   } else {
     return nonstd::nullopt;
@@ -172,7 +175,7 @@ nonstd::optional<Path> CrateReader::GetPath(crate::Index index) const {
 }
 
 nonstd::optional<Path> CrateReader::GetElementPath(crate::Index index) const {
-  if (index.value <= _elemPaths.size()) {
+  if (index.value < _elemPaths.size()) {
     // ok
   } else {
     return nonstd::nullopt;
@@ -183,7 +186,7 @@ nonstd::optional<Path> CrateReader::GetElementPath(crate::Index index) const {
 
 nonstd::optional<std::string> CrateReader::GetPathString(
     crate::Index index) const {
-  if (index.value <= _paths.size()) {
+  if (index.value < _paths.size()) {
     // ok
   } else {
     return nonstd::nullopt;
@@ -3828,10 +3831,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 bool CrateReader::BuildDecompressedPathsImpl(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps, size_t curIndex, Path parentPath) {
+    std::vector<int32_t> const &jumps,
+    std::vector<bool> &visit_table,
+    size_t curIndex, Path parentPath) {
   bool hasChild = false, hasSibling = false;
   do {
     auto thisIndex = curIndex++;
+    DCOUT("thisIndex = " << thisIndex << ", pathIndexes.size = " << pathIndexes.size());
     if (parentPath.IsEmpty()) {
       // root node.
       // Assume single root node in the scene.
@@ -3850,7 +3856,14 @@ bool CrateReader::BuildDecompressedPathsImpl(
         return false;
       }
 
-      _paths[pathIndexes[thisIndex]] = parentPath;
+      if (idx < visit_table.size()) {
+        if (visit_table[idx]) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
+        }
+      }
+
+      _paths[idx] = parentPath;
+      visit_table[idx] = true;
     } else {
       if (thisIndex >= elementTokenIndexes.size()) {
         PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
@@ -3882,6 +3895,12 @@ bool CrateReader::BuildDecompressedPathsImpl(
         return false;
       }
 
+      if (idx < visit_table.size()) {
+        if (visit_table[idx]) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
+        }
+      }
+
       // full path
       _paths[idx] =
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
@@ -3890,6 +3909,8 @@ bool CrateReader::BuildDecompressedPathsImpl(
       // also set leaf path for 'primChildren' check
       _elemPaths[idx] = Path(elemToken.str(), "");
       //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
+
+      visit_table[idx] = true;
     }
 
     // If we have either a child or a sibling but not both, then just
@@ -3909,7 +3930,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       if (hasSibling) {
         // NOTE(syoyo): This recursive call can be parallelized
         auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps,
+        if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                         siblingIndex, parentPath)) {
           return false;
         }
@@ -3932,11 +3953,13 @@ bool CrateReader::BuildDecompressedPathsImpl(
   return true;
 }
 
-// TODO(syoyo): Refactor
+// TODO(syoyo): Refactor. Code is mostly identical to BuildDecompressedPathsImpl
 bool CrateReader::BuildNodeHierarchy(
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps, size_t curIndex,
+    std::vector<int32_t> const &jumps,
+    std::vector<bool> &visit_table, /* inout */
+    size_t curIndex,
     int64_t parentNodeIndex) {
   bool hasChild = false, hasSibling = false;
 
@@ -3966,9 +3989,19 @@ bool CrateReader::BuildNodeHierarchy(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
       }
 
+      if (pathIdx >= visit_table.size()) {
+        // This should not be happan though
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
+      }
+
+      if (visit_table[pathIdx]) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
+      }
+
       Node root(parentNodeIndex, _paths[pathIdx]);
 
       _nodes[pathIdx] = root;
+      visit_table[pathIdx] = true;
 
       parentNodeIndex = int64_t(thisIndex);
 
@@ -3997,6 +4030,15 @@ bool CrateReader::BuildNodeHierarchy(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
       }
 
+      if (pathIdx >= visit_table.size()) {
+        // This should not be happan though
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "[InternalError] out-of-range.");
+      }
+
+      if (visit_table[pathIdx]) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
+      }
+
       Node node(parentNodeIndex, _paths[pathIdx]);
 
       // Ensure parent is not set yet.
@@ -4005,6 +4047,7 @@ bool CrateReader::BuildNodeHierarchy(
       }
 
       _nodes[pathIdx] = node;
+      visit_table[pathIdx] = true;
 
       if (pathIdx >= _elemPaths.size()) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "PathIndex out-of-range.");
@@ -4040,7 +4083,7 @@ bool CrateReader::BuildNodeHierarchy(
     if (hasChild) {
       if (hasSibling) {
         auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+        if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                 siblingIndex, parentNodeIndex)) {
           return false;
         }
@@ -4221,14 +4264,30 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 #endif
 
+  // For circular tree check
+  std::vector<bool> visit_table;
+  CHECK_MEMORY_USAGE(_paths.size()); // TODO: divide by 8?
+
+  // `_paths` is already initialized just before calling this ReadCompressedPaths
+  visit_table.resize(_paths.size());
+  for (size_t i = 0; i < visit_table.size(); i++) {
+    visit_table[i] = false;
+  }
+
   // Now build the paths.
-  if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps,
+  if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                   /* curIndex */ 0, Path())) {
     return false;
   }
 
   // Now build node hierarchy.
-  if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps,
+
+  // Circular referencing check should be done in BuildDecompressedPathsImpl,
+  // but do check it again just in case.
+  for (size_t i = 0; i < visit_table.size(); i++) {
+    visit_table[i] = false;
+  }
+  if (!BuildNodeHierarchy(pathIndexes, elementTokenIndexes, jumps, visit_table,
                           /* curIndex */ 0, /* parent node index */ -1)) {
     return false;
   }
