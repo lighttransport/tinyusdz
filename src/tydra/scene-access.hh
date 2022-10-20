@@ -75,5 +75,63 @@ typedef bool (*VisitPrimFunction)(const Prim &prim, const int32_t tree_depth, vo
 
 void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, void *userdata=nullptr);
 
+///
+/// Terminal Attribute value at specified timecode.
+///
+/// - No "empty" value
+/// - No connection(connection target is evaluated(fetch value producing attribute))
+/// - No timeSampled value
+///
+class TerminalAttributeValue
+{
+ public:
+
+  template<typename T>
+  const T *as() const {
+    return value.as<T>();
+  }
+
+  template<typename T>
+  bool is() const {
+    if (value.as<T>()) {
+      return true;
+    }
+    return false;
+  }
+
+ private:
+  value::Value value{nullptr};
+};
+
+///
+/// Evaluate Attribute of the specied Prim and retrieve terminal Attribute value.
+///
+/// - If the attribute is timeSamples value, evaluate the value at specified time.
+/// - If the attribute is connection, follow the connection target 
+///
+/// @param[in] stage Stage
+/// @param[in] prim Prim
+/// @param[in] attr_name Attribute name
+/// @param[out] value Evaluated terminal attribute value.
+/// @param[out] err Error message(filled when false returned)
+/// @param[in] tc (optional) TimeCode(for timeSamples Attribute)
+/// @param[in] tinterp (optional) Interpolation type for timeSamples value
+///
+/// Return false when:
+///
+/// - Requested attribute not found.
+/// - Invalid connection(e.g. type mismatch, circular referencing, ...).
+/// - Other error happens.
+///
+bool EvaluateAttribute(
+  const tinyusdz::Stage &stage,
+  const tinyusdz::Prim &prim,
+  const std::string &attr_name,
+  TerminalAttributeValue *value,
+  std::string *err,
+  const tinyusdz::value::TimeCode tc = tinyusdz::value::TimeCode::Default(),
+  const tinyusdz::TimeSampleInterpolationType tinterp = tinyusdz::TimeSampleInterpolationType::Held
+  );
+
 }  // namespace tydra
 }  // namespace tinyusdz

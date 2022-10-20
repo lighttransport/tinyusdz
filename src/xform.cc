@@ -731,4 +731,27 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
   return true;
 }
 
+std::vector<value::token> Xformable::xformOpOrder() const {
+  std::vector<value::token> toks;
+
+  for (size_t i = 0; i < xformOps.size(); i++) {
+    std::string ss;
+
+    auto xformOp = xformOps[i];
+
+    if (xformOp.inverted) {
+      ss += "!invert!";
+    }
+    ss += to_string(xformOp.op);
+    if (!xformOp.suffix.empty()) {
+      ss += ":" + xformOp.suffix;
+    }
+
+    toks.push_back(value::token(ss));
+  }
+
+  return toks;
+
+}
+
 } // namespace tinyusdz
