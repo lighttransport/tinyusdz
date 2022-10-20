@@ -257,18 +257,18 @@ bool VisitPrimsRec(const tinyusdz::Prim &root, int32_t level,
 }
 
 template <typename T>
-nonstd::expected<bool, std::string> GetPrimAttribute(
-    const T &prim, const std::string &attr_name, PrimAttrib *out_attr);
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const T &prim, const std::string &prop_name, Property *out_prop);
 
 template <>
-nonstd::expected<bool, std::string> GetPrimAttribute(
-    const Xform &xform, const std::string &attr_name, PrimAttrib *out_attr) {
-  if (!out_attr) {
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const Xform &xform, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
     return nonstd::make_unexpected(fmt::format(
-        "[InternalError] nullptr in output Attribute is not allowed."));
+        "[InternalError] nullptr in output Property is not allowed."));
   }
 
-  if (attr_name == "xformOpOrder") {
+  if (prop_name == "xformOpOrder") {
     // To token[]
     std::vector<value::token> toks = xform.xformOpOrder();
     value::Value val(toks);
@@ -277,36 +277,90 @@ nonstd::expected<bool, std::string> GetPrimAttribute(
 
     PrimAttrib attr;
     attr.set_var(std::move(pvar));
-    (*out_attr) = std::move(attr);
+    Property prop;
+    prop.SetAttrib(attr);
+
+    (*out_prop) = prop;
 
   } else {
-    const auto it = xform.props.find(attr_name);
+    const auto it = xform.props.find(prop_name);
     if (it == xform.props.end()) {
       // Attribute not found.
       return false;
     }
 
-    const Property &prop = it->second;
-    if (prop.IsRel()) {
-      return nonstd::make_unexpected(
-          fmt::format("`{}` is a Relation, not Attribute({})", attr_name,
-                      value::TypeTraits<Xform>::type_name()));
-    } else if (prop.IsEmpty()) {
-      return nonstd::make_unexpected(
-          fmt::format("`{}` is a Relation, not Attribute({})", attr_name,
-                      value::TypeTraits<Xform>::type_name()));
-    } else if (prop.IsAttrib()) {
-      (*out_attr) = prop.GetAttrib();
-
-    } else {
-      // ???
-      return nonstd::make_unexpected(
-          fmt::format("[InternalError] `{}` is the invalid Attribute({})",
-                      attr_name, value::TypeTraits<Xform>::type_name()));
-    }
+    (*out_prop) = it->second;
   }
 
   return true;
+}
+
+// TODO: provide visit map to prevent circular referencing.
+bool EvaluateAttributeImpl(
+    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const std::string &attr_name, TerminalAttributeValue *value,
+    std::string *err, std::set<std::string> &visited_paths,
+    const tinyusdz::value::TimeCode tc,
+    const tinyusdz::TimeSampleInterpolationType tinterp) {
+  // TODO:
+  (void)tc;
+  (void)tinterp;
+  (void)visited_paths;
+
+  // std::string path = prim.
+
+  if (prim.is<Xform>()) {
+    Property prop;
+    auto ret = GetPrimProperty(*prim.as<Xform>(), attr_name, &prop);
+    if (ret) {
+      if (!ret.value()) {
+        if (err) {
+          (*err) += fmt::format("Attribute `{}` does not exist in Prim {}({})",
+                                prim.element_path().GetPrimPart(),
+                                value::TypeTraits<Xform>::type_name());
+        }
+      }
+    } else {
+      if (err) {
+        (*err) += ret.error();
+      }
+      return false;
+    }
+
+    if (prop.IsConnection()) {
+      // Follow connection target Path.
+      auto target = prop.GetConnectionTarget();
+      if (!target) {  // ???
+        if (err) {
+          (*err) +=
+              fmt::format("Internal error. Failed to get connection target.\n");
+        }
+        return false;
+      }
+
+      auto targetPrimRet = stage.GetPrimAtPath(target.value());
+      if (targetPrimRet) {
+        // Follow the connetion
+        const Prim *targetPrim = targetPrimRet.value();
+
+        std::string abs_path = target.value().full_path_name();
+        visited_paths.insert(abs_path);
+
+        std::string prop_name = target.value().GetPropPart();
+
+        return EvaluateAttributeImpl(stage, *targetPrim, 
+            prop_name, value, err, visited_paths, tc, tinterp);
+        
+      } else {
+        if (err) {
+          (*err) += targetPrimRet.error();
+        }
+        return false;
+      }
+    }
+  }
+
+  return false;
 }
 
 }  // namespace
@@ -325,37 +379,10 @@ bool EvaluateAttribute(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
                        TerminalAttributeValue *value, std::string *err,
                        const tinyusdz::value::TimeCode tc,
                        const tinyusdz::TimeSampleInterpolationType tinterp) {
-  // TODO:
-  (void)tc;
-  (void)tinterp;
+  std::set<std::string> visited_paths;
 
-  if (prim.is<Xform>()) {
-    PrimAttrib attr;
-    auto ret = GetPrimAttribute(*prim.as<Xform>(), attr_name, &attr);
-    if (ret) {
-      if (!ret.value()) {
-        if (err) {
-          (*err) += fmt::format("Attribute `{}` does not exist in Prim {}({})",
-                                prim.element_path().GetPrimPart(),
-                                value::TypeTraits<Xform>::type_name());
-        }
-      }
-    } else {
-      if (err) {
-        (*err) += ret.error();
-      }
-      return false;
-    }
-
-  }
-
-  // TODO: More Prim types...
-
-  if (err) {
-    (*err) += "TODO\n";
-  }
-
-  return false;
+  return EvaluateAttributeImpl(stage, prim, attr_name, value, err,
+                               visited_paths, tc, tinterp);
 }
 
 }  // namespace tydra

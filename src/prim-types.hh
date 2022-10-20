@@ -1530,6 +1530,7 @@ class Connection {
 };
 
 // PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
+// TODO: Refactor
 struct PrimAttrib {
   std::string name;  // attrib name
 
