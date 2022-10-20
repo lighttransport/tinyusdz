@@ -1145,6 +1145,92 @@ template <typename T>
 using TypedAnimatableAttributeWithFallback =
     TypedAttributeWithFallback<Animatable<T>>;
 
+#if 0
+///
+/// Generic Attribute class.
+///
+class Attribute {
+ public:
+  Attribute() = default;
+
+  template<typename T>
+  Attribute(const TypedAttributeWithFallback<T> &v) {
+    _attrib = v.GetValue();
+    SetBlock(v.IsBlocked());
+  }
+  
+  Attribute(const primvar::Primvar &v) : _attrib(v) {
+  }
+
+  Attribute(value::Value &&v) : _attrib(std::move(v)) {
+  }
+
+  void SetValue(const value::Value &v) { _attrib = v; }
+
+  const nonstd::optional<value::Value> GetValue() const {
+    if (_attrib) {
+      return _attrib.value();
+    }
+    return nonstd::nullopt;
+  }
+
+  // TODO: Animation data.
+  bool IsBlocked() const { return _blocked; }
+
+  // for `uniform` attribute only
+  void SetBlock(bool onoff) { _blocked = onoff; }
+
+  bool IsConnection() const { return _paths.size(); }
+
+  void SetConnection(const Path &path) {
+    _paths.clear();
+    _paths.push_back(path);
+  }
+
+  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
+
+  const std::vector<Path> &GetConnections() const { return _paths; }
+
+  const nonstd::optional<Path> GetConnection() const {
+    if (_paths.size()) {
+      return _paths[0];
+    }
+
+    return nonstd::nullopt;
+  }
+
+  void SetValueEmpty() { _empty = true; }
+
+  bool IsValueEmpty() const { return _empty; }
+
+  // value set?
+  bool authored() const {
+    if (_empty) {
+      return true;
+    }
+
+    if (_attrib) {
+      return true;
+    }
+    if (_paths.size()) {
+      return true;
+    }
+    return false;
+  }
+
+  AttrMeta meta;
+
+ private:
+  bool _empty{false};
+  std::vector<Path> _paths;
+  nonstd::optional<value::Value> _attrib;
+  bool _blocked{false};  // for `uniform` attribute.
+};
+#endif
+
+///
+/// Similar to pxrUSD's PrimIndex
+///
 class PrimNode;
 
 #if 0  // TODO
