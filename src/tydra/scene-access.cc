@@ -1,7 +1,9 @@
 #include "scene-access.hh"
 
+#include "common-macros.inc"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
+#include "prim-types.hh"
 #include "primvar.hh"
 #include "tiny-format.hh"
 #include "usdGeom.hh"
@@ -14,6 +16,12 @@ namespace tinyusdz {
 namespace tydra {
 
 namespace {
+
+// For PUSH_ERROR_AND_RETURN
+#define PushError(msg) \
+  if (err) {           \
+    (*err) += msg;     \
+  }
 
 template <typename T>
 bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
@@ -256,6 +264,43 @@ bool VisitPrimsRec(const tinyusdz::Prim &root, int32_t level,
   return true;
 }
 
+bool ToTerminalAttributeValue(const PrimAttrib &attr,
+                              TerminalAttributeValue *value, std::string *err,
+                              value::TimeCode tc,
+                              TimeSampleInterpolationType tinterp) {
+  if (!value) {
+    // ???
+    return false;
+  }
+
+  if (attr.blocked()) {
+    PUSH_ERROR_AND_RETURN("Attribute is None(Value Blocked).");
+  }
+
+  const primvar::PrimVar &var = attr.get_var();
+
+  value->meta() = attr.meta;
+  value->variability() = attr.variability();
+
+  if (!var.is_valid()) {
+    PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
+  } else if (var.is_scalar()) {
+    const value::TimeSamples &ts = var.get_raw();
+    value->set_value(ts.values[0]);
+  } else if (var.is_timesample()) {
+    (void)tc;
+    (void)tinterp;
+    // TODO:
+    // Evaluate timeSample value at specified timeCode.
+    PUSH_ERROR_AND_RETURN("TODO: TimeSamples.");
+  }
+
+  return true;
+}
+
+// Return true: Property found(`out_prop` filled)
+// Return false: Property not found
+// Return unexpected: Some eror happened.
 template <typename T>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const T &prim, const std::string &prop_name, Property *out_prop);
@@ -264,8 +309,8 @@ template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const Xform &xform, const std::string &prop_name, Property *out_prop) {
   if (!out_prop) {
-    return nonstd::make_unexpected(fmt::format(
-        "[InternalError] nullptr in output Property is not allowed."));
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
   }
 
   if (prop_name == "xformOpOrder") {
@@ -277,6 +322,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
     PrimAttrib attr;
     attr.set_var(std::move(pvar));
+    attr.variability() = Variability::Uniform;
     Property prop;
     prop.SetAttrib(attr);
 
@@ -309,58 +355,76 @@ bool EvaluateAttributeImpl(
 
   // std::string path = prim.
 
+  Property prop;
   if (prim.is<Xform>()) {
-    Property prop;
     auto ret = GetPrimProperty(*prim.as<Xform>(), attr_name, &prop);
     if (ret) {
       if (!ret.value()) {
-        if (err) {
-          (*err) += fmt::format("Attribute `{}` does not exist in Prim {}({})",
-                                prim.element_path().GetPrimPart(),
-                                value::TypeTraits<Xform>::type_name());
-        }
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Attribute `{}` does not exist in Prim {}",
+                        prim.element_path().GetPrimPart(),
+                        value::TypeTraits<Xform>::type_name()));
       }
     } else {
-      if (err) {
-        (*err) += ret.error();
-      }
-      return false;
-    }
-
-    if (prop.IsConnection()) {
-      // Follow connection target Path.
-      auto target = prop.GetConnectionTarget();
-      if (!target) {  // ???
-        if (err) {
-          (*err) +=
-              fmt::format("Internal error. Failed to get connection target.\n");
-        }
-        return false;
-      }
-
-      auto targetPrimRet = stage.GetPrimAtPath(target.value());
-      if (targetPrimRet) {
-        // Follow the connetion
-        const Prim *targetPrim = targetPrimRet.value();
-
-        std::string abs_path = target.value().full_path_name();
-        visited_paths.insert(abs_path);
-
-        std::string prop_name = target.value().GetPropPart();
-
-        return EvaluateAttributeImpl(stage, *targetPrim, 
-            prop_name, value, err, visited_paths, tc, tinterp);
-        
-      } else {
-        if (err) {
-          (*err) += targetPrimRet.error();
-        }
-        return false;
-      }
+      PUSH_ERROR_AND_RETURN(ret.error());
     }
   }
 
-  return false;
+  if (prop.IsConnection()) {
+    // Follow connection target Path.
+    auto target = prop.GetConnectionTarget();
+    if (!target) {  // ???
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get connection target"));
+    }
+
+    auto targetPrimRet = stage.GetPrimAtPath(target.value());
+    if (targetPrimRet) {
+      // Follow the connetion
+      const Prim *targetPrim = targetPrimRet.value();
+
+      std::string abs_path = target.value().full_path_name();
+
+      if (visited_paths.count(abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Circular referencing detected. connectionTargetPath = {}",
+            to_string(target.value())));
+      }
+      visited_paths.insert(abs_path);
+
+      std::string prop_name = target.value().GetPropPart();
+
+      return EvaluateAttributeImpl(stage, *targetPrim, prop_name, value, err,
+                                   visited_paths, tc, tinterp);
+
+    } else {
+      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+    }
+  } else if (prop.IsRel()) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Property `{}` is a Relation.", attr_name));
+  } else if (prop.IsEmpty()) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "Attribute `{}` is a define-only attribute(no value assigned).",
+        attr_name));
+  } else if (prop.IsAttrib()) {
+    const PrimAttrib &attr = prop.GetAttrib();
+
+    if (attr.blocked()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
+    }
+
+    if (!ToTerminalAttributeValue(attr, value, err, tc, tinterp)) {
+      return false;
+    }
+
+  } else {
+    // ???
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("[InternalError] Invalid Attribute `{}`.", attr_name));
+  }
+
+  return true;
 }
 
 }  // namespace

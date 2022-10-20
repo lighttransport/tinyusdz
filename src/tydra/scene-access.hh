@@ -79,6 +79,7 @@ void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, voi
 /// Terminal Attribute value at specified timecode.
 ///
 /// - No "empty" value
+/// - No `None`(Value Blocked)
 /// - No connection(connection target is evaluated(fetch value producing attribute))
 /// - No timeSampled value
 ///
@@ -86,21 +87,40 @@ class TerminalAttributeValue
 {
  public:
 
+  TerminalAttributeValue(const value::Value &v) : _value(v) {}
+  TerminalAttributeValue(value::Value &&v) : _value(std::move(v)) {}
+
   template<typename T>
   const T *as() const {
-    return value.as<T>();
+    return _value.as<T>();
   }
 
   template<typename T>
   bool is() const {
-    if (value.as<T>()) {
+    if (_value.as<T>()) {
       return true;
     }
     return false;
   }
 
+  void set_value(const value::Value &v) {
+    _value = v;
+  }
+
+  void set_value(value::Value &&v) {
+    _value = std::move(v);
+  }
+
+  Variability variability() const { return _variability; }
+  Variability &variability() { return _variability; }
+
+  const AttrMeta &meta() const { return _meta; }
+  AttrMeta &meta() { return _meta; }
+
  private:
-  value::Value value{nullptr};
+  Variability _variability{Variability::Varying};
+  value::Value _value{nullptr};
+  AttrMeta _meta;
 };
 
 ///

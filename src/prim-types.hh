@@ -1546,9 +1546,6 @@ struct PrimAttrib {
     return _var.type_name();
   }
 
-  Variability variability{
-      Variability::Varying};  // 'uniform` qualifier is handled with
-                              // `variability=uniform`
 
   // Interpolation interpolation{Interpolation::Invalid};
 
@@ -1573,7 +1570,17 @@ struct PrimAttrib {
 
   bool blocked() const { return _blocked; }
 
+  Variability &variability() { return _variability; }
+  Variability variability() const { return _variability; }
+
+  bool is_uniform() {
+    return _variability == Variability::Uniform;
+  }
+
  private:
+  Variability _variability{
+      Variability::Varying};  // 'uniform` qualifier is handled with
+                              // `variability=uniform`
   bool _blocked{false};  // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;

@@ -937,7 +937,7 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
         ss << "custom ";
       }
 
-      if (attr.variability == Variability::Uniform) {
+      if (attr.variability() == Variability::Uniform) {
         ss << "uniform ";
       }
 

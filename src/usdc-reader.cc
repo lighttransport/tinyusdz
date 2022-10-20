@@ -876,8 +876,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "variability") {
       if (auto pv = fv.second.get_value<Variability>()) {
-        attr.variability = pv.value();
-        DCOUT("  variability = " << to_string(attr.variability));
+        attr.variability() = pv.value();
+        DCOUT("  variability = " << to_string(attr.variability()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`variability` field is not `varibility` type.");
