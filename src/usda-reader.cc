@@ -1313,7 +1313,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
                   "`elementType` property as Relation is not supported.");
             }
             if (auto pv = item.second.GetAttrib().get_value<value::token>()) {
-              if (item.second.GetAttrib().variability == Variability::Uniform) {
+              if (item.second.GetAttrib().variability() == Variability::Uniform) {
                 auto e = subset.SetElementType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());
@@ -1330,7 +1330,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
             }
 
             if (auto pv = item.second.GetAttrib().get_value<value::token>()) {
-              if (item.second.GetAttrib().variability == Variability::Uniform) {
+              if (item.second.GetAttrib().variability() == Variability::Uniform) {
                 auto e = subset.SetFamilyType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());

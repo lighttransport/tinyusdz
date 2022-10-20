@@ -190,6 +190,10 @@ struct PrimVar {
     return 0;
   }
 
+  const value::TimeSamples &get_raw() const {
+    return var;
+  }
+
 };
 
 

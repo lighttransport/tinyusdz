@@ -3468,7 +3468,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     Property p(type_name, custom_qual);
 
     if (uniform_qual) {
-      p.GetAttrib().variability = Variability::Uniform;
+      p.GetAttrib().variability() = Variability::Uniform;
     }
     p.GetAttrib().meta = meta;
 
@@ -3724,7 +3724,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     }
 
     if (uniform_qual) {
-      attr.variability = Variability::Uniform;
+      attr.variability() = Variability::Uniform;
     }
     attr.name = primattr_name;
 

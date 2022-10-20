@@ -232,7 +232,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
     PrimAttrib normalsAttr;
     normalsAttr.meta.interpolation = Interpolation::FaceVarying;
-    normalsAttr.variability = Variability::Varying; // FIXME
+    normalsAttr.variability() = Variability::Varying; // FIXME
     normalsAttr.set_var(std::move(var));
     Property prop(normalsAttr, false);
     
@@ -246,7 +246,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
     PrimAttrib texcoordsAttr;
     texcoordsAttr.meta.interpolation = Interpolation::FaceVarying;
-    texcoordsAttr.variability = Variability::Varying;
+    texcoordsAttr.variability() = Variability::Varying;
     texcoordsAttr.set_var(std::move(var));
     Property prop(texcoordsAttr, false);
 
