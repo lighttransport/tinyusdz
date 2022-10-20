@@ -120,7 +120,7 @@ void SimpleScene(tinyusdz::Stage *stage)
       var.set_scalar(myvalue);
       attrib.set_var(std::move(var));
 
-      attrib.variability = tinyusdz::Variability::Uniform;
+      attrib.variability() = tinyusdz::Variability::Uniform;
 
       tinyusdz::AttrMeta meta;
       meta.hidden = false;

@@ -248,7 +248,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         if (attr.blocked()) {
           // e.g. "float radius = None"
           target.SetBlock(true);
-        } else if (attr.variability == Variability::Uniform) {
+        } else if (attr.variability() == Variability::Uniform) {
           // e.g. "float radius = 1.2"
           if (!attr.get_var().is_scalar()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -389,7 +389,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       } else if (prop.GetPropertyType() == Property::Type::Attrib) {
         DCOUT("Adding prop: " << name);
 
-        if (prop.GetAttrib().variability != Variability::Uniform) {
+        if (prop.GetAttrib().variability() != Variability::Uniform) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
           ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
           return ret;
@@ -512,7 +512,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         if (attr.blocked()) {
           // e.g. "float radius = None"
           target.SetBlock(true);
-        } else if (attr.variability == Variability::Uniform) {
+        } else if (attr.variability() == Variability::Uniform) {
           // e.g. "float radius = 1.2"
           if (!attr.get_var().is_scalar()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -660,7 +660,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         DCOUT("Adding typed attribute: " << name);
 
-        if (prop.GetAttrib().variability != Variability::Uniform) {
+        if (prop.GetAttrib().variability() != Variability::Uniform) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
           ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
           return ret;
@@ -782,7 +782,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       if (attr.blocked()) {
         // e.g. "float3[] extent = None"
         target.SetBlock(true);
-      } else if (attr.variability == Variability::Uniform) {
+      } else if (attr.variability() == Variability::Uniform) {
         ret.code = ParseResult::ResultCode::VariabilityMismatch;
         ret.err = fmt::format("`extent` attribute is varying. `uniform` qualifier assigned to it.");
         return ret;
@@ -1647,7 +1647,7 @@ bool ReconstructXformOpsFromProperties(
                    prop.GetAttrib().get_value<std::vector<value::token>>()) {
 
       // 'uniform' check
-      if (prop.GetAttrib().variability != Variability::Uniform) {
+      if (prop.GetAttrib().variability() != Variability::Uniform) {
         PUSH_ERROR_AND_RETURN("`xformOpOrder` must have `uniform` variability.");
       }
 
@@ -3465,7 +3465,7 @@ bool ReconstructPrim<Shader>(
     }
 
     // For some corrupted? USDZ file does not have `uniform` variability.
-    if (attr.variability != Variability::Uniform) {
+    if (attr.variability() != Variability::Uniform) {
       PUSH_WARN("`info:id` attribute must have `uniform` variability.");
     }
   } else {
