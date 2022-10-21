@@ -28,7 +28,7 @@
 // - TypedAttribute<T> : Uniform only. `uniform T` or `uniform T var.connect`
 // - TypedAttribute<Animatable<T>> : Varying. `T var`, `T var = val`, `T var.connect` or `T value.timeSamples`
 // - optional<T> : For output attribute(Just author it. e.g. `float outputs:rgb`)
-// - Relation : Typeless relation(e.g. `rel material:binding`)
+// - Relationship : Typeless relation(e.g. `rel material:binding`)
 
 namespace tinyusdz {
 namespace prim {
@@ -1064,7 +1064,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
   const std::string prop_name,
   const Property &prop,
   const std::string &name,
-  nonstd::optional<Relation> &target) /* out */
+  nonstd::optional<Relationship> &target) /* out */
 {
   ParseResult ret;
 
@@ -1075,7 +1075,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       return ret;
     }
     if (auto pv = prop.GetConnectionTarget()) {
-      Relation rel;
+      Relationship rel;
       rel.set(pv.value());
       rel.meta = prop.GetAttrib().meta;
       target = rel;
@@ -1091,7 +1091,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
 
     if (prop.IsConnection()) {
       if (auto pv = prop.GetConnectionTarget()) {
-        Relation rel;
+        Relationship rel;
         rel.set(pv.value());
         rel.meta = prop.GetAttrib().meta;
         target = rel;
@@ -1110,7 +1110,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       std::string attr_type_name = attr.type_name();
       if (value::TypeTraits<value::token>::type_name() == attr_type_name) {
         if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
-          Relation rel;
+          Relationship rel;
           rel.set_empty();
           rel.meta = prop.GetAttrib().meta;
           table.insert(name);
@@ -1207,9 +1207,9 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
        continue; \
     } \
     if (prop.second.IsRel() && prop.second.IsEmpty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kProxyPrim)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kProxyPrim)); \
     } \
-    const Relation &rel = prop.second.GetRelation(); \
+    const Relationship &rel = prop.second.GetRelationship(); \
     if (rel.is_path()) { \
       __ptarget->proxyPrim = rel; \
       table.insert(prop.first); \
@@ -1227,9 +1227,9 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
        continue; \
     } \
     if (prop.second.IsRel() && prop.second.IsEmpty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kMaterialBinding)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kMaterialBinding)); \
     } \
-    const Relation &rel = prop.second.GetRelation(); \
+    const Relationship &rel = prop.second.GetRelationship(); \
     if (rel.is_path()) { \
       MaterialBindingAPI m; \
       m.binding = rel.targetPath; \
@@ -1258,9 +1258,9 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
        continue; \
     } \
     if (prop.second.IsRel() && prop.second.IsEmpty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kSkelSkeleton)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kSkelSkeleton)); \
     } \
-    const Relation &rel = prop.second.GetRelation(); \
+    const Relationship &rel = prop.second.GetRelationship(); \
     if (rel.is_path()) { \
       __ptarget->skeleton = rel.targetPath; \
       table.insert(prop.first); \
@@ -1642,7 +1642,7 @@ bool ReconstructXformOpsFromProperties(
     auto prop = properties.at("xformOpOrder");
 
     if (prop.IsRel()) {
-      PUSH_ERROR_AND_RETURN("Relation for `xformOpOrder` is not supported.");
+      PUSH_ERROR_AND_RETURN("Relationship for `xformOpOrder` is not supported.");
     } else if (auto pv =
                    prop.GetAttrib().get_value<std::vector<value::token>>()) {
 
@@ -2068,9 +2068,9 @@ bool ReconstructPrim<Skeleton>(
     if (prop.first == kSkelAnimationSource) {
 
       // Must be relation of type Path.
-      if (prop.second.IsRel() && prop.second.GetRelation().is_path()) {
+      if (prop.second.IsRel() && prop.second.GetRelationship().is_path()) {
         {
-          const Relation &rel = prop.second.GetRelation();
+          const Relationship &rel = prop.second.GetRelationship();
           if (rel.is_path()) {
             DCOUT(kSkelAnimationSource);
             skel->animationSource = rel.targetPath;
@@ -2081,7 +2081,7 @@ bool ReconstructPrim<Skeleton>(
         }
       } else {
         PUSH_ERROR_AND_RETURN(
-            "`" << kSkelAnimationSource << "` must be a Relation with Path target.");
+            "`" << kSkelAnimationSource << "` must be a Relationship with Path target.");
       }
     }
 

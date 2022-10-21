@@ -3072,7 +3072,7 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
 ///
 /// Parse rel string
 ///
-bool AsciiParser::ParseRelation(Relation *result) {
+bool AsciiParser::ParseRelationship(Relationship *result) {
   char c;
   if (!LookChar1(&c)) {
     return false;
@@ -3312,8 +3312,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       PUSH_ERROR_AND_RETURN("TODO: Support `None` for property.");
     }
 
-    Relation rel;
-    if (!ParseRelation(&rel)) {
+    Relationship rel;
+    if (!ParseRelationship(&rel)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `rel` property.");
     }
 
@@ -3500,7 +3500,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
     }
 
-    Relation rel;
+    Relationship rel;
     rel.set(path);
 
     Property p(rel, /* value typename */ type_name, custom_qual);

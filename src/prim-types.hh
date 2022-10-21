@@ -1458,12 +1458,11 @@ struct ConnectionPath {
 //     std::unordered_map<std::pair<std::string, std::string>, Connection>;
 #endif
 
-// Relation
-class Relation {
+//
+// Relationship(typeless property)
+//
+class Relationship {
  public:
-  // monostate(empty(define only)), string, Path or PathVector
-  // tinyusdz::variant<tinyusdz::monostate, std::string, Path,
-  // std::vector<Path>> targets;
 
   // For some reaon, using tinyusdz::variant will cause double-free in some
   // environemt on clang, so use old-fashioned way for a while.
@@ -1475,8 +1474,8 @@ class Relation {
   std::vector<Path> targetPathVector;
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};
 
-  static Relation MakeEmpty() {
-    Relation r;
+  static Relationship MakeEmpty() {
+    Relationship r;
     r.set_empty();
     return r;
   }
@@ -1590,7 +1589,7 @@ struct PrimAttrib {
 ///
 /// Typed version of Property(e.g. for `points`, `normals`, `velocities.timeSamples`, `inputs:st.connect`)
 /// (but no Relation)
-/// TODO: Use TypedAttribute since this class does not store Relation information.
+/// TODO: Use TypedAttribute since this class does not store Relationship information.
 ///
 template <typename T>
 class TypedProperty {
@@ -1674,17 +1673,17 @@ class Property {
   }
 
   // Relation: typeless
-  Property(const Relation &r, bool custom) : _rel(r), _has_custom(custom) {
+  Property(const Relationship &r, bool custom) : _rel(r), _has_custom(custom) {
     _type = Type::Relation;
   }
 
-  Property(Relation &&r, bool custom)
+  Property(Relationship &&r, bool custom)
       : _rel(std::move(r)), _has_custom(custom) {
     _type = Type::Relation;
   }
 
   // Attribute Connection: has type
-  Property(const Relation &r, const std::string &prop_value_type_name,
+  Property(const Relationship &r, const std::string &prop_value_type_name,
            bool custom)
       : _rel(r),
         _prop_value_type_name(prop_value_type_name),
@@ -1692,7 +1691,7 @@ class Property {
     _type = Type::Connection;
   }
 
-  Property(Relation &&r, const std::string &prop_value_type_name, bool custom)
+  Property(Relationship &&r, const std::string &prop_value_type_name, bool custom)
       : _rel(std::move(r)),
         _prop_value_type_name(prop_value_type_name),
         _has_custom(custom) {
@@ -1750,9 +1749,9 @@ class Property {
     _type = Type::Attrib;
   }
 
-  const Relation &GetRelation() const { return _rel; }
+  const Relationship &GetRelationship() const { return _rel; }
 
-  Relation &GetRelation() { return _rel; }
+  Relationship &GetRelationship() { return _rel; }
 
   ListEditQual GetListEditQual() const { return _listOpQual; }
 
@@ -1764,7 +1763,7 @@ class Property {
   ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 
   Type _type{Type::EmptyAttrib};
-  Relation _rel;  // Relation(`rel`) or Connection(`.connect`)
+  Relationship _rel;  // Relation(`rel`) or Connection(`.connect`)
   std::string _prop_value_type_name;  // for Connection.
   bool _has_custom{false};            // Qualified with 'custom' keyword?
 };
@@ -2221,7 +2220,7 @@ class Prim {
   }
 
  private:
-  Path _path;  // Prim's local path name. May contain Property, Relation and
+  Path _path;  // Prim's local path name. May contain Property, Relationship and
               // other infos, but do not include parent's path. To get fully absolute path of a Prim(e.g. "/xform0/mymesh0", You need to traverse Prim tree and concatename `elementPath` or use ***(T.B.D>) method in `Stage` class
   Path _elementPath;  // leaf("terminal") Prim name.(e.g. "myxform" for `def
                      // Xform "myform"`). For root node, elementPath name is
@@ -2485,7 +2484,7 @@ DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
 DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
-DEFINE_TYPE_TRAIT(Relation, "Relationship", TYPE_ID_RELATIONSHIP, 1);
+DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
 // TODO(syoyo): Define PathVector as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
 

@@ -680,7 +680,7 @@ class AsciiParser {
 
   bool Eof() { return _sr->eof(); }
 
-  bool ParseRelation(Relation *result);
+  bool ParseRelationship(Relationship *result);
   bool ParseProperty(std::map<std::string, Property> *props);
 
   //
