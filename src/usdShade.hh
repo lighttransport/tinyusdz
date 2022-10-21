@@ -175,8 +175,8 @@ struct UsdPreviewSurface {
   ///
   /// Terminal attribute(No value assigned or `.connect` only)
   ///
-  nonstd::optional<Relation> outputsSurface; // "token outputs:surface", "outputs:surface.connect"
-  nonstd::optional<Relation> outputsDisplacement; // "token outputs:displacement", "outputs:displacement.connect"
+  nonstd::optional<Relationship> outputsSurface; // "token outputs:surface", "outputs:surface.connect"
+  nonstd::optional<Relationship> outputsDisplacement; // "token outputs:displacement", "outputs:displacement.connect"
 
   // Custom properties
   std::map<std::string, Property> props;

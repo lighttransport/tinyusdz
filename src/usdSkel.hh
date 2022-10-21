@@ -44,7 +44,7 @@ struct Skeleton {
   TypedAttribute<std::vector<value::matrix4d>> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                                                 // joint in local coordinate.
 
-  nonstd::optional<Relation> proxyPrim; // rel proxyPrim
+  nonstd::optional<Relationship> proxyPrim; // rel proxyPrim
 
 
   // SkelBindingAPI
@@ -79,7 +79,7 @@ struct SkelRoot {
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
       Visibility::Inherited};  // "token visibility"
 
-  nonstd::optional<Relation> proxyPrim; // rel proxyPrim
+  nonstd::optional<Relationship> proxyPrim; // rel proxyPrim
   std::vector<XformOp> xformOps;
 
   std::map<std::string, Property> props;

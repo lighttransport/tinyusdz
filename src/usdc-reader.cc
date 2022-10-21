@@ -852,7 +852,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   bool is_scalar{false};
 
   value::Value scalar;
-  Relation rel;
+  Relationship rel;
 
   // for consistency check
   bool hasConnectionChildren{false};
@@ -1152,7 +1152,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       DCOUT("spec_type = " << to_string(spec_type));
       if (spec_type == SpecType::Relationship) {
         // `rel` with no target. e.g. `rel target`
-        rel = Relation();
+        rel = Relationship();
         rel.set_empty();
         (*prop) = Property(rel, custom);
       } else {

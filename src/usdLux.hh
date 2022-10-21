@@ -253,7 +253,7 @@ struct DomeLight : public Xformable {
 // TODO:
 struct GeometryLight : public Xformable {
   Specifier spec{Specifier::Def};
-  nonstd::optional<Relation> geometry; // `rel geometry`
+  nonstd::optional<Relationship> geometry; // `rel geometry`
 };
 
 // TODO
