@@ -1076,7 +1076,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     }
     if (auto pv = prop.GetConnectionTarget()) {
       Relation rel;
-      rel.Set(pv.value());
+      rel.set(pv.value());
       rel.meta = prop.GetAttrib().meta;
       target = rel;
       table.insert(propname);
@@ -1092,7 +1092,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     if (prop.IsConnection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         Relation rel;
-        rel.Set(pv.value());
+        rel.set(pv.value());
         rel.meta = prop.GetAttrib().meta;
         target = rel;
         table.insert(prop_name);
@@ -1111,7 +1111,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       if (value::TypeTraits<value::token>::type_name() == attr_type_name) {
         if (prop.GetPropertyType() == Property::Type::EmptyAttrib) {
           Relation rel;
-          rel.SetEmpty();
+          rel.set_empty();
           rel.meta = prop.GetAttrib().meta;
           table.insert(name);
           target = rel;
@@ -1210,7 +1210,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kProxyPrim)); \
     } \
     const Relation &rel = prop.second.GetRelation(); \
-    if (rel.IsPath()) { \
+    if (rel.is_path()) { \
       __ptarget->proxyPrim = rel; \
       table.insert(prop.first); \
       DCOUT("Added rel proxyPrim."); \
@@ -1230,14 +1230,14 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kMaterialBinding)); \
     } \
     const Relation &rel = prop.second.GetRelation(); \
-    if (rel.IsPath()) { \
+    if (rel.is_path()) { \
       MaterialBindingAPI m; \
       m.binding = rel.targetPath; \
       __ptarget->materialBinding = m; \
       table.insert(prop.first); \
       DCOUT("Added rel material:binding."); \
       continue; \
-    } else if (rel.IsPathVector()) { \
+    } else if (rel.is_pathvector()) { \
       if (rel.targetPathVector.size() == 1) { \
         MaterialBindingAPI m; \
         m.binding = rel.targetPathVector[0]; \
@@ -1261,11 +1261,11 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relation with Path target.", kSkelSkeleton)); \
     } \
     const Relation &rel = prop.second.GetRelation(); \
-    if (rel.IsPath()) { \
+    if (rel.is_path()) { \
       __ptarget->skeleton = rel.targetPath; \
       table.insert(prop.first); \
       continue; \
-    } else if (rel.IsPathVector()) { \
+    } else if (rel.is_pathvector()) { \
       if (rel.targetPathVector.size() == 1) { \
         __ptarget->skeleton = rel.targetPathVector[0]; \
         table.insert(prop.first); \
@@ -2068,10 +2068,10 @@ bool ReconstructPrim<Skeleton>(
     if (prop.first == kSkelAnimationSource) {
 
       // Must be relation of type Path.
-      if (prop.second.IsRel() && prop.second.GetRelation().IsPath()) {
+      if (prop.second.IsRel() && prop.second.GetRelation().is_path()) {
         {
           const Relation &rel = prop.second.GetRelation();
-          if (rel.IsPath()) {
+          if (rel.is_path()) {
             DCOUT(kSkelAnimationSource);
             skel->animationSource = rel.targetPath;
             table.insert(kSkelAnimationSource);

@@ -326,7 +326,7 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
-  DCOUT("GerPrimAtPath : " << path);
+  DCOUT("GerPrimAtPath : " << path.GetPrimPart() << "(input path: " << path << ")");
 
   if (_dirty) {
     // Clear cache.

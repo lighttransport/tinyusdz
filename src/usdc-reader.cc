@@ -949,10 +949,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           // Single
           const Path path = items[0];
 
-          rel.Set(path);
+          rel.set(path);
 
         } else {
-          rel.Set(items);  // [Path]
+          rel.set(items);  // [Path]
         }
 
       } else {
@@ -990,10 +990,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           // Single
           const Path path = items[0];
 
-          rel.Set(path);
+          rel.set(path);
 
         } else {
-          rel.Set(items);  // [Path]
+          rel.set(items);  // [Path]
         }
 
         rel.SetListEditQualifier(qual);
@@ -1153,7 +1153,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       if (spec_type == SpecType::Relationship) {
         // `rel` with no target. e.g. `rel target`
         rel = Relation();
-        rel.SetEmpty();
+        rel.set_empty();
         (*prop) = Property(rel, custom);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");

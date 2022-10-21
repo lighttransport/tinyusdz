@@ -122,7 +122,7 @@ static void TraversePrimvarReader_float2(const tinyusdz::Stage &stage,
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need input.usdz\n" << std::endl;
+    std::cout << "Need USD file with Material/Shader(e.g. `<tinyusdz>/models/texturescube.usda`\n" << std::endl;
     return EXIT_FAILURE;
   }
 
@@ -319,6 +319,44 @@ int main(int argc, char **argv) {
       std::cerr << err;
     }
   }
+
+  std::cout << "EvaluateAttribute example -------------\n";
+
+  //
+  // Shader attribute evaluation example.
+  //
+  for (const auto &item : preadermap) {
+    // Returned Prim is Shader class
+    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    if (shader) {
+      std::cout << "Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
+
+      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      if (sp) { // this should be true though.
+
+        if (const tinyusdz::UsdPrimvarReader_float2 *preader = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
+
+          tinyusdz::tydra::TerminalAttributeValue tav;
+          std::string err;
+          bool ret = tinyusdz::tydra::EvaluateAttribute(stage, *shader.value(), "inputs:varname", &tav, &err);
+
+          if (!ret) {
+            std::cout << "Resolving `inputs:varname` failed: " << err << "\n";
+          }
+
+          std::cout << "type = " << tav.type_name() << "\n";
+
+          if (auto pv = tav.as<tinyusdz::value::token>()) {
+            std::cout << "inputs:varname = " << (*pv) << "\n";
+          }
+        }
+      }
+
+    } else {
+      std::cerr << "Err: " << shader.error() << "\n";
+    }
+  }
+
 
   return 0;
 }
