@@ -274,13 +274,13 @@ std::string print_rel(const Relation &rel, const std::string &name, uint32_t ind
 
   ss << "rel " << name;
 
-  if (rel.IsEmpty()) {
+  if (rel.is_empty()) {
     // nothing todo
-  } else if (rel.IsPath()) {
+  } else if (rel.is_path()) {
     ss << " = " << rel.targetPath;
-  } else if (rel.IsPathVector()) {
+  } else if (rel.is_pathvector()) {
     ss << " = " << rel.targetPathVector;
-  } else if (rel.IsString()) {
+  } else if (rel.is_string()) {
     ss << " = " << quote(rel.targetString);
   } else {
     ss << "[InternalErrror]";
@@ -948,12 +948,10 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
 
       if (prop.IsConnection()) {
 
-        // Currently, ".connect" prefix included in property's name
-
-        ss << " = ";
-        if (prop.GetRelation().IsPath()) {
+        ss << ".connect = ";
+        if (prop.GetRelation().is_path()) {
           ss << prop.GetRelation().targetPath;
-        } else if (prop.GetRelation().IsPathVector()) {
+        } else if (prop.GetRelation().is_pathvector()) {
           ss << prop.GetRelation().targetPathVector;
         }
       } else if (prop.IsEmpty()) {
@@ -1522,8 +1520,7 @@ std::string to_string(const Model &model, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  // props
-  // TODO:
+  ss << print_props(model.props,indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1541,8 +1538,7 @@ std::string to_string(const Scope &scope, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  // props
-  // TODO:
+  ss << print_props(scope.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2191,7 +2187,7 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
   // Outputs
   if (shader.outputsSurface) {
     ss << pprint::Indent(indent) << "token outputs:surface";
-    if (shader.outputsSurface.value().IsPath()) {
+    if (shader.outputsSurface.value().is_path()) {
       ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath);
     }
     if (shader.outputsSurface.value().meta.authored()) {
@@ -2202,7 +2198,7 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
 
   if (shader.outputsDisplacement) {
     ss << pprint::Indent(indent) << "token outputs:displacement";
-    if (shader.outputsDisplacement.value().IsPath()) {
+    if (shader.outputsDisplacement.value().is_path()) {
       ss << ".connect = " << pquote(shader.outputsDisplacement.value().targetPath) << "\n";
     }
     if (shader.outputsDisplacement.value().meta.authored()) {
@@ -2533,7 +2529,7 @@ std::string dump_path(const Path &path) {
 namespace prim {
 
 std::string print_prim(const Prim &prim, const uint32_t indent) {
-  
+
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << value::pprint_value(prim.data());

@@ -3084,7 +3084,7 @@ bool AsciiParser::ParseRelation(Relation *result) {
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse String.");
     }
-    result->Set(value);
+    result->set(value);
 
   } else if (c == '<') {
     // Path
@@ -3092,14 +3092,14 @@ bool AsciiParser::ParseRelation(Relation *result) {
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse Path.");
     }
-    result->Set(value);
+    result->set(value);
   } else if (c == '[') {
     // PathVector
     std::vector<Path> value;
     if (!ParseBasicTypeArray(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse PathVector.");
     }
-    result->Set(value);
+    result->set(value);
   } else {
     PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
                           "\" found. Expects string, Path or PathVector.");
@@ -3432,6 +3432,15 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
   bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
   bool isConnection = endsWith(primattr_name, kConnectSuffix);
 
+  // Remove suffix
+  std::string attr_name = primattr_name;
+  if (isTimeSample) {
+    attr_name = removeSuffix(primattr_name, kTimeSamplesSuffix);
+  }
+  if (isConnection) {
+    attr_name = removeSuffix(primattr_name, kConnectSuffix);
+  }
+
   bool define_only = false;
   {
     char c;
@@ -3472,7 +3481,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     }
     p.GetAttrib().meta = meta;
 
-    (*props)[primattr_name] = p;
+    (*props)[attr_name] = p;
 
     return true;
   }
@@ -3492,11 +3501,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     }
 
     Relation rel;
-    rel.Set(path);
+    rel.set(path);
 
     Property p(rel, /* value typename */ type_name, custom_qual);
 
-    (*props)[primattr_name] = p;
+    (*props)[attr_name] = p;
 
     DCOUT(fmt::format("Added {} as a attribute connection.", primattr_name));
 
@@ -3523,20 +3532,20 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       }
     }
 
-    std::string varname = removeSuffix(primattr_name, ".timeSamples");
+    //std::string varname = removeSuffix(primattr_name, ".timeSamples");
     PrimAttrib attr;
     primvar::PrimVar var;
     var.set_timesamples(ts);
 
-    attr.name = varname;
+    attr.name = attr_name;
     attr.set_var(std::move(var));
 
     DCOUT("timeSamples primattr: type = " << type_name
-                                          << ", name = " << varname);
+                                          << ", name = " << attr_name);
 
     Property p(attr, custom_qual);
     p.SetPropetryType(Property::Type::Attrib);
-    (*props)[varname] = p;
+    (*props)[attr_name] = p;
 
     return true;
 
