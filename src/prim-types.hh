@@ -1528,9 +1528,9 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-// PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
+// Attribute is a struct to hold generic attribute of a property(e.g. primvar) of Prim
 // TODO: Refactor
-struct PrimAttrib {
+struct Attribute {
   std::string name;  // attrib name
 
   void set_type_name(const std::string &tname) { _type_name = tname; }
@@ -1663,11 +1663,11 @@ class Property {
     _type = Type::EmptyAttrib;
   }
 
-  Property(const PrimAttrib &a, bool custom) : _attrib(a), _has_custom(custom) {
+  Property(const Attribute &a, bool custom) : _attrib(a), _has_custom(custom) {
     _type = Type::Attrib;
   }
 
-  Property(PrimAttrib &&a, bool custom)
+  Property(Attribute &&a, bool custom)
       : _attrib(std::move(a)), _has_custom(custom) {
     _type = Type::Attrib;
   }
@@ -1698,7 +1698,7 @@ class Property {
     _type = Type::Connection;
   }
 
-  bool IsAttrib() const {
+  bool IsAttribute() const {
     return (_type == Type::EmptyAttrib) || (_type == Type::Attrib);
   }
   bool IsEmpty() const {
@@ -1740,11 +1740,11 @@ class Property {
 
   void SetListEditQual(ListEditQual qual) { _listOpQual = qual; }
 
-  const PrimAttrib &GetAttrib() const { return _attrib; }
+  const Attribute &GetAttribute() const { return _attrib; }
 
-  PrimAttrib &GetAttrib() { return _attrib; }
+  Attribute &GetAttribute() { return _attrib; }
 
-  void SetAttrib(const PrimAttrib &attrib) {
+  void SetAttribute(const Attribute &attrib) {
     _attrib = attrib;
     _type = Type::Attrib;
   }
@@ -1756,7 +1756,7 @@ class Property {
   ListEditQual GetListEditQual() const { return _listOpQual; }
 
  private:
-  PrimAttrib _attrib;
+  Attribute _attrib;
 
   // List Edit qualifier(Attribute can never be list editable)
   // TODO:  Store listEdit qualifier to `Relation`
