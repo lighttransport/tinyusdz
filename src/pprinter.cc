@@ -958,6 +958,10 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
         ss << "\n";
       } else {
         // has value content
+
+        if (attr.get_var().is_timesample()) {
+          ss << ".timeSamples";
+        }
         ss << " = ";
 
         if (attr.get_var().is_timesample()) {
