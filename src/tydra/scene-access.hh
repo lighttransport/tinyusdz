@@ -78,7 +78,6 @@ void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, voi
 ///
 /// Terminal Attribute value at specified timecode.
 ///
-/// - No "empty" value
 /// - No `None`(Value Blocked)
 /// - No connection(connection target is evaluated(fetch value producing attribute))
 /// - No timeSampled value
@@ -87,16 +86,39 @@ class TerminalAttributeValue
 {
  public:
 
-  TerminalAttributeValue(const value::Value &v) : _value(v) {}
-  TerminalAttributeValue(value::Value &&v) : _value(std::move(v)) {}
+  TerminalAttributeValue() = default;
+
+  TerminalAttributeValue(const value::Value &v) : _empty{false}, _value(v) {}
+  TerminalAttributeValue(value::Value &&v) : _empty{false}, _value(std::move(v)) {}
+
+  // "empty" attribute(type info only)
+  void set_empty_attribute(const std::string &type_name) {
+    _empty = true;
+    _type_name = type_name;
+  }
+
+  TerminalAttributeValue(const std::string &type_name) {
+    set_empty_attribute(type_name);
+  } 
+
+  bool is_empty() const {
+    return _empty;
+  }
 
   template<typename T>
   const T *as() const {
+    if (_empty) {
+      return nullptr;
+    }
     return _value.as<T>();
   }
 
   template<typename T>
   bool is() const {
+    if (_empty) {
+      return false;
+    }
+
     if (_value.as<T>()) {
       return true;
     }
@@ -105,10 +127,28 @@ class TerminalAttributeValue
 
   void set_value(const value::Value &v) {
     _value = v;
+    _empty = false;
   }
 
   void set_value(value::Value &&v) {
     _value = std::move(v);
+    _empty = false;
+  }
+
+  const std::string type_name() const {
+    if (_empty) {
+      return _type_name;
+    }
+
+    return _value.type_name();
+  }
+
+  uint32_t type_id() const {
+    if (_empty) {
+      return value::GetTypeId(_type_name);
+    }
+
+    return _value.type_id();
   }
 
   Variability variability() const { return _variability; }
@@ -118,6 +158,8 @@ class TerminalAttributeValue
   AttrMeta &meta() { return _meta; }
 
  private:
+  bool _empty{true};
+  std::string _type_name;
   Variability _variability{Variability::Varying};
   value::Value _value{nullptr};
   AttrMeta _meta;
@@ -126,6 +168,8 @@ class TerminalAttributeValue
 ///
 /// Evaluate Attribute of the specied Prim and retrieve terminal Attribute value.
 ///
+/// - If the attribute is empty(e.g. `float outputs:r`), return "empty" Attribute  
+/// - If the attribute is scalar value, simply returns it.
 /// - If the attribute is timeSamples value, evaluate the value at specified time.
 /// - If the attribute is connection, follow the connection target 
 ///
@@ -139,8 +183,9 @@ class TerminalAttributeValue
 ///
 /// Return false when:
 ///
-/// - Requested attribute not found.
-/// - Invalid connection(e.g. type mismatch, circular referencing, ...).
+/// - If the attribute is None(ValueBlock)
+/// - Requested attribute not found in a Prim.
+/// - Invalid connection(e.g. type mismatch, circular referencing, targetPath points non-existing path, etc), 
 /// - Other error happens.
 ///
 bool EvaluateAttribute(

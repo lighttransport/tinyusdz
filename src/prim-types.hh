@@ -1158,7 +1158,7 @@ class Attribute {
     _attrib = v.GetValue();
     SetBlock(v.IsBlocked());
   }
-  
+
   Attribute(const primvar::Primvar &v) : _attrib(v) {
   }
 
@@ -1477,38 +1477,38 @@ class Relation {
 
   static Relation MakeEmpty() {
     Relation r;
-    r.SetEmpty();
+    r.set_empty();
     return r;
   }
 
+  // TODO: Remove
   void SetListEditQualifier(ListEditQual q) { listOpQual = q; }
-
   ListEditQual GetListEditQualifier() const { return listOpQual; }
 
-  void SetEmpty() { type = Type::Empty; }
+  void set_empty() { type = Type::Empty; }
 
-  void Set(const std::string &s) {
+  void set(const std::string &s) {
     targetString = s;
     type = Type::String;
   }
 
-  void Set(const Path &p) {
+  void set(const Path &p) {
     targetPath = p;
     type = Type::Path;
   }
 
-  void Set(const std::vector<Path> &pv) {
+  void set(const std::vector<Path> &pv) {
     targetPathVector = pv;
     type = Type::PathVector;
   }
 
-  bool IsEmpty() const { return type == Type::Empty; }
+  bool is_empty() const { return type == Type::Empty; }
 
-  bool IsString() const { return type == Type::String; }
+  bool is_string() const { return type == Type::String; }
 
-  bool IsPath() const { return type == Type::Path; }
+  bool is_path() const { return type == Type::Path; }
 
-  bool IsPathVector() const { return type == Type::PathVector; }
+  bool is_pathvector() const { return type == Type::PathVector; }
 
   AttrMeta meta;
 };
@@ -1651,10 +1651,10 @@ class Property {
  public:
   enum class Type {
     EmptyAttrib,        // Attrib with no data.
-    Attrib,             // contains actual data
-    Relation,           // `rel` type
+    Attrib,             // Attrib which contains actual data
+    Relation,           // `rel` with targetPath(s).
     NoTargetsRelation,  // `rel` with no targets.
-    Connection,         // `.connect` suffix
+    Connection,         // Connection attribute(`.connect` suffix)
   };
 
   Property() = default;
@@ -1715,7 +1715,7 @@ class Property {
       return nonstd::nullopt;
     }
 
-    if (_rel.IsPath()) {
+    if (_rel.is_path()) {
       return _rel.targetPath;
     }
 
@@ -2192,6 +2192,14 @@ class Prim {
 
   const Path &element_path() const {
     return _elementPath;
+  }
+
+  const std::string type_name() const {
+    return _data.type_name();
+  }
+
+  uint32_t type_id() const {
+    return _data.type_id();
   }
 
   template<typename T>
