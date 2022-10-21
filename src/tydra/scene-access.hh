@@ -66,7 +66,7 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage, const tinyusdz::Path &pa
 /// Use old-style Callback function approach for easier language bindings
 ///
 /// @param[in] prim Prim
-/// @param[in] tree_depth Tree depth of this Prim. 0 = root prim. 
+/// @param[in] tree_depth Tree depth of this Prim. 0 = root prim.
 /// @param[inout] userdata User data.
 ///
 /// @return Usually true. false to notify stop visiting Prims further.
@@ -74,6 +74,60 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage, const tinyusdz::Path &pa
 typedef bool (*VisitPrimFunction)(const Prim &prim, const int32_t tree_depth, void *userdata);
 
 void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, void *userdata=nullptr);
+
+///
+/// Get Property(Attribute or Relationship) of given Prim by name.
+/// Similar to UsdPrim::GetProperty() in pxrUSD.
+///
+/// @param[in] prim Prim
+/// @param[in] prop_name Property name
+/// @param[out] prop Property
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true if Property found in given Prim.
+/// @return false if Property is not found in given Prim.
+///
+bool GetProperty(
+  const tinyusdz::Prim &prim,
+  const std::string &attr_name,
+  PrimAttrib *attr,
+  std::string *err);
+
+///
+/// Get Attribute of given Prim by name.
+/// Similar to UsdPrim::GetAttribute() in pxrUSD.
+///
+/// @param[in] prim Prim
+/// @param[in] attr_name Attribute name
+/// @param[out] attr Attribute
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true if Attribute found in given Prim.
+/// @return false if Attribute is not found in given Prim, or `attr_name` is a Relationship.
+///
+bool GetAttribute(
+  const tinyusdz::Prim &prim,
+  const std::string &attr_name,
+  PrimAttrib *attr,
+  std::string *err);
+
+///
+/// Get Relationship of given Prim by name.
+/// Similar to UsdPrim::GetRelationship() in pxrUSD.
+///
+/// @param[in] prim Prim
+/// @param[in] rel_name Relationship name
+/// @param[out] rel Relationship
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true if Relationship found in given Prim.
+/// @return false if Relationship is not found in given Prim, or `rel_name` is a Attribute.
+///
+bool GetRelationship(
+  const tinyusdz::Prim &prim,
+  const std::string &rel_name,
+  Relationship *rel,
+  std::string *err);
 
 ///
 /// Terminal Attribute value at specified timecode.
@@ -99,7 +153,7 @@ class TerminalAttributeValue
 
   TerminalAttributeValue(const std::string &type_name) {
     set_empty_attribute(type_name);
-  } 
+  }
 
   bool is_empty() const {
     return _empty;
@@ -168,10 +222,10 @@ class TerminalAttributeValue
 ///
 /// Evaluate Attribute of the specied Prim and retrieve terminal Attribute value.
 ///
-/// - If the attribute is empty(e.g. `float outputs:r`), return "empty" Attribute  
+/// - If the attribute is empty(e.g. `float outputs:r`), return "empty" Attribute
 /// - If the attribute is scalar value, simply returns it.
 /// - If the attribute is timeSamples value, evaluate the value at specified time.
-/// - If the attribute is connection, follow the connection target 
+/// - If the attribute is connection, follow the connection target
 ///
 /// @param[in] stage Stage
 /// @param[in] prim Prim
@@ -185,7 +239,7 @@ class TerminalAttributeValue
 ///
 /// - If the attribute is None(ValueBlock)
 /// - Requested attribute not found in a Prim.
-/// - Invalid connection(e.g. type mismatch, circular referencing, targetPath points non-existing path, etc), 
+/// - Invalid connection(e.g. type mismatch, circular referencing, targetPath points non-existing path, etc),
 /// - Other error happens.
 ///
 bool EvaluateAttribute(
@@ -197,6 +251,7 @@ bool EvaluateAttribute(
   const tinyusdz::value::TimeCode tc = tinyusdz::value::TimeCode::Default(),
   const tinyusdz::TimeSampleInterpolationType tinterp = tinyusdz::TimeSampleInterpolationType::Held
   );
+
 
 }  // namespace tydra
 }  // namespace tinyusdz

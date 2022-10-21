@@ -371,7 +371,7 @@ void ToProperty(
 
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
-    Relation relTarget;
+    Relationship relTarget;
     if (auto pv = input.GetConnection()) {
       relTarget.set(pv.value());
       DCOUT("targetPath = " << relTarget.targetPath);

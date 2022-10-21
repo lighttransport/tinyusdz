@@ -268,7 +268,7 @@ std::string print_references(const prim::ReferenceList &references, const uint32
   return ss.str();
 }
 
-std::string print_rel(const Relation &rel, const std::string &name, uint32_t indent)
+std::string print_rel(const Relationship &rel, const std::string &name, uint32_t indent)
 {
   std::stringstream ss;
 
@@ -882,33 +882,8 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
     ss << to_string(prop.GetListEditQual()) << " ";
   }
 
-#if 0
-  ss << "rel " << name;
-
-  const Relation &rel = prop.GetRelation();
-
-  if (rel.IsEmpty()) {
-    // nothing todo
-  } else if (rel.IsPath()) {
-    ss << " = " << rel.targetPath;
-  } else if (rel.IsPathVector()) {
-    ss << " = " << rel.targetPathVector;
-  } else if (rel.IsString()) {
-    ss << " = " << quote(rel.targetString);
-  } else {
-    ss << "[InternalErrror]";
-  }
-
-  // Metadata is stored in attrib.meta.
-  if (rel.meta.authored()) {
-    ss << " (\n" << print_attr_metas(rel.meta, indent+1) << pprint::Indent(indent) << ")";
-  }
-
-  ss << "\n";
-#else
-  const Relation &rel = prop.GetRelation();
+  const Relationship &rel = prop.GetRelationship();
   ss << print_rel(rel, name, indent);
-#endif
 
   return ss.str();
 }
@@ -949,10 +924,10 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
       if (prop.IsConnection()) {
 
         ss << ".connect = ";
-        if (prop.GetRelation().is_path()) {
-          ss << prop.GetRelation().targetPath;
-        } else if (prop.GetRelation().is_pathvector()) {
-          ss << prop.GetRelation().targetPathVector;
+        if (prop.GetRelationship().is_path()) {
+          ss << prop.GetRelationship().targetPath;
+        } else if (prop.GetRelationship().is_pathvector()) {
+          ss << prop.GetRelationship().targetPathVector;
         }
       } else if (prop.IsEmpty()) {
         ss << "\n";
