@@ -90,7 +90,7 @@ void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, voi
 bool GetProperty(
   const tinyusdz::Prim &prim,
   const std::string &attr_name,
-  PrimAttrib *attr,
+  Property *prop,
   std::string *err);
 
 ///
@@ -108,7 +108,7 @@ bool GetProperty(
 bool GetAttribute(
   const tinyusdz::Prim &prim,
   const std::string &attr_name,
-  PrimAttrib *attr,
+  Attribute *attr,
   std::string *err);
 
 ///
