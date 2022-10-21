@@ -70,7 +70,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     // int[] primvars:uv:indices = [ ... ]
     //
     {
-      tinyusdz::PrimAttrib uvAttr;
+      tinyusdz::Attribute uvAttr;
       std::vector<tinyusdz::value::texcoord2f> uvs;
 
       uvs.push_back({0.0f, 0.0f});
@@ -93,7 +93,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
       // ----------------------
 
-      tinyusdz::PrimAttrib uvIndexAttr;
+      tinyusdz::Attribute uvIndexAttr;
       std::vector<int> uvIndices;
 
       // FIXME: Validate
@@ -114,7 +114,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
     // `custom uniform double myvalue = 3.0 ( hidden = 0 )`
     {
-      tinyusdz::PrimAttrib attrib;
+      tinyusdz::Attribute attrib;
       double myvalue = 3.0;
       tinyusdz::primvar::PrimVar var;
       var.set_scalar(myvalue);
