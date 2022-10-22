@@ -27,6 +27,8 @@ static std::string str_tolower(std::string s) {
 }
 
 // key = Full absolute prim path(e.g. `/bora/dora`)
+using XformMap = std::map<std::string, const tinyusdz::Xform *>;
+using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
 using MaterialMap = std::map<std::string, const tinyusdz::Material *>;
 using PreviewSurfaceMap =
     std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPreviewSurface *>>;
@@ -216,19 +218,23 @@ int main(int argc, char **argv) {
   void *userdata = nullptr;
 
   tinyusdz::tydra::VisitPrims(stage, prim_visit_fun, userdata);
-  
+
 
   std::cout << "--------------------------------------"
             << "\n";
 
   // Mapping hold the pointer to concrete Prim object,
   // So stage content should not be changed(no Prim addition/deletion).
+  XformMap xformmap;
+  MeshMap meshmap;
   MaterialMap matmap;
   PreviewSurfaceMap surfacemap;
   UVTextureMap texmap;
   PrimvarReader_float2Map preadermap;
 
   // Collect and make full path <-> Prim/Shader mapping
+  tinyusdz::tydra::ListPrims(stage, xformmap);
+  tinyusdz::tydra::ListPrims(stage, meshmap);
   tinyusdz::tydra::ListPrims(stage, matmap);
   tinyusdz::tydra::ListShaders(stage, surfacemap);
   tinyusdz::tydra::ListShaders(stage, texmap);
@@ -315,6 +321,17 @@ int main(int argc, char **argv) {
     if (const tinyusdz::Prim *p = tinyusdz::tydra::GetParentPrim(stage, tinyusdz::Path(item.first, /* property */""), &err)) {
       std::cout << "Input path = " << tinyusdz::to_string(item.first) << "\n";
       std::cout << "Parent prim = " << tinyusdz::prim::print_prim(*p) << "\n";
+    } else {
+      std::cerr << err;
+    }
+  }
+
+  std::cout << "GetProperty example -------------\n";
+  for (const auto &item : xformmap) {
+    std::string err;
+    tinyusdz::Property prop;
+    if (tinyusdz::tydra::GetProperty(*item.second, "xformOp:transform", &prop, &err)) {
+      std::cout << "Property value = " << print_prop(prop, "xformOp:transform", 0) << "\n";
     } else {
       std::cerr << err;
     }
