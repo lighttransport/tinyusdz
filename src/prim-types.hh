@@ -190,13 +190,13 @@ class Path {
     Root,
   };
 
-  Path() : valid(false) {}
+  Path() : _valid(false) {}
 
   static Path make_root_path() {
     Path p =  Path("/", "");
     // elementPath is empty for root.
-    p.element_ = "";
-    p.valid = true;
+    p._element = "";
+    p._valid = true;
     return p;
   }
 
@@ -211,53 +211,58 @@ class Path {
   Path(const Path &rhs) = default;
 
   Path &operator=(const Path &rhs) {
-    this->valid = rhs.valid;
+    this->_valid = rhs._valid;
 
-    this->prim_part = rhs.prim_part;
-    this->prop_part = rhs.prop_part;
-    this->element_ = rhs.element_;
+    this->_prim_part = rhs._prim_part;
+    this->_prop_part = rhs._prop_part;
+    this->_element = rhs._element;
 
     return (*this);
   }
 
   std::string full_path_name() const {
     std::string s;
-    if (!valid) {
+    if (!_valid) {
       s += "#INVALID#";
     }
 
-    s += prim_part;
-    if (prop_part.empty()) {
+    s += _prim_part;
+    if (_prop_part.empty()) {
       return s;
     }
 
-    s += "." + prop_part;
+    s += "." + _prop_part;
 
     return s;
   }
 
-  std::string GetPrimPart() const { return prim_part; }
-  std::string GetPropPart() const { return prop_part; }
+  std::string prim_part() const { return _prim_part; }
+  std::string prop_part() const { return _prop_part; }
 
-  void set_path_type(const PathType ty) { path_type_ = ty; }
+  void set_path_type(const PathType ty) { _path_type = ty; }
 
-  nonstd::optional<PathType> get_path_type() const { return path_type_; }
+  bool get_path_type(PathType &ty) {
+    if (_path_type) {
+      ty = _path_type.value();
+    }
+    return false;
+  }
 
   // IsPropertyPath: PrimProperty or RelationalAttribute
-  bool IsPropertyPath() const {
-    if (path_type_) {
-      if ((path_type_.value() == PathType::PrimProperty ||
-           (path_type_.value() == PathType::RelationalAttribute))) {
+  bool is_property_path() const {
+    if (_path_type) {
+      if ((_path_type.value() == PathType::PrimProperty ||
+           (_path_type.value() == PathType::RelationalAttribute))) {
         return true;
       }
     }
 
     // TODO: RelationalAttribute
-    if (prim_part.empty()) {
+    if (_prim_part.empty()) {
       return false;
     }
 
-    if (prop_part.size()) {
+    if (_prop_part.size()) {
       return true;
     }
 
@@ -266,27 +271,27 @@ class Path {
 
   // Is Prim's property path?
   // True when both PrimPart and PropPart are not empty.
-  bool IsPrimPropertyPath() const {
-    if (prim_part.empty()) {
+  bool is_prim_property_path() const {
+    if (_prim_part.empty()) {
       return false;
     }
-    if (prop_part.size()) {
+    if (_prop_part.size()) {
       return true;
     }
     return false;
   }
 
-  bool IsValid() const { return valid; }
+  bool is_valid() const { return _valid; }
 
-  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
+  bool is_empty() { return (_prim_part.empty() && _prop_part.empty()); }
 
   // static Path RelativePath() { return Path("."); }
 
-  Path AppendProperty(const std::string &elem);
+  Path append_property(const std::string &elem);
 
-  Path AppendElement(const std::string &elem);
+  Path append_element(const std::string &elem);
 
-  std::string element_name() const { return element_; }
+  std::string element_name() const { return _element; }
 
   ///
   /// Split a path to the root(common ancestor) and its siblings
@@ -300,19 +305,30 @@ class Path {
   /// - bora -> [Empty, bora]
   /// - .muda -> [Empty, .muda]
   ///
-  std::pair<Path, Path> SplitAtRoot() const;
+  std::pair<Path, Path> split_at_root() const;
 
-  Path GetParentPrimPath() const;
+  ///
+  /// Get parent Prim path
+  ///
+  /// example:
+  ///
+  /// - / -> invalid Path
+  /// - /bora -> invalid Path(since `/` is not the Prim path)
+  /// - /bora/dora -> /bora
+  /// - dora/bora -> dora
+  /// - dora -> invalid Path
+  /// - .dora -> invalid Path(path is property path)
+  Path get_parent_prim_path() const;
 
   ///
   /// @returns true if a path is '/' only
   ///
-  bool IsRootPath() const {
-    if (!valid) {
+  bool is_root_path() const {
+    if (!_valid) {
       return false;
     }
 
-    if ((prim_part.size() == 1) && (prim_part[0] == '/')) {
+    if ((_prim_part.size() == 1) && (_prim_part[0] == '/')) {
       return true;
     }
 
@@ -322,18 +338,18 @@ class Path {
   ///
   /// @returns true if a path is root prim: e.g. '/bora'
   ///
-  bool IsRootPrim() const {
-    if (!valid) {
+  bool is_root_prim() const {
+    if (!_valid) {
       return false;
     }
 
-    if (IsRootPath()) {
+    if (is_root_path()) {
       return false;
     }
 
-    if ((prim_part.size() > 1) && (prim_part[0] == '/')) {
+    if ((_prim_part.size() > 1) && (_prim_part[0] == '/')) {
       // no other '/' except for the fist one
-      if (prim_part.find_last_of('/') == 0) {
+      if (_prim_part.find_last_of('/') == 0) {
         return true;
       }
     }
@@ -341,9 +357,9 @@ class Path {
     return false;
   }
 
-  bool IsAbsolutePath() const {
-    if (prim_part.size()) {
-      if ((prim_part.size() > 0) && (prim_part[0] == '/')) {
+  bool is_absolute_path() const {
+    if (_prim_part.size()) {
+      if ((_prim_part.size() > 0) && (_prim_part[0] == '/')) {
         return true;
       }
     }
@@ -351,42 +367,42 @@ class Path {
     return false;
   }
 
-  bool IsRelativePath() const {
-    if (prim_part.size()) {
-      return !IsAbsolutePath();
+  bool is_relative_path() const {
+    if (_prim_part.size()) {
+      return !is_absolute_path();
     }
 
     return true;  // prop part only
   }
 
   // Strip '/'
-  Path &MakeRelative() {
-    if (IsAbsolutePath() && (prim_part.size() > 1)) {
+  Path &make_relative() {
+    if (is_absolute_path() && (_prim_part.size() > 1)) {
       // Remove first '/'
-      prim_part.erase(0, 1);
+      _prim_part.erase(0, 1);
     }
     return *this;
   }
 
-  const Path MakeRelative(Path &&rhs) {
+  const Path make_relative(Path &&rhs) {
     (*this) = std::move(rhs);
 
-    return MakeRelative();
+    return make_relative();
   }
 
-  static const Path MakeRelative(const Path &rhs) {
+  static const Path make_relative(const Path &rhs) {
     Path p = rhs;  // copy
-    return p.MakeRelative();
+    return p.make_relative();
   }
 
  private:
-  std::string prim_part;  // e.g. /Model/MyMesh, MySphere
-  std::string prop_part;  // e.g. .visibility
-  std::string element_;   // Element name
+  std::string _prim_part;  // e.g. /Model/MyMesh, MySphere
+  std::string _prop_part;  // e.g. .visibility
+  std::string _element;   // Element name
 
-  nonstd::optional<PathType> path_type_;  // Currently optional.
+  nonstd::optional<PathType> _path_type;  // Currently optional.
 
-  bool valid{false};
+  bool _valid{false};
 };
 
 ///
@@ -397,7 +413,7 @@ class TokenizedPath {
   TokenizedPath() {}
 
   TokenizedPath(const Path &path) {
-    std::string s = path.GetPropPart();
+    std::string s = path.prop_part();
     if (s.empty()) {
       // ???
       return;
@@ -1646,6 +1662,7 @@ class TypedProperty {
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for
 // Crate data)
+// TODO: Deprecate `custom` attribute: https://github.com/PixarAnimationStudios/USD/issues/2069
 class Property {
  public:
   enum class Type {
@@ -1698,19 +1715,19 @@ class Property {
     _type = Type::Connection;
   }
 
-  bool IsAttribute() const {
+  bool is_attribute() const {
     return (_type == Type::EmptyAttrib) || (_type == Type::Attrib);
   }
-  bool IsEmpty() const {
+  bool is_empty() const {
     return (_type == Type::EmptyAttrib) || (_type == Type::NoTargetsRelation);
   }
-  bool IsRel() const {
+  bool is_relationship() const {
     return (_type == Type::Relation) || (_type == Type::NoTargetsRelation);
   }
-  bool IsConnection() const { return _type == Type::Connection; }
+  bool is_connection() const { return _type == Type::Connection; }
 
   nonstd::optional<Path> GetConnectionTarget() const {
-    if (!IsConnection()) {
+    if (!is_connection()) {
       return nonstd::nullopt;
     }
 
@@ -1722,9 +1739,9 @@ class Property {
   }
 
   std::string value_type_name() const {
-    if (IsConnection()) {
+    if (is_connection()) {
       return _prop_value_type_name;
-    } else if (IsRel()) {
+    } else if (is_relationship()) {
       // relation is typeless.
       return std::string();
     } else {
@@ -1732,7 +1749,7 @@ class Property {
     }
   }
 
-  bool HasCustom() const { return _has_custom; }
+  bool has_custom() const { return _has_custom; }
 
   void SetPropetryType(Type ty) { _type = ty; }
 
@@ -1882,56 +1899,6 @@ enum class TimeSampleInterpolation {
   // TODO: more to support...
 };
 
-#if 0
-
-template <typename T>
-struct TimeSamples {
-  std::vector<double> times;
-  std::vector<T> values;
-  // TODO: Support `none`
-
-  void Set(T value, double t) {
-    times.push_back(t);
-    values.push_back(value);
-  }
-
-  T Get(double t) const {
-    // Linear-interpolation.
-    // TODO: Support other interpolation method for example cubic.
-    auto it = std::lower_bound(times.begin(), times.end(), t);
-    size_t idx0 = size_t(std::max(
-        int64_t(0), std::min(int64_t(times.size() - 1),
-                             int64_t(std::distance(times.begin(), it - 1)))));
-    size_t idx1 = size_t(std::max(
-        int64_t(0), std::min(int64_t(times.size() - 1), int64_t(idx0) + 1)));
-
-    double tl = times[idx0];
-    double tu = times[idx1];
-
-    double dt = (t - tl);
-    if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-      // slope is zero.
-      dt = 0.0;
-    } else {
-      dt /= (tu - tl);
-    }
-
-    // Just in case.
-    dt = std::max(0.0, std::min(1.0, dt));
-
-    const T &p0 = values[idx0];
-    const T &p1 = values[idx1];
-
-    const T p = lerp(p0, p1, dt);
-
-    return p;
-  }
-
-  bool Valid() const {
-    return !times.empty() && (times.size() == values.size());
-  }
-};
-#endif
 
 // Prim metas, Prim tree and properties.
 struct VariantSet {
