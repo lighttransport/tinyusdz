@@ -97,7 +97,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   const auto &attrs = reader.GetAttrib();
 
-  PrimAttrib pointsAttr;
+  Attribute pointsAttr;
   if ((attrs.vertices.size() % 3) != 0) {
     if (err) {
       (*err) += "[usdObj] Invalid vertices data.\n";
@@ -211,7 +211,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   {
     primvar::PrimVar var;
     var.set_scalar(vertexIndices);
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_var(std::move(var));
     Property prop(attr, false);
     prim->props.emplace("faceVertexIndices", prop);
@@ -220,7 +220,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   {
     primvar::PrimVar var;
     var.set_scalar(vertexCounts);
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_var(std::move(var));
     Property prop(attr, false);
     prim->props.emplace("faceVertexCounts", prop);
@@ -230,7 +230,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
     primvar::PrimVar var;
     var.set_scalar(facevaryingNormals);
 
-    PrimAttrib normalsAttr;
+    Attribute normalsAttr;
     normalsAttr.meta.interpolation = Interpolation::FaceVarying;
     normalsAttr.variability() = Variability::Varying; // FIXME
     normalsAttr.set_var(std::move(var));
@@ -244,7 +244,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
     primvar::PrimVar var;
     var.set_scalar(facevaryingTexcoords);
 
-    PrimAttrib texcoordsAttr;
+    Attribute texcoordsAttr;
     texcoordsAttr.meta.interpolation = Interpolation::FaceVarying;
     texcoordsAttr.variability() = Variability::Varying;
     texcoordsAttr.set_var(std::move(var));

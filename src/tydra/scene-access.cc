@@ -273,7 +273,7 @@ void ToProperty(
   Property &output)
 {
   if (input.IsBlocked()) {
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_blocked(input.IsBlocked());
     attr.variability() = Variability::Uniform;
     output = Property(std::move(attr), /*custom*/ false);
@@ -297,7 +297,7 @@ void ToProperty(
     value::Value val(input.GetValue());
     primvar::PrimVar pvar;
     pvar.set_scalar(val);
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Uniform;
     output = Property(attr, /* custom */false);
@@ -314,7 +314,7 @@ void ToProperty(
   Property &output)
 {
   if (input.IsBlocked()) {
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_blocked(input.IsBlocked());
     attr.variability() = Variability::Uniform;
     output = Property(std::move(attr), /*custom*/ false);
@@ -338,7 +338,7 @@ void ToProperty(
     value::Value val(input.GetValue());
     primvar::PrimVar pvar;
     pvar.set_scalar(val);
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Uniform;
     output = Property(attr, /* custom */false);
@@ -356,7 +356,7 @@ void ToProperty(
   Property &output)
 {
   if (input.IsBlocked()) {
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_blocked(input.IsBlocked());
     attr.variability() = Variability::Uniform;
     output = Property(std::move(attr), /*custom*/ false);
@@ -391,13 +391,13 @@ void ToProperty(
         value::Value val(aval.value().value);
         primvar::PrimVar pvar;
         pvar.set_scalar(val);
-        PrimAttrib attr;
+        Attribute attr;
         attr.set_var(std::move(pvar));
         attr.variability() = Variability::Uniform;
         output = Property(attr, /* custom */false);
         return;
       } else if (aval.value().IsBlocked()) {
-        PrimAttrib attr;
+        Attribute attr;
         attr.set_type_name(value::TypeTraits<T>::type_name());
         attr.set_blocked(true);
         attr.variability() = Variability::Uniform;
@@ -424,7 +424,7 @@ void ToProperty(
   Property &output)
 {
   if (input.IsBlocked()) {
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_blocked(input.IsBlocked());
     attr.variability() = Variability::Uniform;
     output = Property(std::move(attr), /*custom*/ false);
@@ -449,7 +449,7 @@ void ToProperty(
     value::Value val(input.GetValue());
     primvar::PrimVar pvar;
     pvar.set_scalar(val);
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Uniform;
     output = Property(attr, /* custom */false);
@@ -457,7 +457,7 @@ void ToProperty(
 }
 #endif
 
-bool ToTerminalAttributeValue(const PrimAttrib &attr,
+bool ToTerminalAttributeValue(const Attribute &attr,
                               TerminalAttributeValue *value, std::string *err,
                               value::TimeCode tc,
                               TimeSampleInterpolationType tinterp) {
@@ -516,11 +516,11 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     primvar::PrimVar pvar;
     pvar.set_scalar(toks);
 
-    PrimAttrib attr;
+    Attribute attr;
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Uniform;
     Property prop;
-    prop.SetAttrib(attr);
+    prop.SetAttribute(attr);
 
     (*out_prop) = prop;
 
@@ -779,10 +779,10 @@ bool EvaluateAttributeImpl(
     PUSH_ERROR_AND_RETURN(fmt::format(
         "Attribute `{}` is a define-only attribute(no value assigned).",
         attr_name));
-  } else if (prop.IsAttrib()) {
+  } else if (prop.IsAttribute()) {
     DCOUT("IsAttrib");
 
-    const PrimAttrib &attr = prop.GetAttrib();
+    const Attribute &attr = prop.GetAttribute();
 
     if (attr.blocked()) {
       PUSH_ERROR_AND_RETURN(

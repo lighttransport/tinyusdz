@@ -3115,8 +3115,8 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
 template <typename T>
 bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
                                      const std::string &primattr_name,
-                                     PrimAttrib *out_attr) {
-  PrimAttrib attr;
+                                     Attribute *out_attr) {
+  Attribute attr;
   primvar::PrimVar var;
   bool blocked{false};
 
@@ -3178,7 +3178,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   // optional: attribute meta.
   AttrMeta meta;
   if (!ParseAttrMeta(&meta)) {
-    PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+    PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
   }
   attr.meta = meta;
 
@@ -3287,7 +3287,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
 
       if (metap) {
         // TODO: metadataum for Rel
-        p.GetAttrib().meta = metap.value();
+        p.GetAttribute().meta = metap.value();
       }
 
       (*props)[attr_name] = p;
@@ -3347,7 +3347,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     p.SetListEditQual(listop_qual);
 
     if (metap) {
-      p.GetAttrib().meta = metap.value();
+      p.GetAttribute().meta = metap.value();
     }
 
     (*props)[attr_name] = p;
@@ -3468,7 +3468,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     // optional: attribute meta.
     AttrMeta meta;
     if (!ParseAttrMeta(&meta)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+      PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
     }
 
     DCOUT("Define only property = " + primattr_name);
@@ -3477,9 +3477,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     Property p(type_name, custom_qual);
 
     if (uniform_qual) {
-      p.GetAttrib().variability() = Variability::Uniform;
+      p.GetAttribute().variability() = Variability::Uniform;
     }
-    p.GetAttrib().meta = meta;
+    p.GetAttribute().meta = meta;
 
     (*props)[attr_name] = p;
 
@@ -3533,7 +3533,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     }
 
     //std::string varname = removeSuffix(primattr_name, ".timeSamples");
-    PrimAttrib attr;
+    Attribute attr;
     primvar::PrimVar var;
     var.set_timesamples(ts);
 
@@ -3550,7 +3550,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     return true;
 
   } else {
-    PrimAttrib attr;
+    Attribute attr;
 
     // TODO: Refactor. ParseAttrMeta is currently called inside
     // ParseBasicPrimAttr()
@@ -3724,7 +3724,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       // optional: attribute meta.
       AttrMeta meta;
       if (!ParseAttrMeta(&meta)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+        PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
       }
       attr.meta = meta;
 

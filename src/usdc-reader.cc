@@ -415,7 +415,7 @@ bool USDCReader::Impl::ReconstructGeomSubset(
     {
       std::string prop_name = path.GetPropPart();
 
-      PrimAttrib attr;
+      Attribute attr;
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
       DCOUT("prop: " << prop_name << ", ret = " << ret);
 
@@ -847,7 +847,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<CustomDataType> customData;
   nonstd::optional<StringData> comment;
   Property::Type propType{Property::Type::EmptyAttrib};
-  PrimAttrib attr;
+  Attribute attr;
 
   bool is_scalar{false};
 
@@ -894,7 +894,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       propType = Property::Type::Attrib;
 
       // Set scalar
-      // TODO: Easier CrateValue to PrimAttrib.var conversion
+      // TODO: Easier CrateValue to Attribute.var conversion
       scalar = fv.second.get_raw();
       is_scalar = true;
 

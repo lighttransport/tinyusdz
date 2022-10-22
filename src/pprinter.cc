@@ -903,7 +903,7 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
       ss << print_rel_prop(prop, item.first, indent);
 
     } else {
-      const PrimAttrib &attr = item.second.GetAttrib();
+      const Attribute &attr = item.second.GetAttribute();
 
       ss << pprint::Indent(indent);
 
@@ -947,8 +947,8 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
         }
       }
 
-      if (item.second.GetAttrib().meta.authored()) {
-        ss << " (\n" << print_attr_metas(item.second.GetAttrib().meta, indent+1) << pprint::Indent(indent) << ")";
+      if (item.second.GetAttribute().meta.authored()) {
+        ss << " (\n" << print_attr_metas(item.second.GetAttribute().meta, indent+1) << pprint::Indent(indent) << ")";
       }
       ss << "\n";
     }

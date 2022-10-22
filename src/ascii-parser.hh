@@ -769,7 +769,7 @@ class AsciiParser {
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
-                          PrimAttrib *out_attr);
+                          Attribute *out_attr);
 
   bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
 
