@@ -669,7 +669,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 }
 
 
-bool GetPrimProperty(
+bool GetProperty(
     const tinyusdz::Prim &prim,
     const std::string &attr_name,
     Property *out_prop,
@@ -702,6 +702,25 @@ bool GetPrimProperty(
   return true;
 }
 
+bool GetAttribute(
+    const tinyusdz::Prim &prim,
+    const std::string &attr_name,
+    Attribute *out_attr,
+    std::string *err)
+{
+
+  // First lookup as Property, then check if its Attribute
+  Property prop;
+  if (!GetProperty(prim, attr_name, &prop, err)) {
+    return false;
+  }
+
+  if (prop.IsAttribute()) {
+  }
+
+  return true;
+}
+
 // TODO: provide visit map to prevent circular referencing.
 bool EvaluateAttributeImpl(
     const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
@@ -716,7 +735,7 @@ bool EvaluateAttributeImpl(
   DCOUT("Prim : " << prim.element_path().element_name() << "(" << prim.type_name() << ") attr_name " << attr_name);
 
   Property prop;
-  if (!GetPrimProperty(prim, attr_name, &prop, err)) {
+  if (!GetProperty(prim, attr_name, &prop, err)) {
     return false;
   }
 
