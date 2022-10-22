@@ -940,10 +940,10 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
         ss << " = ";
 
         if (attr.get_var().is_timesample()) {
-          ss << print_timesamples(attr.get_var().var, indent+1);
+          ss << print_timesamples(attr.get_var().var(), indent+1);
         } else {
           // is_scalar
-          ss << value::pprint_value(attr.get_var().var.values[0]);
+          ss << value::pprint_value(attr.get_var().var().values[0]);
         }
       }
 
@@ -1014,7 +1014,7 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
         ss << ".timeSamples";
       }
 
-      ss << " = " << print_timesamples(xformOp.var, indent);
+      ss << " = " << print_timesamples(xformOp.var(), indent);
 
       ss << "\n";
     }

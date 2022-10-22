@@ -1807,18 +1807,23 @@ struct XformOp {
   // XformOpValueType value_type;
   // std::string type_name;
 
-  value::TimeSamples var;
+  value::TimeSamples _var; // TODO: Use primvar::PrimVar
+
+  const value::TimeSamples &var() const {
+    return _var;
+  }
+
 
   std::string get_value_type_name() const {
-    if (var.values.size() > 0) {
-      return var.values[0].type_name();
+    if (_var.values.size() > 0) {
+      return _var.values[0].type_name();
     }
     return "[InternalError] XformOp value type name";
   }
 
   uint32_t get_value_type_id() const {
-    if (var.values.size() > 0) {
-      return var.values[0].type_id();
+    if (_var.values.size() > 0) {
+      return _var.values[0].type_id();
     }
     return uint32_t(value::TypeId::TYPE_ID_INVALID);
   }
@@ -1826,15 +1831,15 @@ struct XformOp {
   // TODO: Check if T is valid type.
   template <class T>
   void set_scalar(const T &v) {
-    var.times.clear();
-    var.values.clear();
+    _var.times.clear();
+    _var.values.clear();
 
-    var.values.push_back(v);
+    _var.values.push_back(v);
     // type_name = value::TypeTraits<T>::type_name();
   }
 
   void set_timesamples(const value::TimeSamples &v) {
-    var = v;
+    _var = v;
 
     // if (var.values.size()) {
     //   type_name = var.values[0].type_name();
@@ -1842,19 +1847,19 @@ struct XformOp {
   }
 
   void set_timesamples(value::TimeSamples &&v) {
-    var = std::move(v);
+    _var = std::move(v);
     // if (var.values.size()) {
     //   type_name = var.values[0].type_name();
     // }
   }
 
   bool is_timesamples() const {
-    return (var.times.size() > 0) && (var.times.size() == var.values.size());
+    return (_var.times.size() > 0) && (_var.times.size() == _var.values.size());
   }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
     if (is_timesamples()) {
-      return var;
+      return _var;
     }
     return nonstd::nullopt;
   }
@@ -1866,26 +1871,7 @@ struct XformOp {
       return nonstd::nullopt;
     }
 
-#if 0
-    if (value::TypeTraits<T>::type_id == var.values[0].type_id()) {
-      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-      auto pv = linb::any_cast<const T>(&var.values[0]);
-      if (pv) {
-        return (*pv);
-      }
-      return nonstd::nullopt;
-    } else if (value::TypeTraits<T>::underlying_type_id == var.values[0].underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      //return *reinterpret_cast<const T *>(var.values[0].value());
-
-      // TODO: strict type check.
-      return *linb::cast<const T>(&var.values[0]);
-    }
-    return nonstd::nullopt;
-#else
-    return var.values[0].get_value<T>();
-#endif
+    return _var.values[0].get_value<T>();
   }
 };
 

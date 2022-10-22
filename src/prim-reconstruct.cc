@@ -92,8 +92,8 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       return std::move(dst);
     }
   } else if (var.is_timesample()) {
-    for (size_t i = 0; i < var.var.times.size(); i++) {
-      double t = var.var.times[i];
+    for (size_t i = 0; i < var.var().times.size(); i++) {
+      double t = var.var().times[i];
 
       // Attribute Block?
       if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
@@ -102,7 +102,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
         dst.ts.AddSample(t, pv.value());
       } else {
         // Type mismatch
-        DCOUT(i << "/" << var.var.times.size() << " type mismatch.");
+        DCOUT(i << "/" << var.var().times.size() << " type mismatch.");
         return nonstd::nullopt;
       }
     }
@@ -143,8 +143,8 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
       return std::move(dst);
     }
   } else if (var.is_timesample()) {
-    for (size_t i = 0; i < var.var.times.size(); i++) {
-      double t = var.var.times[i];
+    for (size_t i = 0; i < var.var().times.size(); i++) {
+      double t = var.var().times[i];
 
       // Attribute Block?
       if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
@@ -156,12 +156,12 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
           ext.upper = pv.value()[1];
           dst.ts.AddSample(t, ext);
         } else {
-          DCOUT(i << "/" << var.var.times.size() << " array size mismatch.");
+          DCOUT(i << "/" << var.var().times.size() << " array size mismatch.");
           return nonstd::nullopt;
         }
       } else {
         // Type mismatch
-        DCOUT(i << "/" << var.var.times.size() << " type mismatch.");
+        DCOUT(i << "/" << var.var().times.size() << " type mismatch.");
         return nonstd::nullopt;
       }
     }
@@ -1704,7 +1704,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = xfm.value();  // may contain nested namespaces
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::matrix4d>()) {
             op.set_scalar(pvd.value());
           } else {
@@ -1718,7 +1718,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = tx.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1734,7 +1734,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = scale.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1750,7 +1750,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotX.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
@@ -1766,7 +1766,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotX.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
@@ -1782,7 +1782,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotZ.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
@@ -1798,7 +1798,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotateXYZ.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1814,7 +1814,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotateXZY.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1830,7 +1830,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotateYXZ.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1846,7 +1846,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotateYZX.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1862,7 +1862,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotateZXY.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1878,7 +1878,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = rotateZYX.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1894,7 +1894,7 @@ bool ReconstructXformOpsFromProperties(
           op.suffix = orient.value();
 
           if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var);
+            op.set_timesamples(attr.get_var().var());
           } else if (auto pvd = attr.get_value<value::quatf>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::quatd>()) {

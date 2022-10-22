@@ -478,10 +478,10 @@ bool ToTerminalAttributeValue(const Attribute &attr,
   if (!var.is_valid()) {
     PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
   } else if (var.is_scalar()) {
-    const value::TimeSamples &ts = var.get_raw();
+    const value::TimeSamples &ts = var.var();
     DCOUT("Attribute is scalar type:" << ts.values[0].type_name());
     DCOUT("Attribute value = " << pprint_value(ts.values[0]));
-    
+
     value->set_value(ts.values[0]);
   } else if (var.is_timesample()) {
     (void)tc;
@@ -490,6 +490,42 @@ bool ToTerminalAttributeValue(const Attribute &attr,
     // Evaluate timeSample value at specified timeCode.
     PUSH_ERROR_AND_RETURN("TODO: TimeSamples.");
   }
+
+  return true;
+}
+
+bool XformOpToProperty(const XformOp &x, Property &prop) {
+
+  primvar::PrimVar pv;
+
+  Attribute attr;
+
+  switch (x.op) {
+    case XformOp::OpType::ResetXformStack: {
+      // ??? Not exists in Prim's property
+      return false;
+    }
+    case XformOp::OpType::Transform:
+    case XformOp::OpType::Scale:
+    case XformOp::OpType::Translate:
+    case XformOp::OpType::RotateX:
+    case XformOp::OpType::RotateY:
+    case XformOp::OpType::RotateZ:
+    case XformOp::OpType::Orient:
+    case XformOp::OpType::RotateXYZ:
+    case XformOp::OpType::RotateXZY:
+    case XformOp::OpType::RotateYXZ:
+    case XformOp::OpType::RotateYZX:
+    case XformOp::OpType::RotateZXY:
+    case XformOp::OpType::RotateZYX: {
+      pv.var() = x.var();
+    }
+  }
+
+  attr.set_var(std::move(pv));
+  // TODO: attribute meta
+
+  prop = Property(attr, /* custom */false);
 
   return true;
 }
@@ -525,6 +561,19 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     (*out_prop) = prop;
 
   } else {
+
+    // XformOp?
+    for (const auto &item : xform.xformOps) {
+      std::string op_name = to_string(item.op);
+      if (item.suffix.size()) {
+        op_name += ":" + item.suffix;
+      }
+
+      if (op_name == prop_name) {
+        return XformOpToProperty(item, *out_prop);
+      }
+    }
+
     const auto it = xform.props.find(prop_name);
     if (it == xform.props.end()) {
       // Attribute not found.
@@ -669,57 +718,6 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 }
 
 
-bool GetProperty(
-    const tinyusdz::Prim &prim,
-    const std::string &attr_name,
-    Property *out_prop,
-    std::string *err)
-{
-
-#define GET_PRIM_PROPERTY(__ty) \
-  if (prim.is<__ty>()) { \
-    auto ret = GetPrimProperty(*prim.as<__ty>(), attr_name, out_prop); \
-    if (ret) { \
-      if (!ret.value()) { \
-        PUSH_ERROR_AND_RETURN( \
-            fmt::format("Attribute `{}` does not exist in Prim {}({})", \
-                        attr_name, prim.element_path().GetPrimPart(), \
-                        value::TypeTraits<__ty>::type_name())); \
-      } \
-    } else { \
-      PUSH_ERROR_AND_RETURN(ret.error()); \
-    } \
-  } else
-
-
-  GET_PRIM_PROPERTY(Xform)
-  GET_PRIM_PROPERTY(Shader)
-  GET_PRIM_PROPERTY(Material)
-  {
-    PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
-  }
-
-  return true;
-}
-
-bool GetAttribute(
-    const tinyusdz::Prim &prim,
-    const std::string &attr_name,
-    Attribute *out_attr,
-    std::string *err)
-{
-
-  // First lookup as Property, then check if its Attribute
-  Property prop;
-  if (!GetProperty(prim, attr_name, &prop, err)) {
-    return false;
-  }
-
-  if (prop.IsAttribute()) {
-  }
-
-  return true;
-}
 
 // TODO: provide visit map to prevent circular referencing.
 bool EvaluateAttributeImpl(
@@ -802,6 +800,7 @@ bool EvaluateAttributeImpl(
   return true;
 }
 
+
 }  // namespace
 
 void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
@@ -811,6 +810,89 @@ void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
       return;
     }
   }
+}
+
+bool GetProperty(
+    const tinyusdz::Prim &prim,
+    const std::string &attr_name,
+    Property *out_prop,
+    std::string *err)
+{
+
+#define GET_PRIM_PROPERTY(__ty) \
+  if (prim.is<__ty>()) { \
+    auto ret = GetPrimProperty(*prim.as<__ty>(), attr_name, out_prop); \
+    if (ret) { \
+      if (!ret.value()) { \
+        PUSH_ERROR_AND_RETURN( \
+            fmt::format("Attribute `{}` does not exist in Prim {}({})", \
+                        attr_name, prim.element_path().GetPrimPart(), \
+                        value::TypeTraits<__ty>::type_name())); \
+      } \
+    } else { \
+      PUSH_ERROR_AND_RETURN(ret.error()); \
+    } \
+  } else
+
+
+  GET_PRIM_PROPERTY(Xform)
+  GET_PRIM_PROPERTY(Shader)
+  GET_PRIM_PROPERTY(Material)
+  {
+    PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
+  }
+
+  return true;
+}
+
+bool GetAttribute(
+    const tinyusdz::Prim &prim,
+    const std::string &attr_name,
+    Attribute *out_attr,
+    std::string *err)
+{
+  if (!out_attr) {
+    PUSH_ERROR_AND_RETURN("`out_attr` argument is nullptr.");
+  }
+
+  // First lookup as Property, then check if its Attribute
+  Property prop;
+  if (!GetProperty(prim, attr_name, &prop, err)) {
+    return false;
+  }
+
+  if (prop.IsAttribute()) {
+    (*out_attr) = std::move(prop.GetAttribute());
+    return true;
+  }
+
+  PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Attribute.", attr_name));
+
+}
+
+bool GetRelationship(
+    const tinyusdz::Prim &prim,
+    const std::string &rel_name,
+    Relationship *out_rel,
+    std::string *err)
+{
+  if (!out_rel) {
+    PUSH_ERROR_AND_RETURN("`out_rel` argument is nullptr.");
+  }
+
+  // First lookup as Property, then check if its Relationship
+  Property prop;
+  if (!GetProperty(prim, rel_name, &prop, err)) {
+    return false;
+  }
+
+  if (prop.IsRel()) {
+    (*out_rel) = std::move(prop.GetRelationship());
+  }
+
+  PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Relationship.",rel_name));
+
+  return true;
 }
 
 bool EvaluateAttribute(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
