@@ -204,7 +204,7 @@ int main(int argc, char **argv) {
 
   // Visit all Prims in the Stage.
   auto prim_visit_fun = [](const tinyusdz::Prim &prim, const int32_t level, void *userdata) -> bool {
-    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().GetPrimPart() << "\n";
+    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << "\n";
 
     // Use as() or is() for Prim specific processing.
     if (const tinyusdz::Material *pm = prim.as<tinyusdz::Material>()) {
