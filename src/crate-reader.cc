@@ -1607,209 +1607,6 @@ bool CrateReader::ReadListOp(ListOp<T> *d) {
   return true;
 }
 
-#if 0
-bool CrateReader::ReadReferenceListOp(ListOp<Reference> *d) {
-  // read ListOpHeader
-  ListOpHeader h;
-  if (!_sr->read1(&h.bits)) {
-    PUSH_ERROR("Failed to read ListOpHeader.");
-    return false;
-  }
-
-  if (h.IsExplicit()) {
-    d->ClearAndMakeExplicit();
-  }
-
-  // array data is not compressed
-  auto ReadFn = [this](std::vector<Reference> &result) -> bool {
-    uint64_t n;
-    if (!_sr->read8(&n)) {
-      PUSH_ERROR("Failed to read # of elements in ListOp.");
-      return false;
-    }
-
-    if (n > _config.maxArrayElements) {
-      _err += "Too many ListOp elements.\n";
-      return false;
-    }
-
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(Reference));
-
-    for (size_t i = 0; i < size_t(n); i++) {
-      Reference p;
-      if (!ReadReference(&p)) {
-        return false;
-      }
-      result.emplace_back(p);
-    }
-
-    return true;
-  };
-
-  if (h.HasExplicitItems()) {
-    std::vector<Reference> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::ExplicitItems.\n";
-      return false;
-    }
-
-    d->SetExplicitItems(items);
-  }
-
-  if (h.HasAddedItems()) {
-    std::vector<Reference> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::AddedItems.\n";
-      return false;
-    }
-
-    d->SetAddedItems(items);
-  }
-
-  if (h.HasPrependedItems()) {
-    std::vector<Reference> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::PrependedItems.\n";
-      return false;
-    }
-
-    d->SetPrependedItems(items);
-  }
-
-  if (h.HasAppendedItems()) {
-    std::vector<Reference> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::AppendedItems.\n";
-      return false;
-    }
-
-    d->SetAppendedItems(items);
-  }
-
-  if (h.HasDeletedItems()) {
-    std::vector<Reference> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::DeletedItems.\n";
-      return false;
-    }
-
-    d->SetDeletedItems(items);
-  }
-
-  if (h.HasOrderedItems()) {
-    std::vector<Reference> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::OrderedItems.\n";
-      return false;
-    }
-
-    d->SetOrderedItems(items);
-  }
-
-  return true;
-}
-
-bool CrateReader::ReadPayloadListOp(ListOp<Payload> *d) {
-  // read ListOpHeader
-  ListOpHeader h;
-  if (!_sr->read1(&h.bits)) {
-    PUSH_ERROR("Failed to read ListOpHeader.");
-    return false;
-  }
-
-  if (h.IsExplicit()) {
-    d->ClearAndMakeExplicit();
-  }
-
-  // array data is not compressed
-  auto ReadFn = [this](std::vector<Payload> &result) -> bool {
-    uint64_t n;
-    if (!_sr->read8(&n)) {
-      PUSH_ERROR("Failed to read # of elements in ListOp.");
-      return false;
-    }
-
-    if (n > _config.maxArrayElements) {
-      _err += "Too many ListOp elements.\n";
-      return false;
-    }
-
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(Payload));
-
-    for (size_t i = 0; i < size_t(n); i++) {
-      Payload p;
-      if (!ReadPayload(&p)) {
-        return false;
-      }
-      result.emplace_back(p);
-    }
-
-    return true;
-  };
-
-  if (h.HasExplicitItems()) {
-    std::vector<Payload> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::ExplicitItems.\n";
-      return false;
-    }
-
-    d->SetExplicitItems(items);
-  }
-
-  if (h.HasAddedItems()) {
-    std::vector<Payload> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::AddedItems.\n";
-      return false;
-    }
-
-    d->SetAddedItems(items);
-  }
-
-  if (h.HasPrependedItems()) {
-    std::vector<Payload> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::PrependedItems.\n";
-      return false;
-    }
-
-    d->SetPrependedItems(items);
-  }
-
-  if (h.HasAppendedItems()) {
-    std::vector<Payload> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::AppendedItems.\n";
-      return false;
-    }
-
-    d->SetAppendedItems(items);
-  }
-
-  if (h.HasDeletedItems()) {
-    std::vector<Payload> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::DeletedItems.\n";
-      return false;
-    }
-
-    d->SetDeletedItems(items);
-  }
-
-  if (h.HasOrderedItems()) {
-    std::vector<Payload> items;
-    if (!ReadFn(items)) {
-      _err += "Failed to read ListOp::OrderedItems.\n";
-      return false;
-    }
-
-    d->SetOrderedItems(items);
-  }
-
-  return true;
-}
-#endif
 
 bool CrateReader::ReadVariantSelectionMap(VariantSelectionMap *d) {
 
@@ -3838,7 +3635,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
   do {
     auto thisIndex = curIndex++;
     DCOUT("thisIndex = " << thisIndex << ", pathIndexes.size = " << pathIndexes.size());
-    if (parentPath.IsEmpty()) {
+    if (parentPath.is_empty()) {
       // root node.
       // Assume single root node in the scene.
       DCOUT("paths[" << pathIndexes[thisIndex]
@@ -3903,8 +3700,8 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
       // full path
       _paths[idx] =
-          isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
-                             : parentPath.AppendElement(elemToken.str());
+          isPrimPropertyPath ? parentPath.append_property(elemToken.str())
+                             : parentPath.append_element(elemToken.str());
 
       // also set leaf path for 'primChildren' check
       _elemPaths[idx] = Path(elemToken.str(), "");

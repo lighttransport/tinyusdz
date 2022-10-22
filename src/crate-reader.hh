@@ -99,7 +99,7 @@ class CrateReader {
     void SetElementPath(Path &path) { _elemPath = path; }
 
     nonstd::optional<std::string> GetElementName() const {
-      if (_elemPath.IsRelativePath()) {
+      if (_elemPath.is_relative_path()) {
         return _elemPath.full_path_name();
       } else {
         return nonstd::nullopt;

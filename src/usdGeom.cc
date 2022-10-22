@@ -55,7 +55,7 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(
 
   if (props.count(kPrimvarsNormals)) {
     const auto prop = props.at(kPrimvarsNormals);
-    if (prop.IsRel()) {
+    if (prop.is_relationship()) {
       // TODO:
       return dst;
     }
