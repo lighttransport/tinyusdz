@@ -48,14 +48,14 @@ namespace primvar {
 
 struct PrimVar {
   // For scalar(default) value, times.size() == 0, and values.size() == 1
-  value::TimeSamples var;
+  value::TimeSamples _var;
 
   bool is_scalar() const {
-    return (var.times.size() == 0) && (var.values.size() == 1);
+    return (_var.times.size() == 0) && (_var.values.size() == 1);
   }
 
   bool is_timesample() const {
-    return (var.times.size() > 0) && (var.times.size() == var.values.size());
+    return (_var.times.size() > 0) && (_var.times.size() == _var.values.size());
   }
 
   bool is_valid() const { return is_scalar() || is_timesample(); }
@@ -64,7 +64,7 @@ struct PrimVar {
     if (!is_valid()) {
       return std::string();
     }
-    return var.values[0].type_name();
+    return _var.values[0].type_name();
   }
 
   uint32_t type_id() const {
@@ -72,7 +72,7 @@ struct PrimVar {
       return value::TYPE_ID_INVALID;
     }
 
-    return var.values[0].type_id();
+    return _var.values[0].type_id();
   }
 
   // Type-safe way to get concrete value.
@@ -86,7 +86,7 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    return var.values[0].get_value<T>();
+    return _var.values[0].get_value<T>();
   }
 
   nonstd::optional<double> get_ts_time(size_t idx) const {
@@ -95,11 +95,11 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    if (idx >= var.times.size()) {
+    if (idx >= _var.times.size()) {
       return nonstd::nullopt;
     }
 
-    return var.times[idx];
+    return _var.times[idx];
   }
 
   // Type-safe way to get concrete value.
@@ -110,29 +110,29 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    if (idx >= var.times.size()) {
+    if (idx >= _var.times.size()) {
       return nonstd::nullopt;
     }
 
 #if 0
-    if (value::TypeTraits<T>::type_id == var.values[idx].type_id()) {
-      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-      auto pv = linb::any_cast<const T>(&var.values[idx]);
+    if (value::TypeTraits<T>::type_id == _var.values[idx].type_id()) {
+      //return std::move(*reinterpret_cast<const T *>(_var.values[0].value()));
+      auto pv = linb::any_cast<const T>(&_var.values[idx]);
       if (pv) {
         return (*pv);
       }
       return nonstd::nullopt;
-    } else if (value::TypeTraits<T>::underlying_type_id == var.values[idx].underlying_type_id()) {
+    } else if (value::TypeTraits<T>::underlying_type_id == _var.values[idx].underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
-      //return *reinterpret_cast<const T *>(var.values[0].value());
+      //return *reinterpret_cast<const T *>(_var.values[0].value());
 
       // TODO: strict type check.
-      return *linb::cast<const T>(&var.values[idx]);
+      return *linb::cast<const T>(&_var.values[idx]);
     }
     return nonstd::nullopt;
 #else
-    return var.values[idx].get_value<T>();
+    return _var.values[idx].get_value<T>();
 #endif
   }
 
@@ -143,11 +143,11 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    if (idx >= var.times.size()) {
+    if (idx >= _var.times.size()) {
       return nonstd::nullopt;
     }
 
-    if (auto pv = var.values[idx].get_value<value::ValueBlock>()) {
+    if (auto pv = _var.values[idx].get_value<value::ValueBlock>()) {
       return true;
     }
 
@@ -162,36 +162,40 @@ struct PrimVar {
       return nullptr;
     }
 
-    return var.values[0].as<T>();
+    return _var.values[0].as<T>();
 
     return nullptr;
   }
 
   template <class T>
   void set_scalar(const T &v) {
-    var.times.clear();
-    var.values.clear();
+    _var.times.clear();
+    _var.values.clear();
 
-    var.values.push_back(v);
+    _var.values.push_back(v);
   }
 
   void set_timesamples(const value::TimeSamples &v) {
-    var = v;
+    _var = v;
   }
 
   void set_timesamples(value::TimeSamples &&v) {
-    var = std::move(v);
+    _var = std::move(v);
   }
 
   size_t num_timesamples() const {
     if (is_timesample()) {
-      return var.times.size();
+      return _var.times.size();
     }
     return 0;
   }
 
-  const value::TimeSamples &get_raw() const {
-    return var;
+  const value::TimeSamples &var() const {
+    return _var;
+  }
+  
+  value::TimeSamples &var() {
+    return _var;
   }
 
 };
