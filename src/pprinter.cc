@@ -888,6 +888,66 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   return ss.str();
 }
 
+std::string print_prop(const Property &prop, const std::string &prop_name, uint32_t indent)
+{
+  std::stringstream ss;
+
+  if (prop.IsRel()) {
+
+    ss << print_rel_prop(prop, prop_name, indent);
+
+  } else {
+    const Attribute &attr = prop.GetAttribute();
+
+    ss << pprint::Indent(indent);
+
+    if (prop.HasCustom()) {
+      ss << "custom ";
+    }
+
+    if (attr.variability() == Variability::Uniform) {
+      ss << "uniform ";
+    }
+
+    std::string ty;
+
+    ty = prop.value_type_name();
+    ss << ty << " " << prop_name;
+
+    if (prop.IsConnection()) {
+
+      ss << ".connect = ";
+      if (prop.GetRelationship().is_path()) {
+        ss << prop.GetRelationship().targetPath;
+      } else if (prop.GetRelationship().is_pathvector()) {
+        ss << prop.GetRelationship().targetPathVector;
+      }
+    } else if (prop.IsEmpty()) {
+      ss << "\n";
+    } else {
+      // has value content
+
+      if (attr.get_var().is_timesample()) {
+        ss << ".timeSamples";
+      }
+      ss << " = ";
+
+      if (attr.get_var().is_timesample()) {
+        ss << print_timesamples(attr.get_var().var(), indent+1);
+      } else {
+        // is_scalar
+        ss << value::pprint_value(attr.get_var().var().values[0]);
+      }
+    }
+
+    if (prop.GetAttribute().meta.authored()) {
+      ss << " (\n" << print_attr_metas(prop.GetAttribute().meta, indent+1) << pprint::Indent(indent) << ")";
+    }
+    ss << "\n";
+  }
+
+  return ss.str();
+}
 
 // Print user-defined (custom) properties.
 std::string print_props(const std::map<std::string, Property> &props, uint32_t indent)
@@ -898,60 +958,8 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
 
     const Property &prop = item.second;
 
-    if (prop.IsRel()) {
+    ss << print_prop(prop, item.first, indent);
 
-      ss << print_rel_prop(prop, item.first, indent);
-
-    } else {
-      const Attribute &attr = item.second.GetAttribute();
-
-      ss << pprint::Indent(indent);
-
-
-      if (prop.HasCustom()) {
-        ss << "custom ";
-      }
-
-      if (attr.variability() == Variability::Uniform) {
-        ss << "uniform ";
-      }
-
-      std::string ty;
-
-      ty = item.second.value_type_name();
-      ss << ty << " " << item.first;
-
-      if (prop.IsConnection()) {
-
-        ss << ".connect = ";
-        if (prop.GetRelationship().is_path()) {
-          ss << prop.GetRelationship().targetPath;
-        } else if (prop.GetRelationship().is_pathvector()) {
-          ss << prop.GetRelationship().targetPathVector;
-        }
-      } else if (prop.IsEmpty()) {
-        ss << "\n";
-      } else {
-        // has value content
-
-        if (attr.get_var().is_timesample()) {
-          ss << ".timeSamples";
-        }
-        ss << " = ";
-
-        if (attr.get_var().is_timesample()) {
-          ss << print_timesamples(attr.get_var().var(), indent+1);
-        } else {
-          // is_scalar
-          ss << value::pprint_value(attr.get_var().var().values[0]);
-        }
-      }
-
-      if (item.second.GetAttribute().meta.authored()) {
-        ss << " (\n" << print_attr_metas(item.second.GetAttribute().meta, indent+1) << pprint::Indent(indent) << ")";
-      }
-      ss << "\n";
-    }
   }
 
   return ss.str();
