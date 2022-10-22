@@ -399,8 +399,8 @@ bool USDCReader::Impl::ReconstructGeomSubset(
     const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
+    DCOUT("Path prim part: " << path.prim_part()
+                             << ", prop part: " << path.prop_part()
                              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
@@ -413,7 +413,7 @@ bool USDCReader::Impl::ReconstructGeomSubset(
         _live_fieldsets.at(spec.fieldset_index);
 
     {
-      std::string prop_name = path.GetPropPart();
+      std::string prop_name = path.prop_part();
 
       Attribute attr;
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
@@ -690,8 +690,8 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
     }
 
-    DCOUT("Path prim part: " << path.value().GetPrimPart()
-                             << ", prop part: " << path.value().GetPropPart()
+    DCOUT("Path prim part: " << path.value().prim_part()
+                             << ", prop part: " << path.value().prop_part()
                              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
@@ -704,7 +704,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
         _live_fieldsets.at(spec.fieldset_index);
 
     {
-      std::string prop_name = path.value().GetPropPart();
+      std::string prop_name = path.value().prop_part();
       if (prop_name.empty()) {
         // ???
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
@@ -2030,7 +2030,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       }
 
       if (typeName) {
-        std::string prim_name = elemPath.GetPrimPart();
+        std::string prim_name = elemPath.prim_part();
 
         // Validation check should be already done in crate-reader, so no
         // further validation required.
@@ -2169,7 +2169,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       nonstd::optional<Prim> variantPrim;
       if (typeName) {
-        std::string prim_name = elemPath.GetPrimPart();
+        std::string prim_name = elemPath.prim_part();
         DCOUT("elemPath = " << dump_path(elemPath));
         DCOUT("prim_name = " << prim_name);
 
@@ -2221,14 +2221,14 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         Property prop;
         if (!ParseProperty(spec.spec_type, fvs, &prop)) {
           PUSH_ERROR_AND_RETURN_TAG(
-              kTag, fmt::format("Failed to parse Attribut: {}.", path.value().GetPropPart()));
+              kTag, fmt::format("Failed to parse Attribut: {}.", path.value().prop_part()));
 
         }
 
         // Parent Prim is not yet reconstructed, so store info to temporary buffer _variantAttributeNodes.
         _variantAttributeNodes.emplace(current, prop);
 
-        DCOUT(fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}", current, path.value().GetPropPart(), spec.path_index));
+        DCOUT(fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}", current, path.value().prop_part(), spec.path_index));
 
       } else {
         // Maybe parent is Class/Over, or inherited

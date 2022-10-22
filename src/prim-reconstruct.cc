@@ -190,7 +190,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -215,7 +215,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -335,7 +335,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -360,7 +360,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -454,7 +454,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -479,7 +479,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -603,7 +603,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -629,7 +629,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -725,7 +725,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -750,7 +750,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         target.SetConnection(pv.value());
         //target.variability = prop.attrib.variability;
@@ -890,7 +890,7 @@ static ParseResult ParseTypedProperty(std::set<std::string> &table, /* inout */
     }
     const Attribute &attr = prop.attrib;
 
-    DCOUT("prop is_rel = " << prop.IsRel() << ", is_conn = " << prop.IsConnection());
+    DCOUT("prop is_rel = " << prop.is_relationship() << ", is_conn = " << prop.IsConnection());
 
     if (prop.IsConnection()) {
       if (auto pv = prop.GetConnectionTarget()) {
@@ -1021,7 +1021,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
       ret.err = "Connection is not allowed for output terminal attribute.";
       return ret;
@@ -1089,7 +1089,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         Relationship rel;
         rel.set(pv.value());
@@ -1174,7 +1174,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       return ret;
     }
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
       if (auto pv = prop.GetConnectionTarget()) {
         Connection<Path> conn;
         conn.target = pv.value();
@@ -1206,7 +1206,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (__table.count(kProxyPrim)) { \
        continue; \
     } \
-    if (prop.second.IsRel() && prop.second.IsEmpty()) { \
+    if (prop.second.is_relationship() && prop.second.is_empty()) { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kProxyPrim)); \
     } \
     const Relationship &rel = prop.second.GetRelationship(); \
@@ -1226,7 +1226,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (__table.count(kMaterialBinding)) { \
        continue; \
     } \
-    if (prop.second.IsRel() && prop.second.IsEmpty()) { \
+    if (prop.second.is_relationship() && prop.second.is_empty()) { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kMaterialBinding)); \
     } \
     const Relationship &rel = prop.second.GetRelationship(); \
@@ -1257,7 +1257,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (__table.count(kSkelSkeleton)) { \
        continue; \
     } \
-    if (prop.second.IsRel() && prop.second.IsEmpty()) { \
+    if (prop.second.is_relationship() && prop.second.is_empty()) { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kSkelSkeleton)); \
     } \
     const Relationship &rel = prop.second.GetRelationship(); \
@@ -1641,7 +1641,7 @@ bool ReconstructXformOpsFromProperties(
     // array of string
     auto prop = properties.at("xformOpOrder");
 
-    if (prop.IsRel()) {
+    if (prop.is_relationship()) {
       PUSH_ERROR_AND_RETURN("Relationship for `xformOpOrder` is not supported.");
     } else if (auto pv =
                    prop.GetAttribute().get_value<std::vector<value::token>>()) {
@@ -1690,7 +1690,7 @@ bool ReconstructXformOpsFromProperties(
         if (it == properties.end()) {
           PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
         }
-        if (it->second.IsConnection()) {
+        if (it->second.is_connection()) {
           PUSH_ERROR_AND_RETURN(
               "Connection(.connect) of xformOp property is not yet supported: "
               "`" +
@@ -2068,7 +2068,7 @@ bool ReconstructPrim<Skeleton>(
     if (prop.first == kSkelAnimationSource) {
 
       // Must be relation of type Path.
-      if (prop.second.IsRel() && prop.second.GetRelationship().is_path()) {
+      if (prop.second.is_relationship() && prop.second.GetRelationship().is_path()) {
         {
           const Relationship &rel = prop.second.GetRelationship();
           if (rel.is_path()) {
@@ -2903,7 +2903,7 @@ bool ReconstructPrim<GeomMesh>(
         if (gprim.props.count("points")) {
           DCOUT("points");
           const Property &prop = gprim.props.at("points");
-          if (prop.IsRel()) {
+          if (prop.is_relationship()) {
             PUSH_WARN("TODO: points Rel\n");
           } else {
             const Attribute &attr = prop.attrib;
@@ -3452,7 +3452,7 @@ bool ReconstructPrim<Shader>(
   }
 
   std::string shader_type;
-  if (info_id_prop->second.IsAttribute()) {
+  if (info_id_prop->second.is_attribute()) {
     const Attribute &attr = info_id_prop->second.GetAttribute();
     if ((attr.type_name() == value::kToken)) {
       if (auto pv = attr.get_value<value::token>()) {

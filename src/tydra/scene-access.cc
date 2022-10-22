@@ -133,35 +133,35 @@ bool ListShaders(const tinyusdz::Stage &stage,
 
 const Prim *GetParentPrim(const tinyusdz::Stage &stage,
                           const tinyusdz::Path &path, std::string *err) {
-  if (!path.IsValid()) {
+  if (!path.is_valid()) {
     if (err) {
       (*err) = "Input Path " + tinyusdz::to_string(path) + " is invalid.\n";
     }
     return nullptr;
   }
 
-  if (path.IsRootPath()) {
+  if (path.is_root_path()) {
     if (err) {
       (*err) = "Input Path is root(\"/\").\n";
     }
     return nullptr;
   }
 
-  if (path.IsRootPrim()) {
+  if (path.is_root_prim()) {
     if (err) {
       (*err) = "Input Path is root Prim, so no parent Prim exists.\n";
     }
     return nullptr;
   }
 
-  if (!path.IsAbsolutePath()) {
+  if (!path.is_absolute_path()) {
     if (err) {
       (*err) = "Input Path must be absolute path(i.e. starts with \"/\").\n";
     }
     return nullptr;
   }
 
-  tinyusdz::Path parentPath = path.GetParentPrimPath();
+  tinyusdz::Path parentPath = path.get_parent_prim_path();
 
   nonstd::expected<const Prim *, std::string> ret =
       stage.GetPrimAtPath(parentPath);
@@ -738,7 +738,7 @@ bool EvaluateAttributeImpl(
   }
 
 
-  if (prop.IsConnection()) {
+  if (prop.is_connection()) {
     // Follow connection target Path.
     auto target = prop.GetConnectionTarget();
     if (!target) {  // ???
@@ -746,8 +746,8 @@ bool EvaluateAttributeImpl(
     }
 
 
-    std::string targetPrimPath = target.value().GetPrimPart();
-    std::string targetPrimPropName = target.value().GetPropPart();
+    std::string targetPrimPath = target.value().prim_part();
+    std::string targetPrimPropName = target.value().prop_part();
     DCOUT("connection targetPath : " << target.value() << "(Prim: " << targetPrimPath << ", Prop: " << targetPrimPropName << ")");
 
     auto targetPrimRet = stage.GetPrimAtPath(Path(targetPrimPath, /* prop */""));
@@ -770,14 +770,14 @@ bool EvaluateAttributeImpl(
     } else {
       PUSH_ERROR_AND_RETURN(targetPrimRet.error());
     }
-  } else if (prop.IsRel()) {
+  } else if (prop.is_relationship()) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Property `{}` is a Relation.", attr_name));
-  } else if (prop.IsEmpty()) {
+  } else if (prop.is_empty()) {
     PUSH_ERROR_AND_RETURN(fmt::format(
         "Attribute `{}` is a define-only attribute(no value assigned).",
         attr_name));
-  } else if (prop.IsAttribute()) {
+  } else if (prop.is_attribute()) {
     DCOUT("IsAttrib");
 
     const Attribute &attr = prop.GetAttribute();
@@ -826,7 +826,7 @@ bool GetProperty(
       if (!ret.value()) { \
         PUSH_ERROR_AND_RETURN( \
             fmt::format("Attribute `{}` does not exist in Prim {}({})", \
-                        attr_name, prim.element_path().GetPrimPart(), \
+                        attr_name, prim.element_path().prim_part(), \
                         value::TypeTraits<__ty>::type_name())); \
       } \
     } else { \
@@ -861,7 +861,7 @@ bool GetAttribute(
     return false;
   }
 
-  if (prop.IsAttribute()) {
+  if (prop.is_attribute()) {
     (*out_attr) = std::move(prop.GetAttribute());
     return true;
   }
@@ -886,7 +886,7 @@ bool GetRelationship(
     return false;
   }
 
-  if (prop.IsRel()) {
+  if (prop.is_relationship()) {
     (*out_rel) = std::move(prop.GetRelationship());
   }
 

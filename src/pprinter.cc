@@ -76,7 +76,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
 
   ofs << v.asset_path;
-  if (v.prim_path.IsValid()) {
+  if (v.prim_path.is_valid()) {
     ofs << v.prim_path;
   }
   ofs << v.layerOffset;
@@ -90,7 +90,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
 
   ofs << v.asset_path;
-  if (v._prim_path.IsValid()) {
+  if (v._prim_path.is_valid()) {
     ofs << v._prim_path;
   }
   ofs << v._layer_offset;
@@ -867,13 +867,13 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
 {
   std::stringstream ss;
 
-  if (!prop.IsRel()) {
+  if (!prop.is_relationship()) {
     return ss.str();
   }
 
   ss << pprint::Indent(indent);
 
-  if (prop.HasCustom()) {
+  if (prop.has_custom()) {
     ss << "custom ";
   }
 
@@ -892,7 +892,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
 {
   std::stringstream ss;
 
-  if (prop.IsRel()) {
+  if (prop.is_relationship()) {
 
     ss << print_rel_prop(prop, prop_name, indent);
 
@@ -901,7 +901,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
 
     ss << pprint::Indent(indent);
 
-    if (prop.HasCustom()) {
+    if (prop.has_custom()) {
       ss << "custom ";
     }
 
@@ -914,7 +914,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     ty = prop.value_type_name();
     ss << ty << " " << prop_name;
 
-    if (prop.IsConnection()) {
+    if (prop.is_connection()) {
 
       ss << ".connect = ";
       if (prop.GetRelationship().is_path()) {
@@ -922,7 +922,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
       } else if (prop.GetRelationship().is_pathvector()) {
         ss << prop.GetRelationship().targetPathVector;
       }
-    } else if (prop.IsEmpty()) {
+    } else if (prop.is_empty()) {
       ss << "\n";
     } else {
       // has value content
@@ -1048,7 +1048,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
 
   if (gprim.materialBinding) {
     auto m = gprim.materialBinding.value();
-    if (m.binding.IsValid()) {
+    if (m.binding.is_valid()) {
       ss << pprint::Indent(indent) << "rel material:binding = " << wquote(to_string(m.binding), "<", ">") << "\n";
     }
   }
@@ -1122,7 +1122,7 @@ std::string to_string(const Reference &v) {
   std::stringstream ss;
 
   ss << v.asset_path;
-  if (v.prim_path.IsValid()) {
+  if (v.prim_path.is_valid()) {
     ss << v.prim_path;
   }
 
@@ -1466,7 +1466,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
 
   for (auto prop : klass.props) {
 
-    if (prop.second.IsRel()) {
+    if (prop.second.is_relationship()) {
         ss << "TODO: Rel\n";
     } else {
       //const PrimAttrib &attrib = prop.second.GetAttrib();
@@ -2501,12 +2501,12 @@ std::string to_string(const tinyusdz::value::token &v) {
 
 std::string dump_path(const Path &path) {
   std::stringstream ss;
-  ss << "Path: Prim part = " << path.GetPrimPart();
-  ss << ", Prop part = " << path.GetPropPart();
+  ss << "Path: Prim part = " << path.prim_part();
+  ss << ", Prop part = " << path.prop_part();
   ss << ", elementName = " << path.element_name();
-  ss << ", isValid = " << path.IsValid();
-  ss << ", isAbsolute = " << path.IsAbsolutePath();
-  ss << ", isRelative = " << path.IsRelativePath();
+  ss << ", isValid = " << path.is_valid();
+  ss << ", isAbsolute = " << path.is_absolute_path();
+  ss << ", isRelative = " << path.is_relative_path();
 
   return ss.str();
 }

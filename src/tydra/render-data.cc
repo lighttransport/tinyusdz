@@ -62,12 +62,12 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
     if (mesh.props.count(primvar_name)) {
       const Property &prop = mesh.props.at(primvar_name);
 
-      if (prop.IsRel()) {
+      if (prop.is_relationship()) {
         return nonstd::make_unexpected(
             fmt::format("UV Primvar must not be Relation: {}", primvar_name));
       }
 
-      if (prop.IsAttribute()) {
+      if (prop.is_attribute()) {
         // pxrUSD only allow int[] for ":indices"
         // https://github.com/PixarAnimationStudios/USD/issues/859 TinyUSDZ
         // allow uint[]
@@ -80,7 +80,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
                           value::TypeTraits<T>::type_name(),
                           prop.GetAttribute().type_name(), primvar_name));
         }
-      } else if (prop.IsConnection()) {
+      } else if (prop.is_connection()) {
         return nonstd::make_unexpected(
             fmt::format("FIXME: Support Connection for UV Primvar property: {}",
                         primvar_name));
@@ -114,12 +114,12 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
     if (mesh.props.count(index_name)) {
       const Property &prop = mesh.props.at(index_name);
 
-      if (prop.IsRel()) {
+      if (prop.is_relationship()) {
         return nonstd::make_unexpected(fmt::format(
             "UV Primvar Indices must not be relation: {}", index_name));
       }
 
-      if (prop.IsAttribute()) {
+      if (prop.is_attribute()) {
         // pxrUSD only allow int[] for ":indices"
         // https://github.com/PixarAnimationStudios/USD/issues/859 TinyUSDZ
         // allow uint[]
@@ -139,7 +139,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
               "Index must be type `int[]` or `uint[]`, but got `{}` for {}",
               prop.GetAttribute().type_name(), index_name));
         }
-      } else if (prop.IsConnection()) {
+      } else if (prop.is_connection()) {
         return nonstd::make_unexpected(fmt::format(
             "FIXME: Support Connection for Index property: {}", index_name));
       } else {
@@ -445,7 +445,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   // Material/Shader
   if (mesh.materialBinding) {
     const MaterialBindingAPI &materialBinding = mesh.materialBinding.value();
-    if (materialBinding.binding.IsValid()) {
+    if (materialBinding.binding.is_valid()) {
       DCOUT("materialBinding = " << to_string(materialBinding.binding));
     } else {
       return nonstd::make_unexpected(

@@ -215,10 +215,10 @@ inline void hash_combine(std::size_t &seed, const T &v) {
 
 struct PathHasher {
   size_t operator()(const Path &path) const {
-    size_t seed = std::hash<std::string>()(path.GetPrimPart());
-    hash_combine(seed, std::hash<std::string>()(path.GetPropPart()));
+    size_t seed = std::hash<std::string>()(path.prim_part());
+    hash_combine(seed, std::hash<std::string>()(path.prop_part()));
     //hash_combine(seed, std::hash<std::string>()(path.GetLocalPart()));
-    hash_combine(seed, std::hash<bool>()(path.IsValid()));
+    hash_combine(seed, std::hash<bool>()(path.is_valid()));
 
     return seed;
   }
@@ -226,10 +226,10 @@ struct PathHasher {
 
 struct PathKeyEqual {
   bool operator()(const Path &lhs, const Path &rhs) const {
-    bool ret = lhs.GetPrimPart() == rhs.GetPrimPart();
-    ret &= lhs.GetPropPart() == rhs.GetPropPart();
+    bool ret = lhs.prim_part() == rhs.prim_part();
+    ret &= lhs.prop_part() == rhs.prop_part();
     //ret &= lhs.GetLocalPart() == rhs.GetLocalPart();
-    ret &= lhs.IsValid() == rhs.IsValid();
+    ret &= lhs.is_valid() == rhs.is_valid();
 
     return ret;
   }
