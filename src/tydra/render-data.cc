@@ -62,25 +62,25 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
     if (mesh.props.count(primvar_name)) {
       const Property &prop = mesh.props.at(primvar_name);
 
-      if (prop.IsRel()) {
+      if (prop.is_relationship()) {
         return nonstd::make_unexpected(
             fmt::format("UV Primvar must not be Relation: {}", primvar_name));
       }
 
-      if (prop.IsAttrib()) {
+      if (prop.is_attribute()) {
         // pxrUSD only allow int[] for ":indices"
         // https://github.com/PixarAnimationStudios/USD/issues/859 TinyUSDZ
         // allow uint[]
         // TODO: Support timeSampled indices.
-        if (auto pv = prop.GetAttrib().get_value<std::vector<T>>()) {
+        if (auto pv = prop.get_attribute().get_value<std::vector<T>>()) {
           vattr.data = pv.value();
         } else {
           return nonstd::make_unexpected(
               fmt::format("UV Primvar must be type `{}`, but got `{}` for {}",
                           value::TypeTraits<T>::type_name(),
-                          prop.GetAttrib().type_name(), primvar_name));
+                          prop.get_attribute().type_name(), primvar_name));
         }
-      } else if (prop.IsConnection()) {
+      } else if (prop.is_connection()) {
         return nonstd::make_unexpected(
             fmt::format("FIXME: Support Connection for UV Primvar property: {}",
                         primvar_name));
@@ -92,7 +92,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
       // variability
       // In usdGeom, Default interpolation is "Constant"
       // TinyUSDZ currently reports error when `interpolation` is missing.
-      auto interp = prop.GetAttrib().meta.interpolation;
+      auto interp = prop.get_attribute().meta.interpolation;
       if (interp) {
       } else {
         return nonstd::make_unexpected(
@@ -114,32 +114,32 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
     if (mesh.props.count(index_name)) {
       const Property &prop = mesh.props.at(index_name);
 
-      if (prop.IsRel()) {
+      if (prop.is_relationship()) {
         return nonstd::make_unexpected(fmt::format(
             "UV Primvar Indices must not be relation: {}", index_name));
       }
 
-      if (prop.IsAttrib()) {
+      if (prop.is_attribute()) {
         // pxrUSD only allow int[] for ":indices"
         // https://github.com/PixarAnimationStudios/USD/issues/859 TinyUSDZ
         // allow uint[]
         // TODO: Support timeSampled indices.
         // TODO: Need to check variability meta
-        if (auto pv = prop.GetAttrib().get_value<std::vector<int32_t>>()) {
+        if (auto pv = prop.get_attribute().get_value<std::vector<int32_t>>()) {
           // convert to uint.
           vattr.indices.clear();
           for (const auto &item : pv.value()) {
             vattr.indices.push_back(uint32_t(item));
           }
         } else if (auto pvu =
-                       prop.GetAttrib().get_value<std::vector<uint32_t>>()) {
+                       prop.get_attribute().get_value<std::vector<uint32_t>>()) {
           vattr.indices = pvu.value();
         } else {
           return nonstd::make_unexpected(fmt::format(
               "Index must be type `int[]` or `uint[]`, but got `{}` for {}",
-              prop.GetAttrib().type_name(), index_name));
+              prop.get_attribute().type_name(), index_name));
         }
-      } else if (prop.IsConnection()) {
+      } else if (prop.is_connection()) {
         return nonstd::make_unexpected(fmt::format(
             "FIXME: Support Connection for Index property: {}", index_name));
       } else {
@@ -445,7 +445,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   // Material/Shader
   if (mesh.materialBinding) {
     const MaterialBindingAPI &materialBinding = mesh.materialBinding.value();
-    if (materialBinding.binding.IsValid()) {
+    if (materialBinding.binding.is_valid()) {
       DCOUT("materialBinding = " << to_string(materialBinding.binding));
     } else {
       return nonstd::make_unexpected(

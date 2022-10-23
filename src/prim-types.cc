@@ -45,11 +45,11 @@ nonstd::optional<Orientation> OrientationFromString(const std::string &v) {
 }
 
 bool operator==(const Path &lhs, const Path &rhs) {
-  if (!lhs.IsValid()) {
+  if (!lhs.is_valid()) {
     return false;
   }
 
-  if (!rhs.IsValid()) {
+  if (!rhs.is_valid()) {
     return false;
   }
 
@@ -69,7 +69,7 @@ Path::Path(const std::string &p, const std::string &prop) {
   (void)prop;
 
   if (p.size() < 1) {
-    valid = false;
+    _valid = false;
     return;
   }
 
@@ -85,25 +85,25 @@ Path::Path(const std::string &p, const std::string &prop) {
 
     if (ndots == 0) {
       // absolute prim.
-      prim_part = p;
-      valid = true;
+      _prim_part = p;
+      _valid = true;
     } else if (ndots == 1) {
       if (p.size() < 3) {
         // "/."
-        valid = false;
+        _valid = false;
         return;
       }
 
       auto loc = p.find_first_of('.');
       if (loc == std::string::npos) {
         // ?
-        valid = false;
+        _valid = false;
         return;
       }
 
       if (loc <= 0) {
         // this should not happen though.
-        valid = false;
+        _valid = false;
       }
 
       // split
@@ -111,17 +111,17 @@ Path::Path(const std::string &p, const std::string &prop) {
 
       // Check if No '/' in prop_part
       if (std::count_if(prop_name.begin(), prop_name.end(), slash_fun) > 0) {
-        valid = false;
+        _valid = false;
         return;
       }
 
-      prop_part = prop_name.erase(0, 1);  // remove '.'
-      prim_part = p.substr(0, size_t(loc));
+      _prop_part = prop_name.erase(0, 1);  // remove '.'
+      _prim_part = p.substr(0, size_t(loc));
 
-      valid = true;
+      _valid = true;
 
     } else {
-      valid = false;
+      _valid = false;
       return;
     }
 
@@ -129,13 +129,13 @@ Path::Path(const std::string &p, const std::string &prop) {
     // property
     auto nslashes = std::count_if(p.begin(), p.end(), slash_fun);
     if (nslashes > 0) {
-      valid = false;
+      _valid = false;
       return;
     }
 
-    prop_part = p;
-    prop_part = prop_part.erase(0, 1);
-    valid = true;
+    _prop_part = p;
+    _prop_part = _prop_part.erase(0, 1);
+    _valid = true;
 
   } else {
     // prim.prop
@@ -143,25 +143,25 @@ Path::Path(const std::string &p, const std::string &prop) {
     auto ndots = std::count_if(p.begin(), p.end(), dot_fun);
     if (ndots == 0) {
       // relative prim.
-      prim_part = p;
-      valid = true;
+      _prim_part = p;
+      _valid = true;
     } else if (ndots == 1) {
       if (p.size() < 3) {
         // "/."
-        valid = false;
+        _valid = false;
         return;
       }
 
       auto loc = p.find_first_of('.');
       if (loc == std::string::npos) {
         // ?
-        valid = false;
+        _valid = false;
         return;
       }
 
       if (loc <= 0) {
         // this should not happen though.
-        valid = false;
+        _valid = false;
       }
 
       // split
@@ -169,58 +169,58 @@ Path::Path(const std::string &p, const std::string &prop) {
 
       // Check if No '/' in prop_part
       if (std::count_if(prop_name.begin(), prop_name.end(), slash_fun) > 0) {
-        valid = false;
+        _valid = false;
         return;
       }
 
-      prim_part = p.substr(0, size_t(loc));
-      prop_part = prop_name.erase(0, 1);  // remove '.'
+      _prim_part = p.substr(0, size_t(loc));
+      _prop_part = prop_name.erase(0, 1);  // remove '.'
 
-      valid = true;
+      _valid = true;
 
     } else {
-      valid = false;
+      _valid = false;
       return;
     }
   }
 }
 
-Path Path::AppendProperty(const std::string &elem) {
+Path Path::append_property(const std::string &elem) {
   Path p = (*this);
 
   if (elem.empty()) {
-    p.valid = false;
+    p._valid = false;
     return p;
   }
   
   if (tokenize_variantElement(elem)) {
     // variant chars are not supported yet.
-    p.valid = false;
+    p._valid = false;
     return p;
   }
 
   if (elem[0] == '[') {
     // relational attrib are not supported
-    p.valid = false;
+    p._valid = false;
     return p;
   } else if (elem[0] == '.') {
     // Relative
     // std::cerr << "???. elem[0] is '.'\n";
     // For a while, make this valid.
-    p.valid = false;
+    p._valid = false;
     return p;
   } else {
     // TODO: Validate property path.
-    p.prop_part = elem;
-    p.element_ = elem;
+    p._prop_part = elem;
+    p._element = elem;
 
     return p;
   }
 }
 
-std::pair<Path, Path> Path::SplitAtRoot() const {
-  if (IsAbsolutePath()) {
-    if (IsRootPath()) {
+std::pair<Path, Path> Path::split_at_root() const {
+  if (is_absolute_path()) {
+    if (is_root_path()) {
       return std::make_pair(Path("/", ""), Path());
     }
 
@@ -257,56 +257,56 @@ std::pair<Path, Path> Path::SplitAtRoot() const {
   }
 }
 
-Path Path::AppendElement(const std::string &elem) {
+Path Path::append_element(const std::string &elem) {
   Path p = (*this);
 
   if (elem.empty()) {
-    p.valid = false;
+    p._valid = false;
     return p;
   }
 
   std::array<std::string, 2> variant;
   if (tokenize_variantElement(elem, &variant)) {
     // variant is not supported yet.
-    p.valid = false;
+    p._valid = false;
     return p;
   }
 
   if (elem[0] == '[') {
     // relational attrib are not supported
-    p.valid = false;
+    p._valid = false;
     return p;
   } else if (elem[0] == '.') {
     // Relative path
     // For a while, make this valid.
-    p.valid = false;
+    p._valid = false;
     return p;
   } else {
     // std::cout << "elem " << elem << "\n";
-    if ((p.prim_part.size() == 1) && (p.prim_part[0] == '/')) {
-      p.prim_part += elem;
+    if ((p._prim_part.size() == 1) && (p._prim_part[0] == '/')) {
+      p._prim_part += elem;
     } else {
       // TODO: Validate element name.
-      p.prim_part += '/' + elem;
+      p._prim_part += '/' + elem;
     }
 
     // Also store raw element name
-    p.element_ = elem;
+    p._element = elem;
 
     return p;
   }
 }
 
-Path Path::GetParentPrimPath() const {
-  if (!valid) {
+Path Path::get_parent_prim_path() const {
+  if (!_valid) {
     return Path();
   }
 
-  if (IsRootPrim()) {
+  if (is_root_prim()) {
     return *this;
   }
 
-  size_t n = prim_part.find_last_of('/');
+  size_t n = _prim_part.find_last_of('/');
   if (n == std::string::npos) {
     // this should never happen though.
     return Path();
@@ -317,10 +317,10 @@ Path Path::GetParentPrimPath() const {
     return Path("/", "");
   }
 
-  return Path(prim_part.substr(0, n), "");
+  return Path(_prim_part.substr(0, n), "");
 }
 
-bool MetaVariable::IsObject() const {
+bool MetaVariable::is_object() const {
   return (value.type_id() ==
           value::TypeTraits<tinyusdz::CustomDataType>::type_id);
 }

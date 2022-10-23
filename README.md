@@ -2,14 +2,26 @@
 
 `TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
+## Build status
+
 [![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)](https://github.com/syoyo/tinyusdz/actions/)
 
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/syoyo/tinyusdz.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/syoyo/tinyusdz/alerts/)
 
+## Supported platforms
+
+|         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM                          |
+|:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|
+|   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> 🤔 ARM  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) |
+
+
 ## Status
 
-TinyUSDZ is near to release first working version.
-Remaining task is to write a examples, demo and scene/render delegate(Tydra)
+TinyUSDZ is near to release first version v0.8.0.
+Core loading feature(both USDA and USDC) is production-grade.
+(Flattened scene only(i.e, USDZ). Composition features are not supported yet)
+
+Remaining task is to write a examples, demo and scene/render delegate(Tydra).
 
 * [x] USDZ/USDC(Crate) parser
 * [ ] USDZ/USDC(Crate) writer (Work-in-progress)
@@ -19,10 +31,11 @@ Remaining task is to write a examples, demo and scene/render delegate(Tydra)
 
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
-* [ ] Write simple SDL viewer example(2022 Fall expected)
-* [ ] Write iOS and Android example(2022 Fall expected)
+* [ ] Write simple SDL viewer example(2022 Fall/Winter expected)
+* [ ] Write iOS and Android example(2022 Fall/Winter expected)
 * [ ] Vulkan raytracing viewer example
 * [ ] USD <-> glTF converter example
+  * There is an independent work of USD to glTF binary GLB converter: https://github.com/fynv/usd2glb
 * [ ] Web demo with Three.js?
   * [ ] Three.js started to support USDZ with Ascii format, but no USDC support yet: https://github.com/mrdoob/three.js/issues/14219
 
@@ -75,7 +88,11 @@ Currently TinyUSDZ project is run as personal project by `syoyo` and `syoyo` doe
 If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
 
 
-## Other related projects
+## Projects using TinyUSDZ
+
+* usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
+
+### Other related projects
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )

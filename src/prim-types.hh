@@ -39,6 +39,8 @@
 
 #include "primvar.hh"
 #include "tiny-variant.hh"
+//
+#include "value-eval-util.inc"
 
 namespace tinyusdz {
 
@@ -190,13 +192,13 @@ class Path {
     Root,
   };
 
-  Path() : valid(false) {}
+  Path() : _valid(false) {}
 
   static Path make_root_path() {
     Path p =  Path("/", "");
     // elementPath is empty for root.
-    p.element_ = "";
-    p.valid = true;
+    p._element = "";
+    p._valid = true;
     return p;
   }
 
@@ -211,53 +213,58 @@ class Path {
   Path(const Path &rhs) = default;
 
   Path &operator=(const Path &rhs) {
-    this->valid = rhs.valid;
+    this->_valid = rhs._valid;
 
-    this->prim_part = rhs.prim_part;
-    this->prop_part = rhs.prop_part;
-    this->element_ = rhs.element_;
+    this->_prim_part = rhs._prim_part;
+    this->_prop_part = rhs._prop_part;
+    this->_element = rhs._element;
 
     return (*this);
   }
 
   std::string full_path_name() const {
     std::string s;
-    if (!valid) {
+    if (!_valid) {
       s += "#INVALID#";
     }
 
-    s += prim_part;
-    if (prop_part.empty()) {
+    s += _prim_part;
+    if (_prop_part.empty()) {
       return s;
     }
 
-    s += "." + prop_part;
+    s += "." + _prop_part;
 
     return s;
   }
 
-  std::string GetPrimPart() const { return prim_part; }
-  std::string GetPropPart() const { return prop_part; }
+  std::string prim_part() const { return _prim_part; }
+  std::string prop_part() const { return _prop_part; }
 
-  void set_path_type(const PathType ty) { path_type_ = ty; }
+  void set_path_type(const PathType ty) { _path_type = ty; }
 
-  nonstd::optional<PathType> get_path_type() const { return path_type_; }
+  bool get_path_type(PathType &ty) {
+    if (_path_type) {
+      ty = _path_type.value();
+    }
+    return false;
+  }
 
   // IsPropertyPath: PrimProperty or RelationalAttribute
-  bool IsPropertyPath() const {
-    if (path_type_) {
-      if ((path_type_.value() == PathType::PrimProperty ||
-           (path_type_.value() == PathType::RelationalAttribute))) {
+  bool is_property_path() const {
+    if (_path_type) {
+      if ((_path_type.value() == PathType::PrimProperty ||
+           (_path_type.value() == PathType::RelationalAttribute))) {
         return true;
       }
     }
 
     // TODO: RelationalAttribute
-    if (prim_part.empty()) {
+    if (_prim_part.empty()) {
       return false;
     }
 
-    if (prop_part.size()) {
+    if (_prop_part.size()) {
       return true;
     }
 
@@ -266,27 +273,27 @@ class Path {
 
   // Is Prim's property path?
   // True when both PrimPart and PropPart are not empty.
-  bool IsPrimPropertyPath() const {
-    if (prim_part.empty()) {
+  bool is_prim_property_path() const {
+    if (_prim_part.empty()) {
       return false;
     }
-    if (prop_part.size()) {
+    if (_prop_part.size()) {
       return true;
     }
     return false;
   }
 
-  bool IsValid() const { return valid; }
+  bool is_valid() const { return _valid; }
 
-  bool IsEmpty() { return (prim_part.empty() && prop_part.empty()); }
+  bool is_empty() { return (_prim_part.empty() && _prop_part.empty()); }
 
   // static Path RelativePath() { return Path("."); }
 
-  Path AppendProperty(const std::string &elem);
+  Path append_property(const std::string &elem);
 
-  Path AppendElement(const std::string &elem);
+  Path append_element(const std::string &elem);
 
-  std::string element_name() const { return element_; }
+  std::string element_name() const { return _element; }
 
   ///
   /// Split a path to the root(common ancestor) and its siblings
@@ -300,19 +307,30 @@ class Path {
   /// - bora -> [Empty, bora]
   /// - .muda -> [Empty, .muda]
   ///
-  std::pair<Path, Path> SplitAtRoot() const;
+  std::pair<Path, Path> split_at_root() const;
 
-  Path GetParentPrimPath() const;
+  ///
+  /// Get parent Prim path
+  ///
+  /// example:
+  ///
+  /// - / -> invalid Path
+  /// - /bora -> invalid Path(since `/` is not the Prim path)
+  /// - /bora/dora -> /bora
+  /// - dora/bora -> dora
+  /// - dora -> invalid Path
+  /// - .dora -> invalid Path(path is property path)
+  Path get_parent_prim_path() const;
 
   ///
   /// @returns true if a path is '/' only
   ///
-  bool IsRootPath() const {
-    if (!valid) {
+  bool is_root_path() const {
+    if (!_valid) {
       return false;
     }
 
-    if ((prim_part.size() == 1) && (prim_part[0] == '/')) {
+    if ((_prim_part.size() == 1) && (_prim_part[0] == '/')) {
       return true;
     }
 
@@ -322,18 +340,18 @@ class Path {
   ///
   /// @returns true if a path is root prim: e.g. '/bora'
   ///
-  bool IsRootPrim() const {
-    if (!valid) {
+  bool is_root_prim() const {
+    if (!_valid) {
       return false;
     }
 
-    if (IsRootPath()) {
+    if (is_root_path()) {
       return false;
     }
 
-    if ((prim_part.size() > 1) && (prim_part[0] == '/')) {
+    if ((_prim_part.size() > 1) && (_prim_part[0] == '/')) {
       // no other '/' except for the fist one
-      if (prim_part.find_last_of('/') == 0) {
+      if (_prim_part.find_last_of('/') == 0) {
         return true;
       }
     }
@@ -341,9 +359,9 @@ class Path {
     return false;
   }
 
-  bool IsAbsolutePath() const {
-    if (prim_part.size()) {
-      if ((prim_part.size() > 0) && (prim_part[0] == '/')) {
+  bool is_absolute_path() const {
+    if (_prim_part.size()) {
+      if ((_prim_part.size() > 0) && (_prim_part[0] == '/')) {
         return true;
       }
     }
@@ -351,42 +369,42 @@ class Path {
     return false;
   }
 
-  bool IsRelativePath() const {
-    if (prim_part.size()) {
-      return !IsAbsolutePath();
+  bool is_relative_path() const {
+    if (_prim_part.size()) {
+      return !is_absolute_path();
     }
 
     return true;  // prop part only
   }
 
   // Strip '/'
-  Path &MakeRelative() {
-    if (IsAbsolutePath() && (prim_part.size() > 1)) {
+  Path &make_relative() {
+    if (is_absolute_path() && (_prim_part.size() > 1)) {
       // Remove first '/'
-      prim_part.erase(0, 1);
+      _prim_part.erase(0, 1);
     }
     return *this;
   }
 
-  const Path MakeRelative(Path &&rhs) {
+  const Path make_relative(Path &&rhs) {
     (*this) = std::move(rhs);
 
-    return MakeRelative();
+    return make_relative();
   }
 
-  static const Path MakeRelative(const Path &rhs) {
+  static const Path make_relative(const Path &rhs) {
     Path p = rhs;  // copy
-    return p.MakeRelative();
+    return p.make_relative();
   }
 
  private:
-  std::string prim_part;  // e.g. /Model/MyMesh, MySphere
-  std::string prop_part;  // e.g. .visibility
-  std::string element_;   // Element name
+  std::string _prim_part;  // e.g. /Model/MyMesh, MySphere
+  std::string _prop_part;  // e.g. .visibility
+  std::string _element;   // Element name
 
-  nonstd::optional<PathType> path_type_;  // Currently optional.
+  nonstd::optional<PathType> _path_type;  // Currently optional.
 
-  bool valid{false};
+  bool _valid{false};
 };
 
 ///
@@ -397,7 +415,7 @@ class TokenizedPath {
   TokenizedPath() {}
 
   TokenizedPath(const Path &path) {
-    std::string s = path.GetPropPart();
+    std::string s = path.prop_part();
     if (s.empty()) {
       // ???
       return;
@@ -475,22 +493,37 @@ class MetaVariable {
   //   return value.index() == ValueType::index_of<T>();
   // }
 
-  bool Valid() const {
+  bool is_valid() const {
     return value.type_id() != value::TypeTraits<std::nullptr_t>::type_id;
   }
 
-  bool IsObject() const;
+  bool is_object() const;
 
   // TODO
-  bool IsTimeSamples() const { return false; }
+  bool is_timesamples() const { return false; }
 
   MetaVariable() = default;
 
   template <typename T>
-  void Set(const T &v) {
+  void set(const T &v) {
     value = v;
   }
 
+  template <typename T>
+  bool get(T *dst) const {
+    if (!dst) {
+      return false;
+    }
+
+    if (const T* v = value.as<T>()) {
+      (*dst) = *v;
+      return true;
+    }
+
+    return false;
+  }
+
+  // TODO: Deprecate this API
   template <typename T>
   nonstd::optional<T> Get() const {
     return value.get_value<T>();
@@ -502,7 +535,7 @@ class MetaVariable {
 
   uint32_t TypeId() const { return type_id(*this); }
 
-  bool IsBlocked() const { return (TypeId() == value::TYPE_ID_VALUEBLOCK); }
+  bool is_blocked() const { return (TypeId() == value::TYPE_ID_VALUEBLOCK); }
 
  private:
   static std::string type_name(const MetaVariable &v) {
@@ -511,9 +544,9 @@ class MetaVariable {
     }
 
     // infer type from value content
-    if (v.IsObject()) {
+    if (v.is_object()) {
       return "dictionary";
-    } else if (v.IsTimeSamples()) {
+    } else if (v.is_timesamples()) {
       std::string ts_type = "TODO: TimeSample type";
       // FIXME
 #if 0
@@ -537,9 +570,9 @@ class MetaVariable {
 
   static uint32_t type_id(const MetaVariable &v) {
     // infer type from value content
-    if (v.IsObject()) {
+    if (v.is_object()) {
       return value::TypeId::TYPE_ID_DICT;
-    } else if (v.IsTimeSamples()) {
+    } else if (v.is_timesamples()) {
       return value::TypeId::TYPE_ID_TIMESAMPLES;
     } else {
       return v.value.type_id();
@@ -711,53 +744,6 @@ struct AttrMeta {
   }
 };
 
-template <typename T>
-inline T lerp(const T &a, const T &b, const double t) {
-  return (1.0 - t) * a + t * b;
-}
-
-template <typename T>
-inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b,
-                           const double t) {
-  std::vector<T> dst;
-
-  // Choose shorter one
-  size_t n = std::min(a.size(), b.size());
-  if (n == 0) {
-    return dst;
-  }
-
-  dst.resize(n);
-
-  if (a.size() != b.size()) {
-    return dst;
-  }
-  for (size_t i = 0; i < n; i++) {
-    dst[i] = lerp(a[i], b[i], t);
-  }
-
-  return dst;
-}
-
-// specializations of lerp
-template <>
-inline value::AssetPath lerp(const value::AssetPath &a,
-                             const value::AssetPath &b, const double t) {
-  (void)b;
-  (void)t;
-  // no interpolation
-  return a;
-}
-
-template <>
-inline std::vector<value::AssetPath> lerp(
-    const std::vector<value::AssetPath> &a,
-    const std::vector<value::AssetPath> &b, const double t) {
-  (void)b;
-  (void)t;
-  // no interpolation
-  return a;
-}
 
 // Typed TimeSamples value
 //
@@ -793,21 +779,28 @@ struct TypedTimeSamples {
   // Get value at specified time.
   // Return linearly interpolated value when TimeSampleInterpolationType is
   // Linear. Returns nullopt when specified time is out-of-range.
-  nonstd::optional<T> TryGet(
+  bool get(
+      T *dst,
       double t = value::TimeCode::Default(),
       TimeSampleInterpolationType interp = TimeSampleInterpolationType::Held) {
+
+    if (!dst) {
+      return false;
+    }
+
     if (empty()) {
-      return nonstd::nullopt;
+      return false;
     }
 
     if (_dirty) {
       Update();
     }
 
-    if (value::TimeCode(t).IsDefault()) {
+    if (value::TimeCode(t).is_default()) {
       // FIXME: Use the first item for now.
       // TODO: Handle bloked
-      return _samples[0].value;
+      (*dst) = _samples[0].value;
+      return true;
     } else {
       auto it = std::lower_bound(
           _samples.begin(), _samples.end(), t,
@@ -842,25 +835,28 @@ struct TypedTimeSamples {
 
         const T p = lerp(p0, p1, dt);
 
-        return std::move(p);
+        (*dst) = std::move(p);
+        return true;
       } else {
         if (it == _samples.end()) {
           // ???
-          return nonstd::nullopt;
+          return false;
         }
-        return it->value;
+
+        (*dst) = it->value;
+        return true;
       }
     }
 
-    return nonstd::nullopt;
+    return false;
   }
 
-  void AddSample(const Sample &s) {
+  void add_sample(const Sample &s) {
     _samples.push_back(s);
     _dirty = true;
   }
 
-  void AddSample(const double t, T &v) {
+  void add_sample(const double t, T &v) {
     Sample s;
     s.t = t;
     s.value = v;
@@ -868,7 +864,7 @@ struct TypedTimeSamples {
     _dirty = true;
   }
 
-  void AddBlockedSample(const double t) {
+  void add_blocked_sample(const double t) {
     Sample s;
     s.t = t;
     s.blocked = true;
@@ -876,7 +872,8 @@ struct TypedTimeSamples {
     _dirty = true;
   }
 
-  const std::vector<Sample> &GetSamples() const { return _samples; }
+  const std::vector<Sample> &get_samples() const { return _samples; }
+  std::vector<Sample> &samples() { return _samples; }
 
  private:
   // Need to be sorted when look up the value.
@@ -893,12 +890,11 @@ struct Animatable {
   // timesamples
   TypedTimeSamples<T> ts;
 
-  bool IsTimeSamples() const { return !ts.empty(); }
+  bool is_timesamples() const { return !ts.empty(); }
 
-  bool IsScalar() const { return ts.empty(); }
+  bool is_scalar() const { return ts.empty(); }
 
-  // Scalar
-  bool IsBlocked() const { return blocked; }
+  bool is_blocked() const { return blocked; }
 
 #if 0  // TODO
   T Get() const { return value; }
@@ -912,8 +908,19 @@ struct Animatable {
   }
 #endif
 
+  // TimeSamples
+  void set(double t, const T &v);
+
+  // Scalar
+  void set(const T &v) {
+    value = v;
+  }
+
   Animatable() {}
+
   Animatable(const T &v) : value(v) {}
+
+  // TODO: Init with timesamples
 };
 
 ///
@@ -929,33 +936,43 @@ struct Animatable {
 template <typename T>
 class TypedAttribute {
  public:
-  void SetValue(const T &v) { _attrib = v; }
+  void set_value(const T &v) { _attrib = v; }
 
-  const nonstd::optional<T> GetValue() const {
+  const nonstd::optional<T> get_value() const {
     if (_attrib) {
       return _attrib.value();
     }
     return nonstd::nullopt;
   }
 
-  // TODO: Animation data.
-  bool IsBlocked() const { return _blocked; }
+
+  bool get_value(T *dst) const {
+    if (!dst) return false;
+
+    if (_attrib) {
+      (*dst) = _attrib.value();
+      return true;
+    }
+    return false;
+  }
+
+  bool is_blocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void SetBlock(bool onoff) { _blocked = onoff; }
+  void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool IsConnection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size(); }
 
-  void SetConnection(const Path &path) {
+  void set_connection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
   }
 
-  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &GetConnections() const { return _paths; }
+  const std::vector<Path> &get_connections() const { return _paths; }
 
-  const nonstd::optional<Path> GetConnection() const {
+  const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
       return _paths[0];
     }
@@ -963,9 +980,9 @@ class TypedAttribute {
     return nonstd::nullopt;
   }
 
-  void SetValueEmpty() { _empty = true; }
+  void set_value_empty() { _empty = true; }
 
-  bool IsValueEmpty() const { return _empty; }
+  bool is_value_empty() const { return _empty; }
 
   // value set?
   bool authored() const {
@@ -1003,7 +1020,7 @@ class TypedAttribute {
 template <typename T>
 class TypedTerminalAttribute {
  public:
-  void SetAuthor(bool onoff) { _authored = onoff; }
+  void set_authored(bool onoff) { _authored = onoff; }
 
   // value set?
   bool authored() const { return _authored; }
@@ -1075,38 +1092,36 @@ class TypedAttributeWithFallback {
   //   }
   // }
 
-  void SetValue(const T &v) { _attrib = v; }
+  void set_value(const T &v) { _attrib = v; }
 
-  void SetValueEmpty() { _empty = true; }
+  void set_value_empty() { _empty = true; }
 
-  bool IsValueEmpty() const { return _empty; }
+  bool is_value_empty() const { return _empty; }
 
-  // TODO: Animation data.
-  const T &GetValue() const {
+  const T &get_value() const {
     if (_attrib) {
       return _attrib.value();
     }
     return _fallback;
   }
 
-  // TODO: Animation data.
-  bool IsBlocked() const { return _blocked; }
+  bool is_blocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void SetBlock(bool onoff) { _blocked = onoff; }
+  void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool IsConnection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size(); }
 
-  void SetConnection(const Path &path) {
+  void set_connection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
   }
 
-  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &GetConnections() const { return _paths; }
+  const std::vector<Path> &get_connections() const { return _paths; }
 
-  const nonstd::optional<Path> GetConnection() const {
+  const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
       return _paths[0];
     }
@@ -1145,6 +1160,10 @@ template <typename T>
 using TypedAnimatableAttributeWithFallback =
     TypedAttributeWithFallback<Animatable<T>>;
 
+
+///
+/// Similar to pxrUSD's PrimIndex
+///
 class PrimNode;
 
 #if 0  // TODO
@@ -1329,7 +1348,7 @@ struct Extent {
 
   Extent(const value::float3 &l, const value::float3 &u) : lower(l), upper(u) {}
 
-  bool Valid() const {
+  bool is_valid() const {
     if (lower[0] > upper[0]) return false;
     if (lower[1] > upper[1]) return false;
     if (lower[2] > upper[2]) return false;
@@ -1372,12 +1391,11 @@ struct ConnectionPath {
 //     std::unordered_map<std::pair<std::string, std::string>, Connection>;
 #endif
 
-// Relation
-class Relation {
+//
+// Relationship(typeless property)
+//
+class Relationship {
  public:
-  // monostate(empty(define only)), string, Path or PathVector
-  // tinyusdz::variant<tinyusdz::monostate, std::string, Path,
-  // std::vector<Path>> targets;
 
   // For some reaon, using tinyusdz::variant will cause double-free in some
   // environemt on clang, so use old-fashioned way for a while.
@@ -1389,40 +1407,40 @@ class Relation {
   std::vector<Path> targetPathVector;
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};
 
-  static Relation MakeEmpty() {
-    Relation r;
-    r.SetEmpty();
+  static Relationship make_empty() {
+    Relationship r;
+    r.set_empty();
     return r;
   }
 
-  void SetListEditQualifier(ListEditQual q) { listOpQual = q; }
-
+  // TODO: Remove
+  void set_listedit_qual(ListEditQual q) { listOpQual = q; }
   ListEditQual GetListEditQualifier() const { return listOpQual; }
 
-  void SetEmpty() { type = Type::Empty; }
+  void set_empty() { type = Type::Empty; }
 
-  void Set(const std::string &s) {
+  void set(const std::string &s) {
     targetString = s;
     type = Type::String;
   }
 
-  void Set(const Path &p) {
+  void set(const Path &p) {
     targetPath = p;
     type = Type::Path;
   }
 
-  void Set(const std::vector<Path> &pv) {
+  void set(const std::vector<Path> &pv) {
     targetPathVector = pv;
     type = Type::PathVector;
   }
 
-  bool IsEmpty() const { return type == Type::Empty; }
+  bool is_empty() const { return type == Type::Empty; }
 
-  bool IsString() const { return type == Type::String; }
+  bool is_string() const { return type == Type::String; }
 
-  bool IsPath() const { return type == Type::Path; }
+  bool is_path() const { return type == Type::Path; }
 
-  bool IsPathVector() const { return type == Type::PathVector; }
+  bool is_pathvector() const { return type == Type::PathVector; }
 
   AttrMeta meta;
 };
@@ -1443,8 +1461,9 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-// PrimAttrib is a struct to hold generic attribute of a property(e.g. primvar)
-struct PrimAttrib {
+// Attribute is a struct to hold generic attribute of a property(e.g. primvar) of Prim
+// TODO: Refactor
+struct Attribute {
   std::string name;  // attrib name
 
   void set_type_name(const std::string &tname) { _type_name = tname; }
@@ -1459,9 +1478,6 @@ struct PrimAttrib {
     return _var.type_name();
   }
 
-  Variability variability{
-      Variability::Varying};  // 'uniform` qualifier is handled with
-                              // `variability=uniform`
 
   // Interpolation interpolation{Interpolation::Invalid};
 
@@ -1486,7 +1502,17 @@ struct PrimAttrib {
 
   bool blocked() const { return _blocked; }
 
+  Variability &variability() { return _variability; }
+  Variability variability() const { return _variability; }
+
+  bool is_uniform() {
+    return _variability == Variability::Uniform;
+  }
+
  private:
+  Variability _variability{
+      Variability::Varying};  // 'uniform` qualifier is handled with
+                              // `variability=uniform`
   bool _blocked{false};  // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
@@ -1496,7 +1522,7 @@ struct PrimAttrib {
 ///
 /// Typed version of Property(e.g. for `points`, `normals`, `velocities.timeSamples`, `inputs:st.connect`)
 /// (but no Relation)
-/// TODO: Use TypedAttribute since this class does not store Relation information.
+/// TODO: Use TypedAttribute since this class does not store Relationship information.
 ///
 template <typename T>
 class TypedProperty {
@@ -1517,7 +1543,7 @@ class TypedProperty {
   //  return (value::TypeTraits<T>::type_id == value::TypeTraits<Relation>::type_id)
   //}
 
-  bool IsConnection() const {
+  bool is_connection() const {
     return target.has_value();
   }
 
@@ -1553,14 +1579,15 @@ class TypedProperty {
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for
 // Crate data)
+// TODO: Deprecate `custom` attribute: https://github.com/PixarAnimationStudios/USD/issues/2069
 class Property {
  public:
   enum class Type {
     EmptyAttrib,        // Attrib with no data.
-    Attrib,             // contains actual data
-    Relation,           // `rel` type
+    Attrib,             // Attrib which contains actual data
+    Relation,           // `rel` with targetPath(s).
     NoTargetsRelation,  // `rel` with no targets.
-    Connection,         // `.connect` suffix
+    Connection,         // Connection attribute(`.connect` suffix)
   };
 
   Property() = default;
@@ -1570,27 +1597,27 @@ class Property {
     _type = Type::EmptyAttrib;
   }
 
-  Property(const PrimAttrib &a, bool custom) : _attrib(a), _has_custom(custom) {
+  Property(const Attribute &a, bool custom) : _attrib(a), _has_custom(custom) {
     _type = Type::Attrib;
   }
 
-  Property(PrimAttrib &&a, bool custom)
+  Property(Attribute &&a, bool custom)
       : _attrib(std::move(a)), _has_custom(custom) {
     _type = Type::Attrib;
   }
 
   // Relation: typeless
-  Property(const Relation &r, bool custom) : _rel(r), _has_custom(custom) {
+  Property(const Relationship &r, bool custom) : _rel(r), _has_custom(custom) {
     _type = Type::Relation;
   }
 
-  Property(Relation &&r, bool custom)
+  Property(Relationship &&r, bool custom)
       : _rel(std::move(r)), _has_custom(custom) {
     _type = Type::Relation;
   }
 
   // Attribute Connection: has type
-  Property(const Relation &r, const std::string &prop_value_type_name,
+  Property(const Relationship &r, const std::string &prop_value_type_name,
            bool custom)
       : _rel(r),
         _prop_value_type_name(prop_value_type_name),
@@ -1598,40 +1625,57 @@ class Property {
     _type = Type::Connection;
   }
 
-  Property(Relation &&r, const std::string &prop_value_type_name, bool custom)
+  Property(Relationship &&r, const std::string &prop_value_type_name, bool custom)
       : _rel(std::move(r)),
         _prop_value_type_name(prop_value_type_name),
         _has_custom(custom) {
     _type = Type::Connection;
   }
 
-  bool IsAttrib() const {
+  bool is_attribute() const {
     return (_type == Type::EmptyAttrib) || (_type == Type::Attrib);
   }
-  bool IsEmpty() const {
+  bool is_empty() const {
     return (_type == Type::EmptyAttrib) || (_type == Type::NoTargetsRelation);
   }
-  bool IsRel() const {
+  bool is_relationship() const {
     return (_type == Type::Relation) || (_type == Type::NoTargetsRelation);
   }
-  bool IsConnection() const { return _type == Type::Connection; }
+  bool is_connection() const { return _type == Type::Connection; }
 
-  nonstd::optional<Path> GetConnectionTarget() const {
-    if (!IsConnection()) {
+
+  nonstd::optional<Path> get_relationTarget() const {
+    if (!is_connection()) {
       return nonstd::nullopt;
     }
 
-    if (_rel.IsPath()) {
+    if (_rel.is_path()) {
       return _rel.targetPath;
     }
 
     return nonstd::nullopt;
   }
 
+  std::vector<Path> get_relationTargets() const {
+    std::vector<Path> pv;
+
+    if (!is_connection()) {
+      return pv;
+    }
+
+    if (_rel.is_path()) {
+      pv.push_back(_rel.targetPath);
+    } else if (_rel.is_pathvector()) {
+      pv = _rel.targetPathVector;
+    }
+
+    return pv;
+  }
+
   std::string value_type_name() const {
-    if (IsConnection()) {
+    if (is_connection()) {
       return _prop_value_type_name;
-    } else if (IsRel()) {
+    } else if (is_relationship()) {
       // relation is typeless.
       return std::string();
     } else {
@@ -1639,38 +1683,38 @@ class Property {
     }
   }
 
-  bool HasCustom() const { return _has_custom; }
+  bool has_custom() const { return _has_custom; }
 
-  void SetPropetryType(Type ty) { _type = ty; }
+  void set_property_type(Type ty) { _type = ty; }
 
-  Type GetPropertyType() const { return _type; }
+  Type get_property_type() const { return _type; }
 
-  void SetListEditQual(ListEditQual qual) { _listOpQual = qual; }
+  void set_listedit_qual(ListEditQual qual) { _listOpQual = qual; }
 
-  const PrimAttrib &GetAttrib() const { return _attrib; }
+  const Attribute &get_attribute() const { return _attrib; }
 
-  PrimAttrib &GetAttrib() { return _attrib; }
+  Attribute &attribute() { return _attrib; }
 
-  void SetAttrib(const PrimAttrib &attrib) {
+  void set_attribute(const Attribute &attrib) {
     _attrib = attrib;
     _type = Type::Attrib;
   }
 
-  const Relation &GetRelation() const { return _rel; }
+  const Relationship &get_relationship() const { return _rel; }
 
-  Relation &GetRelation() { return _rel; }
+  Relationship &relationship() { return _rel; }
 
-  ListEditQual GetListEditQual() const { return _listOpQual; }
+  ListEditQual get_listedit_qual() const { return _listOpQual; }
 
  private:
-  PrimAttrib _attrib;
+  Attribute _attrib;
 
   // List Edit qualifier(Attribute can never be list editable)
   // TODO:  Store listEdit qualifier to `Relation`
   ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 
   Type _type{Type::EmptyAttrib};
-  Relation _rel;  // Relation(`rel`) or Connection(`.connect`)
+  Relationship _rel;  // Relation(`rel`) or Connection(`.connect`)
   std::string _prop_value_type_name;  // for Connection.
   bool _has_custom{false};            // Qualified with 'custom' keyword?
 };
@@ -1714,18 +1758,23 @@ struct XformOp {
   // XformOpValueType value_type;
   // std::string type_name;
 
-  value::TimeSamples var;
+  value::TimeSamples _var; // TODO: Use primvar::PrimVar
+
+  const value::TimeSamples &var() const {
+    return _var;
+  }
+
 
   std::string get_value_type_name() const {
-    if (var.values.size() > 0) {
-      return var.values[0].type_name();
+    if (_var.values.size() > 0) {
+      return _var.values[0].type_name();
     }
     return "[InternalError] XformOp value type name";
   }
 
   uint32_t get_value_type_id() const {
-    if (var.values.size() > 0) {
-      return var.values[0].type_id();
+    if (_var.values.size() > 0) {
+      return _var.values[0].type_id();
     }
     return uint32_t(value::TypeId::TYPE_ID_INVALID);
   }
@@ -1733,15 +1782,15 @@ struct XformOp {
   // TODO: Check if T is valid type.
   template <class T>
   void set_scalar(const T &v) {
-    var.times.clear();
-    var.values.clear();
+    _var.times.clear();
+    _var.values.clear();
 
-    var.values.push_back(v);
+    _var.values.push_back(v);
     // type_name = value::TypeTraits<T>::type_name();
   }
 
   void set_timesamples(const value::TimeSamples &v) {
-    var = v;
+    _var = v;
 
     // if (var.values.size()) {
     //   type_name = var.values[0].type_name();
@@ -1749,19 +1798,19 @@ struct XformOp {
   }
 
   void set_timesamples(value::TimeSamples &&v) {
-    var = std::move(v);
+    _var = std::move(v);
     // if (var.values.size()) {
     //   type_name = var.values[0].type_name();
     // }
   }
 
   bool is_timesamples() const {
-    return (var.times.size() > 0) && (var.times.size() == var.values.size());
+    return (_var.times.size() > 0) && (_var.times.size() == _var.values.size());
   }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
     if (is_timesamples()) {
-      return var;
+      return _var;
     }
     return nonstd::nullopt;
   }
@@ -1773,26 +1822,7 @@ struct XformOp {
       return nonstd::nullopt;
     }
 
-#if 0
-    if (value::TypeTraits<T>::type_id == var.values[0].type_id()) {
-      //return std::move(*reinterpret_cast<const T *>(var.values[0].value()));
-      auto pv = linb::any_cast<const T>(&var.values[0]);
-      if (pv) {
-        return (*pv);
-      }
-      return nonstd::nullopt;
-    } else if (value::TypeTraits<T>::underlying_type_id == var.values[0].underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      //return *reinterpret_cast<const T *>(var.values[0].value());
-
-      // TODO: strict type check.
-      return *linb::cast<const T>(&var.values[0]);
-    }
-    return nonstd::nullopt;
-#else
-    return var.values[0].get_value<T>();
-#endif
+    return _var.values[0].get_value<T>();
   }
 };
 
@@ -1803,56 +1833,6 @@ enum class TimeSampleInterpolation {
   // TODO: more to support...
 };
 
-#if 0
-
-template <typename T>
-struct TimeSamples {
-  std::vector<double> times;
-  std::vector<T> values;
-  // TODO: Support `none`
-
-  void Set(T value, double t) {
-    times.push_back(t);
-    values.push_back(value);
-  }
-
-  T Get(double t) const {
-    // Linear-interpolation.
-    // TODO: Support other interpolation method for example cubic.
-    auto it = std::lower_bound(times.begin(), times.end(), t);
-    size_t idx0 = size_t(std::max(
-        int64_t(0), std::min(int64_t(times.size() - 1),
-                             int64_t(std::distance(times.begin(), it - 1)))));
-    size_t idx1 = size_t(std::max(
-        int64_t(0), std::min(int64_t(times.size() - 1), int64_t(idx0) + 1)));
-
-    double tl = times[idx0];
-    double tu = times[idx1];
-
-    double dt = (t - tl);
-    if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-      // slope is zero.
-      dt = 0.0;
-    } else {
-      dt /= (tu - tl);
-    }
-
-    // Just in case.
-    dt = std::max(0.0, std::min(1.0, dt));
-
-    const T &p0 = values[idx0];
-    const T &p1 = values[idx1];
-
-    const T p = lerp(p0, p1, dt);
-
-    return p;
-  }
-
-  bool Valid() const {
-    return !times.empty() && (times.size() == values.size());
-  }
-};
-#endif
 
 // Prim metas, Prim tree and properties.
 struct VariantSet {
@@ -2100,6 +2080,14 @@ class Prim {
     return _elementPath;
   }
 
+  const std::string type_name() const {
+    return _data.type_name();
+  }
+
+  uint32_t type_id() const {
+    return _data.type_id();
+  }
+
   template<typename T>
   bool is() const {
     return (_data.type_id() == value::TypeTraits<T>::type_id);
@@ -2119,7 +2107,7 @@ class Prim {
   }
 
  private:
-  Path _path;  // Prim's local path name. May contain Property, Relation and
+  Path _path;  // Prim's local path name. May contain Property, Relationship and
               // other infos, but do not include parent's path. To get fully absolute path of a Prim(e.g. "/xform0/mymesh0", You need to traverse Prim tree and concatename `elementPath` or use ***(T.B.D>) method in `Stage` class
   Path _elementPath;  // leaf("terminal") Prim name.(e.g. "myxform" for `def
                      // Xform "myform"`). For root node, elementPath name is
@@ -2383,7 +2371,7 @@ DEFINE_TYPE_TRAIT(ListOp<uint64_t>, "ListOpUInt64", TYPE_ID_LIST_OP_UINT64, 1);
 DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
 DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
-DEFINE_TYPE_TRAIT(Relation, "Relationship", TYPE_ID_RELATIONSHIP, 1);
+DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
 // TODO(syoyo): Define PathVector as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
 

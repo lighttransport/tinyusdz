@@ -40,7 +40,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
     pts.push_back({0.0f, 1.0f, 0.0f});
 
-    mesh.points.SetValue(pts);
+    mesh.points.set_value(pts);
   }
 
   {
@@ -49,7 +49,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     std::vector<int> counts;
     counts.push_back(3);
     counts.push_back(3);
-    mesh.faceVertexCounts.SetValue(counts);
+    mesh.faceVertexCounts.set_value(counts);
 
     indices.push_back(0);
     indices.push_back(1);
@@ -59,7 +59,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     indices.push_back(2);
     indices.push_back(3);
 
-    mesh.faceVertexIndices.SetValue(indices);
+    mesh.faceVertexIndices.set_value(indices);
   }
 
   // primvar and custom attribute can be added to generic Property container `props`
@@ -70,7 +70,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     // int[] primvars:uv:indices = [ ... ]
     //
     {
-      tinyusdz::PrimAttrib uvAttr;
+      tinyusdz::Attribute uvAttr;
       std::vector<tinyusdz::value::texcoord2f> uvs;
 
       uvs.push_back({0.0f, 0.0f});
@@ -93,7 +93,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
       // ----------------------
 
-      tinyusdz::PrimAttrib uvIndexAttr;
+      tinyusdz::Attribute uvIndexAttr;
       std::vector<int> uvIndices;
 
       // FIXME: Validate
@@ -114,13 +114,13 @@ void SimpleScene(tinyusdz::Stage *stage)
 
     // `custom uniform double myvalue = 3.0 ( hidden = 0 )`
     {
-      tinyusdz::PrimAttrib attrib;
+      tinyusdz::Attribute attrib;
       double myvalue = 3.0;
       tinyusdz::primvar::PrimVar var;
       var.set_scalar(myvalue);
       attrib.set_var(std::move(var));
 
-      attrib.variability = tinyusdz::Variability::Uniform;
+      attrib.variability() = tinyusdz::Variability::Uniform;
 
       tinyusdz::AttrMeta meta;
       meta.hidden = false;

@@ -82,7 +82,10 @@ struct Xformable {
     return _matrix;
   }
 
-  void SetDirty(bool onoff) { _dirty = onoff; }
+  void set_dirty(bool onoff) { _dirty = onoff; }
+
+  // Return `token[]` representation of `xformOps`
+  std::vector<value::token> xformOpOrder() const;
 
   std::vector<XformOp> xformOps;
 

@@ -680,20 +680,20 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     if (!ReadBasicType(&val)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
     }
-    var.Set(val);
+    var.set(val);
   } else if (type_name == value::kInt) {
     if (array_qual) {
       std::vector<int32_t> vss;
       if (!ParseBasicTypeArray(&vss)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `int[]`");
       }
-      var.Set(vss);
+      var.set(vss);
     } else {
       int32_t val;
       if (!ReadBasicType(&val)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `int`");
       }
-      var.Set(val);
+      var.set(val);
     }
   } else if (type_name == value::kUInt) {
     if (array_qual) {
@@ -701,13 +701,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&vss)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `uint[]`");
       }
-      var.Set(vss);
+      var.set(vss);
     } else {
       uint32_t val;
       if (!ReadBasicType(&val)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `uint`");
       }
-      var.Set(val);
+      var.set(val);
     }
   } else if (type_name == value::kFloat) {
     if (array_qual) {
@@ -715,13 +715,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&vss)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `float[]`");
       }
-      var.Set(vss);
+      var.set(vss);
     } else {
       float val;
       if (!ReadBasicType(&val)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `float`");
       }
-      var.Set(val);
+      var.set(val);
     }
   } else if (type_name == value::kString) {
     if (array_qual) {
@@ -729,13 +729,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&strs)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
       }
-      var.Set(strs);
+      var.set(strs);
     } else {
       StringData str;
       if (!ReadBasicType(&str)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string`");
       }
-      var.Set(str);
+      var.set(str);
     }
   } else if (type_name == "token") {
     if (array_qual) {
@@ -743,13 +743,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&toks)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
       }
-      var.Set(toks);
+      var.set(toks);
     } else {
       value::token tok;
       if (!ReadBasicType(&tok)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `token`");
       }
-      var.Set(tok);
+      var.set(tok);
     }
   } else if (type_name == "dictionary") {
     CustomDataType dict;
@@ -758,7 +758,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     if (!ParseDict(&dict)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
     }
-    var.Set(dict);
+    var.set(dict);
   } else {
     PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
   }
@@ -833,7 +833,7 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
         return false;
       }
 
-      if (!var.Valid()) {
+      if (!var.is_valid()) {
         PUSH_ERROR_AND_RETURN("Invalid Dict element(probably internal issue).");
       }
 
@@ -1544,16 +1544,18 @@ bool AsciiParser::ParseStageMetaOpt() {
   var.name = varname;
 
   if (varname == "defaultPrim") {
-    if (auto pv = var.Get<value::token>()) {
-      DCOUT("defaultPrim = " << pv.value());
-      _stage_metas.defaultPrim = pv.value();
+    value::token tok;
+    if (var.get(&tok)) {
+      DCOUT("defaultPrim = " << tok);
+      _stage_metas.defaultPrim = tok;
     } else {
       PUSH_ERROR_AND_RETURN("`defaultPrim` isn't a token value.");
     }
   } else if (varname == "subLayers") {
-    if (auto pv = var.Get<std::vector<value::AssetPath>>()) {
-      DCOUT("subLayers = " << pv.value());
-      for (const auto &item : pv.value()) {
+    std::vector<value::AssetPath> paths;
+    if (var.get(&paths)) {
+      DCOUT("subLayers = " << paths);
+      for (const auto &item : paths) {
         _stage_metas.subLayers.push_back(item);
       }
     } else {
@@ -2255,7 +2257,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
     DCOUT("bool = " << value);
 
-    var.Set(value);
+    var.set(value);
   } else if (vartype == value::kToken) {
     if (is_array_type) {
       std::vector<value::token> value;
@@ -2265,7 +2267,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       }
       DCOUT("token[] = " << value);
 
-      var.Set(value);
+      var.set(value);
     } else {
       value::token value;
       if (!ReadBasicType(&value)) {
@@ -2275,7 +2277,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       }
       DCOUT("token = " << value);
 
-      var.Set(value);
+      var.set(value);
     }
   } else if (vartype == "token[]") {
     std::vector<value::token> value;
@@ -2287,17 +2289,17 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     // TODO
     // DCOUT("token[] = " << to_string(value));
 
-    var.Set(value);
+    var.set(value);
   } else if (vartype == value::kString) {
     StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
-      var.Set(sdata);
+      var.set(sdata);
     } else {
       std::string value;
       if (!ReadStringLiteral(&value)) {
         PUSH_ERROR_AND_RETURN("String literal expected for `" + varname + "`.");
       }
-      var.Set(value);
+      var.set(value);
     }
 
   } else if (vartype == "string[]") {
@@ -2307,7 +2309,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "ref[]") {
     std::vector<Reference> values;
     if (!ParseBasicTypeArray(&values)) {
@@ -2315,7 +2317,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
                             "`.");
     }
 
-    var.Set(values);
+    var.set(values);
 
   } else if (vartype == "int[]") {
     std::vector<int32_t> values;
@@ -2329,82 +2331,82 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       DCOUT("int[" << i << "] = " << values[i]);
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "float[]") {
     std::vector<float> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "float2[]") {
     std::vector<value::float2> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "float3[]") {
     std::vector<value::float3> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "float4[]") {
     std::vector<value::float4> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "double[]") {
     std::vector<double> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "double2[]") {
     std::vector<value::double2> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "double3[]") {
     std::vector<value::double3> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == "double4[]") {
     std::vector<value::double4> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.Set(values);
+    var.set(values);
   } else if (vartype == value::kFloat) {
     float value;
     if (!ReadBasicType(&value)) {
       return false;
     }
-    var.Set(value);
+    var.set(value);
   } else if (vartype == value::kDouble) {
     double value;
     if (!ReadBasicType(&value)) {
       return false;
     }
-    var.Set(value);
+    var.set(value);
   } else if (vartype == "int2") {
     value::int2 value;
     if (!ReadBasicType(&value)) {
       return false;
     }
 
-    var.Set(value);
+    var.set(value);
 
   } else if (vartype == "int3") {
     value::int3 value;
@@ -2412,14 +2414,14 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       return false;
     }
 
-    var.Set(value);
+    var.set(value);
   } else if (vartype == "int4") {
     value::int4 value;
     if (!ReadBasicType(&value)) {
       return false;
     }
 
-    var.Set(value);
+    var.set(value);
   } else if (vartype == value::kPath) {
     if (is_array_type) {
       std::vector<Path> paths;
@@ -2428,7 +2430,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
       }
-      var.Set(paths);
+      var.set(paths);
 
     } else {
       Path path;
@@ -2437,7 +2439,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
       }
-      var.Set(path);
+      var.set(path);
     }
 
   } else if (vartype == value::kAssetPath) {
@@ -2448,7 +2450,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.Set(paths);
+      var.set(paths);
     } else {
       value::AssetPath asset_path;
       if (!ReadBasicType(&asset_path)) {
@@ -2456,7 +2458,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.Set(asset_path);
+      var.set(asset_path);
     }
   } else if (vartype == "Reference") {
     if (is_array_type) {
@@ -2466,7 +2468,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.Set(refs);
+      var.set(refs);
     } else {
       nonstd::optional<Reference> ref;
       if (!ReadBasicType(&ref)) {
@@ -2475,10 +2477,10 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
       if (ref) {
-        var.Set(ref.value());
+        var.set(ref.value());
       } else {
         // None
-        var.Set(value::ValueBlock());
+        var.set(value::ValueBlock());
       }
     }
   } else if (vartype == value::kDictionary) {
@@ -2487,7 +2489,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     if (!ParseDict(&dict)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` data in metadataum.");
     }
-    var.Set(dict);
+    var.set(dict);
   } else {
     PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
   }
@@ -2779,14 +2781,14 @@ AsciiParser::ParsePrimMeta() {
     if (MaybeTripleQuotedString(&sdata)) {
       MetaVariable var;
       var.name = "";  // empty
-      var.Set(sdata);
+      var.set(sdata);
 
       return std::make_pair(qual, var);
 
     } else if (MaybeString(&sdata)) {
       MetaVariable var;
       var.name = "";  // empty
-      var.Set(sdata);
+      var.set(sdata);
 
       return std::make_pair(qual, var);
     }
@@ -3009,7 +3011,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         // Add as custom meta value.
         MetaVariable metavar;
         metavar.name = "colorSpace";
-        metavar.Set(tok);
+        metavar.set(tok);
         out_meta->meta.emplace("colorSpace", metavar);
       } else if (varname == "customData") {
         CustomDataType dict;
@@ -3072,7 +3074,7 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
 ///
 /// Parse rel string
 ///
-bool AsciiParser::ParseRelation(Relation *result) {
+bool AsciiParser::ParseRelationship(Relationship *result) {
   char c;
   if (!LookChar1(&c)) {
     return false;
@@ -3084,7 +3086,7 @@ bool AsciiParser::ParseRelation(Relation *result) {
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse String.");
     }
-    result->Set(value);
+    result->set(value);
 
   } else if (c == '<') {
     // Path
@@ -3092,14 +3094,14 @@ bool AsciiParser::ParseRelation(Relation *result) {
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse Path.");
     }
-    result->Set(value);
+    result->set(value);
   } else if (c == '[') {
     // PathVector
     std::vector<Path> value;
     if (!ParseBasicTypeArray(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse PathVector.");
     }
-    result->Set(value);
+    result->set(value);
   } else {
     PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
                           "\" found. Expects string, Path or PathVector.");
@@ -3115,8 +3117,8 @@ bool AsciiParser::ParseRelation(Relation *result) {
 template <typename T>
 bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
                                      const std::string &primattr_name,
-                                     PrimAttrib *out_attr) {
-  PrimAttrib attr;
+                                     Attribute *out_attr) {
+  Attribute attr;
   primvar::PrimVar var;
   bool blocked{false};
 
@@ -3178,7 +3180,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   // optional: attribute meta.
   AttrMeta meta;
   if (!ParseAttrMeta(&meta)) {
-    PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+    PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
   }
   attr.meta = meta;
 
@@ -3282,12 +3284,12 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
 
       // No targets. Define only.
       Property p(type_name, custom_qual);
-      p.SetPropetryType(Property::Type::NoTargetsRelation);
-      p.SetListEditQual(listop_qual);
+      p.set_property_type(Property::Type::NoTargetsRelation);
+      p.set_listedit_qual(listop_qual);
 
       if (metap) {
         // TODO: metadataum for Rel
-        p.GetAttrib().meta = metap.value();
+        p.attribute().meta = metap.value();
       }
 
       (*props)[attr_name] = p;
@@ -3312,8 +3314,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       PUSH_ERROR_AND_RETURN("TODO: Support `None` for property.");
     }
 
-    Relation rel;
-    if (!ParseRelation(&rel)) {
+    Relationship rel;
+    if (!ParseRelationship(&rel)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `rel` property.");
     }
 
@@ -3344,10 +3346,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
 
     DCOUT("Relationship with target: " << attr_name);
     Property p(rel, custom_qual);
-    p.SetListEditQual(listop_qual);
+    p.set_listedit_qual(listop_qual);
 
     if (metap) {
-      p.GetAttrib().meta = metap.value();
+      p.attribute().meta = metap.value();
     }
 
     (*props)[attr_name] = p;
@@ -3432,6 +3434,15 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
   bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
   bool isConnection = endsWith(primattr_name, kConnectSuffix);
 
+  // Remove suffix
+  std::string attr_name = primattr_name;
+  if (isTimeSample) {
+    attr_name = removeSuffix(primattr_name, kTimeSamplesSuffix);
+  }
+  if (isConnection) {
+    attr_name = removeSuffix(primattr_name, kConnectSuffix);
+  }
+
   bool define_only = false;
   {
     char c;
@@ -3459,7 +3470,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     // optional: attribute meta.
     AttrMeta meta;
     if (!ParseAttrMeta(&meta)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+      PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
     }
 
     DCOUT("Define only property = " + primattr_name);
@@ -3468,11 +3479,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     Property p(type_name, custom_qual);
 
     if (uniform_qual) {
-      p.GetAttrib().variability = Variability::Uniform;
+      p.attribute().variability() = Variability::Uniform;
     }
-    p.GetAttrib().meta = meta;
+    p.attribute().meta = meta;
 
-    (*props)[primattr_name] = p;
+    (*props)[attr_name] = p;
 
     return true;
   }
@@ -3491,12 +3502,12 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
     }
 
-    Relation rel;
-    rel.Set(path);
+    Relationship rel;
+    rel.set(path);
 
     Property p(rel, /* value typename */ type_name, custom_qual);
 
-    (*props)[primattr_name] = p;
+    (*props)[attr_name] = p;
 
     DCOUT(fmt::format("Added {} as a attribute connection.", primattr_name));
 
@@ -3523,25 +3534,25 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       }
     }
 
-    std::string varname = removeSuffix(primattr_name, ".timeSamples");
-    PrimAttrib attr;
+    //std::string varname = removeSuffix(primattr_name, ".timeSamples");
+    Attribute attr;
     primvar::PrimVar var;
     var.set_timesamples(ts);
 
-    attr.name = varname;
+    attr.name = attr_name;
     attr.set_var(std::move(var));
 
     DCOUT("timeSamples primattr: type = " << type_name
-                                          << ", name = " << varname);
+                                          << ", name = " << attr_name);
 
     Property p(attr, custom_qual);
-    p.SetPropetryType(Property::Type::Attrib);
-    (*props)[varname] = p;
+    p.set_property_type(Property::Type::Attrib);
+    (*props)[attr_name] = p;
 
     return true;
 
   } else {
-    PrimAttrib attr;
+    Attribute attr;
 
     // TODO: Refactor. ParseAttrMeta is currently called inside
     // ParseBasicPrimAttr()
@@ -3715,7 +3726,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       // optional: attribute meta.
       AttrMeta meta;
       if (!ParseAttrMeta(&meta)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse PrimAttrib meta.");
+        PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
       }
       attr.meta = meta;
 
@@ -3724,7 +3735,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     }
 
     if (uniform_qual) {
-      attr.variability = Variability::Uniform;
+      attr.variability() = Variability::Uniform;
     }
     attr.name = primattr_name;
 

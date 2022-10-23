@@ -297,7 +297,7 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
   // if (auto pv = GetPrimElementName(parent->data())) {
   {
     // TODO: Use elementPath
-    std::string elementName = parent->local_path().GetPrimPart();
+    std::string elementName = parent->local_path().prim_part();
     DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
     DCOUT(pprint::Indent(depth) << "Given Path = " << path);
     // fully absolute path
@@ -326,7 +326,7 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
-  DCOUT("GerPrimAtPath : " << path);
+  DCOUT("GerPrimAtPath : " << path.prim_part() << "(input path: " << path << ")");
 
   if (_dirty) {
     // Clear cache.
@@ -335,22 +335,22 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     _dirty = false;
   } else {
     // First find from a cache.
-    auto ret = _prim_path_cache.find(path.GetPrimPart());
+    auto ret = _prim_path_cache.find(path.prim_part());
     if (ret != _prim_path_cache.end()) {
       return ret->second;
     }
   }
 
-  if (!path.IsValid()) {
+  if (!path.is_valid()) {
     return nonstd::make_unexpected("Path is invalid.\n");
   }
 
-  if (path.IsRelativePath()) {
+  if (path.is_relative_path()) {
     // TODO:
     return nonstd::make_unexpected("Relative path is TODO.\n");
   }
 
-  if (!path.IsAbsolutePath()) {
+  if (!path.is_absolute_path()) {
     return nonstd::make_unexpected(
         "Path is not absolute. Non-absolute Path is TODO.\n");
   }
@@ -360,7 +360,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     if (auto pv = GetPrimAtPathRec(&parent, /* root */"", path, /* depth */0)) {
       // Add to cache.
       // Assume pointer address does not change unless dirty state.
-      _prim_path_cache[path.GetPrimPart()] = pv.value();
+      _prim_path_cache[path.prim_part()] = pv.value();
       return pv.value();
     }
   }
@@ -374,16 +374,16 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
   // TODO: Resolve "../"
   // TODO: cache path
 
-  if (!path.IsValid()) {
+  if (!path.is_valid()) {
     return nonstd::make_unexpected("Path is invalid.\n");
   }
 
-  if (path.IsAbsolutePath()) {
+  if (path.is_absolute_path()) {
     return nonstd::make_unexpected(
         "Path is absolute. Path must be relative.\n");
   }
 
-  if (path.IsRelativePath()) {
+  if (path.is_relative_path()) {
     // ok
   } else {
     return nonstd::make_unexpected("Invalid Path.\n");
@@ -440,25 +440,25 @@ std::string Stage::ExportToString() const {
   }
 
   if (stage_metas.metersPerUnit.authored()) {
-    ss << "  metersPerUnit = " << stage_metas.metersPerUnit.GetValue() << "\n";
+    ss << "  metersPerUnit = " << stage_metas.metersPerUnit.get_value() << "\n";
   }
 
   if (stage_metas.upAxis.authored()) {
-    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.GetValue()))
+    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
        << "\n";
   }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
-    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.GetValue()
+    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.get_value()
        << "\n";
   }
 
   if (stage_metas.startTimeCode.authored()) {
-    ss << "  startTimeCode = " << stage_metas.startTimeCode.GetValue() << "\n";
+    ss << "  startTimeCode = " << stage_metas.startTimeCode.get_value() << "\n";
   }
 
   if (stage_metas.endTimeCode.authored()) {
-    ss << "  endTimeCode = " << stage_metas.endTimeCode.GetValue() << "\n";
+    ss << "  endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
   }
 
   // TODO: Do not print subLayers when consumed(after composition evaluated)

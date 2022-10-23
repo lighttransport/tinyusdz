@@ -27,6 +27,8 @@ static std::string str_tolower(std::string s) {
 }
 
 // key = Full absolute prim path(e.g. `/bora/dora`)
+using XformMap = std::map<std::string, const tinyusdz::Xform *>;
+using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
 using MaterialMap = std::map<std::string, const tinyusdz::Material *>;
 using PreviewSurfaceMap =
     std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPreviewSurface *>>;
@@ -122,7 +124,7 @@ static void TraversePrimvarReader_float2(const tinyusdz::Stage &stage,
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need input.usdz\n" << std::endl;
+    std::cout << "Need USD file with Material/Shader(e.g. `<tinyusdz>/models/texturescube.usda`\n" << std::endl;
     return EXIT_FAILURE;
   }
 
@@ -202,7 +204,7 @@ int main(int argc, char **argv) {
 
   // Visit all Prims in the Stage.
   auto prim_visit_fun = [](const tinyusdz::Prim &prim, const int32_t level, void *userdata) -> bool {
-    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().GetPrimPart() << "\n";
+    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << "\n";
 
     // Use as() or is() for Prim specific processing.
     if (const tinyusdz::Material *pm = prim.as<tinyusdz::Material>()) {
@@ -216,19 +218,23 @@ int main(int argc, char **argv) {
   void *userdata = nullptr;
 
   tinyusdz::tydra::VisitPrims(stage, prim_visit_fun, userdata);
-  
+
 
   std::cout << "--------------------------------------"
             << "\n";
 
   // Mapping hold the pointer to concrete Prim object,
   // So stage content should not be changed(no Prim addition/deletion).
+  XformMap xformmap;
+  MeshMap meshmap;
   MaterialMap matmap;
   PreviewSurfaceMap surfacemap;
   UVTextureMap texmap;
   PrimvarReader_float2Map preadermap;
 
   // Collect and make full path <-> Prim/Shader mapping
+  tinyusdz::tydra::ListPrims(stage, xformmap);
+  tinyusdz::tydra::ListPrims(stage, meshmap);
   tinyusdz::tydra::ListPrims(stage, matmap);
   tinyusdz::tydra::ListShaders(stage, surfacemap);
   tinyusdz::tydra::ListShaders(stage, texmap);
@@ -319,6 +325,55 @@ int main(int argc, char **argv) {
       std::cerr << err;
     }
   }
+
+  std::cout << "GetProperty example -------------\n";
+  for (const auto &item : xformmap) {
+    std::string err;
+    tinyusdz::Property prop;
+    if (tinyusdz::tydra::GetProperty(*item.second, "xformOp:transform", &prop, &err)) {
+      std::cout << "Property value = " << print_prop(prop, "xformOp:transform", 0) << "\n";
+    } else {
+      std::cerr << err;
+    }
+  }
+
+  std::cout << "EvaluateAttribute example -------------\n";
+
+  //
+  // Shader attribute evaluation example.
+  //
+  for (const auto &item : preadermap) {
+    // Returned Prim is Shader class
+    nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
+    if (shader) {
+      std::cout << "Shader(UsdPrimvarReader_float2) <" << item.first << "> from Stage:\n";
+
+      const tinyusdz::Shader *sp = shader.value()->as<tinyusdz::Shader>();
+      if (sp) { // this should be true though.
+
+        if (const tinyusdz::UsdPrimvarReader_float2 *preader = sp->value.as<tinyusdz::UsdPrimvarReader_float2>()) {
+
+          tinyusdz::tydra::TerminalAttributeValue tav;
+          std::string err;
+          bool ret = tinyusdz::tydra::EvaluateAttribute(stage, *shader.value(), "inputs:varname", &tav, &err);
+
+          if (!ret) {
+            std::cout << "Resolving `inputs:varname` failed: " << err << "\n";
+          }
+
+          std::cout << "type = " << tav.type_name() << "\n";
+
+          if (auto pv = tav.as<tinyusdz::value::token>()) {
+            std::cout << "inputs:varname = " << (*pv) << "\n";
+          }
+        }
+      }
+
+    } else {
+      std::cerr << "Err: " << shader.error() << "\n";
+    }
+  }
+
 
   return 0;
 }

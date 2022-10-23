@@ -14,44 +14,44 @@ void prim_type_test(void) {
   // Path
   {
     Path path("/", "");
-    TEST_CHECK(path.IsRootPath() == true);
-    TEST_CHECK(path.IsRootPrim() == false);
+    TEST_CHECK(path.is_root_path() == true);
+    TEST_CHECK(path.is_root_prim() == false);
   }
 
   {
     Path path("/bora", "");
-    auto ret = path.SplitAtRoot();
+    auto ret = path.split_at_root();
     TEST_CHECK(std::get<0>(ret).full_path_name() == "/bora");
-    TEST_CHECK(std::get<1>(ret).IsEmpty() == true);
+    TEST_CHECK(std::get<1>(ret).is_empty() == true);
   }
 
   {
     Path path("/dora/bora", "");
-    auto ret = path.SplitAtRoot();
-    TEST_CHECK(std::get<0>(ret).IsValid() == true);
+    auto ret = path.split_at_root();
+    TEST_CHECK(std::get<0>(ret).is_valid() == true);
     TEST_CHECK(std::get<0>(ret).full_path_name() == "/dora");
-    TEST_CHECK(std::get<1>(ret).IsValid() == true);
+    TEST_CHECK(std::get<1>(ret).is_valid() == true);
     TEST_CHECK(std::get<1>(ret).full_path_name() == "/bora");
   }
 
   {
     Path path("dora", "");
-    auto ret = path.SplitAtRoot();
-    TEST_CHECK(std::get<0>(ret).IsEmpty() == true);
-    TEST_CHECK(std::get<1>(ret).IsValid() == true);
+    auto ret = path.split_at_root();
+    TEST_CHECK(std::get<0>(ret).is_empty() == true);
+    TEST_CHECK(std::get<1>(ret).is_valid() == true);
     TEST_CHECK(std::get<1>(ret).full_path_name() == "dora");
   }
 
   {
     Path rpath("dora", "");
-    TEST_CHECK(rpath.MakeRelative().full_path_name() == "dora");
+    TEST_CHECK(rpath.make_relative().full_path_name() == "dora");
 
     Path apath("/dora", "");
-    TEST_CHECK(apath.MakeRelative().full_path_name() == "dora");
+    TEST_CHECK(apath.make_relative().full_path_name() == "dora");
 
     Path cpath("/dora", "");
     Path c;
-    TEST_CHECK(c.MakeRelative(cpath).full_path_name() == "dora"); // std::move
+    TEST_CHECK(c.make_relative(cpath).full_path_name() == "dora"); // std::move
   }
 
 
