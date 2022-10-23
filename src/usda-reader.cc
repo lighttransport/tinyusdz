@@ -1154,7 +1154,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
           if (item.second.is_relationship()) {
             PUSH_WARN("TODO: rel");
           } else {
-            gprim.props[item.first].attrib = item.second.GetAttribute();
+            gprim.props[item.first].attrib = item.second.get_attribute();
           }
         }
 
@@ -1241,8 +1241,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
               PUSH_ERROR_AND_RETURN(
                   "`elementType` property as Relation is not supported.");
             }
-            if (auto pv = item.second.GetAttribute().var.get_value<value::token>()) {
-              if (item.second.GetAttribute().uniform) {
+            if (auto pv = item.second.get_attribute().var.get_value<value::token>()) {
+              if (item.second.get_attribute().uniform) {
                 auto e = subset.SetElementType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());
@@ -1258,8 +1258,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
                   "`familyType` property as Relation is not supported.");
             }
 
-            if (auto pv = item.second.GetAttribute().var.get_value<value::token>()) {
-              if (item.second.GetAttribute().uniform) {
+            if (auto pv = item.second.get_attribute().var.get_value<value::token>()) {
+              if (item.second.get_attribute().uniform) {
                 auto e = subset.SetFamilyType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());
@@ -1277,7 +1277,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
             }
 
             if (auto pv =
-                    item.second.GetAttribute().var.get_value<std::vector<int>>()) {
+                    item.second.get_attribute().var.get_value<std::vector<int>>()) {
               // int -> uint
               std::transform(pv.value().begin(), pv.value().end(),
                              std::back_inserter(subset.indices),
@@ -1286,7 +1286,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
 
             PUSH_ERROR_AND_RETURN(
                 "`indices` property must be `int[]` type, but got `" +
-                item.second.GetAttribute().var.type_name() + "`");
+                item.second.get_attribute().var.type_name() + "`");
 
           } else if (item.first == "material:binding") {
             if (!item.second.is_relationship()) {
@@ -1312,8 +1312,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
               PUSH_ERROR_AND_RETURN(
                   "`elementType` property as Relation is not supported.");
             }
-            if (auto pv = item.second.GetAttribute().get_value<value::token>()) {
-              if (item.second.GetAttribute().variability() == Variability::Uniform) {
+            if (auto pv = item.second.get_attribute().get_value<value::token>()) {
+              if (item.second.get_attribute().variability() == Variability::Uniform) {
                 auto e = subset.SetElementType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());
@@ -1329,8 +1329,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
                   "`familyType` property as Relation is not supported.");
             }
 
-            if (auto pv = item.second.GetAttribute().get_value<value::token>()) {
-              if (item.second.GetAttribute().variability() == Variability::Uniform) {
+            if (auto pv = item.second.get_attribute().get_value<value::token>()) {
+              if (item.second.get_attribute().variability() == Variability::Uniform) {
                 auto e = subset.SetFamilyType(pv.value().str());
                 if (!e) {
                   PUSH_ERROR_AND_RETURN(e.error());
@@ -1348,7 +1348,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
             }
 
             if (auto pv =
-                    item.second.GetAttribute().get_value<std::vector<int>>()) {
+                    item.second.get_attribute().get_value<std::vector<int>>()) {
               // int -> uint
               std::transform(pv.value().begin(), pv.value().end(),
                              std::back_inserter(subset.indices),
@@ -1356,7 +1356,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`indices` property must be `int[]` type, but got `" +
-                  item.second.GetAttribute().type_name() + "`");
+                  item.second.get_attribute().type_name() + "`");
             }
 
           } else if (item.first == "material:binding") {
@@ -1371,12 +1371,12 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
                   "`familyName` property as Relation is not supported.");
             }
 
-            if (auto pv = item.second.GetAttribute().get_value<value::token>()) {
+            if (auto pv = item.second.get_attribute().get_value<value::token>()) {
               subset.familyName = pv.value();
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`familyName` property must be `token` type, but got `" +
-                  item.second.GetAttribute().type_name() + "`");
+                  item.second.get_attribute().type_name() + "`");
             }
           } else {
             PUSH_WARN("GeomSubset: TODO: " + item.first);

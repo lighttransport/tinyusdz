@@ -355,39 +355,45 @@ void ToProperty(
   const TypedAttribute<Animatable<T>> &input,
   Property &output)
 {
-  if (input.IsBlocked()) {
+  if (input.is_blocked()) {
     Attribute attr;
-    attr.set_blocked(input.IsBlocked());
+    attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
     output = Property(std::move(attr), /*custom*/ false);
     return;
-  } else if (input.IsValueEmpty()) {
+  } else if (input.is_value_empty()) {
     // type info only
     output = Property(value::TypeTraits<T>::type_name(), /* custom */false);
     return;
-  } else if (input.IsConnection()) {
+  } else if (input.is_connection()) {
 
     DCOUT("IsConnection");
 
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
-    Relationship relTarget;
-    if (auto pv = input.GetConnection()) {
-      relTarget.set(pv.value());
-      DCOUT("targetPath = " << relTarget.targetPath);
+    Relationship rel;
+    std::vector<Path> pv = input.get_connections();
+    if (pv.empty()) {
+      DCOUT("??? Empty connectionTarget.");
+    } if (pv.size() == 1) {
+      rel.set(pv[0]);
+      DCOUT("targetPath = " << rel.targetPath);
+    } else if (pv.size() > 1) {
+      rel.set(pv);
     } else {
       // ??? TODO: report internal error.
       DCOUT("??? GetConnection faile.");
     }
-    output = Property(relTarget, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
+
+    output = Property(rel, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
     return;
 
   } else {
     // Includes !authored()
     // FIXME: Currently scalar only.
-    nonstd::optional<Animatable<T>> aval = input.GetValue();
+    nonstd::optional<Animatable<T>> aval = input.get_value();
     if (aval) {
-      if (aval.value().IsScalar()) {
+      if (aval.value().is_scalar()) {
         value::Value val(aval.value().value);
         primvar::PrimVar pvar;
         pvar.set_scalar(val);
@@ -556,7 +562,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Uniform;
     Property prop;
-    prop.SetAttribute(attr);
+    prop.set_attribute(attr);
 
     (*out_prop) = prop;
 
@@ -739,28 +745,33 @@ bool EvaluateAttributeImpl(
 
 
   if (prop.is_connection()) {
-    // Follow connection target Path.
-    auto target = prop.GetConnectionTarget();
-    if (!target) {  // ???
+    // Follow connection target Path(singple targetPath only).
+    std::vector<Path> pv = prop.get_relationTargets();
+    if (pv.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to get connection target"));
     }
 
+    if (pv.size() > 1) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Multiple targetPaths assigned to .connection."));
+    }
 
-    std::string targetPrimPath = target.value().prim_part();
-    std::string targetPrimPropName = target.value().prop_part();
-    DCOUT("connection targetPath : " << target.value() << "(Prim: " << targetPrimPath << ", Prop: " << targetPrimPropName << ")");
+    auto target = pv[0];
+
+    std::string targetPrimPath = target.prim_part();
+    std::string targetPrimPropName = target.prop_part();
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath << ", Prop: " << targetPrimPropName << ")");
 
     auto targetPrimRet = stage.GetPrimAtPath(Path(targetPrimPath, /* prop */""));
     if (targetPrimRet) {
       // Follow the connetion
       const Prim *targetPrim = targetPrimRet.value();
 
-      std::string abs_path = target.value().full_path_name();
+      std::string abs_path = target.full_path_name();
 
       if (visited_paths.count(abs_path)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Circular referencing detected. connectionTargetPath = {}",
-            to_string(target.value())));
+            to_string(target)));
       }
       visited_paths.insert(abs_path);
 
@@ -780,7 +791,7 @@ bool EvaluateAttributeImpl(
   } else if (prop.is_attribute()) {
     DCOUT("IsAttrib");
 
-    const Attribute &attr = prop.GetAttribute();
+    const Attribute &attr = prop.get_attribute();
 
     if (attr.blocked()) {
       PUSH_ERROR_AND_RETURN(
@@ -862,7 +873,7 @@ bool GetAttribute(
   }
 
   if (prop.is_attribute()) {
-    (*out_attr) = std::move(prop.GetAttribute());
+    (*out_attr) = std::move(prop.get_attribute());
     return true;
   }
 
@@ -887,7 +898,7 @@ bool GetRelationship(
   }
 
   if (prop.is_relationship()) {
-    (*out_rel) = std::move(prop.GetRelationship());
+    (*out_rel) = std::move(prop.get_relationship());
   }
 
   PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Relationship.",rel_name));
