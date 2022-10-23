@@ -31,6 +31,7 @@ tinyusdz_sources=[
   '../../src/value-pprint.cc',
   '../../src/image-loader.cc',
   '../../src/image-writer.cc',
+  '../../src/linear-algebra.cc',
   '../../src/xform.cc',
   '../../src/stage.cc',
   '../../src/tiny-format.cc',
