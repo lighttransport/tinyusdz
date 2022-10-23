@@ -396,14 +396,14 @@ void ToProperty(
         attr.variability() = Variability::Uniform;
         output = Property(attr, /* custom */false);
         return;
-      } else if (aval.value().IsBlocked()) {
+      } else if (aval.value().is_blocked()) {
         Attribute attr;
         attr.set_type_name(value::TypeTraits<T>::type_name());
         attr.set_blocked(true);
         attr.variability() = Variability::Uniform;
         output = Property(std::move(attr), /*custom*/ false);
         return;
-      } else if (aval.value().IsTimeSamples()) {
+      } else if (aval.value().is_timesamples()) {
         DCOUT("TODO: Convert typed TimeSamples to value::TimeSamples");
       }
     }

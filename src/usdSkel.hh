@@ -49,7 +49,6 @@ struct Skeleton {
 
   // SkelBindingAPI
   nonstd::optional<Path> animationSource; // rel skel:animationSource = </path/...>
-  
 
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
       Visibility::Inherited};  // "token visibility"
@@ -63,6 +62,17 @@ struct Skeleton {
   std::vector<value::token> xformOpOrder;
 
   PrimMeta meta;
+
+  bool get_animationSource(Path *path) {
+    if (animationSource) {
+      if (path) {
+        (*path) = animationSource.value();
+        return true;
+      }
+    }
+
+    return false;
+  }
 };
 
 // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
@@ -100,6 +110,13 @@ struct SkelAnimation {
   TypedAttribute<Animatable<std::vector<value::half3>>>
       scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
   TypedAttribute<Animatable<std::vector<value::float3>>> translations;  // float3[] Joint-local translation.
+
+  bool get_blendShapes(std::vector<value::token> *toks);
+  bool get_blendShapeWeights(std::vector<float> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
+  bool get_joints(std::vector<value::token> *toks);
+  bool get_rotations(std::vector<value::quatf> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
+  bool get_scales(std::vector<value::half3> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
+  bool get_translations(std::vector<value::float3> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
 
   std::map<std::string, Property> props;
   PrimMeta meta;
