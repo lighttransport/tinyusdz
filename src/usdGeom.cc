@@ -27,21 +27,22 @@ const std::vector<value::point3f> GeomMesh::GetPoints(
     double time, TimeSampleInterpolationType interp) const {
   std::vector<value::point3f> dst;
 
-  if (!points.authored() || points.IsBlocked()) {
+  if (!points.authored() || points.is_blocked()) {
     return dst;
   }
 
-  if (points.IsConnection()) {
+  if (points.is_connection()) {
     // TODO: connection
     return dst;
   }
 
-  if (auto pv = points.GetValue()) {
-    if (pv.value().IsTimeSamples()) {
-      if (auto tsv = pv.value().ts.TryGet(time, interp)) {
-        dst = tsv.value();
+  if (auto pv = points.get_value()) {
+    if (pv.value().is_timesamples()) {
+      std::vector<value::point3f> v;
+      if (pv.value().ts.get(&v, time, interp)) {
+        dst = v;
       }
-    } else if (pv.value().IsScalar()) {
+    } else if (pv.value().is_scalar()) {
       dst = pv.value().value;
     }
   }
@@ -60,34 +61,34 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(
       return dst;
     }
 
-    if (prop.GetAttribute().get_var().is_timesample()) {
+    if (prop.get_attribute().get_var().is_timesample()) {
       // TODO:
       return dst;
     }
 
-    if (prop.GetAttribute().type_name() == "normal3f[]") {
+    if (prop.get_attribute().type_name() == "normal3f[]") {
       if (auto pv =
-              prop.GetAttribute().get_value<std::vector<value::normal3f>>()) {
+              prop.get_attribute().get_value<std::vector<value::normal3f>>()) {
         dst = pv.value();
       }
     }
   } else if (normals.authored()) {
-    if (normals.IsConnection()) {
+    if (normals.is_connection()) {
       // TODO
       return dst;
-    } else if (normals.IsBlocked()) {
+    } else if (normals.is_blocked()) {
       return dst;
     }
 
-    if (normals.GetValue()) {
-      if (normals.GetValue().value().IsTimeSamples()) {
+    if (normals.get_value()) {
+      if (normals.get_value().value().is_timesamples()) {
         // TODO
         (void)time;
         (void)interp;
         return dst;
       }
 
-      dst = normals.GetValue().value().value;
+      dst = normals.get_value().value().value;
     }
   }
 
@@ -97,9 +98,9 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(
 Interpolation GeomMesh::GetNormalsInterpolation() const {
   if (props.count(kPrimvarsNormals)) {
     const auto &prop = props.at(kPrimvarsNormals);
-    if (prop.GetAttribute().type_name() == "normal3f[]") {
-      if (prop.GetAttribute().meta.interpolation) {
-        return prop.GetAttribute().meta.interpolation.value();
+    if (prop.get_attribute().type_name() == "normal3f[]") {
+      if (prop.get_attribute().meta.interpolation) {
+        return prop.get_attribute().meta.interpolation.value();
       }
     }
   } else if (normals.meta.interpolation) {
@@ -112,16 +113,16 @@ Interpolation GeomMesh::GetNormalsInterpolation() const {
 const std::vector<int32_t> GeomMesh::GetFaceVertexCounts() const {
   std::vector<int32_t> dst;
 
-  if (!faceVertexCounts.authored() || faceVertexCounts.IsBlocked()) {
+  if (!faceVertexCounts.authored() || faceVertexCounts.is_blocked()) {
     return dst;
   }
 
-  if (faceVertexCounts.IsConnection()) {
+  if (faceVertexCounts.is_connection()) {
     // TODO: connection
     return dst;
   }
 
-  if (auto pv = faceVertexCounts.GetValue()) {
+  if (auto pv = faceVertexCounts.get_value()) {
     dst = pv.value().value;
   }
   return dst;
@@ -130,16 +131,16 @@ const std::vector<int32_t> GeomMesh::GetFaceVertexCounts() const {
 const std::vector<int32_t> GeomMesh::GetFaceVertexIndices() const {
   std::vector<int32_t> dst;
 
-  if (!faceVertexIndices.authored() || faceVertexIndices.IsBlocked()) {
+  if (!faceVertexIndices.authored() || faceVertexIndices.is_blocked()) {
     return dst;
   }
 
-  if (faceVertexIndices.IsConnection()) {
+  if (faceVertexIndices.is_connection()) {
     // TODO: connection
     return dst;
   }
 
-  if (auto pv = faceVertexIndices.GetValue()) {
+  if (auto pv = faceVertexIndices.get_value()) {
     dst = pv.value().value;
   }
   return dst;
@@ -161,7 +162,7 @@ void GeomMesh::Initialize(const GPrim &gprim) {
       continue;
     }
 
-    const PrimAttrib &attr = prop.GetAttribute();
+    const PrimAttrib &attr = prop.get_attribute();
 
     if (attr_name == "points") {
       //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
@@ -249,8 +250,8 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     return nonstd::make_unexpected("TODO: Support faceVertexCounts.connect\n");
   }
 
-  if (faceVertexCounts.GetValue()) {
-    const auto fvp = faceVertexCounts.GetValue();
+  if (faceVertexCounts.get_value()) {
+    const auto fvp = faceVertexCounts.get_value();
     const auto &fv = fvp.value().value;
     size_t n = fv.size();
 

@@ -996,7 +996,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           rel.set(items);  // [Path]
         }
 
-        rel.SetListEditQualifier(qual);
+        rel.set_listedit_qual(qual);
 
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
@@ -1359,7 +1359,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         PUSH_ERROR_AND_RETURN("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v +
                               "'(note: Case sensitive)");
       }
-      DCOUT("upAxis = " << to_string(metas->upAxis.GetValue()));
+      DCOUT("upAxis = " << to_string(metas->upAxis.get_value()));
 
     } else if (fv.first == "metersPerUnit") {
       if (auto vf = fv.second.get_value<float>()) {
@@ -1371,7 +1371,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "`metersPerUnit` value must be double or float type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("metersPerUnit = " << metas->metersPerUnit.GetValue());
+      DCOUT("metersPerUnit = " << metas->metersPerUnit.get_value());
     } else if (fv.first == "timeCodesPerSecond") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->timeCodesPerSecond = double(vf.value());
@@ -1383,7 +1383,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.GetValue());
+      DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.get_value());
     } else if (fv.first == "startTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->startTimeCode = double(vf.value());
@@ -1395,7 +1395,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("startimeCode = " << metas->startTimeCode.GetValue());
+      DCOUT("startimeCode = " << metas->startTimeCode.get_value());
     } else if (fv.first == "endTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->endTimeCode = double(vf.value());
@@ -1407,7 +1407,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("endTimeCode = " << metas->endTimeCode.GetValue());
+      DCOUT("endTimeCode = " << metas->endTimeCode.get_value());
     } else if ((fv.first == "defaultPrim")) {
       auto v = fv.second.get_value<value::token>();
       if (!v) {

@@ -167,7 +167,7 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t
 
   ss << "{\n";
 
-  const auto &samples = v.GetSamples();
+  const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
     ss << pprint::Indent(indent+1) << samples[i].t << ": ";
@@ -190,7 +190,7 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v, const ui
 
   ss << "{\n";
 
-  const auto &samples = v.GetSamples();
+  const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
     ss << pprint::Indent(indent+1) << samples[i].t << ": ";
@@ -211,11 +211,11 @@ template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) {
   std::stringstream ss;
 
-  if (v.IsTimeSamples()) {
+  if (v.is_timesamples()) {
     ss << print_typed_timesamples(v.ts, indent);
-  } else if (v.IsBlocked()) {
+  } else if (v.is_blocked()) {
     ss << "None";
-  } else if (v.IsScalar()) {
+  } else if (v.is_scalar()) {
     ss << v.value;
   } else {
     return "[FIXME: Invalid Animatable]";
@@ -228,11 +228,11 @@ template<typename T>
 std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent = 0) {
   std::stringstream ss;
 
-  if (v.IsTimeSamples()) {
+  if (v.is_timesamples()) {
     ss << print_typed_token_timesamples(v.ts, indent);
-  } else if (v.IsBlocked()) {
+  } else if (v.is_blocked()) {
     ss << "None";
-  } else if (v.IsScalar()) {
+  } else if (v.is_scalar()) {
     ss << quote(to_string(v.value));
   } else {
     return "[FIXME: Invalid Animatable]";
@@ -498,11 +498,11 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
     ss << value::TypeTraits<T>::type_name() << " " << name;
 
-    if (attr.IsBlocked()) {
+    if (attr.is_blocked()) {
       ss << " = None";
-    } else if (attr.IsConnection()) {
+    } else if (attr.is_connection()) {
       ss << ".connect = ";
-      const std::vector<Path> &paths = attr.GetConnections();
+      const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
         ss << paths[0];
       } else if (paths.size() == 0) {
@@ -512,7 +512,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
       }
 
     } else {
-      auto pv = attr.GetValue();
+      auto pv = attr.get_value();
 
       if (pv) {
         if (pv.value().is_timesamples()) {
@@ -544,11 +544,11 @@ std::string print_typed_token_attr(const TypedAttribute<Animatable<T>> &attr, co
 
     ss << "token " << name;
 
-    if (attr.IsBlocked()) {
+    if (attr.is_blocked()) {
       ss << " = None";
     } else if (!attr.define_only) {
       ss << " = ";
-      if (attr.value.value().IsTimeSamples()) {
+      if (attr.value.value().is_timesamples()) {
         ss << print_token_timesamples(attr.value.value().ts, indent+1);
       } else {
         ss << quote(to_string(attr.value.value().value));
@@ -580,12 +580,12 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
     ss << value::TypeTraits<T>::type_name() << " " << name;
 
 
-    if (attr.IsBlocked()) {
+    if (attr.is_blocked()) {
       ss << " = None";
-    } else if (attr.IsConnection()) {
+    } else if (attr.is_connection()) {
 
       ss << ".connect = ";
-      const std::vector<Path> &paths = attr.GetConnections();
+      const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
         ss << paths[0];
       } else if (paths.size() == 0) {
@@ -593,11 +593,11 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
       } else {
         ss << paths;
       }
-    } else if (attr.IsValueEmpty()) {
+    } else if (attr.is_value_empty()) {
       // nothing to do
 
     } else {
-      auto pv = attr.GetValue();
+      auto pv = attr.get_value();
       if (pv) {
         ss << " = " << pv.value();
       }
@@ -627,7 +627,7 @@ std::string print_typed_token_attr(const TypedAttribute<T> &attr, const std::str
     ss << "uniform token " << name;
 
 
-    if (attr.IsBlocked()) {
+    if (attr.is_blocked()) {
       ss << " = None";
     } else {
       if (pv) {
@@ -656,10 +656,10 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
 
     ss << value::TypeTraits<T>::type_name() << " " << name;
 
-    if (attr.IsConnection()) {
+    if (attr.is_connection()) {
       ss << ".connect = ";
 
-      const std::vector<Path> &paths = attr.GetConnections();
+      const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
         ss << paths[0];
       } else if (paths.size() == 0) {
@@ -668,12 +668,12 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
         ss << paths;
       }
 
-    } else if (attr.IsValueEmpty()) {
+    } else if (attr.is_value_empty()) {
       // nothing to do
     } else {
-      auto v = attr.GetValue();
+      auto v = attr.get_value();
 
-      if (v.IsTimeSamples()) {
+      if (v.is_timesamples()) {
         ss << ".timeSamples";
       }
 
@@ -722,12 +722,12 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
 
     ss << value::TypeTraits<T>::type_name() << " " << name;
 
-    if (attr.IsBlocked()) {
+    if (attr.is_blocked()) {
       ss << " = None";
-    } else if (attr.IsConnection()) {
+    } else if (attr.is_connection()) {
       ss << ".connect = ";
 
-      const std::vector<Path> &paths = attr.GetConnections();
+      const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
         ss << paths[0];
       } else if (paths.size() == 0) {
@@ -736,7 +736,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
         ss << paths;
       }
     } else {
-      ss << " = " << attr.GetValue();
+      ss << " = " << attr.get_value();
     }
 
     if (attr.meta.authored()) {
@@ -755,14 +755,14 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
 
   if (attr.authored()) {
 
-    if (attr.IsConnection()) {
+    if (attr.is_connection()) {
 
       ss << pprint::Indent(indent);
 
       ss << "token " << name;
 
       ss << ".connect = ";
-      const std::vector<Path> &paths = attr.GetConnections();
+      const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
         ss << paths[0];
       } else if (paths.size() == 0) {
@@ -772,13 +772,13 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
       }
 
     } else {
-      auto v = attr.GetValue();
+      auto v = attr.get_value();
 
       ss << pprint::Indent(indent);
 
       ss << "token " << name;
 
-      if (v.IsTimeSamples()) {
+      if (v.is_timesamples()) {
         ss << ".timeSamples";
       }
 
@@ -801,13 +801,13 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
 
   if (attr.authored()) {
 
-    if (attr.IsConnection()) {
+    if (attr.is_connection()) {
       ss << pprint::Indent(indent);
 
       ss << "token " << name;
 
       ss << ".connect = ";
-      const std::vector<Path> &paths = attr.GetConnections();
+      const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
         ss << paths[0];
       } else if (paths.size() == 0) {
@@ -821,10 +821,10 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
 
       ss << "uniform token " << name;
 
-      if (attr.IsBlocked()) {
+      if (attr.is_blocked()) {
         ss << " = None";
       } else {
-        ss << " = " << quote(to_string(attr.GetValue()));
+        ss << " = " << quote(to_string(attr.get_value()));
       }
     }
 
@@ -840,11 +840,11 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
 std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent) {
   std::stringstream ss;
 
-  if (v.IsScalar()) {
+  if (v.is_scalar()) {
     ss << value::pprint_value(v.values[0]);
   } else {
 
-    if (!v.ValidTimeSamples()) {
+    if (!v.is_valid_timesamples()) {
       return "[Invalid TimeSamples data(internal error?)]";
     }
 
@@ -878,11 +878,11 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   }
 
   // List editing
-  if (prop.GetListEditQual() != ListEditQual::ResetToExplicit) {
-    ss << to_string(prop.GetListEditQual()) << " ";
+  if (prop.get_listedit_qual() != ListEditQual::ResetToExplicit) {
+    ss << to_string(prop.get_listedit_qual()) << " ";
   }
 
-  const Relationship &rel = prop.GetRelationship();
+  const Relationship &rel = prop.get_relationship();
   ss << print_rel(rel, name, indent);
 
   return ss.str();
@@ -897,7 +897,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     ss << print_rel_prop(prop, prop_name, indent);
 
   } else {
-    const Attribute &attr = prop.GetAttribute();
+    const Attribute &attr = prop.get_attribute();
 
     ss << pprint::Indent(indent);
 
@@ -917,10 +917,10 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     if (prop.is_connection()) {
 
       ss << ".connect = ";
-      if (prop.GetRelationship().is_path()) {
-        ss << prop.GetRelationship().targetPath;
-      } else if (prop.GetRelationship().is_pathvector()) {
-        ss << prop.GetRelationship().targetPathVector;
+      if (prop.get_relationship().is_path()) {
+        ss << prop.get_relationship().targetPath;
+      } else if (prop.get_relationship().is_pathvector()) {
+        ss << prop.get_relationship().targetPathVector;
       }
     } else if (prop.is_empty()) {
       ss << "\n";
@@ -940,8 +940,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
       }
     }
 
-    if (prop.GetAttribute().meta.authored()) {
-      ss << " (\n" << print_attr_metas(prop.GetAttribute().meta, indent+1) << pprint::Indent(indent) << ")";
+    if (prop.get_attribute().meta.authored()) {
+      ss << " (\n" << print_attr_metas(prop.get_attribute().meta, indent+1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }

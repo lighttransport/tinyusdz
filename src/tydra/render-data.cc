@@ -72,13 +72,13 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
         // https://github.com/PixarAnimationStudios/USD/issues/859 TinyUSDZ
         // allow uint[]
         // TODO: Support timeSampled indices.
-        if (auto pv = prop.GetAttribute().get_value<std::vector<T>>()) {
+        if (auto pv = prop.get_attribute().get_value<std::vector<T>>()) {
           vattr.data = pv.value();
         } else {
           return nonstd::make_unexpected(
               fmt::format("UV Primvar must be type `{}`, but got `{}` for {}",
                           value::TypeTraits<T>::type_name(),
-                          prop.GetAttribute().type_name(), primvar_name));
+                          prop.get_attribute().type_name(), primvar_name));
         }
       } else if (prop.is_connection()) {
         return nonstd::make_unexpected(
@@ -92,7 +92,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
       // variability
       // In usdGeom, Default interpolation is "Constant"
       // TinyUSDZ currently reports error when `interpolation` is missing.
-      auto interp = prop.GetAttribute().meta.interpolation;
+      auto interp = prop.get_attribute().meta.interpolation;
       if (interp) {
       } else {
         return nonstd::make_unexpected(
@@ -125,19 +125,19 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
         // allow uint[]
         // TODO: Support timeSampled indices.
         // TODO: Need to check variability meta
-        if (auto pv = prop.GetAttribute().get_value<std::vector<int32_t>>()) {
+        if (auto pv = prop.get_attribute().get_value<std::vector<int32_t>>()) {
           // convert to uint.
           vattr.indices.clear();
           for (const auto &item : pv.value()) {
             vattr.indices.push_back(uint32_t(item));
           }
         } else if (auto pvu =
-                       prop.GetAttribute().get_value<std::vector<uint32_t>>()) {
+                       prop.get_attribute().get_value<std::vector<uint32_t>>()) {
           vattr.indices = pvu.value();
         } else {
           return nonstd::make_unexpected(fmt::format(
               "Index must be type `int[]` or `uint[]`, but got `{}` for {}",
-              prop.GetAttribute().type_name(), index_name));
+              prop.get_attribute().type_name(), index_name));
         }
       } else if (prop.is_connection()) {
         return nonstd::make_unexpected(fmt::format(

@@ -39,6 +39,8 @@
 
 #include "primvar.hh"
 #include "tiny-variant.hh"
+//
+#include "value-eval-util.inc"
 
 namespace tinyusdz {
 
@@ -503,10 +505,25 @@ class MetaVariable {
   MetaVariable() = default;
 
   template <typename T>
-  void Set(const T &v) {
+  void set(const T &v) {
     value = v;
   }
 
+  template <typename T>
+  bool get(T *dst) const {
+    if (!dst) {
+      return false;
+    }
+
+    if (const T* v = value.as<T>()) {
+      (*dst) = *v;
+      return true;
+    }
+
+    return false;
+  }
+
+  // TODO: Deprecate this API
   template <typename T>
   nonstd::optional<T> Get() const {
     return value.get_value<T>();
@@ -527,9 +544,9 @@ class MetaVariable {
     }
 
     // infer type from value content
-    if (v.IsObject()) {
+    if (v.is_object()) {
       return "dictionary";
-    } else if (v.IsTimeSamples()) {
+    } else if (v.is_timesamples()) {
       std::string ts_type = "TODO: TimeSample type";
       // FIXME
 #if 0
@@ -553,9 +570,9 @@ class MetaVariable {
 
   static uint32_t type_id(const MetaVariable &v) {
     // infer type from value content
-    if (v.IsObject()) {
+    if (v.is_object()) {
       return value::TypeId::TYPE_ID_DICT;
-    } else if (v.IsTimeSamples()) {
+    } else if (v.is_timesamples()) {
       return value::TypeId::TYPE_ID_TIMESAMPLES;
     } else {
       return v.value.type_id();
@@ -727,53 +744,6 @@ struct AttrMeta {
   }
 };
 
-template <typename T>
-inline T lerp(const T &a, const T &b, const double t) {
-  return (1.0 - t) * a + t * b;
-}
-
-template <typename T>
-inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b,
-                           const double t) {
-  std::vector<T> dst;
-
-  // Choose shorter one
-  size_t n = std::min(a.size(), b.size());
-  if (n == 0) {
-    return dst;
-  }
-
-  dst.resize(n);
-
-  if (a.size() != b.size()) {
-    return dst;
-  }
-  for (size_t i = 0; i < n; i++) {
-    dst[i] = lerp(a[i], b[i], t);
-  }
-
-  return dst;
-}
-
-// specializations of lerp
-template <>
-inline value::AssetPath lerp(const value::AssetPath &a,
-                             const value::AssetPath &b, const double t) {
-  (void)b;
-  (void)t;
-  // no interpolation
-  return a;
-}
-
-template <>
-inline std::vector<value::AssetPath> lerp(
-    const std::vector<value::AssetPath> &a,
-    const std::vector<value::AssetPath> &b, const double t) {
-  (void)b;
-  (void)t;
-  // no interpolation
-  return a;
-}
 
 // Typed TimeSamples value
 //
@@ -809,21 +779,28 @@ struct TypedTimeSamples {
   // Get value at specified time.
   // Return linearly interpolated value when TimeSampleInterpolationType is
   // Linear. Returns nullopt when specified time is out-of-range.
-  nonstd::optional<T> TryGet(
+  bool get(
+      T *dst,
       double t = value::TimeCode::Default(),
       TimeSampleInterpolationType interp = TimeSampleInterpolationType::Held) {
+
+    if (!dst) {
+      return false;
+    }
+
     if (empty()) {
-      return nonstd::nullopt;
+      return false;
     }
 
     if (_dirty) {
       Update();
     }
 
-    if (value::TimeCode(t).IsDefault()) {
+    if (value::TimeCode(t).is_default()) {
       // FIXME: Use the first item for now.
       // TODO: Handle bloked
-      return _samples[0].value;
+      (*dst) = _samples[0].value;
+      return true;
     } else {
       auto it = std::lower_bound(
           _samples.begin(), _samples.end(), t,
@@ -858,25 +835,28 @@ struct TypedTimeSamples {
 
         const T p = lerp(p0, p1, dt);
 
-        return std::move(p);
+        (*dst) = std::move(p);
+        return true;
       } else {
         if (it == _samples.end()) {
           // ???
-          return nonstd::nullopt;
+          return false;
         }
-        return it->value;
+
+        (*dst) = it->value;
+        return true;
       }
     }
 
-    return nonstd::nullopt;
+    return false;
   }
 
-  void AddSample(const Sample &s) {
+  void add_sample(const Sample &s) {
     _samples.push_back(s);
     _dirty = true;
   }
 
-  void AddSample(const double t, T &v) {
+  void add_sample(const double t, T &v) {
     Sample s;
     s.t = t;
     s.value = v;
@@ -884,7 +864,7 @@ struct TypedTimeSamples {
     _dirty = true;
   }
 
-  void AddBlockedSample(const double t) {
+  void add_blocked_sample(const double t) {
     Sample s;
     s.t = t;
     s.blocked = true;
@@ -892,7 +872,8 @@ struct TypedTimeSamples {
     _dirty = true;
   }
 
-  const std::vector<Sample> &GetSamples() const { return _samples; }
+  const std::vector<Sample> &get_samples() const { return _samples; }
+  std::vector<Sample> &samples() { return _samples; }
 
  private:
   // Need to be sorted when look up the value.
@@ -909,12 +890,11 @@ struct Animatable {
   // timesamples
   TypedTimeSamples<T> ts;
 
-  bool IsTimeSamples() const { return !ts.empty(); }
+  bool is_timesamples() const { return !ts.empty(); }
 
-  bool IsScalar() const { return ts.empty(); }
+  bool is_scalar() const { return ts.empty(); }
 
-  // Scalar
-  bool IsBlocked() const { return blocked; }
+  bool is_blocked() const { return blocked; }
 
 #if 0  // TODO
   T Get() const { return value; }
@@ -928,8 +908,19 @@ struct Animatable {
   }
 #endif
 
+  // TimeSamples
+  void set(double t, const T &v);
+
+  // Scalar
+  void set(const T &v) {
+    value = v;
+  }
+
   Animatable() {}
+
   Animatable(const T &v) : value(v) {}
+
+  // TODO: Init with timesamples
 };
 
 ///
@@ -945,33 +936,43 @@ struct Animatable {
 template <typename T>
 class TypedAttribute {
  public:
-  void SetValue(const T &v) { _attrib = v; }
+  void set_value(const T &v) { _attrib = v; }
 
-  const nonstd::optional<T> GetValue() const {
+  const nonstd::optional<T> get_value() const {
     if (_attrib) {
       return _attrib.value();
     }
     return nonstd::nullopt;
   }
 
-  // TODO: Animation data.
-  bool IsBlocked() const { return _blocked; }
+
+  bool get_value(T *dst) const {
+    if (!dst) return false;
+
+    if (_attrib) {
+      (*dst) = _attrib.value();
+      return true;
+    }
+    return false;
+  }
+
+  bool is_blocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void SetBlock(bool onoff) { _blocked = onoff; }
+  void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool IsConnection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size(); }
 
-  void SetConnection(const Path &path) {
+  void set_connection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
   }
 
-  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &GetConnections() const { return _paths; }
+  const std::vector<Path> &get_connections() const { return _paths; }
 
-  const nonstd::optional<Path> GetConnection() const {
+  const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
       return _paths[0];
     }
@@ -979,9 +980,9 @@ class TypedAttribute {
     return nonstd::nullopt;
   }
 
-  void SetValueEmpty() { _empty = true; }
+  void set_value_empty() { _empty = true; }
 
-  bool IsValueEmpty() const { return _empty; }
+  bool is_value_empty() const { return _empty; }
 
   // value set?
   bool authored() const {
@@ -1019,7 +1020,7 @@ class TypedAttribute {
 template <typename T>
 class TypedTerminalAttribute {
  public:
-  void SetAuthor(bool onoff) { _authored = onoff; }
+  void set_authored(bool onoff) { _authored = onoff; }
 
   // value set?
   bool authored() const { return _authored; }
@@ -1091,38 +1092,36 @@ class TypedAttributeWithFallback {
   //   }
   // }
 
-  void SetValue(const T &v) { _attrib = v; }
+  void set_value(const T &v) { _attrib = v; }
 
-  void SetValueEmpty() { _empty = true; }
+  void set_value_empty() { _empty = true; }
 
-  bool IsValueEmpty() const { return _empty; }
+  bool is_value_empty() const { return _empty; }
 
-  // TODO: Animation data.
-  const T &GetValue() const {
+  const T &get_value() const {
     if (_attrib) {
       return _attrib.value();
     }
     return _fallback;
   }
 
-  // TODO: Animation data.
-  bool IsBlocked() const { return _blocked; }
+  bool is_blocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void SetBlock(bool onoff) { _blocked = onoff; }
+  void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool IsConnection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size(); }
 
-  void SetConnection(const Path &path) {
+  void set_connection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
   }
 
-  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &GetConnections() const { return _paths; }
+  const std::vector<Path> &get_connections() const { return _paths; }
 
-  const nonstd::optional<Path> GetConnection() const {
+  const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
       return _paths[0];
     }
@@ -1161,88 +1160,6 @@ template <typename T>
 using TypedAnimatableAttributeWithFallback =
     TypedAttributeWithFallback<Animatable<T>>;
 
-#if 0
-///
-/// Generic Attribute class.
-///
-class Attribute {
- public:
-  Attribute() = default;
-
-  template<typename T>
-  Attribute(const TypedAttributeWithFallback<T> &v) {
-    _attrib = v.GetValue();
-    SetBlock(v.IsBlocked());
-  }
-
-  Attribute(const primvar::Primvar &v) : _attrib(v) {
-  }
-
-  Attribute(value::Value &&v) : _attrib(std::move(v)) {
-  }
-
-  void SetValue(const value::Value &v) { _attrib = v; }
-
-  const nonstd::optional<value::Value> GetValue() const {
-    if (_attrib) {
-      return _attrib.value();
-    }
-    return nonstd::nullopt;
-  }
-
-  // TODO: Animation data.
-  bool IsBlocked() const { return _blocked; }
-
-  // for `uniform` attribute only
-  void SetBlock(bool onoff) { _blocked = onoff; }
-
-  bool IsConnection() const { return _paths.size(); }
-
-  void SetConnection(const Path &path) {
-    _paths.clear();
-    _paths.push_back(path);
-  }
-
-  void SetConnections(const std::vector<Path> &paths) { _paths = paths; }
-
-  const std::vector<Path> &GetConnections() const { return _paths; }
-
-  const nonstd::optional<Path> GetConnection() const {
-    if (_paths.size()) {
-      return _paths[0];
-    }
-
-    return nonstd::nullopt;
-  }
-
-  void SetValueEmpty() { _empty = true; }
-
-  bool IsValueEmpty() const { return _empty; }
-
-  // value set?
-  bool authored() const {
-    if (_empty) {
-      return true;
-    }
-
-    if (_attrib) {
-      return true;
-    }
-    if (_paths.size()) {
-      return true;
-    }
-    return false;
-  }
-
-  AttrMeta meta;
-
- private:
-  bool _empty{false};
-  std::vector<Path> _paths;
-  nonstd::optional<value::Value> _attrib;
-  bool _blocked{false};  // for `uniform` attribute.
-};
-#endif
 
 ///
 /// Similar to pxrUSD's PrimIndex
@@ -1431,7 +1348,7 @@ struct Extent {
 
   Extent(const value::float3 &l, const value::float3 &u) : lower(l), upper(u) {}
 
-  bool Valid() const {
+  bool is_valid() const {
     if (lower[0] > upper[0]) return false;
     if (lower[1] > upper[1]) return false;
     if (lower[2] > upper[2]) return false;
@@ -1490,14 +1407,14 @@ class Relationship {
   std::vector<Path> targetPathVector;
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};
 
-  static Relationship MakeEmpty() {
+  static Relationship make_empty() {
     Relationship r;
     r.set_empty();
     return r;
   }
 
   // TODO: Remove
-  void SetListEditQualifier(ListEditQual q) { listOpQual = q; }
+  void set_listedit_qual(ListEditQual q) { listOpQual = q; }
   ListEditQual GetListEditQualifier() const { return listOpQual; }
 
   void set_empty() { type = Type::Empty; }
@@ -1626,7 +1543,7 @@ class TypedProperty {
   //  return (value::TypeTraits<T>::type_id == value::TypeTraits<Relation>::type_id)
   //}
 
-  bool IsConnection() const {
+  bool is_connection() const {
     return target.has_value();
   }
 
@@ -1726,7 +1643,8 @@ class Property {
   }
   bool is_connection() const { return _type == Type::Connection; }
 
-  nonstd::optional<Path> GetConnectionTarget() const {
+
+  nonstd::optional<Path> get_relationTarget() const {
     if (!is_connection()) {
       return nonstd::nullopt;
     }
@@ -1736,6 +1654,22 @@ class Property {
     }
 
     return nonstd::nullopt;
+  }
+
+  std::vector<Path> get_relationTargets() const {
+    std::vector<Path> pv;
+
+    if (!is_connection()) {
+      return pv;
+    }
+
+    if (_rel.is_path()) {
+      pv.push_back(_rel.targetPath);
+    } else if (_rel.is_pathvector()) {
+      pv = _rel.targetPathVector;
+    }
+
+    return pv;
   }
 
   std::string value_type_name() const {
@@ -1751,26 +1685,26 @@ class Property {
 
   bool has_custom() const { return _has_custom; }
 
-  void SetPropetryType(Type ty) { _type = ty; }
+  void set_property_type(Type ty) { _type = ty; }
 
-  Type GetPropertyType() const { return _type; }
+  Type get_property_type() const { return _type; }
 
-  void SetListEditQual(ListEditQual qual) { _listOpQual = qual; }
+  void set_listedit_qual(ListEditQual qual) { _listOpQual = qual; }
 
-  const Attribute &GetAttribute() const { return _attrib; }
+  const Attribute &get_attribute() const { return _attrib; }
 
-  Attribute &GetAttribute() { return _attrib; }
+  Attribute &attribute() { return _attrib; }
 
-  void SetAttribute(const Attribute &attrib) {
+  void set_attribute(const Attribute &attrib) {
     _attrib = attrib;
     _type = Type::Attrib;
   }
 
-  const Relationship &GetRelationship() const { return _rel; }
+  const Relationship &get_relationship() const { return _rel; }
 
-  Relationship &GetRelationship() { return _rel; }
+  Relationship &relationship() { return _rel; }
 
-  ListEditQual GetListEditQual() const { return _listOpQual; }
+  ListEditQual get_listedit_qual() const { return _listOpQual; }
 
  private:
   Attribute _attrib;

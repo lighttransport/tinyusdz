@@ -194,14 +194,14 @@ class TimeCode {
     return std::numeric_limits<double>::quiet_NaN();
   }
 
-  double Get(bool *is_default) {
-    if (is_default) {
-      (*is_default) = IsDefault();
+  double Get(bool *is_default_timecode) {
+    if (is_default_timecode) {
+      (*is_default_timecode) = is_default();
     }
     return time_;
   }
 
-  bool IsDefault() {
+  bool is_default() {
     // TODO: Bitwise comparison 
     return !std::isnan(time_);
   }
@@ -508,6 +508,7 @@ using float4 = std::array<float, 4>;
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
+
 
 //
 // OpenGL-like Column-major order
@@ -1253,11 +1254,11 @@ struct TimeSamples {
   std::vector<double> times;
   std::vector<value::Value> values;  // Could have arbitrary type, but usually an array of 'None'(ValueBlock) or Type T
 
-  bool IsScalar() const {
+  bool is_scalar() const {
     return (times.size() == 0) && (values.size() == 1);
   }
 
-  bool ValidTimeSamples() const {
+  bool is_valid_timesamples() const {
     if ((times.size() > 0) && (times.size() == values.size())) {
       return true;
     }
@@ -1392,4 +1393,6 @@ static_assert(sizeof(color3f) == 12, "sizeof(color3f) must be 12");
 static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 
 }  // namespace value
+
 }  // namespace tinyusdz
+
