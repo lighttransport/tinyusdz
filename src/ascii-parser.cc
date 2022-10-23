@@ -833,7 +833,7 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
         return false;
       }
 
-      if (!var.Valid()) {
+      if (!var.is_valid()) {
         PUSH_ERROR_AND_RETURN("Invalid Dict element(probably internal issue).");
       }
 

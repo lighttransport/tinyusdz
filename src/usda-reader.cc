@@ -882,7 +882,7 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "references") {
 
-        if (var.IsBlocked()) {
+        if (var.is_blocked()) {
           // create references with empty array.
           out->references = std::make_pair(listEditQual, std::vector<Reference>());
         } else if (auto pv = var.Get<Reference>()) {
@@ -900,7 +900,7 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "payload") {
 
-        if (var.IsBlocked()) {
+        if (var.is_blocked()) {
           // create payload with empty array.
           out->payload = std::make_pair(listEditQual, std::vector<Payload>());
         } else if (auto pv = var.Get<Reference>()) {

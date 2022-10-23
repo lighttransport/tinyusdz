@@ -515,7 +515,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
       auto pv = attr.GetValue();
 
       if (pv) {
-        if (pv.value().IsTimeSamples()) {
+        if (pv.value().is_timesamples()) {
           ss << ".timeSamples = " << print_typed_timesamples(pv.value().ts, indent+1);
         } else {
           ss << " = " << pv.value().value;
@@ -1173,7 +1173,7 @@ std::string print_customData(const CustomDataType &customData, const std::string
 std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
   std::stringstream ss;
 
-  //ss << "TODO: isObject " << meta.IsObject() << ", isValue " << meta.IsValue() << "\n";
+  //ss << "TODO: isObject " << meta.is_object() << ", isValue " << meta.IsValue() << "\n";
 
   if (auto pv = meta.Get<CustomDataType>()) {
     // dict

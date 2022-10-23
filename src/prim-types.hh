@@ -491,14 +491,14 @@ class MetaVariable {
   //   return value.index() == ValueType::index_of<T>();
   // }
 
-  bool Valid() const {
+  bool is_valid() const {
     return value.type_id() != value::TypeTraits<std::nullptr_t>::type_id;
   }
 
-  bool IsObject() const;
+  bool is_object() const;
 
   // TODO
-  bool IsTimeSamples() const { return false; }
+  bool is_timesamples() const { return false; }
 
   MetaVariable() = default;
 
@@ -518,7 +518,7 @@ class MetaVariable {
 
   uint32_t TypeId() const { return type_id(*this); }
 
-  bool IsBlocked() const { return (TypeId() == value::TYPE_ID_VALUEBLOCK); }
+  bool is_blocked() const { return (TypeId() == value::TYPE_ID_VALUEBLOCK); }
 
  private:
   static std::string type_name(const MetaVariable &v) {
