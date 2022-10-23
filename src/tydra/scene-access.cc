@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022-Present Light Transport Entertainment, Inc.
+//
 #include "scene-access.hh"
 
 #include "common-macros.inc"

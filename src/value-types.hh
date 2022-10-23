@@ -482,15 +482,15 @@ inline half operator+(float a, const half &b) {
 }
 
 inline half operator-(float a, const half &b) {
-  return float_to_half_full(a + half_to_float(b));
+  return float_to_half_full(a - half_to_float(b));
 }
 
 inline half operator*(float a, const half &b) {
-  return float_to_half_full(a + half_to_float(b));
+  return float_to_half_full(a * half_to_float(b));
 }
 
 inline half operator/(float a, const half &b) {
-  return float_to_half_full(a + half_to_float(b));
+  return float_to_half_full(a / half_to_float(b));
 }
 
 using int2 = std::array<int32_t, 2>;
