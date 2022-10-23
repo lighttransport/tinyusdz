@@ -1703,7 +1703,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     // CrateValue -> MetaVariable
     MetaVariable var;
 
-    var.Set(value.get_raw());
+    var.set(value.get_raw());
     var.type = value.type_name();
     var.name = key;
     //var.custom = TODO

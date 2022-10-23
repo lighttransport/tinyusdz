@@ -20,12 +20,14 @@ struct BlendShape {
   std::string name;
   Specifier spec{Specifier::Def};
 
-  TypedAttribute<std::vector<value::vector3f>> offsets;        // uniform vector3f[]. required property
-  TypedAttribute<std::vector<value::vector3f>> normalOffsets;  // uniform vector3f[]. required property
+  TypedAttribute<std::vector<value::vector3f>>
+      offsets;  // uniform vector3f[]. required property
+  TypedAttribute<std::vector<value::vector3f>>
+      normalOffsets;  // uniform vector3f[]. required property
 
   TypedAttribute<std::vector<int>>
-      pointIndices;  // uniform int[]. optional. vertex indices to the original mesh for each
-                     // values in `offsets` and `normalOffsets`.
+      pointIndices;  // uniform int[]. optional. vertex indices to the original
+                     // mesh for each values in `offsets` and `normalOffsets`.
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -36,19 +38,22 @@ struct Skeleton {
   std::string name;
   Specifier spec{Specifier::Def};
 
-  TypedAttribute<std::vector<value::matrix4d>> bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint in world coordinate.
+  TypedAttribute<std::vector<value::matrix4d>>
+      bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint
+                       // in world coordinate.
 
-  TypedAttribute<std::vector<value::token>> jointNames; // uniform token[]
-  TypedAttribute<std::vector<value::token>> joints; // uniform token[]
+  TypedAttribute<std::vector<value::token>> jointNames;  // uniform token[]
+  TypedAttribute<std::vector<value::token>> joints;      // uniform token[]
 
-  TypedAttribute<std::vector<value::matrix4d>> restTransforms;  // uniform matrix4d[] rest-pose transforms of each
-                                                // joint in local coordinate.
+  TypedAttribute<std::vector<value::matrix4d>>
+      restTransforms;  // uniform matrix4d[] rest-pose transforms of each
+                       // joint in local coordinate.
 
-  nonstd::optional<Relationship> proxyPrim; // rel proxyPrim
-
+  nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
 
   // SkelBindingAPI
-  nonstd::optional<Path> animationSource; // rel skel:animationSource = </path/...>
+  nonstd::optional<Path>
+      animationSource;  // rel skel:animationSource = </path/...>
 
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
       Visibility::Inherited};  // "token visibility"
@@ -89,34 +94,49 @@ struct SkelRoot {
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
       Visibility::Inherited};  // "token visibility"
 
-  nonstd::optional<Relationship> proxyPrim; // rel proxyPrim
+  nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
   std::vector<XformOp> xformOps;
 
   std::map<std::string, Property> props;
   PrimMeta meta;
 
-  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh` node?;
-
+  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
+  // node?;
 };
 
 struct SkelAnimation {
   std::string name;
   Specifier spec{Specifier::Def};
 
-  TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[]
-  TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights; // float[]
-  TypedAttribute<std::vector<value::token>> joints; // uniform token[]
-  TypedAttribute<Animatable<std::vector<value::quatf>>> rotations;  // quatf[] Joint-local unit quaternion rotations
+  TypedAttribute<std::vector<value::token>> blendShapes;  // uniform token[]
+  TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights;  // float[]
+  TypedAttribute<std::vector<value::token>> joints;  // uniform token[]
+  TypedAttribute<Animatable<std::vector<value::quatf>>>
+      rotations;  // quatf[] Joint-local unit quaternion rotations
   TypedAttribute<Animatable<std::vector<value::half3>>>
-      scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use float3 for TinyUSDZ for convenience?
-  TypedAttribute<Animatable<std::vector<value::float3>>> translations;  // float3[] Joint-local translation.
+      scales;  // half3[] Joint-local scaling in 16bit half float. TODO: Use
+               // float3 for TinyUSDZ for convenience?
+  TypedAttribute<Animatable<std::vector<value::float3>>>
+      translations;  // float3[] Joint-local translation.
 
   bool get_blendShapes(std::vector<value::token> *toks);
-  bool get_blendShapeWeights(std::vector<float> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
+  bool get_blendShapeWeights(std::vector<float> *vals,
+                             const double t = value::TimeCode::Default(),
+                             const TimeSampleInterpolationType tinterp =
+                                 TimeSampleInterpolationType::Held);
   bool get_joints(std::vector<value::token> *toks);
-  bool get_rotations(std::vector<value::quatf> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
-  bool get_scales(std::vector<value::half3> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
-  bool get_translations(std::vector<value::float3> *vals, const value::TimeCode tc = value::TimeCode::Default(), const TimeSampleInterpolationType tinterp = TimeSampleInterpolationType::Held);
+  bool get_rotations(std::vector<value::quatf> *vals,
+                     const double t = value::TimeCode::Default(),
+                     const TimeSampleInterpolationType tinterp =
+                         TimeSampleInterpolationType::Held);
+  bool get_scales(std::vector<value::half3> *vals,
+                  const double t = value::TimeCode::Default(),
+                  const TimeSampleInterpolationType tinterp =
+                      TimeSampleInterpolationType::Held);
+  bool get_translations(std::vector<value::float3> *vals,
+                        const double t = value::TimeCode::Default(),
+                        const TimeSampleInterpolationType tinterp =
+                            TimeSampleInterpolationType::Held);
 
   std::map<std::string, Property> props;
   PrimMeta meta;
