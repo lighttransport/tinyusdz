@@ -181,6 +181,7 @@ std::string print_variantSelectionMap(const VariantSelectionMap &map, const uint
 std::string print_payload(const prim::PayloadList &payload, const uint32_t indent);
 std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent);
 std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent);
+std::string print_prop(const Property &prop, const std::string &prop_name, uint32_t indent);
 std::string print_props(const std::map<std::string, Property> &props, uint32_t indent);
 
 

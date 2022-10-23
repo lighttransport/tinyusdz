@@ -17,7 +17,7 @@ $ make
 
 ### Binary size
 
-Currently is less than 4MB when compiled with `-DCMAKE_BUILD_TYPE=MinSizeRel`.
+Currently is less than 4MB when compiled with `-DCMAKE_BUILD_TYPE=MinSizeRel` (650 KB when gzip compressed).
 
 ## Run
 

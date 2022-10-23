@@ -399,8 +399,8 @@ bool USDCReader::Impl::ReconstructGeomSubset(
     const crate::Spec &spec = _specs[spec_index];
 
     Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.GetPrimPart()
-                             << ", prop part: " << path.GetPropPart()
+    DCOUT("Path prim part: " << path.prim_part()
+                             << ", prop part: " << path.prop_part()
                              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
@@ -413,9 +413,9 @@ bool USDCReader::Impl::ReconstructGeomSubset(
         _live_fieldsets.at(spec.fieldset_index);
 
     {
-      std::string prop_name = path.GetPropPart();
+      std::string prop_name = path.prop_part();
 
-      PrimAttrib attr;
+      Attribute attr;
       bool ret = ParseAttribute(child_fields, &attr, prop_name);
       DCOUT("prop: " << prop_name << ", ret = " << ret);
 
@@ -690,8 +690,8 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
     }
 
-    DCOUT("Path prim part: " << path.value().GetPrimPart()
-                             << ", prop part: " << path.value().GetPropPart()
+    DCOUT("Path prim part: " << path.value().prim_part()
+                             << ", prop part: " << path.value().prop_part()
                              << ", spec_index = " << spec_index);
 
     if (!_live_fieldsets.count(spec.fieldset_index)) {
@@ -704,7 +704,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
         _live_fieldsets.at(spec.fieldset_index);
 
     {
-      std::string prop_name = path.value().GetPropPart();
+      std::string prop_name = path.value().prop_part();
       if (prop_name.empty()) {
         // ???
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
@@ -847,12 +847,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<CustomDataType> customData;
   nonstd::optional<StringData> comment;
   Property::Type propType{Property::Type::EmptyAttrib};
-  PrimAttrib attr;
+  Attribute attr;
 
   bool is_scalar{false};
 
   value::Value scalar;
-  Relation rel;
+  Relationship rel;
 
   // for consistency check
   bool hasConnectionChildren{false};
@@ -876,8 +876,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "variability") {
       if (auto pv = fv.second.get_value<Variability>()) {
-        attr.variability = pv.value();
-        DCOUT("  variability = " << to_string(attr.variability));
+        attr.variability() = pv.value();
+        DCOUT("  variability = " << to_string(attr.variability()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`variability` field is not `varibility` type.");
@@ -894,7 +894,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       propType = Property::Type::Attrib;
 
       // Set scalar
-      // TODO: Easier CrateValue to PrimAttrib.var conversion
+      // TODO: Easier CrateValue to Attribute.var conversion
       scalar = fv.second.get_raw();
       is_scalar = true;
 
@@ -949,10 +949,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           // Single
           const Path path = items[0];
 
-          rel.Set(path);
+          rel.set(path);
 
         } else {
-          rel.Set(items);  // [Path]
+          rel.set(items);  // [Path]
         }
 
       } else {
@@ -990,13 +990,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           // Single
           const Path path = items[0];
 
-          rel.Set(path);
+          rel.set(path);
 
         } else {
-          rel.Set(items);  // [Path]
+          rel.set(items);  // [Path]
         }
 
-        rel.SetListEditQualifier(qual);
+        rel.set_listedit_qual(qual);
 
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
@@ -1152,8 +1152,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       DCOUT("spec_type = " << to_string(spec_type));
       if (spec_type == SpecType::Relationship) {
         // `rel` with no target. e.g. `rel target`
-        rel = Relation();
-        rel.SetEmpty();
+        rel = Relationship();
+        rel.set_empty();
         (*prop) = Property(rel, custom);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
@@ -1359,7 +1359,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         PUSH_ERROR_AND_RETURN("`upAxis` must be 'X', 'Y' or 'Z' but got '" + v +
                               "'(note: Case sensitive)");
       }
-      DCOUT("upAxis = " << to_string(metas->upAxis.GetValue()));
+      DCOUT("upAxis = " << to_string(metas->upAxis.get_value()));
 
     } else if (fv.first == "metersPerUnit") {
       if (auto vf = fv.second.get_value<float>()) {
@@ -1371,7 +1371,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "`metersPerUnit` value must be double or float type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("metersPerUnit = " << metas->metersPerUnit.GetValue());
+      DCOUT("metersPerUnit = " << metas->metersPerUnit.get_value());
     } else if (fv.first == "timeCodesPerSecond") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->timeCodesPerSecond = double(vf.value());
@@ -1383,7 +1383,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.GetValue());
+      DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.get_value());
     } else if (fv.first == "startTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->startTimeCode = double(vf.value());
@@ -1395,7 +1395,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("startimeCode = " << metas->startTimeCode.GetValue());
+      DCOUT("startimeCode = " << metas->startTimeCode.get_value());
     } else if (fv.first == "endTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->endTimeCode = double(vf.value());
@@ -1407,7 +1407,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-      DCOUT("endTimeCode = " << metas->endTimeCode.GetValue());
+      DCOUT("endTimeCode = " << metas->endTimeCode.get_value());
     } else if ((fv.first == "defaultPrim")) {
       auto v = fv.second.get_value<value::token>();
       if (!v) {
@@ -2030,7 +2030,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       }
 
       if (typeName) {
-        std::string prim_name = elemPath.GetPrimPart();
+        std::string prim_name = elemPath.prim_part();
 
         // Validation check should be already done in crate-reader, so no
         // further validation required.
@@ -2169,7 +2169,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       nonstd::optional<Prim> variantPrim;
       if (typeName) {
-        std::string prim_name = elemPath.GetPrimPart();
+        std::string prim_name = elemPath.prim_part();
         DCOUT("elemPath = " << dump_path(elemPath));
         DCOUT("prim_name = " << prim_name);
 
@@ -2221,14 +2221,14 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         Property prop;
         if (!ParseProperty(spec.spec_type, fvs, &prop)) {
           PUSH_ERROR_AND_RETURN_TAG(
-              kTag, fmt::format("Failed to parse Attribut: {}.", path.value().GetPropPart()));
+              kTag, fmt::format("Failed to parse Attribut: {}.", path.value().prop_part()));
 
         }
 
         // Parent Prim is not yet reconstructed, so store info to temporary buffer _variantAttributeNodes.
         _variantAttributeNodes.emplace(current, prop);
 
-        DCOUT(fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}", current, path.value().GetPropPart(), spec.path_index));
+        DCOUT(fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}", current, path.value().prop_part(), spec.path_index));
 
       } else {
         // Maybe parent is Class/Over, or inherited
@@ -2279,8 +2279,13 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     return false;
   }
 
+#if 0 // not used
   crate::Spec spec;
   {
+    if (!psmap.count(uint32_t(current))) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Spec index {} not found in parent Prim index {}", current, parent));
+    }
+
     uint32_t spec_index = psmap.at(uint32_t(current));
 
     if (spec_index >= _specs.size()) {
@@ -2291,6 +2296,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     spec = _specs[spec_index];
   }
+#endif
 
   // TODO: Refactor
 
@@ -2373,6 +2379,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
         PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
       }
 
+      DCOUT(fmt::format("path index[{}] -> spec index [{}]", _specs[i].path_index.value, uint32_t(i)));
       path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
     }
   }
