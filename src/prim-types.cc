@@ -320,7 +320,7 @@ Path Path::get_parent_prim_path() const {
   return Path(_prim_part.substr(0, n), "");
 }
 
-bool MetaVariable::IsObject() const {
+bool MetaVariable::is_object() const {
   return (value.type_id() ==
           value::TypeTraits<tinyusdz::CustomDataType>::type_id);
 }
