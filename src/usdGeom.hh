@@ -59,7 +59,7 @@ struct GPrim : Xformable {
   TypedAttribute<Animatable<float>> displayOpacity;  // primvars:displaOpacity
 #endif
 
-  nonstd::optional<Relation> proxyPrim;
+  nonstd::optional<Relationship> proxyPrim;
   nonstd::optional<MaterialBindingAPI> materialBinding;
 
   std::map<std::string, Property> props;
@@ -400,7 +400,7 @@ struct GeomPoints : public GPrim {
 //
 struct PointInstancer : public GPrim {
 
-  nonstd::optional<Relation> prototypes; // rel prototypes
+  nonstd::optional<Relationship> prototypes; // rel prototypes
 
   TypedAttribute<Animatable<std::vector<int32_t>>> protoIndices; // int[] protoIndices
   TypedAttribute<Animatable<std::vector<int64_t>>> ids; // int64[] protoIndices

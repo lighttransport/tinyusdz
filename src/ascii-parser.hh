@@ -680,7 +680,7 @@ class AsciiParser {
 
   bool Eof() { return _sr->eof(); }
 
-  bool ParseRelation(Relation *result);
+  bool ParseRelationship(Relationship *result);
   bool ParseProperty(std::map<std::string, Property> *props);
 
   //
@@ -769,7 +769,7 @@ class AsciiParser {
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
-                          PrimAttrib *out_attr);
+                          Attribute *out_attr);
 
   bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
 
