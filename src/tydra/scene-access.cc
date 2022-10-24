@@ -308,56 +308,55 @@ void ToProperty(
 }
 #endif
 
-#if 0
 // Scalar-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
-template<typename T>
-void ToProperty(
-  const TypedAttribute<T> &input,
-  Property &output)
-{
-  if (input.IsBlocked()) {
+template <typename T>
+void ToProperty(const TypedAttribute<T> &input, Property &output) {
+  if (input.is_blocked()) {
     Attribute attr;
-    attr.set_blocked(input.IsBlocked());
+    attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
     output = Property(std::move(attr), /*custom*/ false);
-  } else if (input.IsValueEmpty()) {
+  } else if (input.is_value_empty()) {
     // type info only
-    output = Property(value::TypeTraits<T>::type_name(), /* custom */false);
-  } else if (input.IsConnection()) {
-
+    output = Property(value::TypeTraits<T>::type_name(), /* custom */ false);
+  } else if (input.is_connection()) {
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
-    Relation relTarget;
-    if (auto pv = input.GetConnection()) {
-      relTarget.targetPath = pv.value();
-    } else {
+    Relationship relTarget;
+    std::vector<Path> paths = input.get_connections();
+    if (paths.empty()) {
       // ??? TODO: report internal error.
+    } else if (paths.size() == 1) {
+      relTarget.set(paths[0]);
+    } else {
+      relTarget.set(paths);
     }
-    output = Property(relTarget, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
+    output = Property(relTarget, /* type */ value::TypeTraits<T>::type_name(),
+                      /* custom */ false);
 
   } else {
     // Includes !authored()
-    value::Value val(input.GetValue());
-    primvar::PrimVar pvar;
-    pvar.set_scalar(val);
-    Attribute attr;
-    attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Uniform;
-    output = Property(attr, /* custom */false);
+    if (auto pv = input.get_value()) {
+      value::Value val(pv.value());
+      primvar::PrimVar pvar;
+      pvar.set_scalar(val);
+      Attribute attr;
+      attr.set_var(std::move(pvar));
+      attr.variability() = Variability::Uniform;
+      output = Property(attr, /* custom */ false);
+    } else {
+      // TODO: Report error.
+    }
   }
 }
-#endif
 
 // Scalar or TimeSample-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 //
 // TODO: Support timeSampled attribute.
-template<typename T>
-void ToProperty(
-  const TypedAttribute<Animatable<T>> &input,
-  Property &output)
-{
+template <typename T>
+void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -366,10 +365,9 @@ void ToProperty(
     return;
   } else if (input.is_value_empty()) {
     // type info only
-    output = Property(value::TypeTraits<T>::type_name(), /* custom */false);
+    output = Property(value::TypeTraits<T>::type_name(), /* custom */ false);
     return;
   } else if (input.is_connection()) {
-
     DCOUT("IsConnection");
 
     // Use Relation for Connection(as typed relationshipTarget)
@@ -378,7 +376,8 @@ void ToProperty(
     std::vector<Path> pv = input.get_connections();
     if (pv.empty()) {
       DCOUT("??? Empty connectionTarget.");
-    } if (pv.size() == 1) {
+    }
+    if (pv.size() == 1) {
       rel.set(pv[0]);
       DCOUT("targetPath = " << rel.targetPath);
     } else if (pv.size() > 1) {
@@ -388,7 +387,8 @@ void ToProperty(
       DCOUT("??? GetConnection faile.");
     }
 
-    output = Property(rel, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
+    output = Property(rel, /* type */ value::TypeTraits<T>::type_name(),
+                      /* custom */ false);
     return;
 
   } else {
@@ -403,7 +403,7 @@ void ToProperty(
         Attribute attr;
         attr.set_var(std::move(pvar));
         attr.variability() = Variability::Uniform;
-        output = Property(attr, /* custom */false);
+        output = Property(attr, /* custom */ false);
         return;
       } else if (aval.value().is_blocked()) {
         Attribute attr;
@@ -419,7 +419,8 @@ void ToProperty(
   }
 
   // fallback to Property with invalid value
-  output = Property(value::TypeTraits<std::nullptr_t>::type_name(), /*custom*/ false);
+  output = Property(value::TypeTraits<std::nullptr_t>::type_name(),
+                    /*custom*/ false);
 }
 
 #if 0
@@ -504,7 +505,6 @@ bool ToTerminalAttributeValue(const Attribute &attr,
 }
 
 bool XformOpToProperty(const XformOp &x, Property &prop) {
-
   primvar::PrimVar pv;
 
   Attribute attr;
@@ -534,7 +534,7 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
   attr.set_var(std::move(pv));
   // TODO: attribute meta
 
-  prop = Property(attr, /* custom */false);
+  prop = Property(attr, /* custom */ false);
 
   return true;
 }
@@ -570,7 +570,6 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     (*out_prop) = prop;
 
   } else {
-
     // XformOp?
     for (const auto &item : xform.xformOps) {
       std::string op_name = to_string(item.op);
@@ -605,7 +604,6 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   DCOUT("prop_name = " << prop_name);
   if (prop_name == "inputs:file") {
-
     ToProperty(tex.file, (*out_prop));
 
   } else {
@@ -623,7 +621,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
-    const UsdPrimvarReader_float2 &preader, const std::string &prop_name, Property *out_prop) {
+    const UsdPrimvarReader_float2 &preader, const std::string &prop_name,
+    Property *out_prop) {
   if (!out_prop) {
     return nonstd::make_unexpected(
         "[InternalError] nullptr in output Property is not allowed.");
@@ -631,7 +630,6 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   DCOUT("prop_name = " << prop_name);
   if (prop_name == "inputs:varname") {
-
     ToProperty(preader.varname, (*out_prop));
 
   } else {
@@ -649,7 +647,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
-    const UsdPrimvarReader_float &preader, const std::string &prop_name, Property *out_prop) {
+    const UsdPrimvarReader_float &preader, const std::string &prop_name,
+    Property *out_prop) {
   if (!out_prop) {
     return nonstd::make_unexpected(
         "[InternalError] nullptr in output Property is not allowed.");
@@ -657,7 +656,6 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   DCOUT("prop_name = " << prop_name);
   if (prop_name == "inputs:varname") {
-
     ToProperty(preader.varname, (*out_prop));
 
   } else {
@@ -675,8 +673,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
-    const Material &material,
-    const std::string &prop_name,
+    const Material &material, const std::string &prop_name,
     Property *out_prop) {
   if (!out_prop) {
     return nonstd::make_unexpected(
@@ -689,9 +686,9 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     if (!material.surface) {
     }
   }
-  //if (prop_name == "outputs:volume") {
+  // if (prop_name == "outputs:volume") {
 
-  //ToProperty(preader.varname, (*out_prop));
+  // ToProperty(preader.varname, (*out_prop));
 
   {
     const auto it = material.props.find(prop_name);
@@ -701,9 +698,142 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     }
 
     (*out_prop) = it->second;
-    DCOUT("Prop found: " << prop_name << ", ty = " << it->second.value_type_name());
+    DCOUT("Prop found: " << prop_name
+                         << ", ty = " << it->second.value_type_name());
   }
 
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const SkelRoot &skelroot, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  {
+    const auto it = skelroot.props.find(prop_name);
+    if (it == skelroot.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+    DCOUT("Prop found: " << prop_name
+                         << ", ty = " << it->second.value_type_name());
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const BlendShape &blendshape, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "offsets") {
+    ToProperty(blendshape.offsets, (*out_prop));
+  } else if (prop_name == "normalOffsets") {
+    ToProperty(blendshape.normalOffsets, (*out_prop));
+  } else if (prop_name == "pointIndices") {
+    ToProperty(blendshape.pointIndices, (*out_prop));
+  } else {
+    const auto it = blendshape.props.find(prop_name);
+    if (it == blendshape.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+    DCOUT("Prop found: " << prop_name
+                         << ", ty = " << it->second.value_type_name());
+  }
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const Skeleton &skel, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "bindTransforms") {
+    ToProperty(skel.bindTransforms, (*out_prop));
+  } else if (prop_name == "jointNames") {
+    ToProperty(skel.jointNames, (*out_prop));
+  } else if (prop_name == "joints") {
+    ToProperty(skel.joints, (*out_prop));
+  } else if (prop_name == "restTransforms") {
+    ToProperty(skel.restTransforms, (*out_prop));
+  } else if (prop_name == "animationSource") {
+    if (skel.animationSource) {
+      Relationship rel;
+      rel.set(skel.animationSource.value());
+      (*out_prop) = Property(rel, /* custom */false);
+    } else {
+      // empty 
+      return false;
+    }
+  } else {
+    const auto it = skel.props.find(prop_name);
+    if (it == skel.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+    DCOUT("Prop found: " << prop_name
+                         << ", ty = " << it->second.value_type_name());
+  }
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const SkelAnimation &anim, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "blendShapes") {
+    ToProperty(anim.blendShapes, (*out_prop));
+  } else if (prop_name == "blendShapeWeights") {
+    ToProperty(anim.blendShapeWeights, (*out_prop));
+  } else if (prop_name == "joints") {
+    ToProperty(anim.joints, (*out_prop));
+  } else if (prop_name == "rotations") {
+    ToProperty(anim.rotations, (*out_prop));
+  } else if (prop_name == "scales") {
+    ToProperty(anim.scales, (*out_prop));
+  } else if (prop_name == "translations") {
+    ToProperty(anim.translations, (*out_prop));
+  } else {
+    const auto it = anim.props.find(prop_name);
+    if (it == anim.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+    DCOUT("Prop found: " << prop_name
+                         << ", ty = " << it->second.value_type_name());
+  }
   return true;
 }
 
@@ -717,7 +847,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   if (const auto preader_f = shader.value.as<UsdPrimvarReader_float>()) {
     return GetPrimProperty(*preader_f, prop_name, out_prop);
-  } else if (const auto preader_f2 = shader.value.as<UsdPrimvarReader_float2>()) {
+  } else if (const auto preader_f2 =
+                 shader.value.as<UsdPrimvarReader_float2>()) {
     return GetPrimProperty(*preader_f2, prop_name, out_prop);
   } else if (const auto ptex = shader.value.as<UsdUVTexture>()) {
     return GetPrimProperty(*ptex, prop_name, out_prop);
@@ -725,8 +856,6 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     return nonstd::make_unexpected("TODO: " + shader.value.type_name());
   }
 }
-
-
 
 // TODO: provide visit map to prevent circular referencing.
 bool EvaluateAttributeImpl(
@@ -739,13 +868,13 @@ bool EvaluateAttributeImpl(
   (void)tc;
   (void)tinterp;
 
-  DCOUT("Prim : " << prim.element_path().element_name() << "(" << prim.type_name() << ") attr_name " << attr_name);
+  DCOUT("Prim : " << prim.element_path().element_name() << "("
+                  << prim.type_name() << ") attr_name " << attr_name);
 
   Property prop;
   if (!GetProperty(prim, attr_name, &prop, err)) {
     return false;
   }
-
 
   if (prop.is_connection()) {
     // Follow connection target Path(singple targetPath only).
@@ -755,16 +884,20 @@ bool EvaluateAttributeImpl(
     }
 
     if (pv.size() > 1) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Multiple targetPaths assigned to .connection."));
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Multiple targetPaths assigned to .connection."));
     }
 
     auto target = pv[0];
 
     std::string targetPrimPath = target.prim_part();
     std::string targetPrimPropName = target.prop_part();
-    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath << ", Prop: " << targetPrimPropName << ")");
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                     << ", Prop: " << targetPrimPropName
+                                     << ")");
 
-    auto targetPrimRet = stage.GetPrimAtPath(Path(targetPrimPath, /* prop */""));
+    auto targetPrimRet =
+        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
     if (targetPrimRet) {
       // Follow the connetion
       const Prim *targetPrim = targetPrimRet.value();
@@ -778,8 +911,8 @@ bool EvaluateAttributeImpl(
       }
       visited_paths.insert(abs_path);
 
-      return EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName, value, err,
-                                   visited_paths, tc, tinterp);
+      return EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                   value, err, visited_paths, tc, tinterp);
 
     } else {
       PUSH_ERROR_AND_RETURN(targetPrimRet.error());
@@ -814,7 +947,6 @@ bool EvaluateAttributeImpl(
   return true;
 }
 
-
 }  // namespace
 
 void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
@@ -826,32 +958,30 @@ void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
   }
 }
 
-bool GetProperty(
-    const tinyusdz::Prim &prim,
-    const std::string &attr_name,
-    Property *out_prop,
-    std::string *err)
-{
-
-#define GET_PRIM_PROPERTY(__ty) \
-  if (prim.is<__ty>()) { \
-    auto ret = GetPrimProperty(*prim.as<__ty>(), attr_name, out_prop); \
-    if (ret) { \
-      if (!ret.value()) { \
-        PUSH_ERROR_AND_RETURN( \
+bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
+                 Property *out_prop, std::string *err) {
+#define GET_PRIM_PROPERTY(__ty)                                         \
+  if (prim.is<__ty>()) {                                                \
+    auto ret = GetPrimProperty(*prim.as<__ty>(), attr_name, out_prop);  \
+    if (ret) {                                                          \
+      if (!ret.value()) {                                               \
+        PUSH_ERROR_AND_RETURN(                                          \
             fmt::format("Attribute `{}` does not exist in Prim {}({})", \
-                        attr_name, prim.element_path().prim_part(), \
-                        value::TypeTraits<__ty>::type_name())); \
-      } \
-    } else { \
-      PUSH_ERROR_AND_RETURN(ret.error()); \
-    } \
+                        attr_name, prim.element_path().prim_part(),     \
+                        value::TypeTraits<__ty>::type_name()));         \
+      }                                                                 \
+    } else {                                                            \
+      PUSH_ERROR_AND_RETURN(ret.error());                               \
+    }                                                                   \
   } else
-
 
   GET_PRIM_PROPERTY(Xform)
   GET_PRIM_PROPERTY(Shader)
   GET_PRIM_PROPERTY(Material)
+  GET_PRIM_PROPERTY(SkelRoot)
+  GET_PRIM_PROPERTY(BlendShape)
+  GET_PRIM_PROPERTY(Skeleton)
+  GET_PRIM_PROPERTY(SkelAnimation)
   {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
@@ -859,12 +989,8 @@ bool GetProperty(
   return true;
 }
 
-bool GetAttribute(
-    const tinyusdz::Prim &prim,
-    const std::string &attr_name,
-    Attribute *out_attr,
-    std::string *err)
-{
+bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
+                  Attribute *out_attr, std::string *err) {
   if (!out_attr) {
     PUSH_ERROR_AND_RETURN("`out_attr` argument is nullptr.");
   }
@@ -881,15 +1007,10 @@ bool GetAttribute(
   }
 
   PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Attribute.", attr_name));
-
 }
 
-bool GetRelationship(
-    const tinyusdz::Prim &prim,
-    const std::string &rel_name,
-    Relationship *out_rel,
-    std::string *err)
-{
+bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
+                     Relationship *out_rel, std::string *err) {
   if (!out_rel) {
     PUSH_ERROR_AND_RETURN("`out_rel` argument is nullptr.");
   }
@@ -904,7 +1025,7 @@ bool GetRelationship(
     (*out_rel) = std::move(prop.get_relationship());
   }
 
-  PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Relationship.",rel_name));
+  PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Relationship.", rel_name));
 
   return true;
 }
