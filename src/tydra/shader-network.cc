@@ -25,9 +25,11 @@ bool EvaluateUsdPreviewSurfaceAttribute(
     if (shader.diffuseColor.authored()) {
 
     } else {
-      value::color3f col = shader.diffuseColor.get_value().value;
-      out_val = col;
-      return true;
+      value::color3f col;
+      if (shader.diffuseColor.get_value().get(&col)) {
+        out_val = col;
+        return true;
+      } 
     }
   }
 

@@ -37,13 +37,9 @@ const std::vector<value::point3f> GeomMesh::GetPoints(
   }
 
   if (auto pv = points.get_value()) {
-    if (pv.value().is_timesamples()) {
-      std::vector<value::point3f> v;
-      if (pv.value().ts.get(&v, time, interp)) {
-        dst = v;
-      }
-    } else if (pv.value().is_scalar()) {
-      dst = pv.value().value;
+    std::vector<value::point3f> val;
+    if (pv.value().get(time, &val, interp)) {
+      dst = std::move(val);
     }
   }
 
@@ -81,14 +77,11 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(
     }
 
     if (normals.get_value()) {
-      if (normals.get_value().value().is_timesamples()) {
-        // TODO
-        (void)time;
-        (void)interp;
-        return dst;
-      }
 
-      dst = normals.get_value().value().value;
+      std::vector<value::normal3f> val;
+      if (normals.get_value().value().get(time, &val, interp)) {
+        dst = std::move(val);
+      }
     }
   }
 
@@ -123,7 +116,11 @@ const std::vector<int32_t> GeomMesh::GetFaceVertexCounts() const {
   }
 
   if (auto pv = faceVertexCounts.get_value()) {
-    dst = pv.value().value;
+    std::vector<int32_t> val;
+    // TOOD: timesamples
+    if (pv.value().get(&val)) {
+      dst = std::move(val);
+    }
   }
   return dst;
 }
@@ -141,7 +138,11 @@ const std::vector<int32_t> GeomMesh::GetFaceVertexIndices() const {
   }
 
   if (auto pv = faceVertexIndices.get_value()) {
-    dst = pv.value().value;
+    std::vector<int32_t> val;
+    // TOOD: timesamples
+    if (pv.value().get(&val)) {
+      dst = std::move(val);
+    }
   }
   return dst;
 }
@@ -252,8 +253,17 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
 
   if (faceVertexCounts.get_value()) {
     const auto fvp = faceVertexCounts.get_value();
-    const auto &fv = fvp.value().value;
-    size_t n = fv.size();
+    std::vector<int32_t> fvc;
+
+    if (fvp.value().is_timesamples()) {
+      return nonstd::make_unexpected("TODO: faceVertexCounts.timeSamples\n");
+    }
+
+    if (!fvp.value().get(&fvc)) {
+      return nonstd::make_unexpected("Failed to get faceVertexCounts data.");
+    }
+
+    size_t n = fvc.size();
 
     // Currently we only check if face ids are valid.
     for (size_t i = 0; i < geom_subset_children.size(); i++) {

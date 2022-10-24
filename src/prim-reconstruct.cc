@@ -86,8 +86,7 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
   if (var.is_scalar()) {
 
     if (auto pv = var.get_value<T>()) {
-      dst.value = pv.value();
-      dst.blocked = false;
+      dst.set(pv.value());
 
       return std::move(dst);
     }
@@ -97,9 +96,9 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
 
       // Attribute Block?
       if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
-        dst.ts.add_blocked_sample(t);
+        dst.add_blocked_sample(t);
       } else if (auto pv = var.get_ts_value<T>(i)) {
-        dst.ts.add_sample(t, pv.value());
+        dst.add_sample(t, pv.value());
       } else {
         // Type mismatch
         DCOUT(i << "/" << var.var().times.size() << " type mismatch.");
@@ -133,8 +132,7 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
         ext.lower = pv.value()[0];
         ext.upper = pv.value()[1];
 
-        dst.value = ext;
-        dst.blocked = false;
+        dst.set(ext);
 
       } else {
         return nonstd::nullopt;
@@ -148,13 +146,13 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
 
       // Attribute Block?
       if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
-        dst.ts.add_blocked_sample(t);
+        dst.add_blocked_sample(t);
       } else if (auto pv = var.get_ts_value<std::vector<value::float3>>(i)) {
         if (pv.value().size() == 2) {
           Extent ext;
           ext.lower = pv.value()[0];
           ext.upper = pv.value()[1];
-          dst.ts.add_sample(t, ext);
+          dst.add_sample(t, ext);
         } else {
           DCOUT(i << "/" << var.var().times.size() << " array size mismatch.");
           return nonstd::nullopt;

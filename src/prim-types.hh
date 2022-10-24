@@ -767,7 +767,7 @@ struct TypedTimeSamples {
 
   bool empty() const { return _samples.empty(); }
 
-  void Update() {
+  void update() const {
     std::sort(_samples.begin(), _samples.end(),
               [](const Sample &a, const Sample &b) { return a.t < b.t; });
 
@@ -782,7 +782,7 @@ struct TypedTimeSamples {
   bool get(
       T *dst,
       double t = value::TimeCode::Default(),
-      TimeSampleInterpolationType interp = TimeSampleInterpolationType::Held) {
+      TimeSampleInterpolationType interp = TimeSampleInterpolationType::Held) const {
 
     if (!dst) {
       return false;
@@ -793,7 +793,7 @@ struct TypedTimeSamples {
     }
 
     if (_dirty) {
-      Update();
+      update();
     }
 
     if (value::TimeCode(t).is_default()) {
@@ -806,7 +806,6 @@ struct TypedTimeSamples {
           _samples.begin(), _samples.end(), t,
           [](const Sample &a, double tval) { return a.t < tval; });
 
-      // TODO: Support other interpolation method for example cubic?
       if (interp == TimeSampleInterpolationType::Linear) {
         size_t idx0 = size_t(std::max(
             int64_t(0),
@@ -856,7 +855,7 @@ struct TypedTimeSamples {
     _dirty = true;
   }
 
-  void add_sample(const double t, T &v) {
+  void add_sample(const double t, const T &v) {
     Sample s;
     s.t = t;
     s.value = v;
@@ -872,55 +871,124 @@ struct TypedTimeSamples {
     _dirty = true;
   }
 
-  const std::vector<Sample> &get_samples() const { return _samples; }
-  std::vector<Sample> &samples() { return _samples; }
+  const std::vector<Sample> &get_samples() const {
+    if (_dirty) {
+      update();
+    }
+
+    return _samples; }
+
+  std::vector<Sample> &samples() {
+    if (_dirty) {
+      update();
+    }
+
+    return _samples;
+  }
 
  private:
-  // Need to be sorted when look up the value.
-  std::vector<Sample> _samples;
-  bool _dirty{false};
+  // Need to be sorted when looking up the value.
+  mutable std::vector<Sample> _samples;
+  mutable bool _dirty{false};
 };
 
+//
+// Scalar or TimeSamples.
+//
 template <typename T>
 struct Animatable {
-  // scalar
-  T value;
-  bool blocked{false};
+ public:
 
-  // timesamples
-  TypedTimeSamples<T> ts;
+  bool is_blocked() const { return _blocked; }
 
-  bool is_timesamples() const { return !ts.empty(); }
-
-  bool is_scalar() const { return ts.empty(); }
-
-  bool is_blocked() const { return blocked; }
-
-#if 0  // TODO
-  T Get() const { return value; }
-
-  T Get(double t) {
-    if (IsTimeSampled()) {
-      // TODO: lookup value by t
-      return timeSamples.Get(t);
+  bool is_timesamples() const {
+    if (is_blocked()) {
+      return false;
     }
-    return value;
+    return !_ts.empty(); 
   }
-#endif
+
+  bool is_scalar() const {
+    if (is_blocked()) {
+      return false;
+    }
+    return _ts.empty();
+  }
+
+
+  ///
+  /// Get value at specific time.
+  ///
+  bool get(double t, T *v, const TimeSampleInterpolationType tinerp = TimeSampleInterpolationType::Held) const {
+    if (!v) {
+      return false;
+    }
+
+    if (is_blocked()) {
+      return false;
+    } else if (is_scalar()) {
+      (*v) = _value;
+      return true;
+    } else { // timesamples
+      return _ts.get(v, t, tinerp); 
+    }
+  }
+
+  ///
+  /// Get scalar value. For timesamples value, fetch the value at Default time.
+  ///
+  bool get(T *v) const {
+    if (!v) {
+      return false;
+    }
+
+    if (is_blocked()) {
+      return false;
+    } else if (is_scalar()) {
+      (*v) = _value;
+      return true; 
+    } else { // timesamples
+      return get(value::TimeCode::Default(), v);
+    }
+  }
+
 
   // TimeSamples
-  void set(double t, const T &v);
+  //void set(double t, const T &v);
+
+  void add_sample(const double t, const T &v) {
+    _ts.add_sample(t, v);
+  }
+
+  // Add None(ValueBlock) sample to timesamples 
+  void add_blocked_sample(const double t) {
+    _ts.add_blocked_sample(t);
+  }
 
   // Scalar
   void set(const T &v) {
-    value = v;
+    _value = v;
+    _blocked = false;
+  }
+
+  const TypedTimeSamples<T> &get_timesamples() const {
+    return _ts;
   }
 
   Animatable() {}
 
-  Animatable(const T &v) : value(v) {}
+  Animatable(const T &v) : _value(v) {}
 
   // TODO: Init with timesamples
+  
+ private:
+ 
+  // scalar
+  T _value;
+  bool _blocked{false};
+
+  // timesamples
+  TypedTimeSamples<T> _ts;
 };
 
 ///

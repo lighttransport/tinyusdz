@@ -413,14 +413,17 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
     nonstd::optional<Animatable<T>> aval = input.get_value();
     if (aval) {
       if (aval.value().is_scalar()) {
-        value::Value val(aval.value().value);
-        primvar::PrimVar pvar;
-        pvar.set_scalar(val);
-        Attribute attr;
-        attr.set_var(std::move(pvar));
-        attr.variability() = Variability::Uniform;
-        output = Property(attr, /* custom */ false);
-        return;
+        T a;
+        if (aval.value().get(&a)) {
+          value::Value val(a);
+          primvar::PrimVar pvar;
+          pvar.set_scalar(val);
+          Attribute attr;
+          attr.set_var(std::move(pvar));
+          attr.variability() = Variability::Uniform;
+          output = Property(attr, /* custom */ false);
+          return;
+        }
       } else if (aval.value().is_blocked()) {
         Attribute attr;
         attr.set_type_name(value::TypeTraits<T>::type_name());
@@ -484,11 +487,16 @@ void ToProperty(
     primvar::PrimVar pvar;
 
     if (v.is_timesamples()) {
-      value::TimeSamples ts = ToTypelessTimeSamples(v.ts);
+      value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
       pvar.set_timesamples(ts);
     } else if (v.is_scalar()) {
-      value::Value val(v.value);
-      pvar.set_scalar(val);
+      T a;
+      if (v.get(&a)) {
+        value::Value val(a);
+        pvar.set_scalar(val);
+      } else {
+        DCOUT("??? Invalid Animatable value.");
+      }
     } else {
       DCOUT("??? Invalid Animatable value.");
     }
