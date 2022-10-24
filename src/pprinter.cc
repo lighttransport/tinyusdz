@@ -212,11 +212,15 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
   std::stringstream ss;
 
   if (v.is_timesamples()) {
-    ss << print_typed_timesamples(v.ts, indent);
+    ss << print_typed_timesamples(v.get_timesamples(), indent);
   } else if (v.is_blocked()) {
     ss << "None";
   } else if (v.is_scalar()) {
-    ss << v.value;
+    T a;
+    if (!v.get(&a)) {
+      return "[Animatable: InternalError]";
+    }
+    ss << a;
   } else {
     return "[FIXME: Invalid Animatable]";
   }
@@ -229,11 +233,15 @@ std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent
   std::stringstream ss;
 
   if (v.is_timesamples()) {
-    ss << print_typed_token_timesamples(v.ts, indent);
+    ss << print_typed_token_timesamples(v.get_timesamples(), indent);
   } else if (v.is_blocked()) {
     ss << "None";
   } else if (v.is_scalar()) {
-    ss << quote(to_string(v.value));
+    T a;
+    if (!v.get(&a)) {
+      return "[Animatable: InternalError]";
+    }
+    ss << quote(to_string(a));
   } else {
     return "[FIXME: Invalid Animatable]";
   }
@@ -516,9 +524,14 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
       if (pv) {
         if (pv.value().is_timesamples()) {
-          ss << ".timeSamples = " << print_typed_timesamples(pv.value().ts, indent+1);
+          ss << ".timeSamples = " << print_typed_timesamples(pv.value().get_timesamples(), indent+1);
         } else {
-          ss << " = " << pv.value().value;
+          T a;
+          if (pv.value().get(&a)) {
+            ss << " = " << a;
+          } else {
+            ss << " = [InternalError]";
+          } 
         }
       }
     }

@@ -279,9 +279,63 @@ inline value::float4 operator*(const value::float4 &a, const float b) {
   return {a[0] * b, a[1] * b, a[2] * b, a[3] * b};
 }
 
+// normal
+inline value::normal3f operator+(const value::normal3f &a, const value::normal3f &b) {
+  return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+}
+
+inline value::normal3f operator+(const float a, const value::normal3f &b) {
+  return {a + b[0], a + b[1], a + b[2]};
+}
+
+inline value::normal3f operator+(const value::normal3f &a, const float b) {
+  return {a[0] + b, a[1] + b, a[2] + b};
+}
+
+inline value::normal3f operator-(const value::normal3f &a, const value::normal3f &b) {
+  return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+inline value::normal3f operator-(const float a, const value::normal3f &b) {
+  return {a - b[0], a - b[1], a - b[2]};
+}
+
+inline value::normal3f operator-(const value::normal3f &a, const float b) {
+  return {a[0] - b, a[1] - b, a[2] - b};
+}
+
+inline value::normal3f operator*(const value::normal3f &a, const value::normal3f &b) {
+  return {a[0] * b[0], a[1] * b[1], a[2] * b[2]};
+}
+
+inline value::normal3f operator*(const float a, const value::normal3f &b) {
+  return {a * b[0], a * b[1], a * b[2]};
+}
+
+inline value::normal3f operator*(const value::normal3f &a, const float b) {
+  return {a[0] * b, a[1] * b, a[2] * b};
+}
+
+inline value::normal3f operator/(const value::normal3f &a, const value::normal3f &b) {
+  return {a[0] / b[0], a[1] / b[1], a[2] / b[2]};
+}
+
+inline value::normal3f operator/(const float a, const value::normal3f &b) {
+  return {a / b[0], a / b[1], a / b[2]};
+}
+
+inline value::normal3f operator/(const value::normal3f &a, const float b) {
+  return {a[0] / b, a[1] / b, a[2] / b};
+}
+
+// -- lerp
+
+// no lerp by default
 template <typename T>
 inline T lerp(const T &a, const T &b, const double t) {
-  return (1.0 - t) * a + t * b;
+  (void)b;
+  (void)t;
+  return a;
 }
 
 template <>
@@ -316,6 +370,11 @@ inline value::float2 lerp(const value::float2 &a, const value::float2 &b, const 
 
 template <>
 inline value::float3 lerp(const value::float3 &a, const value::float3 &b, const double t) {
+  return float(1.0 - t) * a + float(t) * b;
+}
+
+template <>
+inline value::normal3f lerp(const value::normal3f &a, const value::normal3f &b, const double t) {
   return float(1.0 - t) * a + float(t) * b;
 }
 

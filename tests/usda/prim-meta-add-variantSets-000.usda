@@ -10,4 +10,5 @@ def Xform "Bottle" (
         string modelingVariant = "Tall"
     }
     add variantSets = "modelingVariant"
-)
+) {
+}
