@@ -673,42 +673,49 @@ struct quatd {
 struct vector3h {
   half x, y, z;
 
+  half operator[](size_t idx) const { return *(&x + idx); }
   half operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct vector3f {
   float x, y, z;
 
+  float operator[](size_t idx) const { return *(&x + idx); }
   float operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct vector3d {
   double x, y, z;
 
+  double operator[](size_t idx) const { return *(&x + idx); }
   double operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct normal3h {
   half x, y, z;
 
+  half operator[](size_t idx) const { return *(&x + idx); }
   half operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct normal3f {
   float x, y, z;
 
+  float operator[](size_t idx) const { return *(&x + idx); }
   float operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct normal3d {
   double x, y, z;
 
+  double operator[](size_t idx) const { return *(&x + idx); }
   double operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct point3h {
   half x, y, z;
 
+  half operator[](size_t idx) const { return *(&x + idx); }
   half operator[](size_t idx) { return *(&x + idx); }
 };
 
@@ -796,6 +803,7 @@ inline point3h operator/(const point3h &a, const point3h &b) {
 struct point3f {
   float x, y, z;
 
+  float operator[](size_t idx) const { return *(&x + idx); }
   float operator[](size_t idx) { return *(&x + idx); }
 };
 
@@ -883,6 +891,7 @@ inline point3f operator/(const point3f &a, const point3f &b) {
 struct point3d {
   double x, y, z;
 
+  double operator[](size_t idx) const { return *(&x + idx); }
   double operator[](size_t idx) { return *(&x + idx); }
 };
 
@@ -891,6 +900,7 @@ struct color3h {
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
+  half operator[](size_t idx) const { return *(&r + idx); }
   half operator[](size_t idx) { return *(&r + idx); }
 };
 
@@ -899,6 +909,7 @@ struct color3f {
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
+  float operator[](size_t idx) const{ return *(&r + idx); }
   float operator[](size_t idx) { return *(&r + idx); }
 };
 
@@ -907,6 +918,7 @@ struct color4h {
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
+  half operator[](size_t idx) const { return *(&r + idx); }
   half operator[](size_t idx) { return *(&r + idx); }
 };
 
@@ -915,6 +927,7 @@ struct color4f {
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
+  float operator[](size_t idx) const { return *(&r + idx); }
   float operator[](size_t idx) { return *(&r + idx); }
 };
 
@@ -923,6 +936,7 @@ struct color3d {
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
+  double operator[](size_t idx) const { return *(&r + idx); }
   double operator[](size_t idx) { return *(&r + idx); }
 };
 
@@ -931,6 +945,7 @@ struct color4d {
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
+  double operator[](size_t idx) const { return *(&r + idx); }
   double operator[](size_t idx) { return *(&r + idx); }
 };
 
