@@ -26,6 +26,22 @@ namespace {
     (*err) += msg;     \
   }
 
+
+// Typed TimeSamples to typeless TimeSamples
+template<typename T>
+value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
+  const std::vector<typename TypedTimeSamples<T>::Sample> &samples = ts.get_samples();
+
+  value::TimeSamples dst;
+
+  for (size_t i = 0; i < samples.size(); i++) {
+    dst.times.push_back(samples[i].t);    
+    dst.values.push_back(samples[i].value);    
+  }
+
+  return dst;
+}
+
 template <typename T>
 bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
                  uint32_t depth, PathPrimMap<T> &itemmap) {
@@ -423,7 +439,6 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
                     /*custom*/ false);
 }
 
-#if 0
 // Scalar or TimeSample-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 //
@@ -433,39 +448,57 @@ void ToProperty(
   const TypedAttributeWithFallback<Animatable<T>> &input,
   Property &output)
 {
-  if (input.IsBlocked()) {
+  if (input.is_blocked()) {
     Attribute attr;
-    attr.set_blocked(input.IsBlocked());
+    attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
     output = Property(std::move(attr), /*custom*/ false);
-  } else if (input.IsValueEmpty()) {
+  } else if (input.is_value_empty()) {
     // type info only
     output = Property(value::TypeTraits<T>::type_name(), /* custom */false);
-  } else if (input.IsConnection()) {
+  } else if (input.is_connection()) {
 
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
-    Relation relTarget;
-    if (auto pv = input.GetConnection()) {
-      relTarget.targetPath = pv.value();
+    Relationship rel;
+    std::vector<Path> pv = input.get_connections();
+    if (pv.empty()) {
+      DCOUT("??? Empty connectionTarget.");
+    }
+    if (pv.size() == 1) {
+      rel.set(pv[0]);
+      DCOUT("targetPath = " << rel.targetPath);
+    } else if (pv.size() > 1) {
+      rel.set(pv);
     } else {
       // ??? TODO: report internal error.
+      DCOUT("??? GetConnection faile.");
     }
-    output = Property(relTarget, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
+    output = Property(rel, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
 
   } else {
     // Includes !authored()
     // FIXME: Currently scalar only.
-    value::Value val(input.GetValue());
+    Animatable<T> v = input.get_value();
+ 
     primvar::PrimVar pvar;
-    pvar.set_scalar(val);
+
+    if (v.is_timesamples()) {
+      value::TimeSamples ts = ToTypelessTimeSamples(v.ts);
+      pvar.set_timesamples(ts);
+    } else if (v.is_scalar()) {
+      value::Value val(v.value);
+      pvar.set_scalar(val);
+    } else {
+      DCOUT("??? Invalid Animatable value.");
+    }
+    
     Attribute attr;
     attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Uniform;
+    attr.variability() = Variability::Varying;
     output = Property(attr, /* custom */false);
   }
 }
-#endif
 
 bool ToTerminalAttributeValue(const Attribute &attr,
                               TerminalAttributeValue *value, std::string *err,
@@ -673,6 +706,84 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPreviewSurface &surface, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "diffuseColor") {
+    ToProperty(surface.diffuseColor, *out_prop);
+  } else if (prop_name == "emissiveColor") {
+    ToProperty(surface.emissiveColor, *out_prop);
+  } else if (prop_name == "specularColor") {
+    ToProperty(surface.specularColor, *out_prop);
+  } else if (prop_name == "useSpecularWorkflow") {
+    ToProperty(surface.useSpecularWorkflow, *out_prop);
+  } else if (prop_name == "metallic") {
+    ToProperty(surface.metallic, *out_prop);
+  } else if (prop_name == "clearcoat") {
+    ToProperty(surface.clearcoat, *out_prop);
+  } else if (prop_name == "clearcoatRoughness") {
+    ToProperty(surface.clearcoatRoughness, *out_prop);
+  } else if (prop_name == "roughness") {
+    ToProperty(surface.roughness, *out_prop);
+  } else if (prop_name == "opacity") {
+    ToProperty(surface.opacity, *out_prop);
+  } else if (prop_name == "opacityThreshold") {
+    ToProperty(surface.opacityThreshold, *out_prop);
+  } else if (prop_name == "ior") {
+    ToProperty(surface.ior, *out_prop);
+  } else if (prop_name == "normal") {
+    ToProperty(surface.normal, *out_prop);
+  } else if (prop_name == "displacement") {
+    ToProperty(surface.displacement, *out_prop);
+  } else if (prop_name == "occlusion") {
+    ToProperty(surface.occlusion, *out_prop);
+  } else if (prop_name == "outputsSurface") {
+    if (surface.outputsSurface) {
+      const Relationship &rel = surface.outputsSurface.value();
+      if (rel.is_empty()) {
+        // empty. type info only
+        (*out_prop) = Property(value::kToken, /* custom */false);
+      } else {
+        (*out_prop) = Property(rel, value::kToken, /* custom */false);
+      }
+    } else {
+      // Not authored 
+      return false;
+    }
+  } else if (prop_name == "outputsDisplacement") {
+    if (surface.outputsDisplacement) {
+      const Relationship &rel = surface.outputsDisplacement.value();
+      if (rel.is_empty()) {
+        // empty. type info only
+        (*out_prop) = Property(value::kToken, /* custom */false);
+      } else {
+        (*out_prop) = Property(rel, value::kToken, /* custom */false);
+      }
+    } else {
+      // Not authored 
+      return false;
+    }
+  } else {
+    const auto it = surface.props.find(prop_name);
+    if (it == surface.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
     const Material &material, const std::string &prop_name,
     Property *out_prop) {
   if (!out_prop) {
@@ -682,15 +793,36 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   DCOUT("prop_name = " << prop_name);
   if (prop_name == "outputs:surface") {
-    // Terminal attribute.
-    if (!material.surface) {
+    if (material.surface) {
+      Connection<Path> conn = material.surface.value();
+      Relationship rel;
+      if (conn.target) {
+        rel.set(conn.target.value());
+        (*out_prop) = Property(rel, conn.type_name(), /* custom */false);
+      } else {
+        // empty. type info only
+        (*out_prop) = Property(conn.type_name(), /* custom */false);
+      }
+    } else {
+      // Not authored 
+      return false;
     }
-  }
-  // if (prop_name == "outputs:volume") {
-
-  // ToProperty(preader.varname, (*out_prop));
-
-  {
+  } else if (prop_name == "outputs:volume") {
+    if (material.volume) {
+      Connection<Path> conn = material.volume.value();
+      Relationship rel;
+      if (conn.target) {
+        rel.set(conn.target.value());
+        (*out_prop) = Property(rel, conn.type_name(), /* custom */false);
+      } else {
+        // empty. type info only
+        (*out_prop) = Property(conn.type_name(), /* custom */false);
+      }
+    } else {
+      // Not authored 
+      return false;
+    }
+  } else {
     const auto it = material.props.find(prop_name);
     if (it == material.props.end()) {
       // Attribute not found.
@@ -698,10 +830,9 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     }
 
     (*out_prop) = it->second;
-    DCOUT("Prop found: " << prop_name
-                         << ", ty = " << it->second.value_type_name());
   }
 
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
   return true;
 }
 
@@ -723,9 +854,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     }
 
     (*out_prop) = it->second;
-    DCOUT("Prop found: " << prop_name
-                         << ", ty = " << it->second.value_type_name());
   }
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
 
   return true;
 }
@@ -754,9 +884,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     }
 
     (*out_prop) = it->second;
-    DCOUT("Prop found: " << prop_name
-                         << ", ty = " << it->second.value_type_name());
   }
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
   return true;
 }
 
@@ -795,9 +924,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     }
 
     (*out_prop) = it->second;
-    DCOUT("Prop found: " << prop_name
-                         << ", ty = " << it->second.value_type_name());
   }
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
   return true;
 }
 
@@ -831,9 +959,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     }
 
     (*out_prop) = it->second;
-    DCOUT("Prop found: " << prop_name
-                         << ", ty = " << it->second.value_type_name());
   }
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
   return true;
 }
 
@@ -852,6 +979,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     return GetPrimProperty(*preader_f2, prop_name, out_prop);
   } else if (const auto ptex = shader.value.as<UsdUVTexture>()) {
     return GetPrimProperty(*ptex, prop_name, out_prop);
+  } else if (const auto psurf = shader.value.as<UsdPreviewSurface>()) {
+    return GetPrimProperty(*psurf, prop_name, out_prop);
   } else {
     return nonstd::make_unexpected("TODO: " + shader.value.type_name());
   }
