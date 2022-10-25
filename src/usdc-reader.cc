@@ -1129,19 +1129,19 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
   // metas
   if (interpolation) {
-    attr.meta.interpolation = interpolation.value();
+    attr.metas().interpolation = interpolation.value();
   }
   if (elementSize) {
-    attr.meta.elementSize = elementSize.value();
+    attr.metas().elementSize = elementSize.value();
   }
   if (hidden) {
-    attr.meta.hidden = hidden.value();
+    attr.metas().hidden = hidden.value();
   }
   if (customData) {
-    attr.meta.customData = customData.value();
+    attr.metas().customData = customData.value();
   }
   if (comment) {
-    attr.meta.comment = comment.value();
+    attr.metas().comment = comment.value();
   }
 
   // FIXME: SpecType supercedes propType.

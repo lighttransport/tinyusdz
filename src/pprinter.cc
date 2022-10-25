@@ -536,8 +536,8 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
       }
     }
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (attr.metas().authored()) {
+      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -616,8 +616,8 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
       }
     }
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (attr.metas().authored()) {
+      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -693,8 +693,8 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
       ss << " = " <<  print_animatable(v, indent+1);
     }
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (attr.metas().authored()) {
+      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -713,8 +713,8 @@ std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, con
 
     ss << value::TypeTraits<T>::type_name() << " " << name;
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (attr.metas().authored()) {
+      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -752,8 +752,8 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
       ss << " = " << attr.get_value();
     }
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (attr.metas().authored()) {
+      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -798,8 +798,8 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
       ss << " = " <<  print_animatable_token(v, indent+1);
     }
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (attr.metas().authored()) {
+      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -841,8 +841,8 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
       }
     }
 
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
+    if (attr.metas().authored()) {
+      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -953,8 +953,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
       }
     }
 
-    if (prop.get_attribute().meta.authored()) {
-      ss << " (\n" << print_attr_metas(prop.get_attribute().meta, indent+1) << pprint::Indent(indent) << ")";
+    if (prop.get_attribute().metas().authored()) {
+      ss << " (\n" << print_attr_metas(prop.get_attribute().metas(), indent+1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
