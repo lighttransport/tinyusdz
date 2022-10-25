@@ -183,6 +183,16 @@ struct PrimVar {
     _var = std::move(v);
   }
 
+  template <typename T>
+  void set_ts_value(double t, const T &v) {
+    if (is_scalar()) {
+      _var.times.clear();
+      _var.values.clear();
+    }
+    _var.times.push_back(t);
+    _var.values.push_back(v);
+  }
+
   size_t num_timesamples() const {
     if (is_timesample()) {
       return _var.times.size();

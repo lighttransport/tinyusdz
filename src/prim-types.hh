@@ -1067,9 +1067,12 @@ class TypedAttribute {
     return false;
   }
 
-  AttrMeta meta;
+
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
 
  private:
+  AttrMeta _metas;
   bool _empty{false};
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
@@ -1097,9 +1100,11 @@ class TypedTerminalAttribute {
 
   uint32_t type_id() const { return value::TypeTraits<T>::type_id; }
 
-  AttrMeta meta;
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
 
  private:
+  AttrMeta _metas;
   bool _authored{false};
 };
 
@@ -1214,9 +1219,11 @@ class TypedAttributeWithFallback {
     return false;
   }
 
-  AttrMeta meta;
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
 
  private:
+  AttrMeta _metas;
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
   bool _empty{false};
@@ -1532,7 +1539,16 @@ class Connection {
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar) of Prim
 // TODO: Refactor
 struct Attribute {
-  std::string name;  // attrib name
+
+  const std::string &name() const {
+    return _name;
+  }
+
+  std::string &name() {
+    return _name;
+  }
+
+  void set_name(const std::string &name) { _name = name; }
 
   void set_type_name(const std::string &tname) { _type_name = tname; }
 
@@ -1546,10 +1562,22 @@ struct Attribute {
     return _var.type_name();
   }
 
+  template<typename T>
+  void set_value(const T &v) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_scalar(v);
+  }
 
-  // Interpolation interpolation{Interpolation::Invalid};
 
-  AttrMeta meta;
+  void set_var(primvar::PrimVar &v) {
+    if (_type_name.empty()) {
+      _type_name = v.type_name();
+    }
+
+    _var = v;
+  }
 
   void set_var(primvar::PrimVar &&v) {
     if (_type_name.empty()) {
@@ -1559,16 +1587,37 @@ struct Attribute {
     _var = std::move(v);
   }
 
+  /// @brief Get the value of Attribute of specified type.
+  /// @tparam T value type
+  /// @return The value if the underlying PrimVar is type T. Return nonstd::nullpt when type mismatch.
   template <typename T>
   nonstd::optional<T> get_value() const {
     return _var.get_value<T>();
   }
 
+  template<typename T>
+  bool get_value(T *v) const {
+    if (!v) {
+      return false;
+    }
+
+    nonstd::optional<T> ret = _var.get_value<T>();
+    if (ret) {
+      (*v) = std::move(ret.value());
+      return true;
+    }
+
+    return false;
+  }
+
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
+
   const primvar::PrimVar &get_var() const { return _var; }
 
   void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool blocked() const { return _blocked; }
+  bool is_blocked() const { return _blocked; }
 
   Variability &variability() { return _variability; }
   Variability variability() const { return _variability; }
@@ -1578,71 +1627,16 @@ struct Attribute {
   }
 
  private:
+  std::string _name;  // attrib name
   Variability _variability{
       Variability::Varying};  // 'uniform` qualifier is handled with
                               // `variability=uniform`
   bool _blocked{false};  // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
+  AttrMeta _metas;
 };
 
-#if 0
-///
-/// Typed version of Property(e.g. for `points`, `normals`, `velocities.timeSamples`, `inputs:st.connect`)
-/// (but no Relation)
-/// TODO: Use TypedAttribute since this class does not store Relationship information.
-///
-template <typename T>
-class TypedProperty {
- public:
-  TypedProperty() = default;
-
-  explicit TypedProperty(const T &fv) : fallback(fv) {}
-
-  using type = typename value::TypeTraits<T>::value_type;
-
-  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
-
-  // TODO: Use variant?
-  nonstd::optional<Animatable<T>> value; // T or TimeSamples<T>
-  nonstd::optional<Path> target;
-
-  //bool IsRel() const {
-  //  return (value::TypeTraits<T>::type_id == value::TypeTraits<Relation>::type_id)
-  //}
-
-  bool is_connection() const {
-    return target.has_value();
-  }
-
-  bool IsAttrib() const {
-    return value.has_value();
-  }
-
-  bool IsEmptyAttrib() const {
-    return define_only;
-  }
-
-  bool authored() const {
-    if (define_only) {
-      return true;
-    }
-
-    return (target || value);
-  }
-
-  bool set_define_only(bool onoff = true) { define_only = onoff; return define_only; }
-
-  nonstd::optional<T> fallback;  // may have fallback
-  AttrMeta meta;
-  bool custom{false}; // `custom`
-  Variability variability{Variability::Varying}; // `uniform`, `varying`
-
-  // TODO: Other variability
-  bool define_only{false}; // Attribute must be define-only(no value or connection assigned). e.g. "float3 outputs:rgb"
-  //ListEditQual listOpQual{ListEditQual::ResetToExplicit}; // default = "unqualified"
-};
-#endif
 
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for

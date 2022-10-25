@@ -192,7 +192,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -217,7 +217,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -235,7 +235,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -243,7 +243,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         DCOUT("Adding typed prop: " << name);
 
-        if (attr.blocked()) {
+        if (attr.is_blocked()) {
           // e.g. "float radius = None"
           target.set_blocked(true);
         } else if (attr.variability() == Variability::Uniform) {
@@ -290,7 +290,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -337,7 +337,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -362,7 +362,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -380,7 +380,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -393,7 +393,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        if (attr.blocked()) {
+        if (attr.is_blocked()) {
           target.set_blocked(true);
         } else if (attr.get_var().is_scalar()) {
           if (auto pv = attr.get_value<T>()) {
@@ -409,7 +409,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -456,7 +456,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -481,7 +481,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -499,7 +499,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -507,7 +507,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         DCOUT("Adding typed attribute: " << name);
 
-        if (attr.blocked()) {
+        if (attr.is_blocked()) {
           // e.g. "float radius = None"
           target.set_blocked(true);
         } else if (attr.variability() == Variability::Uniform) {
@@ -556,7 +556,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         DCOUT("Added typed attribute: " << name);
 
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -605,7 +605,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -631,7 +631,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -650,7 +650,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -664,7 +664,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        if (attr.blocked()) {
+        if (attr.is_blocked()) {
           target.set_blocked(true);
         } else if (attr.get_var().is_scalar()) {
           if (auto pv = attr.get_value<T>()) {
@@ -680,7 +680,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        target.meta = attr.meta;
+        target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -727,7 +727,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(propname);
         ret.code = ParseResult::ResultCode::Success;
         DCOUT("Added as property with connection: " << propname);
@@ -752,7 +752,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       if (auto pv = prop.get_relationTarget()) {
         target.set_connection(pv.value());
         //target.variability = prop.attrib.variability;
-        target.meta = prop.get_attribute().meta;
+        target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -769,7 +769,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
     if (prop.get_property_type() == Property::Type::EmptyAttrib) {
       DCOUT("Added prop with empty value: " << name);
       target.set_value_empty();
-      target.meta = attr.meta;
+      target.metas() = attr.metas();
       table.insert(name);
       ret.code = ParseResult::ResultCode::Success;
       return ret;
@@ -777,7 +777,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
       DCOUT("Adding typed attribute: " << name);
 
-      if (attr.blocked()) {
+      if (attr.is_blocked()) {
         // e.g. "float3[] extent = None"
         target.set_blocked(true);
       } else if (attr.variability() == Variability::Uniform) {
@@ -826,7 +826,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
       DCOUT("Added Extent attribute: " << name);
 
-      target.meta = attr.meta;
+      target.metas() = attr.metas();
       table.insert(name);
       ret.code = ParseResult::ResultCode::Success;
       return ret;
@@ -1032,7 +1032,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
         if (prop.get_property_type() == Property::Type::EmptyAttrib) {
           // OK
           target.set_authored(true);
-          target.meta = prop.get_attribute().meta;
+          target.metas() = prop.get_attribute().metas();
           table.insert(name);
           ret.code = ParseResult::ResultCode::Success;
           return ret;
@@ -1075,7 +1075,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     if (auto pv = prop.get_relationTarget()) {
       Relationship rel;
       rel.set(pv.value());
-      rel.meta = prop.get_attribute().meta;
+      rel.meta = prop.get_attribute().metas();
       target = rel;
       table.insert(propname);
       ret.code = ParseResult::ResultCode::Success;
@@ -1091,7 +1091,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       if (auto pv = prop.get_relationTarget()) {
         Relationship rel;
         rel.set(pv.value());
-        rel.meta = prop.get_attribute().meta;
+        rel.meta = prop.get_attribute().metas();
         target = rel;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
@@ -1110,7 +1110,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
         if (prop.get_property_type() == Property::Type::EmptyAttrib) {
           Relationship rel;
           rel.set_empty();
-          rel.meta = prop.get_attribute().meta;
+          rel.meta = prop.get_attribute().metas();
           table.insert(name);
           target = rel;
           ret.code = ParseResult::ResultCode::Success;

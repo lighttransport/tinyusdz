@@ -666,13 +666,13 @@ bool ToTerminalAttributeValue(const Attribute &attr,
     return false;
   }
 
-  if (attr.blocked()) {
+  if (attr.is_blocked()) {
     PUSH_ERROR_AND_RETURN("Attribute is None(Value Blocked).");
   }
 
   const primvar::PrimVar &var = attr.get_var();
 
-  value->meta() = attr.meta;
+  value->meta() = attr.metas();
   value->variability() = attr.variability();
 
   if (!var.is_valid()) {
@@ -1373,7 +1373,7 @@ bool EvaluateAttributeImpl(
 
     const Attribute &attr = prop.get_attribute();
 
-    if (attr.blocked()) {
+    if (attr.is_blocked()) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
     }
