@@ -92,12 +92,12 @@ Interpolation GeomMesh::GetNormalsInterpolation() const {
   if (props.count(kPrimvarsNormals)) {
     const auto &prop = props.at(kPrimvarsNormals);
     if (prop.get_attribute().type_name() == "normal3f[]") {
-      if (prop.get_attribute().meta.interpolation) {
-        return prop.get_attribute().meta.interpolation.value();
+      if (prop.get_attribute().metas().interpolation) {
+        return prop.get_attribute().metas().interpolation.value();
       }
     }
-  } else if (normals.meta.interpolation) {
-    return normals.meta.interpolation.value();
+  } else if (normals.metas().interpolation) {
+    return normals.metas().interpolation.value();
   }
 
   return Interpolation::Vertex;  // default 'vertex'

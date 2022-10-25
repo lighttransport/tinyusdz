@@ -78,14 +78,18 @@ void SimpleScene(tinyusdz::Stage *stage)
       uvs.push_back({1.0f, 1.0f});
       uvs.push_back({0.0f, 1.0f});
 
-      tinyusdz::primvar::PrimVar uvVar;
-      uvVar.set_scalar(uvs);
-      uvAttr.set_var(std::move(uvVar));
+      // Fast path. Set the value directly to Attribute.
+      uvAttr.set_value(uvs);
+      
+      // or we can first build primvar::PrimVar
+      //tinyusdz::primvar::PrimVar uvVar;
+      //uvVar.set_scalar(uvs);
+      //uvAttr.set_var(std::move(uvVar));
 
       // Currently `interpolation` is described in Attribute metadataum.
       tinyusdz::AttrMeta meta;
       meta.interpolation = tinyusdz::Interpolation::Vertex;
-      uvAttr.meta = meta;
+      uvAttr.metas() = meta;
 
       tinyusdz::Property uvProp(uvAttr, /* custom*/false);
 
@@ -124,7 +128,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
       tinyusdz::AttrMeta meta;
       meta.hidden = false;
-      attrib.meta = meta;
+      attrib.metas() = meta;
 
       tinyusdz::Property prop(attrib, /* custom*/true);
 

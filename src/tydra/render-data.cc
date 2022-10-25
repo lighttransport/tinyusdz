@@ -92,7 +92,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
       // variability
       // In usdGeom, Default interpolation is "Constant"
       // TinyUSDZ currently reports error when `interpolation` is missing.
-      auto interp = prop.get_attribute().meta.interpolation;
+      auto interp = prop.get_attribute().metas().interpolation;
       if (interp) {
       } else {
         return nonstd::make_unexpected(

@@ -3182,7 +3182,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   if (!ParseAttrMeta(&meta)) {
     PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
   }
-  attr.meta = meta;
+  attr.metas() = meta;
 
   if (blocked) {
     attr.set_blocked(true);
@@ -3289,7 +3289,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
 
       if (metap) {
         // TODO: metadataum for Rel
-        p.attribute().meta = metap.value();
+        p.attribute().metas() = metap.value();
       }
 
       (*props)[attr_name] = p;
@@ -3349,7 +3349,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     p.set_listedit_qual(listop_qual);
 
     if (metap) {
-      p.attribute().meta = metap.value();
+      p.attribute().metas() = metap.value();
     }
 
     (*props)[attr_name] = p;
@@ -3481,7 +3481,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     if (uniform_qual) {
       p.attribute().variability() = Variability::Uniform;
     }
-    p.attribute().meta = meta;
+    p.attribute().metas() = meta;
 
     (*props)[attr_name] = p;
 
@@ -3539,7 +3539,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     primvar::PrimVar var;
     var.set_timesamples(ts);
 
-    attr.name = attr_name;
+    attr.name() = attr_name;
     attr.set_var(std::move(var));
 
     DCOUT("timeSamples primattr: type = " << type_name
@@ -3728,7 +3728,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       if (!ParseAttrMeta(&meta)) {
         PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
       }
-      attr.meta = meta;
+      attr.metas() = meta;
 
     } else {
       PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
@@ -3737,7 +3737,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
     if (uniform_qual) {
       attr.variability() = Variability::Uniform;
     }
-    attr.name = primattr_name;
+    attr.set_name(primattr_name);
 
     DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);
 
