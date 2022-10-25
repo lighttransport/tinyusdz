@@ -1242,6 +1242,29 @@ std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
   return s;
 }
 
+std::string to_string(tinyusdz::GeomSubset::ElementType v) {
+  std::string s;
+
+  switch (v) {
+    case tinyusdz::GeomSubset::ElementType::Face: { s = "face"; break; }
+  }
+
+  return s;
+}
+
+std::string to_string(tinyusdz::GeomSubset::FamilyType v) {
+  std::string s;
+
+  switch (v) {
+    case tinyusdz::GeomSubset::FamilyType::Partition: { s = "partition"; break; }
+    case tinyusdz::GeomSubset::FamilyType::NonOverlapping: { s = "nonOverlapping"; break; }
+    case tinyusdz::GeomSubset::FamilyType::Unrestricted: { s = "unrestricted"; break; }
+  }
+
+  return s;
+}
+
+
 std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
   std::string s;
 

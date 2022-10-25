@@ -35,8 +35,25 @@ value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
   value::TimeSamples dst;
 
   for (size_t i = 0; i < samples.size(); i++) {
-    dst.times.push_back(samples[i].t);    
-    dst.values.push_back(samples[i].value);    
+    dst.times.push_back(samples[i].t);
+    dst.values.push_back(samples[i].value);
+  }
+
+  return dst;
+}
+
+// Enum TimeSamples to typeless TimeSamples
+template<typename T>
+value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
+  const std::vector<typename TypedTimeSamples<T>::Sample> &samples = ts.get_samples();
+
+  value::TimeSamples dst;
+
+  for (size_t i = 0; i < samples.size(); i++) {
+    dst.times.push_back(samples[i].t);
+    // to token
+    value::token tok(to_string(samples[i].value));
+    dst.values.push_back(tok);
   }
 
   return dst;
@@ -332,6 +349,7 @@ void ToProperty(const TypedAttribute<T> &input, Property &output) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
+    attr.set_type_name(value::TypeTraits<T>::type_name());
     output = Property(std::move(attr), /*custom*/ false);
   } else if (input.is_value_empty()) {
     // type info only
@@ -377,6 +395,7 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
+    attr.set_type_name(value::TypeTraits<T>::type_name());
     output = Property(std::move(attr), /*custom*/ false);
     return;
   } else if (input.is_value_empty()) {
@@ -455,6 +474,7 @@ void ToProperty(
     Attribute attr;
     attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
+    attr.set_type_name(value::TypeTraits<T>::type_name());
     output = Property(std::move(attr), /*custom*/ false);
   } else if (input.is_value_empty()) {
     // type info only
@@ -483,7 +503,7 @@ void ToProperty(
     // Includes !authored()
     // FIXME: Currently scalar only.
     Animatable<T> v = input.get_value();
- 
+
     primvar::PrimVar pvar;
 
     if (v.is_timesamples()) {
@@ -500,10 +520,139 @@ void ToProperty(
     } else {
       DCOUT("??? Invalid Animatable value.");
     }
-    
+
     Attribute attr;
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Varying;
+    output = Property(attr, /* custom */false);
+  }
+}
+
+// To Property with token type
+template<typename T>
+void ToTokenProperty(
+  const TypedAttributeWithFallback<Animatable<T>> &input,
+  Property &output)
+{
+  if (input.is_blocked()) {
+    Attribute attr;
+    attr.set_blocked(input.is_blocked());
+    attr.variability() = Variability::Uniform;
+    attr.set_type_name(value::kToken);
+    output = Property(std::move(attr), /*custom*/ false);
+  } else if (input.is_value_empty()) {
+    // type info only
+    output = Property(value::kToken, /* custom */false);
+  } else if (input.is_connection()) {
+
+    // Use Relation for Connection(as typed relationshipTarget)
+    // Single connection targetPath only.
+    Relationship rel;
+    std::vector<Path> pv = input.get_connections();
+    if (pv.empty()) {
+      DCOUT("??? Empty connectionTarget.");
+    }
+    if (pv.size() == 1) {
+      rel.set(pv[0]);
+      DCOUT("targetPath = " << rel.targetPath);
+    } else if (pv.size() > 1) {
+      rel.set(pv);
+    } else {
+      // ??? TODO: report internal error.
+      DCOUT("??? GetConnection faile.");
+    }
+    output = Property(rel, /* type */value::kToken, /* custom */false);
+
+  } else {
+    // Includes !authored()
+    // FIXME: Currently scalar only.
+    Animatable<T> v = input.get_value();
+
+    primvar::PrimVar pvar;
+
+    if (v.is_timesamples()) {
+      value::TimeSamples ts = EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
+      pvar.set_timesamples(ts);
+    } else if (v.is_scalar()) {
+      T a;
+      if (v.get(&a)) {
+        // to token type
+        value::token tok(to_string(a));
+        value::Value val(tok);
+        pvar.set_scalar(val);
+      } else {
+        DCOUT("??? Invalid Animatable value.");
+      }
+    } else {
+      DCOUT("??? Invalid Animatable value.");
+    }
+
+    Attribute attr;
+    attr.set_var(std::move(pvar));
+    attr.variability() = Variability::Varying;
+    output = Property(attr, /* custom */false);
+  }
+}
+
+// To Property with token type
+template<typename T>
+void ToTokenProperty(
+  const TypedAttributeWithFallback<T> &input,
+  Property &output)
+{
+  if (input.is_blocked()) {
+    Attribute attr;
+    attr.set_blocked(input.is_blocked());
+    attr.variability() = Variability::Uniform;
+    attr.set_type_name(value::kToken);
+    output = Property(std::move(attr), /*custom*/ false);
+  } else if (input.is_value_empty()) {
+    // type info only
+    output = Property(value::kToken, /* custom */false);
+  } else if (input.is_connection()) {
+
+    // Use Relation for Connection(as typed relationshipTarget)
+    // Single connection targetPath only.
+    Relationship rel;
+    std::vector<Path> pv = input.get_connections();
+    if (pv.empty()) {
+      DCOUT("??? Empty connectionTarget.");
+    }
+    if (pv.size() == 1) {
+      rel.set(pv[0]);
+      DCOUT("targetPath = " << rel.targetPath);
+    } else if (pv.size() > 1) {
+      rel.set(pv);
+    } else {
+      // ??? TODO: report internal error.
+      DCOUT("??? GetConnection faile.");
+    }
+    output = Property(rel, /* type */value::kToken, /* custom */false);
+
+  } else {
+    // Includes !authored()
+    // FIXME: Currently scalar only.
+    Animatable<T> v = input.get_value();
+
+    primvar::PrimVar pvar;
+
+    if (v.is_scalar()) {
+      T a;
+      if (v.get(&a)) {
+        // to token type
+        value::token tok(to_string(a));
+        value::Value val(tok);
+        pvar.set_scalar(val);
+      } else {
+        DCOUT("??? Invalid value.");
+      }
+    } else {
+      DCOUT("??? Invalid value.");
+    }
+
+    Attribute attr;
+    attr.set_var(std::move(pvar));
+    attr.variability() = Variability::Uniform;
     output = Property(attr, /* custom */false);
   }
 }
@@ -589,6 +738,44 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
+    const Model &model, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  const auto it = model.props.find(prop_name);
+  if (it == model.props.end()) {
+    // Attribute not found.
+    return false;
+  }
+
+  (*out_prop) = it->second;
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const Scope &scope, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  const auto it = scope.props.find(prop_name);
+  if (it == scope.props.end()) {
+    // Attribute not found.
+    return false;
+  }
+
+  (*out_prop) = it->second;
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
     const Xform &xform, const std::string &prop_name, Property *out_prop) {
   if (!out_prop) {
     return nonstd::make_unexpected(
@@ -632,6 +819,126 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     (*out_prop) = it->second;
   }
 
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const GeomMesh &mesh, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "points") {
+    ToProperty(mesh.points, *out_prop);
+  } else if (prop_name == "faceVertexCounts") {
+    ToProperty(mesh.faceVertexCounts, *out_prop);
+  } else if (prop_name == "faceVertexIndices") {
+    ToProperty(mesh.faceVertexIndices, *out_prop);
+  } else if (prop_name == "normals") {
+    ToProperty(mesh.normals, *out_prop);
+  } else if (prop_name == "velocities") {
+    ToProperty(mesh.velocities, *out_prop);
+  } else if (prop_name == "cornerIndices") {
+    ToProperty(mesh.cornerIndices, *out_prop);
+  } else if (prop_name == "cornerSharpnesses") {
+    ToProperty(mesh.cornerSharpnesses, *out_prop);
+  } else if (prop_name == "creaseIndices") {
+    ToProperty(mesh.creaseIndices, *out_prop);
+  } else if (prop_name == "creaseSharpnesses") {
+    ToProperty(mesh.creaseSharpnesses, *out_prop);
+  } else if (prop_name == "holeIndices") {
+    ToProperty(mesh.holeIndices, *out_prop);
+  } else if (prop_name == "interpolateBoundary") {
+    ToTokenProperty(mesh.interpolateBoundary, *out_prop);
+  } else if (prop_name == "subdivisionScheme") {
+    ToTokenProperty(mesh.subdivisionScheme, *out_prop);
+  } else if (prop_name == "faceVaryingLinearInterpolation") {
+    ToTokenProperty(mesh.faceVaryingLinearInterpolation, *out_prop);
+  } else if (prop_name == "skeleton") {
+    if (mesh.skeleton) {
+      Relationship rel;
+      rel.set(mesh.skeleton.value());
+      (*out_prop) = Property(rel, /* custom */false);
+    } else {
+      // empty
+      return false;
+    }
+  } else {
+    const auto it = mesh.props.find(prop_name);
+    if (it == mesh.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const GeomSubset &subset, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  // Currently GeomSubset does not support TimeSamples and AttributeMeta
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "indices") {
+    primvar::PrimVar var;
+    var.set_scalar(subset.indices);
+    Attribute attr;
+    attr.set_var(std::move(var));
+    attr.variability() = Variability::Uniform;
+    (*out_prop) = Property(attr, /* custom */false);
+  } else if (prop_name == "elementType") {
+    value::token tok(to_string(subset.elementType));
+    primvar::PrimVar var;
+    var.set_scalar(tok);
+    Attribute attr;
+    attr.set_var(std::move(var));
+    attr.variability() = Variability::Uniform;
+    (*out_prop) = Property(attr, /* custom */false);
+  } else if (prop_name == "familyType") {
+    value::token tok(to_string(subset.familyType));
+    primvar::PrimVar var;
+    var.set_scalar(tok);
+    Attribute attr;
+    attr.set_var(std::move(var));
+    attr.variability() = Variability::Uniform;
+    (*out_prop) = Property(attr, /* custom */false);
+  } else if (prop_name == "familyName") {
+    if (subset.familyName) {
+      value::token tok(subset.familyName.value());
+      primvar::PrimVar var;
+      var.set_scalar(tok);
+      Attribute attr;
+      attr.set_var(std::move(var));
+      attr.variability() = Variability::Uniform;
+      (*out_prop) = Property(attr, /* custom */false);
+    } else {
+      return false;
+    }
+  } else {
+    const auto it = subset.props.find(prop_name);
+    if (it == subset.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  DCOUT("Prop found: " << prop_name << ", ty = " << out_prop->value_type_name());
   return true;
 }
 
@@ -760,7 +1067,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         (*out_prop) = Property(rel, value::kToken, /* custom */false);
       }
     } else {
-      // Not authored 
+      // Not authored
       return false;
     }
   } else if (prop_name == "outputsDisplacement") {
@@ -773,7 +1080,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         (*out_prop) = Property(rel, value::kToken, /* custom */false);
       }
     } else {
-      // Not authored 
+      // Not authored
       return false;
     }
   } else {
@@ -812,7 +1119,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         (*out_prop) = Property(conn.type_name(), /* custom */false);
       }
     } else {
-      // Not authored 
+      // Not authored
       return false;
     }
   } else if (prop_name == "outputs:volume") {
@@ -827,7 +1134,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         (*out_prop) = Property(conn.type_name(), /* custom */false);
       }
     } else {
-      // Not authored 
+      // Not authored
       return false;
     }
   } else {
@@ -921,7 +1228,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
       rel.set(skel.animationSource.value());
       (*out_prop) = Property(rel, /* custom */false);
     } else {
-      // empty 
+      // empty
       return false;
     }
   } else {
@@ -1112,7 +1419,11 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
     }                                                                   \
   } else
 
+  GET_PRIM_PROPERTY(Model)
   GET_PRIM_PROPERTY(Xform)
+  GET_PRIM_PROPERTY(Scope)
+  GET_PRIM_PROPERTY(GeomMesh)
+  GET_PRIM_PROPERTY(GeomSubset)
   GET_PRIM_PROPERTY(Shader)
   GET_PRIM_PROPERTY(Material)
   GET_PRIM_PROPERTY(SkelRoot)

@@ -133,6 +133,8 @@ std::string to_string(const GeomCube &geom, const uint32_t indent = 0, bool clos
 std::string to_string(const GeomCamera &camera, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const GeomSubset &subset, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeomSubset::ElementType ty);
+std::string to_string(const GeomSubset::FamilyType ty);
 
 std::string to_string(const GeomBasisCurves::Wrap &v);
 std::string to_string(const GeomBasisCurves::Type &v);
