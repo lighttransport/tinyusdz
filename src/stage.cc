@@ -143,9 +143,7 @@ class Node {
 // TODO: Move to prim-types.cc
 //
 
-namespace {
-
-nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
+nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   // Since multiple get_value() call consumes lots of stack size(depends on
   // sizeof(T)?), Following code would produce 100KB of stack in debug build. So
   // use as() instead(as() => roughly 2000 bytes for stack size).
@@ -218,9 +216,7 @@ nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
 
 #define EXTRACT_NAME_AND_RETURN_PATH(__ty) \
   if (v.as<__ty>()) {                      \
-    Path p(v.as<__ty>()->name, "");   \
-    p.element_name() = v.as<__ty>()->name; \
-    return std::move(p); \
+    return v.as<__ty>()->name;             \
   }
 
   EXTRACT_NAME_AND_RETURN_PATH(Model)
@@ -257,14 +253,13 @@ nonstd::optional<Path> GetPrimElementName(const value::Value &v) {
   return nonstd::nullopt;
 }
 
-}  // namespace
-
 Prim::Prim(const value::Value &rhs) {
   // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
     if (auto pv = GetPrimElementName(rhs)) {
-      _path = pv.value();
+      _path = Path(pv.value(), /* prop part*/ "");
+      _elementPath = Path(pv.value(), /* prop part */ "");
     }
 
     _data = rhs;
@@ -280,8 +275,36 @@ Prim::Prim(value::Value &&rhs) {
     _data = std::move(rhs);
 
     if (auto pv = GetPrimElementName(_data)) {
-      _path = pv.value();
+      _path = Path(pv.value(), "");
+      _elementPath = Path(pv.value(), "");
     }
+
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+Prim::Prim(const std::string &elementPath, const value::Value &rhs) {
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+    _path = Path(elementPath, /* prop part*/ "");
+    _elementPath = Path(elementPath, /* prop part */ "");
+
+    _data = rhs;
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+    _data = std::move(rhs);
+
+    _path = Path(elementPath, "");
+    _elementPath = Path(elementPath, "");
 
   } else {
     // TODO: Raise an error if rhs is not an Prim
@@ -292,29 +315,32 @@ namespace {
 
 nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
                                                 const std::string &parent_path,
-                                                const Path &path, const uint32_t depth) {
+                                                const Path &path,
+                                                const uint32_t depth) {
   std::string abs_path;
   // if (auto pv = GetPrimElementName(parent->data())) {
   {
-    // TODO: Use elementPath
-    std::string elementName = parent->local_path().prim_part();
+    std::string elementName = parent->element_path().prim_part();
     DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
     DCOUT(pprint::Indent(depth) << "Given Path = " << path);
     // fully absolute path
     abs_path = parent_path + "/" + elementName;
     DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
-    DCOUT(pprint::Indent(depth) << "queriying path = " << path.full_path_name());
+    DCOUT(pprint::Indent(depth)
+          << "queriying path = " << path.full_path_name());
     if (abs_path == path.full_path_name()) {
-      DCOUT(pprint::Indent(depth) << "Got it! Found Prim at Path = " << abs_path);
+      DCOUT(pprint::Indent(depth)
+            << "Got it! Found Prim at Path = " << abs_path);
       return parent;
     }
   }
 
-  DCOUT(pprint::Indent(depth) << "# of children : " << parent->children().size());
+  DCOUT(pprint::Indent(depth)
+        << "# of children : " << parent->children().size());
   for (const auto &child : parent->children()) {
-    //const std::string &p = parent->elementPath.full_path_name();
-    DCOUT(pprint::Indent(depth+1) << "Parent path : " << abs_path);
-    if (auto pv = GetPrimAtPathRec(&child, abs_path, path, depth+1)) {
+    // const std::string &p = parent->elementPath.full_path_name();
+    DCOUT(pprint::Indent(depth + 1) << "Parent path : " << abs_path);
+    if (auto pv = GetPrimAtPathRec(&child, abs_path, path, depth + 1)) {
       return pv.value();
     }
   }
@@ -326,7 +352,8 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
-  DCOUT("GerPrimAtPath : " << path.prim_part() << "(input path: " << path << ")");
+  DCOUT("GerPrimAtPath : " << path.prim_part() << "(input path: " << path
+                           << ")");
 
   if (_dirty) {
     // Clear cache.
@@ -357,7 +384,8 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
   // Brute-force search.
   for (const auto &parent : root_nodes) {
-    if (auto pv = GetPrimAtPathRec(&parent, /* root */"", path, /* depth */0)) {
+    if (auto pv =
+            GetPrimAtPathRec(&parent, /* root */ "", path, /* depth */ 0)) {
       // Add to cache.
       // Assume pointer address does not change unless dirty state.
       _prim_path_cache[path.prim_part()] = pv.value();
@@ -367,6 +395,20 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
   return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
                                  "> int the Stage.\n");
+}
+
+bool Stage::find_prim_at_path(const Path &path, const Prim *&prim,
+                              std::string *err) const {
+  nonstd::expected<const Prim *, std::string> ret = GetPrimAtPath(path);
+  if (ret) {
+    prim = ret.value();
+    return true;
+  } else {
+    if (err) {
+      (*err) = ret.error();
+    }
+    return false;
+  }
 }
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
@@ -389,8 +431,8 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
     return nonstd::make_unexpected("Invalid Path.\n");
   }
 
-#if 0 // TODO
-  Path abs_path = root.local_path();
+#if 0  // TODO
+  Path abs_path = root.element_path();
   abs_path.AppendElement(path.GetPrimPart());
 
   DCOUT("root path = " << root.path());
@@ -410,10 +452,29 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
 #endif
 }
 
+bool Stage::find_prim_from_relative_path(const Prim &root,
+                                         const Path &relative_path,
+                                         const Prim *&prim,
+                                         std::string *err) const {
+  nonstd::expected<const Prim *, std::string> ret =
+      GetPrimFromRelativePath(root, relative_path);
+  if (ret) {
+    prim = ret.value();
+    return true;
+  } else {
+    if (err) {
+      (*err) = ret.error();
+    }
+    return false;
+  }
+}
+
 namespace {
 
 void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   ss << "\n";
+  // Currently, Prim's elementName is read from name variable in concrete Prim class(e.g. Xform::name).
+  // TODO: use prim.elementPath for elementName.
   ss << pprint_value(prim.data(), indent, /* closing_brace */ false);
 
   DCOUT("num_children = " << prim.children().size());
@@ -449,8 +510,8 @@ std::string Stage::ExportToString() const {
   }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
-    ss << "  timeCodesPerSecond = " << stage_metas.timeCodesPerSecond.get_value()
-       << "\n";
+    ss << "  timeCodesPerSecond = "
+       << stage_metas.timeCodesPerSecond.get_value() << "\n";
   }
 
   if (stage_metas.startTimeCode.authored()) {
@@ -471,7 +532,7 @@ std::string Stage::ExportToString() const {
        << "\n";
   }
   if (!stage_metas.comment.value.empty()) {
-    ss << "  doc = " << to_string(stage_metas.comment) << "\n";
+    ss << "  comment = " << to_string(stage_metas.comment) << "\n";
   }
 
   if (stage_metas.customLayerData.size()) {

@@ -186,7 +186,11 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
 std::string print_prop(const Property &prop, const std::string &prop_name, uint32_t indent);
 std::string print_props(const std::map<std::string, Property> &props, uint32_t indent);
 
+// Forwad decl
+class Stage;
 
+// Stage::ExportToString() in pxrUSD
+std::string to_string(const Stage &stage);
 
 } // namespace tinyusdz
 

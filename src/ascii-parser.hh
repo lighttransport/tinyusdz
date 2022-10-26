@@ -104,7 +104,7 @@ class AsciiParser {
     ///
     std::vector<value::AssetPath> subLayers;  // 'subLayers'
     value::token defaultPrim;                 // 'defaultPrim'
-    StringData doc;                           // 'doc'
+    StringData doc;                           // 'doc' or 'documentation'
     nonstd::optional<Axis> upAxis;            // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;

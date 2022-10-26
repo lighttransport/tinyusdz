@@ -1485,7 +1485,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.name = __prim_name;                            \
     typed_prim.spec = __spec;                            \
     value::Value primdata = typed_prim;                       \
-    return Prim(primdata);                                    \
+    return Prim(__prim_name, primdata);                                    \
   } else
 
   RECONSTRUCT_PRIM(Xform, typeName, prim_name, spec)
@@ -1963,7 +1963,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     }
 
     std::vector<value::token> primChildren;
-    if (!ReconstrcutStageMeta(fvs, &stage->GetMetas(), &primChildren)) {
+    if (!ReconstrcutStageMeta(fvs, &stage->metas(), &primChildren)) {
       PUSH_ERROR_AND_RETURN("Failed to reconstruct StageMeta.");
     }
 
@@ -2333,7 +2333,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
   if (parent == 0) {  // root prim
     if (prim) {
-      stage->GetRootPrims().emplace_back(std::move(prim.value()));
+      stage->root_prims().emplace_back(std::move(prim.value()));
     }
   } else {
     // Add to root prim.
@@ -2384,7 +2384,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
     }
   }
 
-  stage->GetRootPrims().clear();
+  stage->root_prims().clear();
 
   int root_node_id = 0;
   bool ret = ReconstructPrimRecursively(/* no further root for root_node */ -1,

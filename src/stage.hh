@@ -35,6 +35,7 @@ class PrimRange;
 class Stage {
  public:
 
+  // pxrUSD compat API ----------------------------------------
   static Stage CreateInMemory() {
     return Stage();
   }
@@ -54,6 +55,20 @@ class Stage {
   nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path) const;
 
   ///
+  /// pxrUSD Compat API
+  ///
+  bool Flatten(bool addSourceFileComment = true) const {
+    return compose(addSourceFileComment);
+  }
+
+  ///
+  /// Dump Stage as ASCII(USDA) representation.
+  ///
+  std::string ExportToString() const;
+
+  // pxrUSD compat API ----------------------------------------
+
+  ///
   /// Get Prim from a children of given root Prim.
   /// Path must be relative Path.
   ///
@@ -61,40 +76,48 @@ class Stage {
   ///
   nonstd::expected<const Prim *, std::string> GetPrimFromRelativePath(const Prim &root, const Path &path) const;
 
-  ///
-  /// Dump Stage as ASCII(USDA) representation.
-  ///
-  std::string ExportToString() const;
 
+  /// Find(Get) Prim at a Path.
+  /// Path must be absolute Path.
+  ///
+  /// @param[in] path Absolute path(e.g. `/bora/dora`)
+  /// @param[out] prim const reference to Prim(if found)
+  /// @param[out] err Error message(filled when false is returned)
+  ///
+  /// @returns true if found a Prim.
+  bool find_prim_at_path(const Path &path, const Prim *&prim, std::string *err = nullptr) const;
 
-  const std::vector<Prim> &GetRootPrims() const {
+  /// Find(Get) Prim from a relative Path.
+  /// Path must be relative Path.
+  ///
+  /// @param[in] root Find from this Prim
+  /// @param[in] relative_path relative path(e.g. `dora/muda`)
+  /// @param[out] prim const reference to Prim(if found)
+  /// @param[out] err Error message(filled when false is returned)
+  ///
+  /// @returns true if found a Prim.
+  bool find_prim_from_relative_path(const Prim &root, const Path &relative_path, const Prim *&prim, std::string *err) const;
+
+  const std::vector<Prim> &root_prims() const {
     return root_nodes;
   }
 
-  std::vector<Prim> &GetRootPrims() {
+  std::vector<Prim> &root_prims() {
     return root_nodes;
   }
 
-  const StageMetas &GetMetas() const {
+  const StageMetas &metas() const {
     return stage_metas;
   }
 
-  StageMetas &GetMetas() {
+  StageMetas &metas() {
     return stage_metas;
   }
 
   ///
   /// Compose scene.
   ///
-  bool Compose(bool addSourceFileComment = true) const;
-
-  ///
-  /// pxrUSD Compat API
-  ///
-  bool Flatten(bool addSourceFileComment = true) const {
-    return Compose(addSourceFileComment);
-  }
-
+  bool compose(bool addSourceFileComment = true) const;
 
  private:
 

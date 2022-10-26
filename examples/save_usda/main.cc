@@ -80,7 +80,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
       // Fast path. Set the value directly to Attribute.
       uvAttr.set_value(uvs);
-      
+
       // or we can first build primvar::PrimVar
       //tinyusdz::primvar::PrimVar uvVar;
       //uvVar.set_scalar(uvs);
@@ -146,7 +146,7 @@ void SimpleScene(tinyusdz::Stage *stage)
   //
   xformPrim.children().emplace_back(std::move(meshPrim));
 
-  stage->GetRootPrims().emplace_back(std::move(xformPrim));
+  stage->root_prims().emplace_back(std::move(xformPrim));
 }
 
 int main(int argc, char **argv)

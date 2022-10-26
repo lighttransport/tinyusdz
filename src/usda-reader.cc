@@ -118,6 +118,7 @@ namespace {
 
 struct PrimNode {
   value::Value prim;
+  std::string elementName;
 
   int64_t parent{-1};            // -1 = root node
   std::vector<size_t> children;  // index to USDAReader._prims[]
@@ -578,40 +579,40 @@ class USDAReader::Impl {
         [&](const ascii::AsciiParser::StageMetas &metas) {
           DCOUT("StageMeta CB:");
 
-          _stage.GetMetas().doc = metas.doc;
+          _stage.metas().doc = metas.doc;
           if (metas.upAxis) {
-            _stage.GetMetas().upAxis = metas.upAxis.value();
+            _stage.metas().upAxis = metas.upAxis.value();
           }
 
           if (metas.subLayers.size()) {
-            _stage.GetMetas().subLayers = metas.subLayers;
+            _stage.metas().subLayers = metas.subLayers;
           }
 
-          _stage.GetMetas().defaultPrim = metas.defaultPrim;
+          _stage.metas().defaultPrim = metas.defaultPrim;
           if (metas.metersPerUnit) {
-            _stage.GetMetas().metersPerUnit = metas.metersPerUnit.value();
+            _stage.metas().metersPerUnit = metas.metersPerUnit.value();
           }
 
           if (metas.timeCodesPerSecond) {
-            _stage.GetMetas().timeCodesPerSecond =
+            _stage.metas().timeCodesPerSecond =
                 metas.timeCodesPerSecond.value();
           }
 
           if (metas.startTimeCode) {
-            _stage.GetMetas().startTimeCode = metas.startTimeCode.value();
+            _stage.metas().startTimeCode = metas.startTimeCode.value();
           }
 
           if (metas.endTimeCode) {
-            _stage.GetMetas().endTimeCode = metas.endTimeCode.value();
+            _stage.metas().endTimeCode = metas.endTimeCode.value();
           }
 
           if (metas.framesPerSecond) {
-            _stage.GetMetas().framesPerSecond = metas.framesPerSecond.value();
+            _stage.metas().framesPerSecond = metas.framesPerSecond.value();
           }
 
-          _stage.GetMetas().customLayerData = metas.customLayerData;
+          _stage.metas().customLayerData = metas.customLayerData;
 
-          _stage.GetMetas().stringData = metas.strings;
+          _stage.metas().stringData = metas.strings;
 
           return true;  // ok
         });
@@ -1079,14 +1080,15 @@ void ReconstructNodeRec(const size_t idx,
 
 
 bool USDAReader::Impl::ReconstructStage() {
-  _stage.GetRootPrims().clear();
+  _stage.root_prims().clear();
 
   for (const auto &idx : _toplevel_prims) {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
 
     const auto &node = _prim_nodes[idx];
 
-    Prim prim(node.prim);
+    // root's elementPath is empty(which is interpreted as "/").
+    Prim prim("", node.prim);
     DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
 
     for (const auto &cidx : node.children) {
@@ -1100,15 +1102,12 @@ bool USDAReader::Impl::ReconstructStage() {
 #endif
     }
 
-    // root's elementPath is empty"/"
-    prim.element_path() = Path("", "");
-
     DCOUT("root prim[" << idx << "].elementPath = " << dump_path(prim.element_path()));
     DCOUT("root prim[" << idx << "].num_children = " << prim.children().size());
 
-    _stage.GetRootPrims().emplace_back(std::move(prim));
+    _stage.root_prims().emplace_back(std::move(prim));
 
-    DCOUT("num_children = " << _stage.GetRootPrims()[size_t(_stage.GetRootPrims().size() - 1)].children().size());
+    DCOUT("num_children = " << _stage.root_prims()[size_t(_stage.root_prims().size() - 1)].children().size());
   }
 
   return true;

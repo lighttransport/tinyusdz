@@ -187,7 +187,7 @@ nonstd::expected<std::string, std::string> ToJSON(
     const tinyusdz::Stage& stage) {
   json j;  // root
 
-  auto jstageMetas = ToJSON(stage.GetMetas());
+  auto jstageMetas = ToJSON(stage.metas());
   if (!jstageMetas) {
     return nonstd::make_unexpected(jstageMetas.error());
   }
@@ -198,7 +198,7 @@ nonstd::expected<std::string, std::string> ToJSON(
   j["version"] = 1.0;
 
   json cj;
-  for (const auto& item : stage.GetRootPrims()) {
+  for (const auto& item : stage.root_prims()) {
     if (!PrimToJSONRec(cj, item, 0)) {
       return nonstd::make_unexpected("Failed to convert Prim to JSON.");
     }
