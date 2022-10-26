@@ -362,12 +362,12 @@ void ToProperty(const TypedAttribute<T> &input, Property &output) {
     if (paths.empty()) {
       // ??? TODO: report internal error.
     } else if (paths.size() == 1) {
-      relTarget.set(paths[0]);
+      output = Property(paths[0], /* type */ value::TypeTraits<T>::type_name(),
+                        /* custom */ false);
     } else {
-      relTarget.set(paths);
+      output = Property(paths, /* type */ value::TypeTraits<T>::type_name(),
+                        /* custom */ false);
     }
-    output = Property(relTarget, /* type */ value::TypeTraits<T>::type_name(),
-                      /* custom */ false);
 
   } else {
     // Includes !authored()
@@ -407,23 +407,22 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
 
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
-    Relationship rel;
     std::vector<Path> pv = input.get_connections();
     if (pv.empty()) {
       DCOUT("??? Empty connectionTarget.");
     }
     if (pv.size() == 1) {
-      rel.set(pv[0]);
-      DCOUT("targetPath = " << rel.targetPath);
+      DCOUT("targetPath = " << pv[0]);
+      output = Property(pv[0], /* type */ value::TypeTraits<T>::type_name(),
+                        /* custom */ false);
     } else if (pv.size() > 1) {
-      rel.set(pv);
+      output = Property(pv, /* type */ value::TypeTraits<T>::type_name(),
+                        /* custom */ false);
     } else {
       // ??? TODO: report internal error.
       DCOUT("??? GetConnection faile.");
     }
 
-    output = Property(rel, /* type */ value::TypeTraits<T>::type_name(),
-                      /* custom */ false);
     return;
 
   } else {
@@ -489,15 +488,14 @@ void ToProperty(
       DCOUT("??? Empty connectionTarget.");
     }
     if (pv.size() == 1) {
-      rel.set(pv[0]);
-      DCOUT("targetPath = " << rel.targetPath);
+      DCOUT("targetPath = " << pv[0]);
+      output = Property(pv[0], /* type */value::TypeTraits<T>::type_name(), /* custom */false);
     } else if (pv.size() > 1) {
-      rel.set(pv);
+      output = Property(pv, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
     } else {
       // ??? TODO: report internal error.
       DCOUT("??? GetConnection faile.");
     }
-    output = Property(rel, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
 
   } else {
     // Includes !authored()
@@ -553,15 +551,13 @@ void ToTokenProperty(
       DCOUT("??? Empty connectionTarget.");
     }
     if (pv.size() == 1) {
-      rel.set(pv[0]);
-      DCOUT("targetPath = " << rel.targetPath);
+      output = Property(pv[0], /* type */value::kToken, /* custom */false);
     } else if (pv.size() > 1) {
-      rel.set(pv);
+      output = Property(pv, /* type */value::kToken, /* custom */false);
     } else {
       // ??? TODO: report internal error.
       DCOUT("??? GetConnection faile.");
     }
-    output = Property(rel, /* type */value::kToken, /* custom */false);
 
   } else {
     // Includes !authored()
@@ -619,15 +615,13 @@ void ToTokenProperty(
       DCOUT("??? Empty connectionTarget.");
     }
     if (pv.size() == 1) {
-      rel.set(pv[0]);
-      DCOUT("targetPath = " << rel.targetPath);
+      output = Property(pv[0], /* type */value::kToken, /* custom */false);
     } else if (pv.size() > 1) {
-      rel.set(pv);
+      output = Property(pv, /* type */value::kToken, /* custom */false);
     } else {
       // ??? TODO: report internal error.
       DCOUT("??? GetConnection faile.");
     }
-    output = Property(rel, /* type */value::kToken, /* custom */false);
 
   } else {
     // Includes !authored()
@@ -1063,8 +1057,12 @@ nonstd::expected<bool, std::string> GetPrimProperty(
       if (rel.is_empty()) {
         // empty. type info only
         (*out_prop) = Property(value::kToken, /* custom */false);
+      } else if (rel.is_path()) {
+        (*out_prop) = Property(rel.targetPath, value::kToken, /* custom */false);
+      } else if (rel.is_pathvector()) {
+        (*out_prop) = Property(rel.targetPathVector, value::kToken, /* custom */false);
       } else {
-        (*out_prop) = Property(rel, value::kToken, /* custom */false);
+        return false;
       }
     } else {
       // Not authored
@@ -1076,8 +1074,12 @@ nonstd::expected<bool, std::string> GetPrimProperty(
       if (rel.is_empty()) {
         // empty. type info only
         (*out_prop) = Property(value::kToken, /* custom */false);
+      } else if (rel.is_path()) {
+        (*out_prop) = Property(rel.targetPath, value::kToken, /* custom */false);
+      } else if (rel.is_pathvector()) {
+        (*out_prop) = Property(rel.targetPathVector, value::kToken, /* custom */false);
       } else {
-        (*out_prop) = Property(rel, value::kToken, /* custom */false);
+        return false;
       }
     } else {
       // Not authored
@@ -1110,10 +1112,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   if (prop_name == "outputs:surface") {
     if (material.surface) {
       Connection<Path> conn = material.surface.value();
-      Relationship rel;
       if (conn.target) {
-        rel.set(conn.target.value());
-        (*out_prop) = Property(rel, conn.type_name(), /* custom */false);
+        (*out_prop) = Property(conn.target.value(), conn.type_name(), /* custom */false);
       } else {
         // empty. type info only
         (*out_prop) = Property(conn.type_name(), /* custom */false);
@@ -1125,10 +1125,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (prop_name == "outputs:volume") {
     if (material.volume) {
       Connection<Path> conn = material.volume.value();
-      Relationship rel;
       if (conn.target) {
-        rel.set(conn.target.value());
-        (*out_prop) = Property(rel, conn.type_name(), /* custom */false);
+        (*out_prop) = Property(conn.target.value(), conn.type_name(), /* custom */false);
       } else {
         // empty. type info only
         (*out_prop) = Property(conn.type_name(), /* custom */false);

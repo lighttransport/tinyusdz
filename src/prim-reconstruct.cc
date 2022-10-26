@@ -213,22 +213,25 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
 
+    const Attribute &attr = prop.get_attribute();
+
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
+      if (attr.is_connection()) { // Ensure Attribute is also return true for is_connection
+        target.set_connections(attr.connections());
+        target.metas() = attr.metas();
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
-        return ret;
       } else {
         ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Internal error. Invalid property with connection.";
+        ret.err = "Internal error. Invalid Property with Attribute connection.";
+      }
+      if (auto pv = prop.get_relationTarget()) {
+        return ret;
+      } else {
         return ret;
       }
     }
 
-    const Attribute &attr = prop.get_attribute();
 
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
@@ -334,8 +337,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(propname);
@@ -359,8 +363,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
 
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
@@ -453,8 +458,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(propname);
@@ -478,8 +484,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
 
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
@@ -602,8 +609,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(propname);
@@ -628,8 +636,9 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
 
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
@@ -724,8 +733,9 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       return ret;
     }
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(propname);
@@ -749,8 +759,9 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
     }
 
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
+        target.set_connections(attr.connections());
         //target.variability = prop.attrib.variability;
         target.metas() = prop.get_attribute().metas();
         table.insert(prop_name);
@@ -1088,14 +1099,29 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     }
 
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
         Relationship rel;
-        rel.set(pv.value());
+        std::vector<Path> conns = attr.connections();
+
+        if (conns.size() == 0) {
+          ret.code = ParseResult::ResultCode::InternalError;
+          ret.err = "Invalid shader output attribute with connection. connection targetPath size is zero.";
+          return ret;
+        }
+
+        if (conns.size() == 1) {
+          rel.set(conns[0]);
+        } else if (conns.size() > 1) {
+          rel.set(conns);
+        }
+
         rel.meta = prop.get_attribute().metas();
         target = rel;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
+
       } else {
         ret.code = ParseResult::ResultCode::InternalError;
         ret.err = "Invalid shader output attribute with connection.";
@@ -1173,9 +1199,17 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     }
 
     if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
+      const Attribute &attr = prop.get_attribute();
+      if (attr.is_connection()) {
         Connection<Path> conn;
-        conn.target = pv.value();
+
+        if (attr.connections().size() == 1) {
+          conn.target = attr.connections()[0];
+        } else {
+          ret.code = ParseResult::ResultCode::InternalError;
+          ret.err = "Attribute does not contain connectionPath or multiple connetionPaths.";
+          return ret;
+        }
         target = conn;
         /* conn.meta = prop.attrib.meta; */ // TODO
         table.insert(prop_name);
