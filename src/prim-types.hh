@@ -1590,7 +1590,7 @@ struct Attribute {
   }
 
   template<typename T>
-  bool get_value(T *dst, const double t = value::TimeCode::Default(),
+  bool get_value(const double t, T *dst,
            value::TimeSampleInterpolationType interp =
                value::TimeSampleInterpolationType::Held) const {
     if (!dst) {
