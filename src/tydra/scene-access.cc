@@ -135,7 +135,7 @@ bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
     return false;
   }
 
-  for (const auto &root_prim : stage.GetRootPrims()) {
+  for (const auto &root_prim : stage.root_prims()) {
     TraverseRec(/* root path is empty */ "", root_prim, /* depth */ 0, m);
   }
 
@@ -160,7 +160,7 @@ bool ListShaders(const tinyusdz::Stage &stage,
     return false;
   }
 
-  for (const auto &root_prim : stage.GetRootPrims()) {
+  for (const auto &root_prim : stage.root_prims()) {
     TraverseShaderRec(/* root path is empty */ "", root_prim, /* depth */ 0, m);
   }
 
@@ -1395,7 +1395,7 @@ bool EvaluateAttributeImpl(
 
 void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata) {
-  for (const auto &root : stage.GetRootPrims()) {
+  for (const auto &root : stage.root_prims()) {
     if (!VisitPrimsRec(root, /* root level */ 0, visitor_fun, userdata)) {
       return;
     }
