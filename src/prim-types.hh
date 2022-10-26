@@ -698,6 +698,10 @@ struct PrimMeta {
   // USDZ extensions
   nonstd::optional<std::string> sceneName;  // 'sceneName'
 
+  // Omniverse extensions(TODO: Use UTF8 string type?)
+  // https://github.com/PixarAnimationStudios/USD/pull/2055
+  nonstd::optional<std::string> displayName; // 'displayName'
+
   std::map<std::string, MetaVariable> meta;  // other meta values
 
   // String only metadataum.
@@ -707,7 +711,7 @@ struct PrimMeta {
   // FIXME: Find a better way to detect Prim meta is authored...
   bool authored() const {
     return (active || hidden || kind || customData || references || payload ||
-            inherits || variants || variantSets || specializes || sceneName ||
+            inherits || variants || variantSets || specializes || displayName || sceneName ||
             doc || comment || meta.size() || apiSchemas || stringData.size() ||
             assetInfo);
   }
@@ -2086,6 +2090,13 @@ struct Scope {
   std::map<std::string, Property> props;
 };
 
+///
+/// Get elementName from Prim(e.g., Xform::name, GeomMesh::name)
+/// `v` must be the value of Prim class.
+///
+nonstd::optional<std::string> GetPrimElementName(const value::Value &v);
+
+
 //
 // For `Stage` scene graph.
 // Similar to `Prim` in pxrUSD.
@@ -2095,14 +2106,28 @@ struct Scope {
 class Prim {
  public:
 
+  // elementName is read from `rhs`(if it is a class of Prim)
   Prim(const value::Value &rhs);
   Prim(value::Value &&rhs);
+
+  Prim(const std::string &elementName, const value::Value &rhs);
+  Prim(const std::string &elementName, value::Value &&rhs);
 
   template<typename T>
   Prim(const T &prim) {
     // Check if T is Prim class type.
     static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) && (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id), "T is not a Prim class type");
     _data = prim;
+    // Use prim.name for elementName?
+    _elementPath = Path(prim.name, "");
+  }
+
+  template<typename T>
+  Prim(const std::string &elementName, const T &prim) {
+    // Check if T is Prim class type.
+    static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) && (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id), "T is not a Prim class type");
+    _data = prim;
+    _elementPath = Path(elementName, "");
   }
 
   std::vector<Prim> &children() {
