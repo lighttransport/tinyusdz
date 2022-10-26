@@ -1562,8 +1562,12 @@ struct Attribute {
       return _type_name;
     }
 
-    // Fallback. May be unreliable(`var` could be empty).
-    return _var.type_name();
+    if (!is_connection()) {
+      // Fallback. May be unreliable(`var` could be empty).
+      return _var.type_name();
+    }
+
+    return std::string();
   }
 
   template<typename T>
@@ -1626,9 +1630,26 @@ struct Attribute {
   Variability &variability() { return _variability; }
   Variability variability() const { return _variability; }
 
-  bool is_uniform() {
+  bool is_uniform() const {
     return _variability == Variability::Uniform;
   }
+
+  bool is_connection() const {
+    return _paths.size();
+  }
+
+  void set_connection(const Path &path) { _paths.push_back(path); }
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
+
+  nonstd::optional<Path> get_connection() const {
+    if (_paths.size() == 1) {
+      return _paths[0];
+    }
+    return nonstd::nullopt;
+  }
+    
+  const std::vector<Path> &connections() const { return _paths; }
+  std::vector<Path> &connections() { return _paths; }
 
  private:
   std::string _name;  // attrib name
@@ -1638,6 +1659,7 @@ struct Attribute {
   bool _blocked{false};  // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
+  std::vector<Path> _paths;
   AttrMeta _metas;
 };
 
@@ -1645,6 +1667,7 @@ struct Attribute {
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for
 // Crate data)
+// TODO: Move Connection to Attribute
 // TODO: Deprecate `custom` attribute: https://github.com/PixarAnimationStudios/USD/issues/2069
 class Property {
  public:
@@ -2096,6 +2119,12 @@ struct Scope {
 ///
 nonstd::optional<std::string> GetPrimElementName(const value::Value &v);
 
+///
+/// Set name for Prim `v`(e.g. Xform::name = elementName)
+/// `v` must be the value of Prim class.
+///
+bool SetPrimElementName(value::Value &v, const std::string &elementName);
+
 
 //
 // For `Stage` scene graph.
@@ -2118,7 +2147,7 @@ class Prim {
     // Check if T is Prim class type.
     static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) && (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id), "T is not a Prim class type");
     _data = prim;
-    // Use prim.name for elementName?
+    // Use prim.name for elementName
     _elementPath = Path(prim.name, "");
   }
 
@@ -2127,6 +2156,7 @@ class Prim {
     // Check if T is Prim class type.
     static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) && (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id), "T is not a Prim class type");
     _data = prim;
+    SetPrimElementName(_data, elementName);
     _elementPath = Path(elementName, "");
   }
 

@@ -1209,6 +1209,20 @@ class Value {
     }
   }
 
+  // Return nullptr when type conversion failed.
+  template <class T>
+  T *as() {
+    if (TypeTraits<T>::type_id == v_.type_id()) {
+      return linb::any_cast<T>(&v_);
+    } else if (TypeTraits<T>::underlying_type_id == v_.underlying_type_id()) {
+      // `roll` type. Can be able to cast to underlying type since the memory
+      // layout does not change.
+      return linb::any_cast<T>(&v_);
+    } else {
+      return nullptr;
+    }
+  }
+
 #if 0
   // Useful function to retrieve concrete value with type T.
   // Undefined behavior(usually will triger segmentation fault) when

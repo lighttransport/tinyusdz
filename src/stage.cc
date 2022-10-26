@@ -242,15 +242,72 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(Shader)
   EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
   EXTRACT_NAME_AND_RETURN_PATH(UsdUVTexture)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_int)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float2)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float3)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float4)
+  EXTRACT_NAME_AND_RETURN_PATH(SkelRoot)
+  EXTRACT_NAME_AND_RETURN_PATH(Skeleton)
+  EXTRACT_NAME_AND_RETURN_PATH(SkelAnimation)
+  EXTRACT_NAME_AND_RETURN_PATH(BlendShape)
 
-  // TODO: primvar reader
-  // EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float);
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
 #endif
 
   return nonstd::nullopt;
+}
+
+bool SetPrimElementName(value::Value &v, const std::string &elementName) {
+
+  // Lookup name field of Prim class
+  bool ok{false};
+
+#define SET_ELEMENT_NAME(__name, __ty) \
+  if (v.as<__ty>()) {                      \
+    v.as<__ty>()->name = __name;             \
+    ok = true; \
+  }
+
+  SET_ELEMENT_NAME(elementName, Model)
+  SET_ELEMENT_NAME(elementName, Scope)
+  SET_ELEMENT_NAME(elementName, Xform)
+  SET_ELEMENT_NAME(elementName, GPrim)
+  SET_ELEMENT_NAME(elementName, GeomMesh)
+  SET_ELEMENT_NAME(elementName, GeomPoints)
+  SET_ELEMENT_NAME(elementName, GeomCube)
+  SET_ELEMENT_NAME(elementName, GeomCapsule)
+  SET_ELEMENT_NAME(elementName, GeomCylinder)
+  SET_ELEMENT_NAME(elementName, GeomSphere)
+  SET_ELEMENT_NAME(elementName, GeomCone)
+  SET_ELEMENT_NAME(elementName, GeomSubset)
+  SET_ELEMENT_NAME(elementName, GeomCamera)
+  SET_ELEMENT_NAME(elementName, GeomBasisCurves)
+  SET_ELEMENT_NAME(elementName, DomeLight)
+  SET_ELEMENT_NAME(elementName, SphereLight)
+  SET_ELEMENT_NAME(elementName, CylinderLight)
+  SET_ELEMENT_NAME(elementName, DiskLight)
+  SET_ELEMENT_NAME(elementName, RectLight)
+  SET_ELEMENT_NAME(elementName, Material)
+  SET_ELEMENT_NAME(elementName, Shader)
+  SET_ELEMENT_NAME(elementName, UsdPreviewSurface)
+  SET_ELEMENT_NAME(elementName, UsdUVTexture)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_int)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float2)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float3)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float4)
+  SET_ELEMENT_NAME(elementName, SkelRoot)
+  SET_ELEMENT_NAME(elementName, Skeleton)
+  SET_ELEMENT_NAME(elementName, SkelAnimation)
+  SET_ELEMENT_NAME(elementName, BlendShape)
+
+
+#undef SET_ELEMENT_NAME
+
+  return ok;
 }
 
 Prim::Prim(const value::Value &rhs) {
@@ -292,6 +349,7 @@ Prim::Prim(const std::string &elementPath, const value::Value &rhs) {
     _elementPath = Path(elementPath, /* prop part */ "");
 
     _data = rhs;
+    SetPrimElementName(_data, elementPath);
   } else {
     // TODO: Raise an error if rhs is not an Prim
   }
@@ -301,11 +359,12 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
   // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
       (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+
+    _path = Path(elementPath, /* prop part */"");
+    _elementPath = Path(elementPath, /* prop part */"");
+
     _data = std::move(rhs);
-
-    _path = Path(elementPath, "");
-    _elementPath = Path(elementPath, "");
-
+    SetPrimElementName(_data, elementPath);
   } else {
     // TODO: Raise an error if rhs is not an Prim
   }
