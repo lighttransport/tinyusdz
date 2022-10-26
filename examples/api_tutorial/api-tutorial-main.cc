@@ -1,8 +1,9 @@
 // All-in-one TinyUSDZ core
 #include "tinyusdz.hh"
 
-// Import to_string() features
+// Import to_string() and operator<< features
 #include "pprinter.hh"
+#include "value-pprint.hh"
 
 // Tydra is a collection of APIs to access/convert USD Prim data
 // (e.g. Can get attribute by name)
@@ -197,17 +198,23 @@ int main(int argc, char **argv) {
     std::cerr << err << "\n";
   }
 
-  // std::string warn;
-  // std::string err;
-  // bool ret = tinyusdz::usda::SaveAsUSDA("output.udsa", stage, &warn, &err);
+  tinyusdz::Attribute attr;
+  if (tinyusdz::tydra::GetAttribute(*prim, "points", &attr, &err)) {
+    std::cout << "point attribute type = " << attr.type_name() << "\n";
 
-  // if (warn.size()) {
-  //   std::cout << "WARN: " << warn << "\n";
-  // }
+    // Ensure Attribute has a value(not Attribute connection)
+    if (attr.is_value()) {
+      std::vector<tinyusdz::value::point3f> pts;
+      // TODO: timesamples
+      if (attr.get_value(&pts)) {
+        std::cout << "point attribute value = " << pts << "\n";
+      }
+    }
 
-  // if (err.size()) {
-  //   std::cerr << "ERR: " << err << "\n";
-  // }
+  } else {
+    std::cerr << err << "\n";
+  }
+
 
   return EXIT_SUCCESS;
 }

@@ -3502,10 +3502,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
     }
 
-    Relationship rel;
-    rel.set(path);
-
-    Property p(rel, /* value typename */ type_name, custom_qual);
+    Property p(path, /* value typename */ type_name, custom_qual);
 
     (*props)[attr_name] = p;
 
