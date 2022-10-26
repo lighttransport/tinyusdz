@@ -4,6 +4,10 @@
 
 #include "str-util.hh"
 #include "value-pprint.hh"
+#include "value-eval-util.hh"
+
+//
+#include "common-macros.inc"
 
 // For compile-time map
 // Another candidate is frozen: https://github.com/serge-sans-paille/frozen
@@ -12,6 +16,126 @@
 
 namespace tinyusdz {
 namespace value {
+
+//
+// Supported type for `Linear` interpolation
+//
+// half, float, double, TimeCode(double)
+// matrix2d, matrix3d, matrix4d,
+// float2h, float3h, float4h
+// float2f, float3f, float4f
+// float2d, float3d, float4d
+// quath, quatf, quatd
+// (use slerp for quaternion type)
+bool IsLerpSupportedType(uint32_t tyid) {
+
+  // See underlying_type_id to simplify check for Role types(e.g. color3f)
+#define IS_SUPPORTED_TYPE(__tyid, __ty) \
+  if (__tyid == value::TypeTraits<__ty>::underlying_type_id) return true 
+
+  IS_SUPPORTED_TYPE(tyid, value::half);
+  IS_SUPPORTED_TYPE(tyid, value::half2);
+  IS_SUPPORTED_TYPE(tyid, value::half3);
+  IS_SUPPORTED_TYPE(tyid, value::half4);
+  IS_SUPPORTED_TYPE(tyid, float);
+  IS_SUPPORTED_TYPE(tyid, value::float2);
+  IS_SUPPORTED_TYPE(tyid, value::float3);
+  IS_SUPPORTED_TYPE(tyid, value::float4);
+  IS_SUPPORTED_TYPE(tyid, double);
+  IS_SUPPORTED_TYPE(tyid, value::double2);
+  IS_SUPPORTED_TYPE(tyid, value::double3);
+  IS_SUPPORTED_TYPE(tyid, value::double4);
+  IS_SUPPORTED_TYPE(tyid, value::quath);
+  IS_SUPPORTED_TYPE(tyid, value::quatf);
+  IS_SUPPORTED_TYPE(tyid, value::quatd);
+  IS_SUPPORTED_TYPE(tyid, value::matrix2d);
+  IS_SUPPORTED_TYPE(tyid, value::matrix3d);
+  IS_SUPPORTED_TYPE(tyid, value::matrix4d);
+
+#undef IS_SUPPORTED_TYPE
+
+  return false;
+}
+
+bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value *dst) {
+  if (!dst) {
+    return false;
+  }
+
+  if (a.type_id() != b.type_id()) {
+    return false;
+  }
+
+  uint32_t tyid = a.type_id();
+
+  if (!IsLerpSupportedType(tyid)) {
+    return false;
+  } 
+
+  bool ok{false};
+  value::Value result;
+
+#define DO_LERP(__ty) \
+  if (tyid == value::TypeTraits<__ty>::type_id) { \
+    const __ty *v0 = a.as<__ty>(); \
+    const __ty *v1 = b.as<__ty>(); \
+    __ty c; \
+    if (v0 && v1) { \
+      c = lerp(*v0, *v1, dt); \
+      result = c; \
+      ok = true; \
+    } \
+  } else
+
+  DO_LERP(value::half)
+  DO_LERP(value::half2)
+  DO_LERP(value::half3)
+  DO_LERP(value::half4)
+  DO_LERP(float)
+  DO_LERP(value::float2)
+  DO_LERP(value::float3)
+  DO_LERP(value::float4)
+  DO_LERP(double)
+  DO_LERP(value::double2)
+  DO_LERP(value::double3)
+  DO_LERP(value::double4)
+  DO_LERP(value::quath)
+  DO_LERP(value::quatf)
+  DO_LERP(value::quatd)
+  DO_LERP(value::color3h)
+  DO_LERP(value::color3f)
+  DO_LERP(value::color3d)
+  DO_LERP(value::color4h)
+  DO_LERP(value::color4f)
+  DO_LERP(value::color4d)
+  DO_LERP(value::point3h)
+  DO_LERP(value::point3f)
+  DO_LERP(value::point3d)
+  DO_LERP(value::normal3h)
+  DO_LERP(value::normal3f)
+  DO_LERP(value::normal3d)
+  DO_LERP(value::vector3h)
+  DO_LERP(value::vector3f)
+  DO_LERP(value::vector3d)
+  DO_LERP(value::texcoord2h)
+  DO_LERP(value::texcoord2f)
+  DO_LERP(value::texcoord2d)
+  DO_LERP(value::texcoord3h)
+  DO_LERP(value::texcoord3f)
+  DO_LERP(value::texcoord3d)
+  {
+    DCOUT("TODO: type " << GetTypeName(tyid));
+  }
+
+#undef DO_LERP
+
+  if (ok) {
+    (*dst) = result;
+  }
+
+  return ok;
+}
+
 
 #if 0  // TODO: Remove
 bool Reconstructor::reconstruct(AttribMap &amap) {

@@ -8,16 +8,17 @@
 ///
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <type_traits>
 #include <vector>
-#include <limits>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -67,93 +68,94 @@ namespace value {
 // See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
 constexpr auto kToken = "token";
 constexpr auto kString = "string";
-constexpr auto kPath = "Path"; // generic(usually prim) path. internal representation.
+constexpr auto kPath =
+    "Path";  // generic(usually prim) path. internal representation.
 constexpr auto kAssetPath = "asset";  // `asset` in USDA
-constexpr auto kDictionary= "dictionary";
-constexpr auto kTimeCode= "timecode";
+constexpr auto kDictionary = "dictionary";
+constexpr auto kTimeCode = "timecode";
 
-constexpr auto kBool= "bool";
-constexpr auto kUChar= "uchar";
-constexpr auto kHalf= "half";
-constexpr auto kInt= "int";
-constexpr auto kUInt= "uint";
-constexpr auto kInt64= "int64";
-constexpr auto kUInt64= "uint64";
+constexpr auto kBool = "bool";
+constexpr auto kUChar = "uchar";
+constexpr auto kHalf = "half";
+constexpr auto kInt = "int";
+constexpr auto kUInt = "uint";
+constexpr auto kInt64 = "int64";
+constexpr auto kUInt64 = "uint64";
 
-constexpr auto kInt2= "int2";
-constexpr auto kInt3= "int3";
-constexpr auto kInt4= "int4";
+constexpr auto kInt2 = "int2";
+constexpr auto kInt3 = "int3";
+constexpr auto kInt4 = "int4";
 
-constexpr auto kUInt2= "uint2";
-constexpr auto kUInt3= "uint3";
-constexpr auto kUInt4= "uint4";
+constexpr auto kUInt2 = "uint2";
+constexpr auto kUInt3 = "uint3";
+constexpr auto kUInt4 = "uint4";
 
-constexpr auto kHalf2= "half2";
-constexpr auto kHalf3= "half3";
-constexpr auto kHalf4= "half4";
+constexpr auto kHalf2 = "half2";
+constexpr auto kHalf3 = "half3";
+constexpr auto kHalf4 = "half4";
 
 // Seems primarily used in usdSkel.
 // float precision matrix is not directly used in XformOp
-constexpr auto kMatrix2f= "matrix2f";
-constexpr auto kMatrix3f= "matrix3f";
-constexpr auto kMatrix4f= "matrix4f";
+constexpr auto kMatrix2f = "matrix2f";
+constexpr auto kMatrix3f = "matrix3f";
+constexpr auto kMatrix4f = "matrix4f";
 
-constexpr auto kMatrix2d= "matrix2d";
-constexpr auto kMatrix3d= "matrix3d";
-constexpr auto kMatrix4d= "matrix4d";
+constexpr auto kMatrix2d = "matrix2d";
+constexpr auto kMatrix3d = "matrix3d";
+constexpr auto kMatrix4d = "matrix4d";
 
-constexpr auto kFloat= "float";
-constexpr auto kFloat2= "float2";
-constexpr auto kFloat3= "float3";
-constexpr auto kFloat4= "float4";
+constexpr auto kFloat = "float";
+constexpr auto kFloat2 = "float2";
+constexpr auto kFloat3 = "float3";
+constexpr auto kFloat4 = "float4";
 
-constexpr auto kDouble= "double";
-constexpr auto kDouble2= "double2";
-constexpr auto kDouble3= "double3";
-constexpr auto kDouble4= "double4";
+constexpr auto kDouble = "double";
+constexpr auto kDouble2 = "double2";
+constexpr auto kDouble3 = "double3";
+constexpr auto kDouble4 = "double4";
 
-constexpr auto kQuath= "quath";
-constexpr auto kQuatf= "quatf";
-constexpr auto kQuatd= "quatd";
+constexpr auto kQuath = "quath";
+constexpr auto kQuatf = "quatf";
+constexpr auto kQuatd = "quatd";
 
-constexpr auto kVector3h= "vector3h";
-constexpr auto kVector3f= "vector3f";
-constexpr auto kVector3d= "vector3d";
+constexpr auto kVector3h = "vector3h";
+constexpr auto kVector3f = "vector3f";
+constexpr auto kVector3d = "vector3d";
 
-constexpr auto kVector4h= "vector4h";
-constexpr auto kVector4f= "vector4f";
-constexpr auto kVector4d= "vector4d";
+constexpr auto kVector4h = "vector4h";
+constexpr auto kVector4f = "vector4f";
+constexpr auto kVector4d = "vector4d";
 
-constexpr auto kPoint3h= "point3h";
-constexpr auto kPoint3f= "point3f";
-constexpr auto kPoint3d= "point3d";
+constexpr auto kPoint3h = "point3h";
+constexpr auto kPoint3f = "point3f";
+constexpr auto kPoint3d = "point3d";
 
-constexpr auto kNormal3h= "normal3h";
-constexpr auto kNormal3f= "normal3f";
-constexpr auto kNormal3d= "normal3d";
+constexpr auto kNormal3h = "normal3h";
+constexpr auto kNormal3f = "normal3f";
+constexpr auto kNormal3d = "normal3d";
 
-constexpr auto kColor3h= "color3h";
-constexpr auto kColor3f= "color3f";
-constexpr auto kColor3d= "color3d";
-constexpr auto kColor4h= "color4h";
-constexpr auto kColor4f= "color4f";
-constexpr auto kColor4d= "color4d";
+constexpr auto kColor3h = "color3h";
+constexpr auto kColor3f = "color3f";
+constexpr auto kColor3d = "color3d";
+constexpr auto kColor4h = "color4h";
+constexpr auto kColor4f = "color4f";
+constexpr auto kColor4d = "color4d";
 
-constexpr auto kFrame4d= "frame4d";
+constexpr auto kFrame4d = "frame4d";
 
-constexpr auto kTexCoord2h= "texCoord2h";
-constexpr auto kTexCoord2f= "texCoord2f";
-constexpr auto kTexCoord2d= "texCoord2d";
+constexpr auto kTexCoord2h = "texCoord2h";
+constexpr auto kTexCoord2f = "texCoord2f";
+constexpr auto kTexCoord2d = "texCoord2d";
 
-constexpr auto kTexCoord3h= "texCoord3h";
-constexpr auto kTexCoord3f= "texCoord3f";
-constexpr auto kTexCoord3d= "texCoord3d";
+constexpr auto kTexCoord3h = "texCoord3h";
+constexpr auto kTexCoord3f = "texCoord3f";
+constexpr auto kTexCoord3d = "texCoord3d";
 
-constexpr auto kTexCoord4h= "texCoord4h";
-constexpr auto kTexCoord4f= "texCoord4f";
-constexpr auto kTexCoord4d= "texCoord4d";
+constexpr auto kTexCoord4h = "texCoord4h";
+constexpr auto kTexCoord4f = "texCoord4f";
+constexpr auto kTexCoord4d = "texCoord4d";
 
-constexpr auto kRelationship= "rel";
+constexpr auto kRelationship = "rel";
 
 inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 
@@ -172,13 +174,9 @@ class AssetPath {
     return false;
   }
 
-  const std::string &GetAssetPath() const {
-    return asset_path_;
-  }
+  const std::string &GetAssetPath() const { return asset_path_; }
 
-  const std::string GetResolvedPath() const {
-    return resolved_path_;
-  }
+  const std::string GetResolvedPath() const { return resolved_path_; }
 
  private:
   std::string asset_path_;
@@ -202,12 +200,12 @@ class TimeCode {
   }
 
   bool is_default() {
-    // TODO: Bitwise comparison 
+    // TODO: Bitwise comparison
     return !std::isnan(time_);
   }
 
  private:
-  double time_; 
+  double time_;
 };
 
 static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
@@ -222,9 +220,9 @@ static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 //
 // TODO(syoyo): Support 3D and 4D?
 constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 20;  // 1024
-//constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21;  // 2048
-// constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 22;
-// constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 23;
+// constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21;  // 2048
+//  constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 22;
+//  constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 23;
 constexpr uint32_t TYPE_ID_TERMINATOR_BIT = 1 << 24;
 
 enum TypeId {
@@ -236,7 +234,8 @@ enum TypeId {
 
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
-  TYPE_ID_STRING_DATA, // String for primvar and metadata. Includes multi-line string
+  TYPE_ID_STRING_DATA,  // String for primvar and metadata. Includes multi-line
+                        // string
 
   TYPE_ID_BOOL,
 
@@ -313,7 +312,7 @@ enum TypeId {
   TYPE_ID_TEXCOORD3F,
   TYPE_ID_TEXCOORD3D,
 
-  TYPE_ID_EXTENT, // float3[2]
+  TYPE_ID_EXTENT,  // float3[2]
 
   TYPE_ID_LAYER_OFFSET,
   TYPE_ID_PAYLOAD,
@@ -321,8 +320,9 @@ enum TypeId {
   TYPE_ID_TIMECODE,
   // TYPE_ID_TIMESAMPLE,
 
-  TYPE_ID_DICT, // Generic dict type.
-  TYPE_ID_CUSTOMDATA, // similar to `dictionary`, but limited types are allowed to use. for metadatum(e.g. `customData` in Prim Meta)
+  TYPE_ID_DICT,        // Generic dict type.
+  TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
+                       // to use. for metadatum(e.g. `customData` in Prim Meta)
 
   // TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
@@ -359,8 +359,8 @@ enum TypeId {
 
   // Types for Model and GPrim
   TYPE_ID_MODEL_BEGIN = (1 << 10),
-  TYPE_ID_MODEL, // internally used class
-  //TYPE_ID_GROUP,
+  TYPE_ID_MODEL,  // internally used class
+  // TYPE_ID_GROUP,
   TYPE_ID_SCOPE,
   TYPE_ID_GPRIM,
   TYPE_ID_GEOM_XFORM,
@@ -509,7 +509,6 @@ using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
-
 //
 // OpenGL-like Column-major order
 //
@@ -652,7 +651,7 @@ struct frame4d {
 };
 
 // Quaternion has memory layout of [x, y, z, w] in Crate(Binary)
-// and QfQuat class in pxrUSD. 
+// and QfQuat class in pxrUSD.
 // https://github.com/PixarAnimationStudios/USD/blob/3abc46452b1271df7650e9948fef9f0ce602e3b2/pxr/base/gf/quatf.h#L287
 // NOTE: ASCII uses [w, x, y, z] ordering
 struct quath {
@@ -909,7 +908,7 @@ struct color3f {
 
   // C++11 or later, struct is tightly packed, so use the pointer offset is
   // valid.
-  float operator[](size_t idx) const{ return *(&r + idx); }
+  float operator[](size_t idx) const { return *(&r + idx); }
   float operator[](size_t idx) { return *(&r + idx); }
 };
 
@@ -980,8 +979,8 @@ using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
-//struct any_value;
-//using dict = std::map<std::string, any_value>;
+// struct any_value;
+// using dict = std::map<std::string, any_value>;
 using dict = std::map<std::string, linb::any>;
 
 template <class dtype>
@@ -1005,7 +1004,7 @@ struct TypeTraits<void> {
 };
 
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
-//DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
+// DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
@@ -1096,8 +1095,8 @@ DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 
 //
-// Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header files(e.g. `prim-types.hh`,
-// `crate-format.hh`(Data types used in Crate data))
+// Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header
+// files(e.g. `prim-types.hh`, `crate-format.hh`(Data types used in Crate data))
 //
 
 #undef DEFINE_TYPE_TRAIT
@@ -1119,7 +1118,7 @@ struct TypeTraits<std::vector<T>> {
   }
 };
 
-#if 0 // Current pxrUSD does not support 2D array 
+#if 0  // Current pxrUSD does not support 2D array 
 // 2D Array
 // TODO(syoyo): support 3D array?
 template <typename T>
@@ -1152,19 +1151,20 @@ nonstd::optional<uint32_t> TryGetTypeId(const std::string &tyname);
 // Return TYPE_ID_INVALID when the input is invalid type name
 uint32_t GetTypeId(const std::string &tyname);
 
-
 // For Role type.
-// Get underlying type name(e.g. return type "float4" for role type "color4f"), or return nullopt/invalid string for invalid input type id.
-// For non-Role type, the behavior is same with TryGetTypeName/GetTypeName(i.e, return "float4" for type `float4`)
+// Get underlying type name(e.g. return type "float4" for role type "color4f"),
+// or return nullopt/invalid string for invalid input type id. For non-Role
+// type, the behavior is same with TryGetTypeName/GetTypeName(i.e, return
+// "float4" for type `float4`)
 nonstd::optional<std::string> TryGetUnderlyingTypeName(uint32_t tyid);
 std::string GetUnderlyingTypeName(uint32_t tyid);
 
-// Get underlying type id(e.g. return type "float4" for role type "color4f"), or return nullopt/TYPE_ID_INVALID for invalid input type name
-// For non-Role type, the behavior is same with TryGetTypeId/GetTypeId(i.e, return `float4` for name "float4")
+// Get underlying type id(e.g. return type "float4" for role type "color4f"), or
+// return nullopt/TYPE_ID_INVALID for invalid input type name For non-Role type,
+// the behavior is same with TryGetTypeId/GetTypeId(i.e, return `float4` for
+// name "float4")
 nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname);
 uint32_t GetUnderlyingTypeId(const std::string &tyname);
-
-
 
 }  // namespace value
 }  // namespace tinyusdz
@@ -1176,11 +1176,11 @@ namespace value {
 
 ///
 /// Generic Value class using any
-/// TODO: Type-check when casting with underlying_type(Need to modify linb::any class) 
+/// TODO: Type-check when casting with underlying_type(Need to modify linb::any
+/// class)
 ///
 class Value {
  public:
-
   Value() = default;
 
   template <class T>
@@ -1190,7 +1190,9 @@ class Value {
   // Value(T &&v) : v_(v) {}
 
   const std::string type_name() const { return v_.type_name(); }
-  const std::string underlying_type_name() const { return v_.underlying_type_name(); }
+  const std::string underlying_type_name() const {
+    return v_.underlying_type_name();
+  }
 
   uint32_t type_id() const { return v_.type_id(); }
   uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
@@ -1264,37 +1266,262 @@ class Value {
   const linb::any &get_raw() const { return v_; }
 
  private:
-  //any_value v_;
+  // any_value v_;
   linb::any v_;
 };
 
-// Handy, but may not be efficient for large time samples(e.g. 1M samples or more)
+// TimeSample interpolation type.
+//
+// Held = something like numpy.digitize(right=False)
+// https://numpy.org/doc/stable/reference/generated/numpy.digitize.html
+//
+// Returns `values[i-1]` for `times[i-1] <= t < times[i]`
+//
+// Linear = linear interpolation
+//
+// example:
+// { 0 : 0.0
+//   10 : 1.0
+// }
+//
+// - Held
+//   - time 5 = returns 0.0
+//   - time 9.99 = returns 0.0
+//   - time 10 = returns 1.0
+// - Linear
+//   - time 5 = returns 0.5
+//   - time 9.99 = nearly 1.0
+//   - time 10 = 1.0
+//
+enum class TimeSampleInterpolationType {
+  Held,  // something like nearest-neighbor.
+  Linear,
+};
+
+//
+// Supported type for `Linear` interpolation
+//
+// half, float, double, TimeCode(double)
+// matrix2d, matrix3d, matrix4d,
+// float2h, float3h, float4h
+// float2f, float3f, float4f
+// float2d, float3d, float4d
+// quath, quatf, quatd
+// (use slerp for quaternion type)
+
+
+bool IsLerpSupportedType(uint32_t tyid);
+
+///
+/// @param[in] dt interpolator [0.0, 1.0)
+///
+bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value *dst);
+
+// Handy, but may not be efficient for large time samples(e.g. 1M samples or
+// more)
 //
 // For the runtime speed, with "-O2 -g" optimization, adding 10M `double`
 // samples to linb::any takes roughly 1.8 ms on Threadripper 1950X, whereas
 // simple vector<double> push_back takes 390 us(roughly x4 times faster). (Build
 // benchmarks to see the numbers on your CPU)
 //
-// We assume having large time samples is rare situlation, and above benchmark speed is acceptable in general  usecases.
+// We assume having large time samples is rare situlation, and above benchmark
+// speed is acceptable in general  usecases.
 //
-// `None`(ValueBlock) is represented as `value::ValueBlock`
+// `None`(ValueBlock) is represented by setting `Sample::blocked` true.
 //
 struct TimeSamples {
-  std::vector<double> times;
-  std::vector<value::Value> values;  // Could have arbitrary type, but usually an array of 'None'(ValueBlock) or Type T
+  struct Sample {
+    double t;
+    value::Value value;
+    bool blocked{false};
+  };
 
-  bool is_scalar() const {
-    return (times.size() == 0) && (values.size() == 1);
+  bool empty() const {
+    return _samples.empty();
   }
 
-  bool is_valid_timesamples() const {
-    if ((times.size() > 0) && (times.size() == values.size())) {
-      return true;
+  size_t size() const {
+    return _samples.size();
+  }
+
+  void clear() {
+    _samples.clear();
+    _dirty = true;
+  }
+
+  void update() const {
+    std::sort(_samples.begin(), _samples.end(),
+              [](const Sample &a, const Sample &b) { return a.t < b.t; });
+
+    _dirty = false;
+  }
+
+  nonstd::optional<double> get_time(size_t idx) const {
+    if (idx > _samples.size()) {
+      return nonstd::nullopt;
     }
+
+    if (_dirty) {
+      update();
+    }
+
+    return _samples[idx].t;
+  }
+
+  nonstd::optional<value::Value> get_value(size_t idx) const {
+    if (idx > _samples.size()) {
+      return nonstd::nullopt;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    return _samples[idx].value;
+  }
+
+  uint32_t type_id() const {
+
+    if (_samples.size()) {
+      if (_dirty) {
+        update();
+      }
+      return _samples[0].value.type_id();
+    } else {
+      return value::TypeId::TYPE_ID_INVALID;
+    }
+  }
+
+  std::string type_name() const {
+    if (_samples.size()) {
+      if (_dirty) {
+        update();
+      }
+      return _samples[0].value.type_name();
+    } else {
+      return std::string();
+    }
+  }
+
+  void add_sample(const Sample &s) {
+    _samples.push_back(s);
+    _dirty = true;
+  }
+
+  void add_sample(double t, const value::Value &v) {
+    _samples.push_back({t, v, false});
+    _dirty = true;
+  }
+
+  // We still need "dummy" value for type_name() and type_id()
+  void add_blocked_sample(double t, const value::Value &v) {
+    Sample s;
+    s.t = t;
+    s.value = v;
+    s.blocked = true;
+
+    _samples.emplace_back(s);
+    _dirty = true;
+  }
+  
+
+  const std::vector<Sample> &get_samples() const {
+    if (_dirty) {
+      update();
+    }
+    return _samples;
+  }
+
+  std::vector<Sample> &samples() {
+    if (_dirty) {
+      update();
+    }
+    return _samples;
+  }
+
+#if 1 // TODO: Write implementation in .cc 
+  // Get value at specified time.
+  // Return linearly interpolated value when TimeSampleInterpolationType is
+  // Linear. Returns nullopt when specified time is out-of-range.
+  template<typename T>
+  bool get(T *dst, double t = value::TimeCode::Default(),
+           TimeSampleInterpolationType interp =
+               TimeSampleInterpolationType::Held) const {
+    if (!dst) {
+      return false;
+    }
+
+    if (empty()) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    if (value::TimeCode(t).is_default()) {
+      // FIXME: Use the first item for now.
+      // TODO: Handle bloked
+      (*dst) = _samples[0].value;
+      return true;
+    } else {
+      auto it = std::lower_bound(
+          _samples.begin(), _samples.end(), t,
+          [](const Sample &a, double tval) { return a.t < tval; });
+
+      if (interp == TimeSampleInterpolationType::Linear) {
+        size_t idx0 = size_t(std::max(
+            int64_t(0),
+            std::min(int64_t(_samples.size() - 1),
+                     int64_t(std::distance(_samples.begin(), it - 1)))));
+        size_t idx1 =
+            size_t(std::max(int64_t(0), std::min(int64_t(_samples.size() - 1),
+                                                 int64_t(idx0) + 1)));
+
+        double tl = _samples[idx0].t;
+        double tu = _samples[idx1].t;
+
+        double dt = (t - tl);
+        if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
+          // slope is zero.
+          dt = 0.0;
+        } else {
+          dt /= (tu - tl);
+        }
+
+        // Just in case.
+        dt = std::max(0.0, std::min(1.0, dt));
+
+        const T &p0 = _samples[idx0].value;
+        const T &p1 = _samples[idx1].value;
+
+        const T p = lerp(p0, p1, dt);
+
+        (*dst) = std::move(p);
+        return true;
+      } else {
+        if (it == _samples.end()) {
+          // ???
+          return false;
+        }
+
+        (*dst) = it->value;
+        return true;
+      }
+    }
+
     return false;
   }
+#endif
+
+
+ private:
+  mutable std::vector<Sample> _samples;
+  mutable bool _dirty{false};
 };
 
+#if 0
 // simple linear interpolator
 template <typename T>
 struct LinearInterpolator {
@@ -1360,11 +1587,9 @@ struct AnimatableValue {
     return val;
   }
 };
+#endif
 
-
-
-
-#if 0 // TODO: Remove? since not used so frequently at the moment.
+#if 0  // TODO: Remove? since not used so frequently at the moment.
 //
 // typecast from type_id
 // It does not throw exception.

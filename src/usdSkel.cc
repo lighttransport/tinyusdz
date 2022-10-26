@@ -23,7 +23,7 @@ bool SkelAnimation::get_joints(std::vector<value::token> *dst) {
 
 bool SkelAnimation::get_blendShapeWeights(
     std::vector<float> *vals, const double t,
-    const TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
   Animatable<std::vector<float>> v;
   if (blendShapeWeights.get_value(&v)) {
     // Evaluate at time `t` with `tinterp` interpolation
@@ -35,7 +35,7 @@ bool SkelAnimation::get_blendShapeWeights(
 
 bool SkelAnimation::get_rotations(std::vector<value::quatf> *vals,
                                   const double t,
-                                  const TimeSampleInterpolationType tinterp) {
+                                  const value::TimeSampleInterpolationType tinterp) {
   Animatable<std::vector<value::quatf>> v;
   if (rotations.get_value(&v)) {
     // Evaluate at time `t` with `tinterp` interpolation
@@ -46,7 +46,7 @@ bool SkelAnimation::get_rotations(std::vector<value::quatf> *vals,
 }
 
 bool SkelAnimation::get_scales(std::vector<value::half3> *vals, const double t,
-                               const TimeSampleInterpolationType tinterp) {
+                               const value::TimeSampleInterpolationType tinterp) {
   Animatable<std::vector<value::half3>> v;
   if (scales.get_value(&v)) {
     // Evaluate at time `t` with `tinterp` interpolation
@@ -58,7 +58,7 @@ bool SkelAnimation::get_scales(std::vector<value::half3> *vals, const double t,
 
 bool SkelAnimation::get_translations(
     std::vector<value::float3> *vals, const double t,
-    const TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
   Animatable<std::vector<value::float3>> v;
   if (translations.get_value(&v)) {
     // Evaluate at time `t` with `tinterp` interpolation

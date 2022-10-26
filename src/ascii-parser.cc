@@ -3164,10 +3164,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       DCOUT("ParseBasicPrimAttr: " << value::TypeTraits<T>::type_name() << " = "
                                    << (*value));
 
-      // TODO: TimeSampled
-      value::TimeSamples ts;
-      ts.values.push_back(*value);
-      var.set_timesamples(ts);
+      var.set_scalar(value.value());
 
     } else {
       blocked = true;

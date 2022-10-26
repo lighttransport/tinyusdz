@@ -322,9 +322,9 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       v = d.value();
     } else {
       if (x.suffix.empty()) {
-        return nonstd::make_unexpected(fmt::format("`{}` is not half3, float3 or double3 type.\n", to_string(x.op)));
+        return nonstd::make_unexpected(fmt::format("`{}` is not half3, float3 or double3 type.\n", to_string(x.op_type)));
       } else {
-        return nonstd::make_unexpected(fmt::format("`{}:{}` is not half3, float3 or double3 type.\n", to_string(x.op), x.suffix));
+        return nonstd::make_unexpected(fmt::format("`{}:{}` is not half3, float3 or double3 type.\n", to_string(x.op_type), x.suffix));
       }
     }
 
@@ -345,27 +345,27 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
     XformEvaluator eval;
 
     if (x.inverted) {
-      if (x.op == XformOp::OpType::RotateXYZ) {
+      if (x.op_type == XformOp::OpType::RotateXYZ) {
         eval.RotateZ(zAngle);
         eval.RotateY(yAngle);
         eval.RotateX(xAngle);
-      } else if (x.op == XformOp::OpType::RotateXZY) {
+      } else if (x.op_type == XformOp::OpType::RotateXZY) {
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
-      } else if (x.op == XformOp::OpType::RotateYXZ) {
+      } else if (x.op_type == XformOp::OpType::RotateYXZ) {
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
-      } else if (x.op == XformOp::OpType::RotateYZX) {
+      } else if (x.op_type == XformOp::OpType::RotateYZX) {
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
         eval.RotateY(yAngle);
-      } else if (x.op == XformOp::OpType::RotateZYX) {
+      } else if (x.op_type == XformOp::OpType::RotateZYX) {
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
-      } else if (x.op == XformOp::OpType::RotateZXY) {
+      } else if (x.op_type == XformOp::OpType::RotateZXY) {
         eval.RotateY(yAngle);
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
@@ -374,27 +374,27 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
         return nonstd::make_unexpected("[InternalError] RotateABC");
       }
     } else {
-      if (x.op == XformOp::OpType::RotateXYZ) {
+      if (x.op_type == XformOp::OpType::RotateXYZ) {
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
-      } else if (x.op == XformOp::OpType::RotateXZY) {
+      } else if (x.op_type == XformOp::OpType::RotateXZY) {
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
         eval.RotateY(yAngle);
-      } else if (x.op == XformOp::OpType::RotateYXZ) {
+      } else if (x.op_type == XformOp::OpType::RotateYXZ) {
         eval.RotateY(yAngle);
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
-      } else if (x.op == XformOp::OpType::RotateYZX) {
+      } else if (x.op_type == XformOp::OpType::RotateYZX) {
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
-      } else if (x.op == XformOp::OpType::RotateZYX) {
+      } else if (x.op_type == XformOp::OpType::RotateZYX) {
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
-      } else if (x.op == XformOp::OpType::RotateZXY) {
+      } else if (x.op_type == XformOp::OpType::RotateZXY) {
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
@@ -434,7 +434,7 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       return false;
     }
 
-    switch (x.op) {
+    switch (x.op_type) {
       case XformOp::OpType::ResetXformStack: {
         if (i != 0) {
           if (err) {
@@ -742,7 +742,7 @@ std::vector<value::token> Xformable::xformOpOrder() const {
     if (xformOp.inverted) {
       ss += "!invert!";
     }
-    ss += to_string(xformOp.op);
+    ss += to_string(xformOp.op_type);
     if (!xformOp.suffix.empty()) {
       ss += ":" + xformOp.suffix;
     }

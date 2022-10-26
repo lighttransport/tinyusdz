@@ -35,8 +35,7 @@ value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
   value::TimeSamples dst;
 
   for (size_t i = 0; i < samples.size(); i++) {
-    dst.times.push_back(samples[i].t);
-    dst.values.push_back(samples[i].value);
+    dst.add_sample(samples[i].t, samples[i].value);
   }
 
   return dst;
@@ -50,10 +49,9 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(const TypedTimeSamples<T
   value::TimeSamples dst;
 
   for (size_t i = 0; i < samples.size(); i++) {
-    dst.times.push_back(samples[i].t);
     // to token
     value::token tok(to_string(samples[i].value));
-    dst.values.push_back(tok);
+    dst.add_sample(samples[i].t, tok);
   }
 
   return dst;
@@ -432,7 +430,7 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
     if (aval) {
       if (aval.value().is_scalar()) {
         T a;
-        if (aval.value().get(&a)) {
+        if (aval.value().get_scalar(&a)) {
           value::Value val(a);
           primvar::PrimVar pvar;
           pvar.set_scalar(val);
@@ -509,7 +507,7 @@ void ToProperty(
       pvar.set_timesamples(ts);
     } else if (v.is_scalar()) {
       T a;
-      if (v.get(&a)) {
+      if (v.get_scalar(&a)) {
         value::Value val(a);
         pvar.set_scalar(val);
       } else {
@@ -571,7 +569,7 @@ void ToTokenProperty(
       pvar.set_timesamples(ts);
     } else if (v.is_scalar()) {
       T a;
-      if (v.get(&a)) {
+      if (v.get_scalar(&a)) {
         // to token type
         value::token tok(to_string(a));
         value::Value val(tok);
@@ -632,7 +630,7 @@ void ToTokenProperty(
 
     if (v.is_scalar()) {
       T a;
-      if (v.get(&a)) {
+      if (v.get_scalar(&a)) {
         // to token type
         value::token tok(to_string(a));
         value::Value val(tok);
@@ -653,8 +651,8 @@ void ToTokenProperty(
 
 bool ToTerminalAttributeValue(const Attribute &attr,
                               TerminalAttributeValue *value, std::string *err,
-                              value::TimeCode tc,
-                              TimeSampleInterpolationType tinterp) {
+                              const double t,
+                              const value::TimeSampleInterpolationType tinterp) {
   if (!value) {
     // ???
     return false;
@@ -672,17 +670,21 @@ bool ToTerminalAttributeValue(const Attribute &attr,
   if (!var.is_valid()) {
     PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
   } else if (var.is_scalar()) {
-    const value::TimeSamples &ts = var.var();
-    DCOUT("Attribute is scalar type:" << ts.values[0].type_name());
-    DCOUT("Attribute value = " << pprint_value(ts.values[0]));
+    const value::Value &v = var.value_raw();
+    DCOUT("Attribute is scalar type:" << v.type_name());
+    DCOUT("Attribute value = " << pprint_value(v));
 
-    value->set_value(ts.values[0]);
-  } else if (var.is_timesample()) {
-    (void)tc;
-    (void)tinterp;
-    // TODO:
-    // Evaluate timeSample value at specified timeCode.
-    PUSH_ERROR_AND_RETURN("TODO: TimeSamples.");
+    value->set_value(v);
+  } else if (var.is_timesamples()) {
+     
+    value::Value v;
+    if (!var.get_interpolated_value(t, tinterp, &v)) {
+      PUSH_ERROR_AND_RETURN("Interpolate TimeSamples failed.");
+      return false;
+    } 
+
+    value->set_value(v);
+    
   }
 
   return true;
@@ -693,7 +695,7 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
 
   Attribute attr;
 
-  switch (x.op) {
+  switch (x.op_type) {
     case XformOp::OpType::ResetXformStack: {
       // ??? Not exists in Prim's property
       return false;
@@ -711,7 +713,7 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
     case XformOp::OpType::RotateYZX:
     case XformOp::OpType::RotateZXY:
     case XformOp::OpType::RotateZYX: {
-      pv.var() = x.var();
+      pv = x.get_var();
     }
   }
 
@@ -794,7 +796,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else {
     // XformOp?
     for (const auto &item : xform.xformOps) {
-      std::string op_name = to_string(item.op);
+      std::string op_name = to_string(item.op_type);
       if (item.suffix.size()) {
         op_name += ":" + item.suffix;
       }
@@ -1304,10 +1306,9 @@ bool EvaluateAttributeImpl(
     const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, std::set<std::string> &visited_paths,
-    const tinyusdz::value::TimeCode tc,
-    const tinyusdz::TimeSampleInterpolationType tinterp) {
+    const double t,
+    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
   // TODO:
-  (void)tc;
   (void)tinterp;
 
   DCOUT("Prim : " << prim.element_path().element_name() << "("
@@ -1354,7 +1355,7 @@ bool EvaluateAttributeImpl(
       visited_paths.insert(abs_path);
 
       return EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
-                                   value, err, visited_paths, tc, tinterp);
+                                   value, err, visited_paths, t, tinterp);
 
     } else {
       PUSH_ERROR_AND_RETURN(targetPrimRet.error());
@@ -1376,7 +1377,7 @@ bool EvaluateAttributeImpl(
           fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
     }
 
-    if (!ToTerminalAttributeValue(attr, value, err, tc, tinterp)) {
+    if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
       return false;
     }
 
@@ -1479,12 +1480,12 @@ bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
 bool EvaluateAttribute(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
                        const std::string &attr_name,
                        TerminalAttributeValue *value, std::string *err,
-                       const tinyusdz::value::TimeCode tc,
-                       const tinyusdz::TimeSampleInterpolationType tinterp) {
+                       const double t,
+                       const tinyusdz::value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
   return EvaluateAttributeImpl(stage, prim, attr_name, value, err,
-                               visited_paths, tc, tinterp);
+                               visited_paths, t, tinterp);
 }
 
 }  // namespace tydra

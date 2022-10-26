@@ -122,21 +122,21 @@ struct SkelAnimation {
   bool get_blendShapes(std::vector<value::token> *toks);
   bool get_blendShapeWeights(std::vector<float> *vals,
                              const double t = value::TimeCode::Default(),
-                             const TimeSampleInterpolationType tinterp =
-                                 TimeSampleInterpolationType::Held);
+                             const value::TimeSampleInterpolationType tinterp =
+                                 value::TimeSampleInterpolationType::Held);
   bool get_joints(std::vector<value::token> *toks);
   bool get_rotations(std::vector<value::quatf> *vals,
                      const double t = value::TimeCode::Default(),
-                     const TimeSampleInterpolationType tinterp =
-                         TimeSampleInterpolationType::Held);
+                     const value::TimeSampleInterpolationType tinterp =
+                         value::TimeSampleInterpolationType::Held);
   bool get_scales(std::vector<value::half3> *vals,
                   const double t = value::TimeCode::Default(),
-                  const TimeSampleInterpolationType tinterp =
-                      TimeSampleInterpolationType::Held);
+                  const value::TimeSampleInterpolationType tinterp =
+                      value::TimeSampleInterpolationType::Held);
   bool get_translations(std::vector<value::float3> *vals,
                         const double t = value::TimeCode::Default(),
-                        const TimeSampleInterpolationType tinterp =
-                            TimeSampleInterpolationType::Held);
+                        const value::TimeSampleInterpolationType tinterp =
+                            value::TimeSampleInterpolationType::Held);
 
   std::map<std::string, Property> props;
   PrimMeta meta;

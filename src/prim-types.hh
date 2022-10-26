@@ -583,44 +583,6 @@ class MetaVariable {
   value::Value value{nullptr};
 };
 
-// TimeSample interpolation type.
-//
-// Held = something like numpy.digitize(right=False)
-// https://numpy.org/doc/stable/reference/generated/numpy.digitize.html
-//
-// Returns `values[i-1]` for `times[i-1] <= t < times[i]`
-//
-// Linear = linear interpolation
-//
-// example:
-// { 0 : 0.0
-//   10 : 1.0
-// }
-//
-// - Held
-//   - time 5 = returns 0.0
-//   - time 9.99 = returns 0.0
-//   - time 10 = returns 1.0
-// - Linear
-//   - time 5 = returns 0.5
-//   - time 9.99 = nearly 1.0
-//   - time 10 = 1.0
-//
-enum class TimeSampleInterpolationType {
-  Held,  // something like nearest-neighbor.
-  Linear,
-};
-
-//
-// Supported type for `Linear`
-//
-// half, float, double, TimeCode(double)
-// matrix2d, matrix3d, matrix4d,
-// float2h, float3h, float4h
-// float2f, float3f, float4f
-// float2d, float3d, float4d
-// quath, quatf, quatd
-// (use slerp for quaternion type)
 
 struct APISchemas {
   // TinyUSDZ does not allow user-supplied API schema for now
@@ -784,8 +746,8 @@ struct TypedTimeSamples {
   // Return linearly interpolated value when TimeSampleInterpolationType is
   // Linear. Returns nullopt when specified time is out-of-range.
   bool get(T *dst, double t = value::TimeCode::Default(),
-           TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Held) const {
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Held) const {
     if (!dst) {
       return false;
     }
@@ -808,7 +770,7 @@ struct TypedTimeSamples {
           _samples.begin(), _samples.end(), t,
           [](const Sample &a, double tval) { return a.t < tval; });
 
-      if (interp == TimeSampleInterpolationType::Linear) {
+      if (interp == value::TimeSampleInterpolationType::Linear) {
         size_t idx0 = size_t(std::max(
             int64_t(0),
             std::min(int64_t(_samples.size() - 1),
@@ -831,10 +793,23 @@ struct TypedTimeSamples {
         // Just in case.
         dt = std::max(0.0, std::min(1.0, dt));
 
-        const T &p0 = _samples[idx0].value;
-        const T &p1 = _samples[idx1].value;
+        const value::Value &pv0 = _samples[idx0].value;
+        const value::Value &pv1 = _samples[idx1].value;
 
-        const T p = lerp(p0, p1, dt);
+        if (pv0.type_id() != pv1.type_id()) {
+          // Type mismatch.
+          return false;
+        }
+
+        // To concrete type
+        const T *p0 = pv0.as<T>();
+        const T *p1 = pv1.as<T>();
+
+        if (!p0 || !p1) {
+          return false;
+        }
+
+        const T p = lerp(*p0, *p1, dt);
 
         (*dst) = std::move(p);
         return true;
@@ -921,8 +896,8 @@ struct Animatable {
   /// Get value at specific time.
   ///
   bool get(double t, T *v,
-           const TimeSampleInterpolationType tinerp =
-               TimeSampleInterpolationType::Held) const {
+           const value::TimeSampleInterpolationType tinerp =
+               value::TimeSampleInterpolationType::Held) const {
     if (!v) {
       return false;
     }
@@ -938,9 +913,9 @@ struct Animatable {
   }
 
   ///
-  /// Get scalar value. For timesamples value, fetch the value at Default time.
+  /// Get scalar value.
   ///
-  bool get(T *v) const {
+  bool get_scalar(T *v) const {
     if (!v) {
       return false;
     }
@@ -951,7 +926,7 @@ struct Animatable {
       (*v) = _value;
       return true;
     } else {  // timesamples
-      return get(value::TimeCode::Default(), v);
+      return false;
     }
   }
 
@@ -1527,6 +1502,14 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
+// Interpolator for TimeSample data
+enum class TimeSampleInterpolation {
+  Nearest,  // nearest neighbor
+  Linear,   // lerp
+  // TODO: more to support...
+};
+
+
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
 // of Prim
 // TODO: Refactor
@@ -1601,11 +1584,31 @@ struct Attribute {
     return false;
   }
 
-  //
-  // TODO: set() and get() wrapper for TimeSamples data.
-  // (For a while, please use `_var`(primvar::PrimVar) directly for timesamples
-  // value.
-  //
+  template<typename T>
+  void set_value(const T &v, double t) {
+    _var.set_ts_value(t, v);
+  }
+
+  template<typename T>
+  bool get_value(T *dst, const double t = value::TimeCode::Default(),
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Held) const {
+    if (!dst) {
+      return false;
+    }
+
+    if (is_timesamples()) {
+      return _var.get_ts_value(dst, t, interp);
+    } else {
+      nonstd::optional<T> v = _var.get_value<T>();
+      if (v) {
+        (*dst) = v;
+        return true;
+      }
+
+      return false;
+    }
+  }
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
@@ -1640,7 +1643,7 @@ struct Attribute {
       return false;
     }
 
-    return _var.is_timesample();
+    return _var.is_timesamples();
   }
 
   void set_connection(const Path &path) {
@@ -1848,67 +1851,54 @@ struct XformOp {
   };
 
   // OpType op;
-  OpType op;
+  OpType op_type;
   bool inverted{false};  // true when `!inverted!` prefix
   std::string
       suffix;  // may contain nested namespaces. e.g. suffix will be
                // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
                // will be empty for "xformOp:translate"
-  // XformOpValueType value_type;
-  // std::string type_name;
 
-  value::TimeSamples _var;  // TODO: Use primvar::PrimVar
-
-  const value::TimeSamples &var() const { return _var; }
+  primvar::PrimVar _var;
+  //const value::TimeSamples &get_ts() const { return _var.ts_raw(); }
 
   std::string get_value_type_name() const {
-    if (_var.values.size() > 0) {
-      return _var.values[0].type_name();
-    }
-    return "[InternalError] XformOp value type name";
+    return _var.type_name();
   }
 
   uint32_t get_value_type_id() const {
-    if (_var.values.size() > 0) {
-      return _var.values[0].type_id();
-    }
-    return uint32_t(value::TypeId::TYPE_ID_INVALID);
+    return _var.type_id();
   }
 
   // TODO: Check if T is valid type.
   template <class T>
   void set_scalar(const T &v) {
-    _var.times.clear();
-    _var.values.clear();
-
-    _var.values.push_back(v);
-    // type_name = value::TypeTraits<T>::type_name();
+    _var.set_scalar(v);
   }
 
   void set_timesamples(const value::TimeSamples &v) {
-    _var = v;
-
-    // if (var.values.size()) {
-    //   type_name = var.values[0].type_name();
-    // }
+    _var.set_timesamples(v);
   }
 
   void set_timesamples(value::TimeSamples &&v) {
-    _var = std::move(v);
-    // if (var.values.size()) {
-    //   type_name = var.values[0].type_name();
-    // }
+    _var.set_timesamples(v);
   }
 
   bool is_timesamples() const {
-    return (_var.times.size() > 0) && (_var.times.size() == _var.values.size());
+    return _var.is_timesamples();
   }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
     if (is_timesamples()) {
-      return _var;
+      return _var.ts_raw();
     }
     return nonstd::nullopt;
+  }
+
+  nonstd::optional<value::Value> get_scalar() const {
+    if (is_timesamples()) {
+      return nonstd::nullopt;
+    }
+    return _var.value_raw();
   }
 
   // Type-safe way to get concrete value.
@@ -1918,15 +1908,17 @@ struct XformOp {
       return nonstd::nullopt;
     }
 
-    return _var.values[0].get_value<T>();
+    return _var.get_value<T>();
   }
-};
 
-// Interpolator for TimeSample data
-enum class TimeSampleInterpolation {
-  Nearest,  // nearest neighbor
-  Linear,   // lerp
-  // TODO: more to support...
+  const primvar::PrimVar &get_var() const {
+    return _var;
+  }
+
+  primvar::PrimVar &var() {
+    return _var;
+  }
+
 };
 
 // Prim metas, Prim tree and properties.
@@ -2290,126 +2282,7 @@ class PrimNode {
   std::vector<value::token> variantChildren;
 };
 
-#if 0  // TODO: Remove
-//
-// For low-level scene graph representation, something like Vulkan.
-// Less abstraction, and scene graph is representated by indices.
-//
-struct Node {
-  std::string name;
-
-  value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
-
-  //
-  // index to a `Scene::node_indices`
-  //
-  int64_t index{-1};
-
-  int64_t parent{-1};          // parent node index
-  std::vector<Node> children;  // child nodes
-};
-#endif
-
-#if 0
-
-struct StageMetas {
-  // TODO: Support more predefined properties: reference = <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp
-  // Scene global setting
-  TypedAttributeWithFallback<Axis> upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
-  value::token defaultPrim;           // prim node name
-  TypedAttributeWithFallback<double> metersPerUnit{1.0};        // default [m]
-  TypedAttributeWithFallback<double> timeCodesPerSecond {24.0};  // default 24 fps
-  TypedAttributeWithFallback<double> framesPerSecond {24.0};  // FIXME: default 24 fps
-  TypedAttributeWithFallback<double> startTimeCode{0.0}; // FIXME: default = -inf?
-  TypedAttributeWithFallback<double> endTimeCode{std::numeric_limits<double>::infinity()};
-  std::vector<value::AssetPath> subLayers; // `subLayers`
-  StringData comment; // 'comment'
-  StringData doc; // `documentation`
-
-  CustomDataType customLayerData; // customLayerData
-
-  // String only metadataum.
-  // TODO: Represent as `MetaVariable`?
-  std::vector<StringData> stringData;
-};
-
-class PrimRange;
-
-// Similar to UsdStage, but much more something like a Scene(scene graph)
-class Stage {
- public:
-
-  static Stage CreateInMemory() {
-    return Stage();
-  }
-
-  ///
-  /// Traverse by depth-first order.
-  ///
-  PrimRange Traverse();
-
-  ///
-  /// Get Prim at a Path.
-  ///
-  /// @returns pointer to Prim(to avoid a copy). Never return nullptr upon success.
-  ///
-  nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path);
-
-  ///
-  /// Dump Stage as ASCII(USDA) representation.
-  ///
-  std::string ExportToString() const;
-
-
-  const std::vector<Prim> &GetRootPrims() const {
-    return root_nodes;
-  }
-
-  std::vector<Prim> &GetRootPrims() {
-    return root_nodes;
-  }
-
-  const StageMetas &GetMetas() const {
-    return stage_metas;
-  }
-
-  StageMetas &GetMetas() {
-    return stage_metas;
-  }
-
-  ///
-  /// Compose scene.
-  ///
-  bool Compose(bool addSourceFileComment = true) const;
-
-  ///
-  /// pxrUSD Compat API
-  ///
-  bool Flatten(bool addSourceFileComment = true) const {
-    return Compose(addSourceFileComment);
-  }
-
-
- private:
-
-  // Root nodes
-  std::vector<Prim> root_nodes;
-
-  std::string name;       // Scene name
-  int64_t default_root_node{-1};  // index to default root node
-
-  StageMetas stage_metas;
-
-  mutable std::string _err;
-  mutable std::string _warn;
-
-  // Cache prim path.
-  std::map<Path, const Prim *> _prim_path_cache;
-  bool _dirty{false};
-
-};
-#endif
-
+#if 0 // TODO: Remove
 // Simple bidirectional Path(string) <-> index lookup
 struct StringAndIdMap {
   void add(int32_t key, const std::string &val) {
@@ -2443,6 +2316,7 @@ struct NodeIndex {
   int64_t index{-1};  // array index to `Scene::xforms`, `Scene::geom_cameras`,
                       // ... -1 = invlid(or not set)
 };
+#endif
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);

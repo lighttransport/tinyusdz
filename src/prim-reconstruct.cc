@@ -90,18 +90,18 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
 
       return std::move(dst);
     }
-  } else if (var.is_timesample()) {
-    for (size_t i = 0; i < var.var().times.size(); i++) {
-      double t = var.var().times[i];
+  } else if (var.is_timesamples()) {
+    for (size_t i = 0; i < var.ts_raw().size(); i++) {
+      const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
 
       // Attribute Block?
-      if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
-        dst.add_blocked_sample(t);
-      } else if (auto pv = var.get_ts_value<T>(i)) {
-        dst.add_sample(t, pv.value());
+      if (s.blocked) {
+        dst.add_blocked_sample(s.t);
+      } else if (auto pv = s.value.get_value<T>()) {
+        dst.add_sample(s.t, pv.value());
       } else {
         // Type mismatch
-        DCOUT(i << "/" << var.var().times.size() << " type mismatch.");
+        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch.");
         return nonstd::nullopt;
       }
     }
@@ -140,26 +140,26 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
 
       return std::move(dst);
     }
-  } else if (var.is_timesample()) {
-    for (size_t i = 0; i < var.var().times.size(); i++) {
-      double t = var.var().times[i];
-
+  } else if (var.is_timesamples()) {
+    for (size_t i = 0; i < var.ts_raw().size(); i++) {
+      const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
+  
       // Attribute Block?
-      if (auto pvb = var.get_ts_value<value::ValueBlock>(i)) {
-        dst.add_blocked_sample(t);
-      } else if (auto pv = var.get_ts_value<std::vector<value::float3>>(i)) {
+      if (s.blocked) {
+        dst.add_blocked_sample(s.t);
+      } else if (auto pv = s.value.get_value<std::vector<value::float3>>()) {
         if (pv.value().size() == 2) {
           Extent ext;
           ext.lower = pv.value()[0];
           ext.upper = pv.value()[1];
-          dst.add_sample(t, ext);
+          dst.add_sample(s.t, ext);
         } else {
-          DCOUT(i << "/" << var.var().times.size() << " array size mismatch.");
+          DCOUT(i << "/" << var.ts_raw().size() << " array size mismatch.");
           return nonstd::nullopt;
         }
       } else {
         // Type mismatch
-        DCOUT(i << "/" << var.var().times.size() << " type mismatch.");
+        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch.");
         return nonstd::nullopt;
       }
     }
@@ -265,7 +265,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
 
-        } else if (attr.get_var().is_timesample()) {
+        } else if (attr.get_var().is_timesamples()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           Animatable<T> anim;
@@ -533,7 +533,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
 
-        } else if (attr.get_var().is_timesample()) {
+        } else if (attr.get_var().is_timesamples()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           Animatable<T> anim;
@@ -815,7 +815,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
           return ret;
         }
 
-      } else if (attr.get_var().is_timesample()) {
+      } else if (attr.get_var().is_timesamples()) {
         // e.g. "float3[] extent.timeSamples = ..."
 
         Animatable<Extent> anim;
@@ -1463,7 +1463,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
   }
 
   if (attr.variability == Variability::Uniform) {
-    if (attr.get_var().is_timesample()) {
+    if (attr.get_var().is_timesamples()) {
       return nonstd::make_unexpected(fmt::format("Property `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name));
     }
 
@@ -1495,7 +1495,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
       } else {
         return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
       }
-    } else if (attr.get_var().is_timesample()) {
+    } else if (attr.get_var().is_timesamples()) {
       size_t n = attr.get_var().num_timesamples();
 
       TypedTimeSamples<T> samples;
@@ -1704,7 +1704,7 @@ bool ReconstructXformOpsFromProperties(
                 "xformOpOrder list.");
           }
 
-          op.op = XformOp::OpType::ResetXformStack;
+          op.op_type = XformOp::OpType::ResetXformStack;
           xformOps->emplace_back(op);
 
           // skip looking up property
@@ -1732,11 +1732,11 @@ bool ReconstructXformOpsFromProperties(
 
         // Check `xformOp` namespace
         if (auto xfm = SplitXformOpToken(tok, kTransform)) {
-          op.op = XformOp::OpType::Transform;
+          op.op_type = XformOp::OpType::Transform;
           op.suffix = xfm.value();  // may contain nested namespaces
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::matrix4d>()) {
             op.set_scalar(pvd.value());
           } else {
@@ -1746,11 +1746,11 @@ bool ReconstructXformOpsFromProperties(
           }
 
         } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
-          op.op = XformOp::OpType::Translate;
+          op.op_type = XformOp::OpType::Translate;
           op.suffix = tx.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1762,11 +1762,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto scale = SplitXformOpToken(tok, kScale)) {
-          op.op = XformOp::OpType::Scale;
+          op.op_type = XformOp::OpType::Scale;
           op.suffix = scale.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1778,11 +1778,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
-          op.op = XformOp::OpType::RotateX;
+          op.op_type = XformOp::OpType::RotateX;
           op.suffix = rotX.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
@@ -1794,11 +1794,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
-          op.op = XformOp::OpType::RotateY;
+          op.op_type = XformOp::OpType::RotateY;
           op.suffix = rotX.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
@@ -1810,11 +1810,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotZ = SplitXformOpToken(tok, kRotateZ)) {
-          op.op = XformOp::OpType::RotateY;
+          op.op_type = XformOp::OpType::RotateY;
           op.suffix = rotZ.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<double>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
@@ -1826,11 +1826,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
-          op.op = XformOp::OpType::RotateXYZ;
+          op.op_type = XformOp::OpType::RotateXYZ;
           op.suffix = rotateXYZ.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1842,11 +1842,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotateXZY = SplitXformOpToken(tok, kRotateXZY)) {
-          op.op = XformOp::OpType::RotateXZY;
+          op.op_type = XformOp::OpType::RotateXZY;
           op.suffix = rotateXZY.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1858,11 +1858,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
-          op.op = XformOp::OpType::RotateYXZ;
+          op.op_type = XformOp::OpType::RotateYXZ;
           op.suffix = rotateYXZ.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1874,11 +1874,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotateYZX = SplitXformOpToken(tok, kRotateYZX)) {
-          op.op = XformOp::OpType::RotateYZX;
+          op.op_type = XformOp::OpType::RotateYZX;
           op.suffix = rotateYZX.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1890,11 +1890,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
-          op.op = XformOp::OpType::RotateZXY;
+          op.op_type = XformOp::OpType::RotateZXY;
           op.suffix = rotateZXY.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1906,11 +1906,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotateZYX = SplitXformOpToken(tok, kRotateZYX)) {
-          op.op = XformOp::OpType::RotateZYX;
+          op.op_type = XformOp::OpType::RotateZYX;
           op.suffix = rotateZYX.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
@@ -1922,11 +1922,11 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
-          op.op = XformOp::OpType::Orient;
+          op.op_type = XformOp::OpType::Orient;
           op.suffix = orient.value();
 
-          if (attr.get_var().is_timesample()) {
-            op.set_timesamples(attr.get_var().var());
+          if (attr.get_var().is_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::quatf>()) {
             op.set_scalar(pvd.value());
           } else if (auto pvf = attr.get_value<value::quatd>()) {

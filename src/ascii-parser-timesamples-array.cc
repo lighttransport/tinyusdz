@@ -277,8 +277,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       DCOUT("sep = " << sep);
       if (sep == '}') {
         // End of item
-        ts.times.push_back(timeVal);
-        ts.values.push_back(value);
+        ts.add_sample(timeVal, value);
         break;
       } else if (sep == ',') {
         // ok
@@ -296,8 +295,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
           if (nc == '}') {
             // End of item
-            ts.times.push_back(timeVal);
-            ts.values.push_back(value);
+            ts.add_sample(timeVal, value);
             break;
           }
         }
@@ -311,11 +309,10 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       return false;
     }
 
-    ts.times.push_back(timeVal);
-    ts.values.push_back(value);
+    ts.add_sample(timeVal, value);
   }
 
-  DCOUT("Parse TimeSamples success. # of items = " << ts.times.size());
+  DCOUT("Parse TimeSamples success. # of items = " << ts.size());
 
   if (ts_out) {
     (*ts_out) = std::move(ts);

@@ -25,7 +25,6 @@ constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
 constexpr auto kPointInstancer = "PointInstancer";
 
-
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
 // <pxrUSD>/pxr/usd/usdGeom/schema.udsa
 
@@ -53,7 +52,7 @@ struct GPrim : Xformable {
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"
 
-#if 0 // TODO: Remove. Please use `props["primvars:displayColor"]`
+#if 0  // TODO: Remove. Please use `props["primvars:displayColor"]`
   TypedAttribute<Animatable<value::color3f>>
       displayColor;                                    // primvars:displayColor
   TypedAttribute<Animatable<float>> displayOpacity;  // primvars:displaOpacity
@@ -70,13 +69,10 @@ struct GPrim : Xformable {
 
   // Prim metadataum.
   PrimMeta meta;
-
 };
 
 struct Xform : GPrim {
-
-  //Xform() {}
-
+  // Xform() {}
 };
 
 // GeomSubset
@@ -135,25 +131,25 @@ struct GeomSubset {
 // X11's X.h uses `None` macro, so add extra prefix to `None` enum
 struct GeomMesh : GPrim {
   enum class InterpolateBoundary {
-    InterpolateBoundaryNone,           // "none"
-    EdgeAndCorner,  // "edgeAndCorner"
-    EdgeOnly        // "edgeOnly"
+    InterpolateBoundaryNone,  // "none"
+    EdgeAndCorner,            // "edgeAndCorner"
+    EdgeOnly                  // "edgeOnly"
   };
 
   enum class FaceVaryingLinearInterpolation {
-    CornersPlus1,  // "cornersPlus1"
-    CornersPlus2,  // "cornersPlus2"
-    CornersOnly,   // "cornersOnly"
-    Boundaries,    // "boundaries"
-    FaceVaryingLinearInterpolationNone,          // "none"
-    All,           // "all"
+    CornersPlus1,                        // "cornersPlus1"
+    CornersPlus2,                        // "cornersPlus2"
+    CornersOnly,                         // "cornersOnly"
+    Boundaries,                          // "boundaries"
+    FaceVaryingLinearInterpolationNone,  // "none"
+    All,                                 // "all"
   };
 
   enum class SubdivisionScheme {
-    CatmullClark,  // "catmullClark"
-    Loop,          // "loop"
-    Bilinear,      // "bilinear"
-    SubdivisionSchemeNone,          // "none"
+    CatmullClark,           // "catmullClark"
+    Loop,                   // "loop"
+    Bilinear,               // "bilinear"
+    SubdivisionSchemeNone,  // "none"
   };
 
   //
@@ -164,10 +160,13 @@ struct GeomMesh : GPrim {
       normals;  // normal3f[] (NOTE: "primvars:normals" are stored in
                 // `GPrim::props`)
 
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;  // vector3f[]
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      velocities;  // vector3f[]
 
-  TypedAttribute<Animatable<std::vector<int32_t>>> faceVertexCounts; // int[] faceVertexCounts
-  TypedAttribute<Animatable<std::vector<int32_t>>> faceVertexIndices; // int[] faceVertexIndices
+  TypedAttribute<Animatable<std::vector<int32_t>>>
+      faceVertexCounts;  // int[] faceVertexCounts
+  TypedAttribute<Animatable<std::vector<int32_t>>>
+      faceVertexIndices;  // int[] faceVertexIndices
 
   // Make SkelBindingAPI first citizen.
   nonstd::optional<Path> skeleton;  // rel skel:skeleton
@@ -183,14 +182,17 @@ struct GeomMesh : GPrim {
   void UpdateBy(const GPrim &pprim);
 
   ///
-  /// @brief Returns `points`. 
+  /// @brief Returns `points`.
   ///
   /// @param[in] time Time for TimeSampled `points` data.
   /// @param[in] interp Interpolation type for TimeSampled `points` data
   /// @return points vector(copied). Returns empty when `points` attribute is
   /// not defined.
   ///
-  const std::vector<value::point3f> GetPoints(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
+  const std::vector<value::point3f> GetPoints(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
 
   ///
   /// @brief Returns normals vector. Precedence order: `primvars:normals` then
@@ -200,7 +202,10 @@ struct GeomMesh : GPrim {
   /// `primvars:normals` nor `normals` attribute defined, attribute is a
   /// relation or normals attribute have invalid type(other than `normal3f`).
   ///
-  const std::vector<value::normal3f> GetNormals(double time=value::TimeCode::Default(), TimeSampleInterpolationType interp=TimeSampleInterpolationType::Linear) const;
+  const std::vector<value::normal3f> GetNormals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
 
   ///
   /// @brief Get interpolation of `primvars:normals`, then `normals`.
@@ -222,23 +227,30 @@ struct GeomMesh : GPrim {
   ///
   const std::vector<int32_t> GetFaceVertexIndices() const;
 
-
   //
   // SubD attribs.
   //
-  TypedAttribute<Animatable<std::vector<int32_t>>> cornerIndices; // int[] cornerIndices
-  TypedAttribute<Animatable<std::vector<float>>> cornerSharpnesses; // float[] cornerSharpnesses
-  TypedAttribute<Animatable<std::vector<int32_t>>> creaseIndices; // int[] creaseIndices
-  TypedAttribute<Animatable<std::vector<int32_t>>> creaseLengths; // int[] creaseLengths
-  TypedAttribute<Animatable<std::vector<float>>> creaseSharpnesses; // float[] creaseSharpnesses
-  TypedAttribute<Animatable<std::vector<int32_t>>> holeIndices; // int[] holeIndices
-  TypedAttributeWithFallback<Animatable<InterpolateBoundary>> interpolateBoundary{
-      InterpolateBoundary::EdgeAndCorner}; // token interpolateBoundary
+  TypedAttribute<Animatable<std::vector<int32_t>>>
+      cornerIndices;  // int[] cornerIndices
+  TypedAttribute<Animatable<std::vector<float>>>
+      cornerSharpnesses;  // float[] cornerSharpnesses
+  TypedAttribute<Animatable<std::vector<int32_t>>>
+      creaseIndices;  // int[] creaseIndices
+  TypedAttribute<Animatable<std::vector<int32_t>>>
+      creaseLengths;  // int[] creaseLengths
+  TypedAttribute<Animatable<std::vector<float>>>
+      creaseSharpnesses;  // float[] creaseSharpnesses
+  TypedAttribute<Animatable<std::vector<int32_t>>>
+      holeIndices;  // int[] holeIndices
+  TypedAttributeWithFallback<Animatable<InterpolateBoundary>>
+      interpolateBoundary{
+          InterpolateBoundary::EdgeAndCorner};  // token interpolateBoundary
   TypedAttributeWithFallback<SubdivisionScheme> subdivisionScheme{
-      SubdivisionScheme::CatmullClark}; // uniform token subdivisionScheme
+      SubdivisionScheme::CatmullClark};  // uniform token subdivisionScheme
   TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
       faceVaryingLinearInterpolation{
-          FaceVaryingLinearInterpolation::CornersPlus1}; // token faceVaryingLinearInterpolation
+          FaceVaryingLinearInterpolation::
+              CornersPlus1};  // token faceVaryingLinearInterpolation
 
   //
   // TODO: Make SkelBindingAPI property first citizen
@@ -288,7 +300,8 @@ struct GeomCamera : public GPrim {
   TypedAttributeWithFallback<Animatable<float>> horizontalApertureOffset{0.0f};
   TypedAttributeWithFallback<Animatable<float>> verticalAperture{15.2908f};
   TypedAttributeWithFallback<Animatable<float>> verticalApertureOffset{0.0f};
-  TypedAttributeWithFallback<Animatable<float>> fStop{0.0f};  // 0.0 = no focusing
+  TypedAttributeWithFallback<Animatable<float>> fStop{
+      0.0f};  // 0.0 = no focusing
   TypedAttributeWithFallback<Animatable<Projection>> projection{
       Projection::Perspective};  // "token projection" Animatable
 
@@ -297,10 +310,11 @@ struct GeomCamera : public GPrim {
 
   TypedAttributeWithFallback<Animatable<double>> shutterClose{
       0.0};  // double shutter:close
-  TypedAttributeWithFallback<Animatable<double>> shutterOpen{0.0};  // double shutter:open
+  TypedAttributeWithFallback<Animatable<double>> shutterOpen{
+      0.0};  // double shutter:open
 };
 
-//struct GeomBoundable : GPrim {};
+// struct GeomBoundable : GPrim {};
 
 struct GeomCone : public GPrim {
   //
@@ -309,7 +323,7 @@ struct GeomCone : public GPrim {
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 
-  nonstd::optional<Axis> axis; // uniform token axis
+  nonstd::optional<Axis> axis;  // uniform token axis
 };
 
 struct GeomCapsule : public GPrim {
@@ -318,7 +332,7 @@ struct GeomCapsule : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{0.5};
-  nonstd::optional<Axis> axis; // uniform token axis
+  nonstd::optional<Axis> axis;  // uniform token axis
 };
 
 struct GeomCylinder : public GPrim {
@@ -327,7 +341,7 @@ struct GeomCylinder : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
-  nonstd::optional<Axis> axis; // uniform token axis
+  nonstd::optional<Axis> axis;  // uniform token axis
 };
 
 struct GeomCube : public GPrim {
@@ -376,8 +390,10 @@ struct GeomBasisCurves : public GPrim {
   TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;  // normal3f
   TypedAttribute<Animatable<std::vector<int>>> curveVertexCounts;
   TypedAttribute<Animatable<std::vector<float>>> widths;
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;     // vector3f
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;  // vector3f
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      velocities;  // vector3f
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      accelerations;  // vector3f
 };
 
 //
@@ -387,31 +403,41 @@ struct GeomPoints : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedAttribute<Animatable<std::vector<value::point3f>>> points;    // point3f[]
-  TypedAttribute<Animatable<std::vector<value::normal3f>>> normals;  // normal3f[]
-  TypedAttribute<Animatable<std::vector<float>>> widths; // float[]
-  TypedAttribute<Animatable<std::vector<int64_t>>> ids;                    // int64[] per-point ids.
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities;     // vector3f[]
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations;  // vector3f[]
+  TypedAttribute<Animatable<std::vector<value::point3f>>> points;  // point3f[]
+  TypedAttribute<Animatable<std::vector<value::normal3f>>>
+      normals;                                            // normal3f[]
+  TypedAttribute<Animatable<std::vector<float>>> widths;  // float[]
+  TypedAttribute<Animatable<std::vector<int64_t>>>
+      ids;  // int64[] per-point ids.
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      velocities;  // vector3f[]
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      accelerations;  // vector3f[]
 };
 
 //
 // Point instancer(TODO).
 //
 struct PointInstancer : public GPrim {
+  nonstd::optional<Relationship> prototypes;  // rel prototypes
 
-  nonstd::optional<Relationship> prototypes; // rel prototypes
-
-  TypedAttribute<Animatable<std::vector<int32_t>>> protoIndices; // int[] protoIndices
-  TypedAttribute<Animatable<std::vector<int64_t>>> ids; // int64[] protoIndices
-  TypedAttribute<Animatable<std::vector<value::point3f>>> positions; // point3f[] positions
-  TypedAttribute<Animatable<std::vector<value::quath>>> orientations; // quath[] orientations
-  TypedAttribute<Animatable<std::vector<value::float3>>> scales; // float3[] scales
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> velocities; // vector3f[] velocities
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> accelerations; // vector3f[] accelerations
-  TypedAttribute<Animatable<std::vector<value::vector3f>>> angularVelocities; // vector3f[] angularVelocities
-  TypedAttribute<Animatable<std::vector<int64_t>>> invisibleIds; // int64[] invisibleIds
-
+  TypedAttribute<Animatable<std::vector<int32_t>>>
+      protoIndices;                                      // int[] protoIndices
+  TypedAttribute<Animatable<std::vector<int64_t>>> ids;  // int64[] protoIndices
+  TypedAttribute<Animatable<std::vector<value::point3f>>>
+      positions;  // point3f[] positions
+  TypedAttribute<Animatable<std::vector<value::quath>>>
+      orientations;  // quath[] orientations
+  TypedAttribute<Animatable<std::vector<value::float3>>>
+      scales;  // float3[] scales
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      velocities;  // vector3f[] velocities
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      accelerations;  // vector3f[] accelerations
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      angularVelocities;  // vector3f[] angularVelocities
+  TypedAttribute<Animatable<std::vector<int64_t>>>
+      invisibleIds;  // int64[] invisibleIds
 };
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
@@ -434,7 +460,8 @@ DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
 DEFINE_TYPE_TRAIT(GeomPoints, kGeomPoints, TYPE_ID_GEOM_POINTS, 1);
 DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
 DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
-DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER, 1);
+DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
+                  1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
