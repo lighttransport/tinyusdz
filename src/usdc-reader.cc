@@ -1166,7 +1166,14 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "`typeName` field is missing for Attribute Connection.");
     }
-    (*prop) = Property(rel, typeName.value().str(), custom);
+    if (rel.is_path()) {
+      (*prop) = Property(rel.targetPath, typeName.value().str(), custom);
+    } else if (rel.is_pathvector()) {
+      (*prop) = Property(rel.targetPathVector, typeName.value().str(), custom);
+    } else {
+      // ???
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
+    }
   } else if (propType == Property::Type::Relation) {
     (*prop) = Property(rel, custom);
   } else {

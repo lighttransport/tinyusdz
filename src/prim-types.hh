@@ -152,7 +152,8 @@ struct StringData {
 
 ///
 /// Simlar to SdfPath.
-/// NOTE: We are doging refactoring of Path class, so the following comment may not be correct.
+/// NOTE: We are doging refactoring of Path class, so the following comment may
+/// not be correct.
 ///
 /// We don't need the performance for USDZ, so use naiive implementation
 /// to represent Path.
@@ -195,7 +196,7 @@ class Path {
   Path() : _valid(false) {}
 
   static Path make_root_path() {
-    Path p =  Path("/", "");
+    Path p = Path("/", "");
     // elementPath is empty for root.
     p._element = "";
     p._valid = true;
@@ -400,7 +401,7 @@ class Path {
  private:
   std::string _prim_part;  // e.g. /Model/MyMesh, MySphere
   std::string _prop_part;  // e.g. .visibility
-  std::string _element;   // Element name
+  std::string _element;    // Element name
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
 
@@ -515,7 +516,7 @@ class MetaVariable {
       return false;
     }
 
-    if (const T* v = value.as<T>()) {
+    if (const T *v = value.as<T>()) {
       (*dst) = *v;
       return true;
     }
@@ -700,7 +701,7 @@ struct PrimMeta {
 
   // Omniverse extensions(TODO: Use UTF8 string type?)
   // https://github.com/PixarAnimationStudios/USD/pull/2055
-  nonstd::optional<std::string> displayName; // 'displayName'
+  nonstd::optional<std::string> displayName;  // 'displayName'
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
@@ -711,9 +712,9 @@ struct PrimMeta {
   // FIXME: Find a better way to detect Prim meta is authored...
   bool authored() const {
     return (active || hidden || kind || customData || references || payload ||
-            inherits || variants || variantSets || specializes || displayName || sceneName ||
-            doc || comment || meta.size() || apiSchemas || stringData.size() ||
-            assetInfo);
+            inherits || variants || variantSets || specializes || displayName ||
+            sceneName || doc || comment || meta.size() || apiSchemas ||
+            stringData.size() || assetInfo);
   }
 
   //
@@ -747,7 +748,6 @@ struct AttrMeta {
             meta.size() || stringData.size());
   }
 };
-
 
 // Typed TimeSamples value
 //
@@ -783,11 +783,9 @@ struct TypedTimeSamples {
   // Get value at specified time.
   // Return linearly interpolated value when TimeSampleInterpolationType is
   // Linear. Returns nullopt when specified time is out-of-range.
-  bool get(
-      T *dst,
-      double t = value::TimeCode::Default(),
-      TimeSampleInterpolationType interp = TimeSampleInterpolationType::Held) const {
-
+  bool get(T *dst, double t = value::TimeCode::Default(),
+           TimeSampleInterpolationType interp =
+               TimeSampleInterpolationType::Held) const {
     if (!dst) {
       return false;
     }
@@ -880,7 +878,8 @@ struct TypedTimeSamples {
       update();
     }
 
-    return _samples; }
+    return _samples;
+  }
 
   std::vector<Sample> &samples() {
     if (_dirty) {
@@ -902,14 +901,13 @@ struct TypedTimeSamples {
 template <typename T>
 struct Animatable {
  public:
-
   bool is_blocked() const { return _blocked; }
 
   bool is_timesamples() const {
     if (is_blocked()) {
       return false;
     }
-    return !_ts.empty(); 
+    return !_ts.empty();
   }
 
   bool is_scalar() const {
@@ -919,11 +917,12 @@ struct Animatable {
     return _ts.empty();
   }
 
-
   ///
   /// Get value at specific time.
   ///
-  bool get(double t, T *v, const TimeSampleInterpolationType tinerp = TimeSampleInterpolationType::Held) const {
+  bool get(double t, T *v,
+           const TimeSampleInterpolationType tinerp =
+               TimeSampleInterpolationType::Held) const {
     if (!v) {
       return false;
     }
@@ -933,8 +932,8 @@ struct Animatable {
     } else if (is_scalar()) {
       (*v) = _value;
       return true;
-    } else { // timesamples
-      return _ts.get(v, t, tinerp); 
+    } else {  // timesamples
+      return _ts.get(v, t, tinerp);
     }
   }
 
@@ -950,24 +949,19 @@ struct Animatable {
       return false;
     } else if (is_scalar()) {
       (*v) = _value;
-      return true; 
-    } else { // timesamples
+      return true;
+    } else {  // timesamples
       return get(value::TimeCode::Default(), v);
     }
   }
 
-
   // TimeSamples
-  //void set(double t, const T &v);
+  // void set(double t, const T &v);
 
-  void add_sample(const double t, const T &v) {
-    _ts.add_sample(t, v);
-  }
+  void add_sample(const double t, const T &v) { _ts.add_sample(t, v); }
 
-  // Add None(ValueBlock) sample to timesamples 
-  void add_blocked_sample(const double t) {
-    _ts.add_blocked_sample(t);
-  }
+  // Add None(ValueBlock) sample to timesamples
+  void add_blocked_sample(const double t) { _ts.add_blocked_sample(t); }
 
   // Scalar
   void set(const T &v) {
@@ -975,18 +969,15 @@ struct Animatable {
     _blocked = false;
   }
 
-  const TypedTimeSamples<T> &get_timesamples() const {
-    return _ts;
-  }
+  const TypedTimeSamples<T> &get_timesamples() const { return _ts; }
 
   Animatable() {}
 
   Animatable(const T &v) : _value(v) {}
 
   // TODO: Init with timesamples
-  
+
  private:
- 
   // scalar
   T _value;
   bool _blocked{false};
@@ -1016,7 +1007,6 @@ class TypedAttribute {
     }
     return nonstd::nullopt;
   }
-
 
   bool get_value(T *dst) const {
     if (!dst) return false;
@@ -1070,7 +1060,6 @@ class TypedAttribute {
     }
     return false;
   }
-
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
@@ -1238,7 +1227,6 @@ class TypedAttributeWithFallback {
 template <typename T>
 using TypedAnimatableAttributeWithFallback =
     TypedAttributeWithFallback<Animatable<T>>;
-
 
 ///
 /// Similar to pxrUSD's PrimIndex
@@ -1475,7 +1463,6 @@ struct ConnectionPath {
 //
 class Relationship {
  public:
-
   // For some reaon, using tinyusdz::variant will cause double-free in some
   // environemt on clang, so use old-fashioned way for a while.
   enum class Type { Empty, String, Path, PathVector };
@@ -1540,17 +1527,13 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-// Attribute is a struct to hold generic attribute of a property(e.g. primvar) of Prim
+// Attribute is a struct to hold generic attribute of a property(e.g. primvar)
+// of Prim
 // TODO: Refactor
 struct Attribute {
+  const std::string &name() const { return _name; }
 
-  const std::string &name() const {
-    return _name;
-  }
-
-  std::string &name() {
-    return _name;
-  }
+  std::string &name() { return _name; }
 
   void set_name(const std::string &name) { _name = name; }
 
@@ -1570,14 +1553,13 @@ struct Attribute {
     return std::string();
   }
 
-  template<typename T>
+  template <typename T>
   void set_value(const T &v) {
     if (_type_name.empty()) {
       _type_name = value::TypeTraits<T>::type_name();
     }
     _var.set_scalar(v);
   }
-
 
   void set_var(primvar::PrimVar &v) {
     if (_type_name.empty()) {
@@ -1597,13 +1579,14 @@ struct Attribute {
 
   /// @brief Get the value of Attribute of specified type.
   /// @tparam T value type
-  /// @return The value if the underlying PrimVar is type T. Return nonstd::nullpt when type mismatch.
+  /// @return The value if the underlying PrimVar is type T. Return
+  /// nonstd::nullpt when type mismatch.
   template <typename T>
   nonstd::optional<T> get_value() const {
     return _var.get_value<T>();
   }
 
-  template<typename T>
+  template <typename T>
   bool get_value(T *v) const {
     if (!v) {
       return false;
@@ -1618,6 +1601,12 @@ struct Attribute {
     return false;
   }
 
+  //
+  // TODO: set() and get() wrapper for TimeSamples data.
+  // (For a while, please use `_var`(primvar::PrimVar) directly for timesamples
+  // value.
+  //
+
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
 
@@ -1630,15 +1619,34 @@ struct Attribute {
   Variability &variability() { return _variability; }
   Variability variability() const { return _variability; }
 
-  bool is_uniform() const {
-    return _variability == Variability::Uniform;
+  bool is_uniform() const { return _variability == Variability::Uniform; }
+
+  bool is_connection() const { return _paths.size(); }
+
+  bool is_value() const {
+    if (is_connection()) {
+      return false;
+    }
+
+    if (is_blocked()) {
+      return false;
+    }
+
+    return true;
   }
 
-  bool is_connection() const {
-    return _paths.size();
+  bool is_timesamples() const {
+    if (!is_value()) {
+      return false;
+    }
+
+    return _var.is_timesample();
   }
 
-  void set_connection(const Path &path) { _paths.push_back(path); }
+  void set_connection(const Path &path) {
+    _paths.clear();
+    _paths.push_back(path);
+  }
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
   nonstd::optional<Path> get_connection() const {
@@ -1647,7 +1655,7 @@ struct Attribute {
     }
     return nonstd::nullopt;
   }
-    
+
   const std::vector<Path> &connections() const { return _paths; }
   std::vector<Path> &connections() { return _paths; }
 
@@ -1656,19 +1664,19 @@ struct Attribute {
   Variability _variability{
       Variability::Varying};  // 'uniform` qualifier is handled with
                               // `variability=uniform`
-  bool _blocked{false};  // Attribute Block('None')
+  bool _blocked{false};       // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
   std::vector<Path> _paths;
   AttrMeta _metas;
 };
 
-
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for
 // Crate data)
 // TODO: Move Connection to Attribute
-// TODO: Deprecate `custom` attribute: https://github.com/PixarAnimationStudios/USD/issues/2069
+// TODO: Deprecate `custom` attribute:
+// https://github.com/PixarAnimationStudios/USD/issues/2069
 class Property {
  public:
   enum class Type {
@@ -1695,29 +1703,32 @@ class Property {
     _type = Type::Attrib;
   }
 
-  // Relation: typeless
+  // Relationship(typeless)
   Property(const Relationship &r, bool custom) : _rel(r), _has_custom(custom) {
     _type = Type::Relation;
   }
 
+  // Relationship(typeless)
   Property(Relationship &&r, bool custom)
       : _rel(std::move(r)), _has_custom(custom) {
     _type = Type::Relation;
   }
 
   // Attribute Connection: has type
-  Property(const Relationship &r, const std::string &prop_value_type_name,
+  Property(const Path &path, const std::string &prop_value_type_name,
            bool custom)
-      : _rel(r),
-        _prop_value_type_name(prop_value_type_name),
-        _has_custom(custom) {
+      : _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
+    _attrib.set_connection(path);
+    _attrib.set_type_name(prop_value_type_name);
     _type = Type::Connection;
   }
 
-  Property(Relationship &&r, const std::string &prop_value_type_name, bool custom)
-      : _rel(std::move(r)),
-        _prop_value_type_name(prop_value_type_name),
-        _has_custom(custom) {
+  // Attribute Connection: has multiple targetPaths
+  Property(const std::vector<Path> &paths,
+           const std::string &prop_value_type_name, bool custom)
+      : _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
+    _attrib.set_connections(paths);
+    _attrib.set_type_name(prop_value_type_name);
     _type = Type::Connection;
   }
 
@@ -1731,7 +1742,6 @@ class Property {
     return (_type == Type::Relation) || (_type == Type::NoTargetsRelation);
   }
   bool is_connection() const { return _type == Type::Connection; }
-
 
   nonstd::optional<Path> get_relationTarget() const {
     if (!is_connection()) {
@@ -1796,14 +1806,14 @@ class Property {
   ListEditQual get_listedit_qual() const { return _listOpQual; }
 
  private:
-  Attribute _attrib;
+  Attribute _attrib;  // attribute(value or ".connect")
 
   // List Edit qualifier(Attribute can never be list editable)
   // TODO:  Store listEdit qualifier to `Relation`
   ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 
   Type _type{Type::EmptyAttrib};
-  Relationship _rel;  // Relation(`rel`) or Connection(`.connect`)
+  Relationship _rel;                  // Relation(`rel`)
   std::string _prop_value_type_name;  // for Connection.
   bool _has_custom{false};            // Qualified with 'custom' keyword?
 };
@@ -1847,12 +1857,9 @@ struct XformOp {
   // XformOpValueType value_type;
   // std::string type_name;
 
-  value::TimeSamples _var; // TODO: Use primvar::PrimVar
+  value::TimeSamples _var;  // TODO: Use primvar::PrimVar
 
-  const value::TimeSamples &var() const {
-    return _var;
-  }
-
+  const value::TimeSamples &var() const { return _var; }
 
   std::string get_value_type_name() const {
     if (_var.values.size() > 0) {
@@ -1921,7 +1928,6 @@ enum class TimeSampleInterpolation {
   Linear,   // lerp
   // TODO: more to support...
 };
-
 
 // Prim metas, Prim tree and properties.
 struct VariantSet {
@@ -2125,16 +2131,15 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v);
 ///
 bool SetPrimElementName(value::Value &v, const std::string &elementName);
 
-
 //
 // For `Stage` scene graph.
 // Similar to `Prim` in pxrUSD.
 // This class uses tree-representation of `Prim`. Easy to use, but may not be
-// performant than flattened Prim array + index representation of Prim tree(Index-based scene graph such like glTF).
+// performant than flattened Prim array + index representation of Prim
+// tree(Index-based scene graph such like glTF).
 //
 class Prim {
  public:
-
   // elementName is read from `rhs`(if it is a class of Prim)
   Prim(const value::Value &rhs);
   Prim(value::Value &&rhs);
@@ -2142,78 +2147,61 @@ class Prim {
   Prim(const std::string &elementName, const value::Value &rhs);
   Prim(const std::string &elementName, value::Value &&rhs);
 
-  template<typename T>
+  template <typename T>
   Prim(const T &prim) {
     // Check if T is Prim class type.
-    static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) && (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id), "T is not a Prim class type");
+    static_assert(
+        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
+            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id),
+        "T is not a Prim class type");
     _data = prim;
     // Use prim.name for elementName
     _elementPath = Path(prim.name, "");
   }
 
-  template<typename T>
+  template <typename T>
   Prim(const std::string &elementName, const T &prim) {
     // Check if T is Prim class type.
-    static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) && (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id), "T is not a Prim class type");
+    static_assert(
+        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
+            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id),
+        "T is not a Prim class type");
     _data = prim;
     SetPrimElementName(_data, elementName);
     _elementPath = Path(elementName, "");
   }
 
-  std::vector<Prim> &children() {
-    return _children;
-  }
+  std::vector<Prim> &children() { return _children; }
 
-  const std::vector<Prim> &children() const {
-    return _children;
-  }
+  const std::vector<Prim> &children() const { return _children; }
 
-  const value::Value &data() const {
-    return _data;
-  }
+  const value::Value &data() const { return _data; }
 
-  Specifier &specifier() {
-    return _specifier;
-  }
+  Specifier &specifier() { return _specifier; }
 
-  Specifier specifier() const {
-    return _specifier;
-  }
+  Specifier specifier() const { return _specifier; }
 
-  Path &local_path() {
-    return _path;
-  }
+  Path &local_path() { return _path; }
 
-  const Path &local_path() const {
-    return _path;
-  }
+  const Path &local_path() const { return _path; }
 
+  Path &element_path() { return _elementPath; }
 
-  Path &element_path() {
-    return _elementPath;
-  }
+  const Path &element_path() const { return _elementPath; }
 
-  const Path &element_path() const {
-    return _elementPath;
-  }
+  const std::string type_name() const { return _data.type_name(); }
 
-  const std::string type_name() const {
-    return _data.type_name();
-  }
+  uint32_t type_id() const { return _data.type_id(); }
 
-  uint32_t type_id() const {
-    return _data.type_id();
-  }
-
-  template<typename T>
+  template <typename T>
   bool is() const {
     return (_data.type_id() == value::TypeTraits<T>::type_id);
   }
 
   // Return a pointer of a concrete Prim class(Xform, Material, ...)
   // Return nullptr when failed to cast or T is not a Prim type.
-  template<typename T>
-  const T* as() const {
+  template <typename T>
+  const T *as() const {
     // Check if T is Prim type. e.g. Xform, Material, ...
     if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
         (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id)) {
@@ -2225,13 +2213,17 @@ class Prim {
 
  private:
   Path _path;  // Prim's local path name. May contain Property, Relationship and
-              // other infos, but do not include parent's path. To get fully absolute path of a Prim(e.g. "/xform0/mymesh0", You need to traverse Prim tree and concatename `elementPath` or use ***(T.B.D>) method in `Stage` class
+               // other infos, but do not include parent's path. To get fully
+               // absolute path of a Prim(e.g. "/xform0/mymesh0", You need to
+               // traverse Prim tree and concatename `elementPath` or use
+               // ***(T.B.D>) method in `Stage` class
   Path _elementPath;  // leaf("terminal") Prim name.(e.g. "myxform" for `def
-                     // Xform "myform"`). For root node, elementPath name is
-                     // empty string("").
+                      // Xform "myform"`). For root node, elementPath name is
+                      // empty string("").
   Specifier _specifier{
       Specifier::Invalid};  // `def`, `over` or `class`. Usually `def`
-  value::Value _data;  // Generic container for concrete Prim object. GPrim, Xform, ...
+  value::Value
+      _data;  // Generic container for concrete Prim object. GPrim, Xform, ...
   std::vector<Prim> _children;  // child Prim nodes
 };
 
