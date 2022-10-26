@@ -1410,7 +1410,11 @@ struct TimeSamples {
   }
 
   void add_sample(double t, const value::Value &v) {
-    _samples.push_back({t, v, false});
+    Sample s;
+    s.t = t;
+    s.value = v;
+    s.blocked = false;
+    _samples.push_back(s);
     _dirty = true;
   }
 
