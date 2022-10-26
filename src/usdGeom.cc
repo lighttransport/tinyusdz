@@ -24,7 +24,7 @@ constexpr auto kPrimvarsNormals = "primvars:normals";
 }  // namespace
 
 const std::vector<value::point3f> GeomMesh::GetPoints(
-    double time, TimeSampleInterpolationType interp) const {
+    double time, value::TimeSampleInterpolationType interp) const {
   std::vector<value::point3f> dst;
 
   if (!points.authored() || points.is_blocked()) {
@@ -47,7 +47,7 @@ const std::vector<value::point3f> GeomMesh::GetPoints(
 }
 
 const std::vector<value::normal3f> GeomMesh::GetNormals(
-    double time, TimeSampleInterpolationType interp) const {
+    double time, value::TimeSampleInterpolationType interp) const {
   std::vector<value::normal3f> dst;
 
   if (props.count(kPrimvarsNormals)) {
@@ -57,7 +57,7 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(
       return dst;
     }
 
-    if (prop.get_attribute().get_var().is_timesample()) {
+    if (prop.get_attribute().get_var().is_timesamples()) {
       // TODO:
       return dst;
     }
@@ -118,7 +118,7 @@ const std::vector<int32_t> GeomMesh::GetFaceVertexCounts() const {
   if (auto pv = faceVertexCounts.get_value()) {
     std::vector<int32_t> val;
     // TOOD: timesamples
-    if (pv.value().get(&val)) {
+    if (pv.value().get_scalar(&val)) {
       dst = std::move(val);
     }
   }
@@ -140,7 +140,7 @@ const std::vector<int32_t> GeomMesh::GetFaceVertexIndices() const {
   if (auto pv = faceVertexIndices.get_value()) {
     std::vector<int32_t> val;
     // TOOD: timesamples
-    if (pv.value().get(&val)) {
+    if (pv.value().get_scalar(&val)) {
       dst = std::move(val);
     }
   }
@@ -259,7 +259,7 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
       return nonstd::make_unexpected("TODO: faceVertexCounts.timeSamples\n");
     }
 
-    if (!fvp.value().get(&fvc)) {
+    if (!fvp.value().get_scalar(&fvc)) {
       return nonstd::make_unexpected("Failed to get faceVertexCounts data.");
     }
 

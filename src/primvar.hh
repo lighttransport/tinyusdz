@@ -47,24 +47,34 @@ namespace tinyusdz {
 namespace primvar {
 
 struct PrimVar {
-  // For scalar(default) value, times.size() == 0, and values.size() == 1
-  value::TimeSamples _var;
+  value::Value _value{nullptr}; // For scalar(default) value
+  bool _blocked{false}; // ValueBlocked.
+  value::TimeSamples _ts; // For TimeSamples value.
 
   bool is_scalar() const {
-    return (_var.times.size() == 0) && (_var.values.size() == 1);
+    return _ts.empty();
   }
 
-  bool is_timesample() const {
-    return (_var.times.size() > 0) && (_var.times.size() == _var.values.size());
+  bool is_timesamples() const {
+    return _ts.size();
   }
 
-  bool is_valid() const { return is_scalar() || is_timesample(); }
+  bool is_blocked() const { return _blocked; }
+
+  bool is_valid() const {
+    if (is_timesamples()) {
+      return _ts.type_id() != value::TypeId::TYPE_ID_INVALID;
+    } else {
+      return _value.type_id() != value::TypeId::TYPE_ID_INVALID;
+    }
+  }
 
   std::string type_name() const {
-    if (!is_valid()) {
-      return std::string();
+    if (is_timesamples()) {
+      return _ts.type_name();
+    } else { // Assume scalar.
+      return _value.type_name();
     }
-    return _var.values[0].type_name();
   }
 
   uint32_t type_id() const {
@@ -72,10 +82,14 @@ struct PrimVar {
       return value::TYPE_ID_INVALID;
     }
 
-    return _var.values[0].type_id();
+    if (is_timesamples()) {
+      return _ts.type_id();
+    } else {
+      return _value.type_id();
+    }
   }
 
-  // Type-safe way to get concrete value.
+  // Type-safe way to get concrete value for non-timesamples data.
   // NOTE: This consumes lots of stack size(rougly 1000 bytes),
   // If you need to handle multiple types, use as() insted.
   // 
@@ -86,74 +100,54 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    return _var.values[0].get_value<T>();
+    return _value.get_value<T>();
   }
 
   nonstd::optional<double> get_ts_time(size_t idx) const {
 
-    if (!is_timesample()) {
+    if (!is_timesamples()) {
       return nonstd::nullopt;
     }
 
-    if (idx >= _var.times.size()) {
+    if (idx >= _ts.size()) {
       return nonstd::nullopt;
     }
 
-    return _var.times[idx];
+    return _ts.get_time(idx);
   }
 
   // Type-safe way to get concrete value.
+  // No interpolation.
   template <class T>
   nonstd::optional<T> get_ts_value(size_t idx) const {
 
-    if (!is_timesample()) {
+    if (!is_timesamples()) {
       return nonstd::nullopt;
     }
 
-    if (idx >= _var.times.size()) {
+    nonstd::optional<value::Value> pv = _ts.get_value(idx);
+    if (!pv) {
       return nonstd::nullopt;
     }
 
-#if 0
-    if (value::TypeTraits<T>::type_id == _var.values[idx].type_id()) {
-      //return std::move(*reinterpret_cast<const T *>(_var.values[0].value()));
-      auto pv = linb::any_cast<const T>(&_var.values[idx]);
-      if (pv) {
-        return (*pv);
-      }
-      return nonstd::nullopt;
-    } else if (value::TypeTraits<T>::underlying_type_id == _var.values[idx].underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      //return *reinterpret_cast<const T *>(_var.values[0].value());
-
-      // TODO: strict type check.
-      return *linb::cast<const T>(&_var.values[idx]);
-    }
-    return nonstd::nullopt;
-#else
-    return _var.values[idx].get_value<T>();
-#endif
+    return pv.value().get_value<T>();
   }
 
   // Check if specific a TimeSample value for a specified index is ValueBlock or not.
   nonstd::optional<bool> is_ts_value_blocked(size_t idx) const {
 
-    if (!is_timesample()) {
+    if (!is_timesamples()) {
       return nonstd::nullopt;
     }
 
-    if (idx >= _var.times.size()) {
+    if (idx >= _ts.get_samples().size()) {
       return nonstd::nullopt;
     }
 
-    if (auto pv = _var.values[idx].get_value<value::ValueBlock>()) {
-      return true;
-    }
-
-    return false;
+    return _ts.get_samples()[idx].blocked;
   }
 
+  // For Scalar only
   // Returns nullptr when type-mismatch.
   template <class T>
   const T* as() const {
@@ -162,52 +156,55 @@ struct PrimVar {
       return nullptr;
     }
 
-    return _var.values[0].as<T>();
-
-    return nullptr;
+    return _value.as<T>();
   }
 
   template <class T>
   void set_scalar(const T &v) {
-    _var.times.clear();
-    _var.values.clear();
-
-    _var.values.push_back(v);
+    _ts.clear();
+    _value = v;
   }
 
   void set_timesamples(const value::TimeSamples &v) {
-    _var = v;
+    _ts = v;
   }
 
   void set_timesamples(value::TimeSamples &&v) {
-    _var = std::move(v);
+    _ts = std::move(v);
   }
 
   template <typename T>
   void set_ts_value(double t, const T &v) {
-    if (is_scalar()) {
-      _var.times.clear();
-      _var.values.clear();
-    }
-    _var.times.push_back(t);
-    _var.values.push_back(v);
+    _ts.add_sample(t, v);
   }
 
+  ///
+  /// Get interpolated timesample value.
+  ///
+  bool get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, value::Value *v) const;
+
   size_t num_timesamples() const {
-    if (is_timesample()) {
-      return _var.times.size();
+    if (is_timesamples()) {
+      return _ts.size();
     }
     return 0;
   }
 
-  const value::TimeSamples &var() const {
-    return _var;
+  const value::TimeSamples &ts_raw() const {
+    return _ts;
   }
   
-  value::TimeSamples &var() {
-    return _var;
+  value::Value &value_raw() {
+    return _value;
   }
 
+  const value::Value &value_raw() const {
+    return _value;
+  }
+  
+  value::TimeSamples &ts_raw() {
+    return _ts;
+  }
 };
 
 

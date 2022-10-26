@@ -798,9 +798,10 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // must be an array of double.
   DCOUT("TimeSample times:" << times_value.type_name());
 
+  std::vector<double> times;
   if (auto pv = times_value.get_value<std::vector<double>>()) {
-    d->times = pv.value();
-    DCOUT("`times` = " << d->times);
+    times = pv.value();
+    DCOUT("`times` = " << times);
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`times` in TimeSamples must be type `double[]`, but got type `{}`", times_value.type_name()));
   }
@@ -837,7 +838,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   DCOUT("Number of values = " << num_values);
 
-  if (d->times.size() != num_values) {
+  if (times.size() != num_values) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "# of `times` elements and # of values in Crate differs.");
   }
 
@@ -858,7 +859,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's value element.");
     }
 
-    d->values.emplace_back(std::move(value.get_raw()));
+    d->add_sample(times[i], value.get_raw());
 
     // UnpackValueRep() will change StreamReader's read position.
     // Revert to next ValueRep location here.

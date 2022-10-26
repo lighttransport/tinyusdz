@@ -217,7 +217,7 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
     ss << "None";
   } else if (v.is_scalar()) {
     T a;
-    if (!v.get(&a)) {
+    if (!v.get_scalar(&a)) {
       return "[Animatable: InternalError]";
     }
     ss << a;
@@ -238,7 +238,7 @@ std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent
     ss << "None";
   } else if (v.is_scalar()) {
     T a;
-    if (!v.get(&a)) {
+    if (!v.get_scalar(&a)) {
       return "[Animatable: InternalError]";
     }
     ss << quote(to_string(a));
@@ -527,7 +527,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
           ss << ".timeSamples = " << print_typed_timesamples(pv.value().get_timesamples(), indent+1);
         } else {
           T a;
-          if (pv.value().get(&a)) {
+          if (pv.value().get_scalar(&a)) {
             ss << " = " << a;
           } else {
             ss << " = [InternalError]";
@@ -853,24 +853,14 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
 std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent) {
   std::stringstream ss;
 
-  if (v.is_scalar()) {
-    ss << value::pprint_value(v.values[0]);
-  } else {
+  ss << "{\n";
 
-    if (!v.is_valid_timesamples()) {
-      return "[Invalid TimeSamples data(internal error?)]";
-    }
-
-    ss << "{\n";
-
-    for (size_t i = 0; i < v.times.size(); i++) {
-
-      ss << pprint::Indent(indent+1);
-      ss << v.times[i] << ": " << value::pprint_value(v.values[i]);
-      ss << ",\n"; // USDA allow ',' for the last item
-    }
-    ss << pprint::Indent(indent) << "}\n";
+  for (size_t i = 0; i < v.size(); i++) {
+    ss << pprint::Indent(indent+1);
+    ss << v.get_samples()[i].t << ": " << value::pprint_value(v.get_samples()[i].value);
+    ss << ",\n"; // USDA allow ',' for the last item
   }
+  ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
@@ -940,16 +930,18 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     } else {
       // has value content
 
-      if (attr.get_var().is_timesample()) {
+      if (attr.get_var().is_timesamples()) {
         ss << ".timeSamples";
       }
       ss << " = ";
 
-      if (attr.get_var().is_timesample()) {
-        ss << print_timesamples(attr.get_var().var(), indent+1);
+      if (attr.get_var().is_timesamples()) {
+        ss << print_timesamples(attr.get_var().ts_raw(), indent+1);
+      } else if (attr.get_var().is_blocked()) {
+        ss << "None";
       } else {
         // is_scalar
-        ss << value::pprint_value(attr.get_var().var().values[0]);
+        ss << value::pprint_value(attr.get_var().value_raw());
       }
     }
 
@@ -994,7 +986,7 @@ std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint3
       if (xformOp.inverted) {
         ss << "!invert!";
       }
-      ss << to_string(xformOp.op);
+      ss << to_string(xformOp.op_type);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
@@ -1017,7 +1009,7 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
     for (size_t i = 0; i < xformOps.size(); i++) {
       const auto xformOp = xformOps[i];
 
-      if (xformOp.op == XformOp::OpType::ResetXformStack) {
+      if (xformOp.op_type == XformOp::OpType::ResetXformStack) {
         // No need to print value.
         continue;
       }
@@ -1026,7 +1018,7 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
 
       ss << xformOp.get_value_type_name() << " " ;
 
-      ss << to_string(xformOp.op);
+      ss << to_string(xformOp.op_type);
       if (!xformOp.suffix.empty()) {
         ss << ":" << xformOp.suffix;
       }
@@ -1035,7 +1027,21 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
         ss << ".timeSamples";
       }
 
-      ss << " = " << print_timesamples(xformOp.var(), indent);
+      ss << " = ";
+
+      if (xformOp.is_timesamples()) {
+        if (auto pv = xformOp.get_timesamples()) {
+          ss << print_timesamples(pv.value(), indent);
+        } else {
+          ss << "[InternalError]";
+        }
+      } else {
+        if (auto pv = xformOp.get_scalar()) {
+          ss << value::pprint_value(pv.value(), indent);
+        } else {
+          ss << "[InternalError]";
+        }
+      }
 
       ss << "\n";
     }

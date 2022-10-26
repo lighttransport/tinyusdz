@@ -20,7 +20,7 @@ void xformOp_test(void) {
     value::double3 scale = {1.0, 2.0, 3.0};
 
     XformOp op;
-    op.op = XformOp::OpType::Scale;
+    op.op_type = XformOp::OpType::Scale;
     op.inverted = true;
     op.set_scalar(scale);
 

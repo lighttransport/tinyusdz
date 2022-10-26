@@ -232,7 +232,7 @@ class TerminalAttributeValue
 /// @param[in] attr_name Attribute name
 /// @param[out] value Evaluated terminal attribute value.
 /// @param[out] err Error message(filled when false returned)
-/// @param[in] tc (optional) TimeCode(for timeSamples Attribute)
+/// @param[in] t (optional) TimeCode(for timeSamples Attribute)
 /// @param[in] tinterp (optional) Interpolation type for timeSamples value
 ///
 /// Return false when:
@@ -248,8 +248,8 @@ bool EvaluateAttribute(
   const std::string &attr_name,
   TerminalAttributeValue *value,
   std::string *err,
-  const tinyusdz::value::TimeCode tc = tinyusdz::value::TimeCode::Default(),
-  const tinyusdz::TimeSampleInterpolationType tinterp = tinyusdz::TimeSampleInterpolationType::Held
+  const double t = tinyusdz::value::TimeCode::Default(),
+  const tinyusdz::value::TimeSampleInterpolationType tinterp = tinyusdz::value::TimeSampleInterpolationType::Held
   );
 
 
