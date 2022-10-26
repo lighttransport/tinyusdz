@@ -31,7 +31,7 @@ void CreateScene(tinyusdz::Stage *stage) {
 
     // `xformOp:***` attribute is represented as XformOp class
     tinyusdz::XformOp op;
-    op.op = tinyusdz::XformOp::OpType::Translate;
+    op.op_type = tinyusdz::XformOp::OpType::Translate;
     tinyusdz::value::double3 translate;
     translate[0] = 1.0;
     translate[1] = 2.0;
