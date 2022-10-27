@@ -91,7 +91,7 @@ enum class Kind {
   Assembly,
   Component,
   Subcomponent,
-  SceneLibrary,
+  SceneLibrary, // USDZ extension
   Invalid
 };
 
@@ -1541,7 +1541,7 @@ struct Attribute {
     if (_type_name.empty()) {
       _type_name = value::TypeTraits<T>::type_name();
     }
-    _var.set_scalar(v);
+    _var.set_value(v);
   }
 
   void set_var(primvar::PrimVar &v) {
@@ -1585,8 +1585,8 @@ struct Attribute {
   }
 
   template<typename T>
-  void set_value(const T &v, double t) {
-    _var.set_ts_value(t, v);
+  void set_timesample(const T &v, double t) {
+    _var.set_timesample(t, v);
   }
 
   template<typename T>
@@ -1871,8 +1871,13 @@ struct XformOp {
 
   // TODO: Check if T is valid type.
   template <class T>
-  void set_scalar(const T &v) {
-    _var.set_scalar(v);
+  void set_value(const T &v) {
+    _var.set_value(v);
+  }
+
+  template <class T>
+  void set_timesample(const float t, const T &v) {
+    _var.set_timesample(t, v);
   }
 
   void set_timesamples(const value::TimeSamples &v) {
@@ -1903,7 +1908,7 @@ struct XformOp {
 
   // Type-safe way to get concrete value.
   template <class T>
-  nonstd::optional<T> get_scalar_value() const {
+  nonstd::optional<T> get_value() const {
     if (is_timesamples()) {
       return nonstd::nullopt;
     }

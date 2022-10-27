@@ -1123,7 +1123,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     }
     primvar::PrimVar var;
-    var.set_scalar(scalar);
+    var.set_value(scalar);
     attr.set_var(std::move(var));
   }
 

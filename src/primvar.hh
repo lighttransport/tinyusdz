@@ -116,6 +116,13 @@ struct PrimVar {
     return _ts.get_time(idx);
   }
 
+  nonstd::optional<value::TimeSamples::Sample> get_timesample(size_t idx) const {
+    if (idx < _ts.get_samples().size()) {
+      return _ts.get_samples()[idx];
+    }
+    return nonstd::nullopt;
+  }
+
   // Type-safe way to get concrete value.
   // No interpolation.
   template <class T>
@@ -160,7 +167,7 @@ struct PrimVar {
   }
 
   template <class T>
-  void set_scalar(const T &v) {
+  void set_value(const T &v) {
     _ts.clear();
     _value = v;
   }
@@ -174,7 +181,11 @@ struct PrimVar {
   }
 
   template <typename T>
-  void set_ts_value(double t, const T &v) {
+  void set_timesample(double t, const T &v) {
+    _ts.add_sample(t, v);
+  }
+
+  void set_timesample(double t, value::Value &v) {
     _ts.add_sample(t, v);
   }
 
