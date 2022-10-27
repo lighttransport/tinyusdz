@@ -231,6 +231,11 @@ static void RegisterStageMetas(
   // Type can be array. i.e. asset, asset[]
   metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers",
                                                 /* allow array type */ true);
+
+  // USDZ extension
+  metas["autoPlay"] = AsciiParser::VariableDef(value::kBool, "autoPlay");
+  metas["playbackMode"] = AsciiParser::VariableDef(value::kToken, "playbackMode");
+
 }
 
 static void RegisterPrimMetas(

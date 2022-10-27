@@ -9,6 +9,11 @@
 namespace tinyusdz {
 
 struct StageMetas {
+  enum class PlaybackMode {
+    PlaybackModeNone,
+    PlaybackModeLoop,
+  };
+    
   // TODO: Support more predefined properties: reference = <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp
   // Scene global setting
   TypedAttributeWithFallback<Axis> upAxis{Axis::Y}; // This can be changed by plugInfo.json in USD: https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
@@ -23,6 +28,10 @@ struct StageMetas {
   StringData doc; // `documentation`
 
   CustomDataType customLayerData; // customLayerData
+
+  // USDZ extension
+  TypedAttributeWithFallback<bool> autoPlay{true}; // default(or not authored) = auto play
+  TypedAttributeWithFallback<PlaybackMode> playbackMode{PlaybackMode::PlaybackModeLoop};
 
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?

@@ -1415,6 +1415,32 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("endTimeCode = " << metas->endTimeCode.get_value());
+    } else if (fv.first == "autoPlay") {
+      if (auto vf = fv.second.get_value<bool>()) {
+        metas->autoPlay = vf.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`autoPlay` value must be bool "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
+      DCOUT("autoPlay = " << metas->autoPlay.get_value());
+    } else if (fv.first == "playbackMode") {
+      if (auto vf = fv.second.get_value<value::token>()) {
+        if (vf.value().str() == "none") {
+          metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeNone;
+        } else if (vf.value().str() == "loop") {
+          metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeLoop;
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "Unsupported token value for `playbackMode`.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`playbackMode` value must be token "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
     } else if ((fv.first == "defaultPrim")) {
       auto v = fv.second.get_value<value::token>();
       if (!v) {
