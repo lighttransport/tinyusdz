@@ -590,6 +590,20 @@ std::string Stage::ExportToString() const {
     ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
        << "\n";
   }
+
+  if (!stage_metas.autoPlay.authored()) {
+    ss << "  autoPlay = " << to_string(stage_metas.autoPlay.get_value()) << "\n";
+  }
+
+  if (!stage_metas.playbackMode.authored()) {
+    auto v = stage_metas.playbackMode.get_value();
+    if (v == StageMetas::PlaybackMode::PlaybackModeLoop) {
+      ss << "  playbackMode = \"loop\"\n";
+    } else { // None
+      ss << "  playbackMode = \"none\"\n";
+    }
+  }
+
   if (!stage_metas.comment.value.empty()) {
     ss << "  comment = " << to_string(stage_metas.comment) << "\n";
   }

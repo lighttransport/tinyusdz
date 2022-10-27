@@ -610,6 +610,21 @@ class USDAReader::Impl {
             _stage.metas().framesPerSecond = metas.framesPerSecond.value();
           }
 
+          if (metas.autoPlay) {
+            _stage.metas().autoPlay = metas.autoPlay.value();
+          }
+
+          if (metas.playbackMode) {
+            value::token tok = metas.playbackMode.value();
+            if (tok.str() == "none") {
+              _stage.metas().playbackMode = StageMetas::PlaybackMode::PlaybackModeNone;
+            } else if (tok.str() == "loop") {
+              _stage.metas().playbackMode = StageMetas::PlaybackMode::PlaybackModeLoop;
+            } else {
+              PUSH_ERROR_AND_RETURN("Unsupported playbackMode: " + tok.str());
+            }
+          }
+
           _stage.metas().customLayerData = metas.customLayerData;
 
           _stage.metas().stringData = metas.strings;
