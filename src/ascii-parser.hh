@@ -112,6 +112,9 @@ class AsciiParser {
     nonstd::optional<double> endTimeCode;
     nonstd::optional<double> framesPerSecond;
 
+    nonstd::optional<bool> autoPlay;
+    nonstd::optional<value::token> playbackMode;  // 'none' or 'loop'
+
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
     std::vector<StringData> strings;  // String only unregistered metadata.
   };
