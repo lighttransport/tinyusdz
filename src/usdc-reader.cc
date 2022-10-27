@@ -2020,8 +2020,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           PUSH_WARN("TODO: `class` specifier. skipping this model...");
           return true;
         } else if (specifier.value() == Specifier::Over) {
-          PUSH_WARN("TODO: `over` specifier. skipping this model...");
-          return true;
+          // ok
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
         }
@@ -2158,8 +2157,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           PUSH_WARN("TODO: `class` specifier. skipping this model...");
           return true;
         } else if (specifier.value() == Specifier::Over) {
-          PUSH_WARN("TODO: `over` specifier. skipping this model...");
-          return true;
+          // ok
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
         }
