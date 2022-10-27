@@ -25,7 +25,7 @@ class AssetResolutionResolver
   ///
   /// Register user defined filesystem handler.
   ///
-  void RegisterFilesystemHandler(FSReadFile readFn);
+  void register_filesystem_handler(FSReadFile readFn);
 
  private:
 
