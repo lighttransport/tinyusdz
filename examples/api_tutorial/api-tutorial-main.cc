@@ -2,13 +2,12 @@
 #include "tinyusdz.hh"
 
 // Import to_string() and operator<< features
+#include <iostream>
 #include "pprinter.hh"
 #include "value-pprint.hh"
 
 // Tydra is a collection of APIs to access/convert USD Prim data
-// (e.g. Can get attribute by name)
-#include <iostream>
-
+// (e.g. Can get Attribute by name)
 #include "tydra/scene-access.hh"
 
 //
@@ -209,33 +208,77 @@ int main(int argc, char **argv) {
 
   std::cout << stage.ExportToString() << "\n";
 
-  tinyusdz::Path path(/* absolute prim path */ "/root/quad",
-                      /* property path */ "");
+  {
+    tinyusdz::Path path(/* absolute prim path */ "/root",
+                        /* property path */ "");
 
-  const tinyusdz::Prim *prim{nullptr};
-  std::string err;
-  bool ret = stage.find_prim_at_path(path, prim, &err);
-  if (ret) {
-    std::cout << "Found Prim at path: " << tinyusdz::to_string(path) << "\n";
-  } else {
-    std::cerr << err << "\n";
-  }
-
-  tinyusdz::Attribute attr;
-  if (tinyusdz::tydra::GetAttribute(*prim, "points", &attr, &err)) {
-    std::cout << "point attribute type = " << attr.type_name() << "\n";
-
-    // Ensure Attribute has a value(not Attribute connection)
-    if (attr.is_value()) {
-      std::vector<tinyusdz::value::point3f> pts;
-      // TODO: timesamples
-      if (attr.get_value(&pts)) {
-        std::cout << "point attribute value = " << pts << "\n";
-      }
+    const tinyusdz::Prim *prim{nullptr};
+    std::string err;
+    bool ret = stage.find_prim_at_path(path, prim, &err);
+    if (ret) {
+      std::cout << "Found Prim at path: " << tinyusdz::to_string(path) << "\n";
+    } else {
+      std::cerr << err << "\n";
     }
 
-  } else {
-    std::cerr << err << "\n";
+    if (!prim) {
+      // This should not be happen though.
+      std::cerr << "Prim is null\n";
+      return -1;
+    }
+
+    if (!prim->is<tinyusdz::Xform>()) {
+      std::cerr << "Expected Xform prim." << "\n";
+      return -1;
+    }
+
+    // Cast to Xform
+    const tinyusdz::Xform *xform = prim->as<tinyusdz::Xform>();
+    if (!xform) {
+      std::cerr << "Expected Xform prim." << "\n";
+      return -1;
+    }
+
+  }
+
+  {
+    tinyusdz::Path path(/* absolute prim path */ "/root/quad",
+                        /* property path */ "");
+
+    const tinyusdz::Prim *prim{nullptr};
+    std::string err;
+    bool ret = stage.find_prim_at_path(path, prim, &err);
+    if (ret) {
+      std::cout << "Found Prim at path: " << tinyusdz::to_string(path) << "\n";
+    } else {
+      std::cerr << err << "\n";
+    }
+
+    if (!prim) {
+      // This should not be happen though.
+      std::cerr << "Prim is null\n";
+      return -1;
+    }
+
+    tinyusdz::Attribute attr;
+    if (tinyusdz::tydra::GetAttribute(*prim, "points", &attr, &err)) {
+      std::cout << "point attribute type = " << attr.type_name() << "\n";
+
+      // Ensure Attribute has a value(not Attribute connection)
+      if (attr.is_value()) {
+        std::vector<tinyusdz::value::point3f> pts;
+        if (attr.is_timesamples()) {
+          // TODO: timesamples
+        } else {
+          if (attr.get_value(&pts)) {
+            std::cout << "point attribute value = " << pts << "\n";
+          }
+        }
+      }
+
+    } else {
+      std::cerr << err << "\n";
+    }
   }
 
 
