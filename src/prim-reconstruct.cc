@@ -1738,7 +1738,7 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::matrix4d>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:transform` must be type `matrix4d`, but got type `" +
@@ -1752,9 +1752,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:translate` must be type `double3` or `float3`, but "
@@ -1768,9 +1768,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:scale` must be type `double3` or `float3`, but got "
@@ -1784,9 +1784,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<double>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateX` must be type `double` or `float`, but got "
@@ -1800,9 +1800,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<double>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateY` must be type `double` or `float`, but got "
@@ -1816,9 +1816,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<double>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<float>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZ` must be type `double` or `float`, but got "
@@ -1832,9 +1832,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
@@ -1848,9 +1848,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
@@ -1864,9 +1864,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
@@ -1880,9 +1880,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
@@ -1896,9 +1896,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
@@ -1912,9 +1912,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::double3>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::float3>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
@@ -1928,9 +1928,9 @@ bool ReconstructXformOpsFromProperties(
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());
           } else if (auto pvd = attr.get_value<value::quatf>()) {
-            op.set_scalar(pvd.value());
+            op.set_value(pvd.value());
           } else if (auto pvf = attr.get_value<value::quatd>()) {
-            op.set_scalar(pvf.value());
+            op.set_value(pvf.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "`xformOp:orient` must be type `quatf` or `quatd`, but got "

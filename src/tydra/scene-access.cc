@@ -330,7 +330,7 @@ void ToProperty(
     // Includes !authored()
     value::Value val(input.GetValue());
     primvar::PrimVar pvar;
-    pvar.set_scalar(val);
+    pvar.set_value(val);
     Attribute attr;
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Uniform;
@@ -372,7 +372,7 @@ void ToProperty(const TypedAttribute<T> &input, Property &output) {
     if (auto pv = input.get_value()) {
       value::Value val(pv.value());
       primvar::PrimVar pvar;
-      pvar.set_scalar(val);
+      pvar.set_value(val);
       Attribute attr;
       attr.set_var(std::move(pvar));
       attr.variability() = Variability::Uniform;
@@ -433,7 +433,7 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
         if (aval.value().get_scalar(&a)) {
           value::Value val(a);
           primvar::PrimVar pvar;
-          pvar.set_scalar(val);
+          pvar.set_value(val);
           Attribute attr;
           attr.set_var(std::move(pvar));
           attr.variability() = Variability::Uniform;
@@ -509,7 +509,7 @@ void ToProperty(
       T a;
       if (v.get_scalar(&a)) {
         value::Value val(a);
-        pvar.set_scalar(val);
+        pvar.set_value(val);
       } else {
         DCOUT("??? Invalid Animatable value.");
       }
@@ -573,7 +573,7 @@ void ToTokenProperty(
         // to token type
         value::token tok(to_string(a));
         value::Value val(tok);
-        pvar.set_scalar(val);
+        pvar.set_value(val);
       } else {
         DCOUT("??? Invalid Animatable value.");
       }
@@ -634,7 +634,7 @@ void ToTokenProperty(
         // to token type
         value::token tok(to_string(a));
         value::Value val(tok);
-        pvar.set_scalar(val);
+        pvar.set_value(val);
       } else {
         DCOUT("??? Invalid value.");
       }
@@ -676,15 +676,15 @@ bool ToTerminalAttributeValue(const Attribute &attr,
 
     value->set_value(v);
   } else if (var.is_timesamples()) {
-     
+
     value::Value v;
     if (!var.get_interpolated_value(t, tinterp, &v)) {
       PUSH_ERROR_AND_RETURN("Interpolate TimeSamples failed.");
       return false;
-    } 
+    }
 
     value->set_value(v);
-    
+
   }
 
   return true;
@@ -783,7 +783,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     std::vector<value::token> toks = xform.xformOpOrder();
     value::Value val(toks);
     primvar::PrimVar pvar;
-    pvar.set_scalar(toks);
+    pvar.set_value(toks);
 
     Attribute attr;
     attr.set_var(std::move(pvar));
@@ -891,7 +891,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   DCOUT("prop_name = " << prop_name);
   if (prop_name == "indices") {
     primvar::PrimVar var;
-    var.set_scalar(subset.indices);
+    var.set_value(subset.indices);
     Attribute attr;
     attr.set_var(std::move(var));
     attr.variability() = Variability::Uniform;
@@ -899,7 +899,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (prop_name == "elementType") {
     value::token tok(to_string(subset.elementType));
     primvar::PrimVar var;
-    var.set_scalar(tok);
+    var.set_value(tok);
     Attribute attr;
     attr.set_var(std::move(var));
     attr.variability() = Variability::Uniform;
@@ -907,7 +907,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (prop_name == "familyType") {
     value::token tok(to_string(subset.familyType));
     primvar::PrimVar var;
-    var.set_scalar(tok);
+    var.set_value(tok);
     Attribute attr;
     attr.set_var(std::move(var));
     attr.variability() = Variability::Uniform;
@@ -916,7 +916,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     if (subset.familyName) {
       value::token tok(subset.familyName.value());
       primvar::PrimVar var;
-      var.set_scalar(tok);
+      var.set_value(tok);
       Attribute attr;
       attr.set_var(std::move(var));
       attr.variability() = Variability::Uniform;

@@ -310,15 +310,15 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
   const auto RotateABC = [](const XformOp &x) -> nonstd::expected<value::matrix4d, std::string>  {
 
     value::double3 v;
-    if (auto h = x.get_scalar_value<value::half3>()) {
+    if (auto h = x.get_value<value::half3>()) {
       v[0] = double(half_to_float(h.value()[0]));
       v[1] = double(half_to_float(h.value()[1]));
       v[2] = double(half_to_float(h.value()[2]));
-    } else if (auto f = x.get_scalar_value<value::float3>()) {
+    } else if (auto f = x.get_value<value::float3>()) {
       v[0] = double(f.value()[0]);
       v[1] = double(f.value()[1]);
       v[2] = double(f.value()[2]);
-    } else if (auto d = x.get_scalar_value<value::double3>()) {
+    } else if (auto d = x.get_value<value::double3>()) {
       v = d.value();
     } else {
       if (x.suffix.empty()) {
@@ -452,14 +452,14 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
         break;
       }
       case XformOp::OpType::Transform: {
-        if (auto sxf = x.get_scalar_value<value::matrix4f>()) {
+        if (auto sxf = x.get_value<value::matrix4f>()) {
           value::matrix4f mf = sxf.value();
           for (size_t j = 0; j < 4; j++) {
             for (size_t k = 0; k < 4; k++) {
               m.m[j][k] = double(mf.m[j][k]);
             }
           }
-        } else if (auto sxd = x.get_scalar_value<value::matrix4d>()) {
+        } else if (auto sxd = x.get_value<value::matrix4d>()) {
           m = sxd.value();
         } else {
           if (err) {
@@ -494,15 +494,15 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       case XformOp::OpType::Scale: {
         double sx, sy, sz;
 
-        if (auto sxh = x.get_scalar_value<value::half3>()) {
+        if (auto sxh = x.get_value<value::half3>()) {
           sx = double(half_to_float(sxh.value()[0]));
           sy = double(half_to_float(sxh.value()[1]));
           sz = double(half_to_float(sxh.value()[2]));
-        } else if (auto sxf = x.get_scalar_value<value::float3>()) {
+        } else if (auto sxf = x.get_value<value::float3>()) {
           sx = double(sxf.value()[0]);
           sy = double(sxf.value()[1]);
           sz = double(sxf.value()[2]);
-        } else if (auto sxd = x.get_scalar_value<value::double3>()) {
+        } else if (auto sxd = x.get_value<value::double3>()) {
           sx = sxd.value()[0];
           sy = sxd.value()[1];
           sz = sxd.value()[2];
@@ -528,15 +528,15 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       }
       case XformOp::OpType::Translate: {
         double tx, ty, tz;
-        if (auto txh = x.get_scalar_value<value::half3>()) {
+        if (auto txh = x.get_value<value::half3>()) {
           tx = double(half_to_float(txh.value()[0]));
           ty = double(half_to_float(txh.value()[1]));
           tz = double(half_to_float(txh.value()[2]));
-        } else if (auto txf = x.get_scalar_value<value::float3>()) {
+        } else if (auto txf = x.get_value<value::float3>()) {
           tx = double(txf.value()[0]);
           ty = double(txf.value()[1]);
           tz = double(txf.value()[2]);
-        } else if (auto txd = x.get_scalar_value<value::double3>()) {
+        } else if (auto txd = x.get_value<value::double3>()) {
           tx = txd.value()[0];
           ty = txd.value()[1];
           tz = txd.value()[2];
@@ -563,11 +563,11 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       case XformOp::OpType::RotateX: {
 
         double angle; // in degrees
-        if (auto h = x.get_scalar_value<value::half>()) {
+        if (auto h = x.get_value<value::half>()) {
           angle = double(half_to_float(h.value()));
-        } else if (auto f = x.get_scalar_value<float>()) {
+        } else if (auto f = x.get_value<float>()) {
           angle = double(f.value());
-        } else if (auto d = x.get_scalar_value<double>()) {
+        } else if (auto d = x.get_value<double>()) {
           angle = d.value();
         } else {
           if (err) {
@@ -596,11 +596,11 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       }
       case XformOp::OpType::RotateY: {
         double angle; // in degrees
-        if (auto h = x.get_scalar_value<value::half>()) {
+        if (auto h = x.get_value<value::half>()) {
           angle = double(half_to_float(h.value()));
-        } else if (auto f = x.get_scalar_value<float>()) {
+        } else if (auto f = x.get_value<float>()) {
           angle = double(f.value());
-        } else if (auto d = x.get_scalar_value<double>()) {
+        } else if (auto d = x.get_value<double>()) {
           angle = d.value();
         } else {
           if (err) {
@@ -629,11 +629,11 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       }
       case XformOp::OpType::RotateZ: {
         double angle; // in degrees
-        if (auto h = x.get_scalar_value<value::half>()) {
+        if (auto h = x.get_value<value::half>()) {
           angle = double(half_to_float(h.value()));
-        } else if (auto f = x.get_scalar_value<float>()) {
+        } else if (auto f = x.get_value<float>()) {
           angle = double(f.value());
-        } else if (auto d = x.get_scalar_value<double>()) {
+        } else if (auto d = x.get_value<double>()) {
           angle = d.value();
         } else {
           if (err) {
@@ -665,11 +665,11 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
         // linalg::quat also stores elements in (x, y, z, w)
 
         value::matrix3d rm;
-        if (auto h = x.get_scalar_value<value::quath>()) {
+        if (auto h = x.get_value<value::quath>()) {
           rm = to_matrix3x3(h.value());
-        } else if (auto f = x.get_scalar_value<value::quatf>()) {
+        } else if (auto f = x.get_value<value::quatf>()) {
           rm = to_matrix3x3(f.value());
-        } else if (auto d = x.get_scalar_value<value::quatd>()) {
+        } else if (auto d = x.get_value<value::quatd>()) {
           rm = to_matrix3x3(d.value());
         } else {
           if (err) {

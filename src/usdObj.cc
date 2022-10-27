@@ -109,7 +109,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   std::vector<value::float3> pts(attrs.vertices.size() / 3);
   memcpy(pts.data(), attrs.vertices.data(), sizeof(float) * 3 * pts.size());
   primvar::PrimVar ptsVar;
-  ptsVar.set_scalar(pts);
+  ptsVar.set_value(pts);
   pointsAttr.set_var(std::move(ptsVar)); 
   Property pointsProp(pointsAttr, /* custom */false);
   prim->props.emplace("points", pointsProp);
@@ -210,7 +210,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     primvar::PrimVar var;
-    var.set_scalar(vertexIndices);
+    var.set_value(vertexIndices);
     Attribute attr;
     attr.set_var(std::move(var));
     Property prop(attr, false);
@@ -219,7 +219,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     primvar::PrimVar var;
-    var.set_scalar(vertexCounts);
+    var.set_value(vertexCounts);
     Attribute attr;
     attr.set_var(std::move(var));
     Property prop(attr, false);
@@ -228,7 +228,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     primvar::PrimVar var;
-    var.set_scalar(facevaryingNormals);
+    var.set_value(facevaryingNormals);
 
     Attribute normalsAttr;
     normalsAttr.metas().interpolation = Interpolation::FaceVarying;
@@ -242,7 +242,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
 
   {
     primvar::PrimVar var;
-    var.set_scalar(facevaryingTexcoords);
+    var.set_value(facevaryingTexcoords);
 
     Attribute texcoordsAttr;
     texcoordsAttr.metas().interpolation = Interpolation::FaceVarying;

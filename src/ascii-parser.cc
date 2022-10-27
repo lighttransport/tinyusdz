@@ -3138,7 +3138,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       if (value.size()) {
         DCOUT("Got it: ty = " + std::string(value::TypeTraits<T>::type_name()) +
               ", sz = " + std::to_string(value.size()));
-        var.set_scalar(value);
+        var.set_value(value);
       } else {
         blocked = true;
       }
@@ -3151,7 +3151,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       return false;
     }
 
-    var.set_scalar(value);
+    var.set_value(value);
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
@@ -3164,7 +3164,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       DCOUT("ParseBasicPrimAttr: " << value::TypeTraits<T>::type_name() << " = "
                                    << (*value));
 
-      var.set_scalar(value.value());
+      var.set_value(value.value());
 
     } else {
       blocked = true;
@@ -3714,7 +3714,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
       DCOUT("Asset path = " << asset_ref.asset_path);
       value::AssetPath assetp(asset_ref.asset_path);
       primvar::PrimVar var;
-      var.set_scalar(assetp);
+      var.set_value(assetp);
       attr.set_var(std::move(var));
 
       // optional: attribute meta.
