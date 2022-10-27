@@ -29,17 +29,43 @@ void CreateScene(tinyusdz::Stage *stage) {
   {
     xform.name = "root";  // Prim's name(elementPath)
 
-    // `xformOp:***` attribute is represented as XformOp class
-    tinyusdz::XformOp op;
-    op.op_type = tinyusdz::XformOp::OpType::Translate;
-    tinyusdz::value::double3 translate;
-    translate[0] = 1.0;
-    translate[1] = 2.0;
-    translate[2] = 3.0;
-    op.set_scalar(translate);
+    {
+      // `xformOp:***` attribute is represented as XformOp class
+      tinyusdz::XformOp op;
+      op.op_type = tinyusdz::XformOp::OpType::Translate;
+      tinyusdz::value::double3 translate;
+      translate[0] = 1.0;
+      translate[1] = 2.0;
+      translate[2] = 3.0;
+      op.set_value(translate);
 
-    // `xformOpOrder`(token[]) is represented as std::vector<XformOp>
-    xform.xformOps.push_back(op);
+      // `xformOpOrder`(token[]) is represented as std::vector<XformOp>
+      xform.xformOps.push_back(op);
+    }
+
+    {
+      // .suffix will be prepended to `xformOp:translate`
+      // 'xformOp:translate:move'
+      tinyusdz::XformOp op;
+      op.op_type = tinyusdz::XformOp::OpType::Translate;
+      op.suffix = "move";
+      tinyusdz::value::double3 translate;
+
+      // TimeSamples value can be added with `set_timesample`
+      // NOTE: TimeSamples data will be automatically sorted by time when using it.
+      translate[0] = 0.0;
+      translate[1] = 0.0;
+      translate[2] = 0.0;
+      op.set_timesample(0.0, translate);
+
+      translate[0] = 1.0;
+      translate[1] = 0.1;
+      translate[2] = 0.3;
+      op.set_timesample(1.0, translate);
+
+      xform.xformOps.push_back(op);
+    }
+
   }
 
   tinyusdz::GeomMesh mesh;
@@ -49,11 +75,8 @@ void CreateScene(tinyusdz::Stage *stage) {
     {
       std::vector<tinyusdz::value::point3f> pts;
       pts.push_back({0.0f, 0.0f, 0.0f});
-
       pts.push_back({1.0f, 0.0f, 0.0f});
-
       pts.push_back({1.0f, 1.0f, 0.0f});
-
       pts.push_back({0.0f, 1.0f, 0.0f});
 
       mesh.points.set_value(pts);
@@ -100,7 +123,7 @@ void CreateScene(tinyusdz::Stage *stage) {
 
         // or we can first build primvar::PrimVar
         // tinyusdz::primvar::PrimVar uvVar;
-        // uvVar.set_scalar(uvs);
+        // uvVar.set_value(uvs);
         // uvAttr.set_var(std::move(uvVar));
 
         // Currently `interpolation` is described in Attribute metadataum.
@@ -124,7 +147,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         uvIndices.push_back(3);
 
         tinyusdz::primvar::PrimVar uvIndexVar;
-        uvIndexVar.set_scalar(uvIndices);
+        uvIndexVar.set_value(uvIndices);
         uvIndexAttr.set_var(std::move(uvIndexVar));
         // Or you can use this approach(if you want to keep a copy of PrimVar
         // data)
@@ -139,7 +162,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         tinyusdz::Attribute attrib;
         double myvalue = 3.0;
         tinyusdz::primvar::PrimVar var;
-        var.set_scalar(myvalue);
+        var.set_value(myvalue);
         attrib.set_var(std::move(var));
         attrib.variability() = tinyusdz::Variability::Uniform;
 
