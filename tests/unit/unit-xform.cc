@@ -22,9 +22,9 @@ void xformOp_test(void) {
     XformOp op;
     op.op_type = XformOp::OpType::Scale;
     op.inverted = true;
-    op.set_scalar(scale);
+    op.set_value(scale);
 
-    
+
     Xformable x;
     x.xformOps.push_back(op);
 
