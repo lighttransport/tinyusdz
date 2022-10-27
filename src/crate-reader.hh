@@ -39,6 +39,8 @@ struct CrateReaderConfig {
 
   size_t maxVariantsMapElements = 128;
 
+  size_t maxValueRecursion = 16; // Prevent recursive Value unpack(e.g. Value encodes itself)
+
   // Generic int[] data
   size_t maxInts = 1024 * 1024 * 4;
 
@@ -385,6 +387,9 @@ class CrateReader {
   void PushWarn(const std::string &s) const { _warn += s; }
   mutable std::string _err;
   mutable std::string _warn;
+
+  // To prevent recursive Value unpack(The Value encodes itself)
+  std::unordered_set<uint64_t> unpackRecursionGuard;
 
   CrateReaderConfig _config;
 

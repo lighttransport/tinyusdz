@@ -272,6 +272,9 @@ static void RegisterPrimMetas(
   // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
       value::Add1DArraySuffix(value::kToken), "apiSchemas");
+
+  // USDZ extension
+  metas["sceneName"] = AsciiParser::VariableDef(value::kString, "sceneName");
 }
 
 static void RegisterPropMetas(

@@ -32,6 +32,7 @@
 #include "value-pprint.hh"
 #include "value-types.hh"
 #include "tiny-format.hh"
+#include "str-util.hh"
 
 //
 #ifdef __clang__
@@ -3606,8 +3607,134 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           "ValueBlock must be defined in Inlined ValueRep.");
       return false;
     }
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE: {
+
+      crate::ValueRep local_rep{0};
+      if (!ReadValueRep(&local_rep)) {
+        PUSH_ERROR(
+            "Failed to read ValueRep for VALUE type.");
+        return false;
+      }
+
+      if (unpackRecursionGuard.size() > _config.maxValueRecursion) {
+        // To many recursive stacks. We report error
+        PUSH_ERROR(
+            "Too many recursion when decoding generic VALUE data.");
+        return false;
+      }
+
+      // TODO: use crate::ValueRep for set container type.
+      if (unpackRecursionGuard.count(local_rep.GetData())) {
+        // Recursion detected.
+        PUSH_ERROR(
+            "Corrupted Value data detected.");
+        return false;
+      } else {
+        crate::CrateValue local_val;
+        bool ret = UnpackValueRep(local_rep, &local_val);
+        if (!ret) {
+          return false;
+        }
+
+        (*value) = local_val;
+
+        unpackRecursionGuard.erase(local_rep.GetData());
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE: {
+      COMPRESS_UNSUPPORTED_CHECK(dty)
+      ARRAY_UNSUPPORTED_CHECK(dty)
+
+      // 8byte for the offset for recursive value. See RecursiveRead() in
+      // https://github.com/PixarAnimationStudios/USD/blob/release/pxr/usd/usd/crateFile.cpp for details.
+      int64_t local_offset{0};
+      if (!_sr->read8(&local_offset)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
+        return false;
+      }
+
+      DCOUT("UnregisteredValue  offset = " << local_offset);
+      DCOUT("tell = " << _sr->tell());
+
+      // -8 to compensate sizeof(offset)
+      if (!_sr->seek_from_current(local_offset - 8)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to UNREGISTERD_VALUE content. Invalid offset value: " +
+                std::to_string(local_offset));
+      }
+
+      uint64_t saved_position = _sr->tell();
+
+      crate::ValueRep local_rep{0};
+      if (!ReadValueRep(&local_rep)) {
+        PUSH_ERROR(
+            "Failed to read ValueRep for UNREGISTERED_VALUE type.");
+        return false;
+      }
+
+      auto local_tyRet = crate::GetCrateDataType(local_rep.GetType());
+      if (!local_tyRet) {
+        PUSH_ERROR(local_tyRet.error());
+        return false;
+      }
+
+      const auto local_dty = local_tyRet.value();
+
+      // Should be STRING or DICTIONARY for UNREGISTERED_VALUE.
+      if (local_dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) {
+        COMPRESS_UNSUPPORTED_CHECK(local_dty)
+        ARRAY_UNSUPPORTED_CHECK(local_dty)
+
+        if (local_rep.IsInlined()) {
+          uint32_t local_d = (local_rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+          if (auto v = GetStringToken(crate::Index(local_d))) {
+            std::string str = v.value().str();
+
+            DCOUT("UNREGISTERED_VALUE.string = " << str);
+
+            // NOTE: string may contain double-quotes.
+            // We remove it at here, but it'd be better not to do it.
+            std::string unquoted = unwrap(str); 
+            value->Set(unquoted);
+
+            if (!_sr->seek_set(saved_position)) {
+              PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
+            }
+            return true;
+          } else {
+            PUSH_ERROR("Failed to decode String.");
+            return false;
+          }
+        } else {
+          PUSH_ERROR("String value must be inlined.");
+          return false;
+        }
+
+      } else if (local_dty.dtype_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY) {
+        COMPRESS_UNSUPPORTED_CHECK(local_dty)
+        ARRAY_UNSUPPORTED_CHECK(local_dty)
+
+        CustomDataType dict;
+
+        if (local_rep.IsInlined()) {
+          // empty dict
+        }  else{
+          if (!ReadCustomData(&dict)) {
+            _err += "Failed to read Dictionary value\n";
+            return false;
+          }
+        }
+        value->Set(dict);
+        if (!_sr->seek_set(saved_position)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
+        }
+        return true;
+
+      } else {
+        PUSH_ERROR_AND_RETURN(fmt::format("UNREGISTERD_VALUE type must be string or dictionary, but got other data type: {}(id {}).", GetCrateDataTypeName(local_dty.dtype_id), local_rep.GetType()));
+      }
+
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE: {
       PUSH_ERROR(
