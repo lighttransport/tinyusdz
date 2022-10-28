@@ -2208,6 +2208,9 @@ class Prim {
     return nullptr;
   }
 
+  const PrimMeta &metas() const; 
+  PrimMeta &metas();
+
  private:
   Path _path;  // Prim's local path name. May contain Property, Relationship and
                // other infos, but do not include parent's path. To get fully
