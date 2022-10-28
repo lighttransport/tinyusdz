@@ -133,6 +133,102 @@ class Node {
 };
 #endif
 
+const PrimMeta *GetPrimMeta(const value::Value &v) {
+
+  // Lookup PrimMeta variable in Prim class
+
+#define GET_PRIM_META(__ty) \
+  if (v.as<__ty>()) {                      \
+    return &(v.as<__ty>()->meta);            \
+  }
+
+  GET_PRIM_META(Model)
+  GET_PRIM_META(Scope)
+  GET_PRIM_META(Xform)
+  GET_PRIM_META(GPrim)
+  GET_PRIM_META(GeomMesh)
+  GET_PRIM_META(GeomPoints)
+  GET_PRIM_META(GeomCube)
+  GET_PRIM_META(GeomCapsule)
+  GET_PRIM_META(GeomCylinder)
+  GET_PRIM_META(GeomSphere)
+  GET_PRIM_META(GeomCone)
+  GET_PRIM_META(GeomSubset)
+  GET_PRIM_META(GeomCamera)
+  GET_PRIM_META(GeomBasisCurves)
+  GET_PRIM_META(DomeLight)
+  GET_PRIM_META(SphereLight)
+  GET_PRIM_META(CylinderLight)
+  GET_PRIM_META(DiskLight)
+  GET_PRIM_META(RectLight)
+  GET_PRIM_META(Material)
+  GET_PRIM_META(Shader)
+  GET_PRIM_META(UsdPreviewSurface)
+  GET_PRIM_META(UsdUVTexture)
+  GET_PRIM_META(UsdPrimvarReader_int)
+  GET_PRIM_META(UsdPrimvarReader_float)
+  GET_PRIM_META(UsdPrimvarReader_float2)
+  GET_PRIM_META(UsdPrimvarReader_float3)
+  GET_PRIM_META(UsdPrimvarReader_float4)
+  GET_PRIM_META(SkelRoot)
+  GET_PRIM_META(Skeleton)
+  GET_PRIM_META(SkelAnimation)
+  GET_PRIM_META(BlendShape)
+
+
+#undef GET_PRIM_META
+
+  return nullptr;
+}
+
+PrimMeta *GetPrimMeta(value::Value &v) {
+
+  // Lookup PrimMeta variable in Prim class
+
+#define GET_PRIM_META(__ty) \
+  if (v.as<__ty>()) {                      \
+    return &(v.as<__ty>()->meta);            \
+  }
+
+  GET_PRIM_META(Model)
+  GET_PRIM_META(Scope)
+  GET_PRIM_META(Xform)
+  GET_PRIM_META(GPrim)
+  GET_PRIM_META(GeomMesh)
+  GET_PRIM_META(GeomPoints)
+  GET_PRIM_META(GeomCube)
+  GET_PRIM_META(GeomCapsule)
+  GET_PRIM_META(GeomCylinder)
+  GET_PRIM_META(GeomSphere)
+  GET_PRIM_META(GeomCone)
+  GET_PRIM_META(GeomSubset)
+  GET_PRIM_META(GeomCamera)
+  GET_PRIM_META(GeomBasisCurves)
+  GET_PRIM_META(DomeLight)
+  GET_PRIM_META(SphereLight)
+  GET_PRIM_META(CylinderLight)
+  GET_PRIM_META(DiskLight)
+  GET_PRIM_META(RectLight)
+  GET_PRIM_META(Material)
+  GET_PRIM_META(Shader)
+  GET_PRIM_META(UsdPreviewSurface)
+  GET_PRIM_META(UsdUVTexture)
+  GET_PRIM_META(UsdPrimvarReader_int)
+  GET_PRIM_META(UsdPrimvarReader_float)
+  GET_PRIM_META(UsdPrimvarReader_float2)
+  GET_PRIM_META(UsdPrimvarReader_float3)
+  GET_PRIM_META(UsdPrimvarReader_float4)
+  GET_PRIM_META(SkelRoot)
+  GET_PRIM_META(Skeleton)
+  GET_PRIM_META(SkelAnimation)
+  GET_PRIM_META(BlendShape)
+
+
+#undef GET_PRIM_META
+
+  return nullptr;
+}
+
 }  // namespace
 
 ///
@@ -310,6 +406,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   return ok;
 }
 
+
 Prim::Prim(const value::Value &rhs) {
   // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
   if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
@@ -368,6 +465,59 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
   } else {
     // TODO: Raise an error if rhs is not an Prim
   }
+}
+
+//
+// To deal with clang's -Wexit-time-destructors, dynamically allocate buffer for PrimMeta.
+//
+// NOTE: not thread-safe.
+//
+class EmptyStaticMeta {
+ private:
+  EmptyStaticMeta() = default;
+
+ public:
+  static PrimMeta &GetEmptyStaticMeta() {
+    if (!s_meta) {
+      s_meta = new PrimMeta();
+    }
+
+    return *s_meta;
+  }
+
+  ~EmptyStaticMeta() {
+    delete s_meta;
+    s_meta = nullptr;
+  }
+
+ private:
+  static PrimMeta *s_meta;
+};
+
+PrimMeta *EmptyStaticMeta::s_meta = nullptr;
+
+
+
+PrimMeta &Prim::metas() {
+
+  PrimMeta *p = GetPrimMeta(_data);
+  if (p) {
+    return *p;
+  }
+
+  // TODO: This should not happen. report an error.
+  return EmptyStaticMeta::GetEmptyStaticMeta();
+}
+
+const PrimMeta &Prim::metas() const {
+
+  const PrimMeta *p = GetPrimMeta(_data);
+  if (p) {
+    return *p;
+  }
+
+  // TODO: This should not happen. report an error.
+  return EmptyStaticMeta::GetEmptyStaticMeta();
 }
 
 namespace {
