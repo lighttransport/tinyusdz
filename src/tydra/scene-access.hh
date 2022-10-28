@@ -3,7 +3,8 @@
 //
 // Scene access API
 //
-// NOTE: Tydra API does not use nonstd::optional and nonstd::expected, std::functions and other non basic STL feature for easier language bindings.
+// NOTE: Tydra API does not use nonstd::optional and nonstd::expected,
+// std::functions and other non basic STL feature for easier language bindings.
 //
 #pragma once
 
@@ -52,10 +53,11 @@ bool ListShaders(const tinyusdz::Stage &stage,
 ///
 /// Example: Return "/xform" Prim for "/xform/mesh0" path
 ///
-/// Returns nullptr when the given Path is a root Prim or invalid Path(`err` will be filled when failed).
+/// Returns nullptr when the given Path is a root Prim or invalid Path(`err`
+/// will be filled when failed).
 ///
-const Prim *GetParentPrim(const tinyusdz::Stage &stage, const tinyusdz::Path &path, std::string *err);
-
+const Prim *GetParentPrim(const tinyusdz::Stage &stage,
+                          const tinyusdz::Path &path, std::string *err);
 
 ///
 /// Visit Stage and invoke callback functions for each Prim.
@@ -71,9 +73,11 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage, const tinyusdz::Path &pa
 ///
 /// @return Usually true. false to notify stop visiting Prims further.
 ///
-typedef bool (*VisitPrimFunction)(const Prim &prim, const int32_t tree_depth, void *userdata);
+typedef bool (*VisitPrimFunction)(const Prim &prim, const int32_t tree_depth,
+                                  void *userdata);
 
-void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, void *userdata=nullptr);
+void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
+                void *userdata = nullptr);
 
 ///
 /// Get Property(Attribute or Relationship) of given Prim by name.
@@ -87,11 +91,8 @@ void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun, voi
 /// @return true if Property found in given Prim.
 /// @return false if Property is not found in given Prim.
 ///
-bool GetProperty(
-  const tinyusdz::Prim &prim,
-  const std::string &attr_name,
-  Property *prop,
-  std::string *err);
+bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
+                 Property *prop, std::string *err);
 
 ///
 /// Get Attribute of given Prim by name.
@@ -103,13 +104,11 @@ bool GetProperty(
 /// @param[out] err Error message(filled when returning false)
 ///
 /// @return true if Attribute found in given Prim.
-/// @return false if Attribute is not found in given Prim, or `attr_name` is a Relationship.
+/// @return false if Attribute is not found in given Prim, or `attr_name` is a
+/// Relationship.
 ///
-bool GetAttribute(
-  const tinyusdz::Prim &prim,
-  const std::string &attr_name,
-  Attribute *attr,
-  std::string *err);
+bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
+                  Attribute *attr, std::string *err);
 
 ///
 /// Get Relationship of given Prim by name.
@@ -121,29 +120,27 @@ bool GetAttribute(
 /// @param[out] err Error message(filled when returning false)
 ///
 /// @return true if Relationship found in given Prim.
-/// @return false if Relationship is not found in given Prim, or `rel_name` is a Attribute.
+/// @return false if Relationship is not found in given Prim, or `rel_name` is a
+/// Attribute.
 ///
-bool GetRelationship(
-  const tinyusdz::Prim &prim,
-  const std::string &rel_name,
-  Relationship *rel,
-  std::string *err);
+bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
+                     Relationship *rel, std::string *err);
 
 ///
 /// Terminal Attribute value at specified timecode.
 ///
 /// - No `None`(Value Blocked)
-/// - No connection(connection target is evaluated(fetch value producing attribute))
+/// - No connection(connection target is evaluated(fetch value producing
+/// attribute))
 /// - No timeSampled value
 ///
-class TerminalAttributeValue
-{
+class TerminalAttributeValue {
  public:
-
   TerminalAttributeValue() = default;
 
   TerminalAttributeValue(const value::Value &v) : _empty{false}, _value(v) {}
-  TerminalAttributeValue(value::Value &&v) : _empty{false}, _value(std::move(v)) {}
+  TerminalAttributeValue(value::Value &&v)
+      : _empty{false}, _value(std::move(v)) {}
 
   // "empty" attribute(type info only)
   void set_empty_attribute(const std::string &type_name) {
@@ -155,11 +152,9 @@ class TerminalAttributeValue
     set_empty_attribute(type_name);
   }
 
-  bool is_empty() const {
-    return _empty;
-  }
+  bool is_empty() const { return _empty; }
 
-  template<typename T>
+  template <typename T>
   const T *as() const {
     if (_empty) {
       return nullptr;
@@ -167,7 +162,7 @@ class TerminalAttributeValue
     return _value.as<T>();
   }
 
-  template<typename T>
+  template <typename T>
   bool is() const {
     if (_empty) {
       return false;
@@ -220,11 +215,14 @@ class TerminalAttributeValue
 };
 
 ///
-/// Evaluate Attribute of the specied Prim and retrieve terminal Attribute value.
+/// Evaluate Attribute of the specied Prim and retrieve terminal Attribute
+/// value.
 ///
-/// - If the attribute is empty(e.g. `float outputs:r`), return "empty" Attribute
+/// - If the attribute is empty(e.g. `float outputs:r`), return "empty"
+/// Attribute
 /// - If the attribute is scalar value, simply returns it.
-/// - If the attribute is timeSamples value, evaluate the value at specified time.
+/// - If the attribute is timeSamples value, evaluate the value at specified
+/// time.
 /// - If the attribute is connection, follow the connection target
 ///
 /// @param[in] stage Stage
@@ -239,19 +237,32 @@ class TerminalAttributeValue
 ///
 /// - If the attribute is None(ValueBlock)
 /// - Requested attribute not found in a Prim.
-/// - Invalid connection(e.g. type mismatch, circular referencing, targetPath points non-existing path, etc),
+/// - Invalid connection(e.g. type mismatch, circular referencing, targetPath
+/// points non-existing path, etc),
 /// - Other error happens.
 ///
 bool EvaluateAttribute(
-  const tinyusdz::Stage &stage,
-  const tinyusdz::Prim &prim,
-  const std::string &attr_name,
-  TerminalAttributeValue *value,
-  std::string *err,
-  const double t = tinyusdz::value::TimeCode::Default(),
-  const tinyusdz::value::TimeSampleInterpolationType tinterp = tinyusdz::value::TimeSampleInterpolationType::Held
-  );
+    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const std::string &attr_name, TerminalAttributeValue *value,
+    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
+    const tinyusdz::value::TimeSampleInterpolationType tinterp =
+        tinyusdz::value::TimeSampleInterpolationType::Held);
 
+//
+// For USDZ AR extensions
+//
+
+///
+/// List up `sceneName` of given Prim's children
+/// https://developer.apple.com/documentation/realitykit/usdz-schemas-for-ar
+///
+/// Prim's Kind must be `sceneLibrary`
+/// @param[out] List of pair of (Is Specifier `over`, sceneName). For `def`
+/// Specifier(primary scene), it is set to false.
+///
+///
+bool ListSceneNames(const tinyusdz::Prim &root,
+                    std::vector<std::pair<bool, std::string>> *sceneNames);
 
 }  // namespace tydra
 }  // namespace tinyusdz
