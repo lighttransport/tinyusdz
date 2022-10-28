@@ -679,13 +679,13 @@ class USDAReader::Impl {
 
       for (const auto &item : dict) {
         // TODO: duplicated key check?
-        if (auto pv = item.second.Get<std::string>()) {
+        if (auto pv = item.second.get_value<std::string>()) {
           m[item.first] = pv.value();
-        } else if (auto pvs = item.second.Get<StringData>()) {
+        } else if (auto pvs = item.second.get_value<StringData>()) {
           // TODO: store triple-quote info
           m[item.first] = pvs.value().value;
         } else {
-          return nonstd::make_unexpected(fmt::format("TinyUSDZ only accepts `string` value for `variants` element, but got type `{}`(type_id {}).", item.second.TypeName(), item.second.TypeId()));
+          return nonstd::make_unexpected(fmt::format("TinyUSDZ only accepts `string` value for `variants` element, but got type `{}`(type_id {}).", item.second.type_name(), item.second.type_id()));
         }
       }
 
@@ -701,9 +701,9 @@ class USDAReader::Impl {
       const MetaVariable &var = std::get<1>(meta.second);
 
       if (meta.first == "active") {
-        DCOUT("active. type = " << var.type);
-        if (var.type == "bool") {
-          if (auto pv = var.Get<bool>()) {
+        DCOUT("active. type = " << var.type_name());
+        if (var.type_name() == "bool") {
+          if (auto pv = var.get_value<bool>()) {
             out->active = pv.value();
           } else {
             PUSH_ERROR_AND_RETURN(
@@ -712,12 +712,12 @@ class USDAReader::Impl {
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `active` metadataum is not type `bool`. got `"
-              << var.type << "`.");
+              << var.type_name() << "`.");
         }
       } else if (meta.first == "hidden") {
-        DCOUT("hidden. type = " << var.type);
-        if (var.type == "bool") {
-          if (auto pv = var.Get<bool>()) {
+        DCOUT("hidden. type = " << var.type_name());
+        if (var.type_name() == "bool") {
+          if (auto pv = var.get_value<bool>()) {
             out->hidden = pv.value();
           } else {
             PUSH_ERROR_AND_RETURN(
@@ -726,13 +726,13 @@ class USDAReader::Impl {
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `hidden` metadataum is not type `bool`. got `"
-              << var.type << "`.");
+              << var.type_name() << "`.");
         }
 
       } else if (meta.first == "sceneName") {
-        DCOUT("sceneName. type = " << var.type);
-        if (var.type == value::kString) {
-          if (auto pv = var.Get<std::string>()) {
+        DCOUT("sceneName. type = " << var.type_name());
+        if (var.type_name() == value::kString) {
+          if (auto pv = var.get_value<std::string>()) {
             out->sceneName = pv.value();
           } else {
             PUSH_ERROR_AND_RETURN(
@@ -741,14 +741,14 @@ class USDAReader::Impl {
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `sceneName` metadataum is not type `string`. got `"
-              << var.type << "`.");
+              << var.type_name() << "`.");
         }
       } else if (meta.first == "kind") {
         // std::tuple<ListEditQual, MetaVariable>
         // TODO: list-edit qual
-        DCOUT("kind. type = " << var.type);
-        if (var.type == "token") {
-          if (auto pv = var.Get<value::token>()) {
+        DCOUT("kind. type = " << var.type_name());
+        if (var.type_name() == "token") {
+          if (auto pv = var.get_value<value::token>()) {
             const value::token tok = pv.value();
             if (tok.str() == "subcomponent") {
               out->kind = Kind::Subcomponent;
@@ -774,47 +774,38 @@ class USDAReader::Impl {
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `kind` metadataum is not type `token`. got `"
-              << var.type << "`.");
+              << var.type_name() << "`.");
         }
       } else if (meta.first == "customData") {
-        DCOUT("customData. type = " << var.type);
-        if (var.type == "dictionary") {
-          if (auto pv = var.Get<CustomDataType>()) {
+        DCOUT("customData. type = " << var.type_name());
+        if (var.type_name() == "dictionary") {
+          if (auto pv = var.get_value<CustomDataType>()) {
             out->customData = pv.value();
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "(Internal error?) `customData` metadataum is not type "
                 "`dictionary`. got type `"
-                << var.type << "`");
+                << var.type_name() << "`");
           }
 
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `customData` metadataum is not type "
               "`dictionary`. got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
       } else if (meta.first == "assetInfo") {
-        DCOUT("assetInfo. type = " << var.type);
-        if (var.type == "dictionary") {
-          if (auto pv = var.Get<CustomDataType>()) {
-            out->assetInfo = pv.value();
-          } else {
-            PUSH_ERROR_AND_RETURN_TAG(kTag,
-                "(Internal error?) `assetInfo` metadataum is not type "
-                "`dictionary`. got type `"
-                << var.type << "`");
-          }
-
+        DCOUT("assetInfo. type = " << var.type_name());
+        if (auto pv = var.get_value<CustomDataType>()) {
+          out->assetInfo = pv.value();
         } else {
-          PUSH_ERROR_AND_RETURN(
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
               "(Internal error?) `assetInfo` metadataum is not type "
               "`dictionary`. got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
-
       } else if (meta.first == "variants") {
-        if (auto pv = var.Get<CustomDataType>()) {
+        if (auto pv = var.get_value<CustomDataType>()) {
           auto pm = BuildVariants(pv.value());
           if (!pm) {
             PUSH_ERROR_AND_RETURN(pm.error());
@@ -824,14 +815,14 @@ class USDAReader::Impl {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `variants` metadataum is not type "
               "`dictionary`. got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
       } else if (meta.first == "inherits") {
-        if (auto pvb = var.Get<value::ValueBlock>()) {
+        if (auto pvb = var.get_value<value::ValueBlock>()) {
           out->inherits = std::make_pair(listEditQual, std::vector<Path>());
-        } else if (auto pv = var.Get<std::vector<Path>>()) {
+        } else if (auto pv = var.get_value<std::vector<Path>>()) {
           out->inherits = std::make_pair(listEditQual, pv.value());
-        } else if (auto pvp = var.Get<Path>()) {
+        } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
           vs.push_back(pvp.value());
           out->inherits = std::make_pair(listEditQual, vs);
@@ -839,15 +830,15 @@ class USDAReader::Impl {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `inherits` metadataum should be either `path` or `path[]`. "
               "got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
 
       } else if (meta.first == "specializes") {
-        if (auto pvb = var.Get<value::ValueBlock>()) {
+        if (auto pvb = var.get_value<value::ValueBlock>()) {
           out->specializes = std::make_pair(listEditQual, std::vector<Path>());
-        } else if (auto pv = var.Get<std::vector<Path>>()) {
+        } else if (auto pv = var.get_value<std::vector<Path>>()) {
           out->specializes = std::make_pair(listEditQual, pv.value());
-        } else if (auto pvp = var.Get<Path>()) {
+        } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
           vs.push_back(pvp.value());
           out->specializes = std::make_pair(listEditQual, vs);
@@ -855,39 +846,39 @@ class USDAReader::Impl {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `specializes` metadataum should be either `path` or `path[]`. "
               "got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
 
       } else if (meta.first == "variantSets") {
         // treat as `string`
-        if (auto pvb = var.Get<value::ValueBlock>()) {
+        if (auto pvb = var.get_value<value::ValueBlock>()) {
           out->variantSets = std::make_pair(listEditQual, std::vector<std::string>());
-        } else if (auto pv = var.Get<StringData>()) {
+        } else if (auto pv = var.get_value<StringData>()) {
           std::vector<std::string> vs;
           vs.push_back(pv.value().value);
           out->variantSets = std::make_pair(listEditQual, vs);
-        } else if (auto pvs = var.Get<std::string>()) {
+        } else if (auto pvs = var.get_value<std::string>()) {
           std::vector<std::string> vs;
           vs.push_back(pvs.value());
           out->variantSets = std::make_pair(listEditQual, vs);
-        } else if (auto pva = var.Get<std::vector<std::string>>()) {
+        } else if (auto pva = var.get_value<std::vector<std::string>>()) {
           out->variantSets = std::make_pair(listEditQual, pva.value());
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `variantSets` metadataum is not type "
               "`string` or `string[]`. got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
       } else if (meta.first == "apiSchemas") {
-        DCOUT("apiSchemas. type = " << var.type);
-        if (var.type == "token[]") {
+        DCOUT("apiSchemas. type = " << var.type_name());
+        if (var.type_name() == "token[]") {
           APISchemas apiSchemas;
           if ((listEditQual != ListEditQual::Prepend) && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN("(PrimMeta) " << "ListEdit op for `apiSchemas` must be empty or `prepend` in TinyUSDZ, but got `" << to_string(listEditQual) << "`");
           }
           apiSchemas.listOpQual = listEditQual;
 
-          if (auto pv = var.Get<std::vector<value::token>>()) {
+          if (auto pv = var.get_value<std::vector<value::token>>()) {
 
             for (const auto &item : pv.value()) {
               // TODO: Multi-apply schema(instance name)
@@ -901,39 +892,41 @@ class USDAReader::Impl {
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
             "`token[]`. got type `"
-            << var.TypeName() << "`");
+            << var.type_name() << "`");
           }
 
           out->apiSchemas = std::move(apiSchemas);
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
-          << var.type << "`");
+          << var.type_name() << "`");
         }
       } else if (meta.first == "references") {
 
         if (var.is_blocked()) {
-          // create references with empty array.
-          out->references = std::make_pair(listEditQual, std::vector<Reference>());
-        } else if (auto pv = var.Get<Reference>()) {
+          // make empty 
+          std::vector<Reference> refs;
+          out->references = std::make_pair(listEditQual, refs);
+        } else if (auto pv = var.get_value<Reference>()) {
           // To Reference
           std::vector<Reference> refs;
           refs.emplace_back(pv.value());
           out->references = std::make_pair(listEditQual, refs);
-        } else if (auto pva = var.Get<std::vector<Reference>>()) {
+        } else if (auto pva = var.get_value<std::vector<Reference>>()) {
           out->references = std::make_pair(listEditQual, pva.value());
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `references` metadataum is not type "
               "`path` or `path[]`. got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
       } else if (meta.first == "payload") {
 
         if (var.is_blocked()) {
-          // create payload with empty array.
-          out->payload = std::make_pair(listEditQual, std::vector<Payload>());
-        } else if (auto pv = var.Get<Reference>()) {
+          // make empty 
+          std::vector<Payload> refs;
+          out->payload = std::make_pair(listEditQual, refs);
+        } else if (auto pv = var.get_value<Reference>()) {
           // To Payload
           std::vector<Payload> refs;
           Payload ref;
@@ -942,7 +935,7 @@ class USDAReader::Impl {
           // TODO: Other member variables
           refs.emplace_back(ref);
           out->payload = std::make_pair(listEditQual, refs);
-        } else if (auto pva = var.Get<std::vector<Reference>>()) {
+        } else if (auto pva = var.get_value<std::vector<Reference>>()) {
           std::vector<Payload> refs;
           for (const auto &item : pva.value()) {
             Payload ref;
@@ -956,11 +949,11 @@ class USDAReader::Impl {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `references` metadataum is not type "
               "`path` or `path[]`. got type `"
-              << var.type << "`");
+              << var.type_name() << "`");
         }
       } else {
         // string-only data?
-        if (auto pv = var.Get<StringData>()) {
+        if (auto pv = var.get_value<StringData>()) {
           out->stringData.push_back(pv.value());
         } else {
           PUSH_WARN("TODO: Prim metadataum : " << meta.first);
@@ -1116,8 +1109,7 @@ bool USDAReader::Impl::ReconstructStage() {
 
     const auto &node = _prim_nodes[idx];
 
-    // root's elementPath is empty(which is interpreted as "/").
-    Prim prim("", node.prim);
+    Prim prim(node.prim);
     DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
 
     for (const auto &cidx : node.children) {

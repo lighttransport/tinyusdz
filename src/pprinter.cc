@@ -1198,15 +1198,15 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
 
   //ss << "TODO: isObject " << meta.is_object() << ", isValue " << meta.IsValue() << "\n";
 
-  if (auto pv = meta.Get<CustomDataType>()) {
+  if (auto pv = meta.get_value<CustomDataType>()) {
     // dict
-    ss << pprint::Indent(indent) << "dictionary " << meta.name << " = {\n";
+    ss << pprint::Indent(indent) << "dictionary " << meta.get_name() << " = {\n";
     for (const auto &item : pv.value()) {
       ss << print_meta(item.second, indent+1);
     }
     ss << pprint::Indent(indent) << "}\n";
   } else {
-    ss << pprint::Indent(indent) << meta.type << " " << meta.name << " = " << pprint_value(meta.get_raw()) << "\n";
+    ss << pprint::Indent(indent) << meta.type_name() << " " << meta.get_name() << " = " << pprint_value(meta.get_raw_value()) << "\n";
   }
 
   return ss.str();

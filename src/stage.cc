@@ -306,6 +306,8 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   // if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
   // if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name);
   // }
+
+  return nonstd::nullopt;
 #else
 
   // Lookup name field of Prim class
@@ -313,7 +315,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
 #define EXTRACT_NAME_AND_RETURN_PATH(__ty) \
   if (v.as<__ty>()) {                      \
     return v.as<__ty>()->name;             \
-  }
+  } else 
 
   EXTRACT_NAME_AND_RETURN_PATH(Model)
   EXTRACT_NAME_AND_RETURN_PATH(Scope)
@@ -347,13 +349,14 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(Skeleton)
   EXTRACT_NAME_AND_RETURN_PATH(SkelAnimation)
   EXTRACT_NAME_AND_RETURN_PATH(BlendShape)
+  {
+    return nonstd::nullopt;
+  }
 
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
 #endif
-
-  return nonstd::nullopt;
 }
 
 bool SetPrimElementName(value::Value &v, const std::string &elementName) {
@@ -365,7 +368,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   if (v.as<__ty>()) {                      \
     v.as<__ty>()->name = __name;             \
     ok = true; \
-  }
+  } else 
 
   SET_ELEMENT_NAME(elementName, Model)
   SET_ELEMENT_NAME(elementName, Scope)
@@ -399,6 +402,9 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, Skeleton)
   SET_ELEMENT_NAME(elementName, SkelAnimation)
   SET_ELEMENT_NAME(elementName, BlendShape)
+  {
+    return false;
+  }
 
 
 #undef SET_ELEMENT_NAME
@@ -702,60 +708,60 @@ std::string Stage::ExportToString() const {
   ss << "#usda 1.0\n";
   ss << "(\n";
   if (stage_metas.doc.value.empty()) {
-    ss << "  doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
+    ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
        << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
        << tinyusdz::version_rev << "\"\n";
   } else {
-    ss << "  doc = " << to_string(stage_metas.doc) << "\n";
+    ss << pprint::Indent(1) << "doc = " << to_string(stage_metas.doc) << "\n";
   }
 
   if (stage_metas.metersPerUnit.authored()) {
-    ss << "  metersPerUnit = " << stage_metas.metersPerUnit.get_value() << "\n";
+    ss << pprint::Indent(1) << "metersPerUnit = " << stage_metas.metersPerUnit.get_value() << "\n";
   }
 
   if (stage_metas.upAxis.authored()) {
-    ss << "  upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
+    ss << pprint::Indent(1) << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
        << "\n";
   }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
-    ss << "  timeCodesPerSecond = "
+    ss << pprint::Indent(1) << "timeCodesPerSecond = "
        << stage_metas.timeCodesPerSecond.get_value() << "\n";
   }
 
   if (stage_metas.startTimeCode.authored()) {
-    ss << "  startTimeCode = " << stage_metas.startTimeCode.get_value() << "\n";
+    ss << pprint::Indent(1) << "startTimeCode = " << stage_metas.startTimeCode.get_value() << "\n";
   }
 
   if (stage_metas.endTimeCode.authored()) {
-    ss << "  endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
+    ss << pprint::Indent(1) << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
   }
 
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (stage_metas.subLayers.size()) {
-    ss << "  subLayers = " << stage_metas.subLayers << "\n";
+    ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers << "\n";
   }
 
   if (stage_metas.defaultPrim.str().size()) {
-    ss << "  defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
+    ss << pprint::Indent(1) << "defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
        << "\n";
   }
 
-  if (!stage_metas.autoPlay.authored()) {
-    ss << "  autoPlay = " << to_string(stage_metas.autoPlay.get_value()) << "\n";
+  if (stage_metas.autoPlay.authored()) {
+    ss << pprint::Indent(1) << "autoPlay = " << to_string(stage_metas.autoPlay.get_value()) << "\n";
   }
 
-  if (!stage_metas.playbackMode.authored()) {
+  if (stage_metas.playbackMode.authored()) {
     auto v = stage_metas.playbackMode.get_value();
     if (v == StageMetas::PlaybackMode::PlaybackModeLoop) {
-      ss << "  playbackMode = \"loop\"\n";
+      ss << pprint::Indent(1) << "playbackMode = \"loop\"\n";
     } else { // None
-      ss << "  playbackMode = \"none\"\n";
+      ss << pprint::Indent(1) << "playbackMode = \"none\"\n";
     }
   }
 
   if (!stage_metas.comment.value.empty()) {
-    ss << "  comment = " << to_string(stage_metas.comment) << "\n";
+    ss << pprint::Indent(1) << "comment = " << to_string(stage_metas.comment) << "\n";
   }
 
   if (stage_metas.customLayerData.size()) {
@@ -765,7 +771,7 @@ std::string Stage::ExportToString() const {
 
   // TODO: Sort by line_no?(preserve appearance in read USDA)
   for (const auto &item : stage_metas.stringData) {
-    ss << "  " << to_string(item) << "\n";
+    ss << pprint::Indent(1) << to_string(item) << "\n";
   }
 
   // TODO: write other header data.

@@ -320,11 +320,6 @@ Path Path::get_parent_prim_path() const {
   return Path(_prim_part.substr(0, n), "");
 }
 
-bool MetaVariable::is_object() const {
-  return (value.type_id() ==
-          value::TypeTraits<tinyusdz::CustomDataType>::type_id);
-}
-
 nonstd::optional<Kind> KindFromString(const std::string &str) {
   if (str == "model") {
     return Kind::Model;
