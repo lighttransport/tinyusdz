@@ -466,27 +466,28 @@ class MetaVariable;
 using CustomDataType = std::map<std::string, MetaVariable>;
 
 // Variable class for Prim and Attribute Metadataum.
-// TODO: Use unify with PrimVar?
+//
+// - Accepts limited number of types for value
+// - No 'custom' keyword
+// - 'None'(Value Block) is supported for some type(at least `references` and `payload` accepts None)
+// - No TimeSamples, No Connection, No Relationship(`rel`)
+// - Value must be assigned(e.g. "float myval = 1.3"). So no definition only syntax("float myval")
+// - Can be string only(no type information) 
+//   - Its variable name is interpreted as "comment"
+// 
 class MetaVariable {
  public:
-  std::string type;  // Explicit (declared) name of type
-  std::string name;
-  bool custom{false};
 
   MetaVariable &operator=(const MetaVariable &rhs) {
-    type = rhs.type;
-    name = rhs.name;
-    custom = rhs.custom;
-    value = rhs.value;
+    _name = rhs._name;
+    _value = rhs._value;
 
     return *this;
   }
 
   MetaVariable(const MetaVariable &rhs) {
-    type = rhs.type;
-    name = rhs.name;
-    custom = rhs.custom;
-    value = rhs.value;
+    _name = rhs._name;
+    _value = rhs._value;
   }
 
   // template <typename T>
@@ -495,28 +496,42 @@ class MetaVariable {
   // }
 
   bool is_valid() const {
-    return value.type_id() != value::TypeTraits<std::nullptr_t>::type_id;
+    return _value.type_id() != value::TypeTraits<std::nullptr_t>::type_id;
   }
 
-  bool is_object() const;
-
-  // TODO
-  bool is_timesamples() const { return false; }
+  //// TODO
+  //bool is_timesamples() const { return false; }
 
   MetaVariable() = default;
 
+  //
+  // custom data must have some value, so no set_type()
+  // OK "float myval = 1"
+  // NG "float myval"
+  //
   template <typename T>
-  void set(const T &v) {
-    value = v;
+  void set_value(const T &v) {
+    // TODO: Check T is supported type for Metadatum.
+    _value = v;
+
+    _name = std::string(); // empty
   }
 
   template <typename T>
-  bool get(T *dst) const {
+  void set_value(const std::string &name, const T &v) {
+    // TODO: Check T is supported type for Metadatum.
+    _value = v;
+
+    _name = name;
+  }
+
+  template <typename T>
+  bool get_value(T *dst) const {
     if (!dst) {
       return false;
     }
 
-    if (const T *v = value.as<T>()) {
+    if (const T *v = _value.as<T>()) {
       (*dst) = *v;
       return true;
     }
@@ -524,63 +539,41 @@ class MetaVariable {
     return false;
   }
 
-  // TODO: Deprecate this API
   template <typename T>
-  nonstd::optional<T> Get() const {
-    return value.get_value<T>();
+  nonstd::optional<T> get_value() const {
+    if (const T *v = _value.as<T>()) {
+      return *v;
+    }
+
+    return nonstd::nullopt;
   }
 
-  const value::Value &get_raw() const { return value; }
+  void set_name(const std::string &name) { _name = name; }
+  const std::string &get_name() const { return _name; }
 
-  const std::string TypeName() const { return type_name(*this); }
+  const value::Value &get_raw_value() const { return _value; }
 
-  uint32_t TypeId() const { return type_id(*this); }
+  // No set_type_name()
+  const std::string type_name() const { return TypeName(*this); }
 
-  bool is_blocked() const { return (TypeId() == value::TYPE_ID_VALUEBLOCK); }
+  uint32_t type_id() const { return TypeId(*this); }
+
+  bool is_blocked() const {
+    return type_id() == value::TypeId::TYPE_ID_VALUEBLOCK;
+  }
 
  private:
-  static std::string type_name(const MetaVariable &v) {
-    if (!v.type.empty()) {
-      return v.type;
-    }
-
-    // infer type from value content
-    if (v.is_object()) {
-      return "dictionary";
-    } else if (v.is_timesamples()) {
-      std::string ts_type = "TODO: TimeSample type";
-      // FIXME
-#if 0
-      auto ts_struct = v.as_timesamples();
-
-      for (const TimeSampleType &item : ts_struct->values) {
-        auto tname = value::type_name(item);
-        if (tname != "none") {
-          return tname;
-        }
-      }
-#endif
-
-      // ??? TimeSamples data contains all `None` values
-      return ts_type;
-
-    } else {
-      return v.value.type_name();
-    }
+  static std::string TypeName(const MetaVariable &v) {
+    return v._value.type_name();
   }
 
-  static uint32_t type_id(const MetaVariable &v) {
-    // infer type from value content
-    if (v.is_object()) {
-      return value::TypeId::TYPE_ID_DICT;
-    } else if (v.is_timesamples()) {
-      return value::TypeId::TYPE_ID_TIMESAMPLES;
-    } else {
-      return v.value.type_id();
-    }
+  static uint32_t TypeId(const MetaVariable &v) {
+    return v._value.type_id();
   }
 
-  value::Value value{nullptr};
+ private:
+  value::Value _value{nullptr};
+  std::string _name;
 };
 
 

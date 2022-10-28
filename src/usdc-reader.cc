@@ -1418,10 +1418,22 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
     } else if (fv.first == "autoPlay") {
       if (auto vf = fv.second.get_value<bool>()) {
         metas->autoPlay = vf.value();
+      } else if (auto vs = fv.second.get_value<std::string>()) {
+        // unregisteredvalue uses string type.
+        bool autoPlay{true};
+        if (vs.value() == "true") {
+          autoPlay = true;
+        } else if (vs.value() == "false") {
+          autoPlay = false;
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "Unsupported value for `autoPlay`: " << vs.value());
+        } 
+        metas->autoPlay = autoPlay;
       } else {
         PUSH_ERROR_AND_RETURN(
             "`autoPlay` value must be bool "
-            "type, but got '" +
+            "type or string type, but got '" +
             fv.second.type_name() + "'");
       }
       DCOUT("autoPlay = " << metas->autoPlay.get_value());
@@ -1434,6 +1446,16 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         } else {
           PUSH_ERROR_AND_RETURN(
               "Unsupported token value for `playbackMode`.");
+        }
+      } else if (auto vs = fv.second.get_value<std::string>()) {
+        // unregisteredvalue uses string type.
+        if (vs.value() == "none") {
+          metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeNone;
+        } else if (vs.value() == "loop") {
+          metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeLoop;
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "Unsupported value for `playbackMode`: " << vs.value());
         }
       } else {
         PUSH_ERROR_AND_RETURN(
