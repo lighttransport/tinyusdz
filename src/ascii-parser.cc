@@ -682,26 +682,26 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   // Supports limited types for customData/Dictionary.
   // TODO: support more types?
   //
-  MetaVariable var;
+  primvar::PrimVar var;
   if (type_name == value::kBool) {
     bool val;
     if (!ReadBasicType(&val)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
     }
-    var.set(val);
+    var.set_value(val);
   } else if (type_name == value::kInt) {
     if (array_qual) {
       std::vector<int32_t> vss;
       if (!ParseBasicTypeArray(&vss)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `int[]`");
       }
-      var.set(vss);
+      var.set_value(vss);
     } else {
       int32_t val;
       if (!ReadBasicType(&val)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `int`");
       }
-      var.set(val);
+      var.set_value(val);
     }
   } else if (type_name == value::kUInt) {
     if (array_qual) {
@@ -709,13 +709,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&vss)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `uint[]`");
       }
-      var.set(vss);
+      var.set_value(vss);
     } else {
       uint32_t val;
       if (!ReadBasicType(&val)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `uint`");
       }
-      var.set(val);
+      var.set_value(val);
     }
   } else if (type_name == value::kFloat) {
     if (array_qual) {
@@ -723,13 +723,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&vss)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `float[]`");
       }
-      var.set(vss);
+      var.set_value(vss);
     } else {
       float val;
       if (!ReadBasicType(&val)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `float`");
       }
-      var.set(val);
+      var.set_value(val);
     }
   } else if (type_name == value::kString) {
     if (array_qual) {
@@ -737,13 +737,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&strs)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
       }
-      var.set(strs);
+      var.set_value(strs);
     } else {
       StringData str;
       if (!ReadBasicType(&str)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string`");
       }
-      var.set(str);
+      var.set_value(str);
     }
   } else if (type_name == "token") {
     if (array_qual) {
@@ -751,13 +751,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseBasicTypeArray(&toks)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
       }
-      var.set(toks);
+      var.set_value(toks);
     } else {
       value::token tok;
       if (!ReadBasicType(&tok)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `token`");
       }
-      var.set(tok);
+      var.set_value(tok);
     }
   } else if (type_name == "dictionary") {
     CustomDataType dict;
@@ -766,22 +766,27 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     if (!ParseDict(&dict)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
     }
-    var.set(dict);
+    var.set_value(dict);
   } else {
     PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
   }
 
+  MetaVariable metavar;
+  metavar.set_value(key_name, var.value_raw());
+
+#if 0
   var.type = type_name;
   if (array_qual) {
     // TODO: 2D array
     var.type += "[]";
   }
   var.name = key_name;
+#endif
 
   DCOUT("key: " << key_name << ", type: " << type_name);
 
   (*out_key) = key_name;
-  (*out_var) = var;
+  (*out_var) = metavar;
 
   return true;
 }
@@ -1549,11 +1554,11 @@ bool AsciiParser::ParseStageMetaOpt() {
     PushError("Failed to parse meta value.\n");
     return false;
   }
-  var.name = varname;
+  var.set_name(varname);
 
   if (varname == "defaultPrim") {
     value::token tok;
-    if (var.get(&tok)) {
+    if (var.get_value(&tok)) {
       DCOUT("defaultPrim = " << tok);
       _stage_metas.defaultPrim = tok;
     } else {
@@ -1561,7 +1566,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     }
   } else if (varname == "subLayers") {
     std::vector<value::AssetPath> paths;
-    if (var.get(&paths)) {
+    if (var.get_value(&paths)) {
       DCOUT("subLayers = " << paths);
       for (const auto &item : paths) {
         _stage_metas.subLayers.push_back(item);
@@ -1570,7 +1575,7 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of asset path");
     }
   } else if (varname == "upAxis") {
-    if (auto pv = var.Get<value::token>()) {
+    if (auto pv = var.get_value<value::token>()) {
       DCOUT("upAxis = " << pv.value());
       const std::string s = pv.value().str();
       if (s == "X") {
@@ -1590,10 +1595,10 @@ bool AsciiParser::ParseStageMetaOpt() {
     }
   } else if ((varname == "doc") || (varname == "documentation")) {
     // `documentation` will be shorten to `doc`
-    if (auto pv = var.Get<StringData>()) {
+    if (auto pv = var.get_value<StringData>()) {
       DCOUT("doc = " << to_string(pv.value()));
       _stage_metas.doc = pv.value();
-    } else if (auto pvs = var.Get<std::string>()) {
+    } else if (auto pvs = var.get_value<std::string>()) {
       StringData sdata;
       sdata.value = pvs.value();
       sdata.is_triple_quoted = false;
@@ -1602,22 +1607,22 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
   } else if (varname == "metersPerUnit") {
-    DCOUT("ty = " << var.TypeName());
-    if (auto pv = var.Get<float>()) {
+    DCOUT("ty = " << var.type_name());
+    if (auto pv = var.get_value<float>()) {
       DCOUT("metersPerUnit = " << pv.value());
       _stage_metas.metersPerUnit = double(pv.value());
-    } else if (auto pvd = var.Get<double>()) {
+    } else if (auto pvd = var.get_value<double>()) {
       DCOUT("metersPerUnit = " << pvd.value());
       _stage_metas.metersPerUnit = pvd.value();
     } else {
       PUSH_ERROR_AND_RETURN("`metersPerUnit` isn't a floating-point value.");
     }
   } else if (varname == "timeCodesPerSecond") {
-    DCOUT("ty = " << var.TypeName());
-    if (auto pv = var.Get<float>()) {
+    DCOUT("ty = " << var.type_name());
+    if (auto pv = var.get_value<float>()) {
       DCOUT("metersPerUnit = " << pv.value());
       _stage_metas.timeCodesPerSecond = double(pv.value());
-    } else if (auto pvd = var.Get<double>()) {
+    } else if (auto pvd = var.get_value<double>()) {
       DCOUT("metersPerUnit = " << pvd.value());
       _stage_metas.timeCodesPerSecond = pvd.value();
     } else {
@@ -1625,32 +1630,32 @@ bool AsciiParser::ParseStageMetaOpt() {
           "`timeCodesPerSecond` isn't a floating-point value.");
     }
   } else if (varname == "startTimeCode") {
-    if (auto pv = var.Get<float>()) {
+    if (auto pv = var.get_value<float>()) {
       DCOUT("startTimeCode = " << pv.value());
       _stage_metas.startTimeCode = double(pv.value());
-    } else if (auto pvd = var.Get<double>()) {
+    } else if (auto pvd = var.get_value<double>()) {
       DCOUT("startTimeCode = " << pvd.value());
       _stage_metas.startTimeCode = pvd.value();
     }
   } else if (varname == "endTimeCode") {
-    if (auto pv = var.Get<float>()) {
+    if (auto pv = var.get_value<float>()) {
       DCOUT("endTimeCode = " << pv.value());
       _stage_metas.endTimeCode = double(pv.value());
-    } else if (auto pvd = var.Get<double>()) {
+    } else if (auto pvd = var.get_value<double>()) {
       DCOUT("endTimeCode = " << pvd.value());
       _stage_metas.endTimeCode = pvd.value();
     }
   } else if (varname == "framesPerSecond") {
-    if (auto pv = var.Get<float>()) {
+    if (auto pv = var.get_value<float>()) {
       DCOUT("framesPerSecond = " << pv.value());
       _stage_metas.framesPerSecond = double(pv.value());
-    } else if (auto pvd = var.Get<double>()) {
+    } else if (auto pvd = var.get_value<double>()) {
       DCOUT("framesPerSecond = " << pvd.value());
       _stage_metas.framesPerSecond = pvd.value();
     }
   } else if (varname == "apiSchemas") {
     // TODO: ListEdit qualifer check
-    if (auto pv = var.Get<std::vector<value::token>>()) {
+    if (auto pv = var.get_value<std::vector<value::token>>()) {
       for (auto &item : pv.value()) {
         if (IsSupportedAPISchema(item.str())) {
           // OK
@@ -1664,7 +1669,7 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`apiSchemas` isn't an `token[]` type.");
     }
   } else if (varname == "customLayerData") {
-    if (auto pv = var.Get<CustomDataType>()) {
+    if (auto pv = var.get_value<CustomDataType>()) {
       _stage_metas.customLayerData = pv.value();
     } else {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
@@ -2265,7 +2270,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
     DCOUT("bool = " << value);
 
-    var.set(value);
+    var.set_value(value);
   } else if (vartype == value::kToken) {
     if (is_array_type) {
       std::vector<value::token> value;
@@ -2275,7 +2280,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       }
       DCOUT("token[] = " << value);
 
-      var.set(value);
+      var.set_value(value);
     } else {
       value::token value;
       if (!ReadBasicType(&value)) {
@@ -2285,7 +2290,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       }
       DCOUT("token = " << value);
 
-      var.set(value);
+      var.set_value(value);
     }
   } else if (vartype == "token[]") {
     std::vector<value::token> value;
@@ -2297,17 +2302,17 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     // TODO
     // DCOUT("token[] = " << to_string(value));
 
-    var.set(value);
+    var.set_value(value);
   } else if (vartype == value::kString) {
     StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
-      var.set(sdata);
+      var.set_value(sdata);
     } else {
       std::string value;
       if (!ReadStringLiteral(&value)) {
         PUSH_ERROR_AND_RETURN("String literal expected for `" + varname + "`.");
       }
-      var.set(value);
+      var.set_value(value);
     }
 
   } else if (vartype == "string[]") {
@@ -2317,7 +2322,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "ref[]") {
     std::vector<Reference> values;
     if (!ParseBasicTypeArray(&values)) {
@@ -2325,7 +2330,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
                             "`.");
     }
 
-    var.set(values);
+    var.set_value(values);
 
   } else if (vartype == "int[]") {
     std::vector<int32_t> values;
@@ -2339,82 +2344,82 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       DCOUT("int[" << i << "] = " << values[i]);
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "float[]") {
     std::vector<float> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "float2[]") {
     std::vector<value::float2> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "float3[]") {
     std::vector<value::float3> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "float4[]") {
     std::vector<value::float4> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "double[]") {
     std::vector<double> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "double2[]") {
     std::vector<value::double2> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "double3[]") {
     std::vector<value::double3> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == "double4[]") {
     std::vector<value::double4> values;
     if (!ParseBasicTypeArray(&values)) {
       return false;
     }
 
-    var.set(values);
+    var.set_value(values);
   } else if (vartype == value::kFloat) {
     float value;
     if (!ReadBasicType(&value)) {
       return false;
     }
-    var.set(value);
+    var.set_value(value);
   } else if (vartype == value::kDouble) {
     double value;
     if (!ReadBasicType(&value)) {
       return false;
     }
-    var.set(value);
+    var.set_value(value);
   } else if (vartype == "int2") {
     value::int2 value;
     if (!ReadBasicType(&value)) {
       return false;
     }
 
-    var.set(value);
+    var.set_value(value);
 
   } else if (vartype == "int3") {
     value::int3 value;
@@ -2422,14 +2427,14 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       return false;
     }
 
-    var.set(value);
+    var.set_value(value);
   } else if (vartype == "int4") {
     value::int4 value;
     if (!ReadBasicType(&value)) {
       return false;
     }
 
-    var.set(value);
+    var.set_value(value);
   } else if (vartype == value::kPath) {
     if (is_array_type) {
       std::vector<Path> paths;
@@ -2438,7 +2443,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
       }
-      var.set(paths);
+      var.set_value(paths);
 
     } else {
       Path path;
@@ -2447,7 +2452,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
       }
-      var.set(path);
+      var.set_value(path);
     }
 
   } else if (vartype == value::kAssetPath) {
@@ -2458,7 +2463,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.set(paths);
+      var.set_value(paths);
     } else {
       value::AssetPath asset_path;
       if (!ReadBasicType(&asset_path)) {
@@ -2466,7 +2471,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.set(asset_path);
+      var.set_value(asset_path);
     }
   } else if (vartype == "Reference") {
     if (is_array_type) {
@@ -2476,7 +2481,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.set(refs);
+      var.set_value(refs);
     } else {
       nonstd::optional<Reference> ref;
       if (!ReadBasicType(&ref)) {
@@ -2485,10 +2490,10 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
       if (ref) {
-        var.set(ref.value());
+        var.set_value(ref.value());
       } else {
         // None
-        var.set(value::ValueBlock());
+        var.set_value(value::ValueBlock());
       }
     }
   } else if (vartype == value::kDictionary) {
@@ -2497,16 +2502,18 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     if (!ParseDict(&dict)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` data in metadataum.");
     }
-    var.set(dict);
+    var.set_value(dict);
   } else {
     PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
   }
 
+#if 0
   if (is_array_type) {
     var.type = vartype + "[]";
   } else {
     var.type = vartype;
   }
+#endif
 
   (*outvar) = var;
 
@@ -2764,7 +2771,7 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
   if (!ParseMetaValue(vardef, &var)) {
     return false;
   }
-  var.name = varname;
+  var.set_name(varname);
 
   std::get<0>(*out) = qual;
   std::get<1>(*out) = var;
@@ -2780,23 +2787,22 @@ AsciiParser::ParsePrimMeta() {
 
   tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
 
-  // May be string only
-  // For some reason, string-only data is stored in `MetaVariable` and
-  // reconstructed in ReconstructPrimMeta in usda-reader.cc
+  // May be string only(varname is "comment")
+  // For some reason, string-only data is just stored in `MetaVariable` and
+  // reconstructed in ReconstructPrimMeta in usda-reader.cc later
   //
   {
     StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
       MetaVariable var;
-      var.name = "";  // empty
-      var.set(sdata);
+      // empty name
+      var.set_value("comment", sdata);
 
       return std::make_pair(qual, var);
 
     } else if (MaybeString(&sdata)) {
       MetaVariable var;
-      var.name = "";  // empty
-      var.set(sdata);
+      var.set_value("comment", sdata);
 
       return std::make_pair(qual, var);
     }
@@ -2838,7 +2844,7 @@ AsciiParser::ParsePrimMeta() {
       PushError("Failed to parse Prim meta value.\n");
       return nonstd::nullopt;
     }
-    var.name = varname;
+    var.set_name(varname);
 
     return std::make_pair(qual, var);
   } else {
@@ -2888,9 +2894,13 @@ bool AsciiParser::ParsePrimMetas(
     if (auto m = ParsePrimMeta()) {
       DCOUT("PrimMeta: list-edit qual = "
             << tinyusdz::to_string(std::get<0>(m.value()))
-            << ", name = " << std::get<1>(m.value()).name);
+            << ", name = " << std::get<1>(m.value()).get_name());
 
-      (*args)[std::get<1>(m.value()).name] = m.value();
+      if (std::get<1>(m.value()).get_name().empty()) {
+        PUSH_ERROR_AND_RETURN("[InternalError] Metadataum name is empty.");
+      }
+
+      (*args)[std::get<1>(m.value()).get_name()] = m.value();
     } else {
       PUSH_ERROR_AND_RETURN("Failed to parse Meta value.");
     }
@@ -3018,8 +3028,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         }
         // Add as custom meta value.
         MetaVariable metavar;
-        metavar.name = "colorSpace";
-        metavar.set(tok);
+        metavar.set_value("colorSpace", tok);
         out_meta->meta.emplace("colorSpace", metavar);
       } else if (varname == "customData") {
         CustomDataType dict;
@@ -3040,7 +3049,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           if (!ParseMetaValue(vardef, &metavar)) {
             return false;
           }
-          metavar.name = varname;
+          metavar.set_name(varname);
 
           // add to custom meta
           out_meta->meta.emplace(varname, metavar);
