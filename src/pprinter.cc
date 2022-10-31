@@ -1128,6 +1128,10 @@ std::string to_string(const APISchemas::APIName &name) {
   return s;
 }
 
+std::string to_string(const CustomDataType &custom) {
+  return print_customData(custom, "", 0);
+}
+
 std::string to_string(const StringData &s) {
   if (s.is_triple_quoted) {
     return quote(s.value, "\"\"\"");
