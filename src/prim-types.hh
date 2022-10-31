@@ -2176,8 +2176,12 @@ class Prim {
   const Path &local_path() const { return _path; }
 
   Path &element_path() { return _elementPath; }
-
   const Path &element_path() const { return _elementPath; }
+
+  // elementName = element_path's prim part
+  const std::string element_name() const {
+    return _elementPath.prop_part();
+  }
 
   const std::string type_name() const { return _data.type_name(); }
 
