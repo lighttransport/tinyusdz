@@ -1,3 +1,4 @@
+// TODO: merge into api-tutorial example.
 #include "usda-writer.hh"
 
 #include <iostream>

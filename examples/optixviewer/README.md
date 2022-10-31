@@ -1,5 +1,9 @@
 # OptiX viewer
 
+## Status 
+
+Not yet working.
+
 ## Requirements
 
 * OptiX 7.2 or later
