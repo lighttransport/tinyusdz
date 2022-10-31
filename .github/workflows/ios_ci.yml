@@ -1,4 +1,4 @@
-name: iOS Build
+name: iOS
 
 on:
   push:
