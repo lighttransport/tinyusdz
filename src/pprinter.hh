@@ -173,6 +173,9 @@ std::string to_string(const GeomCamera::StereoRole &role);
 std::string to_string(const tinyusdz::Animatable<Visibility> &v, const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const APISchemas::APIName &name);
+std::string to_string(const CustomDataType &customData);
+
+
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent);
 std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t indent);
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
@@ -185,6 +188,7 @@ std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent
 std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent);
 std::string print_prop(const Property &prop, const std::string &prop_name, uint32_t indent);
 std::string print_props(const std::map<std::string, Property> &props, uint32_t indent);
+
 
 // Forwad decl
 class Stage;
