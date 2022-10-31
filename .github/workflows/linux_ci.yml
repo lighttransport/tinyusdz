@@ -1,4 +1,4 @@
-name: C/C++ CI
+name: Linux Build
 
 on:
   push:
@@ -64,81 +64,6 @@ jobs:
             ./scripts/bootstrap-gcc-aarch64-cross.sh
             cd build-cross
             make VERBOSE=1
-
-  # Windows(x64) + Visual Studio 2019 build
-  build-windows-msvc:
-
-    runs-on: windows-latest
-    name: Build for Windows(x64, MSVC)
-
-    # Use system installed cmake
-    # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v1
-      - name: Configure
-        run: .\vcsetup.bat
-      - name: Build
-        run: cmake --build build --config Release
-
-  # Windows(32bit) + Visual Studio 2019 build
-  build-windows-msvc-win32:
-
-    runs-on: windows-latest
-    name: Build for Windows(Win32, MSVC)
-
-    # Use system installed cmake
-    # https://help.github.com/en/actions/reference/software-installed-on-github-hosted-runners
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v1
-      - name: Configure
-        run: .\vcsetup-32bit.bat
-      - name: Build
-        run: cmake --build build_win32 --config Release
-
-  # Android(aarch64) build
-  build-android:
-
-    runs-on: ubuntu-latest
-    name: Build for Android(arm64v8a)
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v1
-      - name: Show android sdk root
-        run: |
-            env | grep ANDROID
-            echo $ANDROID_SDK_ROOT
-      - name: Setup
-        run: |
-            sudo apt-get install -y ninja-build tree
-      - name: Show android sdk details
-        run: |
-            tree $ANDROID_SDK_ROOT
-      - name: CmakeAndBuild
-        run: |
-            ./scripts/bootstrap-android-cmake-linux.sh
-            cd build-android
-            ninja -v
-
-  # iOS build
-  build-ios:
-
-    runs-on: macos-latest
-    name: Build for iOS
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v1
-      - name: List up iPhone platform
-        run: |
-            ls -la /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs
-      - name: CmakeAndBuild
-        run: |
-            ./scripts/bootstrap-aarch64-ios.sh
-            cd build-aarch64-cross
-            make VERBOSE=1
-
 
   # Build with OpenSubdiv
   build-osd:
