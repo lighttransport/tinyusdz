@@ -340,7 +340,7 @@ std::ostream &operator<<(std::ostream &ofs,
     s = in_s;
   }
 
-  ofs << quote_str << s << quote_str;
+  ofs << quote_str << tinyusdz::escapeBackslash(s) << quote_str;
 
   return ofs;
 }
@@ -739,7 +739,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTraits<std::string>::type_id: {
       auto p = v.as<std::string>();
       if (p) {
-        os << quote(*p);
+        os << quote(escapeBackslash(*p));
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
@@ -756,8 +756,13 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     }
     case TypeTraits<std::vector<std::string>>::type_id: {
       auto p = v.as<std::vector<std::string>>();
+      // Escape each string.
+      std::vector<std::string> ss;
+      for (const auto &item : *p) {
+        ss.push_back(escapeBackslash(item));
+      }
       if (p) {
-        os << quote(*p);
+        os << quote(ss);
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
       }

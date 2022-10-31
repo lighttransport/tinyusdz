@@ -197,6 +197,11 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
+    if (err) {
+      (*err) += "File not found or failed to read : \"" +
+                filepath + "\"\n";
+    }
+      
     return false;
   }
 
@@ -680,7 +685,10 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
   size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
-    return false;
+    if (err) {
+      (*err) += "File not found or failed to read : \"" +
+                filepath + "\"\n";
+    }
   }
 
   return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,

@@ -337,7 +337,7 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
 #endif
   if (!f) {
     if (err) {
-      (*err) += "File open error : " + filepath + "\n";
+      (*err) += "File does not exit or open error : " + filepath + "\n";
     }
     return false;
   }
@@ -444,6 +444,20 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
       return dir + filename;
     }
   }
+}
+
+bool USDFileExists(const std::string &fpath) {
+  size_t read_len = 9; // USD file must be at least 9 bytes or more.
+
+  std::string err;
+  std::vector<uint8_t> data;
+
+  if (!ReadFileHeader(&data, &err, fpath, uint32_t(read_len))) {
+    return false;
+  }
+
+  return true;
+
 }
 
 bool IsUDIMPath(const std::string &path)

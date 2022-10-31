@@ -207,6 +207,39 @@ inline bool tokenize_variantElement(const std::string &elementName, std::array<s
 
 }
 
+// Escape backslash('\') to '\\'
+inline std::string escapeBackslash(const std::string &str) {
+  std::string s = str;
+
+  std::string bs = "\\";
+  std::string bs_escaped = "\\\\";
+
+  std::string::size_type pos = 0;
+  while ((pos = s.find(bs, pos)) != std::string::npos) {
+    s.replace(pos, bs.length(), bs_escaped);
+    pos += bs_escaped.length();
+  }
+
+  return s;
+}
+
+// Unescape backslash('\\' -> '\')
+inline std::string unescapeBackslash(const std::string &str) {
+  std::string s = str;
+
+  std::string bs = "\\\\";
+  std::string bs_unescaped = "\\";
+
+  std::string::size_type pos = 0;
+  while ((pos = s.find(bs, pos)) != std::string::npos) {
+    s.replace(pos, bs.length(), bs_unescaped);
+    pos += bs_unescaped.length();
+  }
+
+  return s;
+}
+
+
 #if 0
 template<typename It>
 inline std::string quote_then_join(const std::string& sep, const It& v, const std::string &quote = "\"")
