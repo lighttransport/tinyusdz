@@ -18,8 +18,13 @@ int main(int argc, char **argv) {
   //std::string base_dir;
   //base_dir = tinyusdz::io::GetBaseDir(filename);
 
+  if (!tinyusdz::io::USDFileExists(filename)) {
+    std::cerr << "Input file does not exist or failed to read: " << filename << "\n";
+    return -1;
+  }
+
   if (!tinyusdz::IsUSDC(filename)) {
-    std::cerr << "Input file isn't a USDC file.\n";
+    std::cerr << "Input file isn't a USDC file: " << filename << "\n";
     return -1;
   }
 

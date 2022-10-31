@@ -107,7 +107,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::StringData &v) {
   }
 
   ofs << delim;
-  ofs << v.value;
+  ofs << tinyusdz::escapeBackslash(v.value);
   ofs << delim;
 
   return ofs;
@@ -1133,16 +1133,16 @@ std::string to_string(const CustomDataType &custom) {
 }
 
 std::string to_string(const StringData &s) {
-  if (s.is_triple_quoted) {
-    return quote(s.value, "\"\"\"");
-  } else {
-    return quote(s.value);
-  }
+  std::stringstream ss;
+  ss << s;
+  return ss.str();
 }
 
 std::string to_string(const std::string &v) {
   // TODO: Escape `"` character.
-  return quote(v);
+
+  // Escape backslash
+  return quote(escapeBackslash(v));
 }
 
 std::string to_string(const Reference &v) {

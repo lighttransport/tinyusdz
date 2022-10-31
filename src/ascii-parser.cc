@@ -1117,10 +1117,13 @@ bool AsciiParser::MaybeString(StringData *str) {
     return false;
   }
 
-  if (c0 != '"') {
+  // ' or " allowed.
+  if ((c0 != '"') && (c0 != '\'')) {
     SeekTo(loc);
     return false;
   }
+
+  bool single_quote = (c0 == '\'');
 
   bool end_with_quotation{false};
 
@@ -1137,9 +1140,16 @@ bool AsciiParser::MaybeString(StringData *str) {
       return false;
     }
 
-    if (c == '"') {
-      end_with_quotation = true;
-      break;
+    if (single_quote) {
+      if (c == '\'') {
+        end_with_quotation = true;
+        break;
+      }
+    } else {
+      if (c == '"') {
+        end_with_quotation = true;
+        break;
+      }
     }
 
     ss << c;
@@ -1153,12 +1163,14 @@ bool AsciiParser::MaybeString(StringData *str) {
   DCOUT("Single quoted string found. col " << start_cursor.col << ", row "
                                            << start_cursor.row);
 
-  str->value = ss.str();
+  // Unescape backslash required.
+  size_t displayed_string_len = ss.str().size();
+  str->value = unescapeBackslash(ss.str());
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = false;
 
-  _curr_cursor.col += int(str->value.size() + 2);  // +2 for quotation chars
+  _curr_cursor.col += int(displayed_string_len + 2);  // +2 for quotation chars
 
   return true;
 }
@@ -1283,7 +1295,8 @@ bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
   if (s.size() > 3) {  // just in case
     s.erase(s.size() - 3);
   }
-  str->value = s;
+  // Unescape backslash required.
+  str->value = unescapeBackslash(s);
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = true;
@@ -1690,7 +1703,7 @@ bool AsciiParser::ParseStageMetas() {
     return false;
   }
 
-  if (!SkipWhitespaceAndNewline()) {
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
 
@@ -1705,7 +1718,7 @@ bool AsciiParser::ParseStageMetas() {
         return false;
       }
 
-      if (!SkipWhitespaceAndNewline()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
       }
 
@@ -1726,7 +1739,7 @@ bool AsciiParser::ParseStageMetas() {
       }
     }
 
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
   }
