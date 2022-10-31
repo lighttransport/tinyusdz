@@ -1,5 +1,9 @@
 # Simple OpenGL viewer
 
+## Status 
+
+Not yet working.
+
 ## Requirements 
 
 * C++11 compiler

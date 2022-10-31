@@ -5,13 +5,18 @@
 //
 #include "prim-types.hh"
 #include "str-util.hh"
+//
+#include "usdGeom.hh"
+#include "usdSkel.hh"
+#include "usdLux.hh"
+#include "usdShade.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/pystring.h"
+//#include "external/pystring.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -192,7 +197,7 @@ Path Path::append_property(const std::string &elem) {
     p._valid = false;
     return p;
   }
-  
+
   if (tokenize_variantElement(elem)) {
     // variant chars are not supported yet.
     p._valid = false;
@@ -359,7 +364,7 @@ bool ValidatePrimName(const std::string &name)
 
   for (size_t i = 1; i < name.size(); i++) {
     if (std::isalnum(int(name[i])) || (name[i] == '_')) {
-      // ok 
+      // ok
     } else {
       return false;
     }
@@ -367,6 +372,405 @@ bool ValidatePrimName(const std::string &name)
 
   return true;
 
+}
+
+//
+// -- Prim
+//
+
+namespace {
+
+const PrimMeta *GetPrimMeta(const value::Value &v) {
+
+  // Lookup PrimMeta variable in Prim class
+
+#define GET_PRIM_META(__ty) \
+  if (v.as<__ty>()) {                      \
+    return &(v.as<__ty>()->meta);            \
+  }
+
+  GET_PRIM_META(Model)
+  GET_PRIM_META(Scope)
+  GET_PRIM_META(Xform)
+  GET_PRIM_META(GPrim)
+  GET_PRIM_META(GeomMesh)
+  GET_PRIM_META(GeomPoints)
+  GET_PRIM_META(GeomCube)
+  GET_PRIM_META(GeomCapsule)
+  GET_PRIM_META(GeomCylinder)
+  GET_PRIM_META(GeomSphere)
+  GET_PRIM_META(GeomCone)
+  GET_PRIM_META(GeomSubset)
+  GET_PRIM_META(GeomCamera)
+  GET_PRIM_META(GeomBasisCurves)
+  GET_PRIM_META(DomeLight)
+  GET_PRIM_META(SphereLight)
+  GET_PRIM_META(CylinderLight)
+  GET_PRIM_META(DiskLight)
+  GET_PRIM_META(RectLight)
+  GET_PRIM_META(Material)
+  GET_PRIM_META(Shader)
+  GET_PRIM_META(UsdPreviewSurface)
+  GET_PRIM_META(UsdUVTexture)
+  GET_PRIM_META(UsdPrimvarReader_int)
+  GET_PRIM_META(UsdPrimvarReader_float)
+  GET_PRIM_META(UsdPrimvarReader_float2)
+  GET_PRIM_META(UsdPrimvarReader_float3)
+  GET_PRIM_META(UsdPrimvarReader_float4)
+  GET_PRIM_META(SkelRoot)
+  GET_PRIM_META(Skeleton)
+  GET_PRIM_META(SkelAnimation)
+  GET_PRIM_META(BlendShape)
+
+
+#undef GET_PRIM_META
+
+  return nullptr;
+}
+
+PrimMeta *GetPrimMeta(value::Value &v) {
+
+  // Lookup PrimMeta variable in Prim class
+
+#define GET_PRIM_META(__ty) \
+  if (v.as<__ty>()) {                      \
+    return &(v.as<__ty>()->meta);            \
+  }
+
+  GET_PRIM_META(Model)
+  GET_PRIM_META(Scope)
+  GET_PRIM_META(Xform)
+  GET_PRIM_META(GPrim)
+  GET_PRIM_META(GeomMesh)
+  GET_PRIM_META(GeomPoints)
+  GET_PRIM_META(GeomCube)
+  GET_PRIM_META(GeomCapsule)
+  GET_PRIM_META(GeomCylinder)
+  GET_PRIM_META(GeomSphere)
+  GET_PRIM_META(GeomCone)
+  GET_PRIM_META(GeomSubset)
+  GET_PRIM_META(GeomCamera)
+  GET_PRIM_META(GeomBasisCurves)
+  GET_PRIM_META(DomeLight)
+  GET_PRIM_META(SphereLight)
+  GET_PRIM_META(CylinderLight)
+  GET_PRIM_META(DiskLight)
+  GET_PRIM_META(RectLight)
+  GET_PRIM_META(Material)
+  GET_PRIM_META(Shader)
+  GET_PRIM_META(UsdPreviewSurface)
+  GET_PRIM_META(UsdUVTexture)
+  GET_PRIM_META(UsdPrimvarReader_int)
+  GET_PRIM_META(UsdPrimvarReader_float)
+  GET_PRIM_META(UsdPrimvarReader_float2)
+  GET_PRIM_META(UsdPrimvarReader_float3)
+  GET_PRIM_META(UsdPrimvarReader_float4)
+  GET_PRIM_META(SkelRoot)
+  GET_PRIM_META(Skeleton)
+  GET_PRIM_META(SkelAnimation)
+  GET_PRIM_META(BlendShape)
+
+
+#undef GET_PRIM_META
+
+  return nullptr;
+}
+
+}  // namespace
+
+///
+/// Stage
+///
+
+//
+// TODO: Move to prim-types.cc
+//
+
+nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
+  // Since multiple get_value() call consumes lots of stack size(depends on
+  // sizeof(T)?), Following code would produce 100KB of stack in debug build. So
+  // use as() instead(as() => roughly 2000 bytes for stack size).
+#if 0
+  //
+  // TODO: Find a better C++ way... use a std::function?
+  //
+  if (auto pv = v.get_value<Model>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<Scope>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<Xform>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GPrim>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomMesh>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomBasisCurves>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomSphere>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCube>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCylinder>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCapsule>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCone>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomSubset>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<GeomCamera>()) {
+    return Path(pv.value().name, "");
+  }
+
+  if (auto pv = v.get_value<DomeLight>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<SphereLight>()) {
+    return Path(pv.value().name, "");
+  }
+  // if (auto pv = v.get_value<CylinderLight>()) { return
+  // Path(pv.value().name); } if (auto pv = v.get_value<DiskLight>()) {
+  // return Path(pv.value().name); }
+
+  if (auto pv = v.get_value<Material>()) {
+    return Path(pv.value().name, "");
+  }
+  if (auto pv = v.get_value<Shader>()) {
+    return Path(pv.value().name, "");
+  }
+  // if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
+  // if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name);
+  // }
+
+  return nonstd::nullopt;
+#else
+
+  // Lookup name field of Prim class
+
+#define EXTRACT_NAME_AND_RETURN_PATH(__ty) \
+  if (v.as<__ty>()) {                      \
+    return v.as<__ty>()->name;             \
+  } else
+
+  EXTRACT_NAME_AND_RETURN_PATH(Model)
+  EXTRACT_NAME_AND_RETURN_PATH(Scope)
+  EXTRACT_NAME_AND_RETURN_PATH(Xform)
+  EXTRACT_NAME_AND_RETURN_PATH(GPrim)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomMesh)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomPoints)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCube)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCapsule)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCylinder)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomSphere)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCone)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomSubset)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(DomeLight)
+  EXTRACT_NAME_AND_RETURN_PATH(SphereLight)
+  EXTRACT_NAME_AND_RETURN_PATH(CylinderLight)
+  EXTRACT_NAME_AND_RETURN_PATH(DiskLight)
+  EXTRACT_NAME_AND_RETURN_PATH(RectLight)
+  EXTRACT_NAME_AND_RETURN_PATH(Material)
+  EXTRACT_NAME_AND_RETURN_PATH(Shader)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdUVTexture)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_int)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float2)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float3)
+  EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_float4)
+  EXTRACT_NAME_AND_RETURN_PATH(SkelRoot)
+  EXTRACT_NAME_AND_RETURN_PATH(Skeleton)
+  EXTRACT_NAME_AND_RETURN_PATH(SkelAnimation)
+  EXTRACT_NAME_AND_RETURN_PATH(BlendShape)
+  {
+    return nonstd::nullopt;
+  }
+
+
+#undef EXTRACT_NAME_AND_RETURN_PATH
+
+#endif
+}
+
+bool SetPrimElementName(value::Value &v, const std::string &elementName) {
+
+  // Lookup name field of Prim class
+  bool ok{false};
+
+#define SET_ELEMENT_NAME(__name, __ty) \
+  if (v.as<__ty>()) {                      \
+    v.as<__ty>()->name = __name;             \
+    ok = true; \
+  } else
+
+  SET_ELEMENT_NAME(elementName, Model)
+  SET_ELEMENT_NAME(elementName, Scope)
+  SET_ELEMENT_NAME(elementName, Xform)
+  SET_ELEMENT_NAME(elementName, GPrim)
+  SET_ELEMENT_NAME(elementName, GeomMesh)
+  SET_ELEMENT_NAME(elementName, GeomPoints)
+  SET_ELEMENT_NAME(elementName, GeomCube)
+  SET_ELEMENT_NAME(elementName, GeomCapsule)
+  SET_ELEMENT_NAME(elementName, GeomCylinder)
+  SET_ELEMENT_NAME(elementName, GeomSphere)
+  SET_ELEMENT_NAME(elementName, GeomCone)
+  SET_ELEMENT_NAME(elementName, GeomSubset)
+  SET_ELEMENT_NAME(elementName, GeomCamera)
+  SET_ELEMENT_NAME(elementName, GeomBasisCurves)
+  SET_ELEMENT_NAME(elementName, DomeLight)
+  SET_ELEMENT_NAME(elementName, SphereLight)
+  SET_ELEMENT_NAME(elementName, CylinderLight)
+  SET_ELEMENT_NAME(elementName, DiskLight)
+  SET_ELEMENT_NAME(elementName, RectLight)
+  SET_ELEMENT_NAME(elementName, Material)
+  SET_ELEMENT_NAME(elementName, Shader)
+  SET_ELEMENT_NAME(elementName, UsdPreviewSurface)
+  SET_ELEMENT_NAME(elementName, UsdUVTexture)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_int)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float2)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float3)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float4)
+  SET_ELEMENT_NAME(elementName, SkelRoot)
+  SET_ELEMENT_NAME(elementName, Skeleton)
+  SET_ELEMENT_NAME(elementName, SkelAnimation)
+  SET_ELEMENT_NAME(elementName, BlendShape)
+  {
+    return false;
+  }
+
+
+#undef SET_ELEMENT_NAME
+
+  return ok;
+}
+
+
+Prim::Prim(const value::Value &rhs) {
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+    if (auto pv = GetPrimElementName(rhs)) {
+      _path = Path(pv.value(), /* prop part*/ "");
+      _elementPath = Path(pv.value(), /* prop part */ "");
+    }
+
+    _data = rhs;
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+Prim::Prim(value::Value &&rhs) {
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+    _data = std::move(rhs);
+
+    if (auto pv = GetPrimElementName(_data)) {
+      _path = Path(pv.value(), "");
+      _elementPath = Path(pv.value(), "");
+    }
+
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+Prim::Prim(const std::string &elementPath, const value::Value &rhs) {
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+    _path = Path(elementPath, /* prop part*/ "");
+    _elementPath = Path(elementPath, /* prop part */ "");
+
+    _data = rhs;
+    SetPrimElementName(_data, elementPath);
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
+  // Check if type is Prim(Model(GPrim), usdShade, usdLux, etc.)
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= rhs.type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > rhs.type_id())) {
+
+    _path = Path(elementPath, /* prop part */"");
+    _elementPath = Path(elementPath, /* prop part */"");
+
+    _data = std::move(rhs);
+    SetPrimElementName(_data, elementPath);
+  } else {
+    // TODO: Raise an error if rhs is not an Prim
+  }
+}
+
+//
+// To deal with clang's -Wexit-time-destructors, dynamically allocate buffer for PrimMeta.
+//
+// NOTE: not thread-safe.
+//
+class EmptyStaticMeta {
+ private:
+  EmptyStaticMeta() = default;
+
+ public:
+  static PrimMeta &GetEmptyStaticMeta() {
+    if (!s_meta) {
+      s_meta = new PrimMeta();
+    }
+
+    return *s_meta;
+  }
+
+  ~EmptyStaticMeta() {
+    delete s_meta;
+    s_meta = nullptr;
+  }
+
+ private:
+  static PrimMeta *s_meta;
+};
+
+PrimMeta *EmptyStaticMeta::s_meta = nullptr;
+
+
+
+PrimMeta &Prim::metas() {
+
+  PrimMeta *p = GetPrimMeta(_data);
+  if (p) {
+    return *p;
+  }
+
+  // TODO: This should not happen. report an error.
+  return EmptyStaticMeta::GetEmptyStaticMeta();
+}
+
+const PrimMeta &Prim::metas() const {
+
+  const PrimMeta *p = GetPrimMeta(_data);
+  if (p) {
+    return *p;
+  }
+
+  // TODO: This should not happen. report an error.
+  return EmptyStaticMeta::GetEmptyStaticMeta();
 }
 
 
