@@ -305,6 +305,7 @@ list(
   ../../src/usdShade.cc
   ../../src/xform.cc
   ../../src/stage.cc
+  ../../src/linear-algebra.cc
   ../../src/tydra/render-data.cc
   ../../src/tydra/scene-access.cc
 )
