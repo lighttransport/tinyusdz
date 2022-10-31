@@ -1,4 +1,4 @@
-name: Windows CI build
+name: Windows
 
 # TODO: MinGW(gcc) build
 # TODO: llvm-mingw(clang) build
