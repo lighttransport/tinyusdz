@@ -42,6 +42,8 @@ bool IsAbsPath(const std::string &filepath);
 
 bool IsUDIMPath(const std::string &filepath);
 
+bool USDFileExists(const std::string &filepath);
+
 //
 // diffuse.<UDIM>.png => "diffuse.", ".png"
 //
