@@ -6,13 +6,17 @@
 
 [![C/C++ CI](https://github.com/syoyo/tinyusdz/workflows/C/C++%20CI/badge.svg)](https://github.com/syoyo/tinyusdz/actions/)
 
+|         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |
+|:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|
+| dev     | [![Linux Build](https://github.com/syoyo/tinyusdz/actions/workflows/linux_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/linux_ci.yml) | [![Windows CI build](https://github.com/syoyo/tinyusdz/actions/workflows/windows_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/windows_ci.yml) </br> [![Windows ARM CI build](https://github.com/syoyo/tinyusdz/actions/workflows/windows_arm_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/windows_arm_ci.yml)  | [![macOS Build](https://github.com/syoyo/tinyusdz/actions/workflows/macos_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/macos_ci.yml) | [![iOS Build](https://github.com/syoyo/tinyusdz/actions/workflows/ios_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/ios_ci.yml) | [![Android arm64v8a Build](https://github.com/syoyo/tinyusdz/actions/workflows/android_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/android_ci.yml) |
+
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/syoyo/tinyusdz.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/syoyo/tinyusdz/alerts/)
 
 ## Supported platforms
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM                          |
 |:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|
-|   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> 🤔 ARM  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) |
+|   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64/ARM32  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) |
 
 
 ## Status
