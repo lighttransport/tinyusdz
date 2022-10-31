@@ -1,6 +1,5 @@
 name: Windows CI build
 
-# TODO: Arm windows build.
 # TODO: MinGW(gcc) build
 # TODO: llvm-mingw(clang) build
 
