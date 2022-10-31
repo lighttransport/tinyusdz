@@ -31,9 +31,9 @@ Remaining task is to write a examples, demo and scene/render delegate(Tydra).
 
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
-* [ ] Write simple SDL viewer example(2022 Fall/Winter expected)
-* [ ] Write iOS and Android example(2022 Fall/Winter expected)
-* [ ] Vulkan raytracing viewer example
+* [ ] Write simple SDL viewer example(2022 Winter expected)
+* [ ] Write iOS and Android example(2022 Winter expected)
+* [ ] Vulkan or OptiX/HIP RT raytracing viewer example
 * [ ] USD <-> glTF converter example
   * There is an independent work of USD to glTF binary GLB converter: https://github.com/fynv/usd2glb
 * [ ] Web demo with Three.js?
