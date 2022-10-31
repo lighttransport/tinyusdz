@@ -1,4 +1,4 @@
-name: Android arm64v8a Build
+name: Android
 
 on:
   push:
