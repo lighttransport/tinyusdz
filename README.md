@@ -1,6 +1,6 @@
 # Tiny USDZ library in C++14
 
-`TinyUSDZ` is dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
+`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
 ## Build status
 
@@ -25,7 +25,7 @@ TinyUSDZ is near to release first version v0.8.0.
 Core loading feature(both USDA and USDC) is production-grade.
 (Flattened scene only(i.e, USDZ). Composition features are not supported yet)
 
-Remaining task is to write a examples, demo and scene/render delegate(Tydra).
+Remaining task is to write examples, demos and utility functions(Tydra).
 
 * [x] USDZ/USDC(Crate) parser
 * [ ] USDZ/USDC(Crate) writer (Work-in-progress)
@@ -47,7 +47,7 @@ Remaining task is to write a examples, demo and scene/render delegate(Tydra).
 
 TinyUSDZ has first priority of considering security and stability.
 
-USDZ(USDC) is a binary format and data are compressed. To avoid out-of-bounds access, out-of-memory, and other security issues when loading malcious USDZ(e.g. USDZ file from unknown origin), TinyUSDZ has a memory budget feature to avoid out-of-memory issue.
+USDZ(USDC) is a binary format. To avoid out-of-bounds access, out-of-memory, and other security issues when loading malcious USDZ(e.g. USDZ file from unknown origin), TinyUSDZ has a memory budget feature to avoid out-of-memory issue.
 
 To limit a memory usage when loading USDZ file, Please set a value `max_memory_limit_in_mb` in USDLoadOptions.
 
@@ -58,9 +58,9 @@ TinyUSDZ source codes(and some external third party codes) are also checked by A
 See [tests/fuzzer](tests/fuzzer) .
 For building fuzzer tests, you'll need Meson and Ninja.
 
-If you need to deal with arbitrary USD files from unknown origin(e.g. from internet, NFT storage. Whose may contain malcious data), it is recommended to use TinyUSDZ in sandboxed environment(RunC, FlatPak, WASI(WASM)). Run in WASI is recommended at the moment(please see next section).
-
 #### Web platform(WASM) and sandboxed environment(WASI)
+
+If you need to deal with arbitrary USD files from unknown origin(e.g. from internet, NFT storage. Whose may contain malcious data), it is recommended to use TinyUSDZ in sandboxed environment(RunC, FlatPak, WASI(WASM)). Run in WASI is recommended at the moment.
 
 TinyUSDZ does not use C++ exceptions and can be built without threads. TinyUSDZ supports WASM and WASI build. So TinyUSDZ should runs well on various Web platform(WebAssembly. No SharedArrayBuffer, Atomics and WebAssembly SIMD(which is not yet available on iOS Safari) required) and sandboxed environment(WASI. Users who need to read various USD file which possibly could contain malcious data from Internet, IPFS or blockchain storage). 
 
@@ -69,6 +69,7 @@ See [sandbox/wasi/](sandbox/wasi) for Building TinyUSDZ with WASI toolchain.
 ### Tydra
 
 USD itself is a generic container of 3D scene data.
+
 Tydra is an interface to Renderers/Viewers and other DCCs.
 Tydra may be something like Tiny version of pxrUSD Hydra, but its API is completely different. See [src/tydra/README.md](src/tydra/README.md) for the background.
 
