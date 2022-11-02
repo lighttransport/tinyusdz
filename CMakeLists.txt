@@ -40,7 +40,7 @@ option(TINYUSDZ_WITH_USDVOX
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
-  ON)
+  OFF)
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 
