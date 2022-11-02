@@ -14,7 +14,7 @@
 
 ## Supported platforms
 
-|         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM                          |
+|         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM(WASI)                    |
 |:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|
 |   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64/ARM32  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) |
 
