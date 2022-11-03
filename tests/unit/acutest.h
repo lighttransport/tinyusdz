@@ -113,6 +113,9 @@
 
 
 #ifdef __cplusplus
+/* TinyUSDZ: Disable exception */
+
+#if 0
 /* Macros to verify that the code (the 1st argument) throws exception of given
  * type (the 2nd argument). (Note these macros are only available in C++.)
  *
@@ -159,6 +162,9 @@
         if(msg_ != NULL)                                                       \
             acutest_message_("%s", msg_);                                      \
     } while(0)
+
+#endif
+
 #endif  /* #ifdef __cplusplus */
 
 
@@ -1013,7 +1019,12 @@ acutest_do_run_(const struct acutest_test_* test, int index)
     acutest_cond_failed_ = 0;
 
 #ifdef __cplusplus
+/* TinyUSDZ: disable exception */
+#if 0
     try {
+#else
+    {
+#endif
 #endif
         acutest_init_(test->name);
         acutest_begin_test_line_(test);
@@ -1067,6 +1078,8 @@ aborted:
         status = (acutest_test_failures_ == 0) ? 0 : -1;
 
 #ifdef __cplusplus
+/* TinyUSDZ: disable exception */
+#if 0
     } catch(std::exception& e) {
         const char* what = e.what();
         acutest_check_(0, NULL, 0, "Threw std::exception");
@@ -1087,6 +1100,9 @@ aborted:
             printf("C++ exception.\n\n");
         }
     }
+#else
+    }
+#endif
 #endif
 
     acutest_fini_(test->name);

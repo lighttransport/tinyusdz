@@ -16,6 +16,7 @@
 //#endif
 
 // TINYUSDZ: TODO: Completely disable int128 feature for portablity?
+#if defined(__GNUC__)
 #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)) && \
     defined(__x86_64__)
 namespace gcc_ints
@@ -23,6 +24,7 @@ namespace gcc_ints
     __extension__ typedef __int128 int128;
     __extension__ typedef unsigned __int128 uint128;
 }  // namespace gcc_ints
+#endif
 #endif
 
 #define UINT64_C2(h, l) ((static_cast<uint64_t>(h) << 32) | static_cast<uint64_t>(l))
@@ -63,7 +65,7 @@ struct DiyFp {
 		if (l & (uint64_t(1) << 63)) // rounding
 			h++;
 		return DiyFp(h, e + rhs.e + 64);
-#elif (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)) && defined(__x86_64__)
+#elif defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)) && defined(__x86_64__)
         gcc_ints::uint128 p = static_cast<gcc_ints::uint128>(f) * static_cast<gcc_ints::uint128>(rhs.f);
 		uint64_t h = p >> 64;
 		uint64_t l = static_cast<uint64_t>(p);
@@ -90,7 +92,7 @@ struct DiyFp {
 #if defined(_MSC_VER) && defined(_M_AMD64)
 		unsigned long index;
 		_BitScanReverse64(&index, f);
-		return DiyFp(f << (63 - index), e - (63 - index));
+		return DiyFp(f << (63 - int(index)), e - (63 - int(index)));
 #elif defined(__GNUC__)
 		int s = __builtin_clzll(f);
 		return DiyFp(f << s, e - s);
@@ -110,7 +112,7 @@ struct DiyFp {
 #if defined(_MSC_VER) && defined(_M_AMD64)
 		unsigned long index;
 		_BitScanReverse64(&index, f);
-		return DiyFp (f << (63 - index), e - (63 - index));
+		return DiyFp (f << (63 - int(index)), e - (63 - int(index)));
 #else
 		DiyFp res = *this;
 		while (!(res.f & (kDpHiddenBit << 1))) {
@@ -265,7 +267,7 @@ inline void DigitGen(const DiyFp& W, const DiyFp& Mp, uint64_t delta, char* buff
 			default:
 #if defined(_MSC_VER)
 				__assume(0);
-#elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 5)
+#elif defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 5))
 				__builtin_unreachable();
 #else
 				d = 0;
