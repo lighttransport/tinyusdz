@@ -308,6 +308,7 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
 #include <iterator>
 #include <map>
 #include <sstream>
+#include <limits>
 
 #if defined(TINY_DNG_LOADER_NO_STDIO)
 #else
@@ -337,7 +338,7 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#define TINY_DNG_LOADER_DEBUG
+// #define TINY_DNG_LOADER_DEBUG
 #ifdef TINY_DNG_LOADER_DEBUG
 #define TINY_DNG_DPRINTF(...) printf(__VA_ARGS__)
 #else
@@ -5500,10 +5501,18 @@ bool LoadDNGFromMemory(const char* mem, unsigned int size,
             image->height = h;
             image->samples_per_pixel = components;
 
-            const size_t len =
-                static_cast<size_t>((image->samples_per_pixel * image->width *
-                                     image->height * image->bits_per_sample) /
-                                    8);
+            const uint64_t len = uint64_t(image->samples_per_pixel) * uint64_t(image->width) * uint64_t(image->height) * uint64_t(image->bits_per_sample / 8);
+            // For 32bit
+            if (sizeof(void *) == 4) {
+              // Use 2GB as a max
+              if (len > std::numeric_limits<int32_t>::max()) {
+                if (err) {
+                  (*err) += "Decoded image size exceeds 2GB.\n";
+                }
+                return false; 
+              }
+            }
+
             image->data.resize(len);
 
             memcpy(image->data.data(), decoded_image, len);
@@ -5521,20 +5530,34 @@ bool LoadDNGFromMemory(const char* mem, unsigned int size,
 
         // std::cout << "w = " << image->width << ", h = " << image->height <<
         // std::endl;
+        
+        TINY_DNG_DPRINTF("image.width = %d\n", image->width);
+        TINY_DNG_DPRINTF("image.height = %d\n", image->height);
+        TINY_DNG_DPRINTF("image.bps = %d\n", image->bits_per_sample);
+        TINY_DNG_DPRINTF("image.spp = %d\n", image->samples_per_pixel);
 
         TINY_DNG_ASSERT(
             ((image->width * image->height * image->bits_per_sample) % 8) == 0,
             "Image must be multiple of 8.");
-        const size_t len =
-            static_cast<size_t>((image->samples_per_pixel * image->width *
-                                 image->height * image->bits_per_sample) /
-                                8);
+        const uint64_t len = uint64_t(image->samples_per_pixel) * uint64_t(image->width) * uint64_t(image->height) * uint64_t(image->bits_per_sample / 8);
+        // For 32bit
+        if (sizeof(void *) == 4) {
+          // Use 2GB as a max
+          if (len > std::numeric_limits<int32_t>::max()) {
+            if (err) {
+              (*err) += "Decoded image size exceeds 2GB.\n";
+            }
+            return false; 
+          }
+        }
+
         if (len == 0) {
           if (err) {
             (*err) += "Invalid jpeg data length.\n";
           }
           return false;
         }
+        TINY_DNG_DPRINTF("image.data.size = %lld\n", len);
 
         image->data.resize(len);
         TINY_DNG_DPRINTF("image.data.size = %d\n", int(len));
