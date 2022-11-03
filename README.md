@@ -219,6 +219,57 @@ See [examples](examples) directory for more examples, but may not actively maint
 
 See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
 
+## Example
+
+### Minimum example to load USDA/USDC/USDZ file.
+
+```
+// TinyUSDZ is not a header-only library, so no TINYUSDZ_IMPLEMENTATIONS
+#include "tinyusdz.hh"
+
+// If you want to print TinyUSDZ classes/enums.
+// to_string() and operator<< against TinyUSDZ classes/enums are provided separately.
+#include <iostream>
+#include "pprinter.hh"
+#include "value-pprint.hh"
+
+int main(int argc, char **argv) {
+
+  std::string filename = "input.usd";
+  std::string warn;
+  std::string err;
+
+  if (argc > 1) {
+    filename = argv[1];
+  }
+
+  tinyusdz::Stage stage; // Scene
+
+  // Auto detect USDA/USDC/USDZ
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
+
+  if (warn.size()) {
+    std::cout << "WARN : " << warn << "\n";
+  }
+
+  if (!ret) {
+    if (!err.empty()) {
+      std::cerr << "ERR : " << warn << "\n";
+    }
+    return EXIT_FAILURE;
+  }
+
+  // Print Stage(Scene graph) 
+  std::cout << stage.ExportToString() << "\n";
+
+  return EXIT_SUCCESS;
+}
+```
+
+### With Tydra
+
+T.B.W.
+
 ## Blender add-on(will be removed)
 
 There was some experiements of TinyUSDZ add-on for Blender.
