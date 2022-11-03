@@ -31,6 +31,7 @@ THE SOFTWARE.
 
 #include <sstream>
 #include <vector>
+#include <cstring>
 
 #ifndef ROL32
 #define ROL32(v,a) ((v) << (a) | (v) >> (32-(a)))
@@ -41,6 +42,570 @@ THE SOFTWARE.
 #endif
 
 namespace tinydngwriter {
+
+namespace {
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+// Begin liblj92, Lossless JPEG decode/encoder ------------------------------
+//
+// With fixes: https://github.com/ilia3101/MLV-App/pull/151
+
+/*
+lj92.c
+(c) Andrew Baldwin 2014
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+enum LJ92_ERRORS {
+  LJ92_ERROR_NONE = 0,
+  LJ92_ERROR_CORRUPT = -1,
+  LJ92_ERROR_NO_MEMORY = -2,
+  LJ92_ERROR_BAD_HANDLE = -3,
+  LJ92_ERROR_TOO_WIDE = -4
+};
+
+/*
+ * Encode a grayscale image supplied as 16bit values within the given bitdepth
+ * Read from tile in the image
+ * Apply delinearization if given
+ * Return the encoded lossless JPEG stream
+ */
+int lj92_encode(uint16_t *image, int width, int height, int bitdepth,
+                int readLength, int skipLength, uint16_t *delinearize,
+                int delinearizeLength, uint8_t **encoded, int *encodedLength);
+
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+
+//#define LJ92_DEBUG
+
+/* Encoder implementation */
+
+#ifdef _MSC_VER
+#include <intrin.h>
+
+uint32_t __inline clz32(uint32_t value) {
+  unsigned long leading_zero = 0;
+
+  if (_BitScanReverse(&leading_zero, value)) {
+    return 31 - leading_zero;
+  } else {
+    // Same remarks as above
+    return 32;
+  }
+}
+
+#else
+
+// Very simple count leading zero implementation.
+static int clz32(unsigned int x) {
+  int n;
+  if (x == 0) return 32;
+  for (n = 0; ((x & 0x80000000) == 0); n++, x <<= 1)
+    ;
+  return n;
+}
+
+#endif
+
+typedef struct _lje {
+  uint16_t *image;
+  int width;
+  int height;
+  int bitdepth;
+  int readLength;
+  int skipLength;
+  uint16_t *delinearize;
+  int delinearizeLength;
+  uint8_t *encoded;
+  int encodedWritten;
+  int encodedLength;
+  int hist[17];  // SSSS frequency histogram
+  int bits[17];
+  int huffval[17];
+  u16 huffenc[17];
+  u16 huffbits[17];
+  int huffsym[17];
+} lje;
+
+int frequencyScan(lje *self) {
+  // Scan through the tile using the standard type 6 prediction
+  // Need to cache the previous 2 row in target coordinates because of tiling
+  uint16_t *pixel = self->image;
+  int pixcount = self->width * self->height;
+  int scan = self->readLength;
+  uint16_t *rowcache = (uint16_t *)calloc(1, self->width * 4);
+  uint16_t *rows[2];
+  rows[0] = rowcache;
+  rows[1] = &rowcache[self->width];
+
+  int col = 0;
+  int row = 0;
+  int Px = 0;
+  int32_t diff = 0;
+  int maxval = (1 << self->bitdepth);
+  while (pixcount--) {
+    uint16_t p = *pixel;
+    if (self->delinearize) {
+      if (p >= self->delinearizeLength) {
+        free(rowcache);
+        return LJ92_ERROR_TOO_WIDE;
+      }
+      p = self->delinearize[p];
+    }
+    if (p >= maxval) {
+      free(rowcache);
+      return LJ92_ERROR_TOO_WIDE;
+    }
+    rows[1][col] = p;
+
+    if ((row == 0) && (col == 0))
+      Px = 1 << (self->bitdepth - 1);
+    else if (row == 0)
+      Px = rows[1][col - 1];
+    else if (col == 0)
+      Px = rows[0][col];
+    else
+      Px = rows[0][col] + ((rows[1][col - 1] - rows[0][col - 1]) >> 1);
+    diff = rows[1][col] - Px;
+    int ssss = 32 - clz32(abs(diff));
+    if (diff == 0) ssss = 0;
+    self->hist[ssss]++;
+    // printf("%d %d %d %d %d %d\n",col,row,p,Px,diff,ssss);
+    pixel++;
+    scan--;
+    col++;
+    if (scan == 0) {
+      pixel += self->skipLength;
+      scan = self->readLength;
+    }
+    if (col == self->width) {
+      uint16_t *tmprow = rows[1];
+      rows[1] = rows[0];
+      rows[0] = tmprow;
+      col = 0;
+      row++;
+    }
+  }
+#ifdef DEBUG
+  int sort[17];
+  for (int h = 0; h < 17; h++) {
+    sort[h] = h;
+    printf("%d:%d\n", h, self->hist[h]);
+  }
+#endif
+  free(rowcache);
+  return LJ92_ERROR_NONE;
+}
+
+void createEncodeTable(lje *self) {
+  float freq[18];
+  int codesize[18];
+  int others[18];
+
+  // Calculate frequencies
+  float totalpixels = self->width * self->height;
+  for (int i = 0; i < 17; i++) {
+    freq[i] = (float)(self->hist[i]) / totalpixels;
+#ifdef DEBUG
+    printf("%d:%f\n", i, freq[i]);
+#endif
+    codesize[i] = 0;
+    others[i] = -1;
+  }
+  codesize[17] = 0;
+  others[17] = -1;
+  freq[17] = 1.0f;
+
+  float v1f, v2f;
+  int v1, v2;
+
+  while (1) {
+    v1f = 3.0f;
+    v1 = -1;
+    for (int i = 0; i < 18; i++) {
+      if ((freq[i] <= v1f) && (freq[i] > 0.0f)) {
+        v1f = freq[i];
+        v1 = i;
+      }
+    }
+#ifdef DEBUG
+    printf("v1:%d,%f\n", v1, v1f);
+#endif
+    v2f = 3.0f;
+    v2 = -1;
+    for (int i = 0; i < 18; i++) {
+      if (i == v1) continue;
+      if ((freq[i] < v2f) && (freq[i] > 0.0f)) {
+        v2f = freq[i];
+        v2 = i;
+      }
+    }
+    if (v2 == -1) break;  // Done
+
+    freq[v1] += freq[v2];
+    freq[v2] = 0.0f;
+
+    while (1) {
+      codesize[v1]++;
+      if (others[v1] == -1) break;
+      v1 = others[v1];
+    }
+    others[v1] = v2;
+    while (1) {
+      codesize[v2]++;
+      if (others[v2] == -1) break;
+      v2 = others[v2];
+    }
+  }
+  int *bits = self->bits;
+  memset(bits, 0, sizeof(self->bits));
+  for (int i = 0; i < 18; i++) {
+    if (codesize[i] != 0) {
+      bits[codesize[i]]++;
+    }
+  }
+#ifdef DEBUG
+  for (int i = 0; i < 17; i++) {
+    printf("bits:%d,%d,%d\n", i, bits[i], codesize[i]);
+  }
+#endif
+  int *huffval = self->huffval;
+  int i = 1;
+  int k = 0;
+  int j;
+  memset(huffval, 0, sizeof(self->huffval));
+  while (i <= 32) {
+    j = 0;
+    while (j < 17) {
+      if (codesize[j] == i) {
+        huffval[k++] = j;
+      }
+      j++;
+    }
+    i++;
+  }
+#ifdef DEBUG
+  for (i = 0; i < 17; i++) {
+    printf("i=%d,huffval[i]=%x\n", i, huffval[i]);
+  }
+#endif
+  int maxbits = 16;
+  while (maxbits > 0) {
+    if (bits[maxbits]) break;
+    maxbits--;
+  }
+  u16 *huffenc = self->huffenc;
+  u16 *huffbits = self->huffbits;
+  int *huffsym = self->huffsym;
+  memset(huffenc, 0, sizeof(self->huffenc));
+  memset(huffbits, 0, sizeof(self->huffbits));
+  memset(self->huffsym, 0, sizeof(self->huffsym));
+  i = 0;
+  int hv = 0;
+  int rv = 0;
+  int vl = 0;  // i
+  // int hcode;
+  int bitsused = 1;
+  int sym = 0;
+  // printf("%04x:%x:%d:%x\n",i,huffvals[hv],bitsused,1<<(maxbits-bitsused));
+  while (i < 1 << maxbits) {
+    if (bitsused > maxbits) {
+      break;  // Done. Should never get here!
+    }
+    if (vl >= bits[bitsused]) {
+      bitsused++;
+      vl = 0;
+      continue;
+    }
+    if (rv == 1 << (maxbits - bitsused)) {
+      rv = 0;
+      vl++;
+      hv++;
+      // printf("%04x:%x:%d:%x\n",i,huffvals[hv],bitsused,1<<(maxbits-bitsused));
+      continue;
+    }
+    huffbits[sym] = bitsused;
+    huffenc[sym++] = i >> (maxbits - bitsused);
+    // printf("%d %d %d\n",i,bitsused,hcode);
+    i += (1 << (maxbits - bitsused));
+    rv = 1 << (maxbits - bitsused);
+  }
+  for (i = 0; i < 17; i++) {
+    if (huffbits[i] > 0) {
+      huffsym[huffval[i]] = i;
+    }
+#ifdef DEBUG
+    printf("huffval[%d]=%d,huffenc[%d]=%x,bits=%d\n", i, huffval[i], i,
+           huffenc[i], huffbits[i]);
+#endif
+    if (huffbits[i] > 0) {
+      huffsym[huffval[i]] = i;
+    }
+  }
+#ifdef DEBUG
+  for (i = 0; i < 17; i++) {
+    printf("huffsym[%d]=%d\n", i, huffsym[i]);
+  }
+#endif
+}
+
+void writeHeader(lje *self) {
+  int w = self->encodedWritten;
+  uint8_t *e = self->encoded;
+  e[w++] = 0xff;
+  e[w++] = 0xd8;  // SOI
+  e[w++] = 0xff;
+  e[w++] = 0xc3;  // SOF3
+  // Write SOF
+  e[w++] = 0x0;
+  e[w++] = 11;  // Lf, frame header length
+  e[w++] = self->bitdepth;
+  e[w++] = self->height >> 8;
+  e[w++] = self->height & 0xFF;
+  e[w++] = self->width >> 8;
+  e[w++] = self->width & 0xFF;
+  e[w++] = 1;     // Components
+  e[w++] = 0;     // Component ID
+  e[w++] = 0x11;  // Component X/Y
+  e[w++] = 0;     // Unused (Quantisation)
+  e[w++] = 0xff;
+  e[w++] = 0xc4;  // HUFF
+  // Write HUFF
+  int count = 0;
+  for (int i = 0; i < 17; i++) {
+    count += self->bits[i];
+  }
+  e[w++] = 0x0;
+  e[w++] = 17 + 2 + count;  // Lf, frame header length
+  e[w++] = 0;               // Table ID
+  for (int i = 1; i < 17; i++) {
+    e[w++] = self->bits[i];
+  }
+  for (int i = 0; i < count; i++) {
+    e[w++] = self->huffval[i];
+  }
+  e[w++] = 0xff;
+  e[w++] = 0xda;  // SCAN
+  // Write SCAN
+  e[w++] = 0x0;
+  e[w++] = 8;  // Ls, scan header length
+  e[w++] = 1;  // Components
+  e[w++] = 0;  //
+  e[w++] = 0;  //
+  e[w++] = 6;  // Predictor
+  e[w++] = 0;  //
+  e[w++] = 0;  //
+  self->encodedWritten = w;
+}
+
+void writePost(lje *self) {
+  int w = self->encodedWritten;
+  uint8_t *e = self->encoded;
+  e[w++] = 0xff;
+  e[w++] = 0xd9;  // EOI
+  self->encodedWritten = w;
+}
+
+void writeBody(lje *self) {
+  // Scan through the tile using the standard type 6 prediction
+  // Need to cache the previous 2 row in target coordinates because of tiling
+  uint16_t *pixel = self->image;
+  int pixcount = self->width * self->height;
+  int scan = self->readLength;
+  uint16_t *rowcache = (uint16_t *)calloc(1, self->width * 4);
+  uint16_t *rows[2];
+  rows[0] = rowcache;
+  rows[1] = &rowcache[self->width];
+
+  int col = 0;
+  int row = 0;
+  int Px = 0;
+  int32_t diff = 0;
+  int bitcount = 0;
+  uint8_t *out = self->encoded;
+  int w = self->encodedWritten;
+  uint8_t next = 0;
+  uint8_t nextbits = 8;
+  while (pixcount--) {
+    uint16_t p = *pixel;
+    if (self->delinearize) p = self->delinearize[p];
+    rows[1][col] = p;
+
+    if ((row == 0) && (col == 0))
+      Px = 1 << (self->bitdepth - 1);
+    else if (row == 0)
+      Px = rows[1][col - 1];
+    else if (col == 0)
+      Px = rows[0][col];
+    else
+      Px = rows[0][col] + ((rows[1][col - 1] - rows[0][col - 1]) >> 1);
+    diff = rows[1][col] - Px;
+    int ssss = 32 - clz32(abs(diff));
+    if (diff == 0) ssss = 0;
+    // printf("%d %d %d %d %d\n",col,row,Px,diff,ssss);
+
+    // Write the huffman code for the ssss value
+    int huffcode = self->huffsym[ssss];
+    int huffenc = self->huffenc[huffcode];
+    int huffbits = self->huffbits[huffcode];
+    bitcount += huffbits + ssss;
+
+    int vt = ssss > 0 ? (1 << (ssss - 1)) : 0;
+    // printf("%d %d %d %d\n",rows[1][col],Px,diff,Px+diff);
+#ifdef DEBUG
+#endif
+    if (diff < vt) diff += (1 << (ssss)) - 1;
+
+    // Write the ssss
+    while (huffbits > 0) {
+      int usebits = huffbits > nextbits ? nextbits : huffbits;
+      // Add top usebits from huffval to next usebits of nextbits
+      int tophuff = huffenc >> (huffbits - usebits);
+      next |= (tophuff << (nextbits - usebits));
+      nextbits -= usebits;
+      huffbits -= usebits;
+      huffenc &= (1 << huffbits) - 1;
+      if (nextbits == 0) {
+        out[w++] = next;
+        if (next == 0xff) out[w++] = 0x0;
+        next = 0;
+        nextbits = 8;
+      }
+    }
+    // Write the rest of the bits for the value
+
+    while (ssss > 0) {
+      int usebits = ssss > nextbits ? nextbits : ssss;
+      // Add top usebits from huffval to next usebits of nextbits
+      int tophuff = diff >> (ssss - usebits);
+      next |= (tophuff << (nextbits - usebits));
+      nextbits -= usebits;
+      ssss -= usebits;
+      diff &= (1 << ssss) - 1;
+      if (nextbits == 0) {
+        out[w++] = next;
+        if (next == 0xff) out[w++] = 0x0;
+        next = 0;
+        nextbits = 8;
+      }
+    }
+
+    // printf("%d %d\n",diff,ssss);
+    pixel++;
+    scan--;
+    col++;
+    if (scan == 0) {
+      pixel += self->skipLength;
+      scan = self->readLength;
+    }
+    if (col == self->width) {
+      uint16_t *tmprow = rows[1];
+      rows[1] = rows[0];
+      rows[0] = tmprow;
+      col = 0;
+      row++;
+    }
+  }
+  // Flush the final bits
+  if (nextbits < 8) {
+    out[w++] = next;
+    if (next == 0xff) out[w++] = 0x0;
+  }
+#ifdef DEBUG
+  int sort[17];
+  for (int h = 0; h < 17; h++) {
+    sort[h] = h;
+    printf("%d:%d\n", h, self->hist[h]);
+  }
+  printf("Total bytes: %d\n", bitcount >> 3);
+#endif
+  free(rowcache);
+  self->encodedWritten = w;
+}
+
+/* Encoder
+ * Read tile from an image and encode in one shot
+ * Return the encoded data
+ */
+int lj92_encode(uint16_t *image, int width, int height, int bitdepth,
+                int readLength, int skipLength, uint16_t *delinearize,
+                int delinearizeLength, uint8_t **encoded, int *encodedLength) {
+  int ret = LJ92_ERROR_NONE;
+
+  lje *self = (lje *)calloc(sizeof(lje), 1);
+  if (self == NULL) return LJ92_ERROR_NO_MEMORY;
+  self->image = image;
+  self->width = width;
+  self->height = height;
+  self->bitdepth = bitdepth;
+  self->readLength = readLength;
+  self->skipLength = skipLength;
+  self->delinearize = delinearize;
+  self->delinearizeLength = delinearizeLength;
+  self->encodedLength = width * height * 3 + 200;
+  self->encoded = (uint8_t*)malloc(self->encodedLength);
+  if (self->encoded == NULL) {
+    free(self);
+    return LJ92_ERROR_NO_MEMORY;
+  }
+  // Scan through data to gather frequencies of ssss prefixes
+  ret = frequencyScan(self);
+  if (ret != LJ92_ERROR_NONE) {
+    free(self->encoded);
+    free(self);
+    return ret;
+  }
+  // Create encoded table based on frequencies
+  createEncodeTable(self);
+  // Write JPEG head and scan header
+  writeHeader(self);
+  // Scan through and do the compression
+  writeBody(self);
+  // Finish
+  writePost(self);
+#ifdef DEBUG
+  printf("written:%d\n", self->encodedWritten);
+#endif
+  self->encoded = (uint8_t*)realloc(self->encoded, self->encodedWritten);
+  self->encodedLength = self->encodedWritten;
+  *encoded = self->encoded;
+  *encodedLength = self->encodedLength;
+
+  free(self);
+
+  return ret;
+}
+
+// End liblj92 ---------------------------------------------------------
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+}  // namespace
 
 typedef enum {
   TIFFTAG_SUB_FILETYPE = 254,
@@ -106,6 +671,7 @@ static const int PLANARCONFIG_SEPARATE = 2;
 // COMPRESSION
 // TODO(syoyo) more compressin types.
 static const int COMPRESSION_NONE = 1;
+static const int COMPRESSION_NEW_JPEG = 7;
 
 // ORIENTATION
 static const int ORIENTATION_TOPLEFT = 1;
@@ -249,6 +815,11 @@ class DNGImage {
 
   /// Set image data.
   bool SetImageData(const unsigned char *data, const size_t data_len);
+
+  /// Compress image data with LosslessJPEG and set it to the image data.
+  /// width and height must be multiple of 2.
+  /// Must set COMPRESSION to COMPRESSION_NEW_JPEG by calling SetCompression() separetely
+  bool SetImageDataWithLosslessJpegCompression(const unsigned short *data, unsigned int width, unsigned int height, unsigned int bpp);
 
   /// Set custom field.
   bool SetCustomFieldLong(const unsigned short tag, const int value);
@@ -829,12 +1400,6 @@ bool DNGImage::SetPlanarConfig(const unsigned short value) {
 
 bool DNGImage::SetCompression(const unsigned short value) {
   unsigned int count = 1;
-
-  if ((value == COMPRESSION_NONE)) {
-    // OK
-  } else {
-    return false;
-  }
 
   const unsigned short data = value;
   bool ret = WriteTIFFTag(
@@ -1600,7 +2165,7 @@ bool DNGImage::SetImageDataPacked(const unsigned short *input_buffer, const int 
 
   if (input_bpp > 16)
     return false;
-  
+
   unsigned int bits_free = 16 - input_bpp;
   const unsigned short *unpacked_bits = input_buffer;
 
@@ -1612,7 +2177,7 @@ bool DNGImage::SetImageDataPacked(const unsigned short *input_buffer, const int 
   {
     unsigned int bits_offset = (pixel_index * bits_free) % 16;
     unsigned int bits_to_rol = bits_free + bits_offset + (bits_offset > 0) * 16;
-    
+
     unsigned int data = ROL32(static_cast<unsigned int>(unpacked_bits[pixel_index]), bits_to_rol);
     *(reinterpret_cast<unsigned int *>(packed_bits)) = (*(reinterpret_cast<unsigned int *>(packed_bits)) & 0x0000FFFF) | data;
 
@@ -1658,6 +2223,48 @@ bool DNGImage::SetImageData(const unsigned char *data, const size_t data_len) {
   }
 
   return true;
+}
+
+bool DNGImage::SetImageDataWithLosslessJpegCompression(const unsigned short *data, unsigned int width,
+                                unsigned int height, unsigned int bpp) {
+  if ((data == NULL) || (height % 2 == 1) || (width % 2 == 1)) {
+    return false;
+  }
+
+  uint8_t *compressed = NULL;
+  int output_buffer_size = 0;
+
+  // Width x2 to move each second line
+  // -----------
+  // Before:
+  //
+  // GRGRGR...
+  // BGBGBG...
+  // GRGRGR...
+  // BGBGBG...
+  // -----------
+  // After:
+  //
+  // GRGRGR...BGBGBG...
+  // GRGRGR...BGBGBG...
+  // -----------
+  int new_width = int(width * 2);
+  int new_height = int(height / 2);
+
+  // Encode image
+  int ret = lj92_encode(const_cast<unsigned short *>(data), new_width, new_height, int(bpp),
+                        new_width * new_height, 0, NULL, 0, &compressed,
+                        &output_buffer_size);
+
+  if (ret != LJ92_ERROR_NONE)
+	  return false;
+
+  bool sid_res = SetImageData(compressed, size_t(output_buffer_size));
+
+  if (compressed)
+	  free(compressed);
+
+  return sid_res;
 }
 
 bool DNGImage::SetCustomFieldLong(const unsigned short tag, const int value) {
