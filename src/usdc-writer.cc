@@ -15,12 +15,24 @@
 #endif
 #endif
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 
 #include <windows.h>  // include API for expanding a file path
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
 #endif
+
+#endif
+
 
 #include <fstream>
 #include <iostream>
