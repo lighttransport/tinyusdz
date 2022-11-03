@@ -73,6 +73,13 @@
 
 // Control presence of C++ exception handling (try and auto discover):
 
+// TinyUSDZ: Disable exception by default
+#ifdef nsel_CONFIG_NO_EXCEPTIONS
+#undef nsel_CONFIG_NO_EXCEPTIONS
+#endif
+
+#define nsel_CONFIG_NO_EXCEPTIONS  1
+
 #ifndef nsel_CONFIG_NO_EXCEPTIONS
 # if _MSC_VER
 #  include <cstddef>    // for _HAS_EXCEPTIONS
