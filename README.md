@@ -115,7 +115,8 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
 * [x] iOS
 * [x] macOS(Arm, x86-64)
 * [x] Windows 10 64bit or later
-  * [ ] Windows ARM(should work)
+  * [x] Windows ARM
+  * [x] clang-cl + MSVC SDK cross compile
 * [x] WebAssembly
   * Emscripten
     * See [examples/sdlviewer/](examples/sdlviewer) example.
@@ -364,6 +365,14 @@ then build TinyUSDZ by linking with this local Python build.
 ```
 > ci-build-vs2022.bat
 ```
+
+#### Cross compile with clang-cl + MSVC SDK on linux and run it on WINE(No Windows required at all solution!)
+
+clang-cl(MSVC cl.exe) + MSVC SDK cross compile is also supported.
+
+Please take a look at [doc/wine_cl.md](doc/wine_cl.md)
+
+You can build pure Windows build of TinyUSDZ on Linux CI machine.
 
 ## License
 
