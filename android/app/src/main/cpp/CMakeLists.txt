@@ -28,6 +28,7 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/usdGeom.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/xform.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/stage.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/linear-algebra.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/scene-access.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data.cc
         )
