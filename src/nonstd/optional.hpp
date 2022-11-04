@@ -53,6 +53,12 @@
 
 // Control presence of exception handling (try and auto discover):
 
+// TinyUSDZ mod. Force disable exception.
+#if defined( optional_CONFIG_NO_EXCEPTIONS )
+#undef optional_CONFIG_NO_EXCEPTIONS
+#define optional_CONFIG_NO_EXCEPTIONS 1
+#endif
+
 #ifndef optional_CONFIG_NO_EXCEPTIONS
 # if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
 #  define optional_CONFIG_NO_EXCEPTIONS  0
