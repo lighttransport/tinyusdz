@@ -7,7 +7,7 @@ Instead, we'd like to propose Tydra, a three-headed monster(Please imagine Gidor
 
 Currently Tydra is considering following three usecases in mind:
 
-- Runtime publishment(e.g. to glTF), DCC conversion, data exchange.
+- Runtime publishment(e.g. to glTF), DCC conversion and exchange for realtime graphics(AR, VR, MR, games, etc).
 - Scene conversion to GL/Vulkan renderer(e.g. WebGL rendering)
 - Scene conversion to Ray tracing renderer(e.g. Vulkan/OptiX ray tracing)
   See `../../examples/sdlviewer/` for SW raytracing example.
