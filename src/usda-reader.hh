@@ -86,8 +86,12 @@ class USDAReader {
   const Stage& GetStage() const;
 
  private:
+#if defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
+  Stage *_empty_stage{nullptr};
+#else
   class Impl;
-  Impl *_impl;
+  Impl *_impl{nullptr};
+#endif
 
 };
 
