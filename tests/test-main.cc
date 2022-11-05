@@ -21,8 +21,17 @@ static std::string str_tolower(std::string s) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need input.usdz\n" << std::endl;
+    std::cout << "Usage input.[usd|usda|usdc|usdz] (--verbose)\n" << std::endl;
     return EXIT_FAILURE;
+  }
+
+  bool verbose = false; // default false for unit batch test.
+
+  if (argc > 2) {
+    std::string arg(argv[2]);
+    if (arg.compare("--verbose") == 0) {
+      verbose = true;
+    }
   }
 
   std::string filepath = argv[1];
@@ -33,36 +42,68 @@ int main(int argc, char **argv) {
 
   tinyusdz::Stage stage;
 
-  if (ext.compare("usdz") == 0) {
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else {  // assume usdc
+  if (ext.compare("usdc") == 0) {
     bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
     }
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
+      //return EXIT_FAILURE;
     }
 
     if (!ret) {
       std::cerr << "Failed to load USDC file: " << filepath << "\n";
       return EXIT_FAILURE;
     }
+  } else if (ext.compare("usda") == 0) {
+    bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      //return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDA file: " << filepath << "\n";
+      return EXIT_FAILURE;
+    }
+  } else if (ext.compare("usdz") == 0) {
+    //std::cout << "usdz\n";
+    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      //return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USDZ file: " << filepath << "\n";
+      return EXIT_FAILURE;
+    }
+  } else {
+    // try to auto detect format.
+    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      //return EXIT_FAILURE;
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD file: " << filepath << "\n";
+      return EXIT_FAILURE;
+    }
+  }
+
+  if (verbose) {
+    std::cout<< "Load OK: " << filepath << "\n";
   }
 
   return EXIT_SUCCESS;
