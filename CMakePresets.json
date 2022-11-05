@@ -13,17 +13,12 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/default_debug",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_VERBOSE_MAKEFILE": {
-          "type": "BOOL",
-          "value": "ON"
-        },
-        "SECOND_CACHE_VARIABLE": "ON"
+        "CMAKE_BUILD_TYPE": "Debug"
       }
     },
     {
       "name": "ninja-multi",
-      "inherits": "default",
+      "inherits": "default_debug",
       "displayName": "Ninja Multi-Config",
       "description": "Default build using Ninja Multi-Config generator",
       "generator": "Ninja Multi-Config"
