@@ -904,7 +904,7 @@ class USDAReader::Impl {
       } else if (meta.first == "references") {
 
         if (var.is_blocked()) {
-          // make empty 
+          // make empty
           std::vector<Reference> refs;
           out->references = std::make_pair(listEditQual, refs);
         } else if (auto pv = var.get_value<Reference>()) {
@@ -923,7 +923,7 @@ class USDAReader::Impl {
       } else if (meta.first == "payload") {
 
         if (var.is_blocked()) {
-          // make empty 
+          // make empty
           std::vector<Payload> refs;
           out->payload = std::make_pair(listEditQual, refs);
         } else if (auto pv = var.get_value<Reference>()) {
@@ -1682,13 +1682,19 @@ const Stage &USDAReader::GetStage() const { return _impl->GetStage(); }
 namespace tinyusdz {
 namespace usda {
 
-USDAReader::USDAReader(StreamReader *sr) { (void)sr; }
+USDAReader::USDAReader(StreamReader *sr) {
+  _empty_stage = new Stage();
+  (void)sr;
+}
 
-USDAReader::~USDAReader() {}
+USDAReader::~USDAReader() {
+  delete _empty_stage;
+  _empty_stage = nullptr;
+}
 
 bool USDAReader::CheckHeader() { return false; }
 
-bool USDAReader::Parse(ascii::AsciiParser::LoadState state) {
+bool USDAReader::Read(ascii::LoadState state) {
   (void)state;
   return false;
 }
@@ -1706,8 +1712,7 @@ std::string USDAReader::GetWarning() { return std::string{}; }
 bool USDAReader::ReconstructStage() { return false; }
 
 const Stage &USDAReader::GetStage() const {
-  static Stage empty;
-  return empty;
+  return *_empty_stage;
 }
 
 }  // namespace usda
