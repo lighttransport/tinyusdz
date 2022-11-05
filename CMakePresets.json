@@ -7,15 +7,16 @@
   },
   "configurePresets": [
     {
-      "name": "default",
-      "displayName": "Default Config",
-      "description": "Default build using Ninja generator",
+      "name": "default_debug",
+      "displayName": "Default Debug Config",
+      "description": "Default Debug build using Ninja generator",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/default",
+      "binaryDir": "${sourceDir}/build/default_debug",
       "cacheVariables": {
-        "FIRST_CACHE_VARIABLE": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_VERBOSE_MAKEFILE": {
           "type": "BOOL",
-          "value": "OFF"
+          "value": "ON"
         },
         "SECOND_CACHE_VARIABLE": "ON"
       }
@@ -30,16 +31,21 @@
   ],
   "buildPresets": [
     {
-      "name": "default",
-      "configurePreset": "default"
+      "name": "default_debug",
+      "configurePreset": "default_debug"
     }
   ],
   "testPresets": [
     {
-      "name": "default",
-      "configurePreset": "default",
-      "output": {"outputOnFailure": true},
-      "execution": {"noTestsAction": "error", "stopOnFailure": true}
+      "name": "default_debug",
+      "configurePreset": "default_debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": true
+      }
     }
   ]
 }
