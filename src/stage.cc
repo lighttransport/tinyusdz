@@ -346,6 +346,10 @@ std::string Stage::ExportToString() const {
     ss << pprint::Indent(1) << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
   }
 
+  if (stage_metas.framesPerSecond.authored()) {
+    ss << pprint::Indent(1) << "framesPerSecond = " << stage_metas.framesPerSecond.get_value() << "\n";
+  }
+
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (stage_metas.subLayers.size()) {
     ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers << "\n";

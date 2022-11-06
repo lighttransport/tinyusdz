@@ -1415,6 +1415,18 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("endTimeCode = " << metas->endTimeCode.get_value());
+    } else if (fv.first == "framesPerSecond") {
+      if (auto vf = fv.second.get_value<float>()) {
+        metas->framesPerSecond = double(vf.value());
+      } else if (auto vd = fv.second.get_value<double>()) {
+        metas->framesPerSecond = vd.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`framesPerSecond` value must be double or float "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
+      DCOUT("framesPerSecond = " << metas->framesPerSecond.get_value());
     } else if (fv.first == "autoPlay") {
       if (auto vf = fv.second.get_value<bool>()) {
         metas->autoPlay = vf.value();
