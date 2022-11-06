@@ -1527,14 +1527,15 @@ bool AsciiParser::SkipUntilNewline() {
 //              |  var '=' value '\n'
 //
 bool AsciiParser::ParseStageMetaOpt() {
-  // Maybe string
+  // Maybe string-only comment.
+  // Comment cannot have multiple lines. The last one wins
   {
     StringData str;
     if (MaybeTripleQuotedString(&str)) {
-      _stage_metas.strings.push_back(str);
+      _stage_metas.comment = str;
       return true;
     } else if (MaybeString(&str)) {
-      _stage_metas.strings.push_back(str);
+      _stage_metas.comment = str;
       return true;
     }
   }
@@ -1686,6 +1687,18 @@ bool AsciiParser::ParseStageMetaOpt() {
       _stage_metas.customLayerData = pv.value();
     } else {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
+    }
+  } else if (varname == "comment") {
+    if (auto pv = var.get_value<StringData>()) {
+      DCOUT("comment = " << to_string(pv.value()));
+      _stage_metas.comment = pv.value();
+    } else if (auto pvs = var.get_value<std::string>()) {
+      StringData sdata;
+      sdata.value = pvs.value();
+      sdata.is_triple_quoted = false;
+      _stage_metas.comment = sdata;
+    } else {
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
   } else {
     DCOUT("TODO: Stage meta: " << varname);
@@ -1873,7 +1886,7 @@ bool AsciiParser::SkipWhitespace() {
   return true;
 }
 
-bool AsciiParser::SkipWhitespaceAndNewline(bool allow_semicolon) {
+bool AsciiParser::SkipWhitespaceAndNewline(const bool allow_semicolon) {
   // USDA also allow C-style ';' as a newline separator.
   while (!Eof()) {
     char c;
@@ -1928,7 +1941,7 @@ bool AsciiParser::SkipWhitespaceAndNewline(bool allow_semicolon) {
   return true;
 }
 
-bool AsciiParser::SkipCommentAndWhitespaceAndNewline() {
+bool AsciiParser::SkipCommentAndWhitespaceAndNewline(const bool allow_semicolon) {
   // Skip multiple line of comments.
   while (!Eof()) {
     char c;
@@ -1944,6 +1957,9 @@ bool AsciiParser::SkipCommentAndWhitespaceAndNewline() {
         return false;
       }
     } else if ((c == ' ') || (c == '\t') || (c == '\f')) {
+      _curr_cursor.col++;
+      // continue
+    } else if (allow_semicolon && (c == ';')) {
       _curr_cursor.col++;
       // continue
     } else if (c == '\n') {
