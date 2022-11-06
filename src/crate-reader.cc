@@ -3691,7 +3691,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
             // NOTE: string may contain double-quotes.
             // We remove it at here, but it'd be better not to do it.
-            std::string unquoted = unwrap(str); 
+            std::string unquoted = unwrap(str);
             value->Set(unquoted);
 
             if (!_sr->seek_set(saved_position)) {
@@ -4273,18 +4273,18 @@ bool CrateReader::ReadTokens() {
   DCOUT("sec.size = " << sec.size);
 
   // # of tokens.
-  uint64_t n;
-  if (!_sr->read8(&n)) {
+  uint64_t num_tokens;
+  if (!_sr->read8(&num_tokens)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read # of tokens at `TOKENS` section.");
   }
 
-  DCOUT("# of tokens = " << n);
+  DCOUT("# of tokens = " << num_tokens);
 
-  if (n == 0) {
+  if (num_tokens == 0) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty tokens.");
   }
 
-  if (n > _config.maxNumTokens) {
+  if (num_tokens > _config.maxNumTokens) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many Tokens.");
   }
 
@@ -4299,14 +4299,14 @@ bool CrateReader::ReadTokens() {
   DCOUT("uncompressedSize = " << uncompressedSize);
 
 
+  // Must be larger than len(';-)') + all empty string case.
   // 3 = ';-)'
-  // consider '\0' delimiter
-  if ((3 + n) > uncompressedSize) {
+  // num_tokens = '\0' delimiter
+  if ((3 + num_tokens) > uncompressedSize) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "`TOKENS` section corrupted.");
   }
 
   // At least min size should be 16 both for compress and uncompress.
-
   if (uncompressedSize < 4) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
   }
@@ -4368,8 +4368,8 @@ bool CrateReader::ReadTokens() {
   // Split null terminated string into _tokens.
   const char *ps = chars.data();
   const char *pe = chars.data() + chars.size();
-  const char *p = ps;
-  size_t n_remain = size_t(n);
+  const char *pcurr = ps;
+  size_t nbytes_remain = size_t(chars.size());
 
   auto my_strnlen = [](const char *s, const size_t max_length) -> size_t {
     if (!s) return 0;
@@ -4387,22 +4387,28 @@ bool CrateReader::ReadTokens() {
 
   // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null
   // characters)
-  for (size_t i = 0; i < n; i++) {
-    size_t len = my_strnlen(p, n_remain);
+  for (size_t i = 0; i < num_tokens; i++) {
+    DCOUT("n_remain = " << nbytes_remain);
 
-    if ((p + len) > pe) {
+    size_t len = my_strnlen(pcurr, nbytes_remain);
+    DCOUT("len = " << len);
+
+    if ((pcurr + (len+1)) > pe) {
       _err += "Invalid token string array.\n";
       return false;
     }
 
     std::string str;
     if (len > 0) {
-      str = std::string(p, len);
+      str = std::string(pcurr, len);
+    } else {
+      // Empty string allowed
+      str = std::string();
     }
 
-    p += len + 1;  // +1 = '\0'
-    n_remain = size_t(pe - p);
-    if (p > pe) {
+    pcurr += len + 1;  // +1 = '\0'
+    nbytes_remain = size_t(pe - pcurr);
+    if (pcurr > pe) {
       _err += "Invalid token string array.\n";
       return false;
     }
@@ -4411,6 +4417,15 @@ bool CrateReader::ReadTokens() {
 
     DCOUT("token[" << i << "] = " << tok);
     _tokens.push_back(tok);
+
+    if (nbytes_remain == 0) {
+      // reached to the string buffer end.
+      break;
+    }
+  }
+
+  if (_tokens.size() != num_tokens) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("The number of tokens parsed {} does not match the requested one {}", _tokens.size(), num_tokens));
   }
 
   return true;
