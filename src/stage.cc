@@ -374,17 +374,13 @@ std::string Stage::ExportToString() const {
   }
 
   if (!stage_metas.comment.value.empty()) {
-    ss << pprint::Indent(1) << "comment = " << to_string(stage_metas.comment) << "\n";
+    // Stage meta omits 'comment'
+    ss << pprint::Indent(1) << to_string(stage_metas.comment) << "\n";
   }
 
   if (stage_metas.customLayerData.size()) {
     ss << print_customData(stage_metas.customLayerData, "customLayerData",
                            /* indent */ 1);
-  }
-
-  // TODO: Sort by line_no?(preserve appearance in read USDA)
-  for (const auto &item : stage_metas.stringData) {
-    ss << pprint::Indent(1) << to_string(item) << "\n";
   }
 
   // TODO: write other header data.
