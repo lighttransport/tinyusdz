@@ -176,12 +176,14 @@ class USDCReader::Impl {
   bool ParseProperty(const SpecType specType,
                      const crate::FieldValuePairVector &fvs, Property *prop);
 
+#if 0 // TODO: Remove
   // For simple, non animatable and non `.connect` types. e.g. "token[]"
   template <typename T>
   bool ReconstructSimpleAttribute(int parent,
                                   const crate::FieldValuePairVector &fvs,
                                   T *attr, bool *custom_out = nullptr,
                                   Variability *variability_out = nullptr);
+#endif
 
 #if 0
   // For attribute which maybe a value, connection or TimeSamples.
@@ -1183,6 +1185,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   return true;
 }
 
+#if 0 // TODO: Remove
 template <typename T>
 bool USDCReader::Impl::ReconstructSimpleAttribute(
     int parent, const crate::FieldValuePairVector &fvs, T *attr,
@@ -1253,6 +1256,7 @@ bool USDCReader::Impl::ReconstructSimpleAttribute(
 
   return true;
 }
+#endif
 
 #if 0
 template <typename T>
@@ -1440,7 +1444,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         } else {
           PUSH_ERROR_AND_RETURN(
               "Unsupported value for `autoPlay`: " << vs.value());
-        } 
+        }
         metas->autoPlay = autoPlay;
       } else {
         PUSH_ERROR_AND_RETURN(
@@ -1948,6 +1952,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                            const PathIndexToSpecIndexMap &psmap,
                                            Stage *stage,
                                            nonstd::optional<Prim> *primOut) {
+  (void)level;
   const crate::CrateReader::Node &node = _nodes[size_t(current)];
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
@@ -2588,7 +2593,7 @@ bool USDCReader::ReadUSDC() { return impl_->ReadUSDC(); }
 }  // namespace usdc
 }  // namespace tinyusdz
 
-#else
+#else // TINYUSDZ_DISABLE_MODULE_USDC_READER
 
 namespace tinyusdz {
 namespace usdc {
@@ -2618,4 +2623,4 @@ std::string USDCReader::GetWarning() { return ""; }
 }  // namespace usdc
 }  // namespace tinyusdz
 
-#endif
+#endif // TINYUSDZ_DISABLE_MODULE_USDC_READER

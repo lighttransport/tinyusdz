@@ -1,7 +1,9 @@
 #pragma once
 
 #if !defined(TINYUSDZ_PRODUCTION_BUILD) && !defined(TINYUSDZ_FUZZER_BUILD)
+#if defined(TINYUSDZ_DEBUG_PRINT)
 #define TINYUSDZ_LOCAL_DEBUG_PRINT
+#endif
 #endif
 
 #if defined(TINYUSDZ_PRODUCTION_BUILD)
