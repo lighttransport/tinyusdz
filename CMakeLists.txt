@@ -69,6 +69,11 @@ option(
   "Build for production release(e.g. disables debug print, do not include full filepath in error messages)"
   OFF)
 
+option(
+  TINYUSDZ_DEBUG_PRINT
+  "Enable debug print(For debugging). Disabled when `TINYUSDZ_PRODUCTION_BUILD` is On"
+  OFF)
+
 # -- modules --
 option(TINYUSDZ_WITH_MODULE_USDA_READER "Build with USDA reader feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
@@ -524,6 +529,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   #if(MSVC)
   #  target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
   #endif()
+
+  if(TINYUSDZ_DEBUG_PRINT)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DEBUG_PRINT")
+  endif()
 
   if(TINYUSDZ_PRODUCTION_BUILD)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
