@@ -1495,12 +1495,14 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
+#if 0 // Moved to value::TimeSampleInterpolationType
 // Interpolator for TimeSample data
 enum class TimeSampleInterpolation {
   Nearest,  // nearest neighbor
   Linear,   // lerp
   // TODO: more to support...
 };
+#endif
 
 
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
@@ -1527,6 +1529,19 @@ struct Attribute {
     }
 
     return std::string();
+  }
+
+  uint32_t type_id() const {
+    if (_type_name.size()) {
+      return value::GetTypeId(_type_name);
+    }
+
+    if (!is_connection()) {
+      // Fallback. May be unreliable(`var` could be empty).
+      return _var.type_id();
+    }
+
+    return value::TYPE_ID_INVALID;
   }
 
   template <typename T>
