@@ -177,6 +177,24 @@ void CreateScene(tinyusdz::Stage *stage) {
         mesh.props.emplace("myvalue", prop);
       }
     }
+
+    // Access GeomPrimvar
+    {
+      std::cout << "uv is primvar? " << mesh.has_primvar("uv") << "\n";
+      tinyusdz::GeomPrimvar primvar;
+      std::string err;
+      if (mesh.get_primvar("uv", &primvar, &err)) {
+        std::cout << "uv primvar is Indexed Primvar? " << primvar.has_indices() << "\n";
+      } else {
+        std::cerr << "get_primvar(\"uv\") failed. err = " << err << "\n";
+      }
+
+      std::vector<tinyusdz::GeomPrimvar> gpvars = mesh.get_primvars();
+      std::cout << "# of primvars = " << gpvars.size();
+      for (const auto &item : gpvars) {
+        std::cout << "  primvar = " << item.name() << "\n";
+      }
+    }
   }
 
   //
@@ -206,7 +224,7 @@ void CreateScene(tinyusdz::Stage *stage) {
   {
     // CustomDataType is similar to VtDictionary.
     // it is a map<string, MetaVariable>
-    // MetaVariable is similar to Value, but accepts limited variation of types(double, token, string, float3[], ...) 
+    // MetaVariable is similar to Value, but accepts limited variation of types(double, token, string, float3[], ...)
     tinyusdz::CustomDataType customData;
     tinyusdz::MetaVariable metavar;
     double mycustom = 1.3;
@@ -255,6 +273,11 @@ int main(int argc, char **argv) {
       std::cerr << "Expected Xform prim." << "\n";
       return -1;
     }
+
+  }
+
+  // GeomPrimvar
+  {
 
   }
 
