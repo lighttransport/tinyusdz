@@ -584,6 +584,8 @@ class USDAReader::Impl {
             _stage.metas().upAxis = metas.upAxis.value();
           }
 
+          _stage.metas().comment = metas.comment;
+
           if (metas.subLayers.size()) {
             _stage.metas().subLayers = metas.subLayers;
           }
@@ -627,7 +629,6 @@ class USDAReader::Impl {
 
           _stage.metas().customLayerData = metas.customLayerData;
 
-          _stage.metas().stringData = metas.strings;
 
           return true;  // ok
         });
@@ -778,7 +779,7 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "customData") {
         DCOUT("customData. type = " << var.type_name());
-        if (var.type_name() == "dictionary") {
+        if (var.type_id() == value::TypeTraits<CustomDataType>::type_id) {
           if (auto pv = var.get_value<CustomDataType>()) {
             out->customData = pv.value();
           } else {
