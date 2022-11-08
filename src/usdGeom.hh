@@ -27,6 +27,9 @@ constexpr auto kPointInstancer = "PointInstancer";
 
 struct GPrim;
 
+bool IsSupportedGeomPrimvarType(uint32_t tyid);
+bool IsSupportedGeomPrimvarType(const std::string &type_name);
+  
 //
 // GeomPrimvar is a wrapper class for Attribute and indices(for Indexed Primvar)
 // - Attribute with `primvars` prefix. e.g. "primvars:
@@ -51,15 +54,25 @@ class GeomPrimvar {
 
   ///
   /// equivalent to ComputeFlattened in pxrUSD.
+  /// Behavior is identical to numpy.take() with 1D index array.
   ///
-  /// If Primvar has Indices, expand items with it
+  /// ```
+  /// for i in len(indices):
+  ///   dest[i] = values[indices[i]]
+  /// ```
   ///
+  /// If Primvar does not have indices, return attribute value as is(same with `get_value`).
   ///
-  /// If not, same with get_value();
-  /// TODO: timeSamples
+  /// Return false when operation failed or if the attribute type is not supported for Indexed Primvar.
   ///
   template <typename T>
-  bool expand_by_indices(std::vector<T> *dst);
+  bool take_elements_from_indices(T *dst, std::string *err = nullptr);
+
+  template <typename T>
+  bool take_elements_from_indices(std::vector<T> *dst, std::string *err = nullptr);
+
+  // Generic Value version.
+  bool take_elements_from_indices(value::Value *dst, std::string *err = nullptr);
 
   bool has_elementSize() const;
   uint32_t get_elementSize() const;
