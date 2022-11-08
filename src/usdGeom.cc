@@ -14,7 +14,7 @@
 #include "value-types.hh"
 #include "xform.hh"
 //
-#include "external/simple_match/include/simple_match/simple_match.hpp"
+//#include "external/simple_match/include/simple_match/simple_match.hpp"
 //
 #include "common-macros.inc"
 #include "math-util.inc"
@@ -254,8 +254,8 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 }
 
 bool GeomPrimvar::take_elements_from_indices(value::Value *dest, std::string *err) {
-  using namespace simple_match;
-  using namespace simple_match::placeholders;
+  //using namespace simple_match;
+  //using namespace simple_match::placeholders;
 
   value::Value val;
 
@@ -290,6 +290,7 @@ bool GeomPrimvar::take_elements_from_indices(value::Value *dest, std::string *er
     } else {
       std::string err_msg;
 
+#if 0
 #define APPLY_FUN(__ty)                                                      \
   value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT,                             \
       [this, &val, &processed, &err_msg]() {                                 \
@@ -309,6 +310,32 @@ bool GeomPrimvar::take_elements_from_indices(value::Value *dest, std::string *er
 
       match(_attr.type_id(), APPLY_GEOMPRIVAR_TYPE(APPLY_FUN) _,
             [&processed]() { processed = false; });
+#else
+
+#define APPLY_FUN(__ty)                                                      \
+      case value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT: {     \
+        std::vector<__ty> expanded_val;                                      \
+        if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
+          auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
+          if (ret) {                                                         \
+            processed = ret.value();                                         \
+            if (processed) {                                                 \
+              val = expanded_val;                                            \
+            }                                                                \
+          } else {                                                           \
+            err_msg = ret.error();                                           \
+          }                                                                  \
+        } break;                                                             \
+      }
+
+#endif
+
+      switch (_attr.type_id()) {
+        APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
+        default: {
+          processed = false;
+        } 
+      }
 
 #undef APPLY_FUN
 
