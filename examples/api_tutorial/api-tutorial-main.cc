@@ -145,8 +145,8 @@ void CreateScene(tinyusdz::Stage *stage) {
         // FIXME: Validate
         uvIndices.push_back(0);
         uvIndices.push_back(1);
-        uvIndices.push_back(2);
         uvIndices.push_back(3);
+        uvIndices.push_back(2);
 
         tinyusdz::primvar::PrimVar uvIndexVar;
         uvIndexVar.set_value(uvIndices);
@@ -187,6 +187,15 @@ void CreateScene(tinyusdz::Stage *stage) {
         std::cout << "uv primvar is Indexed Primvar? " << primvar.has_indices() << "\n";
       } else {
         std::cerr << "get_primvar(\"uv\") failed. err = " << err << "\n";
+      }
+
+      // Equivalent to pxr::UsdGeomPrimvar::ComputeFlattened().
+      // elems[i] = values[indices[i]]
+      tinyusdz::value::Value value;
+      if (primvar.take_elements_from_indices(&value, &err)) {
+        std::cout << "uv primvars. expand_by_indices result = " << tinyusdz::value::pprint_value(value) << "\n";
+      } else {
+        std::cerr << "expand_by_indices failed. err = " << err << "\n";
       }
 
       std::vector<tinyusdz::GeomPrimvar> gpvars = mesh.get_primvars();
