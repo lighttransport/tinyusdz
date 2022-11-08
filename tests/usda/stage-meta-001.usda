@@ -2,6 +2,6 @@
 (
   upAxis = "Y"
   framesPerSecond = 10
-  statTimeCode = 3
+  startTimeCode = 3
   endTimeCode = 21
 )

@@ -346,6 +346,10 @@ std::string Stage::ExportToString() const {
     ss << pprint::Indent(1) << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
   }
 
+  if (stage_metas.framesPerSecond.authored()) {
+    ss << pprint::Indent(1) << "framesPerSecond = " << stage_metas.framesPerSecond.get_value() << "\n";
+  }
+
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (stage_metas.subLayers.size()) {
     ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers << "\n";
@@ -370,17 +374,13 @@ std::string Stage::ExportToString() const {
   }
 
   if (!stage_metas.comment.value.empty()) {
-    ss << pprint::Indent(1) << "comment = " << to_string(stage_metas.comment) << "\n";
+    // Stage meta omits 'comment'
+    ss << pprint::Indent(1) << to_string(stage_metas.comment) << "\n";
   }
 
   if (stage_metas.customLayerData.size()) {
     ss << print_customData(stage_metas.customLayerData, "customLayerData",
                            /* indent */ 1);
-  }
-
-  // TODO: Sort by line_no?(preserve appearance in read USDA)
-  for (const auto &item : stage_metas.stringData) {
-    ss << pprint::Indent(1) << to_string(item) << "\n";
   }
 
   // TODO: write other header data.

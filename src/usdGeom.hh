@@ -25,6 +25,84 @@ constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
 constexpr auto kPointInstancer = "PointInstancer";
 
+struct GPrim;
+
+//
+// GeomPrimvar is a wrapper class for Attribute and indices(for Indexed Primvar)
+// - Attribute with `primvars` prefix. e.g. "primvars:
+// - Optional: indices.
+//
+// Currently this class COPIES variable from GPrim.
+// GeomPrimvar is only constructable from GPrim.
+//
+// Currently read-only operation are provided and TinyUSDZ does not recommend to use GeomPrimar to construct Prim's property at the moment.
+// (Please operate on `props` directly)
+//
+//
+class GeomPrimvar {
+
+ friend GPrim;
+
+ public:
+  GeomPrimvar() = default;
+
+  //GeomPrimvar(const Attribute &attr) : _attr(attr) {}
+  //GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices) {}
+
+  ///
+  /// equivalent to ComputeFlattened in pxrUSD.
+  ///
+  /// If Primvar has Indices, expand items with it
+  ///
+  ///
+  /// If not, same with get_value();
+  /// TODO: timeSamples
+  ///
+  template <typename T>
+  bool expand_by_indices(std::vector<T> *dst);
+
+  bool has_elementSize() const;
+  uint32_t get_elementSize() const;
+
+  bool has_interpolation() const;
+  Interpolation get_interpolation() const;
+
+  const std::vector<int32_t> &get_indices() { return _indices; }
+
+  bool has_indices() { return _indices.size(); }
+
+  uint32_t type_id() { return _attr.type_id(); }
+  std::string type_name() { return _attr.type_name(); }
+
+  // Name of Primvar. "primvars:" prefix(namespace) is omitted.
+  const std::string name() const { return _name; }
+
+  ///
+  /// Attribute has value?(Not empty)
+  ///
+  bool has_value() const;
+
+ private:
+  void set_name(const std::string &name) { _name = name; }
+  void set_attribute(const Attribute &attr) {
+    _attr = attr;
+  }
+
+  void set_indices(const std::vector<int32_t> &indices) {
+    _indices = indices;
+  }
+
+  std::string _name;
+  Attribute _attr;
+  std::vector<int32_t> _indices;  // TODO: uint support?
+
+  bool get_value(const value::Value *value,
+                 const double t = value::TimeCode::Default(),
+                 const value::TimeSampleInterpolationType tinterp =
+                     value::TimeSampleInterpolationType::Held);
+
+};
+
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
 // <pxrUSD>/pxr/usd/usdGeom/schema.udsa
 
@@ -69,6 +147,30 @@ struct GPrim : Xformable {
 
   // Prim metadataum.
   PrimMeta meta;
+
+  // For GeomPrimvar.
+
+  ///
+  /// Get Attribute(+ indices Attribute for Indexed Primvar) with "primvars:" suffix(namespace) in `props`
+  ///
+  /// @param[in] name Primvar name(`primvars:` prefix omitted. e.g. "normals", "st0", ...)
+  /// @param[out] primvar GeomPrimvar output.
+  /// @param[out] err Optional Error message(filled when returning false)
+  ///
+  bool get_primvar(const std::string &name, GeomPrimvar *primvar, std::string *err = nullptr) const;
+
+  ///
+  /// Check if primvar exists with given name
+  ///
+  /// @param[in] name Primvar name(`primvars:` prefix omitted. e.g. "normals", "st0", ...)
+  ///
+  bool has_primvar(const std::string &name) const;
+  
+  ///
+  /// Return List of Primvar in this GPrim contains.
+  ///
+  std::vector<GeomPrimvar> get_primvars() const;
+
 };
 
 struct Xform : GPrim {
@@ -439,6 +541,7 @@ struct PointInstancer : public GPrim {
   TypedAttribute<Animatable<std::vector<int64_t>>>
       invisibleIds;  // int64[] invisibleIds
 };
+
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"

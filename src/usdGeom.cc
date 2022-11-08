@@ -11,17 +11,146 @@
 #include "prim-types.hh"
 #include "tiny-format.hh"
 #include "xform.hh"
+#include "str-util.hh"
 //
 #include "common-macros.inc"
 #include "math-util.inc"
+
+#define SET_ERROR_AND_RETURN(msg) if (err) { \
+      (*err) = (msg); \
+    } \
+    return false
 
 namespace tinyusdz {
 
 namespace {
 
+constexpr auto kPrimvars = "primvars:";
+constexpr auto kIndices = ":indices";
 constexpr auto kPrimvarsNormals = "primvars:normals";
 
 }  // namespace
+
+bool GeomPrimvar::has_elementSize() const {
+  return _attr.metas().elementSize.has_value();
+}
+
+uint32_t GeomPrimvar::get_elementSize() const {
+  if (_attr.metas().elementSize.has_value()) {
+    return _attr.metas().elementSize.value();
+  }
+  return 1;
+}
+
+bool GeomPrimvar::has_interpolation() const {
+  return _attr.metas().interpolation.has_value();
+}
+
+Interpolation GeomPrimvar::get_interpolation() const {
+  if (_attr.metas().interpolation.has_value()) {
+    return _attr.metas().interpolation.value();
+  }
+
+  return Interpolation::Constant; // unauthored
+}
+
+// TODO
+//bool GeomPrimvar::has_value() const {
+//  return _attr.
+//}
+
+bool GPrim::has_primvar(
+    const std::string &varname) const {
+
+  std::string primvar_name = kPrimvars + varname;
+  return props.count(primvar_name);
+}
+
+bool GPrim::get_primvar(
+    const std::string &varname, GeomPrimvar *out_primvar, std::string *err) const {
+  if (!out_primvar) {
+    SET_ERROR_AND_RETURN("Output GeomPrimvar is nullptr.");
+  }
+
+  GeomPrimvar primvar;
+
+  std::string primvar_name = kPrimvars + varname;
+
+  const auto it = props.find(primvar_name);
+  if (it != props.end()) {
+    // Currently connection attribute is not supported.
+    if (it->second.is_attribute()) {
+      const Attribute &attr = it->second.get_attribute();
+
+      primvar.set_attribute(attr);
+      primvar.set_name(varname);
+
+    } else {
+      return false;
+    }
+
+    // has indices?
+    std::string index_name = primvar_name + kIndices;
+    const auto indexIt = props.find(index_name);
+
+    if (indexIt != props.end()) {
+      if (indexIt->second.is_attribute()) {
+        const Attribute &indexAttr = indexIt->second.get_attribute();
+
+        if (indexAttr.is_connection()) {
+
+          SET_ERROR_AND_RETURN("TODO: Connetion is not supported for index Attribute at the "
+              "moment.");
+        } else if (indexAttr.is_timesamples()) {
+          SET_ERROR_AND_RETURN("TODO: Index attribute with timeSamples is not supported yet.");
+        } else if (indexAttr.is_blocked()) {
+          SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
+        } else if (indexAttr.is_value()) {
+
+          // Check if int[] type.
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!indexAttr.get_value(&indices)) {
+                SET_ERROR_AND_RETURN(fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+          primvar.set_indices(indices);
+        } else {
+          SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+        }
+      } else {
+        // indices are optional, so ok to skip it.
+      }
+    }
+  }
+
+  (*out_primvar) = primvar;
+
+  return true;
+}
+
+std::vector<GeomPrimvar> GPrim::get_primvars() const {
+  std::vector<GeomPrimvar> gpvars;
+
+  for (const auto &prop : props) {
+
+    if (startsWith(prop.first, kPrimvars)) {
+
+      // skip `:indices`. Attribute with `:indices` suffix is handled in `get_primvar`
+      if (props.count(prop.first + kIndices)) {
+        continue;
+      }
+
+      GeomPrimvar gprimvar;
+      if (get_primvar(removePrefix(prop.first, kPrimvars), &gprimvar)) {
+        gpvars.emplace_back(std::move(gprimvar));
+      }
+    }
+  }
+
+  return gpvars;
+}
 
 const std::vector<value::point3f> GeomMesh::GetPoints(
     double time, value::TimeSampleInterpolationType interp) const {
@@ -77,7 +206,6 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(
     }
 
     if (normals.get_value()) {
-
       std::vector<value::normal3f> val;
       if (normals.get_value().value().get(time, &val, interp)) {
         dst = std::move(val);
