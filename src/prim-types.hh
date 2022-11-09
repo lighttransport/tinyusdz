@@ -474,9 +474,19 @@ class MetaVariable {
     return *this;
   }
 
+  template<typename T>
+  MetaVariable(const T& v) {
+    set_value(v);
+  }
+
   MetaVariable(const MetaVariable &rhs) {
     _name = rhs._name;
     _value = rhs._value;
+  }
+
+  template<typename T>
+  MetaVariable(const std::string &name, const T& v) {
+    set_value(name, v);
   }
 
   // template <typename T>
