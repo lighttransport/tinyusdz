@@ -59,9 +59,9 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
 // For debugging
 std::string dump_path(const Path &p);
 
-std::string to_string(const StringData &s);
 
 // TODO: move to value-types.hh
+std::string to_string(const value::StringData &s);
 std::string to_string(const value::token &s);
 std::string to_string(const std::string &s);
 

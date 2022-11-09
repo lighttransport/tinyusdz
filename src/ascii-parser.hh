@@ -94,7 +94,7 @@ class AsciiParser {
     nonstd::optional<Kind> kind;
 
     value::dict customData;           // `customData`
-    std::vector<StringData> strings;  // String only unregistered metadata.
+    std::vector<value::StringData> strings;  // String only unregistered metadata.
   };
 
   // TODO: Unifity class with StageMetas in prim-types.hh
@@ -104,7 +104,7 @@ class AsciiParser {
     ///
     std::vector<value::AssetPath> subLayers;  // 'subLayers'
     value::token defaultPrim;                 // 'defaultPrim'
-    StringData doc;                           // 'doc' or 'documentation'
+    value::StringData doc;                           // 'doc' or 'documentation'
     nonstd::optional<Axis> upAxis;            // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
@@ -116,7 +116,7 @@ class AsciiParser {
     nonstd::optional<value::token> playbackMode;  // 'none' or 'loop'
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
-    StringData comment;  // String only comment string.
+    value::StringData comment;  // String only comment string.
   };
 
   struct ParseState {
@@ -391,7 +391,7 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::texcoord3h> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord3f> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord3d> *value);
-  bool ReadBasicType(nonstd::optional<StringData> *value);
+  bool ReadBasicType(nonstd::optional<value::StringData> *value);
   bool ReadBasicType(nonstd::optional<std::string> *value);
   bool ReadBasicType(nonstd::optional<value::token> *value);
   bool ReadBasicType(nonstd::optional<Path> *value);
@@ -453,7 +453,7 @@ class AsciiParser {
   bool ReadBasicType(value::matrix2d *value);
   bool ReadBasicType(value::matrix3d *value);
   bool ReadBasicType(value::matrix4d *value);
-  bool ReadBasicType(StringData *value);
+  bool ReadBasicType(value::StringData *value);
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(value::token *value);
   bool ReadBasicType(Path *value);
@@ -575,12 +575,12 @@ class AsciiParser {
   ///
   /// Try parsing single-quoted(`"`) string
   ///
-  bool MaybeString(StringData *str);
+  bool MaybeString(value::StringData *str);
 
   ///
   /// Try parsing triple-quited(`"""`) multi-line string.
   ///
-  bool MaybeTripleQuotedString(StringData *str);
+  bool MaybeTripleQuotedString(value::StringData *str);
 
   ///
   /// Parse assset path identifier.

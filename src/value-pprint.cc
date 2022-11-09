@@ -745,8 +745,8 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTraits<StringData>::type_id: {
-      auto p = v.as<StringData>();
+    case TypeTraits<value::StringData>::type_id: {
+      auto p = v.as<value::StringData>();
       if (p) {
         os << (*p);
       } else {
@@ -768,8 +768,8 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       }
       break;
     }
-    case TypeTraits<std::vector<StringData>>::type_id: {
-      auto p = v.as<std::vector<StringData>>();
+    case TypeTraits<std::vector<value::StringData>>::type_id: {
+      auto p = v.as<std::vector<value::StringData>>();
       if (p) {
         os << (*p);
       } else {
