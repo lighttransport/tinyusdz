@@ -96,12 +96,19 @@ constexpr auto kPrimvarsNormals = "primvars:normals";
 ///  for i in len(indices):
 ///    dest[i] = values[indices[i]]
 ///
+/// `dest` = `values` when `indices` is empty
+///
 template <typename T>
 nonstd::expected<bool, std::string> ExpandWithIndices(
     const std::vector<T> &values, const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
   if (!dest) {
     return nonstd::make_unexpected("`dest` is nullptr.");
+  }
+
+  if (indices.empty()) {
+    (*dest) = values;
+    return true;
   }
 
   dest->resize(indices.size());
