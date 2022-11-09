@@ -146,7 +146,7 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::option
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::token>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<StringData>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Reference>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path>> *result);
@@ -194,7 +194,7 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<StringData> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
@@ -733,13 +733,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     }
   } else if (type_name == value::kString) {
     if (array_qual) {
-      std::vector<StringData> strs;
+      std::vector<value::StringData> strs;
       if (!ParseBasicTypeArray(&strs)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
       }
       var.set_value(strs);
     } else {
-      StringData str;
+      value::StringData str;
       if (!ReadBasicType(&str)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `string`");
       }
@@ -1101,7 +1101,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
   return true;
 }
 
-bool AsciiParser::MaybeString(StringData *str) {
+bool AsciiParser::MaybeString(value::StringData *str) {
   std::stringstream ss;
 
   if (!str) {
@@ -1175,7 +1175,7 @@ bool AsciiParser::MaybeString(StringData *str) {
   return true;
 }
 
-bool AsciiParser::MaybeTripleQuotedString(StringData *str) {
+bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   std::stringstream ss;
 
   auto loc = CurrLoc();
@@ -1530,7 +1530,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   // Maybe string-only comment.
   // Comment cannot have multiple lines. The last one wins
   {
-    StringData str;
+    value::StringData str;
     if (MaybeTripleQuotedString(&str)) {
       _stage_metas.comment = str;
       return true;
@@ -1609,11 +1609,11 @@ bool AsciiParser::ParseStageMetaOpt() {
     }
   } else if ((varname == "doc") || (varname == "documentation")) {
     // `documentation` will be shorten to `doc`
-    if (auto pv = var.get_value<StringData>()) {
+    if (auto pv = var.get_value<value::StringData>()) {
       DCOUT("doc = " << to_string(pv.value()));
       _stage_metas.doc = pv.value();
     } else if (auto pvs = var.get_value<std::string>()) {
-      StringData sdata;
+      value::StringData sdata;
       sdata.value = pvs.value();
       sdata.is_triple_quoted = false;
       _stage_metas.doc = sdata;
@@ -1689,11 +1689,11 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
     }
   } else if (varname == "comment") {
-    if (auto pv = var.get_value<StringData>()) {
+    if (auto pv = var.get_value<value::StringData>()) {
       DCOUT("comment = " << to_string(pv.value()));
       _stage_metas.comment = pv.value();
     } else if (auto pvs = var.get_value<std::string>()) {
-      StringData sdata;
+      value::StringData sdata;
       sdata.value = pvs.value();
       sdata.is_triple_quoted = false;
       _stage_metas.comment = sdata;
@@ -2333,7 +2333,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
 
     var.set_value(value);
   } else if (vartype == value::kString) {
-    StringData sdata;
+    value::StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
       var.set_value(sdata);
     } else {
@@ -2821,7 +2821,7 @@ AsciiParser::ParsePrimMeta() {
   // reconstructed in ReconstructPrimMeta in usda-reader.cc later
   //
   {
-    StringData sdata;
+    value::StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
       MetaVariable var;
       // empty name
@@ -2986,7 +2986,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       // May be string only
       {
-        StringData sdata;
+        value::StringData sdata;
         if (MaybeTripleQuotedString(&sdata)) {
           out_meta->stringData.push_back(sdata);
 
@@ -3621,7 +3621,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
         return false;
       }
     } else if (type_name == value::kString) {
-      if (!ParseBasicPrimAttr<StringData>(array_qual, primattr_name, &attr)) {
+      if (!ParseBasicPrimAttr<value::StringData>(array_qual, primattr_name, &attr)) {
         return false;
       }
     } else if (type_name == value::kToken) {

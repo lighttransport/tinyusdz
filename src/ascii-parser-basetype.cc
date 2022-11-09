@@ -480,7 +480,7 @@ bool AsciiParser::ReadBasicType(nonstd::optional<Identifier> *value) {
 bool AsciiParser::ReadBasicType(value::token *value) {
   // Try triple-quotated string first.
   {
-    StringData sdata;
+    value::StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
       // TODO: preserve quotation info.
       (*value) = value::token(sdata.value);
@@ -519,7 +519,7 @@ bool AsciiParser::ReadBasicType(std::string *value) {
 
   // May be triple-quoted string
   {
-    StringData sdata;
+    value::StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
       (*value) = sdata.value;
       return true;
@@ -549,14 +549,14 @@ bool AsciiParser::ReadBasicType(nonstd::optional<std::string> *value) {
   return false;
 }
 
-bool AsciiParser::ReadBasicType(StringData *value) {
+bool AsciiParser::ReadBasicType(value::StringData *value) {
   if (!value) {
     return false;
   }
 
   // May be triple-quoted string
   {
-    StringData sdata;
+    value::StringData sdata;
     if (MaybeTripleQuotedString(&sdata)) {
       (*value) = sdata;
       return true;
@@ -570,13 +570,13 @@ bool AsciiParser::ReadBasicType(StringData *value) {
   return false;
 }
 
-bool AsciiParser::ReadBasicType(nonstd::optional<StringData> *value) {
+bool AsciiParser::ReadBasicType(nonstd::optional<value::StringData> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
   }
 
-  StringData v;
+  value::StringData v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
@@ -2883,7 +2883,7 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<valu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::token>> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<StringData>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Reference>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path>> *result);
@@ -2935,7 +2935,7 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<StringData> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);

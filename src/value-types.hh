@@ -62,6 +62,7 @@ class any;
 };
 
 namespace tinyusdz {
+
 namespace value {
 
 // Identifier is the one used in USDA(Ascii)
@@ -160,6 +161,17 @@ constexpr auto kRelationship = "rel";
 inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 
 using token = tinyusdz::Token;
+
+// single or triple-quoted('"""' or ''') string
+struct StringData {
+  std::string value;
+  bool is_triple_quoted{false};
+  bool single_quote{false};  // true for ', false for "
+
+  // optional(for USDA)
+  int line_row{0};
+  int line_col{0};
+};
 
 // SdfAssetPath
 class AssetPath {
@@ -1088,8 +1100,10 @@ DEFINE_ROLE_TYPE_TRAIT(texcoord3d, kTexCoord3d, TYPE_ID_TEXCOORD3D, double3);
 //
 //
 //
+
 DEFINE_TYPE_TRAIT(token, kToken, TYPE_ID_TOKEN, 1);
 DEFINE_TYPE_TRAIT(std::string, kString, TYPE_ID_STRING, 1);
+DEFINE_TYPE_TRAIT(StringData, kString, TYPE_ID_STRING_DATA, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
@@ -1265,9 +1279,19 @@ class Value {
 
   const linb::any &get_raw() const { return v_; }
 
+  bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
+
+  // return 0 for non array type.
+  // This method is primaliry for Primvar types(`float[]`, `color3f[]`, ...)
+  // It does not report non-Primvar types(e.g. `Reference`, `Xform`, `GeomMesh`,
+  // ...)
+  size_t array_size() const;
+
+  bool is_empty() const { return v_.type_id() == value::TYPE_ID_NULL; }
+
  private:
   // any_value v_;
-  linb::any v_;
+  linb::any v_{nullptr};
 };
 
 // TimeSample interpolation type.
@@ -1309,13 +1333,13 @@ enum class TimeSampleInterpolationType {
 // quath, quatf, quatd
 // (use slerp for quaternion type)
 
-
 bool IsLerpSupportedType(uint32_t tyid);
 
 ///
 /// @param[in] dt interpolator [0.0, 1.0)
 ///
-bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value *dst);
+bool Lerp(const value::Value &a, const value::Value &b, double dt,
+          value::Value *dst);
 
 // Handy, but may not be efficient for large time samples(e.g. 1M samples or
 // more)
@@ -1337,13 +1361,9 @@ struct TimeSamples {
     bool blocked{false};
   };
 
-  bool empty() const {
-    return _samples.empty();
-  }
+  bool empty() const { return _samples.empty(); }
 
-  size_t size() const {
-    return _samples.size();
-  }
+  size_t size() const { return _samples.size(); }
 
   void clear() {
     _samples.clear();
@@ -1382,7 +1402,6 @@ struct TimeSamples {
   }
 
   uint32_t type_id() const {
-
     if (_samples.size()) {
       if (_dirty) {
         update();
@@ -1428,7 +1447,6 @@ struct TimeSamples {
     _samples.emplace_back(s);
     _dirty = true;
   }
-  
 
   const std::vector<Sample> &get_samples() const {
     if (_dirty) {
@@ -1444,11 +1462,11 @@ struct TimeSamples {
     return _samples;
   }
 
-#if 1 // TODO: Write implementation in .cc 
+#if 1  // TODO: Write implementation in .cc
   // Get value at specified time.
   // Return linearly interpolated value when TimeSampleInterpolationType is
   // Linear. Returns nullopt when specified time is out-of-range.
-  template<typename T>
+  template <typename T>
   bool get(T *dst, double t = value::TimeCode::Default(),
            TimeSampleInterpolationType interp =
                TimeSampleInterpolationType::Held) const {
@@ -1518,7 +1536,6 @@ struct TimeSamples {
     return false;
   }
 #endif
-
 
  private:
   mutable std::vector<Sample> _samples;
@@ -1653,4 +1670,3 @@ static_assert(sizeof(color4f) == 16, "sizeof(color4f) must be 16");
 }  // namespace value
 
 }  // namespace tinyusdz
-

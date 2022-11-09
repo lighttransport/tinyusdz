@@ -98,7 +98,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::StringData &v) {
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v) {
 
   std::string delim = v.single_quote ? "'" : "\"";
 
@@ -1132,7 +1132,7 @@ std::string to_string(const CustomDataType &custom) {
   return print_customData(custom, "", 0);
 }
 
-std::string to_string(const StringData &s) {
+std::string to_string(const value::StringData &s) {
   std::stringstream ss;
   ss << s;
   return ss.str();

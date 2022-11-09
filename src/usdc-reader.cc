@@ -847,7 +847,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<int> elementSize;
   nonstd::optional<bool> hidden;
   nonstd::optional<CustomDataType> customData;
-  nonstd::optional<StringData> comment;
+  nonstd::optional<value::StringData> comment;
   Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
 
@@ -1076,7 +1076,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "comment") {
       if (auto pv = fv.second.get_value<std::string>()) {
-        StringData s;
+        value::StringData s;
         s.value = pv.value();
         s.is_triple_quoted = hasNewline(s.value);
         comment = s;
@@ -1514,7 +1514,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
                    fv.second.type_name() + "\n");
         return false;
       }
-      StringData sdata;
+      value::StringData sdata;
       sdata.value = v.value();
       sdata.is_triple_quoted = hasNewline(sdata.value);
       metas->doc = sdata;
@@ -1526,7 +1526,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
                    fv.second.type_name() + "\n");
         return false;
       }
-      StringData sdata;
+      value::StringData sdata;
       sdata.value = v.value();
       sdata.is_triple_quoted = hasNewline(sdata.value);
       metas->comment = sdata;
@@ -1708,7 +1708,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "documentation") {
       if (auto pv = fv.second.as<std::string>()) {
-        StringData s;
+        value::StringData s;
         s.value = (*pv);
         s.is_triple_quoted = hasNewline(s.value);
         primMeta.doc = s;
@@ -1719,7 +1719,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "comment") {
       if (auto pv = fv.second.as<std::string>()) {
-        StringData s;
+        value::StringData s;
         s.value = (*pv);
         s.is_triple_quoted = hasNewline(s.value);
         primMeta.comment = s;
