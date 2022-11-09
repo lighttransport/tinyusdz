@@ -125,7 +125,7 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath>
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<StringData> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);

@@ -24,8 +24,8 @@ struct StageMetas {
   TypedAttributeWithFallback<double> startTimeCode{0.0}; // FIXME: default = -inf?
   TypedAttributeWithFallback<double> endTimeCode{std::numeric_limits<double>::infinity()};
   std::vector<value::AssetPath> subLayers; // `subLayers`
-  StringData comment; // 'comment' In Stage meta, comment must be string only(`comment = "..."` is not allowed)
-  StringData doc; // `documentation`
+  value::StringData comment; // 'comment' In Stage meta, comment must be string only(`comment = "..."` is not allowed)
+  value::StringData doc; // `documentation`
 
   CustomDataType customLayerData; // customLayerData
 

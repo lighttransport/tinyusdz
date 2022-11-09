@@ -772,6 +772,87 @@ half float_to_half_full(float _f) {
   return fp16;
 }
 
+size_t Value::array_size() const {
+  if (!is_array()) {
+    return 0;
+  }
+
+  // primvar types only.
+
+#define APPLY_FUNC_TO_TYPES(__FUNC) \
+  __FUNC(bool)                 \
+  __FUNC(value::token)                 \
+  __FUNC(std::string)                 \
+  __FUNC(StringData)                 \
+  __FUNC(half)                 \
+  __FUNC(half2)                \
+  __FUNC(half3)                \
+  __FUNC(half4)                \
+  __FUNC(int32_t)              \
+  __FUNC(uint32_t)             \
+  __FUNC(int2)                 \
+  __FUNC(int3)                 \
+  __FUNC(int4)                 \
+  __FUNC(uint2)                \
+  __FUNC(uint3)                \
+  __FUNC(uint4)                \
+  __FUNC(int64_t)              \
+  __FUNC(uint64_t)             \
+  __FUNC(float)                \
+  __FUNC(float2)               \
+  __FUNC(float3)               \
+  __FUNC(float4)               \
+  __FUNC(double)               \
+  __FUNC(double2)              \
+  __FUNC(double3)              \
+  __FUNC(double4)              \
+  __FUNC(quath)                \
+  __FUNC(quatf)                \
+  __FUNC(quatd)                \
+  __FUNC(normal3h)             \
+  __FUNC(normal3f)             \
+  __FUNC(normal3d)             \
+  __FUNC(vector3h)             \
+  __FUNC(vector3f)             \
+  __FUNC(vector3d)             \
+  __FUNC(point3h)              \
+  __FUNC(point3f)              \
+  __FUNC(point3d)              \
+  __FUNC(color3f)              \
+  __FUNC(color3d)              \
+  __FUNC(color4h)              \
+  __FUNC(color4f)              \
+  __FUNC(color4d)              \
+  __FUNC(texcoord2h)           \
+  __FUNC(texcoord2f)           \
+  __FUNC(texcoord2d)           \
+  __FUNC(texcoord3h)           \
+  __FUNC(texcoord3f)           \
+  __FUNC(texcoord3d) \
+  __FUNC(matrix2d) \
+  __FUNC(matrix3d) \
+  __FUNC(matrix4d) \
+  __FUNC(frame4d) 
+
+#define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT: { \
+    if (auto pv = v_.cast<std::vector<__ty>>()) { \
+      return pv->size(); \
+    } \
+    return 0; \
+  }
+
+
+  switch (v_.type_id()) {
+    APPLY_FUNC_TO_TYPES(ARRAY_SIZE_GET) 
+    default:
+      return 0;
+  }
+
+#undef ARRAY_SIZE_GET
+#undef APPLY_FUNC_TO_TYPES
+
+}
+
 
 }  // namespace value
 }  // namespace tinyusdz

@@ -682,7 +682,7 @@ class USDAReader::Impl {
         // TODO: duplicated key check?
         if (auto pv = item.second.get_value<std::string>()) {
           m[item.first] = pv.value();
-        } else if (auto pvs = item.second.get_value<StringData>()) {
+        } else if (auto pvs = item.second.get_value<value::StringData>()) {
           // TODO: store triple-quote info
           m[item.first] = pvs.value().value;
         } else {
@@ -854,7 +854,7 @@ class USDAReader::Impl {
         // treat as `string`
         if (auto pvb = var.get_value<value::ValueBlock>()) {
           out->variantSets = std::make_pair(listEditQual, std::vector<std::string>());
-        } else if (auto pv = var.get_value<StringData>()) {
+        } else if (auto pv = var.get_value<value::StringData>()) {
           std::vector<std::string> vs;
           vs.push_back(pv.value().value);
           out->variantSets = std::make_pair(listEditQual, vs);
@@ -954,7 +954,7 @@ class USDAReader::Impl {
         }
       } else {
         // string-only data?
-        if (auto pv = var.get_value<StringData>()) {
+        if (auto pv = var.get_value<value::StringData>()) {
           out->stringData.push_back(pv.value());
         } else {
           PUSH_WARN("TODO: Prim metadataum : " << meta.first);

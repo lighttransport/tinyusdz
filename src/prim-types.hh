@@ -139,17 +139,6 @@ enum class Variability {
   Invalid
 };
 
-// single or triple-quoted('"""' or ''') string
-struct StringData {
-  std::string value;
-  bool is_triple_quoted{false};
-  bool single_quote{false};  // true for ', false for "
-
-  // optional(for USDA)
-  int line_row{0};
-  int line_col{0};
-};
-
 ///
 /// Simlar to SdfPath.
 /// NOTE: We are doging refactoring of Path class, so the following comment may
@@ -472,9 +461,9 @@ using CustomDataType = std::map<std::string, MetaVariable>;
 // - 'None'(Value Block) is supported for some type(at least `references` and `payload` accepts None)
 // - No TimeSamples, No Connection, No Relationship(`rel`)
 // - Value must be assigned(e.g. "float myval = 1.3"). So no definition only syntax("float myval")
-// - Can be string only(no type information) 
+// - Can be string only(no type information)
 //   - Its variable name is interpreted as "comment"
-// 
+//
 class MetaVariable {
  public:
 
@@ -631,8 +620,8 @@ struct PrimMeta {
   nonstd::optional<Kind> kind;                  // 'kind'
   nonstd::optional<CustomDataType> assetInfo;   // 'assetInfo'
   nonstd::optional<CustomDataType> customData;  // `customData`
-  nonstd::optional<StringData> doc;             // 'documentation'
-  nonstd::optional<StringData> comment;         // 'comment'
+  nonstd::optional<value::StringData> doc;             // 'documentation'
+  nonstd::optional<value::StringData> comment;         // 'comment'
   nonstd::optional<APISchemas> apiSchemas;      // 'apiSchemas'
 
   //
@@ -662,7 +651,7 @@ struct PrimMeta {
 
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
-  std::vector<StringData> stringData;
+  std::vector<value::StringData> stringData;
 
   // FIXME: Find a better way to detect Prim meta is authored...
   bool authored() const {
@@ -689,14 +678,14 @@ struct AttrMeta {
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
   nonstd::optional<bool> hidden;                  // 'hidden'
-  nonstd::optional<StringData> comment;           // `comment`
+  nonstd::optional<value::StringData> comment;           // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
-  std::vector<StringData> stringData;
+  std::vector<value::StringData> stringData;
 
   bool authored() const {
     return (interpolation || elementSize || hidden || customData ||
@@ -2220,7 +2209,7 @@ class Prim {
     return nullptr;
   }
 
-  const PrimMeta &metas() const; 
+  const PrimMeta &metas() const;
   PrimMeta &metas();
 
  private:
@@ -2375,7 +2364,7 @@ DEFINE_TYPE_TRAIT(ListOp<Payload>, "ListOpPayload", TYPE_ID_LIST_OP_PAYLOAD, 1);
 
 DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
 DEFINE_TYPE_TRAIT(Relationship, "Relationship", TYPE_ID_RELATIONSHIP, 1);
-// TODO(syoyo): Define PathVector as 1D array?
+// TODO(syoyo): Define as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
 
 DEFINE_TYPE_TRAIT(std::vector<value::token>, "token[]", TYPE_ID_TOKEN_VECTOR,
@@ -2385,8 +2374,6 @@ DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
-
-DEFINE_TYPE_TRAIT(StringData, "string", TYPE_ID_STRING_DATA, 1);
 
 DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA,
                   1);  // TODO: Unify with `dict`?
