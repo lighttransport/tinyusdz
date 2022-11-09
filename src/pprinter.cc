@@ -1216,7 +1216,7 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, const st
     // dict
     ss << pprint::Indent(indent) << "dictionary " << name << " = {\n";
     for (const auto &item : pv.value()) {
-      ss << print_meta(item.second, indent+1);
+      ss << print_meta(item.second, indent+1, item.first);
     }
     ss << pprint::Indent(indent) << "}\n";
   } else {
