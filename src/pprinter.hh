@@ -179,7 +179,9 @@ std::string to_string(const CustomDataType &customData);
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent);
 std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t indent);
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
-std::string print_meta(const MetaVariable &meta, const uint32_t indent);
+
+// varname = optional variable name which is used when meta.get_name() is empty.
+std::string print_meta(const MetaVariable &meta, const uint32_t indent, const std::string &varname = std::string());
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_customData(const CustomDataType &customData, const std::string &name, const uint32_t indent);
 std::string print_variantSelectionMap(const VariantSelectionMap &map, const uint32_t indent);
