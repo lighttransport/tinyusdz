@@ -32,6 +32,31 @@ void CreateScene(tinyusdz::Stage *stage) {
     xform.name = "root";  // Prim's name(elementPath)
 
     {
+      tinyusdz::XformOp op;
+      op.op_type = tinyusdz::XformOp::OpType::Transform;
+      tinyusdz::value::matrix4d a0;
+      tinyusdz::value::matrix4d b0;
+
+      tinyusdz::Identity(&a0);
+      tinyusdz::Identity(&b0);
+
+      a0.m[1][1] = 2.1;
+
+      // column major, so [3][0], [3][1], [3][2] = translate X, Y, Z
+      b0.m[3][0] = 1.0;
+      b0.m[3][1] = 3.1;
+      b0.m[3][2] = 5.1;
+
+      tinyusdz::value::matrix4d transform = a0 * b0;
+
+      op.set_value(transform);
+
+      // `xformOpOrder`(token[]) is represented as std::vector<XformOp>
+      xform.xformOps.push_back(op);
+
+    }
+
+    {
       // `xformOp:***` attribute is represented as XformOp class
       tinyusdz::XformOp op;
       op.op_type = tinyusdz::XformOp::OpType::Translate;
