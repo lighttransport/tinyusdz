@@ -145,6 +145,8 @@ All include paths are set relative from `src` folder, so you can just add includ
 
 See `<tinyusdz>/CMakeLists.txt` and [examples/sdlviewer/CMakeLists.txt](examples/sdlviewer/CMakeLists.txt) for details.
 
+TinyUSDZ does not generate any header files and source files before the build and after the build(before the installation stage), so you don't need to take care of any pre-processing and post-processing of source tree. For example, USD Ascii parser uses hand-written C++ code so no Bison/flex/PEG processing involved.
+
 It may not be recommend to use tinyusdz as a git submodule, since the repo contains lots of codes required to build TinyUSDZ examples but these are not required for your app.
 
 ### Compiler defines
