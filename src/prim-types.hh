@@ -1350,24 +1350,6 @@ inline void Identity(value::matrix4d *mat) {
   }
 }
 
-// ret = m x n
-template <typename MTy, typename STy, size_t N>
-MTy Mult(const MTy &m, const MTy &n) {
-  MTy ret;
-  memset(ret.m, 0, sizeof(MTy));
-
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      STy value = static_cast<STy>(0);
-      for (size_t k = 0; k < N; k++) {
-        value += m.m[k][i] * n.m[j][k];
-      }
-      ret.m[j][i] = value;
-    }
-  }
-
-  return ret;
-}
 
 struct Extent {
   value::float3 lower{{std::numeric_limits<float>::infinity(),
