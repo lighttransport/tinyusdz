@@ -164,6 +164,14 @@ using token = tinyusdz::Token;
 
 // single or triple-quoted('"""' or ''') string
 struct StringData {
+  
+  StringData() = default;
+  StringData(const std::string &v) : value(v) {}
+  StringData &operator=(const std::string &v) {
+    value = v;
+    return (*this);
+  }
+
   std::string value;
   bool is_triple_quoted{false};
   bool single_quote{false};  // true for ', false for "
