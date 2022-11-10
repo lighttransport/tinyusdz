@@ -189,9 +189,27 @@ inline float vlength(const value::float3 &a) {
   return 0.0f;
 }
 
+inline float vlength(const value::normal3f &a) {
+  return vlength(value::float3{a.x, a.y, a.z});
+}
+
+inline float vlength(const value::vector3f &a) {
+  return vlength(value::float3{a.x, a.y, a.z});
+}
+
 inline value::float3 vnormalize(const value::float3 &a) {
   float len = vlength(a);
   return value::float3({a[0] / len, a[1] / len, a[2] / len});
+}
+
+inline value::normal3f vnormalize(const value::normal3f &a) {
+  float len = vlength(a);
+  return value::normal3f({a[0] / len, a[1] / len, a[2] / len});
+}
+
+inline value::vector3f vnormalize(const value::vector3f &a) {
+  float len = vlength(a);
+  return value::vector3f({a[0] / len, a[1] / len, a[2] / len});
 }
 
 inline double vlength(const value::double3 &a) {
