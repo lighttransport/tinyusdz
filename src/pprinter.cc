@@ -452,7 +452,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
 
   for (const auto &item : meta.meta) {
-    ss << print_meta(item.second, indent+1);
+    ss << print_meta(item.second, indent+1, item.first);
   }
 
   for (const auto &item : meta.stringData) {
@@ -488,8 +488,7 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   // other user defined metadataum.
   for (const auto &item : meta.meta) {
-    // TODO: emit typename?
-    ss << print_meta(item.second, indent);
+    ss << print_meta(item.second, indent, item.first);
   }
 
   for (const auto &item : meta.stringData) {
@@ -1190,27 +1189,38 @@ std::string print_customData(const CustomDataType &customData, const std::string
     ss << "{\n";
   }
   for (const auto &item : customData) {
-    ss << print_meta(item.second, indent+1);
+    ss << print_meta(item.second, indent+1, item.first);
   }
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
 
-std::string print_meta(const MetaVariable &meta, const uint32_t indent) {
+std::string print_meta(const MetaVariable &meta, const uint32_t indent, const std::string &varname) {
   std::stringstream ss;
 
   //ss << "TODO: isObject " << meta.is_object() << ", isValue " << meta.IsValue() << "\n";
+  
+  // Use varname if meta.name is empty
+  std::string name = meta.get_name();
+  if (name.empty()) {
+    name = varname;
+  }
+
+  if (name.empty()) {
+    name = "[ERROR:EmptyName]";
+  }
+
 
   if (auto pv = meta.get_value<CustomDataType>()) {
     // dict
-    ss << pprint::Indent(indent) << "dictionary " << meta.get_name() << " = {\n";
+    ss << pprint::Indent(indent) << "dictionary " << name << " = {\n";
     for (const auto &item : pv.value()) {
-      ss << print_meta(item.second, indent+1);
+      ss << print_meta(item.second, indent+1, item.first);
     }
     ss << pprint::Indent(indent) << "}\n";
   } else {
-    ss << pprint::Indent(indent) << meta.type_name() << " " << meta.get_name() << " = " << pprint_value(meta.get_raw_value()) << "\n";
+    ss << pprint::Indent(indent) << meta.type_name() << " " << name << " = " << pprint_value(meta.get_raw_value()) << "\n";
   }
 
   return ss.str();

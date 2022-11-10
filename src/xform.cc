@@ -249,7 +249,7 @@ class XformEvaluator {
     rm.m[2][1] = -std::sin(rad);
     rm.m[2][2] = std::cos(rad);
 
-    m = Mult<value::matrix4d, double, 4>(m, rm);
+    m = value::Mult<value::matrix4d, double, 4>(m, rm);
 
     return (*this);
   }
@@ -265,7 +265,7 @@ class XformEvaluator {
     rm.m[2][0] = std::sin(rad);
     rm.m[2][2] = std::cos(rad);
 
-    m = Mult<value::matrix4d, double, 4>(m, rm);
+    m = value::Mult<value::matrix4d, double, 4>(m, rm);
 
     return (*this);
   }
@@ -281,7 +281,7 @@ class XformEvaluator {
     rm.m[1][0] = -std::sin(rad);
     rm.m[1][1] = std::cos(rad);
 
-    m = Mult<value::matrix4d, double, 4>(m, rm);
+    m = value::Mult<value::matrix4d, double, 4>(m, rm);
 
     return (*this);
   }
@@ -723,7 +723,7 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
       }
     }
 
-    cm = Mult<value::matrix4d, double, 4>(cm, m);
+    cm = value::Mult<value::matrix4d, double, 4>(cm, m);
   }
 
   (*out_matrix) = cm;
