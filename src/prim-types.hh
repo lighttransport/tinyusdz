@@ -1385,6 +1385,22 @@ struct Extent {
 
     return ret;
   }
+
+  const Extent &union_with(const Extent &box) {
+
+    lower[0] = std::min(lower[0], box.lower[0]);
+    lower[1] = std::min(lower[1], box.lower[1]);
+    lower[2] = std::min(lower[2], box.lower[2]);
+
+    upper[0] = std::max(upper[0], box.upper[0]);
+    upper[1] = std::max(upper[1], box.upper[1]);
+    upper[2] = std::max(upper[2], box.upper[2]);
+
+    return *this;
+  }
+
+  
+  
 };
 
 #if 0
