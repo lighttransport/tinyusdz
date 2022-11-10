@@ -1689,34 +1689,34 @@ class Property {
 
   Property() = default;
 
-  Property(const std::string &type_name, bool custom) : _has_custom(custom) {
+  Property(const std::string &type_name, bool custom = false) : _has_custom(custom) {
     _attrib.set_type_name(type_name);
     _type = Type::EmptyAttrib;
   }
 
-  Property(const Attribute &a, bool custom) : _attrib(a), _has_custom(custom) {
+  Property(const Attribute &a, bool custom = false) : _attrib(a), _has_custom(custom) {
     _type = Type::Attrib;
   }
 
-  Property(Attribute &&a, bool custom)
+  Property(Attribute &&a, bool custom = false)
       : _attrib(std::move(a)), _has_custom(custom) {
     _type = Type::Attrib;
   }
 
   // Relationship(typeless)
-  Property(const Relationship &r, bool custom) : _rel(r), _has_custom(custom) {
+  Property(const Relationship &r, bool custom = false) : _rel(r), _has_custom(custom) {
     _type = Type::Relation;
   }
 
   // Relationship(typeless)
-  Property(Relationship &&r, bool custom)
+  Property(Relationship &&r, bool custom = false)
       : _rel(std::move(r)), _has_custom(custom) {
     _type = Type::Relation;
   }
 
   // Attribute Connection: has type
   Property(const Path &path, const std::string &prop_value_type_name,
-           bool custom)
+           bool custom = false)
       : _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
     _attrib.set_connection(path);
     _attrib.set_type_name(prop_value_type_name);
@@ -1725,7 +1725,7 @@ class Property {
 
   // Attribute Connection: has multiple targetPaths
   Property(const std::vector<Path> &paths,
-           const std::string &prop_value_type_name, bool custom)
+           const std::string &prop_value_type_name, bool custom = false)
       : _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
     _attrib.set_connections(paths);
     _attrib.set_type_name(prop_value_type_name);
@@ -1743,33 +1743,6 @@ class Property {
   }
   bool is_connection() const { return _type == Type::Connection; }
 
-  nonstd::optional<Path> get_relationTarget() const {
-    if (!is_connection()) {
-      return nonstd::nullopt;
-    }
-
-    if (_rel.is_path()) {
-      return _rel.targetPath;
-    }
-
-    return nonstd::nullopt;
-  }
-
-  std::vector<Path> get_relationTargets() const {
-    std::vector<Path> pv;
-
-    if (!is_connection()) {
-      return pv;
-    }
-
-    if (_rel.is_path()) {
-      pv.push_back(_rel.targetPath);
-    } else if (_rel.is_pathvector()) {
-      pv = _rel.targetPathVector;
-    }
-
-    return pv;
-  }
 
   std::string value_type_name() const {
     if (is_connection()) {
@@ -1783,6 +1756,7 @@ class Property {
   }
 
   bool has_custom() const { return _has_custom; }
+  void set_custom(const bool onoff) { _has_custom = onoff; }
 
   void set_property_type(Type ty) { _type = ty; }
 
@@ -1803,6 +1777,50 @@ class Property {
 
   Relationship &relationship() { return _rel; }
 
+  ///
+  /// Convienient methos when Property is a Relationship
+  ///
+
+  ///
+  /// Return single relationTarget path when Property is a Relationship.
+  /// Return the first path when Relationship is composed of PathVector(multiple paths)
+  ///
+  nonstd::optional<Path> get_relationTarget() const {
+    if (!is_connection()) {
+      return nonstd::nullopt;
+    }
+
+    if (_rel.is_path()) {
+      return _rel.targetPath;
+    } else if (_rel.is_pathvector()) {
+      if (_rel.targetPathVector.size() > 0) {
+        return _rel.targetPathVector[0];
+      }
+    }
+
+    return nonstd::nullopt;
+  }
+
+  ///
+  /// Return multiple relationTarget paths when Property is a Relationship.
+  /// Returns empty when Property is not a Relationship or a Relationship does not contain any target paths.
+  ///
+  std::vector<Path> get_relationTargets() const {
+    std::vector<Path> pv;
+
+    if (!is_connection()) {
+      return pv;
+    }
+
+    if (_rel.is_path()) {
+      pv.push_back(_rel.targetPath);
+    } else if (_rel.is_pathvector()) {
+      pv = _rel.targetPathVector;
+    }
+
+    return pv;
+  }
+
   ListEditQual get_listedit_qual() const { return _listOpQual; }
 
  private:
@@ -1815,7 +1833,7 @@ class Property {
   Type _type{Type::EmptyAttrib};
   Relationship _rel;                  // Relation(`rel`)
   std::string _prop_value_type_name;  // for Connection.
-  bool _has_custom{false};            // Qualified with 'custom' keyword?
+  bool _has_custom{false};            // Qualified with 'custom' keyword? This will be deprecated though
 };
 
 struct XformOp {
