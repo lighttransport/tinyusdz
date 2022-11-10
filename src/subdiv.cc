@@ -307,6 +307,7 @@ bool subdivide(int subd_level, const ControlQuadMesh &in_mesh, SubdividedMesh *o
       std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t)
           .count());
 
+  (void)elapsed;
   DCOUT("SubD time : " << elapsed << " [ms]");
 
   if (dump) {
