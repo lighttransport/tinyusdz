@@ -128,8 +128,9 @@ nonstd::expected<bool, std::string> ExpandWithIndices(
 
   if (invalidIndices.size()) {
     return nonstd::make_unexpected(
-        "Invalid indices found: " + value::print_array_snipped(invalidIndices,
-                                                         /* N to display */ 5));
+        "Invalid indices found: " +
+        value::print_array_snipped(invalidIndices,
+                                   /* N to display */ 5));
   }
 
   return valid;
@@ -141,12 +142,12 @@ bool IsSupportedGeomPrimvarType(uint32_t tyid) {
   //
   // scalar and 1D
   //
-#define SUPPORTED_TYPE_FUN(__ty)                        \
-  case value::TypeTraits<__ty>::type_id: {              \
-    return true;                                        \
-  }                                                     \
+#define SUPPORTED_TYPE_FUN(__ty)                                           \
+  case value::TypeTraits<__ty>::type_id: {                                 \
+    return true;                                                           \
+  }                                                                        \
   case (value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT): { \
-    return true;                                        \
+    return true;                                                           \
   }
 
   switch (tyid) {
@@ -260,9 +261,58 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
-bool GeomPrimvar::take_elements_from_indices(value::Value *dest, std::string *err) {
-  //using namespace simple_match;
-  //using namespace simple_match::placeholders;
+template <typename T>
+bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
+  if (!dest) {
+    if (err) {
+      (*err) += "Output value is nullptr.";
+    }
+    return false;
+  }
+
+  if (_attr.is_timesamples()) {
+    if (err) {
+      (*err) += "TimeSamples attribute is TODO.";
+    }
+    return false;
+  }
+
+  if (_attr.is_value()) {
+    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+      if (err) {
+        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                              _attr.type_name());
+      }
+      return false;
+    }
+
+    if (auto pv = _attr.get_value<std::vector<T>>()) {
+      std::vector<T> expanded_val;
+      auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val);
+      if (ret) {
+        (*dest) = expanded_val;
+        // Currently we ignore ret.value()
+        return true;
+      } else {
+        const std::string &err_msg = ret.error();
+        if (err) {
+          (*err) += fmt::format(
+              "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
+              _attr.type_name());
+          if (err_msg.size()) {
+            (*err) += "\n" + err_msg;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
+  // using namespace simple_match;
+  // using namespace simple_match::placeholders;
 
   value::Value val;
 
@@ -299,7 +349,7 @@ bool GeomPrimvar::take_elements_from_indices(value::Value *dest, std::string *er
 
 #if 0
 #define APPLY_FUN(__ty)                                                      \
-  value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT,                             \
+  value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT,            \
       [this, &val, &processed, &err_msg]() {                                 \
         std::vector<__ty> expanded_val;                                      \
         if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
@@ -319,21 +369,22 @@ bool GeomPrimvar::take_elements_from_indices(value::Value *dest, std::string *er
             [&processed]() { processed = false; });
 #else
 
-#define APPLY_FUN(__ty)                                                      \
-      case value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT: {     \
-        std::vector<__ty> expanded_val;                                      \
-        if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
-          auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
-          if (ret) {                                                         \
-            processed = ret.value();                                         \
-            if (processed) {                                                 \
-              val = expanded_val;                                            \
-            }                                                                \
-          } else {                                                           \
-            err_msg = ret.error();                                           \
-          }                                                                  \
-        } break;                                                             \
-      }
+#define APPLY_FUN(__ty)                                                  \
+  case value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT: { \
+    std::vector<__ty> expanded_val;                                      \
+    if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
+      auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
+      if (ret) {                                                         \
+        processed = ret.value();                                         \
+        if (processed) {                                                 \
+          val = expanded_val;                                            \
+        }                                                                \
+      } else {                                                           \
+        err_msg = ret.error();                                           \
+      }                                                                  \
+    }                                                                    \
+    break;                                                               \
+  }
 
 #endif
 
@@ -341,7 +392,7 @@ bool GeomPrimvar::take_elements_from_indices(value::Value *dest, std::string *er
         APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
         default: {
           processed = false;
-        } 
+        }
       }
 
 #undef APPLY_FUN
