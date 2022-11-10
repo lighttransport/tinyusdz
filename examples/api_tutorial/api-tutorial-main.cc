@@ -133,7 +133,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         // `interpolation`, `hidden`) through `metas()`.
         uvAttr.metas().interpolation = tinyusdz::Interpolation::Vertex;
 
-        tinyusdz::Property uvProp(uvAttr, /* custom*/ false);
+        tinyusdz::Property uvProp(uvAttr);
 
         mesh.props.emplace("primvars:uv", uvProp);
 
@@ -155,7 +155,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         // data)
         // uvIndexAttr.set_var(uvIndexVar);
 
-        tinyusdz::Property uvIndexProp(uvIndexAttr, /* custom*/ false);
+        tinyusdz::Property uvIndexProp(uvIndexAttr);
         mesh.props.emplace("primvars:uv:indices", uvIndexProp);
       }
 
