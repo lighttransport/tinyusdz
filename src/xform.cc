@@ -23,6 +23,7 @@ namespace tinyusdz {
 
 using matrix44d = linalg::aliases::double4x4;
 using matrix33d = linalg::aliases::double3x3;
+using matrix22d = linalg::aliases::double2x2;
 using double3x3 = linalg::aliases::double3x3;
 
 // linalg quat: (x, y, z, w)
@@ -149,7 +150,7 @@ value::matrix4d to_matrix(const value::quatd &q)
   return m;
 }
 
-value::matrix4d invert(const value::matrix4d &_m) {
+value::matrix4d inverse(const value::matrix4d &_m) {
 
   matrix44d m;
   // memory layout is same
@@ -164,7 +165,7 @@ value::matrix4d invert(const value::matrix4d &_m) {
   return outm;
 }
 
-value::matrix3d invert3x3(const value::matrix3d &_m) {
+value::matrix3d inverse(const value::matrix3d &_m) {
 
   matrix33d m;
   // memory layout is same
@@ -190,7 +191,7 @@ double determinant(const value::matrix4d &_m) {
   return det;
 }
 
-double determinant3x3(const value::matrix3d &_m) {
+double determinant(const value::matrix3d &_m) {
 
   matrix33d m;
   // memory layout is same
@@ -201,7 +202,7 @@ double determinant3x3(const value::matrix3d &_m) {
   return det;
 }
 
-bool invert(const value::matrix4d &_m, value::matrix4d &inv_m) {
+bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m) {
 
   double det = determinant(_m);
 
@@ -211,13 +212,13 @@ bool invert(const value::matrix4d &_m, value::matrix4d &inv_m) {
     return false;
   }
 
-  inv_m = invert(_m);
+  inv_m = inverse(_m);
   return true;
 }
 
-bool invert3x3(const value::matrix3d &_m, value::matrix3d &inv_m) {
+bool inverse(const value::matrix3d &_m, value::matrix3d &inv_m) {
 
-  double det = determinant3x3(_m);
+  double det = determinant(_m);
 
   // 1e-9 comes from pxrUSD
   // determinant should be positive(absolute), but take a fabs() just in case.
@@ -225,8 +226,56 @@ bool invert3x3(const value::matrix3d &_m, value::matrix3d &inv_m) {
     return false;
   }
 
-  inv_m = invert3x3(_m);
+  inv_m = inverse(_m);
   return true;
+}
+
+value::matrix2d transpose(const value::matrix2d &_m) {
+
+  matrix22d m;
+  matrix22d tm;
+  // memory layout is same
+  memcpy(&m[0][0], _m.m, sizeof(double) * 2 * 2);
+  tm = linalg::transpose(m);
+
+  value::matrix2d dst;
+
+  // memory layout is same
+  memcpy(&dst.m[0][0], &tm[0][0], sizeof(double) * 2 * 2);
+
+  return dst;
+}
+
+value::matrix3d transpose(const value::matrix3d &_m) {
+
+  matrix33d m;
+  matrix33d tm;
+  // memory layout is same
+  memcpy(&m[0][0], _m.m, sizeof(double) * 3 * 3);
+  tm = linalg::transpose(m);
+
+  value::matrix3d dst;
+
+  // memory layout is same
+  memcpy(&dst.m[0][0], &tm[0][0], sizeof(double) * 3 * 3);
+
+  return dst;
+}
+
+value::matrix4d transpose(const value::matrix4d &_m) {
+
+  matrix44d m;
+  matrix44d tm;
+  // memory layout is same
+  memcpy(&m[0][0], _m.m, sizeof(double) * 4 * 4);
+  tm = linalg::transpose(m);
+
+  value::matrix4d dst;
+
+  // memory layout is same
+  memcpy(&dst.m[0][0], &tm[0][0], sizeof(double) * 4 * 4);
+
+  return dst;
 }
 
 namespace {
@@ -486,7 +535,7 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
             return false;
           }
 
-          m = invert(m);
+          m = inverse(m);
         }
 
         break;
@@ -685,7 +734,7 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
         // FIXME: invert before getting matrix.
         if (x.inverted) {
           value::matrix3d inv_rm;
-          if (invert3x3(rm, inv_rm)) {
+          if (inverse(rm, inv_rm)) {
 
           } else {
             if (err) {
