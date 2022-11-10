@@ -1386,6 +1386,19 @@ struct Extent {
     return ret;
   }
 
+  const Extent &union_with(const value::float3 &p) {
+
+    lower[0] = (std::min)(lower[0], p[0]);
+    lower[1] = (std::min)(lower[1], p[1]);
+    lower[2] = (std::min)(lower[2], p[2]);
+
+    upper[0] = (std::max)(upper[0], p[0]);
+    upper[1] = (std::max)(upper[1], p[1]);
+    upper[2] = (std::max)(upper[2], p[2]);
+
+    return *this;
+  }
+
   const Extent &union_with(const Extent &box) {
 
     lower[0] = (std::min)(lower[0], box.lower[0]);
