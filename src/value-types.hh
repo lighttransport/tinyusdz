@@ -670,6 +670,98 @@ struct frame4d {
   double m[4][4];
 };
 
+// ret = m x n
+template <typename MTy, typename STy, size_t N>
+MTy Mult(const MTy &m, const MTy &n) {
+  MTy ret;
+  memset(ret.m, 0, sizeof(MTy));
+
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      STy value = static_cast<STy>(0);
+      for (size_t k = 0; k < N; k++) {
+        value += m.m[k][i] * n.m[j][k];
+      }
+      ret.m[j][i] = value;
+    }
+  }
+
+  return ret;
+}
+
+template <typename MTy, typename STy, size_t N>
+MTy MatAdd(const MTy &m, const MTy &n) {
+  MTy ret;
+  memset(ret.m, 0, sizeof(MTy));
+
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      ret.m[j][i] = m.m[i][j] + n.m[i][j];
+    }
+  }
+
+  return ret;
+}
+
+template <typename MTy, typename STy, size_t N>
+MTy MatSub(const MTy &m, const MTy &n) {
+  MTy ret;
+  memset(ret.m, 0, sizeof(MTy));
+
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      ret.m[j][i] = m.m[i][j] - n.m[i][j];
+    }
+  }
+
+  return ret;
+}
+
+inline matrix2d operator+(const matrix2d &a, const matrix2d &b) {
+  matrix2d ret = MatAdd<matrix2d, double, 2>(a, b);
+  return ret;
+}
+
+inline matrix2d operator-(const matrix2d &a, const matrix2d &b) {
+  matrix2d ret = MatSub<matrix2d, double, 2>(a, b);
+  return ret;
+}
+
+inline matrix2d operator*(const matrix2d &a, const matrix2d &b) {
+  matrix2d ret = Mult<matrix2d, double, 2>(a, b);
+  return ret;
+}
+
+inline matrix3d operator+(const matrix3d &a, const matrix3d &b) {
+  matrix3d ret = MatAdd<matrix3d, double, 3>(a, b);
+  return ret;
+}
+
+inline matrix3d operator-(const matrix3d &a, const matrix3d &b) {
+  matrix3d ret = MatSub<matrix3d, double, 3>(a, b);
+  return ret;
+}
+
+inline matrix3d operator*(const matrix3d &a, const matrix3d &b) {
+  matrix3d ret = Mult<matrix3d, double, 3>(a, b);
+  return ret;
+}
+
+inline matrix4d operator+(const matrix4d &a, const matrix4d &b) {
+  matrix4d ret = MatAdd<matrix4d, double, 4>(a, b);
+  return ret;
+}
+
+inline matrix4d operator-(const matrix4d &a, const matrix4d &b) {
+  matrix4d ret = MatSub<matrix4d, double, 4>(a, b);
+  return ret;
+}
+
+inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
+  matrix4d ret = Mult<matrix4d, double, 4>(a, b);
+  return ret;
+}
+
 // Quaternion has memory layout of [x, y, z, w] in Crate(Binary)
 // and QfQuat class in pxrUSD.
 // https://github.com/PixarAnimationStudios/USD/blob/3abc46452b1271df7650e9948fef9f0ce602e3b2/pxr/base/gf/quatf.h#L287

@@ -28,6 +28,7 @@ double determinant3x3(const value::matrix3d &m);
 bool invert(const value::matrix4d &m, value::matrix4d &inv_m);
 bool invert3x3(const value::matrix3d &m, value::matrix3d &inv_m);
 
+
 //
 // For usdGeom, usdLux
 // TODO: Move to `xform.hh`?
@@ -56,7 +57,7 @@ struct Xformable {
         return m.value();
       } else {
         value::matrix4d cm =
-            Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
+            value::Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
         return cm;
       }
     } else {

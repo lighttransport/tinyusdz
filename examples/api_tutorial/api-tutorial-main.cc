@@ -32,6 +32,31 @@ void CreateScene(tinyusdz::Stage *stage) {
     xform.name = "root";  // Prim's name(elementPath)
 
     {
+      tinyusdz::XformOp op;
+      op.op_type = tinyusdz::XformOp::OpType::Transform;
+      tinyusdz::value::matrix4d a0;
+      tinyusdz::value::matrix4d b0;
+
+      tinyusdz::Identity(&a0);
+      tinyusdz::Identity(&b0);
+
+      a0.m[1][1] = 2.1;
+
+      // column major, so [3][0], [3][1], [3][2] = translate X, Y, Z
+      b0.m[3][0] = 1.0;
+      b0.m[3][1] = 3.1;
+      b0.m[3][2] = 5.1;
+
+      tinyusdz::value::matrix4d transform = a0 * b0;
+
+      op.set_value(transform);
+
+      // `xformOpOrder`(token[]) is represented as std::vector<XformOp>
+      xform.xformOps.push_back(op);
+
+    }
+
+    {
       // `xformOp:***` attribute is represented as XformOp class
       tinyusdz::XformOp op;
       op.op_type = tinyusdz::XformOp::OpType::Translate;
@@ -192,7 +217,7 @@ void CreateScene(tinyusdz::Stage *stage) {
       // Equivalent to pxr::UsdGeomPrimvar::ComputeFlattened().
       // elems[i] = values[indices[i]]
       tinyusdz::value::Value value;
-      if (primvar.take_elements_from_indices(&value, &err)) {
+      if (primvar.flatten_with_indices(&value, &err)) {
         // value;:Value can contain any types, but value.array_size() should work well only for primvar types(e.g. `float[]`, `color3f[]`)
         // It would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
         std::cout << "uv primvars. array size = " << value.array_size() << "\n";
@@ -236,10 +261,17 @@ void CreateScene(tinyusdz::Stage *stage) {
     // it is a map<string, MetaVariable>
     // MetaVariable is similar to Value, but accepts limited variation of types(double, token, string, float3[], ...)
     tinyusdz::CustomDataType customData;
+
     tinyusdz::MetaVariable metavar;
     double mycustom = 1.3;
     metavar.set_value("mycustom", mycustom);
+
+    std::string mystring = "hello";
+    tinyusdz::MetaVariable metavar2("mystring", mystring);
+
     customData.emplace("mycustom", metavar);
+    customData.emplace("mystring", metavar2);
+    customData.emplace("myvalue", 2.45); // Construct MetaVariables implicitly
 
     stage->metas().customLayerData = customData;
 

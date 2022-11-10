@@ -53,8 +53,9 @@ class GeomPrimvar {
   //GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices) {}
 
   ///
+  /// For Indexed Primvar(array value + indices)
+  ///
   /// equivalent to ComputeFlattened in pxrUSD.
-  /// Behavior is identical to numpy.take() with 1D index array.
   ///
   /// ```
   /// for i in len(indices):
@@ -66,13 +67,13 @@ class GeomPrimvar {
   /// Return false when operation failed or if the attribute type is not supported for Indexed Primvar.
   ///
   template <typename T>
-  bool take_elements_from_indices(T *dst, std::string *err = nullptr);
+  bool flatten_with_indices(T *dst, std::string *err = nullptr);
 
   template <typename T>
-  bool take_elements_from_indices(std::vector<T> *dst, std::string *err = nullptr);
+  bool flatten_with_indices(std::vector<T> *dst, std::string *err = nullptr);
 
   // Generic Value version.
-  bool take_elements_from_indices(value::Value *dst, std::string *err = nullptr);
+  bool flatten_with_indices(value::Value *dst, std::string *err = nullptr);
 
   bool has_elementSize() const;
   uint32_t get_elementSize() const;
