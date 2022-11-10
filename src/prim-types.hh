@@ -2169,6 +2169,17 @@ class Prim {
 
   template <typename T>
   Prim(const T &prim) {
+    set_primdata(prim);
+  }
+
+  template <typename T>
+  Prim(const std::string &elementName, const T &prim) {
+    set_primdata(elementName, prim);
+  }
+
+  // Replace exting prim
+  template<typename T>
+  void set_primdata(const T &prim) {
     // Check if T is Prim class type.
     static_assert(
         (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
@@ -2179,8 +2190,9 @@ class Prim {
     _elementPath = Path(prim.name, "");
   }
 
+  // Replace exting prim
   template <typename T>
-  Prim(const std::string &elementName, const T &prim) {
+  void set_primdata(const std::string &elementName, const T &prim) {
     // Check if T is Prim class type.
     static_assert(
         (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
