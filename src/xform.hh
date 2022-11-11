@@ -70,9 +70,11 @@ value::double4 matmul(const value::matrix4d &m, const value::double4 &p);
 value::float3 transform_dir(const value::matrix4d &m, const value::float3 &p);
 value::vector3f transform_dir(const value::matrix4d &m, const value::vector3f &p);
 value::normal3f transform_dir(const value::matrix4d &m, const value::normal3f &p);
+value::point3f transform_dir(const value::matrix4d &m, const value::point3f &p);
 value::double3 transform_dir(const value::matrix4d &m, const value::double3 &p);
 value::vector3d transform_dir(const value::matrix4d &m, const value::vector3d &p);
 value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p);
+value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p);
 
 
 //
