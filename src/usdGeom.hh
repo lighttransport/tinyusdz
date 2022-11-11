@@ -35,11 +35,15 @@ bool IsSupportedGeomPrimvarType(const std::string &type_name);
 // - Attribute with `primvars` prefix. e.g. "primvars:
 // - Optional: indices.
 //
-// Currently this class COPIES variable from GPrim.
 // GeomPrimvar is only constructable from GPrim.
+// This class COPIES variable from GPrim when get operation.
 //
-// Currently read-only operation are provided and TinyUSDZ does not recommend to use GeomPrimar to construct Prim's property at the moment.
-// (Please operate on `props` directly)
+// Currently read-only operation are well provided. writing feature is not well tested(`set_value` may have issue)
+// (If you struggled to ue GeomPrimvar, please operate on `GPrim::props` directly)
+//
+// Limitation:
+// TimeSamples are not supported for indices.
+// Also, TimeSamples are not supported both when constructing GeomPrimvar with Typed Attribute value and retriving Attribute value.
 //
 //
 class GeomPrimvar {
@@ -49,8 +53,10 @@ class GeomPrimvar {
  public:
   GeomPrimvar() = default;
 
-  //GeomPrimvar(const Attribute &attr) : _attr(attr) {}
-  //GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices) {}
+  GeomPrimvar(const Attribute &attr) : _attr(attr) {}
+
+  // TODO: TimeSamples indices.
+  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices) {}
 
   ///
   /// For Indexed Primvar(array value + indices)
@@ -77,12 +83,21 @@ class GeomPrimvar {
 
   bool has_elementSize() const;
   uint32_t get_elementSize() const;
-
+  
   bool has_interpolation() const;
   Interpolation get_interpolation() const;
 
-  const std::vector<int32_t> &get_indices() { return _indices; }
+  // When you change elementSize and interpolation,
+  // Attribute value must be set beforehand.
+  void set_elementSize(uint32_t n) {
+    _attr.metas().elementSize = n;
+  }
 
+  void set_interpolation(const Interpolation interp) {
+    _attr.metas().interpolation = interp;
+  }
+
+  const std::vector<int32_t> &get_indices() { return _indices; }
   bool has_indices() { return _indices.size(); }
 
   uint32_t type_id() { return _attr.type_id(); }
@@ -96,24 +111,58 @@ class GeomPrimvar {
   ///
   bool has_value() const;
 
- private:
-  void set_name(const std::string &name) { _name = name; }
-  void set_attribute(const Attribute &attr) {
+
+  ///
+  /// Get Attribute value.
+  /// TODO: TimeSamples
+  ///
+  template <typename T>
+  bool get_value(T *dst, std::string *err = nullptr);
+
+  bool get_value(value::Value *dst, std::string *err = nullptr);
+
+  ///
+  /// Set Attribute value.
+  ///
+  template <typename T>
+  bool set_value(const T &val) {
+    _attr.set_value(val);
+  }
+
+  void set_value(const Attribute &attr) {
     _attr = attr;
   }
+
+  void set_value(const Attribute &&attr) {
+    _attr = std::move(attr);
+  }
+
+  void set_name(const std::string &name) { _name = name; }
 
   void set_indices(const std::vector<int32_t> &indices) {
     _indices = indices;
   }
 
+  void set_indices(const std::vector<int32_t> &&indices) {
+    _indices = std::move(indices);
+  }
+
+  const Attribute &get_attribute() const {
+    return _attr;
+  }
+
+ private:
+
   std::string _name;
   Attribute _attr;
   std::vector<int32_t> _indices;  // TODO: uint support?
 
+#if 0 // TODO
   bool get_value(const value::Value *value,
                  const double t = value::TimeCode::Default(),
                  const value::TimeSampleInterpolationType tinterp =
                      value::TimeSampleInterpolationType::Held);
+#endif
 
 };
 
@@ -184,6 +233,16 @@ struct GPrim : Xformable {
   /// Return List of Primvar in this GPrim contains.
   ///
   std::vector<GeomPrimvar> get_primvars() const;
+
+  ///
+  /// Set Attribute(+ indices Attribute for Indexed Primvar) with "primvars:" suffix(namespace) to `props`
+  ///
+  /// @param[in] primvar GeomPrimvar
+  /// @param[out] err Optional Error message(filled when returning false)
+  ///
+  /// Returns true when success to add primvar. Return false on error(e.g. `primvar` does not contain valid name).
+  ///
+  bool set_primvar(const GeomPrimvar &primvar, std::string *err = nullptr);
 
 };
 
