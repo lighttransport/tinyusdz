@@ -1399,6 +1399,13 @@ struct Extent {
     return *this;
   }
 
+  const Extent &union_with(const value::point3f &p) {
+
+    union_with(value::float3{p.x, p.y, p.z});
+
+    return *this;
+  }
+
   const Extent &union_with(const Extent &box) {
 
     lower[0] = (std::min)(lower[0], box.lower[0]);
