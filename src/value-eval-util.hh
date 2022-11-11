@@ -279,6 +279,144 @@ inline value::float4 operator*(const value::float4 &a, const float b) {
   return {a[0] * b, a[1] * b, a[2] * b, a[3] * b};
 }
 
+// double
+
+inline value::double2 operator+(const value::double2 &a, const value::double2 &b) {
+  return {a[0] + b[0], a[1] + b[1]};
+}
+
+inline value::double2 operator+(const double a, const value::double2 &b) {
+  return {a + b[0], a + b[1]};
+}
+
+inline value::double2 operator+(const value::double2 &a, const double b) {
+  return {a[0] + b, a[1] + b};
+}
+
+
+inline value::double2 operator-(const value::double2 &a, const value::double2 &b) {
+  return {a[0] - b[0], a[1] - b[1]};
+}
+
+inline value::double2 operator-(const double a, const value::double2 &b) {
+  return {a - b[0], a - b[1]};
+}
+
+inline value::double2 operator-(const value::double2 &a, const double b) {
+  return {a[0] - b, a[1] - b};
+}
+
+inline value::double2 operator*(const value::double2 &a, const value::double2 &b) {
+  return {a[0] * b[0], a[1] * b[1]};
+}
+
+inline value::double2 operator*(const double a, const value::double2 &b) {
+  return {a * b[0], a * b[1]};
+}
+
+inline value::double2 operator*(const value::double2 &a, const double b) {
+  return {a[0] * b, a[1] * b};
+}
+
+inline value::double2 operator/(const value::double2 &a, const value::double2 &b) {
+  return {a[0] / b[0], a[1] / b[1]};
+}
+
+inline value::double2 operator/(const double a, const value::double2 &b) {
+  return {a / b[0], a / b[1]};
+}
+
+inline value::double2 operator/(const value::double2 &a, const double b) {
+  return {a[0] / b, a[1] / b};
+}
+
+inline value::double3 operator+(const value::double3 &a, const value::double3 &b) {
+  return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+}
+
+inline value::double3 operator+(const double a, const value::double3 &b) {
+  return {a + b[0], a + b[1], a + b[2]};
+}
+
+inline value::double3 operator+(const value::double3 &a, const double b) {
+  return {a[0] + b, a[1] + b, a[2] + b};
+}
+
+inline value::double3 operator-(const value::double3 &a, const value::double3 &b) {
+  return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+inline value::double3 operator-(const double a, const value::double3 &b) {
+  return {a - b[0], a - b[1], a - b[2]};
+}
+
+inline value::double3 operator-(const value::double3 &a, const double b) {
+  return {a[0] - b, a[1] - b, a[2] - b};
+}
+
+inline value::double3 operator*(const value::double3 &a, const value::double3 &b) {
+  return {a[0] * b[0], a[1] * b[1], a[2] * b[2]};
+}
+
+inline value::double3 operator*(const double a, const value::double3 &b) {
+  return {a * b[0], a * b[1], a * b[2]};
+}
+
+inline value::double3 operator*(const value::double3 &a, const double b) {
+  return {a[0] * b, a[1] * b, a[2] * b};
+}
+
+inline value::double3 operator/(const value::double3 &a, const value::double3 &b) {
+  return {a[0] / b[0], a[1] / b[1], a[2] / b[2]};
+}
+
+inline value::double3 operator/(const double a, const value::double3 &b) {
+  return {a / b[0], a / b[1], a / b[2]};
+}
+
+inline value::double3 operator/(const value::double3 &a, const double b) {
+  return {a[0] / b, a[1] / b, a[2] / b};
+}
+
+inline value::double4 operator+(const value::double4 &a, const value::double4 &b) {
+  return {a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]};
+}
+
+inline value::double4 operator+(const double a, const value::double4 &b) {
+  return {a + b[0], a + b[1], a + b[2], a + b[3]};
+}
+
+inline value::double4 operator+(const value::double4 &a, const double b) {
+  return {a[0] + b, a[1] + b, a[2] + b, a[3] + b};
+}
+
+inline value::double4 operator-(const value::double4 &a, const value::double4 &b) {
+  return {a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]};
+}
+
+inline value::double4 operator-(const double a, const value::double4 &b) {
+  return {a - b[0], a - b[1], a - b[2], a - b[3]};
+}
+
+inline value::double4 operator-(const value::double4 &a, const double b) {
+  return {a[0] - b, a[1] - b, a[2] - b, a[3] - b};
+}
+
+
+
+inline value::double4 operator*(const value::double4 &a, const value::double4 &b) {
+  return {a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]};
+}
+
+inline value::double4 operator*(const double a, const value::double4 &b) {
+  return {a * b[0], a * b[1], a * b[2], a * b[3]};
+}
+
+inline value::double4 operator*(const value::double4 &a, const double b) {
+
+  return {a[0] * b, a[1] * b, a[2] * b, a[3] * b};
+}
+
 // normal
 inline value::normal3f operator+(const value::normal3f &a, const value::normal3f &b) {
   return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
@@ -325,6 +463,55 @@ inline value::normal3f operator/(const float a, const value::normal3f &b) {
 }
 
 inline value::normal3f operator/(const value::normal3f &a, const float b) {
+  return {a[0] / b, a[1] / b, a[2] / b};
+}
+
+// vector
+inline value::vector3f operator+(const value::vector3f &a, const value::vector3f &b) {
+  return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+}
+
+inline value::vector3f operator+(const float a, const value::vector3f &b) {
+  return {a + b[0], a + b[1], a + b[2]};
+}
+
+inline value::vector3f operator+(const value::vector3f &a, const float b) {
+  return {a[0] + b, a[1] + b, a[2] + b};
+}
+
+inline value::vector3f operator-(const value::vector3f &a, const value::vector3f &b) {
+  return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+inline value::vector3f operator-(const float a, const value::vector3f &b) {
+  return {a - b[0], a - b[1], a - b[2]};
+}
+
+inline value::vector3f operator-(const value::vector3f &a, const float b) {
+  return {a[0] - b, a[1] - b, a[2] - b};
+}
+
+inline value::vector3f operator*(const value::vector3f &a, const value::vector3f &b) {
+  return {a[0] * b[0], a[1] * b[1], a[2] * b[2]};
+}
+
+inline value::vector3f operator*(const float a, const value::vector3f &b) {
+  return {a * b[0], a * b[1], a * b[2]};
+}
+
+inline value::vector3f operator*(const value::vector3f &a, const float b) {
+  return {a[0] * b, a[1] * b, a[2] * b};
+}
+
+inline value::vector3f operator/(const value::vector3f &a, const value::vector3f &b) {
+  return {a[0] / b[0], a[1] / b[1], a[2] / b[2]};
+}
+
+inline value::vector3f operator/(const float a, const value::vector3f &b) {
+  return {a / b[0], a / b[1], a / b[2]};
+}
+
+inline value::vector3f operator/(const value::vector3f &a, const float b) {
   return {a[0] / b, a[1] / b, a[2] / b};
 }
 

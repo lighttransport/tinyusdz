@@ -1108,6 +1108,8 @@ struct texcoord3d {
   double &operator[](size_t idx) { return *(&s + idx); }
 };
 
+
+
 // Attribute value Block(`None`)
 struct ValueBlock {};
 

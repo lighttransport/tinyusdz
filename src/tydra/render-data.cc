@@ -267,7 +267,7 @@ bool TriangulatePolygon(
           n[1] += (a[2] * b[0]);
           n[2] += (a[0] * b[1]);
         }
-        BaseTy length_n = math::vlength(n);
+        BaseTy length_n = vlength(n);
         // Check if zero length normal
         if (std::fabs(length_n) < std::numeric_limits<BaseTy>::epsilon()) {
           err = "Degenerated polygon found.";
@@ -275,7 +275,7 @@ bool TriangulatePolygon(
         }
 
         // Negative is to flip the normal to the correct direction
-        n = math::vnormalize(n);
+        n = vnormalize(n);
 
         T axis_w, axis_v, axis_u;
         axis_w = n;
@@ -285,8 +285,8 @@ bool TriangulatePolygon(
         } else {
           a = {BaseTy(1), BaseTy(0), BaseTy(0)};
         }
-        axis_v = math::vnormalize(math::vcross(axis_w, a));
-        axis_u = math::vcross(axis_w, axis_v);
+        axis_v = vnormalize(vcross(axis_w, a));
+        axis_u = vcross(axis_w, axis_v);
 
         using Point3D = std::array<BaseTy, 3>;
         using Point2D = std::array<BaseTy, 2>;
@@ -304,8 +304,8 @@ bool TriangulatePolygon(
           // Point3 polypoint = {v0[0],v0[1],v0[2]};
 
           // world to local
-          Point3D loc = {math::vdot(v, axis_u), math::vdot(v, axis_v),
-                         math::vdot(v, axis_w)};
+          Point3D loc = {vdot(v, axis_u), vdot(v, axis_v),
+                         vdot(v, axis_w)};
 
           polyline.push_back({loc[0], loc[1]});
         }

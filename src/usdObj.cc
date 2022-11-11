@@ -18,7 +18,7 @@
 #include "io-util.hh"
 #include "usdObj.hh"
 
-#include "math-util.inc"
+//#include "math-util.inc"
 
 #ifdef TINYUSDZ_USE_USDOBJ
 
@@ -190,7 +190,7 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
           p2[1] = attrs.vertices[3 * vidx2 + 1];
           p2[2] = attrs.vertices[3 * vidx2 + 2];
 
-          value::float3 n = math::geometric_normal(p0, p1, p2);
+          value::float3 n = geometric_normal(p0, p1, p2);
 
           for (size_t v = 0; v < num_v; v++) {
             facevaryingNormals.push_back(n);
