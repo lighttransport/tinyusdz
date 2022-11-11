@@ -67,12 +67,12 @@ value::double4 matmul(const value::matrix4d &m, const value::double4 &p);
 // Transform 3d vector using upper-left 3x3 matrix elements.
 // ([3][3] is not used)
 //
-value::float3 tranform_dir(const value::matrix4d &m, const value::float3 &p);
-value::vector3f tranform_dir(const value::matrix4d &m, const value::vector3f &p);
-value::normal3f tranform_dir(const value::matrix4d &m, const value::normal3f &p);
-value::double3 tranform_dir(const value::matrix4d &m, const value::double3 &p);
-value::vector3d tranform_dir(const value::matrix4d &m, const value::vector3d &p);
-value::normal3d tranform_dir(const value::matrix4d &m, const value::normal3d &p);
+value::float3 transform_dir(const value::matrix4d &m, const value::float3 &p);
+value::vector3f transform_dir(const value::matrix4d &m, const value::vector3f &p);
+value::normal3f transform_dir(const value::matrix4d &m, const value::normal3f &p);
+value::double3 transform_dir(const value::matrix4d &m, const value::double3 &p);
+value::vector3d transform_dir(const value::matrix4d &m, const value::vector3d &p);
+value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p);
 
 
 //
