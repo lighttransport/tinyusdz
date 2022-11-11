@@ -13,6 +13,15 @@ value::matrix4d to_matrix(const value::quatd &q);
 
 value::matrix4d to_matrix(const value::matrix3d &m, const value::double3 &tx);
 
+//
+// | x x x 0 |
+// | x x x 0 |
+// | x x x 0 |
+// | 0 0 0 1 |
+// Remove [3][*](translation) and [*][3]
+// [3][3] is set to 1.0.
+value::matrix4d upper_left_3x3_only(const value::matrix4d &m);
+
 // Decompose into Upper-left 3x3 matrix + translation
 value::matrix3d to_matrix3x3(const value::matrix4d &m, value::double3 *tx = nullptr);
 
@@ -33,7 +42,11 @@ bool inverse(const value::matrix3d &m, value::matrix3d &inv_m);
 
 value::matrix2d transpose(const value::matrix2d &m);
 value::matrix3d transpose(const value::matrix3d &m);
-value::matrix4d transpose(const value::matrix4d &m); // NOTE: Full matrix transpose(i.e, translation elements are transposed). 
+
+// NOTE: Full matrix transpose(i.e, translation elements are transposed). 
+// So if you want to transform normal vector, first make input matrix elements upper-left 3x3 only,
+// then transpose(inverse(upper_left_3x3_only(M)))
+value::matrix4d transpose(const value::matrix4d &m); 
 
 value::float3 matmul(const value::matrix4d &m, const value::float3 &p);
 value::point3f matmul(const value::matrix4d &m, const value::point3f &p);
@@ -47,6 +60,17 @@ value::double3 matmul(const value::matrix4d &m, const value::double3 &p);
 
 value::float4 matmul(const value::matrix4d &m, const value::float4 &p);
 value::double4 matmul(const value::matrix4d &m, const value::double4 &p);
+
+//
+// Transform 3d vector using upper-left 3x3 matrix elements.
+// ([3][3] is not used)
+//
+value::float3 tranform_dir(const value::matrix4d &m, const value::float3 &p);
+value::vector3f tranform_dir(const value::matrix4d &m, const value::vector3f &p);
+value::normal3f tranform_dir(const value::matrix4d &m, const value::normal3f &p);
+value::double3 tranform_dir(const value::matrix4d &m, const value::double3 &p);
+value::vector3d tranform_dir(const value::matrix4d &m, const value::vector3d &p);
+value::normal3d tranform_dir(const value::matrix4d &m, const value::normal3d &p);
 
 
 //

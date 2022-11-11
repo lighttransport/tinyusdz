@@ -201,7 +201,38 @@ void CreateScene(tinyusdz::Stage *stage) {
 
         mesh.props.emplace("myvalue", prop);
       }
+
+      // Add Primvar through GeomPrimvar;
+      {
+        tinyusdz::GeomPrimvar uvPrimvar;
+
+        uvPrimvar.set_name("my_uv");
+        std::vector<tinyusdz::value::texcoord2f> uvs;
+
+        uvs.push_back({0.0f, 0.0f});
+        uvs.push_back({1.0f, 0.0f});
+        uvs.push_back({1.0f, 1.0f});
+        uvs.push_back({0.0f, 1.0f});
+
+        uvPrimvar.set_value(uvs);
+        uvPrimvar.set_interpolation(tinyusdz::Interpolation::Vertex);
+
+        std::vector<int> uvIndices;
+        uvIndices.push_back(0);
+        uvIndices.push_back(1);
+        uvIndices.push_back(3);
+        uvIndices.push_back(2);
+
+        uvPrimvar.set_indices(uvIndices);
+      
+        // primvar name is extracted from Primvar::name
+        std::string err;
+        if (!mesh.set_primvar(uvPrimvar, &err)) {
+          std::cerr << "Failed to add Primar: " << err << "\n";
+        }
+      }
     }
+
 
     // Access GeomPrimvar
     {
