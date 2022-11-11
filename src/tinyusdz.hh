@@ -58,6 +58,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "prim-types.hh"
 #include "texture-types.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
+#include "usdShade.hh"
+#include "usdSkel.hh"
+//#include "usdVox.hh"
 #include "stage.hh"
 
 namespace tinyusdz {

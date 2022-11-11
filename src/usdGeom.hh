@@ -87,14 +87,12 @@ class GeomPrimvar {
   bool has_interpolation() const;
   Interpolation get_interpolation() const;
 
-  // When you change elementSize and interpolation,
-  // Attribute value must be set beforehand.
   void set_elementSize(uint32_t n) {
-    _attr.metas().elementSize = n;
+    _elementSize = n;
   }
 
   void set_interpolation(const Interpolation interp) {
-    _attr.metas().interpolation = interp;
+    _interpolation = interp;
   }
 
   const std::vector<int32_t> &get_indices() const { return _indices; }
@@ -156,6 +154,10 @@ class GeomPrimvar {
   std::string _name;
   Attribute _attr;
   std::vector<int32_t> _indices;  // TODO: uint support?
+
+  // Store Attribute meta separately.
+  nonstd::optional<uint32_t> _elementSize;
+  nonstd::optional<Interpolation> _interpolation;
 
 #if 0 // TODO
   bool get_value(const value::Value *value,

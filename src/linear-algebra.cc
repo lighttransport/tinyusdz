@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 #include "linear-algebra.hh"
+#include "value-eval-util.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -15,12 +16,30 @@
 
 namespace tinyusdz {
 
-#if 0
-value::quath slerp(const value::quath &a, const value::quath &b, const float t) {
-  value::quatf q;
-   
+value::quath slerp(const value::quath &_a, const value::quath &_b, const float t) {
+  value::quatf a;
+  value::quatf b;
+
+  a[0] = value::half_to_float(_a[0]);
+  a[1] = value::half_to_float(_a[1]);
+  a[2] = value::half_to_float(_a[2]);
+  a[3] = value::half_to_float(_a[3]);
+
+  b[0] = value::half_to_float(_b[0]);
+  b[1] = value::half_to_float(_b[1]);
+  b[2] = value::half_to_float(_b[2]);
+  b[3] = value::half_to_float(_b[3]);
+
+  value::quatf _c = slerp(a, b, t);
+
+  value::quath c;
+  c[0] = value::float_to_half_full(_c[0]);
+  c[1] = value::float_to_half_full(_c[1]);
+  c[2] = value::float_to_half_full(_c[2]);
+  c[3] = value::float_to_half_full(_c[3]);
+
+  return c;
 }
-#endif
 
 value::quatf slerp(const value::quatf &a, const value::quatf &b, const float t) {
   linalg::vec<float, 4> qa;    
@@ -49,6 +68,86 @@ value::quatd slerp(const value::quatd &a, const value::quatd &b, const double t)
   
   return *(reinterpret_cast<value::quatd *>(&qret));
 
+}
+
+float vlength(const value::float3 &a) {
+  float d2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+  if (d2 > std::numeric_limits<float>::epsilon()) {
+    return std::sqrt(d2);
+  }
+  return 0.0f;
+}
+
+float vlength(const value::normal3f &a) {
+  return vlength(value::float3{a.x, a.y, a.z});
+}
+
+float vlength(const value::vector3f &a) {
+  return vlength(value::float3{a.x, a.y, a.z});
+}
+
+value::float3 vnormalize(const value::float3 &a) {
+  float len = vlength(a);
+  return value::float3({a[0] / len, a[1] / len, a[2] / len});
+}
+
+value::normal3f vnormalize(const value::normal3f &a) {
+  float len = vlength(a);
+  return value::normal3f({a[0] / len, a[1] / len, a[2] / len});
+}
+
+value::vector3f vnormalize(const value::vector3f &a) {
+  float len = vlength(a);
+  return value::vector3f({a[0] / len, a[1] / len, a[2] / len});
+}
+
+double vlength(const value::double3 &a) {
+  double d2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+  if (d2 > std::numeric_limits<double>::epsilon()) {
+    return std::sqrt(d2);
+  }
+  return 0.0;
+}
+
+value::double3 vnormalize(const value::double3 &a) {
+  double len = vlength(a);
+  return value::double3({a[0] / len, a[1] / len, a[2] / len});
+}
+
+value::float3 vcross(const value::float3 &a, const value::float3 &b)
+{
+  value::float3 n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+value::float3 geometric_normal(const value::float3 &p0, const value::float3 &p1, const value::float3 &p2)
+{
+  // CCW
+  value::float3 n = vcross(p1 - p0, p2 - p0);
+
+  return vnormalize(n);
+}
+
+value::double3 vcross(const value::double3 &a, const value::double3 &b)
+{
+  value::double3 n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+value::double3 geometric_normal(const value::double3 &p0, const value::double3 &p1, const value::double3 &p2)
+{
+  // CCW
+  value::double3 n = vcross(p1 - p0, p2 - p0);
+
+  return vnormalize(n);
 }
 
 } // namespace tinyusdz
