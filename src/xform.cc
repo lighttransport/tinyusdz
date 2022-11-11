@@ -303,6 +303,14 @@ value::matrix4d transpose(const value::matrix4d &_m) {
   return dst;
 }
 
+value::float4 matmul(const value::matrix4d &m, const value::float4 &p) {
+  return value::MultV<value::matrix4d, value::float4, float, 4>(m, p);
+}
+
+value::double4 matmul(const value::matrix4d &m, const value::double4 &p) {
+  return value::MultV<value::matrix4d, value::double4, double, 4>(m, p);
+}
+
 namespace {
 
 ///
