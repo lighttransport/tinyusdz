@@ -689,6 +689,24 @@ MTy Mult(const MTy &m, const MTy &n) {
   return ret;
 }
 
+// ret = matrix x vector
+// Assume matrixN >= vecN
+template <typename MTy, typename VTy, typename VBaseTy, size_t N>
+VTy MultV(const MTy &m, const VTy &v) {
+  VTy ret;
+
+  for (size_t j = 0; j < N; j++) {
+    VBaseTy value = static_cast<VBaseTy>(0);
+    for (size_t i = 0; i < N; i++) {
+      // TODO: Use MBaseTy for better precison.
+      value += static_cast<VBaseTy>(m.m[i][j]) * v[i];
+    }
+    ret[j] = value;
+  }
+
+  return ret;
+}
+
 template <typename MTy, typename STy, size_t N>
 MTy MatAdd(const MTy &m, const MTy &n) {
   MTy ret;
@@ -769,65 +787,71 @@ inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
 struct quath {
   half3 imag;
   half real;
+  half operator[](size_t idx) const { return *(&imag[0] + idx); }
+  half &operator[](size_t idx) { return *(&imag[0] + idx); }
 };
 
 struct quatf {
   float3 imag;
   float real;
+  float operator[](size_t idx) const { return *(&imag[0] + idx); }
+  float &operator[](size_t idx) { return *(&imag[0] + idx); }
 };
 
 struct quatd {
   double3 imag;
   double real;
+  double operator[](size_t idx) const { return *(&imag[0] + idx); }
+  double &operator[](size_t idx) { return *(&imag[0] + idx); }
 };
 
 struct vector3h {
   half x, y, z;
 
   half operator[](size_t idx) const { return *(&x + idx); }
-  half operator[](size_t idx) { return *(&x + idx); }
+  half &operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct vector3f {
   float x, y, z;
 
   float operator[](size_t idx) const { return *(&x + idx); }
-  float operator[](size_t idx) { return *(&x + idx); }
+  float &operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct vector3d {
   double x, y, z;
 
   double operator[](size_t idx) const { return *(&x + idx); }
-  double operator[](size_t idx) { return *(&x + idx); }
+  double &operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct normal3h {
   half x, y, z;
 
   half operator[](size_t idx) const { return *(&x + idx); }
-  half operator[](size_t idx) { return *(&x + idx); }
+  half &operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct normal3f {
   float x, y, z;
 
   float operator[](size_t idx) const { return *(&x + idx); }
-  float operator[](size_t idx) { return *(&x + idx); }
+  float &operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct normal3d {
   double x, y, z;
 
   double operator[](size_t idx) const { return *(&x + idx); }
-  double operator[](size_t idx) { return *(&x + idx); }
+  double &operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct point3h {
   half x, y, z;
 
   half operator[](size_t idx) const { return *(&x + idx); }
-  half operator[](size_t idx) { return *(&x + idx); }
+  half &operator[](size_t idx) { return *(&x + idx); }
 };
 
 inline point3h operator+(const float a, const point3h &b) {
@@ -915,7 +939,7 @@ struct point3f {
   float x, y, z;
 
   float operator[](size_t idx) const { return *(&x + idx); }
-  float operator[](size_t idx) { return *(&x + idx); }
+  float &operator[](size_t idx) { return *(&x + idx); }
 };
 
 inline point3f operator+(const float a, const point3f &b) {
@@ -1003,85 +1027,85 @@ struct point3d {
   double x, y, z;
 
   double operator[](size_t idx) const { return *(&x + idx); }
-  double operator[](size_t idx) { return *(&x + idx); }
+  double &operator[](size_t idx) { return *(&x + idx); }
 };
 
 struct color3h {
   half r, g, b;
 
-  // C++11 or later, struct is tightly packed, so use the pointer offset is
-  // valid.
   half operator[](size_t idx) const { return *(&r + idx); }
-  half operator[](size_t idx) { return *(&r + idx); }
+  half &operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct color3f {
   float r, g, b;
 
-  // C++11 or later, struct is tightly packed, so use the pointer offset is
-  // valid.
   float operator[](size_t idx) const { return *(&r + idx); }
-  float operator[](size_t idx) { return *(&r + idx); }
+  float &operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct color4h {
   half r, g, b, a;
 
-  // C++11 or later, struct is tightly packed, so use the pointer offset is
-  // valid.
   half operator[](size_t idx) const { return *(&r + idx); }
-  half operator[](size_t idx) { return *(&r + idx); }
+  half &operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct color4f {
   float r, g, b, a;
 
-  // C++11 or later, struct is tightly packed, so use the pointer offset is
-  // valid.
   float operator[](size_t idx) const { return *(&r + idx); }
-  float operator[](size_t idx) { return *(&r + idx); }
+  float &operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct color3d {
   double r, g, b;
 
-  // C++11 or later, struct is tightly packed, so use the pointer offset is
-  // valid.
   double operator[](size_t idx) const { return *(&r + idx); }
-  double operator[](size_t idx) { return *(&r + idx); }
+  double &operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct color4d {
   double r, g, b, a;
 
-  // C++11 or later, struct is tightly packed, so use the pointer offset is
-  // valid.
   double operator[](size_t idx) const { return *(&r + idx); }
-  double operator[](size_t idx) { return *(&r + idx); }
+  double &operator[](size_t idx) { return *(&r + idx); }
 };
 
 struct texcoord2h {
   half s, t;
+  half operator[](size_t idx) const { return *(&s + idx); }
+  half &operator[](size_t idx) { return *(&s + idx); }
 };
 
 struct texcoord2f {
   float s, t;
+  float operator[](size_t idx) const { return *(&s + idx); }
+  float &operator[](size_t idx) { return *(&s + idx); }
 };
 
 struct texcoord2d {
   double s, t;
+  double operator[](size_t idx) const { return *(&s + idx); }
+  double &operator[](size_t idx) { return *(&s + idx); }
 };
 
 struct texcoord3h {
   half s, t, r;
+  half operator[](size_t idx) const { return *(&s + idx); }
+  half &operator[](size_t idx) { return *(&s + idx); }
 };
 
 struct texcoord3f {
   float s, t, r;
+  float operator[](size_t idx) const { return *(&s + idx); }
+  float &operator[](size_t idx) { return *(&s + idx); }
 };
 
 struct texcoord3d {
   double s, t, r;
+  double operator[](size_t idx) const { return *(&s + idx); }
+  double &operator[](size_t idx) { return *(&s + idx); }
 };
 
 // Attribute value Block(`None`)

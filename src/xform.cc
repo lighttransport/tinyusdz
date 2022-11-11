@@ -828,4 +828,45 @@ std::vector<value::token> Xformable::xformOpOrder() const {
 
 }
 
+value::float3 tranform_dir(const value::matrix4d &m, const value::float3 &p) {
+  // MatTy, VecTy, VecBaseTy, vecN
+  return value::MultV<value::matrix4d, value::float3, float, 3>(m, p);
+}
+
+value::vector3f tranform_dir(const value::matrix4d &m, const value::vector3f &p) {
+  return value::MultV<value::matrix4d, value::vector3f, float, 3>(m, p);
+}
+
+value::normal3f tranform_dir(const value::matrix4d &m, const value::normal3f &p) {
+  return value::MultV<value::matrix4d, value::normal3f, float, 3>(m, p);
+}
+value::double3 tranform_dir(const value::matrix4d &m, const value::double3 &p) {
+  return value::MultV<value::matrix4d, value::double3, double, 3>(m, p);
+}
+value::vector3d tranform_dir(const value::matrix4d &m, const value::vector3d &p) {
+  return value::MultV<value::matrix4d, value::vector3d, double, 3>(m, p);
+}
+value::normal3d tranform_dir(const value::matrix4d &m, const value::normal3d &p) {
+  return value::MultV<value::matrix4d, value::normal3d, double, 3>(m, p);
+}
+
+value::matrix4d upper_left_3x3_only(const value::matrix4d &m) {
+  value::matrix4d dst;
+
+  memcpy(dst.m, m.m, sizeof(double) * 4 * 4);
+
+  dst.m[0][3] = 0.0;
+  dst.m[0][3] = 0.0;
+  dst.m[0][3] = 0.0;
+
+  dst.m[3][0] = 0.0;
+  dst.m[3][1] = 0.0;
+  dst.m[3][2] = 0.0;
+
+  dst.m[3][3] = 1.0;
+
+  return dst;
+}
+
+
 } // namespace tinyusdz

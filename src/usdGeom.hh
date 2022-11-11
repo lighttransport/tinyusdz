@@ -97,8 +97,8 @@ class GeomPrimvar {
     _attr.metas().interpolation = interp;
   }
 
-  const std::vector<int32_t> &get_indices() { return _indices; }
-  bool has_indices() { return _indices.size(); }
+  const std::vector<int32_t> &get_indices() const { return _indices; }
+  bool has_indices() const { return _indices.size(); }
 
   uint32_t type_id() { return _attr.type_id(); }
   std::string type_name() { return _attr.type_name(); }
@@ -125,7 +125,7 @@ class GeomPrimvar {
   /// Set Attribute value.
   ///
   template <typename T>
-  bool set_value(const T &val) {
+  void set_value(const T &val) {
     _attr.set_value(val);
   }
 

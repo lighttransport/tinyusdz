@@ -18,7 +18,7 @@
 //
 #include "common-macros.inc"
 #include "math-util.inc"
-#include "str-util.inc"
+#include "str-util.hh"
 #include "value-pprint.hh"
 
 #define SET_ERROR_AND_RETURN(msg) \
@@ -449,7 +449,7 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) {
     }
 
     if (auto pv = _attr.get_value<T>()) {
-      
+
       // copy
       (*dest) = pv.value();
       return true;
@@ -487,9 +487,7 @@ std::vector<GeomPrimvar> GPrim::get_primvars() const {
 }
 
 bool GPrim::set_primvar(const GeomPrimvar &primvar,
-                        std::string *err) const {
-  GeomPrimvar primvar;
-
+                        std::string *err) {
   if (primvar.name().empty()) {
     if (err) {
       (*err) += "GeomPrimvar.name is empty.";
@@ -509,60 +507,18 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   // Overwrite existing primvar prop.
   // TODO: Report warn when primvar name already exists.
 
+  const Attribute &attr = primvar.get_attribute();
+  props.emplace(primvar_name, attr);
+
   if (primvar.has_indices()) {
-  }
 
-  const auto it = props.find(primvar_name);
-  if (it != props.end()) {
-    // Currently connection attribute is not supported.
-    if (it->second.is_attribute()) {
-      const Attribute &attr = it->second.get_attribute();
-
-      primvar.set_value(attr);
-      primvar.set_name(varname);
-
-    } else {
-      return false;
-    }
-
-    // has indices?
     std::string index_name = primvar_name + kIndices;
-    const auto indexIt = props.find(index_name);
 
-    if (indexIt != props.end()) {
-      if (indexIt->second.is_attribute()) {
-        const Attribute &indexAttr = indexIt->second.get_attribute();
+    Attribute indices;
+    indices.set_value(primvar.get_indices());
 
-        if (indexAttr.is_connection()) {
-          SET_ERROR_AND_RETURN(
-              "TODO: Connetion is not supported for index Attribute at the "
-              "moment.");
-        } else if (indexAttr.is_timesamples()) {
-          SET_ERROR_AND_RETURN(
-              "TODO: Index attribute with timeSamples is not supported yet.");
-        } else if (indexAttr.is_blocked()) {
-          SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
-        } else if (indexAttr.is_value()) {
-          // Check if int[] type.
-          // TODO: Support uint[]?
-          std::vector<int32_t> indices;
-          if (!indexAttr.get_value(&indices)) {
-            SET_ERROR_AND_RETURN(
-                fmt::format("Index Attribute is not int[] type. Got {}",
-                            indexAttr.type_name()));
-          }
-
-          primvar.set_indices(indices);
-        } else {
-          SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
-        }
-      } else {
-        // indices are optional, so ok to skip it.
-      }
-    }
+    props.emplace(index_name, indices);
   }
-
-  (*out_primvar) = primvar;
 
   return true;
 }
