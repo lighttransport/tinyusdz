@@ -263,7 +263,7 @@ struct GeomSubset {
   };
 
   std::string name;
-  Specifier spec;
+  Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to parent node
 
