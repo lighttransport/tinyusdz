@@ -18,6 +18,7 @@
 //
 #include "common-macros.inc"
 #include "math-util.inc"
+#include "str-util.inc"
 #include "value-pprint.hh"
 
 #define SET_ERROR_AND_RETURN(msg) \
@@ -212,7 +213,7 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
     if (it->second.is_attribute()) {
       const Attribute &attr = it->second.get_attribute();
 
-      primvar.set_attribute(attr);
+      primvar.set_value(attr);
       primvar.set_name(varname);
 
     } else {
@@ -415,6 +416,55 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
   return processed;
 }
 
+template <typename T>
+bool GeomPrimvar::get_value(T *dest, std::string *err) {
+  if (!dest) {
+    if (err) {
+      (*err) += "Output value is nullptr.";
+    }
+    return false;
+  }
+
+  if (_attr.is_timesamples()) {
+    if (err) {
+      (*err) += "TimeSamples attribute is TODO.";
+    }
+    return false;
+  }
+
+  if (_attr.is_blocked()) {
+    if (err) {
+      (*err) += "Attribute is blocked.";
+    }
+    return false;
+  }
+
+  if (_attr.is_value()) {
+    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+      if (err) {
+        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                              _attr.type_name());
+      }
+      return false;
+    }
+
+    if (auto pv = _attr.get_value<T>()) {
+      
+      // copy
+      (*dest) = pv.value();
+      return true;
+
+    } else {
+      if (err) {
+        (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id, _attr.type_name());
+      }
+      return false;
+    }
+  }
+
+  return false;
+}
+
 std::vector<GeomPrimvar> GPrim::get_primvars() const {
   std::vector<GeomPrimvar> gpvars;
 
@@ -434,6 +484,87 @@ std::vector<GeomPrimvar> GPrim::get_primvars() const {
   }
 
   return gpvars;
+}
+
+bool GPrim::set_primvar(const GeomPrimvar &primvar,
+                        std::string *err) const {
+  GeomPrimvar primvar;
+
+  if (primvar.name().empty()) {
+    if (err) {
+      (*err) += "GeomPrimvar.name is empty.";
+    }
+    return false;
+  }
+
+  if (startsWith(primvar.name(), "primvars:")) {
+    if (err) {
+      (*err) += "GeomPrimvar.name must not start with `primvars:` namespace. name = " + primvar.name();
+    }
+    return false;
+  }
+
+  std::string primvar_name = kPrimvars + primvar.name();
+
+  // Overwrite existing primvar prop.
+  // TODO: Report warn when primvar name already exists.
+
+  if (primvar.has_indices()) {
+  }
+
+  const auto it = props.find(primvar_name);
+  if (it != props.end()) {
+    // Currently connection attribute is not supported.
+    if (it->second.is_attribute()) {
+      const Attribute &attr = it->second.get_attribute();
+
+      primvar.set_value(attr);
+      primvar.set_name(varname);
+
+    } else {
+      return false;
+    }
+
+    // has indices?
+    std::string index_name = primvar_name + kIndices;
+    const auto indexIt = props.find(index_name);
+
+    if (indexIt != props.end()) {
+      if (indexIt->second.is_attribute()) {
+        const Attribute &indexAttr = indexIt->second.get_attribute();
+
+        if (indexAttr.is_connection()) {
+          SET_ERROR_AND_RETURN(
+              "TODO: Connetion is not supported for index Attribute at the "
+              "moment.");
+        } else if (indexAttr.is_timesamples()) {
+          SET_ERROR_AND_RETURN(
+              "TODO: Index attribute with timeSamples is not supported yet.");
+        } else if (indexAttr.is_blocked()) {
+          SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
+        } else if (indexAttr.is_value()) {
+          // Check if int[] type.
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!indexAttr.get_value(&indices)) {
+            SET_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+          primvar.set_indices(indices);
+        } else {
+          SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+        }
+      } else {
+        // indices are optional, so ok to skip it.
+      }
+    }
+  }
+
+  (*out_primvar) = primvar;
+
+  return true;
 }
 
 const std::vector<value::point3f> GeomMesh::GetPoints(

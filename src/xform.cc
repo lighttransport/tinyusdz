@@ -87,6 +87,31 @@ value::matrix4d to_matrix(const value::matrix3d &m33, const value::double3 &tx)
   return m;
 }
 
+value::matrix3d to_matrix3x3(const value::matrix4d &m44, value::double3 *tx)
+{
+
+  value::matrix3d m;
+  Identity(&m);
+
+  m.m[0][0] = m44.m[0][0];
+  m.m[0][1] = m44.m[0][1];
+  m.m[0][2] = m44.m[0][2];
+  m.m[1][0] = m44.m[1][0];
+  m.m[1][1] = m44.m[1][1];
+  m.m[1][2] = m44.m[1][2];
+  m.m[2][0] = m44.m[2][0];
+  m.m[2][1] = m44.m[2][1];
+  m.m[2][2] = m44.m[2][2];
+
+  if (tx) {
+    (*tx)[0] = m44.m[3][0];
+    (*tx)[1] = m44.m[3][1];
+    (*tx)[2] = m44.m[3][2];
+  }
+
+  return m;
+}
+
 
 value::matrix4d to_matrix(const value::quath &q)
 {
