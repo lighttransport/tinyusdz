@@ -165,23 +165,23 @@ bool IsSupportedGeomPrimvarType(const std::string &type_name) {
 }
 
 bool GeomPrimvar::has_elementSize() const {
-  return _attr.metas().elementSize.has_value();
+  return _elementSize.has_value();
 }
 
 uint32_t GeomPrimvar::get_elementSize() const {
-  if (_attr.metas().elementSize.has_value()) {
-    return _attr.metas().elementSize.value();
+  if (_elementSize.has_value()) {
+    return _elementSize.value();
   }
   return 1;
 }
 
 bool GeomPrimvar::has_interpolation() const {
-  return _attr.metas().interpolation.has_value();
+  return _interpolation.has_value();
 }
 
 Interpolation GeomPrimvar::get_interpolation() const {
-  if (_attr.metas().interpolation.has_value()) {
-    return _attr.metas().interpolation.value();
+  if (_interpolation.has_value()) {
+    return _interpolation.value();
   }
 
   return Interpolation::Constant;  // unauthored
@@ -215,6 +215,12 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 
       primvar.set_value(attr);
       primvar.set_name(varname);
+      if (attr.metas().interpolation.has_value()) {
+        primvar.set_interpolation(attr.metas().interpolation.value());
+      }
+      if (attr.metas().elementSize.has_value()) {
+        primvar.set_elementSize(attr.metas().elementSize.value());
+      }
 
     } else {
       return false;
@@ -507,7 +513,16 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   // Overwrite existing primvar prop.
   // TODO: Report warn when primvar name already exists.
 
-  const Attribute &attr = primvar.get_attribute();
+  Attribute attr = primvar.get_attribute();
+
+  if (primvar.has_interpolation()) {
+    attr.metas().interpolation = primvar.get_interpolation();
+  }
+
+  if (primvar.has_elementSize()) {
+    attr.metas().elementSize = primvar.get_elementSize();
+  }
+
   props.emplace(primvar_name, attr);
 
   if (primvar.has_indices()) {
