@@ -848,6 +848,9 @@ value::vector3f transform_dir(const value::matrix4d &m, const value::vector3f &p
 value::normal3f transform_dir(const value::matrix4d &m, const value::normal3f &p) {
   return value::MultV<value::matrix4d, value::normal3f, float, 3>(m, p);
 }
+value::point3f transform_dir(const value::matrix4d &m, const value::point3f &p) {
+  return value::MultV<value::matrix4d, value::point3f, float, 3>(m, p);
+}
 value::double3 transform_dir(const value::matrix4d &m, const value::double3 &p) {
   return value::MultV<value::matrix4d, value::double3, double, 3>(m, p);
 }
@@ -856,6 +859,9 @@ value::vector3d transform_dir(const value::matrix4d &m, const value::vector3d &p
 }
 value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p) {
   return value::MultV<value::matrix4d, value::normal3d, double, 3>(m, p);
+}
+value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p) {
+  return value::MultV<value::matrix4d, value::point3d, double, 3>(m, p);
 }
 
 value::matrix4d upper_left_3x3_only(const value::matrix4d &m) {
