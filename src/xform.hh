@@ -13,6 +13,9 @@ value::matrix4d to_matrix(const value::quatd &q);
 
 value::matrix4d to_matrix(const value::matrix3d &m, const value::double3 &tx);
 
+// Decompose into Upper-left 3x3 matrix + translation
+value::matrix3d to_matrix3x3(const value::matrix4d &m, value::double3 *tx = nullptr);
+
 value::matrix3d to_matrix3x3(const value::quath &q);
 value::matrix3d to_matrix3x3(const value::quatf &q);
 value::matrix3d to_matrix3x3(const value::quatd &q);
@@ -30,7 +33,7 @@ bool inverse(const value::matrix3d &m, value::matrix3d &inv_m);
 
 value::matrix2d transpose(const value::matrix2d &m);
 value::matrix3d transpose(const value::matrix3d &m);
-value::matrix4d transpose(const value::matrix4d &m);
+value::matrix4d transpose(const value::matrix4d &m); // NOTE: Full matrix transpose(i.e, translation elements are transposed). 
 
 
 //
