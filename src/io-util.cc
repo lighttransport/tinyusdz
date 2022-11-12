@@ -370,24 +370,24 @@ bool WriteWholeFile(const std::string &filepath,
 #ifdef _WIN32
 bool WriteWholeFile(const std::wstring &filepath,
                     const unsigned char *contents, size_t content_bytes, std::string *err) {
-#ifdef _WIN32
 #if defined(__GLIBCXX__)  // mingw
-  int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
+  int file_descriptor = _wopen(filepath.c_str(),
                                _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
   __gnu_cxx::stdio_filebuf<char> wfile_buf(
       file_descriptor, std::ios_base::out | std::ios_base::binary);
   std::ostream f(&wfile_buf);
 #elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
+  // MSVC extension allow wstrng as an argument.
   std::ofstream f(filepath.c_str(), std::ofstream::binary);
 #else  // other C++ compiler for win32?
-  std::wofstream f(filepath.c_str(), std::ofstream::binary);
+#error "Unsupporte platform"
 #endif
-#else
-  std::wofstream f(filepath.c_str(), std::ofstream::binary);
-#endif
+
   if (!f) {
     if (err) {
-      (*err) += "File open error for writing : " + filepath + "\n";
+      // This would print garbage character... 
+      // FIXME: First create string in wchar, then convert to wstring?
+      (*err) += "File open error for writing : " + WcharToUTF8(filepath) + "\n";
     }
     return false;
   }
@@ -396,7 +396,7 @@ bool WriteWholeFile(const std::wstring &filepath,
           static_cast<std::streamsize>(content_bytes));
   if (!f) {
     if (err) {
-      (*err) += "File write error: " + filepath + "\n";
+      (*err) += "File write error: " + WcharToUTF8(filepath) + "\n";
     }
     return false;
   }
