@@ -3847,6 +3847,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
     hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
     hasSibling = (jumps[thisIndex] >= 0);
+    DCOUT("hasChild = " << hasChild << ", hasSibling = " << hasSibling);
 
     if (hasChild) {
       if (hasSibling) {

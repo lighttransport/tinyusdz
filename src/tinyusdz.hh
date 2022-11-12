@@ -172,7 +172,7 @@ bool LoadUSDZFromFile(const std::string &filename, Stage *stage,
                       const USDLoadOptions &options = USDLoadOptions());
 
 #ifdef _WIN32
-// WideChar version
+// WideChar(Unicode filename) version
 bool LoadUSDZFromFile(const std::wstring &filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options = USDLoadOptions());

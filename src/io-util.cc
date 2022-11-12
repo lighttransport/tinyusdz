@@ -241,44 +241,6 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
 #endif
 }
 
-#if 0 // not used at this momemnt
-bool WriteWholeFile(std::string *err, const std::string &filepath,
-                    const std::vector<unsigned char> &contents, void *) {
-#ifdef _WIN32
-#if defined(__GLIBCXX__)  // mingw
-  int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
-                               _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
-  __gnu_cxx::stdio_filebuf<char> wfile_buf(
-      file_descriptor, std::ios_base::out | std::ios_base::binary);
-  std::ostream f(&wfile_buf);
-#elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
-  std::ofstream f(UTF8ToWchar(filepath).c_str(), std::ofstream::binary);
-#else  // other C++ compiler for win32?
-  std::ofstream f(filepath.c_str(), std::ofstream::binary);
-#endif
-#else
-  std::ofstream f(filepath.c_str(), std::ofstream::binary);
-#endif
-  if (!f) {
-    if (err) {
-      (*err) += "File open error for writing : " + filepath + "\n";
-    }
-    return false;
-  }
-
-  f.write(reinterpret_cast<const char *>(&contents.at(0)),
-          static_cast<std::streamsize>(contents.size()));
-  if (!f) {
-    if (err) {
-      (*err) += "File write error: " + filepath + "\n";
-    }
-    return false;
-  }
-
-  return true;
-}
-#endif
-
 bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
                    const std::string &filepath, uint32_t max_read_bytes, void *userdata) {
   (void)userdata;
@@ -369,9 +331,8 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
 #endif
 }
 
-#if 0 // not used at this momemnt
-bool WriteWholeFile(std::string *err, const std::string &filepath,
-                    const std::vector<unsigned char> &contents, void *) {
+bool WriteWholeFile(const std::string &filepath,
+                    const unsigned char *contents, size_t content_bytes, std::string *err) {
 #ifdef _WIN32
 #if defined(__GLIBCXX__)  // mingw
   int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
@@ -394,8 +355,45 @@ bool WriteWholeFile(std::string *err, const std::string &filepath,
     return false;
   }
 
-  f.write(reinterpret_cast<const char *>(&contents.at(0)),
-          static_cast<std::streamsize>(contents.size()));
+  f.write(reinterpret_cast<const char *>(contents),
+          static_cast<std::streamsize>(content_bytes));
+  if (!f) {
+    if (err) {
+      (*err) += "File write error: " + filepath + "\n";
+    }
+    return false;
+  }
+
+  return true;
+}
+
+#ifdef _WIN32
+bool WriteWholeFile(const std::wstring &filepath,
+                    const unsigned char *contents, size_t content_bytes, std::string *err) {
+#ifdef _WIN32
+#if defined(__GLIBCXX__)  // mingw
+  int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
+                               _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
+  __gnu_cxx::stdio_filebuf<char> wfile_buf(
+      file_descriptor, std::ios_base::out | std::ios_base::binary);
+  std::ostream f(&wfile_buf);
+#elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
+  std::ofstream f(filepath.c_str(), std::ofstream::binary);
+#else  // other C++ compiler for win32?
+  std::wofstream f(filepath.c_str(), std::ofstream::binary);
+#endif
+#else
+  std::wofstream f(filepath.c_str(), std::ofstream::binary);
+#endif
+  if (!f) {
+    if (err) {
+      (*err) += "File open error for writing : " + filepath + "\n";
+    }
+    return false;
+  }
+
+  f.write(reinterpret_cast<const char *>(contents),
+          static_cast<std::streamsize>(content_bytes));
   if (!f) {
     if (err) {
       (*err) += "File write error: " + filepath + "\n";

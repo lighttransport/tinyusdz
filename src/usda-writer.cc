@@ -15,6 +15,7 @@
 #include "pprinter.hh"
 #include "value-pprint.hh"
 #include "tinyusdz.hh"
+#include "io-util.hh"
 
 namespace tinyusdz {
 namespace usda {
@@ -27,20 +28,14 @@ namespace {
 bool SaveAsUSDA(const std::string &filename, const Stage &stage,
                 std::string *warn, std::string *err) {
 
-  // TODO: warn and err on export.
-  std::string s = stage.ExportToString();
-
   (void)warn;
 
-  std::ofstream ofs(filename);
-  if (!ofs) {
-    if (err) {
-      (*err) += "Failed to open file [" + filename + "] to write.\n";
-    }
+  // TODO: Handle warn and err on export.
+  std::string s = stage.ExportToString();
+
+  if (!io::WriteWholeFile(filename, reinterpret_cast<const unsigned char *>(s.data()), s.size(), err)) {
     return false;
   }
-
-  ofs << s;
 
   std::cout << "Wrote to [" << filename << "]\n";
 
@@ -49,6 +44,13 @@ bool SaveAsUSDA(const std::string &filename, const Stage &stage,
 
 } // namespace usda
 }  // namespace tinyusdz
+
+#if defined(_WIN32)
+bool SaveAsUSDA(const std::wstring &filename, const Stage &stage,
+                std::string *warn, std::string *err) {
+
+}
+#endif
 
 #else
 
