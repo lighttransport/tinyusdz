@@ -422,3 +422,4 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * dtoa_milo.h: MIT License. https://github.com/miloyip/dtoa-benchmark
 * jeaiii/itoa: MIT License. https://github.com/jeaiii/itoa
 * alac: Apache 2.0 License. https://macosforge.github.io/alac/
+* UTF8-CPP: BSL 1.0 License. https://github.com/nemtrif/utfcpp
