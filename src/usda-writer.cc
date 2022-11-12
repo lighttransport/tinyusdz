@@ -42,15 +42,28 @@ bool SaveAsUSDA(const std::string &filename, const Stage &stage,
   return true;
 }
 
-} // namespace usda
-}  // namespace tinyusdz
-
 #if defined(_WIN32)
 bool SaveAsUSDA(const std::wstring &filename, const Stage &stage,
                 std::string *warn, std::string *err) {
 
+  (void)warn;
+
+  // TODO: Handle warn and err on export.
+  std::string s = stage.ExportToString();
+
+  if (!io::WriteWholeFile(filename, reinterpret_cast<const unsigned char *>(s.data()), s.size(), err)) {
+    return false;
+  }
+
+  std::wcout << "Wrote to [" << filename << "]\n";
+
+  return true;
 }
 #endif
+
+} // namespace usda
+}  // namespace tinyusdz
+
 
 #else
 
