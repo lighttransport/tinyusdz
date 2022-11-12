@@ -36,6 +36,17 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
                    const std::string &filepath, uint32_t max_read_bytes = 128,
                    void *userdata = nullptr);
 
+///
+/// Filepath is treated as WideChar(UNICODE) on Windows.
+///
+bool WriteWholeFile(const std::string &filepath,
+                    const unsigned char *contents, size_t content_bytes, std::string *err);
+
+#ifdef _WIN32
+bool WriteWholeFile(const std::wstring &filepath,
+                    const unsigned char *contents, size_t content_bytes, std::string *err);
+#endif
+
 std::string GetBaseDir(const std::string &filepath);
 std::string JoinPath(const std::string &dir, const std::string &filename);
 bool IsAbsPath(const std::string &filepath);
