@@ -176,7 +176,7 @@ class USDCReader::Impl {
   bool ParseProperty(const SpecType specType,
                      const crate::FieldValuePairVector &fvs, Property *prop);
 
-#if 0 // TODO: Remove
+#if 0  // TODO: Remove
   // For simple, non animatable and non `.connect` types. e.g. "token[]"
   template <typename T>
   bool ReconstructSimpleAttribute(int parent,
@@ -197,10 +197,10 @@ class USDCReader::Impl {
   /// Parse Prim spec from FieldValuePairs
   ///
   bool ParsePrimSpec(const crate::FieldValuePairVector &fvs,
-                       nonstd::optional<std::string> &typeName, /* out */
-                       nonstd::optional<Specifier> &specifier,  /* out */
-                       std::vector<value::token> &properties,   /* out */
-                       PrimMeta &primMeta);                     /* out */
+                     nonstd::optional<std::string> &typeName, /* out */
+                     nonstd::optional<Specifier> &specifier,  /* out */
+                     std::vector<value::token> &properties,   /* out */
+                     PrimMeta &primMeta);                     /* out */
 
   bool ParseVariantSetFields(
       const crate::FieldValuePairVector &fvs,
@@ -217,7 +217,8 @@ class USDCReader::Impl {
   /// When `current` is 0(StageMeta), `primOut` is not set.
   /// `is_parent_variant` : True when parent path is Variant
   ///
-  bool ReconstructPrimNode(int parent, int current, int level, bool is_parent_variant,
+  bool ReconstructPrimNode(int parent, int current, int level,
+                           bool is_parent_variant,
                            const PathIndexToSpecIndexMap &psmap, Stage *stage,
                            nonstd::optional<Prim> *primOut);
 
@@ -226,8 +227,7 @@ class USDCReader::Impl {
   ///
   nonstd::optional<Prim> ReconstructPrimFromTypeName(
       const std::string &typeName, const std::string &prim_name,
-      const crate::CrateReader::Node &node,
-      const Specifier spec,
+      const crate::CrateReader::Node &node, const Specifier spec,
       const crate::FieldValuePairVector &fvs,
       const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta);
 
@@ -742,79 +742,112 @@ static bool UpcastType(const std::string &reqType, value::Value &inout) {
     return false;
   }
 
-  if (tyid == value::TYPE_ID_FLOAT) {
-    float dst;
-    if (auto pv = inout.get_value<value::half>()) {
-      dst = half_to_float(pv.value());
-      inout = dst;
-      return true;
+  bool reqTypeArray = false;
+  uint32_t baseReqTyId;
+  DCOUT("UpcastType trial: reqTy : " << reqType << ", valtype = " << inout.type_name());
+
+  if (endsWith(reqType, "[]")) {
+    reqTypeArray = true;
+    baseReqTyId = value::GetTypeId(removeSuffix(reqType, "[]"));
+  } else {
+    baseReqTyId = value::GetTypeId(reqType);
+  }
+  DCOUT("is array: " << reqTypeArray << ", basereqty = " << value::GetTypeName(baseReqTyId));
+
+  // For array
+  if (reqTypeArray) {
+    // Role type check
+    // TODO: More Role type cast
+    if (inout.type_id() ==
+        value::TypeTraits<std::vector<value::float2>>::type_id) {
+      if (baseReqTyId == value::TypeTraits<value::texcoord2f>::type_id) {
+        if (auto pv = inout.get_value<std::vector<value::float2>>()) {
+          std::vector<value::float2> val = pv.value();
+          std::vector<value::texcoord2f> newval;
+          newval.resize(val.size());
+          memcpy(newval.data(), val.data(), sizeof(value::float2) * val.size());
+  
+          inout = newval;
+          return true;
+        }
+      }
     }
-  } else if (tyid == value::TYPE_ID_FLOAT2) {
-    value::float2 dst;
-    if (auto pv = inout.get_value<value::half2>()) {
-      value::half2 v = pv.value();
-      dst[0] = half_to_float(v[0]);
-      dst[1] = half_to_float(v[1]);
-      inout = dst;
-      return true;
-    }
-  } else if (tyid == value::TYPE_ID_FLOAT3) {
-    value::float3 dst;
-    if (auto pv = inout.get_value<value::half3>()) {
-      value::half3 v = pv.value();
-      dst[0] = half_to_float(v[0]);
-      dst[1] = half_to_float(v[1]);
-      dst[2] = half_to_float(v[2]);
-      inout = dst;
-      return true;
-    }
-  } else if (tyid == value::TYPE_ID_FLOAT4) {
-    value::float4 dst;
-    if (auto pv = inout.get_value<value::half4>()) {
-      value::half4 v = pv.value();
-      dst[0] = half_to_float(v[0]);
-      dst[1] = half_to_float(v[1]);
-      dst[2] = half_to_float(v[2]);
-      dst[3] = half_to_float(v[3]);
-      inout = dst;
-      return true;
-    }
-  } else if (tyid == value::TYPE_ID_DOUBLE) {
-    double dst;
-    if (auto pv = inout.get_value<value::half>()) {
-      dst = double(half_to_float(pv.value()));
-      inout = dst;
-      return true;
-    }
-  } else if (tyid == value::TYPE_ID_DOUBLE2) {
-    value::double2 dst;
-    if (auto pv = inout.get_value<value::half2>()) {
-      value::half2 v = pv.value();
-      dst[0] = double(half_to_float(v[0]));
-      dst[1] = double(half_to_float(v[1]));
-      inout = dst;
-      return true;
-    }
-  } else if (tyid == value::TYPE_ID_DOUBLE3) {
-    value::double3 dst;
-    if (auto pv = inout.get_value<value::half3>()) {
-      value::half3 v = pv.value();
-      dst[0] = double(half_to_float(v[0]));
-      dst[1] = double(half_to_float(v[1]));
-      dst[2] = double(half_to_float(v[2]));
-      inout = dst;
-      return true;
-    }
-  } else if (tyid == value::TYPE_ID_DOUBLE4) {
-    value::double4 dst;
-    if (auto pv = inout.get_value<value::half4>()) {
-      value::half4 v = pv.value();
-      dst[0] = double(half_to_float(v[0]));
-      dst[1] = double(half_to_float(v[1]));
-      dst[2] = double(half_to_float(v[2]));
-      dst[3] = double(half_to_float(v[3]));
-      inout = dst;
-      return true;
+  } else {
+    if (tyid == value::TYPE_ID_FLOAT) {
+      float dst;
+      if (auto pv = inout.get_value<value::half>()) {
+        dst = half_to_float(pv.value());
+        inout = dst;
+        return true;
+      }
+    } else if (tyid == value::TYPE_ID_FLOAT2) {
+      if (auto pv = inout.get_value<value::half2>()) {
+        value::float2 dst;
+        value::half2 v = pv.value();
+        dst[0] = half_to_float(v[0]);
+        dst[1] = half_to_float(v[1]);
+        inout = dst;
+        return true;
+      }
+
+    } else if (tyid == value::TYPE_ID_FLOAT3) {
+      value::float3 dst;
+      if (auto pv = inout.get_value<value::half3>()) {
+        value::half3 v = pv.value();
+        dst[0] = half_to_float(v[0]);
+        dst[1] = half_to_float(v[1]);
+        dst[2] = half_to_float(v[2]);
+        inout = dst;
+        return true;
+      }
+    } else if (tyid == value::TYPE_ID_FLOAT4) {
+      value::float4 dst;
+      if (auto pv = inout.get_value<value::half4>()) {
+        value::half4 v = pv.value();
+        dst[0] = half_to_float(v[0]);
+        dst[1] = half_to_float(v[1]);
+        dst[2] = half_to_float(v[2]);
+        dst[3] = half_to_float(v[3]);
+        inout = dst;
+        return true;
+      }
+    } else if (tyid == value::TYPE_ID_DOUBLE) {
+      double dst;
+      if (auto pv = inout.get_value<value::half>()) {
+        dst = double(half_to_float(pv.value()));
+        inout = dst;
+        return true;
+      }
+    } else if (tyid == value::TYPE_ID_DOUBLE2) {
+      value::double2 dst;
+      if (auto pv = inout.get_value<value::half2>()) {
+        value::half2 v = pv.value();
+        dst[0] = double(half_to_float(v[0]));
+        dst[1] = double(half_to_float(v[1]));
+        inout = dst;
+        return true;
+      }
+    } else if (tyid == value::TYPE_ID_DOUBLE3) {
+      value::double3 dst;
+      if (auto pv = inout.get_value<value::half3>()) {
+        value::half3 v = pv.value();
+        dst[0] = double(half_to_float(v[0]));
+        dst[1] = double(half_to_float(v[1]));
+        dst[2] = double(half_to_float(v[2]));
+        inout = dst;
+        return true;
+      }
+    } else if (tyid == value::TYPE_ID_DOUBLE4) {
+      value::double4 dst;
+      if (auto pv = inout.get_value<value::half4>()) {
+        value::half4 v = pv.value();
+        dst[0] = double(half_to_float(v[0]));
+        dst[1] = double(half_to_float(v[1]));
+        dst[2] = double(half_to_float(v[2]));
+        dst[3] = double(half_to_float(v[3]));
+        inout = dst;
+        return true;
+      }
     }
   }
 
@@ -1185,7 +1218,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   return true;
 }
 
-#if 0 // TODO: Remove
+#if 0  // TODO: Remove
 template <typename T>
 bool USDCReader::Impl::ReconstructSimpleAttribute(
     int parent, const crate::FieldValuePairVector &fvs, T *attr,
@@ -1460,8 +1493,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         } else if (vf.value().str() == "loop") {
           metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeLoop;
         } else {
-          PUSH_ERROR_AND_RETURN(
-              "Unsupported token value for `playbackMode`.");
+          PUSH_ERROR_AND_RETURN("Unsupported token value for `playbackMode`.");
         }
       } else if (auto vs = fv.second.get_value<std::string>()) {
         // unregisteredvalue uses string type.
@@ -1541,22 +1573,21 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 
 nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     const std::string &typeName, const std::string &prim_name,
-    const crate::CrateReader::Node &node,
-    const Specifier spec,
+    const crate::CrateReader::Node &node, const Specifier spec,
     const crate::FieldValuePairVector &fvs,
     const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta) {
-#define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec)    \
-  if (__node_ty == value::TypeTraits<__primty>::type_name()) { \
-    __primty typed_prim;                                      \
-    if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {    \
-      PUSH_ERROR("Failed to reconstruct Prim " << __node_ty); \
-      return nonstd::nullopt;                                 \
-    }                                                         \
-    typed_prim.meta = meta;                                   \
-    typed_prim.name = __prim_name;                            \
-    typed_prim.spec = __spec;                            \
-    value::Value primdata = typed_prim;                       \
-    return Prim(__prim_name, primdata);                                    \
+#define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec) \
+  if (__node_ty == value::TypeTraits<__primty>::type_name()) {     \
+    __primty typed_prim;                                           \
+    if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {         \
+      PUSH_ERROR("Failed to reconstruct Prim " << __node_ty);      \
+      return nonstd::nullopt;                                      \
+    }                                                              \
+    typed_prim.meta = meta;                                        \
+    typed_prim.name = __prim_name;                                 \
+    typed_prim.spec = __spec;                                      \
+    value::Value primdata = typed_prim;                            \
+    return Prim(__prim_name, primdata);                            \
   } else
 
   RECONSTRUCT_PRIM(Xform, typeName, prim_name, spec)
@@ -1606,10 +1637,10 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 ///
 ///
 bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
-                                       nonstd::optional<std::string> &typeName,
-                                       nonstd::optional<Specifier> &specifier,
-                                       std::vector<value::token> &properties,
-                                       PrimMeta &primMeta) {
+                                     nonstd::optional<std::string> &typeName,
+                                     nonstd::optional<Specifier> &specifier,
+                                     std::vector<value::token> &properties,
+                                     PrimMeta &primMeta) {
   // Fields for Prim and Prim metas.
   for (const auto &fv : fvs) {
     if (fv.first == "typeName") {
@@ -1838,8 +1869,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
     } else if (fv.first == "references") {  // `references` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
         // make empty array
-        primMeta.references =
-            std::make_pair(ListEditQual::ResetToExplicit, std::vector<Reference>());
+        primMeta.references = std::make_pair(ListEditQual::ResetToExplicit,
+                                             std::vector<Reference>());
       } else if (auto pv = fv.second.as<ListOp<Reference>>()) {
         const ListOp<Reference> &p = *pv;
         DCOUT("references = " << to_string(p));
@@ -1860,8 +1891,9 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
         primMeta.references = std::make_pair(qual, items);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "`references` must be type `ListOp[Reference]`, but got type `"
-                      << fv.second.type_name() << "`");
+            kTag,
+            "`references` must be type `ListOp[Reference]`, but got type `"
+                << fv.second.type_name() << "`");
       }
     } else if (fv.first == "specializes") {  // `specializes` composition
       if (auto pv = fv.second.as<ListOp<Path>>()) {
@@ -2117,7 +2149,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         auto prim = ReconstructPrimFromTypeName(typeName.value(), prim_name,
-                                                node, specifier.value(), fvs, psmap, primMeta);
+                                                node, specifier.value(), fvs,
+                                                psmap, primMeta);
 
         if (prim) {
           // Prim name
@@ -2160,7 +2193,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         // Ensure ElementPath is variant
         if (!tokenize_variantElement(elemPath.full_path_name())) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
         }
 
       } else {
@@ -2254,22 +2288,27 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         std::array<std::string, 2> variantPair;
         if (!tokenize_variantElement(prim_name, &variantPair)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
         }
 
         std::string variantSetName = variantPair[0];
         std::string variantPrimName = variantPair[1];
 
         if (!ValidatePrimName(variantPrimName)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Prim name in Variant: `{}`", variantPrimName));
+          PUSH_ERROR_AND_RETURN_TAG(
+              kTag, fmt::format("Invalid Prim name in Variant: `{}`",
+                                variantPrimName));
         }
 
-        variantPrim = ReconstructPrimFromTypeName(typeName.value(), variantPrimName,
-                                                node, specifier.value(), fvs, psmap, primMeta);
+        variantPrim = ReconstructPrimFromTypeName(
+            typeName.value(), variantPrimName, node, specifier.value(), fvs,
+            psmap, primMeta);
 
         if (variantPrim) {
           // Prim name
-          variantPrim.value().element_path() = elemPath; // FIXME: Use variantPrimName?
+          variantPrim.value().element_path() =
+              elemPath;  // FIXME: Use variantPrimName?
 
           // Prim Specifier
           variantPrim.value().specifier() = specifier.value();
@@ -2288,7 +2327,6 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     }
     case SpecType::Attribute: {
       if (is_parent_variant) {
-
         nonstd::optional<Path> path = GetPath(spec.path_index);
 
         if (!path) {
@@ -2297,15 +2335,18 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         Property prop;
         if (!ParseProperty(spec.spec_type, fvs, &prop)) {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, fmt::format("Failed to parse Attribut: {}.", path.value().prop_part()));
-
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    fmt::format("Failed to parse Attribut: {}.",
+                                                path.value().prop_part()));
         }
 
-        // Parent Prim is not yet reconstructed, so store info to temporary buffer _variantAttributeNodes.
+        // Parent Prim is not yet reconstructed, so store info to temporary
+        // buffer _variantAttributeNodes.
         _variantAttributeNodes.emplace(current, prop);
 
-        DCOUT(fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}", current, path.value().prop_part(), spec.path_index));
+        DCOUT(
+            fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}",
+                        current, path.value().prop_part(), spec.path_index));
 
       } else {
         // Maybe parent is Class/Over, or inherited
@@ -2348,7 +2389,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   }
 
   DCOUT("ReconstructPrimRecursively: parent = "
-        << std::to_string(parent) << ", current = " << current << ", level = " << std::to_string(level));
+        << std::to_string(parent) << ", current = " << current
+        << ", level = " << std::to_string(level));
 
   if ((current < 0) || (current >= int(_nodes.size()))) {
     PUSH_ERROR("Invalid current node id: " + std::to_string(current) +
@@ -2356,7 +2398,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     return false;
   }
 
-#if 0 // not used
+#if 0  // not used
   crate::Spec spec;
   {
     if (!psmap.count(uint32_t(current))) {
@@ -2385,7 +2427,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   // Assume parent node is already processed.
   bool is_parent_variant = _variantPrims.count(parent);
 
-  if (!ReconstructPrimNode(parent, current, level, is_parent_variant, psmap, stage, &prim)) {
+  if (!ReconstructPrimNode(parent, current, level, is_parent_variant, psmap,
+                           stage, &prim)) {
     return false;
   }
 
@@ -2456,7 +2499,8 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
         PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
       }
 
-      DCOUT(fmt::format("path index[{}] -> spec index [{}]", _specs[i].path_index.value, uint32_t(i)));
+      DCOUT(fmt::format("path index[{}] -> spec index [{}]",
+                        _specs[i].path_index.value, uint32_t(i)));
       path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
     }
   }
@@ -2600,7 +2644,7 @@ bool USDCReader::ReadUSDC() { return impl_->ReadUSDC(); }
 }  // namespace usdc
 }  // namespace tinyusdz
 
-#else // TINYUSDZ_DISABLE_MODULE_USDC_READER
+#else  // TINYUSDZ_DISABLE_MODULE_USDC_READER
 
 namespace tinyusdz {
 namespace usdc {
@@ -2630,4 +2674,4 @@ std::string USDCReader::GetWarning() { return ""; }
 }  // namespace usdc
 }  // namespace tinyusdz
 
-#endif // TINYUSDZ_DISABLE_MODULE_USDC_READER
+#endif  // TINYUSDZ_DISABLE_MODULE_USDC_READER
