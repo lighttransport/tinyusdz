@@ -191,7 +191,7 @@ Path::Path(const std::string &p, const std::string &prop) {
 }
 
 Path Path::append_property(const std::string &elem) {
-  Path p = (*this);
+  Path &p = (*this);
 
   if (elem.empty()) {
     p._valid = false;
@@ -263,7 +263,7 @@ std::pair<Path, Path> Path::split_at_root() const {
 }
 
 Path Path::append_element(const std::string &elem) {
-  Path p = (*this);
+  Path &p = (*this);
 
   if (elem.empty()) {
     p._valid = false;
