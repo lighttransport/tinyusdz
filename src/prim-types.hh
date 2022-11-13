@@ -279,11 +279,20 @@ class Path {
 
   // static Path RelativePath() { return Path("."); }
 
+  // Append property path(change internal state)
   Path append_property(const std::string &elem);
 
-  Path append_element(const std::string &elem);
+  // Append prim path(change internal state)
+  Path append_element(const std::string &elem); // for legacy
+  Path append_prim(const std::string &elem) {
+    return append_element(elem);
+  }
 
-  std::string element_name() const { return _element; }
+  // Const version. Does not change internal state.
+  const Path AppendProperty(const std::string &elem) const;
+  const Path AppendPrim(const std::string &elem) const;
+
+  const std::string &element_name() const { return _element; }
 
   ///
   /// Split a path to the root(common ancestor) and its siblings

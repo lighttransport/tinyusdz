@@ -223,6 +223,22 @@ Path Path::append_property(const std::string &elem) {
   }
 }
 
+const Path Path::AppendPrim(const std::string &elem) const {
+  Path p = (*this); // copies
+
+  p.append_prim(elem);
+
+  return p;
+}
+
+const Path Path::AppendProperty(const std::string &elem) const {
+  Path p = (*this); // copies
+
+  p.append_property(elem);
+
+  return p;
+}
+
 std::pair<Path, Path> Path::split_at_root() const {
   if (is_absolute_path()) {
     if (is_root_path()) {

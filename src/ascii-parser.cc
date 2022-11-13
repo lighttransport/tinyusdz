@@ -280,6 +280,10 @@ static void RegisterPrimMetas(
 
   // USDZ extension
   metas["sceneName"] = AsciiParser::VariableDef(value::kString, "sceneName");
+
+  // Omniverse extension
+  // Builtin from pxrUSD 23.xx?
+  metas["displayName"] = AsciiParser::VariableDef(value::kString, "displayName");
 }
 
 static void RegisterPropMetas(
