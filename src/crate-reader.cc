@@ -3823,10 +3823,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
       }
 
-      // full path
+      // Reconstruct full path
       _paths[idx] =
-          isPrimPropertyPath ? parentPath.append_property(elemToken.str())
-                             : parentPath.append_element(elemToken.str());
+          isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
+                             : parentPath.AppendPrim(elemToken.str());
 
       // also set leaf path for 'primChildren' check
       _elemPaths[idx] = Path(elemToken.str(), "");

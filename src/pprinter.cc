@@ -345,8 +345,14 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << pprint::Indent(indent) << "kind = " << quote(to_string(meta.kind.value())) << "\n";
   }
 
+  // TODO: UTF-8 ready pprint
   if (meta.sceneName) {
     ss << pprint::Indent(indent) << "sceneName = " << quote(meta.sceneName.value()) << "\n";
+  }
+
+  // TODO: UTF-8 ready pprint
+  if (meta.displayName) {
+    ss << pprint::Indent(indent) << "displayName = " << quote(meta.displayName.value()) << "\n";
   }
 
   if (meta.assetInfo) {
