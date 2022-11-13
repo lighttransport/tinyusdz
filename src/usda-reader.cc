@@ -744,6 +744,20 @@ class USDAReader::Impl {
               "(Internal error?) `sceneName` metadataum is not type `string`. got `"
               << var.type_name() << "`.");
         }
+      } else if (meta.first == "displayName") {
+        DCOUT("displayName. type = " << var.type_name());
+        if (var.type_name() == value::kString) {
+          if (auto pv = var.get_value<std::string>()) {
+            out->displayName = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "(Internal error?) `displayName` metadataum is not type `string`.");
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `displayName` metadataum is not type `string`. got `"
+              << var.type_name() << "`.");
+        }
       } else if (meta.first == "kind") {
         // std::tuple<ListEditQual, MetaVariable>
         // TODO: list-edit qual

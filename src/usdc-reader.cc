@@ -1792,12 +1792,19 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                 << fv.second.type_name() << "`");
       }
     } else if (fv.first == "sceneName") {  // USDZ extension
-      // CustomData(dict)
       if (auto pv = fv.second.as<std::string>()) {
         primMeta.sceneName = (*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`sceneName` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "displayName") {  // USD supported since 23.xx?
+      if (auto pv = fv.second.as<std::string>()) {
+        primMeta.displayName = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`displayName` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
     } else if (fv.first == "inherits") {  // `inherits` composition
