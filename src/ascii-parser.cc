@@ -735,6 +735,20 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       }
       var.set_value(val);
     }
+  } else if (type_name == value::kDouble) {
+    if (array_qual) {
+      std::vector<double> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `double[]`");
+      }
+      var.set_value(vss);
+    } else {
+      double str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `double`");
+      }
+      var.set_value(str);
+    }
   } else if (type_name == value::kString) {
     if (array_qual) {
       std::vector<value::StringData> strs;
