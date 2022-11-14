@@ -504,7 +504,7 @@ class MetaVariable {
   // }
 
   bool is_valid() const {
-    return _value.type_id() != value::TypeTraits<std::nullptr_t>::type_id;
+    return _value.type_id() != value::TypeTraits<std::nullptr_t>::type_id();
   }
 
   //// TODO
@@ -1067,7 +1067,7 @@ class TypedTerminalAttribute {
 
   std::string type_name() const { return value::TypeTraits<T>::type_name(); }
 
-  uint32_t type_id() const { return value::TypeTraits<T>::type_id; }
+  uint32_t type_id() const { return value::TypeTraits<T>::type_id(); }
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
@@ -1428,8 +1428,8 @@ struct Extent {
     return *this;
   }
 
-  
-  
+
+
 };
 
 #if 0
@@ -2211,8 +2211,8 @@ class Prim {
   void set_primdata(const T &prim) {
     // Check if T is Prim class type.
     static_assert(
-        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
-            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id),
+        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
+            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id()),
         "T is not a Prim class type");
     _data = prim;
     // Use prim.name for elementName
@@ -2224,8 +2224,8 @@ class Prim {
   void set_primdata(const std::string &elementName, const T &prim) {
     // Check if T is Prim class type.
     static_assert(
-        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
-            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id),
+        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
+            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id()),
         "T is not a Prim class type");
     _data = prim;
     SetPrimElementName(_data, elementName);
@@ -2260,7 +2260,7 @@ class Prim {
 
   template <typename T>
   bool is() const {
-    return (_data.type_id() == value::TypeTraits<T>::type_id);
+    return (_data.type_id() == value::TypeTraits<T>::type_id());
   }
 
   // Return a pointer of a concrete Prim class(Xform, Material, ...)
@@ -2268,8 +2268,8 @@ class Prim {
   template <typename T>
   const T *as() const {
     // Check if T is Prim type. e.g. Xform, Material, ...
-    if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
-        (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id)) {
+    if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
+        (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id())) {
       return _data.as<T>();
     }
 

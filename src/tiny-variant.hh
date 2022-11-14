@@ -210,7 +210,7 @@ struct variant {
   // using alternative = typename variant_alternative<i, Ts...>::type;
 
   static inline uint32_t invalid_type() {
-    return value::TypeTraits<void>::type_id;
+    return value::TypeTraits<void>::type_id();
   }
 
   uint32_t variant_id;

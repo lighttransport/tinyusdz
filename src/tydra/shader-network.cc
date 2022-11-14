@@ -21,7 +21,7 @@ bool EvaluateUsdPreviewSurfaceAttribute(
 
   (void)stage;
 
-  if ((attr_name == "diffuseColor") && (req_type_id == value::TypeTraits<value::color3f>::type_id)) {
+  if ((attr_name == "diffuseColor") && (req_type_id == value::TypeTraits<value::color3f>::type_id())) {
     if (shader.diffuseColor.authored()) {
 
     } else {
@@ -29,7 +29,7 @@ bool EvaluateUsdPreviewSurfaceAttribute(
       if (shader.diffuseColor.get_value().get_scalar(&col)) {
         out_val = col;
         return true;
-      } 
+      }
     }
   }
 
@@ -55,7 +55,7 @@ bool EvaluateShaderAttribute(
     return false;
   }
 
-  uint32_t tyid = value::TypeTraits<T>::type_id;
+  uint32_t tyid = value::TypeTraits<T>::type_id();
   value::Value outval;
 
   bool result = false;

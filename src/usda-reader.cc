@@ -793,7 +793,7 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "customData") {
         DCOUT("customData. type = " << var.type_name());
-        if (var.type_id() == value::TypeTraits<CustomDataType>::type_id) {
+        if (var.type_id() == value::TypeTraits<CustomDataType>::type_id()) {
           if (auto pv = var.get_value<CustomDataType>()) {
             out->customData = pv.value();
           } else {

@@ -31,7 +31,7 @@ bool IsLerpSupportedType(uint32_t tyid) {
 
   // See underlying_type_id to simplify check for Role types(e.g. color3f)
 #define IS_SUPPORTED_TYPE(__tyid, __ty) \
-  if (__tyid == value::TypeTraits<__ty>::underlying_type_id) return true 
+  if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) return true 
 
   IS_SUPPORTED_TYPE(tyid, value::half);
   IS_SUPPORTED_TYPE(tyid, value::half2);
@@ -76,7 +76,7 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value 
   value::Value result;
 
 #define DO_LERP(__ty) \
-  if (tyid == value::TypeTraits<__ty>::type_id) { \
+  if (tyid == value::TypeTraits<__ty>::type_id()) { \
     const __ty *v0 = a.as<__ty>(); \
     const __ty *v1 = b.as<__ty>(); \
     __ty c; \
@@ -834,7 +834,7 @@ size_t Value::array_size() const {
   __FUNC(matrix4d) \
   __FUNC(frame4d) 
 
-#define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT: { \
+#define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     if (auto pv = v_.cast<std::vector<__ty>>()) { \
       return pv->size(); \
     } \
