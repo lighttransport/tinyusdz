@@ -3,16 +3,16 @@
 //
 // UsdGeom API implementations
 
-#include "usdGeom.hh"
 
 #include <sstream>
 
 #include "pprinter.hh"
+#include "value-types.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
-#include "value-types.hh"
 #include "xform.hh"
+#include "usdGeom.hh"
 //
 //#include "external/simple_match/include/simple_match/simple_match.hpp"
 //
@@ -144,10 +144,10 @@ bool IsSupportedGeomPrimvarType(uint32_t tyid) {
   // scalar and 1D
   //
 #define SUPPORTED_TYPE_FUN(__ty)                                           \
-  case value::TypeTraits<__ty>::type_id: {                                 \
+  case value::TypeTraits<__ty>::type_id(): {                                 \
     return true;                                                           \
   }                                                                        \
-  case (value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT): { \
+  case (value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT): { \
     return true;                                                           \
   }
 
@@ -186,11 +186,6 @@ Interpolation GeomPrimvar::get_interpolation() const {
 
   return Interpolation::Constant;  // unauthored
 }
-
-// TODO
-// bool GeomPrimvar::has_value() const {
-//  return _attr.
-//}
 
 bool GPrim::has_primvar(const std::string &varname) const {
   std::string primvar_name = kPrimvars + varname;
@@ -377,7 +372,7 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
 #else
 
 #define APPLY_FUN(__ty)                                                  \
-  case value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT: { \
+  case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     std::vector<__ty> expanded_val;                                      \
     if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
       auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
@@ -462,7 +457,7 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) {
 
     } else {
       if (err) {
-        (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id, _attr.type_name());
+        (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
       }
       return false;
     }
@@ -470,6 +465,15 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) {
 
   return false;
 }
+
+// instanciation
+#define INSTANCIATE_GET_VALUE(__ty) \
+  template bool GeomPrimvar::get_value(__ty *dest, std::string *err); \
+  template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err);
+
+APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_GET_VALUE)
+
+#undef INSTANCIATE_GET_VALUE
 
 std::vector<GeomPrimvar> GPrim::get_primvars() const {
   std::vector<GeomPrimvar> gpvars;
