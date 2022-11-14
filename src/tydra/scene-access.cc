@@ -144,13 +144,13 @@ template <typename T>
 bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
   // Should report error at compilation stege.
   static_assert(
-      (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
-          (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id),
+      (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
+          (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id()),
       "Not a Prim type.");
 
   // Check at runtime. Just in case...
-  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id) &&
-      (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id)) {
+  if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
+      (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id())) {
     // Ok
   } else {
     return false;
@@ -169,13 +169,13 @@ bool ListShaders(const tinyusdz::Stage &stage,
   // Concrete Shader type(e.g. UsdPreviewSurface) is classified as Imaging
   // Should report error at compilation stege.
   static_assert(
-      (value::TypeId::TYPE_ID_IMAGING_BEGIN <= value::TypeTraits<T>::type_id) &&
-          (value::TypeId::TYPE_ID_IMAGING_END > value::TypeTraits<T>::type_id),
+      (value::TypeId::TYPE_ID_IMAGING_BEGIN <= value::TypeTraits<T>::type_id()) &&
+          (value::TypeId::TYPE_ID_IMAGING_END > value::TypeTraits<T>::type_id()),
       "Not a Shader type.");
 
   // Check at runtime. Just in case...
-  if ((value::TypeId::TYPE_ID_IMAGING_BEGIN <= value::TypeTraits<T>::type_id) &&
-      (value::TypeId::TYPE_ID_IMAGING_END > value::TypeTraits<T>::type_id)) {
+  if ((value::TypeId::TYPE_ID_IMAGING_BEGIN <= value::TypeTraits<T>::type_id()) &&
+      (value::TypeId::TYPE_ID_IMAGING_END > value::TypeTraits<T>::type_id())) {
     // Ok
   } else {
     return false;

@@ -89,13 +89,13 @@ bool AsciiParser::ParseTimeSampleValue(const uint32_t type_id, value::Value *res
 
   if (MaybeNone()) {
     (*result) = value::ValueBlock();
-    return true;     
+    return true;
   }
 
   value::Value val;
 
 #define PARSE_TYPE(__tyid, __type)                       \
-  if (__tyid == value::TypeTraits<__type>::type_id) {             \
+  if (__tyid == value::TypeTraits<__type>::type_id()) {             \
     __type typed_val; \
     if (!ReadBasicType(&typed_val)) {                             \
       PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + value::GetTypeName(__tyid) + "`"); \

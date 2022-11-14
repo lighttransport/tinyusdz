@@ -759,14 +759,14 @@ static bool UpcastType(const std::string &reqType, value::Value &inout) {
     // Role type check
     // TODO: More Role type cast
     if (inout.type_id() ==
-        value::TypeTraits<std::vector<value::float2>>::type_id) {
-      if (baseReqTyId == value::TypeTraits<value::texcoord2f>::type_id) {
+        value::TypeTraits<std::vector<value::float2>>::type_id()) {
+      if (baseReqTyId == value::TypeTraits<value::texcoord2f>::type_id()) {
         if (auto pv = inout.get_value<std::vector<value::float2>>()) {
           std::vector<value::float2> val = pv.value();
           std::vector<value::texcoord2f> newval;
           newval.resize(val.size());
           memcpy(newval.data(), val.data(), sizeof(value::float2) * val.size());
-  
+
           inout = newval;
           return true;
         }
@@ -1264,7 +1264,7 @@ bool USDCReader::Impl::ReconstructSimpleAttribute(
                                   "`typeName` field is not `token` type.");
       }
     } else if (fv.first == "default") {
-      if (fv.second.type_id() != value::TypeTraits<T>::type_id) {
+      if (fv.second.type_id() != value::TypeTraits<T>::type_id()) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `"
                                             << value::TypeTraits<T>::type_name()
                                             << "` expected but got `"
@@ -1324,7 +1324,7 @@ bool USDCReader::Impl::ReconstructTypedProperty(
                                   "`typeName` field is not `token` type.");
       }
     } else if (fv.first == "default") {
-      if (fv.second.type_id() != value::TypeTraits<T>::type_id) {
+      if (fv.second.type_id() != value::TypeTraits<T>::type_id()) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property type mismatch. `"
                                             << value::TypeTraits<T>::type_name()
                                             << "` expected but got `"

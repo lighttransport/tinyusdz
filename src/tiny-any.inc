@@ -192,12 +192,12 @@ public:
 #if 1 // tinyusdz
     uint32_t type_id() const noexcept
     {
-        return empty()? tinyusdz::value::TypeTraits<void>::type_id : this->vtable->type_id();
+        return empty()? tinyusdz::value::TypeTraits<void>::type_id() : this->vtable->type_id();
     }
 
     uint32_t underlying_type_id() const noexcept
     {
-        return empty()? tinyusdz::value::TypeTraits<void>::underlying_type_id : this->vtable->underlying_type_id();
+        return empty()? tinyusdz::value::TypeTraits<void>::underlying_type_id() : this->vtable->underlying_type_id();
     }
 
     const std::string type_name() const noexcept
@@ -317,12 +317,12 @@ private: // Storage and Virtual Method Table
 #if 1 // tinyusdz
         static uint32_t type_id() noexcept
         {
-            return tinyusdz::value::TypeTraits<T>::type_id;
+            return tinyusdz::value::TypeTraits<T>::type_id();
         }
 
         static uint32_t underlying_type_id() noexcept
         {
-            return tinyusdz::value::TypeTraits<T>::underlying_type_id;
+            return tinyusdz::value::TypeTraits<T>::underlying_type_id();
         }
 
         static const std::string type_name() noexcept
@@ -374,12 +374,12 @@ private: // Storage and Virtual Method Table
 #if 1 // tinyusdz
         static uint32_t type_id() noexcept
         {
-            return tinyusdz::value::TypeTraits<T>::type_id;
+            return tinyusdz::value::TypeTraits<T>::type_id();
         }
 
         static uint32_t underlying_type_id() noexcept
         {
-            return tinyusdz::value::TypeTraits<T>::underlying_type_id;
+            return tinyusdz::value::TypeTraits<T>::underlying_type_id();
         }
 
         static const std::string type_name() noexcept
@@ -600,7 +600,7 @@ inline ValueType* any_cast(any* operand) noexcept
     if (operand && operand->is_typed(typeid(T)))
 #else
     //if (operand && operand->vtable == any::vtable_for_type<T>())
-    if (operand && operand->type_id() == tinyusdz::value::TypeTraits<T>::type_id)
+    if (operand && operand->type_id() == tinyusdz::value::TypeTraits<T>::type_id())
 #endif
         return operand->cast<ValueType>();
     else

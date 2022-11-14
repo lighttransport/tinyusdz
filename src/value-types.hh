@@ -164,7 +164,7 @@ using token = tinyusdz::Token;
 
 // single or triple-quoted('"""' or ''') string
 struct StringData {
-  
+
   StringData() = default;
   StringData(const std::string &v) : value(v) {}
   StringData &operator=(const std::string &v) {
@@ -1132,11 +1132,12 @@ template <>
 struct TypeTraits<void> {
   using value_type = void;
   using value_underlying_type = void;
-  static constexpr uint32_t ndim = 0; /* array dim */
+  static constexpr uint32_t ndim() { return 0; } /* array dim */
   static constexpr uint32_t size = 0; /* zero for void  */
-  static constexpr uint32_t ncomp = 0;
-  static constexpr uint32_t type_id = TYPE_ID_VOID;
-  static constexpr uint32_t underlying_type_id = TYPE_ID_VOID;
+  static constexpr uint32_t ncomp() { return 0; }
+  static constexpr uint32_t type_id() { return TYPE_ID_VOID; }
+  static constexpr uint32_t get_type_id() { return TYPE_ID_VOID; }
+  static constexpr uint32_t underlying_type_id() { return TYPE_ID_VOID; }
   static std::string type_name() { return "void"; }
   static std::string underlying_type_name() { return "void"; }
 };
@@ -1246,19 +1247,21 @@ DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 template <typename T>
 struct TypeTraits<std::vector<T>> {
   using value_type = std::vector<T>;
-  static constexpr uint32_t ndim = 1; /* array dim */
-  static constexpr uint32_t ncomp = TypeTraits<T>::ncomp;
-  static constexpr uint32_t type_id =
-      TypeTraits<T>::type_id | TYPE_ID_1D_ARRAY_BIT;
-  static constexpr uint32_t underlying_type_id =
-      TypeTraits<T>::underlying_type_id | TYPE_ID_1D_ARRAY_BIT;
+  static constexpr uint32_t ndim() { return 1; } /* array dim */
+  static constexpr uint32_t ncomp() { return TypeTraits<T>::ncomp(); }
+  static constexpr uint32_t type_id() { return
+      TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static constexpr uint32_t get_type_id() {
+      return TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static constexpr uint32_t underlying_type_id() {
+      return TypeTraits<T>::underlying_type_id() | TYPE_ID_1D_ARRAY_BIT; }
   static std::string type_name() { return TypeTraits<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
     return TypeTraits<T>::underlying_type_name() + "[]";
   }
 };
 
-#if 0  // Current pxrUSD does not support 2D array 
+#if 0  // Current pxrUSD does not support 2D array
 // 2D Array
 // TODO(syoyo): support 3D array?
 template <typename T>
@@ -1340,9 +1343,9 @@ class Value {
   // Return nullptr when type conversion failed.
   template <class T>
   const T *as() const {
-    if (TypeTraits<T>::type_id == v_.type_id()) {
+    if (TypeTraits<T>::type_id() == v_.type_id()) {
       return linb::any_cast<const T>(&v_);
-    } else if (TypeTraits<T>::underlying_type_id == v_.underlying_type_id()) {
+    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       return linb::any_cast<const T>(&v_);
@@ -1354,9 +1357,9 @@ class Value {
   // Return nullptr when type conversion failed.
   template <class T>
   T *as() {
-    if (TypeTraits<T>::type_id == v_.type_id()) {
+    if (TypeTraits<T>::type_id() == v_.type_id()) {
       return linb::any_cast<T>(&v_);
-    } else if (TypeTraits<T>::underlying_type_id == v_.underlying_type_id()) {
+    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       return linb::any_cast<T>(&v_);
@@ -1379,7 +1382,7 @@ class Value {
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
-    if (TypeTraits<T>::type_id == v_.type_id()) {
+    if (TypeTraits<T>::type_id() == v_.type_id()) {
       const T *pv = linb::any_cast<const T>(&v_);
       if (!pv) {
         // ???
@@ -1387,7 +1390,7 @@ class Value {
       }
 
       return std::move(*pv);
-    } else if (TypeTraits<T>::underlying_type_id == v_.underlying_type_id()) {
+    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
       // `roll` type. Can be able to cast to underlying type since the memory
       // layout does not change.
       // Use force cast
