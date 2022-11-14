@@ -729,130 +729,6 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
   return true;
 }
 
-// TODO: Use template and move code to `value-types.hh`
-// TODO: Preserve type for Role type(currently, "color3f" is converted to
-// "float3" type)
-static bool UpcastType(const std::string &reqType, value::Value &inout) {
-  // `reqType` may be Role type. Get underlying type
-  uint32_t tyid;
-  if (auto pv = value::TryGetUnderlyingTypeId(reqType)) {
-    tyid = pv.value();
-  } else {
-    // Invalid reqType.
-    return false;
-  }
-
-  bool reqTypeArray = false;
-  uint32_t baseReqTyId;
-  DCOUT("UpcastType trial: reqTy : " << reqType << ", valtype = " << inout.type_name());
-
-  if (endsWith(reqType, "[]")) {
-    reqTypeArray = true;
-    baseReqTyId = value::GetTypeId(removeSuffix(reqType, "[]"));
-  } else {
-    baseReqTyId = value::GetTypeId(reqType);
-  }
-  DCOUT("is array: " << reqTypeArray << ", basereqty = " << value::GetTypeName(baseReqTyId));
-
-  // For array
-  if (reqTypeArray) {
-    // Role type check
-    // TODO: More Role type cast
-    if (inout.type_id() ==
-        value::TypeTraits<std::vector<value::float2>>::type_id()) {
-      if (baseReqTyId == value::TypeTraits<value::texcoord2f>::type_id()) {
-        if (auto pv = inout.get_value<std::vector<value::float2>>()) {
-          std::vector<value::float2> val = pv.value();
-          std::vector<value::texcoord2f> newval;
-          newval.resize(val.size());
-          memcpy(newval.data(), val.data(), sizeof(value::float2) * val.size());
-
-          inout = newval;
-          return true;
-        }
-      }
-    }
-  } else {
-    if (tyid == value::TYPE_ID_FLOAT) {
-      float dst;
-      if (auto pv = inout.get_value<value::half>()) {
-        dst = half_to_float(pv.value());
-        inout = dst;
-        return true;
-      }
-    } else if (tyid == value::TYPE_ID_FLOAT2) {
-      if (auto pv = inout.get_value<value::half2>()) {
-        value::float2 dst;
-        value::half2 v = pv.value();
-        dst[0] = half_to_float(v[0]);
-        dst[1] = half_to_float(v[1]);
-        inout = dst;
-        return true;
-      }
-
-    } else if (tyid == value::TYPE_ID_FLOAT3) {
-      value::float3 dst;
-      if (auto pv = inout.get_value<value::half3>()) {
-        value::half3 v = pv.value();
-        dst[0] = half_to_float(v[0]);
-        dst[1] = half_to_float(v[1]);
-        dst[2] = half_to_float(v[2]);
-        inout = dst;
-        return true;
-      }
-    } else if (tyid == value::TYPE_ID_FLOAT4) {
-      value::float4 dst;
-      if (auto pv = inout.get_value<value::half4>()) {
-        value::half4 v = pv.value();
-        dst[0] = half_to_float(v[0]);
-        dst[1] = half_to_float(v[1]);
-        dst[2] = half_to_float(v[2]);
-        dst[3] = half_to_float(v[3]);
-        inout = dst;
-        return true;
-      }
-    } else if (tyid == value::TYPE_ID_DOUBLE) {
-      double dst;
-      if (auto pv = inout.get_value<value::half>()) {
-        dst = double(half_to_float(pv.value()));
-        inout = dst;
-        return true;
-      }
-    } else if (tyid == value::TYPE_ID_DOUBLE2) {
-      value::double2 dst;
-      if (auto pv = inout.get_value<value::half2>()) {
-        value::half2 v = pv.value();
-        dst[0] = double(half_to_float(v[0]));
-        dst[1] = double(half_to_float(v[1]));
-        inout = dst;
-        return true;
-      }
-    } else if (tyid == value::TYPE_ID_DOUBLE3) {
-      value::double3 dst;
-      if (auto pv = inout.get_value<value::half3>()) {
-        value::half3 v = pv.value();
-        dst[0] = double(half_to_float(v[0]));
-        dst[1] = double(half_to_float(v[1]));
-        dst[2] = double(half_to_float(v[2]));
-        inout = dst;
-        return true;
-      }
-    } else if (tyid == value::TYPE_ID_DOUBLE4) {
-      value::double4 dst;
-      if (auto pv = inout.get_value<value::half4>()) {
-        value::half4 v = pv.value();
-        dst[0] = double(half_to_float(v[0]));
-        dst[1] = double(half_to_float(v[1]));
-        dst[2] = double(half_to_float(v[2]));
-        dst[3] = double(half_to_float(v[3]));
-        inout = dst;
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
 
 /// Attrib/Property fieldSet example
 ///
@@ -1144,16 +1020,25 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
   if (is_scalar) {
     if (typeName) {
-      // Some inlined? value uses less accuracy type(e.g. `half3`) than
-      // typeName(e.g. `float3`) Use type specified in `typeName` as much as
-      // possible.
       std::string reqTy = typeName.value().str();
       std::string scalarTy = scalar.type_name();
 
       if (reqTy.compare(scalarTy) != 0) {
-        bool ret = UpcastType(reqTy, scalar);
+
+        // Some inlined? value uses less accuracy type(e.g. `half3`) than
+        // typeName(e.g. `float3`) Use type specified in `typeName` as much as
+        // possible.
+        bool ret = value::UpcastType(reqTy, scalar);
         if (ret) {
           DCOUT(fmt::format("Upcast type from {} to {}.", scalarTy, reqTy));
+        }
+
+        // Optionally, cast to role type(in crate data, `typeName` uses role typename(e.g. `color3f`), whereas stored data uses base typename(e.g. VEC3F)
+        scalarTy = scalar.type_name();
+        if (value::RoleTypeCast(value::GetTypeId(reqTy), scalar)) {
+          DCOUT(fmt::format("Casted to Role type {} from type {}.", reqTy, scalarTy));
+        } else {
+          // Its ok.
         }
       }
     }
