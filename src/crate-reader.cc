@@ -1335,6 +1335,7 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   }
 
   if (h.IsExplicit()) {
+    DCOUT("IsExplicit()");
     d->ClearAndMakeExplicit();
   }
 

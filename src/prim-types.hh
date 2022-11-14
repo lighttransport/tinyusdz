@@ -1475,7 +1475,7 @@ class Relationship {
 
   // TODO: Remove
   void set_listedit_qual(ListEditQual q) { listOpQual = q; }
-  ListEditQual GetListEditQualifier() const { return listOpQual; }
+  ListEditQual get_listedit_qual() const { return listOpQual; }
 
   void set_empty() { type = Type::Empty; }
 
@@ -1743,12 +1743,14 @@ class Property {
   // Relationship(typeless)
   Property(const Relationship &r, bool custom = false) : _rel(r), _has_custom(custom) {
     _type = Type::Relation;
+    set_listedit_qual(r.get_listedit_qual());
   }
 
   // Relationship(typeless)
   Property(Relationship &&r, bool custom = false)
       : _rel(std::move(r)), _has_custom(custom) {
     _type = Type::Relation;
+    set_listedit_qual(r.get_listedit_qual());
   }
 
   // Attribute Connection: has type
