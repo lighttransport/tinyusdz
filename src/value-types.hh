@@ -1671,6 +1671,18 @@ struct TimeSamples {
   mutable bool _dirty{false};
 };
 
+///
+/// Cast input value's type to Role type
+/// Return true: cast success.
+///
+bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout);
+
+///
+/// Upcast value to specified type(e.g. `half` -> `float`)
+/// Return Upcast success.
+///
+bool UpcastType(const std::string &toType, value::Value &inout);
+
 #if 0
 // simple linear interpolator
 template <typename T>

@@ -312,6 +312,14 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
   return false;
 }
 
+// instanciation
+#define INSTANCIATE_FLATTEN_WITH_INDICES(__ty) \
+  template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err);
+
+APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_FLATTEN_WITH_INDICES)
+
+#undef INSTANCIATE_FLATTEN_WITH_INDICES
+
 bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
   // using namespace simple_match;
   // using namespace simple_match::placeholders;
