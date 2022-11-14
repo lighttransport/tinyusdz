@@ -51,12 +51,48 @@ class GeomPrimvar {
  friend GPrim;
 
  public:
-  GeomPrimvar() = default;
+  GeomPrimvar() : _has_value(false) {
+  }
 
-  GeomPrimvar(const Attribute &attr) : _attr(attr) {}
+  GeomPrimvar(const Attribute &attr) : _attr(attr) {
+    _has_value = true;
+  }
 
   // TODO: TimeSamples indices.
-  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices) {}
+  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices) 
+  {
+    _has_value = true;
+  }
+
+  GeomPrimvar(const GeomPrimvar &rhs) {
+    _name = rhs._name;
+    _attr = rhs._attr;
+    _indices = rhs._indices;
+    _has_value = rhs._has_value;
+    if (rhs._elementSize) {
+      _elementSize = rhs._elementSize;
+    }
+
+    if (rhs._interpolation) {
+      _interpolation = rhs._interpolation;
+    }
+  }
+
+  GeomPrimvar &operator=(const GeomPrimvar &rhs) {
+    _name = rhs._name;
+    _attr = rhs._attr;
+    _indices = rhs._indices;
+    _has_value = rhs._has_value;
+    if (rhs._elementSize) {
+      _elementSize = rhs._elementSize;
+    }
+
+    if (rhs._interpolation) {
+      _interpolation = rhs._interpolation;
+    }
+
+    return *this;
+  }
 
   ///
   /// For Indexed Primvar(array value + indices)
@@ -107,7 +143,9 @@ class GeomPrimvar {
   ///
   /// Attribute has value?(Not empty)
   ///
-  bool has_value() const;
+  bool has_value() const {
+    return _has_value;
+  }
 
 
   ///
@@ -125,14 +163,17 @@ class GeomPrimvar {
   template <typename T>
   void set_value(const T &val) {
     _attr.set_value(val);
+    _has_value = true;
   }
 
   void set_value(const Attribute &attr) {
     _attr = attr;
+    _has_value = true;
   }
 
   void set_value(const Attribute &&attr) {
     _attr = std::move(attr);
+    _has_value = true;
   }
 
   void set_name(const std::string &name) { _name = name; }
@@ -152,6 +193,7 @@ class GeomPrimvar {
  private:
 
   std::string _name;
+  bool _has_value{false};
   Attribute _attr;
   std::vector<int32_t> _indices;  // TODO: uint support?
 
