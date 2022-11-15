@@ -46,7 +46,18 @@ struct PrimVar {
     return _ts.size();
   }
 
-  bool is_blocked() const { return _blocked; }
+  bool is_blocked() const {
+    // Fist check if stored value is ValueBlock, then return _blocked.
+    if (_value.type_id() == value::TYPE_ID_VALUEBLOCK) {
+      return true;
+    }
+    return _blocked;
+  }
+
+  void set_blocked(bool onoff) {
+    // fast path
+    _blocked = onoff;
+  }
 
   bool is_valid() const {
     if (is_timesamples()) {

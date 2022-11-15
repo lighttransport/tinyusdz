@@ -1644,6 +1644,25 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
     return false;
   }
 
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  // Empty array?
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == ']') {
+      result->clear();
+      return true;
+    }
+
+    Rewind(1);
+  }
+
   if (!SepBy1BasicType<T>(',', ']', result)) {
     return false;
   }
