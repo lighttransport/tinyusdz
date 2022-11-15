@@ -771,8 +771,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   bool hasTargetChildren{false};
   bool hasTargetPaths{false};
 
-  // TODO: Rel, TimeSamples, Connection
-
   DCOUT("== List of Fields");
   for (auto &fv : fvs) {
     DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
@@ -1020,31 +1018,42 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
   if (is_scalar) {
     if (typeName) {
-      std::string reqTy = typeName.value().str();
-      std::string scalarTy = scalar.type_name();
+      if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+        // nothing to do
+      } else {
+        std::string reqTy = typeName.value().str();
+        std::string scalarTy = scalar.type_name();
 
-      if (reqTy.compare(scalarTy) != 0) {
+        if (reqTy.compare(scalarTy) != 0) {
 
-        // Some inlined? value uses less accuracy type(e.g. `half3`) than
-        // typeName(e.g. `float3`) Use type specified in `typeName` as much as
-        // possible.
-        bool ret = value::UpcastType(reqTy, scalar);
-        if (ret) {
-          DCOUT(fmt::format("Upcast type from {} to {}.", scalarTy, reqTy));
-        }
+          // Some inlined? value uses less accuracy type(e.g. `half3`) than
+          // typeName(e.g. `float3`) Use type specified in `typeName` as much as
+          // possible.
+          bool ret = value::UpcastType(reqTy, scalar);
+          if (ret) {
+            DCOUT(fmt::format("Upcast type from {} to {}.", scalarTy, reqTy));
+          }
 
-        // Optionally, cast to role type(in crate data, `typeName` uses role typename(e.g. `color3f`), whereas stored data uses base typename(e.g. VEC3F)
-        scalarTy = scalar.type_name();
-        if (value::RoleTypeCast(value::GetTypeId(reqTy), scalar)) {
-          DCOUT(fmt::format("Casted to Role type {} from type {}.", reqTy, scalarTy));
-        } else {
-          // Its ok.
+          // Optionally, cast to role type(in crate data, `typeName` uses role typename(e.g. `color3f`), whereas stored data uses base typename(e.g. VEC3F)
+          scalarTy = scalar.type_name();
+          if (value::RoleTypeCast(value::GetTypeId(reqTy), scalar)) {
+            DCOUT(fmt::format("Casted to Role type {} from type {}.", reqTy, scalarTy));
+          } else {
+            // Its ok.
+          }
         }
       }
     }
     primvar::PrimVar var;
     var.set_value(scalar);
     attr.set_var(std::move(var));
+
+    if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+      if (typeName) {
+        // Use `typeName`
+        attr.set_type_name(typeName.value().str());
+      }
+    }
   }
 
   // metas
