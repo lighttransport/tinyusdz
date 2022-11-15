@@ -1543,7 +1543,7 @@ struct Attribute {
 
   void set_type_name(const std::string &tname) { _type_name = tname; }
 
-  // `var` may be empty, so store type info with set_type_name and set_type_id.
+  // `var` may be empty or ValueBlock, so store type info with set_type_name and set_type_id.
   std::string type_name() const {
     if (_type_name.size()) {
       return _type_name;
@@ -1649,9 +1649,9 @@ struct Attribute {
 
   const primvar::PrimVar &get_var() const { return _var; }
 
-  void set_blocked(bool onoff) { _blocked = onoff; }
+  void set_blocked(bool onoff) { _var.set_blocked(onoff); }
 
-  bool is_blocked() const { return _blocked; }
+  bool is_blocked() const { return _var.is_blocked(); }
 
   Variability &variability() { return _variability; }
   Variability variability() const { return _variability; }
@@ -1701,7 +1701,7 @@ struct Attribute {
   Variability _variability{
       Variability::Varying};  // 'uniform` qualifier is handled with
                               // `variability=uniform`
-  bool _blocked{false};       // Attribute Block('None')
+  //bool _blocked{false};       // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
   std::vector<Path> _paths;

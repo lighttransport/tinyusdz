@@ -3191,20 +3191,21 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       PushError("Array of bool type is not supported.");
       return false;
     } else {
-      std::vector<T> value;
-      if (!ParseBasicTypeArray(&value)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse " +
-                              std::string(value::TypeTraits<T>::type_name()) +
-                              " array.");
-        return false;
-      }
+      if (MaybeNone()) {
+        blocked = true;
+      } else {
+        std::vector<T> value;
+        if (!ParseBasicTypeArray(&value)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse " +
+                                std::string(value::TypeTraits<T>::type_name()) +
+                                " array.");
+          return false;
+        }
 
-      if (value.size()) {
+        // Empty array allowed.
         DCOUT("Got it: ty = " + std::string(value::TypeTraits<T>::type_name()) +
               ", sz = " + std::to_string(value.size()));
         var.set_value(value);
-      } else {
-        blocked = true;
       }
     }
 
@@ -3246,7 +3247,15 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   attr.metas() = meta;
 
   if (blocked) {
+    // There is still have a type for ValueBlock.
+    value::ValueBlock noneval;
+    attr.set_value(noneval);
     attr.set_blocked(true);
+    if (array_qual) {
+      attr.set_type_name(value::TypeTraits<T>::type_name() + "[]");
+    } else {
+      attr.set_type_name(value::TypeTraits<T>::type_name());
+    }
   } else {
     attr.set_var(std::move(var));
   }
