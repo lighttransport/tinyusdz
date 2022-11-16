@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 def Xform "hello" (
-  displayName = "無駄"
+  displayName = "こんにちは"
   )
 {
-   string mystr = こんにちは"
+   string mystr = "無駄"
 }
