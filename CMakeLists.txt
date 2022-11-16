@@ -10,16 +10,34 @@ set(TINYUSDZ_BENCHMARK_TARGET "benchmark_tinyusdz")
 
 project(${TINYUSDZ_TARGET} C CXX)
 
+if (EMSCRIPTEN)
+  set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD On)
+  set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
+  set(TINYUSDZ_DEFAULT_EXAMPLES Off)
+  set(TINYUSDZ_DEFAULT_WITH_C_API Off)
+  set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API Off)
+  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+else()
+  set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
+  set(TINYUSDZ_DEFAULT_BUILD_TESTS On)
+  set(TINYUSDZ_DEFAULT_BUILD_EXAMPLES On)
+  set(TINYUSDZ_DEFAULT_WITH_C_API Off)
+  set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
+  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER On)
+  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER On)
+endif ()
+
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
-option(TINYUSDZ_WITH_C_API "Enable C API." ON)
-option(TINYUSDZ_BUILD_TESTS "Build tests" ON)
+option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
+option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
 option(TINYUSDZ_BUILD_BENCHMARKS
        "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples area built in `examples` folder)"
-       ON)
+       ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
 
 if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
@@ -54,7 +72,7 @@ option(
   "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option"
   OFF)
 
-option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ON)
+option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ${TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API})
 
 option(
   TINYUSDZ_WITH_BLENDER_ADDON
@@ -64,10 +82,12 @@ option(
 option(TINYUSDZ_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
 
+
 option(
   TINYUSDZ_PRODUCTION_BUILD
   "Build for production release(e.g. disables debug print, do not include full filepath in error messages)"
   OFF)
+
 
 option(
   TINYUSDZ_DEBUG_PRINT
@@ -114,8 +134,8 @@ option(TINYUSDZ_WITH_COLORIO
 # ---------
 
 # -- optional tool --
-option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ON)
-option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" ON)
+option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ${TINYUSDZ_DEFAULT_WITH_USDA_PARSER})
+option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" ${TINYUSDZ_DEFAULT_WITH_USDC_PARSER})
 # --------------
 
 # -- For developers --
@@ -129,6 +149,14 @@ option(TINYUSDZ_CUSTOM_COMPILE_FLAGS
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/sanitizers)
 find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
+
+# [cifuzz]
+option(TINYUSDZ_TEST_CIFUZZ "Run cifuzz test" OFF)
+
+if (TINYUSDZ_TEST_CIFUZZ)
+  find_package(cifuzz NO_SYSTEM_ENVIRONMENT_PATH)
+  enable_fuzz_testing()
+endif()
 
 if(TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
