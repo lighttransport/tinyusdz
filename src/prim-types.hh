@@ -447,6 +447,8 @@ class TokenizedPath {
 
 bool operator==(const Path &lhs, const Path &rhs);
 
+
+
 // variants in Prim Meta.
 //
 // e.g.
@@ -584,6 +586,17 @@ class MetaVariable {
   std::string _name;
 };
 
+struct AssetInfo
+{
+  // builtin fields 
+  value::AssetPath identifier;
+  std::string name;
+  std::string payloadAssetDependencies;
+  std::string version;
+
+  // Other fields 
+  CustomDataType _fields;
+};
 
 struct APISchemas {
   // TinyUSDZ does not allow user-supplied API schema for now
@@ -637,7 +650,7 @@ struct PrimMeta {
   nonstd::optional<bool> active;                // 'active'
   nonstd::optional<bool> hidden;                // 'hidden'
   nonstd::optional<Kind> kind;                  // 'kind'
-  nonstd::optional<CustomDataType> assetInfo;   // 'assetInfo'
+  nonstd::optional<CustomDataType> assetInfo;   // 'assetInfo' // TODO: Use AssetInfo
   nonstd::optional<CustomDataType> customData;  // `customData`
   nonstd::optional<value::StringData> doc;             // 'documentation'
   nonstd::optional<value::StringData> comment;         // 'comment'
