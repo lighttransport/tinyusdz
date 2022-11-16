@@ -10,6 +10,14 @@
 
 namespace tinyusdz {
 
+enum class CharEncoding
+{
+  None,
+  UTF8, 
+  UTF8BOM, // UTF8 + BOM
+  UTF16LE  // UTF16 LE(Windows Unicode)
+};
+
 inline bool hasNewline(const std::string &str) {
   for (size_t i = 0; i < str.size(); i++) {
     if ((str[i] == '\r') || (str[i] == '\n')) {
