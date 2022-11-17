@@ -5,8 +5,15 @@
 //
 #pragma once
 
+#include "prim-types.hh"
+
 namespace tinyusdz {
 namespace prim {
+
+class LayerStack
+{
+  std::vector<Layer> layers;
+};
 
 } // namespace prim
 } // namespace tinyusdz
