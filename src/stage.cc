@@ -50,17 +50,17 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
+#include "usda-reader.hh"
+#include "io-util.hh"
 //
 #include "common-macros.inc"
 
 namespace tinyusdz {
 
-#if 0
+#if 1
 // For PUSH_ERROR_AND_RETURN
 #define PushError(s) \
-  if (err) {         \
-    (*err) += s;     \
-  }
+  _err += s;     
 //#define PushWarn(s) if (warn) { (*warn) += s; }
 #endif
 
@@ -291,6 +291,49 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
     }
     return false;
   }
+}
+
+bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer) {
+
+  tinyusdz::StreamReader sr(addr, nbytes, /* swap endian */ false);
+  tinyusdz::usda::USDAReader reader(&sr);
+
+  // TODO: Uase AssetResolver
+  //reader.SetBaseDir(base_dir);
+
+  if (!reader.Read(ascii::LoadState::REFERENCE)) {
+    return false;
+  }
+
+  if (!reader.GetAsLayer(layer)) {
+    PUSH_ERROR_AND_RETURN("Failed to retrieve USD data as Layer: filepath = " << asset_name);
+  }
+
+  return false;
+}
+
+bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer) {
+  // TODO: Setup AssetResolver.
+
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
+  std::string base_dir = io::GetBaseDir(_filename);
+
+  DCOUT("load layer from file: " << filepath);
+
+  std::string err;
+  std::vector<uint8_t> data;
+  size_t max_bytes = std::numeric_limits<size_t>::max(); // TODO:
+  if (!io::ReadWholeFile(&data, &err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    PUSH_ERROR_AND_RETURN("Read file failed: " + err);
+  }
+
+  return LoadLayerFromMemory(data.data(), data.size(), filepath, layer);
+}
+
+bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
+  (void)sublayers;
+  return false;
 }
 
 namespace {

@@ -24,11 +24,31 @@ static std::string str_tolower(std::string s) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need input.usdz\n" << std::endl;
+    std::cout << "Usage simple_usdz_dump [--flatten] input.usda/usdc/usdz\n" << std::endl;
+    std::cout << "\n --flatten (not implemented yet) Do composition(load sublayers, refences, payloads, evaluate `over`, inherit, variants..)\n" << std::endl;
     return EXIT_FAILURE;
   }
 
-  std::string filepath = argv[1];
+  bool has_flatten{false};
+  std::string filepath;
+
+  int input_index = -1;
+
+  for (size_t i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg.compare("--flatten") == 0) {
+      has_flatten = true;
+    } else {
+      filepath = arg;
+      input_index = i;
+    }
+  }
+
+  if (filepath.empty() || (input_index < 0)) {
+    std::cout << "Input USD filename missing.\n";
+    return EXIT_FAILURE;
+  }
+
   std::string warn;
   std::string err;
 
@@ -37,7 +57,10 @@ int main(int argc, char **argv) {
   tinyusdz::Stage stage;
 
   if (ext.compare("usdc") == 0) {
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
+    tinyusdz::USDLoadOptions options;
+    options.do_composition = has_flatten;
+
+    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err, options);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -51,7 +74,10 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else if (ext.compare("usda") == 0) {
-    bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err);
+    tinyusdz::USDLoadOptions options;
+    options.do_composition = has_flatten;
+
+    bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err, options);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -65,6 +91,9 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else if (ext.compare("usdz") == 0) {
+    if (has_flatten) {
+      std::cout << "--flatten is ignored for USDZ model at the moment.\n";
+    }
     //std::cout << "usdz\n";
     bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
     if (!warn.empty()) {
@@ -80,8 +109,11 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   } else {
+    tinyusdz::USDLoadOptions options;
+    options.do_composition = has_flatten;
+
     // try to auto detect format.
-    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }

@@ -127,12 +127,21 @@ class Stage {
  private:
 
   ///
-  /// Loads `reference` USD asset
+  /// Loads USD from and return it as Layer
+  ///
+  bool LoadLayerFromFile(const std::string &filename, Layer *layer);
+
+  ///
+  /// Loads USD asset from memory and return it as Layer
+  bool LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer);
+
+  ///
+  /// Loads `reference` USD asset and return it as Layer
   ///
   bool LoadReference(const Reference &reference, Layer *dest);
 
   ///
-  /// Loads USD assets described in `subLayers` Stage meta.
+  /// Loads USD assets described in `subLayers` Stage meta and return it as Layers
   ///
   bool LoadSubLayers(std::vector<Layer> *dest_sublayers);
 
