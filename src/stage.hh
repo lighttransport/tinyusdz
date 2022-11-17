@@ -126,6 +126,16 @@ class Stage {
 
  private:
 
+  ///
+  /// Loads `reference` USD asset
+  ///
+  bool LoadReference(const Reference &reference, Layer *dest);
+
+  ///
+  /// Loads USD assets described in `subLayers` Stage meta.
+  ///
+  bool LoadSubLayers(std::vector<Layer> *dest_sublayers);
+
   // Root nodes
   std::vector<Prim> root_nodes;
 
