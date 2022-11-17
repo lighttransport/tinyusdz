@@ -632,6 +632,7 @@ struct Payload {
   // No customData for Payload
 };
 
+
 // Metadata for Prim
 struct PrimMeta {
   nonstd::optional<bool> active;                // 'active'
@@ -2359,6 +2360,14 @@ class PrimNode {
   std::vector<value::token> primChildren;
   std::vector<value::token> variantChildren;
 };
+
+// Similar to SdfLayer
+struct Layer
+{
+  std::string name; // layer name ~= USD filename
+  std::vector<PrimNode> prim_nodes;
+};
+
 
 #if 0 // TODO: Remove
 // Simple bidirectional Path(string) <-> index lookup
