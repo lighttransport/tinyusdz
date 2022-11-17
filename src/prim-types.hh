@@ -91,7 +91,7 @@ enum class Kind {
   Assembly,
   Component,
   Subcomponent,
-  SceneLibrary, // USDZ extension
+  SceneLibrary,  // USDZ extension
   Invalid
 };
 
@@ -283,10 +283,8 @@ class Path {
   Path append_property(const std::string &elem);
 
   // Append prim path(change internal state)
-  Path append_element(const std::string &elem); // for legacy
-  Path append_prim(const std::string &elem) {
-    return append_element(elem);
-  }
+  Path append_element(const std::string &elem);  // for legacy
+  Path append_prim(const std::string &elem) { return append_element(elem); }
 
   // Const version. Does not change internal state.
   const Path AppendProperty(const std::string &elem) const;
@@ -447,8 +445,6 @@ class TokenizedPath {
 
 bool operator==(const Path &lhs, const Path &rhs);
 
-
-
 // variants in Prim Meta.
 //
 // e.g.
@@ -469,15 +465,16 @@ using CustomDataType = std::map<std::string, MetaVariable>;
 //
 // - Accepts limited number of types for value
 // - No 'custom' keyword
-// - 'None'(Value Block) is supported for some type(at least `references` and `payload` accepts None)
+// - 'None'(Value Block) is supported for some type(at least `references` and
+// `payload` accepts None)
 // - No TimeSamples, No Connection, No Relationship(`rel`)
-// - Value must be assigned(e.g. "float myval = 1.3"). So no definition only syntax("float myval")
+// - Value must be assigned(e.g. "float myval = 1.3"). So no definition only
+// syntax("float myval")
 // - Can be string only(no type information)
 //   - Its variable name is interpreted as "comment"
 //
 class MetaVariable {
  public:
-
   MetaVariable &operator=(const MetaVariable &rhs) {
     _name = rhs._name;
     _value = rhs._value;
@@ -485,8 +482,8 @@ class MetaVariable {
     return *this;
   }
 
-  template<typename T>
-  MetaVariable(const T& v) {
+  template <typename T>
+  MetaVariable(const T &v) {
     set_value(v);
   }
 
@@ -495,8 +492,8 @@ class MetaVariable {
     _value = rhs._value;
   }
 
-  template<typename T>
-  MetaVariable(const std::string &name, const T& v) {
+  template <typename T>
+  MetaVariable(const std::string &name, const T &v) {
     set_value(name, v);
   }
 
@@ -510,7 +507,7 @@ class MetaVariable {
   }
 
   //// TODO
-  //bool is_timesamples() const { return false; }
+  // bool is_timesamples() const { return false; }
 
   MetaVariable() = default;
 
@@ -524,7 +521,7 @@ class MetaVariable {
     // TODO: Check T is supported type for Metadatum.
     _value = v;
 
-    _name = std::string(); // empty
+    _name = std::string();  // empty
   }
 
   template <typename T>
@@ -577,24 +574,21 @@ class MetaVariable {
     return v._value.type_name();
   }
 
-  static uint32_t TypeId(const MetaVariable &v) {
-    return v._value.type_id();
-  }
+  static uint32_t TypeId(const MetaVariable &v) { return v._value.type_id(); }
 
  private:
   value::Value _value{nullptr};
   std::string _name;
 };
 
-struct AssetInfo
-{
-  // builtin fields 
+struct AssetInfo {
+  // builtin fields
   value::AssetPath identifier;
   std::string name;
   std::string payloadAssetDependencies;
   std::string version;
 
-  // Other fields 
+  // Other fields
   CustomDataType _fields;
 };
 
@@ -645,16 +639,16 @@ struct Payload {
   // No customData for Payload
 };
 
-
 // Metadata for Prim
 struct PrimMeta {
-  nonstd::optional<bool> active;                // 'active'
-  nonstd::optional<bool> hidden;                // 'hidden'
-  nonstd::optional<Kind> kind;                  // 'kind'
-  nonstd::optional<CustomDataType> assetInfo;   // 'assetInfo' // TODO: Use AssetInfo
+  nonstd::optional<bool> active;  // 'active'
+  nonstd::optional<bool> hidden;  // 'hidden'
+  nonstd::optional<Kind> kind;    // 'kind'
+  nonstd::optional<CustomDataType>
+      assetInfo;  // 'assetInfo' // TODO: Use AssetInfo
   nonstd::optional<CustomDataType> customData;  // `customData`
-  nonstd::optional<value::StringData> doc;             // 'documentation'
-  nonstd::optional<value::StringData> comment;         // 'comment'
+  nonstd::optional<value::StringData> doc;      // 'documentation'
+  nonstd::optional<value::StringData> comment;  // 'comment'
   nonstd::optional<APISchemas> apiSchemas;      // 'apiSchemas'
 
   //
@@ -711,7 +705,7 @@ struct AttrMeta {
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
   nonstd::optional<bool> hidden;                  // 'hidden'
-  nonstd::optional<value::StringData> comment;           // `comment`
+  nonstd::optional<value::StringData> comment;    // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
   std::map<std::string, MetaVariable> meta;  // other meta values
@@ -1373,7 +1367,6 @@ inline void Identity(value::matrix4d *mat) {
   }
 }
 
-
 struct Extent {
   value::float3 lower{{std::numeric_limits<float>::infinity(),
                        std::numeric_limits<float>::infinity(),
@@ -1410,7 +1403,6 @@ struct Extent {
   }
 
   const Extent &union_with(const value::float3 &p) {
-
     lower[0] = (std::min)(lower[0], p[0]);
     lower[1] = (std::min)(lower[1], p[1]);
     lower[2] = (std::min)(lower[2], p[2]);
@@ -1423,14 +1415,12 @@ struct Extent {
   }
 
   const Extent &union_with(const value::point3f &p) {
-
     union_with(value::float3{p.x, p.y, p.z});
 
     return *this;
   }
 
   const Extent &union_with(const Extent &box) {
-
     lower[0] = (std::min)(lower[0], box.lower[0]);
     lower[1] = (std::min)(lower[1], box.lower[1]);
     lower[2] = (std::min)(lower[2], box.lower[2]);
@@ -1441,9 +1431,6 @@ struct Extent {
 
     return *this;
   }
-
-
-
 };
 
 #if 0
@@ -1535,7 +1522,7 @@ class Connection {
   nonstd::optional<Path> target;
 };
 
-#if 0 // Moved to value::TimeSampleInterpolationType
+#if 0  // Moved to value::TimeSampleInterpolationType
 // Interpolator for TimeSample data
 enum class TimeSampleInterpolation {
   Nearest,  // nearest neighbor
@@ -1543,7 +1530,6 @@ enum class TimeSampleInterpolation {
   // TODO: more to support...
 };
 #endif
-
 
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
 // of Prim
@@ -1557,7 +1543,8 @@ struct Attribute {
 
   void set_type_name(const std::string &tname) { _type_name = tname; }
 
-  // `var` may be empty or ValueBlock, so store type info with set_type_name and set_type_id.
+  // `var` may be empty or ValueBlock, so store type info with set_type_name and
+  // set_type_id.
   std::string type_name() const {
     if (_type_name.size()) {
       return _type_name;
@@ -1632,15 +1619,15 @@ struct Attribute {
     return false;
   }
 
-  template<typename T>
+  template <typename T>
   void set_timesample(const T &v, double t) {
     _var.set_timesample(t, v);
   }
 
-  template<typename T>
+  template <typename T>
   bool get_value(const double t, T *dst,
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Held) const {
+                 value::TimeSampleInterpolationType interp =
+                     value::TimeSampleInterpolationType::Held) const {
     if (!dst) {
       return false;
     }
@@ -1715,7 +1702,7 @@ struct Attribute {
   Variability _variability{
       Variability::Varying};  // 'uniform` qualifier is handled with
                               // `variability=uniform`
-  //bool _blocked{false};       // Attribute Block('None')
+  // bool _blocked{false};       // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
   std::vector<Path> _paths;
@@ -1740,12 +1727,14 @@ class Property {
 
   Property() = default;
 
-  Property(const std::string &type_name, bool custom = false) : _has_custom(custom) {
+  Property(const std::string &type_name, bool custom = false)
+      : _has_custom(custom) {
     _attrib.set_type_name(type_name);
     _type = Type::EmptyAttrib;
   }
 
-  Property(const Attribute &a, bool custom = false) : _attrib(a), _has_custom(custom) {
+  Property(const Attribute &a, bool custom = false)
+      : _attrib(a), _has_custom(custom) {
     _type = Type::Attrib;
   }
 
@@ -1755,7 +1744,8 @@ class Property {
   }
 
   // Relationship(typeless)
-  Property(const Relationship &r, bool custom = false) : _rel(r), _has_custom(custom) {
+  Property(const Relationship &r, bool custom = false)
+      : _rel(r), _has_custom(custom) {
     _type = Type::Relation;
     set_listedit_qual(r.get_listedit_qual());
   }
@@ -1796,7 +1786,6 @@ class Property {
   }
   bool is_connection() const { return _type == Type::Connection; }
 
-
   std::string value_type_name() const {
     if (is_connection()) {
       return _prop_value_type_name;
@@ -1836,7 +1825,8 @@ class Property {
 
   ///
   /// Return single relationTarget path when Property is a Relationship.
-  /// Return the first path when Relationship is composed of PathVector(multiple paths)
+  /// Return the first path when Relationship is composed of PathVector(multiple
+  /// paths)
   ///
   nonstd::optional<Path> get_relationTarget() const {
     if (!is_connection()) {
@@ -1856,7 +1846,8 @@ class Property {
 
   ///
   /// Return multiple relationTarget paths when Property is a Relationship.
-  /// Returns empty when Property is not a Relationship or a Relationship does not contain any target paths.
+  /// Returns empty when Property is not a Relationship or a Relationship does
+  /// not contain any target paths.
   ///
   std::vector<Path> get_relationTargets() const {
     std::vector<Path> pv;
@@ -1886,7 +1877,8 @@ class Property {
   Type _type{Type::EmptyAttrib};
   Relationship _rel;                  // Relation(`rel`)
   std::string _prop_value_type_name;  // for Connection.
-  bool _has_custom{false};            // Qualified with 'custom' keyword? This will be deprecated though
+  bool _has_custom{false};  // Qualified with 'custom' keyword? This will be
+                            // deprecated though
 };
 
 struct XformOp {
@@ -1927,15 +1919,11 @@ struct XformOp {
                // will be empty for "xformOp:translate"
 
   primvar::PrimVar _var;
-  //const value::TimeSamples &get_ts() const { return _var.ts_raw(); }
+  // const value::TimeSamples &get_ts() const { return _var.ts_raw(); }
 
-  std::string get_value_type_name() const {
-    return _var.type_name();
-  }
+  std::string get_value_type_name() const { return _var.type_name(); }
 
-  uint32_t get_value_type_id() const {
-    return _var.type_id();
-  }
+  uint32_t get_value_type_id() const { return _var.type_id(); }
 
   // TODO: Check if T is valid type.
   template <class T>
@@ -1948,17 +1936,11 @@ struct XformOp {
     _var.set_timesample(t, v);
   }
 
-  void set_timesamples(const value::TimeSamples &v) {
-    _var.set_timesamples(v);
-  }
+  void set_timesamples(const value::TimeSamples &v) { _var.set_timesamples(v); }
 
-  void set_timesamples(value::TimeSamples &&v) {
-    _var.set_timesamples(v);
-  }
+  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
 
-  bool is_timesamples() const {
-    return _var.is_timesamples();
-  }
+  bool is_timesamples() const { return _var.is_timesamples(); }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
     if (is_timesamples()) {
@@ -1984,14 +1966,9 @@ struct XformOp {
     return _var.get_value<T>();
   }
 
-  const primvar::PrimVar &get_var() const {
-    return _var;
-  }
+  const primvar::PrimVar &get_var() const { return _var; }
 
-  primvar::PrimVar &var() {
-    return _var;
-  }
-
+  primvar::PrimVar &var() { return _var; }
 };
 
 // Prim metas, Prim tree and properties.
@@ -2223,13 +2200,14 @@ class Prim {
   }
 
   // Replace exting prim
-  template<typename T>
+  template <typename T>
   void set_primdata(const T &prim) {
     // Check if T is Prim class type.
-    static_assert(
-        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
-            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id()),
-        "T is not a Prim class type");
+    static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <=
+                   value::TypeTraits<T>::type_id()) &&
+                      (value::TypeId::TYPE_ID_MODEL_END >
+                       value::TypeTraits<T>::type_id()),
+                  "T is not a Prim class type");
     _data = prim;
     // Use prim.name for elementName
     _elementPath = Path(prim.name, "");
@@ -2239,10 +2217,11 @@ class Prim {
   template <typename T>
   void set_primdata(const std::string &elementName, const T &prim) {
     // Check if T is Prim class type.
-    static_assert(
-        (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
-            (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id()),
-        "T is not a Prim class type");
+    static_assert((value::TypeId::TYPE_ID_MODEL_BEGIN <=
+                   value::TypeTraits<T>::type_id()) &&
+                      (value::TypeId::TYPE_ID_MODEL_END >
+                       value::TypeTraits<T>::type_id()),
+                  "T is not a Prim class type");
     _data = prim;
     SetPrimElementName(_data, elementName);
     _elementPath = Path(elementName, "");
@@ -2266,9 +2245,7 @@ class Prim {
   const Path &element_path() const { return _elementPath; }
 
   // elementName = element_path's prim part
-  const std::string element_name() const {
-    return _elementPath.prop_part();
-  }
+  const std::string element_name() const { return _elementPath.prop_part(); }
 
   const std::string type_name() const { return _data.type_name(); }
 
@@ -2284,7 +2261,8 @@ class Prim {
   template <typename T>
   const T *as() const {
     // Check if T is Prim type. e.g. Xform, Material, ...
-    if ((value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
+    if ((value::TypeId::TYPE_ID_MODEL_BEGIN <=
+         value::TypeTraits<T>::type_id()) &&
         (value::TypeId::TYPE_ID_MODEL_END > value::TypeTraits<T>::type_id())) {
       return _data.as<T>();
     }
@@ -2374,15 +2352,153 @@ class PrimNode {
   std::vector<value::token> variantChildren;
 };
 
-// Similar to SdfLayer
-struct Layer
-{
-  std::string name; // layer name ~= USD filename
-  std::vector<PrimNode> prim_nodes;
+/// Similar to PrimSpec
+/// PrimSpec is a Prim object state just after reading it from USDA and USDC.
+/// The state before compositions and Prim reconstruction by applying
+/// schema(ReconstructPrim in prim-reconstruct.hh) happens.
+///
+/// Its composed primarily of name, specifier, PrimMeta and
+/// Properties(Relationships and Attributes)
+class PrimSpec {
+ public:
+  PrimSpec() = default;
+
+  PrimSpec(const Specifier &spec, const std::string &name)
+      : _specifier(spec), _name(name) {}
+  PrimSpec(const Specifier &spec, const std::string &typeName,
+           const std::string &name)
+      : _specifier(spec), _typeName(typeName), _name(name) {}
+
+  PrimSpec(const PrimSpec &rhs) {
+    if (this != &rhs) {
+      CopyFrom(rhs);
+    }
+  }
+
+  PrimSpec &operator=(const PrimSpec &rhs) {
+    if (this != &rhs) {
+      CopyFrom(rhs);
+    }
+
+    return *this;
+  }
+
+  PrimSpec &operator=(PrimSpec &&rhs) {
+    if (this != &rhs) {
+      MoveFrom(rhs);
+    }
+
+    return *this;
+  }
+
+  const std::string &name() const { return _name; }
+  std::string &name() { return _name; }
+
+  const std::string &typeName() const { return _typeName; }
+  // Can change type name
+  std::string &typeName() { return _typeName; }
+
+  const Specifier &specifier() const { return _specifier; }
+  Specifier &specifier() { return _specifier; }
+
+  const std::vector<PrimSpec> &children() const { return _children; }
+  std::vector<PrimSpec> &children() { return _children; }
+
+  ///
+  /// List variants in this Prim
+  /// key = variant prim name
+  /// value = variats
+  ///
+  const VariantSelectionMap &get_variant_selection_map() const {
+    return _vsmap;
+  }
+
+  const PrimMeta &metas() const;
+  PrimMeta &metas();
+
+  const std::vector<Reference> &get_references();
+  const ListEditQual &get_references_listedit_qualifier();
+
+  const std::vector<Payload> &get_payloads();
+  const ListEditQual &get_payloads_listedit_qualifier();
+
+ private:
+  void CopyFrom(const PrimSpec &rhs) {
+    _specifier = rhs._specifier;
+    _typeName = rhs._typeName;
+    _name = rhs._name;
+
+    _children = rhs._children;
+
+    _props = rhs._props;
+
+    _vsmap = rhs._vsmap;
+
+    _variantAttributeMap = rhs._variantAttributeMap;
+    _variantPrimNodeMap = rhs._variantPrimNodeMap;
+
+    _metas = rhs._metas;
+  }
+
+  void MoveFrom(PrimSpec &rhs) {
+    _specifier = std::move(rhs._specifier);
+    _typeName = std::move(rhs._typeName);
+    _name = std::move(rhs._name);
+
+    _children = std::move(rhs._children);
+
+    _props = std::move(rhs._props);
+
+    _vsmap = std::move(rhs._vsmap);
+
+    _variantAttributeMap = std::move(rhs._variantAttributeMap);
+    _variantPrimNodeMap = std::move(rhs._variantPrimNodeMap);
+
+    _metas = std::move(rhs._metas);
+  }
+
+  Specifier _specifier{Specifier::Def};
+  std::string _typeName;  // prim's typeName(e.g. "Xform", "Material") This is
+                          // identitical to `typeName` in Crate format)
+  std::string _name;      // elementName. Should not be empty.
+
+  std::vector<PrimSpec> _children;  // child nodes
+
+  using PropertyMap = std::map<std::string, Property>;
+  PropertyMap _props;
+
+  ///
+  /// Variants
+  ///
+  /// variant element = Property or Prim
+  ///
+  using PrimSpecMap = std::map<std::string, PrimSpec>;
+
+  VariantSelectionMap _vsmap;  // Original variant selections
+
+  // key = variant_name
+  std::map<std::string, PropertyMap> _variantAttributeMap;
+  std::map<std::string, PrimSpecMap> _variantPrimNodeMap;
+
+#if 0
+  ///
+  /// Information for Crate(USDC binary)
+  ///
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _variantChildren;
+#endif
+
+  PrimMeta _metas;
 };
 
+// Similar to SdfLayer
+// It is basically hold the list of PrimSpec
+struct Layer {
+  std::string name;  // layer name ~= USD filename
+  std::vector<PrimSpec> prim_specs;
+};
 
-#if 0 // TODO: Remove
+#if 0  // TODO: Remove
 // Simple bidirectional Path(string) <-> index lookup
 struct StringAndIdMap {
   void add(int32_t key, const std::string &val) {

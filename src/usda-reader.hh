@@ -11,14 +11,6 @@ namespace tinyusdz {
 
 namespace usda {
 
-//enum LoadState {
-//  LOAD_STATE_TOPLEVEL,   // toplevel .usda input
-//  LOAD_STATE_SUBLAYER,   // .usda is read by 'subLayers'
-//  LOAD_STATE_REFERENCE,  // .usda is read by `references`
-//  LOAD_STATE_PAYLOAD,    // .usda is read by `payload`
-//};
-
-
 ///
 /// Test if input file is USDA format.
 ///
@@ -73,6 +65,12 @@ class USDAReader {
   /// Get warning message(warnings in `Parse`)
   ///
   std::string GetWarning();
+
+  ///
+  /// Get read USD scene data as Layer
+  /// Must be called after `Read`
+  ///
+  bool GetAsLayer(Layer *layer);
 
   ///
   /// Reconstruct Stage from loaded USD scene data.

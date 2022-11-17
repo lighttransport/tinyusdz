@@ -91,6 +91,13 @@ struct USDLoadOptions {
   bool load_assets{true};
 
   ///
+  /// (experimental)
+  /// Do composition on load(Load sublayers, references, etc)
+  /// For USDZ model, this should be false.
+  ///
+  bool do_composition{false};
+
+  ///
   /// Max MBs allowed for each asset file(e.g. jpeg)
   ///
   uint32_t max_allowed_asset_size_in_mb{1024};  // [mb] default 1GB.
