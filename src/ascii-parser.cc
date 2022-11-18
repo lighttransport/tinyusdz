@@ -3187,26 +3187,20 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   bool blocked{false};
 
   if (array_qual) {
-    if (value::TypeTraits<T>::type_name() == "bool") {
-      PushError("Array of bool type is not supported.");
-      return false;
+    if (MaybeNone()) {
     } else {
-      if (MaybeNone()) {
-        blocked = true;
-      } else {
-        std::vector<T> value;
-        if (!ParseBasicTypeArray(&value)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse " +
-                                std::string(value::TypeTraits<T>::type_name()) +
-                                " array.");
-          return false;
-        }
-
-        // Empty array allowed.
-        DCOUT("Got it: ty = " + std::string(value::TypeTraits<T>::type_name()) +
-              ", sz = " + std::to_string(value.size()));
-        var.set_value(value);
+      std::vector<T> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse " +
+                              std::string(value::TypeTraits<T>::type_name()) +
+                              " array.");
+        return false;
       }
+
+      // Empty array allowed.
+      DCOUT("Got it: ty = " + std::string(value::TypeTraits<T>::type_name()) +
+            ", sz = " + std::to_string(value.size()));
+      var.set_value(value);
     }
 
   } else if (hasConnect(primattr_name)) {

@@ -134,6 +134,8 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
   * [x] llvm-mingw(clang) supported
   * [x] MinGW gcc supported, but not recommended(You may got compilation failure depending on your build configuration: https://github.com/syoyo/tinyusdz/issues/33 , and linking takes too much time if you use default bfd linker.). If you want to compile TinyUSDZ in MinGW environment, llvm-mingw(clang) is recommended to use.
 
+Compilation with C++17 is also supported.
+
 ## Build
 
 ### Integrate to your app

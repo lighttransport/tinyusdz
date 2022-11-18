@@ -421,7 +421,10 @@ class CrateValue {
   __FUNC(std::string)
 
 
+  // Note: Use bool and std::vector<bool> as-is in C++ layer, but its serialized as 8bit in Crate binary.
   SET_TYPE_SCALAR(bool)
+  SET_TYPE_1D(bool)
+
   SET_TYPE_SCALAR(Specifier)
   SET_TYPE_SCALAR(Permission)
   SET_TYPE_SCALAR(Variability)
