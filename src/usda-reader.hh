@@ -44,7 +44,7 @@ class USDAReader {
   ///
   /// Reader entry point
   ///
-  bool Read(ascii::LoadState state = ascii::LoadState::TOPLEVEL);
+  bool Read(LoadState state = LoadState::Toplevel);
 
   ///
   ///

@@ -293,15 +293,17 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
   }
 }
 
-bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer) {
+bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, const LoadState load_state, Layer *layer) {
 
+  // TODO: USDC/USDZ support.
+  
   tinyusdz::StreamReader sr(addr, nbytes, /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
 
   // TODO: Uase AssetResolver
   //reader.SetBaseDir(base_dir);
 
-  if (!reader.Read(ascii::LoadState::REFERENCE)) {
+  if (!reader.Read(load_state)) {
     return false;
   }
 
@@ -312,7 +314,7 @@ bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const 
   return false;
 }
 
-bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer) {
+bool Stage::LoadLayerFromFile(const std::string &_filename, const LoadState load_state, Layer *layer) {
   // TODO: Setup AssetResolver.
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
@@ -328,7 +330,7 @@ bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer) {
     PUSH_ERROR_AND_RETURN("Read file failed: " + err);
   }
 
-  return LoadLayerFromMemory(data.data(), data.size(), filepath, layer);
+  return LoadLayerFromMemory(data.data(), data.size(), filepath, load_state, layer);
 }
 
 bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
