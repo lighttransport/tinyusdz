@@ -5,4 +5,3 @@ TabWidth: 2
 UseTab: Never
 BreakBeforeBraces: Attach
 Standard: Cpp11
-IndentPPDirective: BeforeHash

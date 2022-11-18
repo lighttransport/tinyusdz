@@ -4295,29 +4295,49 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
   std::string pTy = prim_type;
 
-  if (prim_type.empty()) {
-    // No Prim type specified. Treat it as Model
+  if (IsToplevel()) {
 
-    pTy = "Model";
-  }
+    if (prim_type.empty()) {
+      // No Prim type specified. Treat it as Model
 
-  if (_prim_construct_fun_map.count(pTy)) {
-    auto construct_fun = _prim_construct_fun_map[pTy];
+      pTy = "Model";
+    }
 
-    Path fullpath(GetCurrentPath(), "");
-    Path pname(prim_name, "");
-    nonstd::expected<bool, std::string> ret = construct_fun(
-        fullpath, spec, pname, primIdx, parentPrimIdx, props, in_metas);
+    if (_prim_construct_fun_map.count(pTy)) {
+      auto construct_fun = _prim_construct_fun_map[pTy];
 
-    if (!ret) {
-      // construction failed.
-      PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy +
-                            "` failed: " + ret.error());
+      Path fullpath(GetCurrentPath(), "");
+      Path pname(prim_name, "");
+      nonstd::expected<bool, std::string> ret = construct_fun(
+          fullpath, spec, pname, primIdx, parentPrimIdx, props, in_metas);
+
+      if (!ret) {
+        // construction failed.
+        PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy +
+                              "` failed: " + ret.error());
+      }
+    } else {
+      PUSH_WARN(fmt::format(
+          "TODO: Unsupported/Unimplemented Prim type: `{}`. Skipping parsing.",
+          pTy));
     }
   } else {
-    PUSH_WARN(fmt::format(
-        "TODO: Unsupported/Unimplemented Prim type: `{}`. Skipping parsing.",
-        pTy));
+    // Load scene as PrimSpec tree
+    if (_primspec_fun) {
+      Path fullpath(GetCurrentPath(), "");
+      Path pname(prim_name, "");
+
+      // pass prim_type as is(empty = empty string)
+      nonstd::expected<bool, std::string> ret = _primspec_fun(
+          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas);
+
+      if (!ret) {
+        // construction failed.
+        PUSH_ERROR_AND_RETURN(fmt::format("Constructing PrimSpec typeName `{}`, elementName `{}` failed: {}", prim_type, prim_name, ret.error()));
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "[Internal Error] PrimSpec handler is not found.");
+    }
   }
 
   PopPath();
@@ -4327,12 +4347,12 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
 ///
 /// Parser entry point
-/// TODO: Refactor
+/// TODO: Refactor and use unified code path regardless of LoadState.
 ///
 bool AsciiParser::Parse(LoadState state) {
-  _sub_layered = (state == LoadState::SUBLAYER);
-  _referenced = (state == LoadState::REFERENCE);
-  _payloaded = (state == LoadState::PAYLOAD);
+  _sub_layered = (state == LoadState::Sublayer);
+  _referenced = (state == LoadState::Reference);
+  _payloaded = (state == LoadState::Payload);
 
   bool header_ok = ParseMagicHeader();
   if (!header_ok) {
@@ -4355,13 +4375,14 @@ bool AsciiParser::Parse(LoadState state) {
 
     if (c == '(') {
       // stage meta.
+      // TODO: We could skip parsing stage meta in flatten(composition) mode.
       if (!ParseStageMetas()) {
         PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
       }
     }
   }
 
-  if (_stage_meta_process_fun) {
+  if (IsToplevel() && _stage_meta_process_fun) {
     DCOUT("StageMeta callback.");
     bool ret = _stage_meta_process_fun(_stage_metas);
     if (!ret) {
