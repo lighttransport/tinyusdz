@@ -478,6 +478,7 @@ namespace value {
 // TODO: Use std::function or some template technique?
 
 #define CASE_EXPR_LIST(__FUNC) \
+  __FUNC(bool)                 \
   __FUNC(half)                 \
   __FUNC(half2)                \
   __FUNC(half3)                \
@@ -687,9 +688,6 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
   std::stringstream os;
 
   switch (v.type_id()) {
-    // TODO: `bool` type for 1D?
-    BASETYPE_CASE_EXPR(bool)
-
 
     // base type
     CASE_EXPR_LIST(BASETYPE_CASE_EXPR)

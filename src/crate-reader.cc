@@ -2230,9 +2230,47 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        TODO_IMPLEMENT(dty)
+        std::vector<bool> v;
+
+        if (rep.GetPayload() == 0) { // empty array
+          value->Set(v); 
+          return true;
+        }
+
+        // bool is encoded as 8bit value.
+
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+
+        if (n > _config.maxAssetPathElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of bool array too large. TinyUSDZ limites it up to {}", _config.maxAssetPathElements));
+        }
+
+        CHECK_MEMORY_USAGE(n * sizeof(uint8_t));
+
+        std::vector<uint8_t> data(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(uint8_t),
+                       size_t(n) * sizeof(uint8_t),
+                       reinterpret_cast<uint8_t *>(data.data()))) {
+          PUSH_ERROR("Failed to read bool array.");
+          return false;
+        }
+
+        // to std::vector<bool>, whose underlying storage may use 1bit.
+        v.resize(n);
+        for (size_t i = 0; i < n; i++) {
+          v[i] = data[i] ? true : false;
+        }
+        
+        value->Set(v);
+        return true;
+
       } else {
-        return false;
+        // non array bool should be inline encoded.
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "bool value must be inlined.");
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
@@ -2240,6 +2278,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
+
+        if (rep.GetPayload() == 0) { // empty array
+          value->Set(std::vector<value::AssetPath>()); 
+          return true;
+        }
+
         // AssetPath = std::string(storage format is TokenIndex).
         uint64_t n;
         if (!_sr->read8(&n)) {
@@ -2283,6 +2327,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       NON_ARRAY_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
+
+        if (rep.GetPayload() == 0) { // empty array
+          value->Set(std::vector<value::token>()); 
+          return true;
+        }
+
         uint64_t n;
         if (!_sr->read8(&n)) {
           PUSH_ERROR("Failed to read the number of array elements.");
@@ -2295,7 +2345,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
-        std::vector<crate::Index> v(static_cast<size_t>(n));
+        std::vector<crate::Index> v;
+        v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(v.data()))) {
