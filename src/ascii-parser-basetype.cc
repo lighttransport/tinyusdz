@@ -490,6 +490,7 @@ bool AsciiParser::ReadBasicType(value::token *value) {
 
   std::string s;
   if (!ReadStringLiteral(&s)) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse string literal.");
     return false;
   }
 
