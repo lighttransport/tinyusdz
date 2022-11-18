@@ -8,11 +8,20 @@
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need input.usda\n";
+    std::cout << "Need input.usda (--flatten)\n";
     exit(-1);
   }
 
   std::string filename = argv[1];
+
+  bool do_compose =false;
+
+  if (argc > 2) {
+    std::string arg = argv[2];
+    if (arg == "--flatten") {
+      do_compose = true;
+    }
+  }
 
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filename);
@@ -41,8 +50,15 @@ int main(int argc, char **argv) {
 #endif
   reader.SetBaseDir(base_dir);
 
+  tinyusdz::LoadState state = tinyusdz::LoadState::Toplevel;
+  if (do_compose) {
+    // FIXME
+    state = tinyusdz::LoadState::Sublayer;
+    std::cout << "Enable composition.\n"; 
+  }
+
   {
-    bool ret = reader.Read();
+    bool ret = reader.Read(state);
 
     if (!ret) {
       std::cerr << "Failed to parse .usda: \n";
