@@ -282,7 +282,7 @@ std::string print_rel(const Relationship &rel, const std::string &name, uint32_t
 
   ss << "rel " << name;
 
-  if (rel.is_empty()) {
+  if (!rel.has_value()) {
     // nothing todo
   } else if (rel.is_path()) {
     ss << " = " << rel.targetPath;
@@ -290,6 +290,8 @@ std::string print_rel(const Relationship &rel, const std::string &name, uint32_t
     ss << " = " << rel.targetPathVector;
   } else if (rel.is_string()) {
     ss << " = " << quote(rel.targetString);
+  } else if (rel.is_blocked()) {
+    ss << " = None";
   } else {
     ss << "[InternalErrror]";
   }
@@ -1719,7 +1721,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
 
   if (mesh.skeleton) {
-    ss << pprint::Indent(indent+1) << "rel skel:skeleton = " << mesh.skeleton.value() << "\n";
+    ss << print_rel(mesh.skeleton.value(), "skel:skeketon", indent+1);
   }
 
   // subdiv
@@ -2052,7 +2054,7 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
   ss << print_typed_attr(skel.restTransforms, "restTransforms", indent+1);
 
   if (skel.animationSource) {
-    ss << pprint::Indent(indent+1) << "rel skel:animationSource = " << pquote(skel.animationSource.value()) << "\n";
+    ss << print_rel(skel.animationSource.value(), "skel:animationSource", indent+1);
   }
 
   if (skel.proxyPrim) {

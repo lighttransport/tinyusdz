@@ -52,7 +52,7 @@ struct Skeleton {
   nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
 
   // SkelBindingAPI
-  nonstd::optional<Path>
+  nonstd::optional<Relationship>
       animationSource;  // rel skel:animationSource = </path/...>
 
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
@@ -68,13 +68,26 @@ struct Skeleton {
 
   PrimMeta meta;
 
-  bool get_animationSource(Path *path) {
-    if (animationSource) {
-      if (path) {
-        (*path) = animationSource.value();
-        return true;
-      }
+  bool get_animationSource(Path *path, ListEditQual *qual = nullptr) {
+    if (!path) {
+      return false;
     }
+
+    const Relationship &rel = animationSource.value();
+    if (qual) {
+      (*qual) = rel.get_listedit_qual();
+    }
+
+    if (rel.is_path()) {
+      (*path) = rel.targetPath;
+    } else if (rel.is_pathvector()) {
+      if (rel.targetPathVector.size()) {
+        (*path) = rel.targetPathVector[0];
+      }
+    } else {
+      return false;
+    }
+
 
     return false;
   }
