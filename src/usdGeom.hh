@@ -388,7 +388,7 @@ struct GeomMesh : GPrim {
       faceVertexIndices;  // int[] faceVertexIndices
 
   // Make SkelBindingAPI first citizen.
-  nonstd::optional<Path> skeleton;  // rel skel:skeleton
+  nonstd::optional<Relationship> skeleton;  // rel skel:skeleton
 
   //
   // Utility functions
