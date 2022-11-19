@@ -5,6 +5,7 @@
 #pragma once
 
 #include "prim-types.hh"
+#include "composition.hh"
 
 namespace tinyusdz {
 
@@ -129,11 +130,11 @@ class Stage {
   ///
   /// Loads USD from and return it as Layer
   ///
-  bool LoadLayerFromFile(const std::string &filename, Layer *layer);
+  bool LoadLayerFromFile(const std::string &filename, const LoadState load_state, Layer *layer);
 
   ///
   /// Loads USD asset from memory and return it as Layer
-  bool LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer);
+  bool LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, const LoadState load_state, Layer *dest);
 
   ///
   /// Loads `reference` USD asset and return it as Layer
