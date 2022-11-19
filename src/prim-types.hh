@@ -2019,6 +2019,7 @@ struct Klass {
 };
 #endif
 
+#if 0
 struct MaterialBindingAPI {
   Path binding;            // rel material:binding
   Path bindingCorrection;  // rel material:binding:correction
@@ -2026,6 +2027,7 @@ struct MaterialBindingAPI {
 
   // TODO: allPurpose, preview, ...
 };
+#endif
 
 //
 // Predefined node classes

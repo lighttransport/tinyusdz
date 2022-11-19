@@ -444,15 +444,9 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 
   // Material/Shader
   if (mesh.materialBinding) {
-    const MaterialBindingAPI &materialBinding = mesh.materialBinding.value();
-    if (materialBinding.binding.is_valid()) {
-      DCOUT("materialBinding = " << to_string(materialBinding.binding));
-    } else {
-      return nonstd::make_unexpected(
-          fmt::format("material:binding has invalid Path."));
-    }
-
-    // stage.GetPrimAtPath
+    const Relationship &materialBinding = mesh.materialBinding.value();
+    DCOUT("TODO: materialBinding.");
+    (void)materialBinding;
   }
 
   // Compute total faceVarying elements;
