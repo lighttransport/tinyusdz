@@ -244,7 +244,11 @@ struct GPrim : Xformable {
 #endif
 
   nonstd::optional<Relationship> proxyPrim;
-  nonstd::optional<MaterialBindingAPI> materialBinding;
+
+  // Some frequently used materialBindings
+  nonstd::optional<Relationship> materialBinding; // material:binding
+  nonstd::optional<Relationship> materialBindingCorrection; // material:binding:correction
+  nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
 
   std::map<std::string, Property> props;
 
