@@ -572,4 +572,10 @@ include src/xform.hh
 include src/xform.cc
 include src/audio-loader.cc
 include src/audio-loader.hh
+include src/external/OpenFBX/LICENSE
+include src/external/OpenFBX/README.md
+include src/external/OpenFBX/src/ofbx.cpp
+include src/external/OpenFBX/src/ofbx.h
+include src/usdFbx.cc
+include src/usdFbx.hh
 recursive-include src/external/pybind11 *

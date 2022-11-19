@@ -53,6 +53,8 @@ option(TINYUSDZ_CXX_EXCEPTIONS
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
+option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
+       OFF)
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
 option(
@@ -339,6 +341,11 @@ if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
 endif()
 
+if(TINYUSDZ_WITH_USDFBX)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/OpenFBX/src/ofbx.cpp)
+endif()
+
 if(TINYUSDZ_WITH_USDOBJ)
   list(APPEND TINYUSDZ_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
@@ -607,6 +614,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   #    ${TINYUSDZ_LIB_TARGET}
   #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
   #endif()
+
+  if(TINYUSDZ_WITH_USDFBX)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDFBX")
+  endif()
 
   if(TINYUSDZ_WITH_USDOBJ)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
