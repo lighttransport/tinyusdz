@@ -257,6 +257,17 @@ void CreateScene(tinyusdz::Stage *stage) {
         std::cerr << "expand_by_indices failed. err = " << err << "\n";
       }
 
+      // Typed version
+      std::vector<tinyusdz::value::texcoord2f> uvs;
+      if (primvar.flatten_with_indices(&uvs, &err)) {
+        // value;:Value can contain any types, but value.array_size() should work well only for primvar types(e.g. `float[]`, `color3f[]`)
+        // It would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
+        std::cout << "uv primvars. array size = " << uvs.size() << "\n";
+        std::cout << "uv primvars. expand_by_indices result = " << tinyusdz::value::pprint_value(uvs) << "\n";
+      } else {
+        std::cerr << "expand_by_indices failed. err = " << err << "\n";
+      }
+
       std::vector<tinyusdz::GeomPrimvar> gpvars = mesh.get_primvars();
       std::cout << "# of primvars = " << gpvars.size();
       for (const auto &item : gpvars) {
