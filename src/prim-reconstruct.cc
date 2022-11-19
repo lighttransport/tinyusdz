@@ -1135,7 +1135,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
       if (value::TypeTraits<value::token>::type_name() == attr_type_name) {
         if (prop.get_property_type() == Property::Type::EmptyAttrib) {
           Relationship rel;
-          rel.set_empty();
+          rel.set_novalue();
           rel.meta = prop.get_attribute().metas();
           table.insert(name);
           target = rel;
@@ -1294,12 +1294,12 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     } \
     const Relationship &rel = prop.second.get_relationship(); \
     if (rel.is_path()) { \
-      __ptarget->skeleton = rel.targetPath; \
+      __ptarget->skeleton = rel; \
       table.insert(prop.first); \
       continue; \
     } else if (rel.is_pathvector()) { \
       if (rel.targetPathVector.size() == 1) { \
-        __ptarget->skeleton = rel.targetPathVector[0]; \
+        __ptarget->skeleton = rel; \
         table.insert(prop.first); \
         continue; \
       } \
@@ -2104,8 +2104,7 @@ bool ReconstructPrim<Skeleton>(
         {
           const Relationship &rel = prop.second.get_relationship();
           if (rel.is_path()) {
-            DCOUT(kSkelAnimationSource);
-            skel->animationSource = rel.targetPath;
+            skel->animationSource = rel;
             table.insert(kSkelAnimationSource);
           } else {
             PUSH_ERROR_AND_RETURN("`" << kSkelAnimationSource << "` target must be Path.");

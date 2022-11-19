@@ -869,8 +869,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     ToTokenProperty(mesh.faceVaryingLinearInterpolation, *out_prop);
   } else if (prop_name == "skeleton") {
     if (mesh.skeleton) {
-      Relationship rel;
-      rel.set(mesh.skeleton.value());
+      const Relationship &rel = mesh.skeleton.value();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       // empty
@@ -1071,7 +1070,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (prop_name == "outputsSurface") {
     if (surface.outputsSurface) {
       const Relationship &rel = surface.outputsSurface.value();
-      if (rel.is_empty()) {
+      if (!rel.has_value()) {
         // empty. type info only
         (*out_prop) = Property(value::kToken, /* custom */ false);
       } else if (rel.is_path()) {
@@ -1090,7 +1089,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (prop_name == "outputsDisplacement") {
     if (surface.outputsDisplacement) {
       const Relationship &rel = surface.outputsDisplacement.value();
-      if (rel.is_empty()) {
+      if (!rel.has_value()) {
         // empty. type info only
         (*out_prop) = Property(value::kToken, /* custom */ false);
       } else if (rel.is_path()) {
@@ -1248,8 +1247,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     ToProperty(skel.restTransforms, (*out_prop));
   } else if (prop_name == "animationSource") {
     if (skel.animationSource) {
-      Relationship rel;
-      rel.set(skel.animationSource.value());
+      const Relationship &rel = skel.animationSource.value();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       // empty

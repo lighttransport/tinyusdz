@@ -1082,7 +1082,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       if (spec_type == SpecType::Relationship) {
         // `rel` with no target. e.g. `rel target`
         rel = Relationship();
-        rel.set_empty();
+        rel.set_novalue();
         (*prop) = Property(rel, custom);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");

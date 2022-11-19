@@ -1458,27 +1458,26 @@ struct ConnectionPath {
 //
 class Relationship {
  public:
-  // For some reaon, using tinyusdz::variant will cause double-free in some
-  // environemt on clang, so use old-fashioned way for a while.
-  enum class Type { Empty, String, Path, PathVector };
 
-  Type type{Type::Empty};
+  // rel myrel    : DefineOnly(or empty)
+  // rel myrel = "abc" : String
+  // rel myrel = </a> : Path
+  // rel myrel = [</a>, </b>, ...] : PathVector
+  // rel myrel = None : ValueBlock
+  //
+  enum class Type { DefineOnly, String, Path, PathVector, ValueBlock };
+
+  Type type{Type::DefineOnly};
   std::string targetString;
   Path targetPath;
   std::vector<Path> targetPathVector;
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};
 
-  static Relationship make_empty() {
-    Relationship r;
-    r.set_empty();
-    return r;
-  }
-
   // TODO: Remove
   void set_listedit_qual(ListEditQual q) { listOpQual = q; }
   ListEditQual get_listedit_qual() const { return listOpQual; }
 
-  void set_empty() { type = Type::Empty; }
+  void set_novalue() { type = Type::DefineOnly; }
 
   void set(const std::string &s) {
     targetString = s;
@@ -1495,13 +1494,24 @@ class Relationship {
     type = Type::PathVector;
   }
 
-  bool is_empty() const { return type == Type::Empty; }
+  void set(const value::ValueBlock &v) {
+    (void)v;
+    type = Type::ValueBlock;
+  }
+
+  void set_blocked() {
+    type = Type::ValueBlock;
+  }
+
+  bool has_value() const { return type != Type::DefineOnly; }
 
   bool is_string() const { return type == Type::String; }
 
   bool is_path() const { return type == Type::Path; }
 
   bool is_pathvector() const { return type == Type::PathVector; }
+
+  bool is_blocked() const { return type == Type::ValueBlock; }
 
   AttrMeta meta;
 };
