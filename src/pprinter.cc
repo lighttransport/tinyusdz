@@ -306,6 +306,25 @@ std::string print_rel(const Relationship &rel, const std::string &name, uint32_t
   return ss.str();
 }
 
+std::string print_relationship(const Relationship &rel, const ListEditQual &qual, const bool custom, const std::string &name, uint32_t indent) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent);
+
+  if (custom) {
+    ss << "custom ";
+  }
+
+  // List editing
+  if (qual != ListEditQual::ResetToExplicit) {
+    ss << to_string(qual) << " ";
+  }
+
+  ss << print_rel(rel, name, indent);
+
+  return ss.str();
+}
+
 } // namespce local
 
 std::string print_payload(const prim::PayloadList &payload, const uint32_t indent) {
@@ -1077,10 +1096,15 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   ss << print_typed_token_attr(gprim.visibility, "visibility", indent);
 
   if (gprim.materialBinding) {
-    auto m = gprim.materialBinding.value();
-    if (m.binding.is_valid()) {
-      ss << pprint::Indent(indent) << "rel material:binding = " << wquote(to_string(m.binding), "<", ">") << "\n";
-    }
+    ss << print_relationship(gprim.materialBinding.value(), gprim.materialBinding.value().get_listedit_qual(), /* custom */false, "material:binding", indent);
+  }
+
+  if (gprim.materialBindingCorrection) {
+    ss << print_relationship(gprim.materialBindingCorrection.value(), gprim.materialBindingCorrection.value().get_listedit_qual(), /* custom */false, "material:binding:correction", indent);
+  }
+
+  if (gprim.materialBindingPreview) {
+    ss << print_relationship(gprim.materialBindingPreview.value(), gprim.materialBindingPreview.value().get_listedit_qual(), /* custom */false, "material:binding:preview", indent);
   }
 
   ss << print_xformOps(gprim.xformOps, indent);

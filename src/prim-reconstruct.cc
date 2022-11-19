@@ -37,6 +37,8 @@ constexpr auto kTag = "[PrimReconstruct]";
 
 constexpr auto kProxyPrim = "proxyPrim";
 constexpr auto kMaterialBinding = "material:binding";
+constexpr auto kMaterialBindingCorrection = "material:binding:correction";
+constexpr auto kMaterialBindingPreview = "material:binding:preview";
 constexpr auto kSkelSkeleton = "skel:skeleton";
 constexpr auto kSkelAnimationSource = "skel:animationSource";
 
@@ -1252,35 +1254,31 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     } \
   }
 
-// "rel material:binding = <...>"
-#define PARSE_MATERIAL_BINDING_RELATION(__table, __prop, __ptarget) \
-  if (prop.first == kMaterialBinding) { \
-    if (__table.count(kMaterialBinding)) { \
+// Rel with single targetPath
+#define PARSE_SINGLE_TARGET_PATH_RELATION(__table, __prop, __propname, __target) \
+  if (prop.first == __propname) { \
+    if (__table.count(__propname)) { \
        continue; \
     } \
     if (prop.second.is_relationship() && prop.second.is_empty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kMaterialBinding)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", __propname)); \
     } \
     const Relationship &rel = prop.second.get_relationship(); \
     if (rel.is_path()) { \
-      MaterialBindingAPI m; \
-      m.binding = rel.targetPath; \
-      __ptarget->materialBinding = m; \
+      __target = rel; \
       table.insert(prop.first); \
-      DCOUT("Added rel material:binding."); \
+      DCOUT("Added rel " << __propname); \
       continue; \
     } else if (rel.is_pathvector()) { \
       if (rel.targetPathVector.size() == 1) { \
-        MaterialBindingAPI m; \
-        m.binding = rel.targetPathVector[0]; \
-        __ptarget->materialBinding = m; \
+        __target = rel; \
         table.insert(prop.first); \
-        DCOUT("Added rel material:binding."); \
+        DCOUT("Added rel " << __propname); \
         continue; \
       } \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", kMaterialBinding)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", __propname)); \
     } else { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kMaterialBinding)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", __propname)); \
     } \
   }
 
@@ -2579,7 +2577,9 @@ bool ReconstructPrim<GeomSphere>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    PARSE_MATERIAL_BINDING_RELATION(table, prop, sphere)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, sphere->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, sphere->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, sphere->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomSphere, sphere->radius)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomSphere, sphere->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomSphere,
@@ -2688,7 +2688,9 @@ bool ReconstructPrim<GeomPoints>(
 
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    PARSE_MATERIAL_BINDING_RELATION(table, prop, points)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, points->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, points->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, points->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomPoints, points->points)
     PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomPoints, points->normals)
     PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomPoints, points->widths)
@@ -2761,7 +2763,9 @@ bool ReconstructPrim<GeomCone>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     PARSE_PROXY_PRIM_RELATION(table, prop, cone)
-    PARSE_MATERIAL_BINDING_RELATION(table, prop, cone)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, cone->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, cone->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, cone->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
     PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
@@ -2796,7 +2800,9 @@ bool ReconstructPrim<GeomCylinder>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     PARSE_PROXY_PRIM_RELATION(table, prop, cylinder)
-    PARSE_MATERIAL_BINDING_RELATION(table, prop, cylinder)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, cylinder->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, cylinder->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, cylinder->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCylinder,
                          cylinder->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
@@ -2832,7 +2838,9 @@ bool ReconstructPrim<GeomCapsule>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     PARSE_PROXY_PRIM_RELATION(table, prop, capsule)
-    PARSE_MATERIAL_BINDING_RELATION(table, prop, capsule)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, capsule->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, capsule->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, capsule->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
     PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis)
@@ -2869,7 +2877,9 @@ bool ReconstructPrim<GeomCube>(
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
     PARSE_PROXY_PRIM_RELATION(table, prop, cube)
-    PARSE_MATERIAL_BINDING_RELATION(table, prop, cube)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, cube->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, cube->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, cube->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "size", GeomCube, cube->size)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCube, cube->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCube,
@@ -3022,7 +3032,9 @@ bool ReconstructPrim<GeomMesh>(
   for (const auto &prop : properties) {
     DCOUT("GeomMesh prop: " << prop.first);
     PARSE_PROXY_PRIM_RELATION(table, prop, mesh)
-    PARSE_MATERIAL_BINDING_RELATION(table, prop, mesh)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, mesh->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, mesh->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mesh->materialBindingPreview)
     PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
     PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomMesh, mesh->points)
     PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomMesh, mesh->normals)
