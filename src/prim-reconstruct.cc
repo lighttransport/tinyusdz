@@ -41,6 +41,8 @@ constexpr auto kMaterialBindingCorrection = "material:binding:correction";
 constexpr auto kMaterialBindingPreview = "material:binding:preview";
 constexpr auto kSkelSkeleton = "skel:skeleton";
 constexpr auto kSkelAnimationSource = "skel:animationSource";
+constexpr auto kSkelBlendShapes = "skel:blendShapes";
+constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
 
 ///
 /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
@@ -145,7 +147,7 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
   } else if (var.is_timesamples()) {
     for (size_t i = 0; i < var.ts_raw().size(); i++) {
       const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
-  
+
       // Attribute Block?
       if (s.blocked) {
         dst.add_blocked_sample(s.t);
@@ -1282,6 +1284,28 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     } \
   }
 
+// Rel with targetPaths(array of Paths)
+#define PARSE_TARGET_PATHS_RELATION(__table, __prop, __propname, __target) \
+  if (prop.first == __propname) { \
+    if (__table.count(__propname)) { \
+       continue; \
+    } \
+    if (prop.second.is_relationship() && prop.second.is_empty()) { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", __propname)); \
+    } \
+    const Relationship &rel = prop.second.get_relationship(); \
+    if (rel.is_pathvector()) { \
+      /* allow empty */ \
+      __target = rel; \
+      table.insert(prop.first); \
+      DCOUT("Added rel " << __propname); \
+      continue; \
+    } else { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be an Path vector(array of Paths).", __propname)); \
+    } \
+  }
+
+#if 0
 #define PARSE_SKEL_SKELETON_RELATION(__table, __prop, __ptarget) \
   if (prop.first == kSkelSkeleton) { \
     if (__table.count(kSkelSkeleton)) { \
@@ -1306,6 +1330,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kSkelSkeleton)); \
     } \
   }
+#endif
 
 #define PARSE_SHADER_TERMINAL_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target); \
@@ -1569,19 +1594,6 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
     }                                                                        \
   } }
 
-
-#if 0 // TODO: remove
-#define PARSE_TYPED_PROPERTY(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseTypedProperty(__table, __prop.first, __prop.second, __name, __target); \
-  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
-    /* go next */ \
-  } else { \
-    PUSH_ERROR_AND_RETURN(fmt::format("Parsing property `{}` failed. Error: {}", __name, ret.err)); \
-  } \
-}
-#endif
 
 // Add custom property(including property with "primvars" prefix)
 // Please call this macro after listing up all predefined property using
@@ -1967,17 +1979,6 @@ bool ReconstructPrim(
   (void)references;
   (void)warn;
 
-#if 0 // TODO
-  //
-  // Resolve prepend references
-  //
-  if (std::get<0>(references) == ListEditQual::Prepend) {
-    for (const auto &ref : std::get<1>(references)) {
-      (void)ref;
-    }
-  }
-#endif
-
   std::set<std::string> table;
   if (!prim::ReconstructXformOpsFromProperties(table, properties, &xform->xformOps, err)) {
     return false;
@@ -1987,18 +1988,6 @@ bool ReconstructPrim(
     ADD_PROPERTY(table, prop, Xform, xform->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
-
-#if 0 // TODO
-  //
-  // Resolve append references
-  // (Overwrite variables with the referenced one).
-  //
-  if (std::get<0>(references) == ListEditQual::Append) {
-    for (const auto &ref : std::get<1>(references)) {
-      (void)ref;
-    }
-  }
-#endif
 
   return true;
 }
@@ -2903,78 +2892,6 @@ bool ReconstructPrim<GeomMesh>(
 
   DCOUT("GeomMesh");
 
-#if 0 // TODO
-  //
-  // Resolve prepend references
-  //
-
-  for (const auto &ref : references) {
-    DCOUT("asset_path = '" + std::get<1>(ref).asset_path + "'\n");
-
-    if ((std::get<0>(ref) == tinyusdz::ListEditQual::ResetToExplicit) ||
-        (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend)) {
-      const Reference &asset_ref = std::get<1>(ref);
-
-      if (endsWith(asset_ref.asset_path, ".obj")) {
-        std::string err;
-        GPrim gprim;
-
-        // abs path.
-        std::string filepath = asset_ref.asset_path;
-
-        if (io::IsAbsPath(asset_ref.asset_path)) {
-          // do nothing
-        } else {
-          if (!_base_dir.empty()) {
-            filepath = io::JoinPath(_base_dir, filepath);
-          }
-        }
-
-        DCOUT("Reading .obj file: " + filepath);
-
-        if (!usdObj::ReadObjFromFile(filepath, &gprim, &err)) {
-          PUSH_ERROR_AND_RETURN("Failed to read .obj(usdObj). err = " + err);
-        }
-        DCOUT("Loaded .obj file: " + filepath);
-
-        mesh->visibility = gprim.visibility;
-        mesh->doubleSided = gprim.doubleSided;
-        mesh->orientation = gprim.orientation;
-
-        if (gprim.props.count("points")) {
-          DCOUT("points");
-          const Property &prop = gprim.props.at("points");
-          if (prop.is_relationship()) {
-            PUSH_WARN("TODO: points Rel\n");
-          } else {
-            const Attribute &attr = prop.attrib;
-            // PrimVar
-            DCOUT("points.type:" + attr.var.type_name());
-            if (attr.var.is_scalar()) {
-              auto p = attr.var.get_value<std::vector<value::point3f>>();
-              if (p) {
-                mesh->points.value = p.value();
-              } else {
-                PUSH_ERROR_AND_RETURN("TODO: points.type = " +
-                                      attr.var.type_name());
-              }
-              // if (auto p = value::as_vector<value::float3>(&pattr->var)) {
-              //   DCOUT("points. sz = " + std::to_string(p->size()));
-              //   mesh->points = (*p);
-              // }
-            } else {
-              PUSH_ERROR_AND_RETURN("TODO: timesample points.");
-            }
-          }
-        }
-
-      } else {
-        DCOUT("Not a .obj file");
-      }
-    }
-  }
-#endif
-
   auto SubdivisioSchemeHandler = [](const std::string &tok)
       -> nonstd::expected<GeomMesh::SubdivisionScheme, std::string> {
     using EnumTy = std::pair<GeomMesh::SubdivisionScheme, const char *>;
@@ -3035,7 +2952,8 @@ bool ReconstructPrim<GeomMesh>(
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, mesh->materialBinding)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, mesh->materialBindingCorrection)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mesh->materialBindingPreview)
-    PARSE_SKEL_SKELETON_RELATION(table, prop, mesh)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kSkelSkeleton, mesh->skeleton)
+    PARSE_TARGET_PATHS_RELATION(table, prop, kSkelBlendShapeTargets, mesh->blendShapeTargets)
     PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomMesh, mesh->points)
     PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomMesh, mesh->normals)
     PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexCounts", GeomMesh,
@@ -3070,21 +2988,13 @@ bool ReconstructPrim<GeomMesh>(
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomMesh,
                        mesh->purpose)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomMesh, mesh->extent)
+    // blendShape names
+    PARSE_TYPED_ATTRIBUTE(table, prop, kSkelBlendShapes, GeomMesh, mesh->blendShapes)
+    // generic
     ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
-#if 0
-  //
-  // Resolve append references
-  // (Overwrite variables with the referenced one).
-  //
-  for (const auto &ref : references) {
-    if (std::get<0>(ref) == tinyusdz::ListEditQual::Append) {
-      // TODO
-    }
-  }
-#endif
 
   return true;
 }
