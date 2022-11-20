@@ -276,7 +276,7 @@ std::string print_references(const prim::ReferenceList &references, const uint32
   return ss.str();
 }
 
-std::string print_rel(const Relationship &rel, const std::string &name, uint32_t indent)
+std::string print_rel_only(const Relationship &rel, const std::string &name, uint32_t indent)
 {
   std::stringstream ss;
 
@@ -320,7 +320,7 @@ std::string print_relationship(const Relationship &rel, const ListEditQual &qual
     ss << to_string(qual) << " ";
   }
 
-  ss << print_rel(rel, name, indent);
+  ss << print_rel_only(rel, name, indent);
 
   return ss.str();
 }
@@ -916,7 +916,7 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   }
 
   const Relationship &rel = prop.get_relationship();
-  ss << print_rel(rel, name, indent);
+  ss << print_rel_only(rel, name, indent);
 
   return ss.str();
 }
@@ -1745,8 +1745,14 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
 
   if (mesh.skeleton) {
-    ss << print_rel(mesh.skeleton.value(), "skel:skeketon", indent+1);
+    ss << print_relationship(mesh.skeleton.value(), mesh.skeleton.value().get_listedit_qual(), /* custom */false, "skel:skeketon", indent+1);
   }
+
+  ss << print_typed_attr(mesh.blendShapes, "skel:blendShapes", indent+1);
+  if (mesh.blendShapeTargets) {
+    ss << print_relationship(mesh.blendShapeTargets.value(), mesh.blendShapeTargets.value().get_listedit_qual(), /* custom */false, "skel:blendShapeTargets", indent+1);
+  }
+  
 
   // subdiv
   ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
@@ -2045,7 +2051,7 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   ss << print_typed_attr(root.extent, "extent", indent+1);
 
   if (root.proxyPrim) {
-    ss << print_rel(root.proxyPrim.value(), "proxyPrim", indent+1);
+    ss << print_relationship(root.proxyPrim.value(), root.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
   }
 
   // TODO
@@ -2078,11 +2084,11 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
   ss << print_typed_attr(skel.restTransforms, "restTransforms", indent+1);
 
   if (skel.animationSource) {
-    ss << print_rel(skel.animationSource.value(), "skel:animationSource", indent+1);
+    ss << print_relationship(skel.animationSource.value(), skel.animationSource.value().get_listedit_qual(), /* custom */false, "skel:animationSource", indent+1);
   }
 
   if (skel.proxyPrim) {
-    ss << print_rel(skel.proxyPrim.value(), "proxyPrim", indent+1);
+    ss << print_relationship(skel.proxyPrim.value(), skel.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
   }
 
   ss << print_typed_token_attr(skel.visibility, "visibility", indent+1);
