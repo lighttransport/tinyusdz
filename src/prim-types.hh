@@ -1455,34 +1455,27 @@ struct ConnectionPath {
 
 //
 // Relationship(typeless property)
+// TODO: Support variability?
 //
 class Relationship {
  public:
 
   // rel myrel    : DefineOnly(or empty)
-  // rel myrel = "abc" : String
   // rel myrel = </a> : Path
   // rel myrel = [</a>, </b>, ...] : PathVector
   // rel myrel = None : ValueBlock
   //
-  enum class Type { DefineOnly, String, Path, PathVector, ValueBlock };
+  enum class Type { DefineOnly, Path, PathVector, ValueBlock };
 
   Type type{Type::DefineOnly};
-  std::string targetString;
   Path targetPath;
   std::vector<Path> targetPathVector;
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};
 
-  // TODO: Remove
   void set_listedit_qual(ListEditQual q) { listOpQual = q; }
   ListEditQual get_listedit_qual() const { return listOpQual; }
 
   void set_novalue() { type = Type::DefineOnly; }
-
-  void set(const std::string &s) {
-    targetString = s;
-    type = Type::String;
-  }
 
   void set(const Path &p) {
     targetPath = p;
@@ -1504,8 +1497,6 @@ class Relationship {
   }
 
   bool has_value() const { return type != Type::DefineOnly; }
-
-  bool is_string() const { return type == Type::String; }
 
   bool is_path() const { return type == Type::Path; }
 
