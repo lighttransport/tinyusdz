@@ -15,7 +15,6 @@ constexpr auto kSkelAnimation = "SkelAnimation";
 constexpr auto kBlendShape = "BlendShape";
 
 // BlendShapes
-// TODO(syoyo): Blendshape
 struct BlendShape {
   std::string name;
   Specifier spec{Specifier::Def};
@@ -158,23 +157,6 @@ struct SkelAnimation {
 // PackedJointAnimation is deprecated(Convert to SkelAnimation)
 // struct PackedJointAnimation {
 // };
-
-#if 0
-// W.I.P.
-struct SkelBindingAPI {
-  value::matrix4d geomBindTransform;     // primvars:skel:geomBindTransform
-  std::vector<int> jointIndices;         // primvars:skel:jointIndices
-  std::vector<float> jointWeights;       // primvars:skel:jointWeights
-  std::vector<value::token> blendShapes;  // optional?
-  std::vector<value::token> joints;       // optional
-
-  int64_t animationSource{
-      -1};  // index to Scene.animations. ref skel:animationSource
-  int64_t blendShapeTargets{
-      -1};  // index to Scene.blendshapes. ref skel:bindShapeTargets
-  int64_t skeleton{-1};  // index to Scene.skeletons. // ref skel:skeleton
-};
-#endif
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"

@@ -475,12 +475,13 @@ struct GeomMesh : GPrim {
           FaceVaryingLinearInterpolation::
               CornersPlus1};  // token faceVaryingLinearInterpolation
 
+  TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[] skel:blendShapes
+  nonstd::optional<Relationship> blendShapeTargets; // rel skel:blendShapeTargets (Path[])
+
   //
-  // TODO: Make SkelBindingAPI property first citizen
+  // TODO: Make these primvars first citizen?
   // - int[] primvars:skel:jointIndices
   // - float[] primvars:skel:jointWeights
-  // - uniform token[] skel:blendShapes
-  // - uniform token[] skel:blendShapeTargets
 
   //
   // GeomSubset
