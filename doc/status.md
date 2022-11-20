@@ -5,6 +5,7 @@
 * 🚧 = Work in progress.
 * empty cell = not yet supported.
 
+NOTE: TinyUSDZ API is subject to change
 NOTE: USDC(Binary) = Read only
 
 ## Generic Prim types
@@ -78,6 +79,7 @@ NOTE: USDC(Binary) = Read only
 | BlendShape  | ✅    | ✅   |              |
 
 * Skinning evaulation/validation are work-in-progress.
+* Skeleton utility functions(e.g. build joint hiearchy from list of `token[]`) are work-in-progress.
 
 ## Work in progress
 
@@ -92,7 +94,7 @@ NOTE: USDC(Binary) = Read only
 * [ ] Performance optimization
 * [ ] UDIM texture
 * [ ] MeshLight(GeometryLight)
-* [ ] Collection
+* [ ] Collection API
   * e.g. Light Sets
 * [ ] Composition Arcs
   * Parsing some Composition Arcs possible, needs Evaluation of it.
@@ -103,7 +105,7 @@ NOTE: USDC(Binary) = Read only
   * [ ] specializers(priority is low)
 * [ ] Delayed load of Layer/Stage
 * [ ] Instancing
-* [ ] Better custom filesystem handler(Asset Resolution)
+* [ ] Custom filesystem handler(Asset Resolution)
 * [ ] Volume(usdVol)
   * [ ] MagicaVoxel vox for Volume?
   * [ ] VDBVolume support through TinyVDBIO? https://github.com/syoyo/tinyvdbio
