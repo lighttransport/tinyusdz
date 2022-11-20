@@ -288,8 +288,6 @@ std::string print_rel_only(const Relationship &rel, const std::string &name, uin
     ss << " = " << rel.targetPath;
   } else if (rel.is_pathvector()) {
     ss << " = " << rel.targetPathVector;
-  } else if (rel.is_string()) {
-    ss << " = " << quote(rel.targetString);
   } else if (rel.is_blocked()) {
     ss << " = None";
   } else {

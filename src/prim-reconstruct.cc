@@ -1284,53 +1284,22 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     } \
   }
 
-// Rel with targetPaths(array of Paths)
+// Rel with targetPaths(single path or array of Paths)
 #define PARSE_TARGET_PATHS_RELATION(__table, __prop, __propname, __target) \
   if (prop.first == __propname) { \
     if (__table.count(__propname)) { \
        continue; \
     } \
-    if (prop.second.is_relationship() && prop.second.is_empty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", __propname)); \
+    if (!prop.second.is_relationship()) { \
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", __propname)); \
     } \
     const Relationship &rel = prop.second.get_relationship(); \
-    if (rel.is_pathvector()) { \
-      /* allow empty */ \
-      __target = rel; \
-      table.insert(prop.first); \
-      DCOUT("Added rel " << __propname); \
-      continue; \
-    } else { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be an Path vector(array of Paths).", __propname)); \
-    } \
+    __target = rel; \
+    table.insert(prop.first); \
+    DCOUT("Added rel " << __propname); \
+    continue; \
   }
 
-#if 0
-#define PARSE_SKEL_SKELETON_RELATION(__table, __prop, __ptarget) \
-  if (prop.first == kSkelSkeleton) { \
-    if (__table.count(kSkelSkeleton)) { \
-       continue; \
-    } \
-    if (prop.second.is_relationship() && prop.second.is_empty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kSkelSkeleton)); \
-    } \
-    const Relationship &rel = prop.second.get_relationship(); \
-    if (rel.is_path()) { \
-      __ptarget->skeleton = rel; \
-      table.insert(prop.first); \
-      continue; \
-    } else if (rel.is_pathvector()) { \
-      if (rel.targetPathVector.size() == 1) { \
-        __ptarget->skeleton = rel; \
-        table.insert(prop.first); \
-        continue; \
-      } \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", kSkelSkeleton)); \
-    } else { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kSkelSkeleton)); \
-    } \
-  }
-#endif
 
 #define PARSE_SHADER_TERMINAL_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderOutputTerminalAttribute(__table, __prop.first, __prop.second, __name, __target); \

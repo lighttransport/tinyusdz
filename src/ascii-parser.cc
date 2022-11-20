@@ -3144,15 +3144,7 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
     return false;
   }
 
-  if (c == '"') {
-    // string
-    std::string value;
-    if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse String.");
-    }
-    result->set(value);
-
-  } else if (c == '<') {
+  if (c == '<') {
     // Path
     Path value;
     if (!ReadBasicType(&value)) {
@@ -3168,7 +3160,7 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
     result->set(value);
   } else {
     PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
-                          "\" found. Expects string, Path or PathVector.");
+                          "\" found. Expects Path or PathVector.");
   }
 
   if (!SkipWhitespaceAndNewline()) {
