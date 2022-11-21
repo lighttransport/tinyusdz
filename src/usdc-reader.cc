@@ -1480,7 +1480,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     Prim prim(__prim_name, primdata);                            \
     /* also add primChildren to Prim */ \
     prim.metas().primChildren = primChildren; \
-    return prim; \
+    return std::move(prim); \
   } else
 
   RECONSTRUCT_PRIM(Xform, typeName, prim_name, spec)
