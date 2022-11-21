@@ -232,6 +232,7 @@ class AsciiParser {
     PrimMetaMap metas;
     std::vector<int64_t> primIndices;  // primIdx of Reconstrcuted Prim.
     std::map<std::string, Property> props;
+    std::vector<value::token> properties;
   };
 
   ///
@@ -667,7 +668,7 @@ class AsciiParser {
   bool Eof() { return _sr->eof(); }
 
   bool ParseRelationship(Relationship *result);
-  bool ParseProperty(std::map<std::string, Property> *props);
+  bool ParseProperties(std::map<std::string, Property> *props, std::vector<value::token> *propNames);
 
   //
   // Look***() : Fetch chars but do not change input stream position.
@@ -718,41 +719,9 @@ class AsciiParser {
   ///
   void Setup();
 
-  // template<typename T>
-  // bool ParseTimeSampleData(nonstd::optional<T> *out_value);
-
-  // -- [TimeSamples] -------------------
-
-  // template <typename T>
-  // using TimeSampleData = std::vector<std::pair<double, nonstd::optional<T>>>;
-
-  // template <typename T>
-  // using TimeSampleDataArray = std::vector<std::pair<double,
-  // nonstd::optional<std::vector<T>>>>;
-
-  ///
-  /// Convert TimeSampleData<T> to TimeSamples(type-erased TimeSample Sdata
-  /// struct)
-  ///
-  // template <typename T>
-  // value::TimeSamples ConvertToTimeSamples(const TimeSampleData<T> &in);
-
-  // template <typename T>
-  // value::TimeSamples ConvertToTimeSamples(
-  //     const TimeSampleData<std::vector<T>> &in);
-
-  //// T = scalar(e.g. `float`)
-  // template <typename T>
-  // nonstd::optional<TimeSampleData<T>> TryParseTimeSamples();
-
-  // template <typename T>
-  // nonstd::optional<TimeSampleData<std::vector<T>>>
-  // TryParseTimeSamplesOfArray();
-
-  // ---------------------------------------
 
   nonstd::optional<std::pair<ListEditQual, MetaVariable>> ParsePrimMeta();
-  bool ParsePrimProps(std::map<std::string, Property> *props);
+  bool ParsePrimProps(std::map<std::string, Property> *props, std::vector<value::token> *propNames);
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
@@ -778,16 +747,6 @@ class AsciiParser {
   // "class" defs
   // std::map<std::string, Klass> _klasses;
   std::stack<std::string> _path_stack;
-
-#if 0
-  // Cache of loaded `references`
-  // <filename, {defaultPrim index, list of root nodes in referenced usd file}>
-  std::map<std::string, std::pair<uint32_t, std::vector<GPrim>>>
-        _reference_cache;
-
-    // toplevel "def" defs
-    std::vector<GPrim> _gprims;
-#endif
 
   Cursor _curr_cursor;
 
