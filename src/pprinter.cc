@@ -9,6 +9,9 @@
 #include "value-pprint.hh"
 #include "str-util.hh"
 
+// TODO:
+// - [ ] Print properties based on its appearance(USDA) or "properties" Prim field(USC)
+
 namespace tinyusdz {
 namespace {
 
@@ -982,7 +985,6 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
   return ss.str();
 }
 
-// Print user-defined (custom) properties.
 std::string print_props(const std::map<std::string, Property> &props, uint32_t indent)
 {
   std::stringstream ss;
@@ -992,6 +994,35 @@ std::string print_props(const std::map<std::string, Property> &props, uint32_t i
     const Property &prop = item.second;
 
     ss << print_prop(prop, item.first, indent);
+
+  }
+
+  return ss.str();
+}
+
+// Print user-defined (custom) properties.
+std::string print_props(const std::map<std::string, Property> &props, std::set<std::string> &tok_table, const std::vector<value::token> &propNames, uint32_t indent)
+{
+  std::stringstream ss;
+
+  if (propNames.size()) {
+    for (size_t i = 0; i < propNames.size(); i++) {
+      if (tok_table.count(propNames[i].str())) {
+        continue;
+      }
+
+      const auto it = props.find(propNames[i].str());
+      if (it != props.end()) {
+
+        ss << print_prop(it->second, it->first, indent);
+
+        tok_table.insert(propNames[i].str());
+      }
+      
+    } 
+  } else {
+
+    ss << print_props(props, indent);
 
   }
 
@@ -1597,7 +1628,8 @@ std::string to_string(const Model &model, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_props(model.props,indent+1);
+  std::set<std::string> tokset;
+  ss << print_props(model.props, tokset, model.propertyNames(), indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1615,7 +1647,8 @@ std::string to_string(const Scope &scope, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_props(scope.props, indent+1);
+  std::set<std::string> tokset;
+  ss << print_props(scope.props, tokset, scope.propertyNames(), indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

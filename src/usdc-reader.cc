@@ -199,6 +199,7 @@ class USDCReader::Impl {
   bool ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                      nonstd::optional<std::string> &typeName, /* out */
                      nonstd::optional<Specifier> &specifier,  /* out */
+                     std::vector<value::token> &primChildren,   /* out */
                      std::vector<value::token> &properties,   /* out */
                      PrimMeta &primMeta);                     /* out */
 
@@ -208,7 +209,6 @@ class USDCReader::Impl {
 
   template <typename T>
   bool ReconstructPrim(const crate::CrateReader::Node &node,
-                       const crate::FieldValuePairVector &fvs,
                        const PathIndexToSpecIndexMap &psmap, T *prim);
 
   ///
@@ -228,7 +228,8 @@ class USDCReader::Impl {
   nonstd::optional<Prim> ReconstructPrimFromTypeName(
       const std::string &typeName, const std::string &prim_name,
       const crate::CrateReader::Node &node, const Specifier spec,
-      const crate::FieldValuePairVector &fvs,
+      const std::vector<value::token> &primChildren,
+      const std::vector<value::token> &properties,
       const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta);
 
   bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrim,
@@ -274,8 +275,7 @@ class USDCReader::Impl {
                         prim::PropertyMap *props);
 
   bool ReconstrcutStageMeta(const crate::FieldValuePairVector &fvs,
-                            StageMetas *out,
-                            std::vector<value::token> *primChildrenOut);
+                            StageMetas *out);
 
   bool AddVariantChildrenToPrimNode(
       int32_t prim_idx, const std::vector<value::token> &variantChildren) {
@@ -1242,11 +1242,8 @@ bool USDCReader::Impl::ReconstructTypedProperty(
 
 template <typename T>
 bool USDCReader::Impl::ReconstructPrim(const crate::CrateReader::Node &node,
-                                       const crate::FieldValuePairVector &fvs,
                                        const PathIndexToSpecIndexMap &psmap,
                                        T *prim) {
-  (void)fvs;
-
   // Prim's properties are stored in its children nodes.
   prim::PropertyMap properties;
   if (!BuildPropertyMap(node.GetChildren(), psmap, &properties)) {
@@ -1264,8 +1261,7 @@ bool USDCReader::Impl::ReconstructPrim(const crate::CrateReader::Node &node,
 }
 
 bool USDCReader::Impl::ReconstrcutStageMeta(
-    const crate::FieldValuePairVector &fvs, StageMetas *metas,
-    std::vector<value::token> *primChildren) {
+    const crate::FieldValuePairVector &fvs, StageMetas *metas) {
   /// Stage(toplevel layer) Meta fieldSet example.
   ///
   ///   specTy = SpecTypePseudoRoot
@@ -1275,9 +1271,9 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   ///     - metersPerUnit(double)
   ///     - timeCodesPerSecond(double)
   ///     - upAxis(token)
-  ///     - primChildren(token[]) : Crate only. List of root prims
   ///     - documentation(string) : `doc`
   ///     - comment(string) : comment
+  ///     - primChildren(token[]) : Crate only. List of root prims(Root Prim should be traversed based on this array)
 
   for (const auto &fv : fvs) {
     if (fv.first == "upAxis") {
@@ -1421,7 +1417,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "customLayerData must be `dictionary` type, but got type `" +
             fv.second.type_name());
       }
-    } else if (fv.first == "primChildren") {  // it looks only appears in USDC.
+    } else if (fv.first == "primChildren") {  // only appears in USDC.
       auto v = fv.second.get_value<std::vector<value::token>>();
       if (!v) {
         PUSH_ERROR("Type must be `token[]` for `primChildren`, but got " +
@@ -1429,10 +1425,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         return false;
       }
 
-      if (primChildren) {
-        (*primChildren) = v.value();
-        DCOUT("primChildren = " << (*primChildren));
-      }
+      metas->primChildren = v.value();
     } else if (fv.first == "documentation") {  // 'doc'
       auto v = fv.second.get_value<std::string>();
       if (!v) {
@@ -1468,20 +1461,26 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     const std::string &typeName, const std::string &prim_name,
     const crate::CrateReader::Node &node, const Specifier spec,
-    const crate::FieldValuePairVector &fvs,
+    const std::vector<value::token> &primChildren,
+    const std::vector<value::token> &properties,
     const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta) {
 #define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec) \
   if (__node_ty == value::TypeTraits<__primty>::type_name()) {     \
     __primty typed_prim;                                           \
-    if (!ReconstructPrim(node, fvs, psmap, &typed_prim)) {         \
+    if (!ReconstructPrim(node, psmap, &typed_prim)) {         \
       PUSH_ERROR("Failed to reconstruct Prim " << __node_ty);      \
       return nonstd::nullopt;                                      \
     }                                                              \
     typed_prim.meta = meta;                                        \
     typed_prim.name = __prim_name;                                 \
     typed_prim.spec = __spec;                                      \
+    typed_prim.propertyNames() = properties; \
+    typed_prim.primChildrenNames() = primChildren; \
     value::Value primdata = typed_prim;                            \
-    return Prim(__prim_name, primdata);                            \
+    Prim prim(__prim_name, primdata);                            \
+    /* also add primChildren to Prim */ \
+    prim.metas().primChildren = primChildren; \
+    return prim; \
   } else
 
   RECONSTRUCT_PRIM(Xform, typeName, prim_name, spec)
@@ -1526,13 +1525,14 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 ///     - kind(token) : kind metadataum
 ///     - optional: typeName(token) : type name of Prim(e.g. `Xform`). No
 ///     typeName = `def "mynode"`
-///     - properties(token[]) : List of name of Prim properties(attributes)
-///     - optional: primChildren(token[]): List of child prims.
+///     - primChildren(TokenVector): List of child prims.
+///     - properties(TokenVector) : List of name of Prim properties.
 ///
 ///
 bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                                      nonstd::optional<std::string> &typeName,
                                      nonstd::optional<Specifier> &specifier,
+                                     std::vector<value::token> &primChildren,
                                      std::vector<value::token> &properties,
                                      PrimMeta &primMeta) {
   // Fields for Prim and Prim metas.
@@ -1567,7 +1567,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
     } else if (fv.first == "primChildren") {
       // Crate only
       if (auto pv = fv.second.as<std::vector<value::token>>()) {
-        primMeta.primChildren = (*pv);
+        primChildren = (*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`primChildren` must be type `token[]`, but got type `"
@@ -1967,12 +1967,11 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           "SpecTypePseudoRoot expected for root layer(Stage) element.");
     }
 
-    std::vector<value::token> primChildren;
-    if (!ReconstrcutStageMeta(fvs, &stage->metas(), &primChildren)) {
+    if (!ReconstrcutStageMeta(fvs, &stage->metas())) {
       PUSH_ERROR_AND_RETURN("Failed to reconstruct StageMeta.");
     }
 
-    // TODO: Validate scene using `primChildren`.
+    // TODO: Validate scene using `StageMetas::primChildren`.
 
     _prim_table.insert(current);
 
@@ -1987,13 +1986,14 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     case SpecType::Prim: {
       nonstd::optional<std::string> typeName;
       nonstd::optional<Specifier> specifier;
+      std::vector<value::token> primChildren;
       std::vector<value::token> properties;
 
       PrimMeta primMeta;
 
       DCOUT("== PrimFields begin ==> ");
 
-      if (!ParsePrimSpec(fvs, typeName, specifier, properties, primMeta)) {
+      if (!ParsePrimSpec(fvs, typeName, specifier, primChildren, properties, primMeta)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to parse Prim fields.");
         return false;
       }
@@ -2043,7 +2043,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         auto prim = ReconstructPrimFromTypeName(typeName.value(), prim_name,
-                                                node, specifier.value(), fvs,
+                                                node, specifier.value(), primChildren, properties,
                                                 psmap, primMeta);
 
         if (prim) {
@@ -2126,13 +2126,14 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       nonstd::optional<std::string> typeName;
       nonstd::optional<Specifier> specifier;
+      std::vector<value::token> primChildren;
       std::vector<value::token> properties;
 
       PrimMeta primMeta;
 
       DCOUT("== VariantFields begin ==> ");
 
-      if (!ParsePrimSpec(fvs, typeName, specifier, properties, primMeta)) {
+      if (!ParsePrimSpec(fvs, typeName, specifier, primChildren, properties, primMeta)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "Failed to parse Prim fields under Variant.");
         return false;
@@ -2196,7 +2197,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         variantPrim = ReconstructPrimFromTypeName(
-            typeName.value(), variantPrimName, node, specifier.value(), fvs,
+            typeName.value(), variantPrimName, node, specifier.value(), primChildren, properties,
             psmap, primMeta);
 
         if (variantPrim) {

@@ -30,6 +30,15 @@ struct BlendShape {
 
   std::map<std::string, Property> props;
   PrimMeta meta;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 // Skeleton
@@ -90,6 +99,15 @@ struct Skeleton {
 
     return false;
   }
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
@@ -109,11 +127,21 @@ struct SkelRoot {
   nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
   std::vector<XformOp> xformOps;
 
+  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
+  // node?;
+
   std::map<std::string, Property> props;
   PrimMeta meta;
 
-  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
-  // node?;
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
+
 };
 
 struct SkelAnimation {
@@ -152,6 +180,15 @@ struct SkelAnimation {
 
   std::map<std::string, Property> props;
   PrimMeta meta;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 // PackedJointAnimation is deprecated(Convert to SkelAnimation)

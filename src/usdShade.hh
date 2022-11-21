@@ -38,6 +38,15 @@ struct Material {
 
   // Custom properties
   std::map<std::string, Property> props;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 // TODO
@@ -54,6 +63,15 @@ struct NodeGraph {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 template <typename T>
@@ -268,6 +286,15 @@ struct Shader {
 #endif
 
   PrimMeta meta;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 

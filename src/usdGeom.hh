@@ -292,6 +292,31 @@ struct GPrim : Xformable {
   ///
   bool set_primvar(const GeomPrimvar &primvar, std::string *err = nullptr);
 
+
+  ///
+  /// Aux infos
+  ///
+  std::vector<value::token> &primChildrenNames() {
+    return _primChildrenNames;
+  }
+
+  std::vector<value::token> &propertyNames() {
+    return _propertyNames;
+  }
+
+  const std::vector<value::token> &primChildrenNames() const {
+    return _primChildrenNames;
+  }
+
+  const std::vector<value::token> &propertyNames() const {
+    return _propertyNames;
+  }
+
+ private:
+
+  std::vector<value::token> _primChildrenNames;
+  std::vector<value::token> _propertyNames; 
+
 };
 
 struct Xform : GPrim {
