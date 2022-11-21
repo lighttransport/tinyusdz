@@ -3251,7 +3251,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   return true;
 }
 
-bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
+bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::vector<value::token> *propNames) {
   // prim_prop : (custom?) uniform type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
   //           | (custom?) uniform type (array_qual?) name interpolation?
@@ -3802,7 +3802,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props) {
   }
 }
 
-bool AsciiParser::ParseProperty(std::map<std::string, Property> *props) {
+// propNames stores list of property name in its appearance order.
+bool AsciiParser::ParseProperties(std::map<std::string, Property> *props, std::vector<value::token> *propNames) {
   // property : primm_attr
   //          | 'rel' name '=' path
   //          ;
@@ -3828,7 +3829,7 @@ bool AsciiParser::ParseProperty(std::map<std::string, Property> *props) {
   }
 
   // attribute
-  return ParsePrimProps(props);
+  return ParsePrimProps(props, propNames);
 }
 
 std::string AsciiParser::GetCurrentPath() {
@@ -3999,7 +4000,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
 
       } else {
         DCOUT("Enter ParsePrimProps.");
-        if (!ParsePrimProps(&variantContent.props)) {
+        if (!ParsePrimProps(&variantContent.props, &variantContent.properties)) {
           PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
         }
         DCOUT(fmt::format("Done parse ParsePrimProps."));
@@ -4168,6 +4169,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   }
 
   std::map<std::string, Property> props;
+  std::vector<value::token> propNames;
 
   {
     std::string full_path = GetCurrentPath();
@@ -4274,7 +4276,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       } else {
         DCOUT("Enter ParsePrimProps.");
         // Assume PrimAttr
-        if (!ParsePrimProps(&props)) {
+        if (!ParsePrimProps(&props, &propNames)) {
           PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
         }
       }

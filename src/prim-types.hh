@@ -689,11 +689,20 @@ struct PrimMeta {
   }
 
   //
-  // Crate only. Only used internally&debugging.
+  // Infos used indirectly.
   //
+  
+  // Used to display/traverse Prim items based on this array 
+  // USDA: By appearance. USDC: "primChildren" TokenVector field
+  std::vector<value::token> primChildren;
+
+  // Used to display/traverse Property items based on this array 
+  // USDA: By appearance. USDC: "properties" TokenVector field
+  std::vector<value::token> properties;
+
 
   nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inheritPaths;
-  nonstd::optional<std::vector<value::token>> primChildren;
+
   nonstd::optional<std::vector<value::token>> variantChildren;
   nonstd::optional<std::vector<value::token>> variantSetChildren;
 };
@@ -1995,6 +2004,15 @@ struct Model {
   std::map<std::string, VariantSet> variantSet;
 
   std::map<std::string, Property> props;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 #if 0  // TODO: Remove
@@ -2162,6 +2180,15 @@ struct Scope {
   std::map<std::string, VariantSet> variantSet;
 
   std::map<std::string, Property> props;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
 };
 
 ///
@@ -2348,10 +2375,8 @@ class PrimNode {
   std::map<std::string, PropertyMap> variantAttributeMap;
   std::map<std::string, PrimNodeMap> variantPrimNodeMap;
 
-  ///
-  /// Information for Crate(USDC binary)
-  ///
-  std::vector<value::token> primChildren;
+  std::vector<value::token> primChildren; // List of child Prim nodes
+  std::vector<value::token> properties; // List of property names
   std::vector<value::token> variantChildren;
 };
 

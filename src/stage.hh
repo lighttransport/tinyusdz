@@ -9,6 +9,7 @@
 
 namespace tinyusdz {
 
+// TODO: Rename to LayerMetas
 struct StageMetas {
   enum class PlaybackMode {
     PlaybackModeNone,
@@ -33,6 +34,9 @@ struct StageMetas {
   // USDZ extension
   TypedAttributeWithFallback<bool> autoPlay{true}; // default(or not authored) = auto play
   TypedAttributeWithFallback<PlaybackMode> playbackMode{PlaybackMode::PlaybackModeLoop};
+
+  // Indirectly used.
+  std::vector<value::token> primChildren;
 };
 
 class PrimRange;
