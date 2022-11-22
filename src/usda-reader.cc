@@ -590,12 +590,14 @@ class USDAReader::Impl {
 
   void ImportScene(tinyusdz::Stage &scene) { _imported_scene = scene; }
 
+#if 0
   bool HasPath(const std::string &path) {
     Path p(path, "");
     TokenizedPath tokPath(p);
     (void)tokPath;
     PUSH_ERROR_AND_RETURN("TODO: HasPath()");
   }
+#endif
 
   void StageMetaProcessor() {
     _parser.RegisterStageMetaProcessFunction(
