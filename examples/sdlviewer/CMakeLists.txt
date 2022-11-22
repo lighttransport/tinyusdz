@@ -294,8 +294,9 @@ list(
   ../../src/ascii-parser-timesamples-array.cc
   ../../src/usdc-reader.cc
   ../../src/usda-reader.cc
-  #../../src/usda-writer.cc
+  ../../src/usda-writer.cc
   ../../src/image-loader.cc
+  ../../src/linear-algebra.cc
   ../../src/value-types.cc
   ../../src/value-pprint.cc
   ../../src/tiny-format.cc
@@ -308,6 +309,8 @@ list(
   ../../src/linear-algebra.cc
   ../../src/tydra/render-data.cc
   ../../src/tydra/scene-access.cc
+  ../../src/tydra/shader-network.cc
+  ../../src/tydra/prim-apply.cc
 )
 
 set(TINYUSDZ_DEP_SOURCES
