@@ -10,9 +10,12 @@
 
 namespace tinyusdz {
 
-// forward decl of usdShade
+// forward decl of prim-types.hh
+class Path;
 class Stage;
 class Prim;
+
+// forward decl of usdShade
 struct Material;
 struct Shader;
 
@@ -61,6 +64,29 @@ bool EvaluateShaderAttribute(
  
 // Currently float2 only
 //std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
+
+
+///
+/// Get material:binding target Path.
+/// The bahavior is:
+///
+/// 1. If material:binding is assigned to given Prim, return it
+/// 2. Look into parent Prim's material:binding
+///
+/// @param[in] stage Prim
+/// @param[in] prim Prim
+/// @param[in] suffix extra suffix(e.g. empty string is given, look into `material:binding`. `correction` is given, look into `material:binding:correction`.)
+/// @param[out] materialPath Found target Path.
+/// @param[out] material THe pointer to found Material object in Stage(if no Material object found in Stage, returns nullptr)
+/// @return true when bound Material Path is found.
+///
+bool GetBoundMaterial(
+  const Stage &stage,
+  const Prim &prim,
+  const std::string &suffix,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
 
 }  // namespace tydra
 }  // namespace tinyusdz
