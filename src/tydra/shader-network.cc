@@ -1,9 +1,12 @@
 #include "shader-network.hh"
+#include "prim-apply.hh"
 
+#include "prim-types.hh"
 #include "usdShade.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
+#include "stage.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -128,6 +131,103 @@ INSTANCIATE_EVAL_SHADER(value::matrix3d);
 INSTANCIATE_EVAL_SHADER(value::matrix4d);
 
 // instanciations
+
+namespace {
+
+bool GetSinglePath(const Relationship &rel, Path *path) {
+  if (!path) {
+    return false;
+  }
+
+  if (rel.is_path()) {
+    (*path) = rel.targetPath;
+    return true;
+  } else if (rel.is_pathvector()) {
+    if (rel.targetPathVector.size() > 0) {
+      (*path) = rel.targetPathVector[0];
+      return true;
+    }
+  }
+
+  return false;
+}
+
+} // namespace local
+
+bool GetBoundMaterial(
+  const Stage &_stage,
+  const Prim &prim,
+  const std::string &suffix,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err) {
+
+  if (materialPath == nullptr) {
+    return false;
+  }
+
+  (void)err;
+  
+  auto apply_fun = [&](const Stage &stage, const GPrim *gprim) -> bool {
+    if (suffix.empty()) {
+      if (gprim->materialBinding.has_value()) {
+        if (GetSinglePath(gprim->materialBinding.value(), materialPath)) {
+
+          const Prim *p;
+          if (stage.find_prim_at_path(*materialPath, p, err)) {
+            if (p->is<Material>() && (material != nullptr)) {
+              (*material) = p->as<Material>();
+            } else {
+              (*material) = nullptr;
+            }
+          }
+          
+          return true;
+        }
+      }
+    } else if (suffix == "correction") {
+      if (gprim->materialBindingCorrection.has_value()) {
+        if (GetSinglePath(gprim->materialBindingCorrection.value(), materialPath)) {
+
+          const Prim *p;
+          if (stage.find_prim_at_path(*materialPath, p, err)) {
+            if (p->is<Material>() && (material != nullptr)) {
+              (*material) = p->as<Material>();
+            } else {
+              (*material) = nullptr;
+            }
+          }
+          
+          return true;
+        }
+      }
+    } else if (suffix == "preview") {
+      if (gprim->materialBindingPreview.has_value()) {
+        if (GetSinglePath(gprim->materialBindingPreview.value(), materialPath)) {
+
+          const Prim *p;
+          if (stage.find_prim_at_path(*materialPath, p, err)) {
+            if (p->is<Material>() && (material != nullptr)) {
+              (*material) = p->as<Material>();
+            } else {
+              (*material) = nullptr;
+            }
+          }
+          
+          return true;
+        }
+      }
+    } else {
+      return false;
+    } 
+
+    return false;
+  };
+
+  bool ret = ApplyToGPrim(_stage, prim, apply_fun);
+
+  return ret;
+}
 
 } // namespace tydra
 } // namespace tinyusdz
