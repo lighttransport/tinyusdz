@@ -52,6 +52,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "value-pprint.hh"
 #include "usda-reader.hh"
 #include "io-util.hh"
+#include "tiny-format.hh"
 //
 #include "common-macros.inc"
 
@@ -60,7 +61,7 @@ namespace tinyusdz {
 #if 1
 // For PUSH_ERROR_AND_RETURN
 #define PushError(s) \
-  _err += s;     
+  _err += s;
 //#define PushWarn(s) if (warn) { (*warn) += s; }
 #endif
 
@@ -296,7 +297,7 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
 bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, const LoadState load_state, Layer *layer) {
 
   // TODO: USDC/USDZ support.
-  
+
   tinyusdz::StreamReader sr(addr, nbytes, /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
 
@@ -347,8 +348,30 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   ss << pprint_value(prim.data(), indent, /* closing_brace */ false);
 
   DCOUT("num_children = " << prim.children().size());
-  for (const auto &child : prim.children()) {
-    PrimPrintRec(ss, child, indent + 1);
+
+  if (prim.metas().primChildren.size() == prim.children().size()) {
+    // Use primChildren info to determine the order of the traversal.
+
+    std::map<std::string, const Prim *> primNameTable;
+    for (size_t i = 0; i < prim.children().size(); i++) {
+      primNameTable.emplace(prim.children()[i].element_name(), &prim.children()[i]);
+    }
+
+    for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
+      value::token nameTok = prim.metas().primChildren[i];
+      DCOUT(fmt::format("primChildren  {}/{} = {}", i, prim.metas().primChildren.size(), nameTok.str()));
+      const auto it = primNameTable.find(nameTok.str());
+      if (it != primNameTable.end()) {
+        PrimPrintRec(ss, *(it->second), indent + 1);
+      } else {
+        // TODO: Report warning?
+      }
+    }
+
+  } else {
+    for (const auto &child : prim.children()) {
+      PrimPrintRec(ss, child, indent + 1);
+    }
   }
 
   ss << pprint::Indent(indent) << "}\n";
@@ -433,6 +456,7 @@ std::string Stage::ExportToString() const {
   ss << "\n";
 
   for (const auto &item : root_nodes) {
+    // TODO: Traverse according to StageMeta:primChildren
     PrimPrintRec(ss, item, 0);
   }
 
