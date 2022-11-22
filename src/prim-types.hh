@@ -290,7 +290,8 @@ class Path {
   const Path AppendProperty(const std::string &elem) const;
   const Path AppendPrim(const std::string &elem) const;
 
-  const std::string &element_name() const { return _element; }
+  // Get element name(the last element of Path. i.e. Prim's name, Property's name)
+  const std::string &element_name() const;
 
   ///
   /// Split a path to the root(common ancestor) and its siblings
@@ -396,14 +397,15 @@ class Path {
 
  private:
   std::string _prim_part;  // e.g. /Model/MyMesh, MySphere
-  std::string _prop_part;  // e.g. .visibility
-  std::string _element;    // Element name
+  std::string _prop_part;  // e.g. visibility (`.` is not included)
+  mutable std::string _element;    // Element name
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
 
   bool _valid{false};
 };
 
+#if 0
 ///
 /// Split Path by the delimiter(e.g. "/") then create lists.
 ///
@@ -442,6 +444,7 @@ class TokenizedPath {
  private:
   std::vector<std::string> _tokens;
 };
+#endif
 
 bool operator==(const Path &lhs, const Path &rhs);
 
@@ -2275,7 +2278,7 @@ class Prim {
   const Path &element_path() const { return _elementPath; }
 
   // elementName = element_path's prim part
-  const std::string element_name() const { return _elementPath.prop_part(); }
+  const std::string element_name() const { return _elementPath.prim_part(); }
 
   const std::string type_name() const { return _data.type_name(); }
 
