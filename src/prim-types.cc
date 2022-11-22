@@ -341,6 +341,19 @@ Path Path::get_parent_prim_path() const {
   return Path(_prim_part.substr(0, n), "");
 }
 
+const std::string &Path::element_name() const {
+  if (_element.empty()) {
+    // Get last item.
+    std::vector<std::string> tokenized_prim_names = split(prim_part(), "/");
+    if (tokenized_prim_names.size()) {
+      _element = tokenized_prim_names[size_t(tokenized_prim_names.size() - 1)]; 
+    }
+  }
+
+  return _element;
+}
+
+
 nonstd::optional<Kind> KindFromString(const std::string &str) {
   if (str == "model") {
     return Kind::Model;
