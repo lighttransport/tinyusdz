@@ -36,6 +36,7 @@ tinyusdz_sources=[
   '../../src/stage.cc',
   '../../src/tiny-format.cc',
   '../../src/tydra/render-data.cc',
+  '../../src/tydra/prim-apply.cc',
   '../../src/tydra/shader-network.cc',
   '../../src/tydra/scene-access.cc',
   # deps

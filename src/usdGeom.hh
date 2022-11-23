@@ -25,6 +25,10 @@ constexpr auto kGeomSphere = "Sphere";
 constexpr auto kGeomCamera = "Camera";
 constexpr auto kPointInstancer = "PointInstancer";
 
+constexpr auto kMaterialBinding = "material:binding";
+constexpr auto kMaterialBindingCorrection = "material:binding:correction";
+constexpr auto kMaterialBindingPreview = "material:binding:preview";
+
 struct GPrim;
 
 bool IsSupportedGeomPrimvarType(uint32_t tyid);

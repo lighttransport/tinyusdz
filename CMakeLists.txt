@@ -306,6 +306,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc)
