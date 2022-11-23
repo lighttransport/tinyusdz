@@ -533,6 +533,8 @@ include src/tinyusdz.hh
 include src/tiny-variant.hh
 include src/token-type.hh
 include src/tydra/README.md
+include src/tydra/prim-apply.cc
+include src/tydra/prim-apply.hh
 include src/tydra/render-data.cc
 include src/tydra/render-data.hh
 include src/tydra/scene-access.cc
