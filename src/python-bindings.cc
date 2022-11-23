@@ -1,8 +1,6 @@
 #include <pybind11/pybind11.h>
 
-#include "prim-types.hh"
-#include "usda-reader.hh"
-//#include "ascii-writer.hh"
+#include "tinyusdz.hh"
 
 #include "nonstd/optional.hpp"
 
@@ -16,15 +14,21 @@ static double test_api() {
 }
 
 // stub classes
-struct Stage
+struct PyStage
 {
   std::string filepath;
+  tinyusdz::Stage _stage;
+  std::string warn;
+  std::string err;
+  bool status{false};
 
-  static Stage Open(const std::string &_filepath) {
+  static PyStage Open(const std::string &_filepath) {
     // TODO
-    Stage stage;
+    PyStage stage;
     stage.filepath = _filepath;
 
+    stage.status = tinyusdz::LoadUSDFromFile(stage.filepath, &stage._stage, &stage.warn, &stage.err);
+    
     return stage;
   }
 
@@ -65,11 +69,11 @@ PYBIND11_MODULE(pytinyusd, m) {
 
   auto UsdModule = m.def_submodule("Usd");
 
-  py::class_<Stage>(UsdModule, "Stage")
+  py::class_<PyStage>(UsdModule, "Stage")
     .def(py::init<>())
-    .def_static("Open", &Stage::Open)
-    .def("Export", &Stage::Export)
-    .def("GetPrimAtPath", [](const Stage &s, const std::string &path) -> py::object {
+    .def_static("Open", &PyStage::Open)
+    .def("Export", &PyStage::Export)
+    .def("GetPrimAtPath", [](const PyStage &s, const std::string &path) -> py::object {
       if (auto p = s.GetPrimAtPath(path)) {
         return py::cast(*p);
       }
