@@ -12,10 +12,13 @@
 #include "usdLux.hh"
 #include "value-types.hh"
 
-
 // For fast int/float to ascii
-// Disabled for a while(need to write a test).
-//#include "external/jeaiii_to_text.h"
+// Default disabled.
+//#define TINYUSDZ_LOCAL_USE_JEAIII_ITOA
+
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+#include "external/jeaiii_to_text.h"
+#endif
 
 #include "external/dtoa_milo.h"
 
@@ -23,7 +26,7 @@ namespace tinyusdz {
 
 namespace {
 
-#if 0
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
 void itoa(uint32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(uint64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
@@ -393,17 +396,22 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
 template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
-  //char buf[32];
+  char buf[32];
+#endif
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    //tinyusdz::itoa(v[i], buf);
-    //ofs << buf;
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+    tinyusdz::itoa(v[i], buf);
+    ofs << buf;
+#else
     ofs << v[i];
+#endif
   }
   ofs << "]";
 
@@ -413,16 +421,21 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 
-  //char buf[32];
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+  char buf[32];
+#endif
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    //tinyusdz::itoa(v[i], buf);
-    //ofs << buf;
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+    tinyusdz::itoa(v[i], buf);
+    ofs << buf;
+#else
     ofs << v[i];
+#endif
   }
   ofs << "]";
 
@@ -432,17 +445,22 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
-  //char buf[32];
+  char buf[32];
+#endif
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    //tinyusdz::itoa(v[i], buf);
-    //ofs << buf;
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+    tinyusdz::itoa(v[i], buf);
+    ofs << buf;
+#else
     ofs << v[i];
+#endif
   }
   ofs << "]";
 
@@ -452,16 +470,21 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
 
-  //char buf[32];
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+  char buf[32];
+#endif
 
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    //tinyusdz::itoa(v[i], buf);
-    //ofs << buf;
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+    tinyusdz::itoa(v[i], buf);
+    ofs << buf;
+#else
     ofs << v[i];
+#endif
   }
   ofs << "]";
 
