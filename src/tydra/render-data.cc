@@ -417,16 +417,16 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 
   // TODO: timeSamples
 
-  if (mesh.GetPoints().size()) {
-    dst.points.resize(mesh.GetPoints().size());
-    memcpy(dst.points.data(), mesh.GetPoints().data(),
-           sizeof(value::float3) * mesh.GetPoints().size());
+  if (mesh.get_points().size()) {
+    dst.points.resize(mesh.get_points().size());
+    memcpy(dst.points.data(), mesh.get_points().data(),
+           sizeof(value::float3) * mesh.get_points().size());
   }
 
   // normals
   {
-    std::vector<value::normal3f> normals = mesh.GetNormals();
-    Interpolation interp = mesh.GetNormalsInterpolation();
+    std::vector<value::normal3f> normals = mesh.get_normals();
+    Interpolation interp = mesh.get_normalsInterpolation();
 
     if (interp == Interpolation::Vertex) {
       return nonstd::make_unexpected(

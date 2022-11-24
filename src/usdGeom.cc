@@ -550,7 +550,39 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   return true;
 }
 
-const std::vector<value::point3f> GeomMesh::GetPoints(
+bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp)
+{
+  // TODO: timeSamples
+  (void)t;
+  (void)tinterp;
+
+  GeomPrimvar primvar;
+  std::string err;
+  if (!get_primvar("displayColor", &primvar, &err)) {
+    // TODO: report err
+    return false;
+  }
+
+  return primvar.get_value(dst);
+}
+
+bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp)
+{
+  // TODO: timeSamples
+  (void)t;
+  (void)tinterp;
+
+  GeomPrimvar primvar;
+  std::string err;
+  if (!get_primvar("displayOpacity", &primvar, &err)) {
+    // TODO: report err
+    return false;
+  }
+
+  return primvar.get_value(dst);
+}
+
+const std::vector<value::point3f> GeomMesh::get_points(
     double time, value::TimeSampleInterpolationType interp) const {
   std::vector<value::point3f> dst;
 
@@ -573,7 +605,7 @@ const std::vector<value::point3f> GeomMesh::GetPoints(
   return dst;
 }
 
-const std::vector<value::normal3f> GeomMesh::GetNormals(
+const std::vector<value::normal3f> GeomMesh::get_normals(
     double time, value::TimeSampleInterpolationType interp) const {
   std::vector<value::normal3f> dst;
 
@@ -614,7 +646,7 @@ const std::vector<value::normal3f> GeomMesh::GetNormals(
   return dst;
 }
 
-Interpolation GeomMesh::GetNormalsInterpolation() const {
+Interpolation GeomMesh::get_normalsInterpolation() const {
   if (props.count(kPrimvarsNormals)) {
     const auto &prop = props.at(kPrimvarsNormals);
     if (prop.get_attribute().type_name() == "normal3f[]") {
@@ -629,7 +661,7 @@ Interpolation GeomMesh::GetNormalsInterpolation() const {
   return Interpolation::Vertex;  // default 'vertex'
 }
 
-const std::vector<int32_t> GeomMesh::GetFaceVertexCounts() const {
+const std::vector<int32_t> GeomMesh::get_faceVertexCounts() const {
   std::vector<int32_t> dst;
 
   if (!faceVertexCounts.authored() || faceVertexCounts.is_blocked()) {
@@ -651,7 +683,7 @@ const std::vector<int32_t> GeomMesh::GetFaceVertexCounts() const {
   return dst;
 }
 
-const std::vector<int32_t> GeomMesh::GetFaceVertexIndices() const {
+const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
   std::vector<int32_t> dst;
 
   if (!faceVertexIndices.authored() || faceVertexIndices.is_blocked()) {
@@ -673,6 +705,7 @@ const std::vector<int32_t> GeomMesh::GetFaceVertexIndices() const {
   return dst;
 }
 
+#if 0
 void GeomMesh::Initialize(const GPrim &gprim) {
   name = gprim.name;
   parent_id = gprim.parent_id;
@@ -750,6 +783,7 @@ void GeomMesh::Initialize(const GPrim &gprim) {
 
 #endif
 };
+#endif
 
 nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
   std::stringstream ss;
