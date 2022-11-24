@@ -225,6 +225,17 @@ struct GPrim : Xformable {
 
   std::string prim_type;  // Primitive type(if specified by `def`)
 
+  void set_name(const std::string &name_) {
+    name = name_;
+  }
+
+  const std::string &get_name() const {
+    return name;
+  }
+
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
+
   // Gprim
 
   TypedAttribute<Animatable<Extent>>
@@ -241,11 +252,10 @@ struct GPrim : Xformable {
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"
 
-#if 0  // TODO: Remove. Please use `props["primvars:displayColor"]`
-  TypedAttribute<Animatable<value::color3f>>
-      displayColor;                                    // primvars:displayColor
-  TypedAttribute<Animatable<float>> displayOpacity;  // primvars:displaOpacity
-#endif
+  // Handy API to get `primvars:displayColor` and `primvars:displayOpacity`
+  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
+
+  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
 
   nonstd::optional<Relationship> proxyPrim;
 
@@ -427,11 +437,13 @@ struct GeomMesh : GPrim {
   // Utility functions
   //
 
+#if 0 // TODO: Remove
   // Initialize GeomMesh by GPrim(prepend references)
   void Initialize(const GPrim &pprim);
 
   // Update GeomMesh by GPrim(append references)
   void UpdateBy(const GPrim &pprim);
+#endif
 
   ///
   /// @brief Returns `points`.
@@ -441,7 +453,7 @@ struct GeomMesh : GPrim {
   /// @return points vector(copied). Returns empty when `points` attribute is
   /// not defined.
   ///
-  const std::vector<value::point3f> GetPoints(
+  const std::vector<value::point3f> get_points(
       double time = value::TimeCode::Default(),
       value::TimeSampleInterpolationType interp =
           value::TimeSampleInterpolationType::Linear) const;
@@ -454,7 +466,7 @@ struct GeomMesh : GPrim {
   /// `primvars:normals` nor `normals` attribute defined, attribute is a
   /// relation or normals attribute have invalid type(other than `normal3f`).
   ///
-  const std::vector<value::normal3f> GetNormals(
+  const std::vector<value::normal3f> get_normals(
       double time = value::TimeCode::Default(),
       value::TimeSampleInterpolationType interp =
           value::TimeSampleInterpolationType::Linear) const;
@@ -463,21 +475,21 @@ struct GeomMesh : GPrim {
   /// @brief Get interpolation of `primvars:normals`, then `normals`.
   /// @return Interpolation of normals. `vertex` by defaut.
   ///
-  Interpolation GetNormalsInterpolation() const;
+  Interpolation get_normalsInterpolation() const;
 
   ///
   /// @brief Returns `faceVertexCounts`.
   ///
   /// @return face vertex counts vector(copied)
   ///
-  const std::vector<int32_t> GetFaceVertexCounts() const;
+  const std::vector<int32_t> get_faceVertexCounts() const;
 
   ///
   /// @brief Returns `faceVertexIndices`.
   ///
   /// @return face vertex indices vector(copied)
   ///
-  const std::vector<int32_t> GetFaceVertexIndices() const;
+  const std::vector<int32_t> get_faceVertexIndices() const;
 
   //
   // SubD attribs.
