@@ -464,6 +464,14 @@ class MetaVariable;
 
 using CustomDataType = std::map<std::string, MetaVariable>;
 
+///
+/// Helper function to access CustomData(dictionary).
+/// Recursively process into subdictionaries when a key contains namespaces(':') 
+/// 
+bool HasCustomDataKey(const CustomDataType &customData, const std::string &key);
+bool GetCustomDataByKey(const CustomDataType &customData, const std::string &key, /* out */MetaVariable *dst);
+bool SetCustomDataByKey(const std::string &key, const MetaVariable &val, /* inout */CustomDataType &customData);
+
 // Variable class for Prim and Attribute Metadataum.
 //
 // - Accepts limited number of types for value
