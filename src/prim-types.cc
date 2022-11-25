@@ -5,6 +5,7 @@
 //
 #include "prim-types.hh"
 #include "str-util.hh"
+#include "tiny-format.hh"
 //
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -947,6 +948,69 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
   }
 
   return true;
+}
+
+// TODO: Do test more.
+// Current implementation may not behave as in pxrUSD's SdfPath's _LessThanInternal implementation
+bool Path::LessThan(const Path &lhs, const Path &rhs) {
+  DCOUT("LessThan");
+  if (lhs.is_valid() && rhs.is_valid()) {
+    // ok
+  } else {
+    DCOUT("invalid");
+    return false;
+  }
+
+  // TODO: handle relative path correctly.
+  if (lhs.is_absolute_path() && rhs.is_absolute_path()) {
+    // ok
+  } else {
+    DCOUT("not absolute path");
+    return false;
+  }
+
+
+  const std::string &lhs_prop_part = lhs.prop_part();
+  const std::string &rhs_prop_part = rhs.prop_part();
+
+  const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
+  const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
+  DCOUT("lhs_names = " << to_string(lhs_prim_names));
+  DCOUT("rhs_names = " << to_string(rhs_prim_names));
+
+  if (lhs_prim_names.size() < rhs_prim_names.size()) {
+    return true;
+  } else if (lhs_prim_names.size() == rhs_prim_names.size()) {
+    // continue
+  } else {
+    DCOUT("greater");
+    return false;
+  }
+
+  for (size_t i = 0; i < lhs_prim_names.size(); i++) {
+    DCOUT(fmt::format("{}/{} compare = {}", i, lhs_prim_names.size(), lhs_prim_names[i].compare(rhs_prim_names[i])));
+    if (lhs_prim_names[i].compare(rhs_prim_names[i]) < 0) {
+      return true;
+    } else if (lhs_prim_names[i].compare(rhs_prim_names[i]) > 0) {
+      return false;
+    } else {
+      // equal. continue check.
+    }
+  }
+
+  // prim path is equal.
+  if (lhs_prop_part.empty() && rhs_prop_part.empty()) {
+    // no prop part
+    return false;
+  }
+
+  if (lhs_prop_part.empty()) {
+    DCOUT("rhs has prim part.");
+    return true;
+  }
+
+  DCOUT("prop compare." << lhs_prop_part.compare(rhs_prop_part));
+  return (lhs_prop_part.compare(rhs_prop_part) < 0);
 }
 
 }  // namespace tinyusdz

@@ -261,6 +261,19 @@ class Path {
     return false;
   }
 
+  // Is Prim path?
+  bool is_prim_path() const {
+    if (_prop_part.size()) {
+      return false;
+    }
+
+    if (_prim_part.size()) {
+      return true;
+    }
+
+    return false;
+  }
+
   // Is Prim's property path?
   // True when both PrimPart and PropPart are not empty.
   bool is_prim_property_path() const {
@@ -393,6 +406,23 @@ class Path {
   static const Path make_relative(const Path &rhs) {
     Path p = rhs;  // copy
     return p.make_relative();
+  }
+
+  static bool LessThan(const Path &lhs, const Path &rhs);
+
+  // To sort paths lexicographically.
+  // TODO: Use std::lexicographical_compare when we moved to C++17
+  // TODO: consider abs and relative path correctly
+  bool operator<(const Path &rhs) const {
+    if (full_path_name() == rhs.full_path_name()) {
+      return false;
+    }
+
+    if (prim_part().empty() || rhs.prim_part().empty()) {
+      return prim_part().empty() && rhs.prim_part().size();
+    }
+
+    return LessThan(*this, rhs);
   }
 
  private:
