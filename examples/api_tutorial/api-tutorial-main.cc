@@ -5,6 +5,7 @@
 #include <iostream>
 #include "pprinter.hh"
 #include "value-pprint.hh"
+#include "prim-pprint.hh"
 
 // Tydra is a collection of APIs to access/convert USD Prim data
 // (e.g. Can get Attribute by name)
@@ -276,6 +277,14 @@ void CreateScene(tinyusdz::Stage *stage) {
     }
   }
 
+  tinyusdz::GeomSphere sphere;
+  {
+    sphere.name = "sphere0";
+
+    sphere.radius = 3.14;
+
+  }
+
   //
   // Create Scene(Stage) hierarchy.
   // You can add child Prim to parent Prim's `children()`.
@@ -283,14 +292,24 @@ void CreateScene(tinyusdz::Stage *stage) {
   // [Xform]
   //  |
   //  +- [Mesh]
+  //  +- [Sphere]
   //
 
   // Prim's elementName is read from concrete Prim class(GeomMesh::name,
   // Xform::name, ...)
   tinyusdz::Prim meshPrim(mesh);
+  tinyusdz::Prim spherePrim(sphere);
   tinyusdz::Prim xformPrim(xform);
 
   xformPrim.children().emplace_back(std::move(meshPrim));
+  xformPrim.children().emplace_back(std::move(spherePrim));
+
+  // If you want to specify the appearance/traversal order of child Prim(e.g. Showing Prim tree in GUI, Ascii output), set "primChildren"(token[]) metadata
+  // xfromPrim.metas().primChildren.size() must be identical to xformPrim.children().size()
+  xformPrim.metas().primChildren.push_back(tinyusdz::value::token(spherePrim.element_name()));
+  xformPrim.metas().primChildren.push_back(tinyusdz::value::token(meshPrim.element_name()));
+  std::cout << "sphere.element_name = " << spherePrim.element_name() << "\n";
+  std::cout << "mesh.element_name = " << meshPrim.element_name() << "\n";
 
   // Use Stage::root_prims() to retrieve Stage's root Prim array.
   stage->root_prims().emplace_back(std::move(xformPrim));
@@ -315,8 +334,13 @@ void CreateScene(tinyusdz::Stage *stage) {
     customData.emplace("mystring", metavar2);
     customData.emplace("myvalue", 2.45); // Construct MetaVariables implicitly
 
-    stage->metas().customLayerData = customData;
 
+    // You can also use SetCustomDataByKey to set custom value with key having namespaces(':')
+    
+    tinyusdz::MetaVariable intval = int(5);
+    tinyusdz::SetCustomDataByKey("mydict:myval", intval, /* inout */customData);
+
+    stage->metas().customLayerData = customData;
   }
 }
 

@@ -8,6 +8,7 @@
 #include "unit-primvar.h"
 #include "unit-value-types.h"
 #include "unit-xform.h"
+#include "unit-customdata.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -20,6 +21,7 @@ TEST_LIST = {
   { "primvar_test", primvar_test },
   { "value_types_test", value_types_test },
   { "xformOp_test", xformOp_test },
+  { "customdata_test", customdata_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

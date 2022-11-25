@@ -2,6 +2,8 @@ set(TEST_TARGET_NAME unit-test-tinyusdz)
 
 set(TEST_SOURCES
 	unit-main.cc
+
+	unit-customdata.cc
 	unit-prim-types.cc
 	unit-primvar.cc
 	unit-value-types.cc
