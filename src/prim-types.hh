@@ -570,6 +570,7 @@ class MetaVariable {
   const std::string &get_name() const { return _name; }
 
   const value::Value &get_raw_value() const { return _value; }
+  value::Value &get_raw_value() { return _value; }
 
   // No set_type_name()
   const std::string type_name() const { return TypeName(*this); }
