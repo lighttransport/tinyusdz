@@ -126,6 +126,8 @@ bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
 bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
                      Relationship *rel, std::string *err);
 
+bool HasRelationship(const tinyusdz::Prim &prim, const std::string &rel_name);
+
 ///
 /// Terminal Attribute value at specified timecode.
 ///

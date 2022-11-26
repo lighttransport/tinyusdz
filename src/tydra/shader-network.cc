@@ -205,7 +205,7 @@ bool GetBoundMaterial(
       if (gprim->materialBindingPreview.has_value()) {
         if (GetSinglePath(gprim->materialBindingPreview.value(), materialPath)) {
 
-          const Prim *p;
+          const Prim *p{nullptr};
           if (stage.find_prim_at_path(*materialPath, p, err)) {
             if (p->is<Material>() && (material != nullptr)) {
               (*material) = p->as<Material>();
@@ -227,6 +227,113 @@ bool GetBoundMaterial(
   bool ret = ApplyToGPrim(_stage, prim, apply_fun);
 
   return ret;
+}
+
+bool FindBoundMaterial(
+  const Stage &_stage,
+  const Path &abs_path,
+  const std::string &suffix,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err) {
+
+  if (materialPath == nullptr) {
+    return false;
+  }
+
+  const Prim *prim{nullptr};
+  bool ret = _stage.find_prim_at_path(abs_path, prim, err);
+
+  if (!ret) {
+    return false;
+  }
+
+  auto apply_fun = [&](const Stage &stage, const GPrim *gprim) -> bool {
+    if (suffix.empty()) {
+      if (gprim->materialBinding.has_value()) {
+        if (GetSinglePath(gprim->materialBinding.value(), materialPath)) {
+
+          const Prim *p;
+          if (stage.find_prim_at_path(*materialPath, p, err)) {
+            if (p->is<Material>() && (material != nullptr)) {
+              (*material) = p->as<Material>();
+            } else {
+              (*material) = nullptr;
+            }
+          }
+          
+          return true;
+        }
+      }
+    } else if (suffix == "correction") {
+      if (gprim->materialBindingCorrection.has_value()) {
+        if (GetSinglePath(gprim->materialBindingCorrection.value(), materialPath)) {
+
+          const Prim *p;
+          if (stage.find_prim_at_path(*materialPath, p, err)) {
+            if (p->is<Material>() && (material != nullptr)) {
+              (*material) = p->as<Material>();
+            } else {
+              (*material) = nullptr;
+            }
+          }
+          
+          return true;
+        }
+      }
+    } else if (suffix == "preview") {
+      if (gprim->materialBindingPreview.has_value()) {
+        if (GetSinglePath(gprim->materialBindingPreview.value(), materialPath)) {
+
+          const Prim *p{nullptr};
+          if (stage.find_prim_at_path(*materialPath, p, err)) {
+            if (p->is<Material>() && (material != nullptr)) {
+              (*material) = p->as<Material>();
+            } else {
+              (*material) = nullptr;
+            }
+          }
+          
+          return true;
+        }
+      }
+    } else {
+      return false;
+    } 
+
+    return false;
+  };
+
+  ret = ApplyToGPrim(_stage, *prim, apply_fun);
+  if (ret) {
+    return true;
+  }
+
+  // Search parent Prim
+  int depth = 0;
+  while (depth < 1024*1024*128) { // to avoid infinite loop.
+    Path parentPath = abs_path.get_parent_prim_path();
+
+    if (parentPath.is_valid() && (!parentPath.is_root_path())) {
+      ret = _stage.find_prim_at_path(parentPath, prim, err);
+      if (!ret) {
+        return false;
+      }
+
+      ret = ApplyToGPrim(_stage, *prim, apply_fun);
+
+    } else {
+      return false;
+    }
+
+    if (parentPath.is_root_prim()) {
+      // no further parent Prim.
+      return false;
+    }
+    depth++;
+  }
+
+  return false;
 }
 
 } // namespace tydra
