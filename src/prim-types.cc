@@ -75,9 +75,9 @@ Path::Path(const std::string &p, const std::string &prop) {
   //
   // For absolute path, starts with '/' and no other '/' exists.
   // For property part, '.' exists only once.
-  (void)prop;
+  //
 
-  if (p.size() < 1) {
+  if (p.empty() && prop.empty()) {
     _valid = false;
     return;
   }
@@ -85,7 +85,24 @@ Path::Path(const std::string &p, const std::string &prop) {
   auto slash_fun = [](const char c) { return c == '/'; };
   auto dot_fun = [](const char c) { return c == '.'; };
 
+  std::vector<std::string> prims = split(p, "/");
+
   // TODO: More checks('{', '[', ...)
+
+  if (prop.size()) {
+    // prop should not contain slashes
+    auto nslashes = std::count_if(prop.begin(), prop.end(), slash_fun);
+    if (nslashes) {
+      _valid = false;
+      return;
+    }
+
+    // prop does not start with '.'
+    if (startsWith(prop, ".")) {
+      _valid = false;
+      return;
+    }
+  }
 
   if (p[0] == '/') {
     // absolute path
@@ -95,8 +112,26 @@ Path::Path(const std::string &p, const std::string &prop) {
     if (ndots == 0) {
       // absolute prim.
       _prim_part = p;
+
+      if (prop.size()) {
+        _prop_part = prop;
+        _element = prop;
+      } else {
+        if (prims.size()) {
+          _element = prims[prims.size()-1];
+        } else {
+          _element = p;
+        }
+      }
       _valid = true;
     } else if (ndots == 1) {
+      // prim_part contains property name.
+      if (prop.size()) {
+        // prop must be empty.
+        _valid = false;
+        return;
+      }
+
       if (p.size() < 3) {
         // "/."
         _valid = false;
@@ -118,14 +153,9 @@ Path::Path(const std::string &p, const std::string &prop) {
       // split
       std::string prop_name = p.substr(size_t(loc));
 
-      // Check if No '/' in prop_part
-      if (std::count_if(prop_name.begin(), prop_name.end(), slash_fun) > 0) {
-        _valid = false;
-        return;
-      }
-
       _prop_part = prop_name.erase(0, 1);  // remove '.'
       _prim_part = p.substr(0, size_t(loc));
+      _element = _prop_part; // elementName is property path
 
       _valid = true;
 
@@ -135,7 +165,10 @@ Path::Path(const std::string &p, const std::string &prop) {
     }
 
   } else if (p[0] == '.') {
-    // property
+    // maybe relative(e.g. "./xform", "../xform")
+    // FIXME: Support relative path fully
+
+#if 0
     auto nslashes = std::count_if(p.begin(), p.end(), slash_fun);
     if (nslashes > 0) {
       _valid = false;
@@ -145,6 +178,21 @@ Path::Path(const std::string &p, const std::string &prop) {
     _prop_part = p;
     _prop_part = _prop_part.erase(0, 1);
     _valid = true;
+#else
+    _prim_part = p;
+    if (prop.size()) {
+      _prop_part = prop;
+      _element = prop;
+    } else {
+      if (prims.size()) {
+        _element = prims[prims.size()-1];
+      } else {
+        _element = p;
+      }
+    }
+    _valid = true;
+
+#endif
 
   } else {
     // prim.prop
@@ -153,6 +201,9 @@ Path::Path(const std::string &p, const std::string &prop) {
     if (ndots == 0) {
       // relative prim.
       _prim_part = p;
+      if (prop.size()) {
+        _prop_part = prop;
+      }
       _valid = true;
     } else if (ndots == 1) {
       if (p.size() < 3) {
@@ -978,6 +1029,10 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
   DCOUT("lhs_names = " << to_string(lhs_prim_names));
   DCOUT("rhs_names = " << to_string(rhs_prim_names));
 
+  // less Prim depth = less than.
+  // same Prim depth, lexicographically compare each Prim name
+  // When Prim path is same, compare property name
+
   if (lhs_prim_names.size() < rhs_prim_names.size()) {
     return true;
   } else if (lhs_prim_names.size() == rhs_prim_names.size()) {
@@ -989,6 +1044,18 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
 
   for (size_t i = 0; i < lhs_prim_names.size(); i++) {
     DCOUT(fmt::format("{}/{} compare = {}", i, lhs_prim_names.size(), lhs_prim_names[i].compare(rhs_prim_names[i])));
+
+#if 1
+    const std::string &lhs_name = lhs_prim_names[i];
+    const std::string &rhs_name = rhs_prim_names[i];
+
+    if (lhs_name.compare(rhs_name) == 0) {
+      // equal. continue check.
+    } else {
+      // FIXME: We can simply use std::string::compare?
+      return std::lexicographical_compare(lhs_name.begin(), lhs_name.end(), rhs_name.begin(), rhs_name.end());
+    }
+#else
     if (lhs_prim_names[i].compare(rhs_prim_names[i]) < 0) {
       return true;
     } else if (lhs_prim_names[i].compare(rhs_prim_names[i]) > 0) {
@@ -996,6 +1063,8 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
     } else {
       // equal. continue check.
     }
+
+#endif
   }
 
   // prim path is equal.

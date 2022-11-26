@@ -192,8 +192,15 @@ class Path {
     return p;
   }
 
-  // `p` is split into prim_part and prop_part
-  // Path(const std::string &p);
+  // Create Path both from Prim Path and Prop
+  // If `prim` starts 
+  // "/aaa", "bora" => /aaa.bora
+  // "/aaa", "" => /aaa (prim only)
+  // "", "bora" => .bora (property only)
+  //
+  // Note: This constructor may fail to extract elementName from given `prim` and `prop`.
+  // It is highly recommended to use AppendPrim() and AppendProperty to.
+  // construct Path hierarchy(e.g. `/aaa/xform/geom.points`) so that elementName is set correctly.
   Path(const std::string &prim, const std::string &prop);
 
   // : prim_part(prim), valid(true) {}
@@ -411,7 +418,6 @@ class Path {
   static bool LessThan(const Path &lhs, const Path &rhs);
 
   // To sort paths lexicographically.
-  // TODO: Use std::lexicographical_compare when we moved to C++17
   // TODO: consider abs and relative path correctly
   bool operator<(const Path &rhs) const {
     if (full_path_name() == rhs.full_path_name()) {
