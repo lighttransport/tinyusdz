@@ -177,10 +177,11 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
-  DCOUT("GerPrimAtPath : " << path.prim_part() << "(input path: " << path
+  DCOUT("GetPrimAtPath : " << path.prim_part() << "(input path: " << path
                            << ")");
 
   if (_dirty) {
+    DCOUT("clear cache.");
     // Clear cache.
     _prim_path_cache.clear();
 
@@ -189,20 +190,24 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     // First find from a cache.
     auto ret = _prim_path_cache.find(path.prim_part());
     if (ret != _prim_path_cache.end()) {
+      DCOUT("Found cache.");
       return ret->second;
     }
   }
 
   if (!path.is_valid()) {
+    DCOUT("Invalid path.");
     return nonstd::make_unexpected("Path is invalid.\n");
   }
 
   if (path.is_relative_path()) {
+    DCOUT("Relative path is todo.");
     // TODO:
     return nonstd::make_unexpected("Relative path is TODO.\n");
   }
 
   if (!path.is_absolute_path()) {
+    DCOUT("Not absolute path.");
     return nonstd::make_unexpected(
         "Path is not absolute. Non-absolute Path is TODO.\n");
   }
@@ -218,6 +223,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     }
   }
 
+  DCOUT("Not found.");
   return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
                                  "> int the Stage.\n");
 }
