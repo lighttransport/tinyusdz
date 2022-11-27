@@ -5,6 +5,7 @@
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
+#include "tydra/shader-network.hh"
 #include "usdShade.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -337,11 +338,35 @@ int main(int argc, char **argv) {
     }
   }
 
-  std::cout << "EvaluateAttribute example -------------\n";
+
+  //
+  // Find bound Material
+  //
+  std::cout << "FindBoundMaterial example -------------\n";
+  for (const auto &item : meshmap) {
+    // FindBoundMaterial seaches bound material for parent GPrim.
+    tinyusdz::Path matPath;
+    const tinyusdz::Material *material{nullptr};
+    std::string err;
+    bool ret = tinyusdz::tydra::FindBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* suffix */"", &matPath, &material, &err);
+
+    if (ret) {
+      std::cout << item.first << " has bound Material. Material Path = " << matPath << "\n";
+      std::cout << "mat = " << material << "\n";
+      if (material) {
+        std::cout << to_string(*material, /* indent */1) << "\n";
+      }
+    } else {
+      std::cout << "Bound material not found for Prim path : " << item.first << "\n";
+    }
+  }
+  
+  
 
   //
   // Shader attribute evaluation example.
   //
+  std::cout << "EvaluateAttribute example -------------\n";
   for (const auto &item : preadermap) {
     // Returned Prim is Shader class
     nonstd::expected<const tinyusdz::Prim*, std::string> shader = stage.GetPrimAtPath(tinyusdz::Path(item.first, /* prop name */""));
@@ -373,6 +398,7 @@ int main(int argc, char **argv) {
       std::cerr << "Err: " << shader.error() << "\n";
     }
   }
+
 
 
   return 0;

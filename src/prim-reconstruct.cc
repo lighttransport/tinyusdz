@@ -1441,6 +1441,15 @@ static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::stri
   return EnumHandler<Purpose>("purpose", tok, enums);
 };
 
+static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const std::string &tok) {
+  using EnumTy = std::pair<Orientation, const char *>;
+  const std::vector<EnumTy> enums = {
+      std::make_pair(Orientation::RightHanded, "rightHanded"),
+      std::make_pair(Orientation::LeftHanded, "leftHanded"),
+  };
+  return EnumHandler<Orientation>("orientation", tok, enums);
+};
+
 #if 0
 // Animatable enum
 template<typename T, typename EnumTy>
@@ -1938,7 +1947,7 @@ bool ReconstructXformOpsFromProperties(
 
 
 template <>
-bool ReconstructPrim(
+bool ReconstructPrim<Xform>(
     const PropertyMap &properties,
     const ReferenceList &references,
     Xform *xform,
@@ -1954,6 +1963,15 @@ bool ReconstructPrim(
   }
 
   for (const auto &prop : properties) {
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, xform->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, xform->proxyPrim)
+    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, Xform,
+                   xform->visibility)
+    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Xform,
+                       xform->purpose)
+    PARSE_ENUM_PROPETY(table, prop, "orientation", OrientationEnumHandler, Xform,
+                       xform->orientation)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", Xform, xform->extent)
     ADD_PROPERTY(table, prop, Xform, xform->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2956,6 +2974,8 @@ bool ReconstructPrim<GeomMesh>(
                        mesh->faceVaryingLinearInterpolation)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomMesh,
                        mesh->purpose)
+    PARSE_ENUM_PROPETY(table, prop, "orientation", OrientationEnumHandler, GeomMesh,
+                       mesh->orientation)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomMesh, mesh->extent)
     // blendShape names
     PARSE_TYPED_ATTRIBUTE(table, prop, kSkelBlendShapes, GeomMesh, mesh->blendShapes)
@@ -3060,6 +3080,8 @@ bool ReconstructPrim<GeomCamera>(
                        camera->stereoRole)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GeomCamera,
                          camera->purpose)
+    PARSE_ENUM_PROPETY(table, prop, "orientation", OrientationEnumHandler, GeomCamera,
+                       camera->orientation)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GeomCamera, camera->extent)
     ADD_PROPERTY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
