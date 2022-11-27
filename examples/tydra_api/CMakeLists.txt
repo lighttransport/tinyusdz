@@ -1,8 +1,8 @@
 # Assume this cmake is called from tinyusdz root(../../)
-set(EXAMPLE_TARGET "tydra_convert_example")
+set(EXAMPLE_TARGET "tydra_api")
 
 set(TINYUSDZ_TYDRA_CONVERT_SOURCES
-    tydra-convert-main.cc
+    tydra-api-main.cc
     )
 
 add_executable(${EXAMPLE_TARGET} ${TINYUSDZ_TYDRA_CONVERT_SOURCES})

@@ -7,6 +7,7 @@
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 #include "stage.hh"
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -158,7 +159,7 @@ bool GetBoundMaterial(
   const Stage &_stage,
   const Prim &prim,
   const std::string &suffix,
-  tinyusdz::Path *materialPath, 
+  tinyusdz::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -167,7 +168,7 @@ bool GetBoundMaterial(
   }
 
   (void)err;
-  
+
   auto apply_fun = [&](const Stage &stage, const GPrim *gprim) -> bool {
     if (suffix.empty()) {
       if (gprim->materialBinding.has_value()) {
@@ -181,7 +182,7 @@ bool GetBoundMaterial(
               (*material) = nullptr;
             }
           }
-          
+
           return true;
         }
       }
@@ -197,7 +198,7 @@ bool GetBoundMaterial(
               (*material) = nullptr;
             }
           }
-          
+
           return true;
         }
       }
@@ -213,13 +214,13 @@ bool GetBoundMaterial(
               (*material) = nullptr;
             }
           }
-          
+
           return true;
         }
       }
     } else {
       return false;
-    } 
+    }
 
     return false;
   };
@@ -233,7 +234,7 @@ bool FindBoundMaterial(
   const Stage &_stage,
   const Path &abs_path,
   const std::string &suffix,
-  tinyusdz::Path *materialPath, 
+  tinyusdz::Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -252,18 +253,22 @@ bool FindBoundMaterial(
     if (suffix.empty()) {
       if (gprim->materialBinding.has_value()) {
         if (GetSinglePath(gprim->materialBinding.value(), materialPath)) {
-
+          DCOUT("GPrim has materialBinding.");
           const Prim *p;
           if (stage.find_prim_at_path(*materialPath, p, err)) {
+            DCOUT("material = " << material);
             if (p->is<Material>() && (material != nullptr)) {
+              DCOUT("Store mat.");
               (*material) = p->as<Material>();
             } else {
+              DCOUT("nullmat.");
               (*material) = nullptr;
             }
           }
-          
           return true;
         }
+      } else {
+          DCOUT("GPrim has no materialBinding.");
       }
     } else if (suffix == "correction") {
       if (gprim->materialBindingCorrection.has_value()) {
@@ -277,7 +282,7 @@ bool FindBoundMaterial(
               (*material) = nullptr;
             }
           }
-          
+
           return true;
         }
       }
@@ -293,13 +298,13 @@ bool FindBoundMaterial(
               (*material) = nullptr;
             }
           }
-          
+
           return true;
         }
       }
     } else {
       return false;
-    } 
+    }
 
     return false;
   };
@@ -313,6 +318,7 @@ bool FindBoundMaterial(
   int depth = 0;
   while (depth < 1024*1024*128) { // to avoid infinite loop.
     Path parentPath = abs_path.get_parent_prim_path();
+    DCOUT("search parent: " << parentPath.full_path_name());
 
     if (parentPath.is_valid() && (!parentPath.is_root_path())) {
       ret = _stage.find_prim_at_path(parentPath, prim, err);
@@ -321,6 +327,9 @@ bool FindBoundMaterial(
       }
 
       ret = ApplyToGPrim(_stage, *prim, apply_fun);
+      if (ret) {
+        return true;
+      }
 
     } else {
       return false;
