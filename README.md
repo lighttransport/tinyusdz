@@ -217,7 +217,8 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 * [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDZ/USDA/USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
-* [api_tutorial](examples/api_tutorial/) Tutorial of TinyUSDZ to construct a USD scene data.
+* [api_tutorial](examples/api_tutorial/) Tutorial of TinyUSDZ Core API to construct a USD scene data.
+* [tydra_api](examples/tydra_api/) Tutorial of TinyUSDZ Tydra API to access/query/convert a USD scene data.
 
 See [examples](examples) directory for more examples, but may not actively maintained except for the above examples.
 
@@ -276,41 +277,13 @@ int main(int argc, char **argv) {
 
 T.B.W.
 
-## Blender add-on(will be removed)
-
-There was some experiements of TinyUSDZ add-on for Blender.
-
-But Blender's USD support is getting better.
-We recommend to use Omniverse version of Blender's USD import/export feature.
-
-https://builder.blender.org/download/experimental/
-
-### Build Blender add-on on Linux(deprecared)
-
-Edit path to python interpreter in `scripts/bootstrap-cmake-linux-blender-pymodule.sh`, then
-
-```
-$ ./scripts/bootstrap-cmake-linux-blender-pymodule.sh
-$ cd build
-$ make
-```
-
-Copy `tinyusd_blender.*-linux-gnu.so` to blender's folder.
-Recommended location is `USER` folder(`~/.config/blender/2.xx`)
-
-Create `scripts/addons/modules` folder if required
-
-```
-mkdir -p ~/.config/blender/2.93/scripts/addons/modules
-```
-
 
 ## TODO
 
 ### Higher priority
 
 * [ ] Built-in usdObj(wavefront .obj mesh) support.
-  * Through tinyobjloader.
+  * via tinyobjloader.
 * [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
 * [ ] usdSkel utilities
   * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
@@ -322,7 +295,7 @@ mkdir -p ~/.config/blender/2.93/scripts/addons/modules
 * [ ] Support Nested USDZ
 * [ ] UDIM texture support
 * [ ] MaterialX support
-  * Parse XML file
+  * [ ] Parse XML file using tinyxml2
 
 ### Middle priority
 
