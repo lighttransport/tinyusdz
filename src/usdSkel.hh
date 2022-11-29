@@ -6,6 +6,7 @@
 
 #include "prim-types.hh"
 #include "value-types.hh"
+#include "xform.hh"
 
 namespace tinyusdz {
 
@@ -42,7 +43,7 @@ struct BlendShape {
 };
 
 // Skeleton
-struct Skeleton {
+struct Skeleton : Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -72,7 +73,7 @@ struct Skeleton {
       Purpose::Default};  // "uniform token purpose"
 
   std::map<std::string, Property> props;
-  std::vector<value::token> xformOpOrder;
+  //std::vector<value::token> xformOpOrder;
 
   PrimMeta meta;
 
@@ -111,7 +112,7 @@ struct Skeleton {
 };
 
 // NOTE: SkelRoot itself does not have dedicated attributes in the schema.
-struct SkelRoot {
+struct SkelRoot : Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
   int64_t parent_id{-1};
@@ -125,7 +126,7 @@ struct SkelRoot {
       Visibility::Inherited};  // "token visibility"
 
   nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
-  std::vector<XformOp> xformOps;
+  //std::vector<XformOp> xformOps;
 
   // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
   // node?;

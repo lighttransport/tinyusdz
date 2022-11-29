@@ -2253,9 +2253,11 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName);
 
 //
 // For `Stage` scene graph.
-// Similar to `Prim` in pxrUSD.
+// Its a freezed state of an element of a scene graph(so no Prim additin/deletion from a scene graph is considered).
+// May be Similar to `Prim` in pxrUSD.
+// If you want to manipulate scene graph, use PrimSpec instead(but PrimSpec is W.I.P.)
 // This class uses tree-representation of `Prim`. Easy to use, but may not be
-// performant than flattened Prim array + index representation of Prim
+// performant than flattened array index representation of Prim
 // tree(Index-based scene graph such like glTF).
 //
 class Prim {
@@ -2348,9 +2350,30 @@ class Prim {
     return nullptr;
   }
 
+#if 0
+  // Compute or update world matrix of this Prim.
+  // Will traverse child Prims.
+  void update_world_matrix(const value::matrix4d &parent_mat);
+
+  const value::matrix4d &get_local_matrix() const;
+  const value::matrix4d &get_world_matrix() const;
+#endif
+
   const PrimMeta &metas() const;
   PrimMeta &metas();
 
+  int64_t prim_id() const {
+    return _prim_id;
+  }
+
+  int64_t &prim_id() {
+    return _prim_id;
+  }
+
+  // TODO: Add API to get parent Prim directly?
+  // (Currently we need to traverse parent Prim using Stage)
+
+ 
  private:
   Path _path;  // Prim's local path name. May contain Property, Relationship and
                // other infos, but do not include parent's path. To get fully
@@ -2365,7 +2388,18 @@ class Prim {
   value::Value
       _data;  // Generic container for concrete Prim object. GPrim, Xform, ...
   std::vector<Prim> _children;  // child Prim nodes
+
+  // NOTE: Not used at the moment. 
+  int64_t _prim_id{-1}; // Unique Prim id when positive. Id is usually [0, NumPrimsInStage) when reading from USDA, PathIndex from USDC.
+
+#if 0
+  mutable bool _matrix_dirty{true};
+  value::matrix4d _local_matrix{value::matrix4d::identity()}; // from xfromOps
+  value::matrix4d _world_matrix{value::matrix4d::identity()}; // computed from Prim root
+#endif
 };
+
+bool IsXformablePrim(const Prim &prim);
 
 ///
 /// Contains concrete Prim object and composition elements.
