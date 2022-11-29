@@ -1082,4 +1082,31 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
   return (lhs_prop_part.compare(rhs_prop_part) < 0);
 }
 
+bool IsXformablePrim(const Prim &prim) {
+  
+  uint32_t tyid = prim.type_id();
+
+  // GeomSubset is not xformable
+
+  switch (tyid) {
+  case value::TYPE_ID_GPRIM: { return true; }
+  case value::TYPE_ID_GEOM_XFORM: { return true; }
+  case value::TYPE_ID_GEOM_MESH: { return true; } 
+  case value::TYPE_ID_GEOM_BASIS_CURVES: { return true; } 
+  case value::TYPE_ID_GEOM_SPHERE: { return true; } 
+  case value::TYPE_ID_GEOM_CUBE: { return true; } 
+  case value::TYPE_ID_GEOM_CYLINDER: { return true; } 
+  case value::TYPE_ID_GEOM_CONE: { return true; } 
+  case value::TYPE_ID_GEOM_CAPSULE: { return true; } 
+  case value::TYPE_ID_GEOM_POINTS: { return true; } 
+  // value::TYPE_ID_GEOM_GEOMSUBSET
+  case value::TYPE_ID_GEOM_POINT_INSTANCER: { return true; } 
+  case value::TYPE_ID_GEOM_CAMERA: { return true; } 
+  case value::TYPE_ID_SKEL_ROOT: { return true; } 
+  default:
+    return false;
+  }
+
+}
+
 }  // namespace tinyusdz

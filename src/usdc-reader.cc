@@ -2049,6 +2049,9 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         if (prim) {
           // Prim name
           prim.value().element_path() = elemPath;
+
+          // Prim id = Path ID
+          prim.value().prim_id() = int64_t(current);
         }
 
         if (primOut) {

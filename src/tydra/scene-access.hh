@@ -15,6 +15,7 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "value-types.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -248,6 +249,58 @@ bool EvaluateAttribute(
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
+        tinyusdz::value::TimeSampleInterpolationType::Held);
+
+///
+/// For efficient Xform retrieval from Stage.
+/// Set a time, and compute xform of each Prim and cache it(read only).
+/// Xform value does not change until `update` is trigerred.
+/// 
+/// XformNode's pointer value and hierarchy become invalid when Prim is removed/added to Stage.
+/// (If you change the content of Stage, please rebuild XformNode using BuildXformNodeFromStage()
+///
+struct XformNode
+{
+  std::string element_name; // e.g. "geom0"
+  Path absolute_path; // e.g. "/xform/geom0"
+
+  const Prim *prim{nullptr}; // pointer to Prim.
+
+  XformNode *parent{nullptr}; // pointer to parent
+  std::vector<XformNode> children;
+
+  const value::matrix4d &get_local_matrix() const {
+    return _local_matrix;
+  }
+
+  const value::matrix4d &get_world_matrix() const {
+    return _world_matrix;
+  }
+
+  // TODO: accessible only from Friend class?
+  void set_local_matrix(const value::matrix4d &m) {
+    _local_matrix = m;
+  }
+
+  void set_world_matrix(const value::matrix4d &m) {
+    _world_matrix = m;
+  }
+
+  // true: Prim with Xform(e.g. GeomMesh)
+  // false: Prim with no Xform(e.g. Stage root("/"), Scope, Material, ...)
+  bool has_xform() const { return _has_xform; }
+  bool &has_xform() { return _has_xform; }
+
+ private:
+  bool _has_xform{false};
+  value::matrix4d _local_matrix{value::matrix4d::identity()};
+  value::matrix4d _world_matrix{value::matrix4d::identity()};
+};
+
+bool BuildXformNodeFromStage(
+  const tinyusdz::Stage &stage,
+  XformNode *root, /* out */
+  const double t = tinyusdz::value::TimeCode::Default(), const tinyusdz::value::TimeSampleInterpolationType tinterp = 
         tinyusdz::value::TimeSampleInterpolationType::Held);
 
 //

@@ -9,6 +9,7 @@
 #include "prim-types.hh"
 #include "primvar.hh"
 #include "tiny-format.hh"
+#include "tydra/prim-apply.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
@@ -1536,6 +1537,70 @@ bool ListSceneNames(const tinyusdz::Prim &root,
 
   return true;
 }
+
+namespace {
+
+#if 0 // TODO
+bool BuildXformNodeFromStageRec(
+  const tinyusdz::Stage &stage,
+  const Path &rootPath,
+  const Prim &rootPrim,
+  XformNode *nodeOut, /* out */
+  value::matrix4d rootMat,
+  const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+  // TODO: time
+  (void)t;
+  (void)tinterp;
+
+  XformNode node;
+  node.element_name = rootPrim.element_name();
+  node.absolute_path = rootPath.AppendPrim(rootPrim.element_name());
+  node.has_xform() = IsXformablePrim(rootPrim);
+
+  if (IsXformablePrim(rootPrim)) {
+  }
+
+  return true;
+}
+#endif
+
+} // namespace local
+
+#if 0 // TODO
+bool BuildXformNodeFromStage(
+  const tinyusdz::Stage &stage,
+  XformNode *root, /* out */
+  const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+  // TODO: time
+  (void)t;
+  (void)tinterp;
+  
+  XformNode stage_root;
+  stage_root.element_name = ""; // Stage root element name is empty.
+  stage_root.absolute_path = Path("/", "");
+  stage_root.has_xform() = false;
+
+  const tinyusdz::Stage &stage,
+  const Path &rootPath,
+  const Prim &rootPrim,
+  XformNode *nodeOut, /* out */
+  value::matrix4d rootMat,
+  const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+
+  Prim dummyPrim;
+
+  for (const auto &root : stage.root_prims()) {
+    XformNode node;
+    value::matrix4d rootMat{value::matrix4d::identity()}; 
+
+    if (!BuildXformNodeFromStageRec(stage, stage_root.absolute_path, root, 
+      return false;
+    }
+  
+  }
+
+}
+#endif
 
 }  // namespace tydra
 }  // namespace tinyusdz

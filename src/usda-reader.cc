@@ -1209,6 +1209,7 @@ void ReconstructNodeRec(const size_t idx,
 
   Prim prim(node.prim);
   DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
+  prim.prim_id() = int64_t(idx);
 
   for (const auto &cidx : node.children) {
     ReconstructNodeRec(cidx, prim_nodes, prim);
@@ -1231,6 +1232,7 @@ bool USDAReader::Impl::ReconstructStage() {
 
     Prim prim(node.prim);
     DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
+    prim.prim_id() = int64_t(idx);
 
     for (const auto &cidx : node.children) {
 #if 0

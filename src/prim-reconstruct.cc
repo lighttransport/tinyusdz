@@ -2096,6 +2096,10 @@ bool ReconstructPrim<Skeleton>(
   (void)references;
 
   std::set<std::string> table;
+  if (!prim::ReconstructXformOpsFromProperties(table, properties, &skel->xformOps, err)) {
+    return false;
+  }
+
   for (auto &prop : properties) {
 
     // SkelBindingAPI

@@ -2122,6 +2122,8 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
     ss << print_relationship(skel.proxyPrim.value(), skel.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
   }
 
+  ss << print_xformOps(skel.xformOps, indent+1);
+
   ss << print_typed_token_attr(skel.visibility, "visibility", indent+1);
   ss << print_typed_token_attr(skel.purpose, "purpose", indent+1);
   ss << print_typed_attr(skel.extent, "extent", indent+1);
