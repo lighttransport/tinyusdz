@@ -77,26 +77,29 @@ value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p
 value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p);
 
 
-//
-// For usdGeom, usdLux
-// TODO: Move to `xform.hh`?
-//
+///
+/// For usdGeom, usdSkel, usdLux
+///
+/// TODO: TimeSample support.
 struct Xformable {
   ///
   /// Evaluate XformOps and output evaluated(concatenated) matrix to `out_matrix`
   /// `resetXformStack` become true when xformOps[0] is !resetXformStack!
   /// Return error message when failed.
   ///
-  bool EvaluateXformOps(value::matrix4d *out_matrix, bool *resetXformStack, std::string *err) const;
+  /// @param[in] t Time
+  /// @param[in] tinterp TimeSample interpolation type
+  ///
+  bool EvaluateXformOps(double t, value::TimeSampleInterpolationType tinterp, value::matrix4d *out_matrix, bool *resetXformStack, std::string *err) const;
 
   ///
   /// Global = Parent x Local
   ///
   nonstd::expected<value::matrix4d, std::string> GetGlobalMatrix(
-      const value::matrix4d &parentMatrix) const {
+      const value::matrix4d &parentMatrix, double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held) const {
     bool resetXformStack{false};
 
-    auto m = GetLocalMatrix(&resetXformStack);
+    auto m = GetLocalMatrix(t, tinterp, &resetXformStack);
 
     if (m) {
       if (resetXformStack) {
@@ -116,11 +119,13 @@ struct Xformable {
   ///
   /// Evaluate xformOps and get local matrix.
   ///
-  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(bool *resetTransformStack = nullptr) const {
+  /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!? 
+  ///
+  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held, bool *resetTransformStack = nullptr) const {
     if (_dirty) {
       value::matrix4d m;
       std::string err;
-      if (EvaluateXformOps(&m, resetTransformStack, &err)) {
+      if (EvaluateXformOps(t, tinterp, &m, resetTransformStack, &err)) {
         _matrix = m;
         _dirty = false;
       } else {

@@ -310,6 +310,11 @@ struct XformNode
   value::matrix4d _parent_world_matrix{value::matrix4d::identity()};
 };
 
+///
+/// Build Xform scene hierachy from Stage.
+///
+/// TODO: Support timeSamples.
+///
 bool BuildXformNodeFromStage(
   const tinyusdz::Stage &stage,
   XformNode *root, /* out */

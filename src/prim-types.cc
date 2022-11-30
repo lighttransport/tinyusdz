@@ -1161,7 +1161,7 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable) {
 
 }
 
-value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack) {
+value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack, double t, value::TimeSampleInterpolationType tinterp) {
   if (!IsXformablePrim(prim)) {
     if (resetXformStack) {
       (*resetXformStack) = false;
@@ -1182,7 +1182,7 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack) {
 
     value::matrix4d m;
     bool rxs{false};
-    nonstd::expected<value::matrix4d, std::string> ret = xformable->GetLocalMatrix(&rxs);
+    nonstd::expected<value::matrix4d, std::string> ret = xformable->GetLocalMatrix(t, tinterp, &rxs);
     if (ret) {
       if (resetXformStack) {
         (*resetXformStack) = rxs;

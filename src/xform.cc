@@ -386,7 +386,8 @@ class XformEvaluator {
 
 } // namespace local
 
-bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
+bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType tinterp,
+                                 value::matrix4d *out_matrix,
                                  bool *resetXformStack,
                                  std::string *err) const {
   const auto RotateABC = [](const XformOp &x) -> nonstd::expected<value::matrix4d, std::string>  {
@@ -510,6 +511,8 @@ bool Xformable::EvaluateXformOps(value::matrix4d *out_matrix,
     Identity(&m);
 
     if (x.is_timesamples()) {
+      (void)t;
+      (void)tinterp;
       if (err) {
         (*err) += "TODO: xformOp property with timeSamples.\n";
       }
