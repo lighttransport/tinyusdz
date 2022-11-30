@@ -259,12 +259,15 @@ bool EvaluateAttribute(
 /// XformNode's pointer value and hierarchy become invalid when Prim is removed/added to Stage.
 /// (If you change the content of Stage, please rebuild XformNode using BuildXformNodeFromStage()
 ///
+/// TODO: Use prim_id and deprecate the pointer to Prim.
+///
 struct XformNode
 {
   std::string element_name; // e.g. "geom0"
   Path absolute_path; // e.g. "/xform/geom0"
 
-  const Prim *prim{nullptr}; // pointer to Prim.
+  const Prim *prim{nullptr}; // The pointer to Prim.
+  int64_t prim_id{-1}; // Prim id(0 or positive if exists)
 
   XformNode *parent{nullptr}; // pointer to parent
   std::vector<XformNode> children;
@@ -273,8 +276,13 @@ struct XformNode
     return _local_matrix;
   }
 
+  // world matrix = parent_world_matrix x local_matrix
   const value::matrix4d &get_world_matrix() const {
     return _world_matrix;
+  }
+
+  const value::matrix4d &get_parent_world_matrix() const {
+    return _parent_world_matrix;
   }
 
   // TODO: accessible only from Friend class?
@@ -286,6 +294,10 @@ struct XformNode
     _world_matrix = m;
   }
 
+  void set_parent_world_matrix(const value::matrix4d &m) {
+    _parent_world_matrix = m;
+  }
+
   // true: Prim with Xform(e.g. GeomMesh)
   // false: Prim with no Xform(e.g. Stage root("/"), Scope, Material, ...)
   bool has_xform() const { return _has_xform; }
@@ -295,6 +307,7 @@ struct XformNode
   bool _has_xform{false};
   value::matrix4d _local_matrix{value::matrix4d::identity()};
   value::matrix4d _world_matrix{value::matrix4d::identity()};
+  value::matrix4d _parent_world_matrix{value::matrix4d::identity()};
 };
 
 bool BuildXformNodeFromStage(
@@ -302,6 +315,8 @@ bool BuildXformNodeFromStage(
   XformNode *root, /* out */
   const double t = tinyusdz::value::TimeCode::Default(), const tinyusdz::value::TimeSampleInterpolationType tinterp = 
         tinyusdz::value::TimeSampleInterpolationType::Held);
+
+std::string DumpXformNode(const XformNode &root);
 
 //
 // For USDZ AR extensions

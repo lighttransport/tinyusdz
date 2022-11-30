@@ -202,6 +202,7 @@ struct DiskLight : public Xformable {
   std::vector<value::token> _properties;
 };
 
+// NOTE: Make Distance xformable?
 struct DistantLight : public Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
@@ -349,7 +350,7 @@ struct PluginLight : public Xformable {
 };
 
 // TODO
-struct PluginLightFilter {
+struct PluginLightFilter : public Xformable {
   Specifier spec{Specifier::Def};
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
