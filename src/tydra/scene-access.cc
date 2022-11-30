@@ -1540,67 +1540,125 @@ bool ListSceneNames(const tinyusdz::Prim &root,
 
 namespace {
 
-#if 0 // TODO
 bool BuildXformNodeFromStageRec(
   const tinyusdz::Stage &stage,
-  const Path &rootPath,
-  const Prim &rootPrim,
+  const Path &abs_path,
+  const Prim &prim,
   XformNode *nodeOut, /* out */
   value::matrix4d rootMat,
   const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
   // TODO: time
   (void)t;
   (void)tinterp;
+  (void)stage;
+
+  if (!nodeOut) {
+    return false;
+  }
 
   XformNode node;
-  node.element_name = rootPrim.element_name();
-  node.absolute_path = rootPath.AppendPrim(rootPrim.element_name());
-  node.has_xform() = IsXformablePrim(rootPrim);
 
-  if (IsXformablePrim(rootPrim)) {
+  if (prim.element_name().empty()) {
+    // TODO: report error
   }
+
+  node.element_name = prim.element_name();
+  node.absolute_path = abs_path.AppendPrim(prim.element_name());
+
+  if (IsXformablePrim(prim)) {
+    bool resetXformStack{false};
+
+    value::matrix4d localMat = GetLocalTransform(prim, &resetXformStack);
+
+    value::matrix4d worldMat = rootMat;
+    if (resetXformStack) {
+      // FIXME. Is it correct to reset parent's world matrix?
+      worldMat = value::matrix4d::identity();
+    }
+
+    value::matrix4d m = worldMat * localMat;
+
+    node.set_parent_world_matrix(rootMat);
+    node.set_local_matrix(localMat);
+    node.set_world_matrix(m);
+  } else {
+    node.has_xform() = false;
+    node.set_parent_world_matrix(rootMat);
+    node.set_world_matrix(rootMat);
+    node.set_local_matrix(value::matrix4d::identity());
+  }
+
+  (*nodeOut) = node;
+
 
   return true;
 }
-#endif
+
+std::string PrintXformNodeRec(
+  const XformNode &node,
+  uint32_t indent)
+{
+  std::stringstream ss;
+
+   // TODO
+  (void)node;
+  (void)indent;
+
+  return ss.str();
+}
+
 
 } // namespace local
 
-#if 0 // TODO
 bool BuildXformNodeFromStage(
   const tinyusdz::Stage &stage,
-  XformNode *root, /* out */
+  XformNode *rootNode, /* out */
   const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
-  // TODO: time
-  (void)t;
-  (void)tinterp;
-  
+
+  if (!rootNode) {
+    return false;
+  }
+
   XformNode stage_root;
   stage_root.element_name = ""; // Stage root element name is empty.
   stage_root.absolute_path = Path("/", "");
   stage_root.has_xform() = false;
-
-  const tinyusdz::Stage &stage,
-  const Path &rootPath,
-  const Prim &rootPrim,
-  XformNode *nodeOut, /* out */
-  value::matrix4d rootMat,
-  const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
-
-  Prim dummyPrim;
+  stage_root.parent = nullptr;
 
   for (const auto &root : stage.root_prims()) {
     XformNode node;
-    value::matrix4d rootMat{value::matrix4d::identity()}; 
 
-    if (!BuildXformNodeFromStageRec(stage, stage_root.absolute_path, root, 
+    value::matrix4d rootMat{value::matrix4d::identity()};
+
+    if (!BuildXformNodeFromStageRec(stage, stage_root.absolute_path, root, &node, rootMat, t, tinterp)) {
       return false;
     }
-  
+
+    stage_root.children.emplace_back(std::move(node));
   }
 
+  (*rootNode) = stage_root;
+
+  return true;
 }
-#endif
+
+std::string DumpXformNode(
+  const XformNode &node)
+{
+  std::stringstream ss;
+
+  ss << "Prim name: " << node.element_name << "(Path " << node.absolute_path << ") {\n";
+  ss << pprint::Indent(1) << "parent_world: " << node.get_parent_world_matrix() << "\n";
+  ss << pprint::Indent(1) << "world: " << node.get_world_matrix() << "\n";
+  ss << pprint::Indent(1) << "local: " << node.get_local_matrix() << "\n";
+
+  for (const auto &child : node.children) {
+    ss << PrintXformNodeRec(child, 1);
+  }
+
+  return ss.str();
+
+}
 
 }  // namespace tydra
 }  // namespace tinyusdz

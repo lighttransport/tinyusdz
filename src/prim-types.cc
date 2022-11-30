@@ -1103,10 +1103,95 @@ bool IsXformablePrim(const Prim &prim) {
   case value::TYPE_ID_GEOM_POINT_INSTANCER: { return true; } 
   case value::TYPE_ID_GEOM_CAMERA: { return true; } 
   case value::TYPE_ID_SKEL_ROOT: { return true; } 
+  case value::TYPE_ID_LUX_DOME: { return true; } 
+  case value::TYPE_ID_LUX_CYLINDER: { return true; } 
+  case value::TYPE_ID_LUX_SPHERE: { return true; } 
+  case value::TYPE_ID_LUX_DISK: { return true; } 
+  case value::TYPE_ID_LUX_DISTANT: { return true; } 
+  case value::TYPE_ID_LUX_RECT: { return true; } 
+  case value::TYPE_ID_LUX_GEOMETRY: { return true; } 
+  case value::TYPE_ID_LUX_PORTAL: { return true; } 
+  case value::TYPE_ID_LUX_PLUGIN: { return true; } 
   default:
     return false;
   }
 
+}
+
+bool CastToXformable(const Prim &prim, const Xformable **xformable) {
+
+  if (!xformable) {
+    return false;
+  }
+
+  // __ty = class derived from Xformable.
+#define TRY_CAST(__ty) \
+  if (auto pv = prim.as<__ty>()) { \
+    (*xformable) = pv; \
+    return true; \
+  }
+  
+  // TODO: Use tydra::ApplyToXformable
+  TRY_CAST(GPrim)
+  TRY_CAST(Xform)
+  TRY_CAST(GeomMesh)
+  TRY_CAST(GeomBasisCurves)
+  TRY_CAST(GeomCube)
+  TRY_CAST(GeomSphere)
+  TRY_CAST(GeomCylinder)
+  TRY_CAST(GeomCone)
+  TRY_CAST(GeomCapsule)
+  TRY_CAST(GeomPoints)
+  //TRY_CAST(GeomPointInstancer)
+  TRY_CAST(GeomCamera)
+  TRY_CAST(SkelRoot)
+  TRY_CAST(Skeleton)
+  TRY_CAST(RectLight)
+  TRY_CAST(DomeLight)
+  TRY_CAST(CylinderLight)
+  TRY_CAST(SphereLight)
+  TRY_CAST(DiskLight)
+  TRY_CAST(DistantLight)
+  TRY_CAST(RectLight)
+  TRY_CAST(GeometryLight)
+  TRY_CAST(PortalLight)
+  TRY_CAST(PluginLight)
+
+  return false;
+
+}
+
+value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack) {
+  if (!IsXformablePrim(prim)) {
+    if (resetXformStack) {
+      (*resetXformStack) = false;
+    }
+    return value::matrix4d::identity();
+  }
+
+  // default false
+  if (resetXformStack) {
+    (*resetXformStack) = false;
+  }
+
+  const Xformable *xformable{nullptr};
+  if (CastToXformable(prim, &xformable)) {
+    if (!xformable) {
+      return value::matrix4d::identity();
+    }
+
+    value::matrix4d m;
+    bool rxs{false};
+    nonstd::expected<value::matrix4d, std::string> ret = xformable->GetLocalMatrix(&rxs);
+    if (ret) {
+      if (resetXformStack) {
+        (*resetXformStack) = rxs;
+      }
+      return ret.value();
+    }
+  }
+  
+  return value::matrix4d::identity();
 }
 
 }  // namespace tinyusdz
