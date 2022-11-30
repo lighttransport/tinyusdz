@@ -2405,14 +2405,16 @@ bool IsXformablePrim(const Prim &prim);
 struct Xformable;
 bool CastToXformable(const Prim &prim, const Xformable **xformable);
 
-// 
-// Get Prim's local transform(xformOps)
-// For non-Xformable Prim it returns identity matrix.
-//
-// @param[in] prim Prim
-// @param[out] resetXformStack Whether Prim's xformOps contains `!resetXformStack!` or not
-//
-value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak);
+/// 
+/// Get Prim's local transform(xformOps) at specified time.
+/// For non-Xformable Prim it returns identity matrix.
+///
+/// @param[in] prim Prim
+/// @param[out] resetXformStack Whether Prim's xformOps contains `!resetXformStack!` or not
+/// @param[in] t time
+/// @param[in] tinterp Interpolation type(Held or Linear)
+///
+value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak, double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
 
 ///
 /// Contains concrete Prim object and composition elements.

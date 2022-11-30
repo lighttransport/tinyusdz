@@ -10,6 +10,7 @@
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
+#include "value-types.hh"
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
@@ -223,6 +224,20 @@ int main(int argc, char **argv) {
 
   std::cout << "--------------------------------------"
             << "\n";
+
+  // Compute Xform of each Prim at time t.
+  {
+    tinyusdz::tydra::XformNode xformnode;
+    double t = tinyusdz::value::TimeCode::Default();
+    tinyusdz::value::TimeSampleInterpolationType tinterp = tinyusdz::value::TimeSampleInterpolationType::Held; // Held or Linear
+
+    if (!tinyusdz::tydra::BuildXformNodeFromStage(stage, &xformnode, t, tinterp)) {
+      std::cerr << "BuildXformNodeFromStage error.\n";
+    } else {
+      std::cout << tinyusdz::tydra::DumpXformNode(xformnode) << "\n";
+    }
+  }
+  
 
   // Mapping hold the pointer to concrete Prim object,
   // So stage content should not be changed(no Prim addition/deletion).

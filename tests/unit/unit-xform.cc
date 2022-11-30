@@ -5,6 +5,7 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
+#include "value-types.hh"
 #include "unit-value-types.h"
 #include "prim-types.hh"
 #include "xform.hh"
@@ -31,7 +32,10 @@ void xformOp_test(void) {
     value::matrix4d m;
     bool resetXformStack;
     std::string err;
-    bool ret = x.EvaluateXformOps(&m, &resetXformStack, &err);
+    double t = value::TimeCode::Default();
+    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+ 
+    bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret == true);
 
     TEST_CHECK(float_equals(m.m[0][0], 1.0));
