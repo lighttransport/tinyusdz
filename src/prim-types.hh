@@ -2401,6 +2401,19 @@ class Prim {
 
 bool IsXformablePrim(const Prim &prim);
 
+// forward decl(xform.hh)
+struct Xformable;
+bool CastToXformable(const Prim &prim, const Xformable **xformable);
+
+// 
+// Get Prim's local transform(xformOps)
+// For non-Xformable Prim it returns identity matrix.
+//
+// @param[in] prim Prim
+// @param[out] resetXformStack Whether Prim's xformOps contains `!resetXformStack!` or not
+//
+value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak);
+
 ///
 /// Contains concrete Prim object and composition elements.
 ///
