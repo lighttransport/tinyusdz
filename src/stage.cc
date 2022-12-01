@@ -469,7 +469,7 @@ std::string Stage::ExportToString() const {
   return ss.str();
 }
 
-bool Stage::allocate_prim_id(uint64_t *prim_id) {
+bool Stage::allocate_prim_id(uint64_t *prim_id) const {
   if (!prim_id) {
     return false;
   }
@@ -483,8 +483,52 @@ bool Stage::allocate_prim_id(uint64_t *prim_id) {
   return false;
 }
 
-bool Stage::release_prim_id(const uint64_t prim_id) {
+bool Stage::release_prim_id(const uint64_t prim_id) const {
   return _prim_id_allocator.Release(prim_id);
+}
+
+namespace {
+
+bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path &parentPath, uint32_t depth) {
+  if (depth > 1024*1024*128) {
+    // too deep node.
+    return false;
+  }
+
+  // TODO: Check prim's element_name is not empty.
+
+  Path abs_path = parentPath.AppendPrim(prim.element_name());
+
+  prim.absolute_path() = abs_path;
+  if (prim.prim_id() < 1) {
+    uint64_t prim_id{0};
+    if (!stage.allocate_prim_id(&prim_id)) {
+      return false;
+    }
+    prim.prim_id() = int64_t(prim_id);
+  }
+
+  for (Prim &child : prim.children()) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(stage, child, abs_path, depth+1)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+} // namespace local
+
+bool Stage::compute_absolute_prim_path_and_assign_prim_id() {
+
+  Path rootPath("/", "");
+  for (Prim &root : root_prims()) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 }  // namespace tinyusdz
