@@ -39,6 +39,7 @@
 
 #include "primvar.hh"
 #include "tiny-variant.hh"
+#include "handle-allocator.hh"
 //
 #include "value-eval-util.hh"
 
