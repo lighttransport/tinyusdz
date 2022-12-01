@@ -125,6 +125,13 @@ class Stage {
   }
 
   ///
+  /// Assign unique Prim id inside this Stage.
+  ///
+  bool allocate_prim_id(uint64_t *prim_id);
+  bool release_prim_id(const uint64_t prim_id);
+  
+
+  ///
   /// Compose scene.
   ///
   bool compose(bool addSourceFileComment = true) const;
@@ -166,6 +173,8 @@ class Stage {
   mutable std::map<std::string, const Prim *> _prim_path_cache;
 
   mutable bool _dirty{false}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
+
+  HandleAllocator<uint64_t> _prim_id_allocator;
 
 };
 
