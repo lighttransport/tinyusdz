@@ -469,4 +469,22 @@ std::string Stage::ExportToString() const {
   return ss.str();
 }
 
+bool Stage::allocate_prim_id(uint64_t *prim_id) {
+  if (!prim_id) {
+    return false;
+  }
+
+  uint64_t val;
+  if (_prim_id_allocator.Allocate(&val)) {
+    (*prim_id) = val; 
+    return true;
+  }
+
+  return false;
+}
+
+bool Stage::release_prim_id(const uint64_t prim_id) {
+  return _prim_id_allocator.Release(prim_id);
+}
+
 }  // namespace tinyusdz
