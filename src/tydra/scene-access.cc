@@ -306,15 +306,16 @@ template bool ListShaders(const tinyusdz::Stage &stage,
 
 namespace {
 
-bool VisitPrimsRec(const tinyusdz::Prim &root, int32_t level,
+bool VisitPrimsRec(const tinyusdz::Path &root_abs_path, const tinyusdz::Prim &root, int32_t level,
                    VisitPrimFunction visitor_fun, void *userdata) {
-  bool ret = visitor_fun(root, level, userdata);
+  bool ret = visitor_fun(root_abs_path, root, level, userdata);
   if (!ret) {
     return false;
   }
 
   for (const auto &child : root.children()) {
-    if (!VisitPrimsRec(child, level + 1, visitor_fun, userdata)) {
+    const Path child_abs_path = root_abs_path.AppendPrim(child.element_name());
+    if (!VisitPrimsRec(child_abs_path, child, level + 1, visitor_fun, userdata)) {
       return false;
     }
   }
@@ -1419,7 +1420,8 @@ bool EvaluateAttributeImpl(
 void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata) {
   for (const auto &root : stage.root_prims()) {
-    if (!VisitPrimsRec(root, /* root level */ 0, visitor_fun, userdata)) {
+    const Path root_abs_path("/" + root.element_name(), /* prop part */"");
+    if (!VisitPrimsRec(root_abs_path, root, /* root level */ 0, visitor_fun, userdata)) {
       return;
     }
   }

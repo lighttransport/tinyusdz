@@ -68,13 +68,14 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
 ///
 /// Use old-style Callback function approach for easier language bindings
 ///
+/// @param[in] abs_path Prim's absolute path(e.g. "/xform/mesh0")
 /// @param[in] prim Prim
 /// @param[in] tree_depth Tree depth of this Prim. 0 = root prim.
 /// @param[inout] userdata User data.
 ///
 /// @return Usually true. false to notify stop visiting Prims further.
 ///
-typedef bool (*VisitPrimFunction)(const Prim &prim, const int32_t tree_depth,
+typedef bool (*VisitPrimFunction)(const Path &abs_path, const Prim &prim, const int32_t tree_depth,
                                   void *userdata);
 
 void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
