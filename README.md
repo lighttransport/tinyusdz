@@ -127,7 +127,7 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
 * C++14 compiler
   * [x] gcc 4.9 or later
   * [x] Visual Studio 2019 or later(2017 may compiles)
-    * VS2019 16.10 or later recommended to use `CMakePresets.json` for easier building.
+    * VS2019 16.10 or later you can use `CMakePresets.json` for easier building.
     * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
   * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
   * [x] llvm-mingw(clang) supported
@@ -173,8 +173,10 @@ Please take a look at `scripts/bootstrap-cmake-*.sh` for some build configuraion
 
 Visual Studio 2019 and 2022 are supported.
 
-`CMakeSettings.json` is provided for Visual Studio 2019, but reccommended way is to invoke `vcsetup.bat`.
-(Edit VS version in `vcsetup.bat` as you with)
+`CMakePresets.json` is provided for easier build on Visual Studio 2019 and Visual Studio 2022, but has lot of limitations(and seems parallel build is not working well so build is slow).
+
+If you want flexibility, ordinary cmake `.sln` generation approach by invoking `vcsetup.bat` recommended.
+(Edit VS version in `vcsetup.bat` as you with before the run)
 
 #### LLVM-MinGW build
 
