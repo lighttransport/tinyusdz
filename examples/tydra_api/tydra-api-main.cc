@@ -205,8 +205,8 @@ int main(int argc, char **argv) {
             << "\n";
 
   // Visit all Prims in the Stage.
-  auto prim_visit_fun = [](const tinyusdz::Prim &prim, const int32_t level, void *userdata) -> bool {
-    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << "\n";
+  auto prim_visit_fun = [](const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim, const int32_t level, void *userdata) -> bool {
+    std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << " : AbsPath " << tinyusdz::to_string(abs_path) << "\n";
 
     // Use as() or is() for Prim specific processing.
     if (const tinyusdz::Material *pm = prim.as<tinyusdz::Material>()) {
@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
       std::cout << tinyusdz::tydra::DumpXformNode(xformnode) << "\n";
     }
   }
-  
+
 
   // Mapping hold the pointer to concrete Prim object,
   // So stage content should not be changed(no Prim addition/deletion).
@@ -375,8 +375,8 @@ int main(int argc, char **argv) {
       std::cout << "Bound material not found for Prim path : " << item.first << "\n";
     }
   }
-  
-  
+
+
 
   //
   // Shader attribute evaluation example.
