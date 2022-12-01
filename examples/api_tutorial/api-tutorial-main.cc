@@ -294,12 +294,37 @@ void CreateScene(tinyusdz::Stage *stage) {
   //  +- [Mesh]
   //  +- [Sphere]
   //
+  
+
 
   // Prim's elementName is read from concrete Prim class(GeomMesh::name,
   // Xform::name, ...)
   tinyusdz::Prim meshPrim(mesh);
   tinyusdz::Prim spherePrim(sphere);
   tinyusdz::Prim xformPrim(xform);
+
+  //
+  // Prim::prim_id is optional, but it'd be better to have it when you construct Prim hierarchy manually,
+  // since Prim itself cannot have absolute Path information at the moment.
+  // (USDA reader and USDC reader assigns unique Prim id in another way)
+  //
+  // You can use Stage::allocate_prim_id() to assign unique Prim id(Starts with 1. zero is reserved)
+  // NOTE: You can release prim_id through Stage::release_prim_id(prim_id)
+  uint64_t meshPrimId;
+  uint64_t spherePrimId;
+  uint64_t xformPrimId;
+
+  stage->allocate_prim_id(&meshPrimId);
+  stage->allocate_prim_id(&spherePrimId);
+  stage->allocate_prim_id(&xformPrimId);
+
+  std::cout << "meshPrimId = " << meshPrimId << "\n";
+  std::cout << "spherePrimId = " << spherePrimId << "\n";
+  std::cout << "xformPrimId = " << xformPrimId << "\n";
+
+  meshPrim.prim_id() = meshPrimId;
+  spherePrim.prim_id() = spherePrimId;
+  xformPrim.prim_id() = xformPrimId;
 
   xformPrim.children().emplace_back(std::move(meshPrim));
   xformPrim.children().emplace_back(std::move(spherePrim));
