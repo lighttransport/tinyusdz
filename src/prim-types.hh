@@ -2318,9 +2318,17 @@ class Prim {
 
   Specifier specifier() const { return _specifier; }
 
+  // local_path is reserved for Prim composition.
+  // for a while please use absolute_path(full Prim absolute path) or element_name(leaf Prim name).
   Path &local_path() { return _path; }
-
   const Path &local_path() const { return _path; }
+
+  ///
+  /// Absolute Prim Path(e.g. "/xform/mesh0") is available after Stage::compute_absolute_path()
+  /// or assign it manually by an app.
+  ///
+  Path &absolute_path() { return _abs_path; }
+  const Path &absolute_path() const { return _abs_path; }
 
   Path &element_path() { return _elementPath; }
   const Path &element_path() const { return _elementPath; }
@@ -2376,6 +2384,7 @@ class Prim {
 
  
  private:
+  Path _abs_path; // Absolute Prim path in a freezed(after composition state). Usually set by Stage::compute_absolute_path()
   Path _path;  // Prim's local path name. May contain Property, Relationship and
                // other infos, but do not include parent's path. To get fully
                // absolute path of a Prim(e.g. "/xform0/mymesh0", You need to
@@ -2393,11 +2402,6 @@ class Prim {
   // NOTE: Not used at the moment. 
   int64_t _prim_id{-1}; // Unique Prim id when positive. Id is usually [0, NumPrimsInStage) when reading from USDA, PathIndex from USDC.
 
-#if 0
-  mutable bool _matrix_dirty{true};
-  value::matrix4d _local_matrix{value::matrix4d::identity()}; // from xfromOps
-  value::matrix4d _world_matrix{value::matrix4d::identity()}; // computed from Prim root
-#endif
 };
 
 bool IsXformablePrim(const Prim &prim);
