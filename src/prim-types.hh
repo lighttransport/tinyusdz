@@ -45,6 +45,7 @@
 
 namespace tinyusdz {
 
+
 // SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value
 // is stored in Crate directly)
 enum class SpecType {
@@ -118,6 +119,22 @@ enum class ListEditQual {
 };
 
 enum class Axis { X, Y, Z, Invalid };
+
+// metrics(UsdGeomLinearUnits in pxrUSD)
+// To avoid linkage error, defined as static constexpr function.
+struct Units {
+  static constexpr double Nanometers = 1e-9; 
+  static constexpr double Micrometers=  1e-6; 
+  static constexpr double Millimeters = 0.001; 
+  static constexpr double Centimeters = 0.01; 
+  static constexpr double Meters = 1.0; 
+  static constexpr double Kilometers = 1000; 
+  static constexpr double LightYears = 9.4607304725808e15; 
+  static constexpr double Inches = 0.0254; 
+  static constexpr double Feet = 0.3048; 
+  static constexpr double Yards = 0.9144; 
+  static constexpr double Miles = 1609.344;
+};
 
 // For PrimSpec
 enum class Specifier {
