@@ -242,6 +242,73 @@ bool Stage::find_prim_at_path(const Path &path, const Prim *&prim,
   }
 }
 
+namespace {
+
+bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root, const Prim **primFound, int level, std::string *err) {
+
+  if (level > 1024*1024*128) {
+    // too deep node.
+    return false;
+  }
+
+  if (!primFound) {
+    return false;
+  }
+
+  if (root->prim_id() == int64_t(prim_id)) {
+    (*primFound) = root;
+    return true;
+  }
+
+  // Brute-force search.
+  for (const auto &child : root->children()) {
+    if (FindPrimByPrimIdRec(prim_id, &child, primFound, level+1, err)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+} // namespace local
+
+bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
+                              std::string *err) const {
+  if (prim_id < 1) {
+    if (err) {
+      (*err) = "Input prim_id must be 1 or greater.";
+    }
+    return false;
+  }
+
+  if (_prim_id_dirty) {
+    DCOUT("clear prim_id cache.");
+    // Clear cache.
+    _prim_id_cache.clear();
+
+    _prim_id_dirty = false;
+  } else {
+    // First find from a cache.
+    auto ret = _prim_id_cache.find(prim_id);
+    if (ret != _prim_id_cache.end()) {
+      DCOUT("Found cache.");
+      return ret->second;
+    }
+  }
+
+  const Prim *p{nullptr};
+  for (const auto &root : root_prims()) {
+    if (FindPrimByPrimIdRec(prim_id, &root, &p, 0, err)) {
+      _prim_id_cache[prim_id] = p;
+      prim = p;
+      return true;
+    }
+  }
+
+  return false;
+
+}
+
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
     const Prim &root, const Path &path) const {
   // TODO: Resolve "../"
@@ -476,7 +543,7 @@ bool Stage::allocate_prim_id(uint64_t *prim_id) const {
 
   uint64_t val;
   if (_prim_id_allocator.Allocate(&val)) {
-    (*prim_id) = val; 
+    (*prim_id) = val;
     return true;
   }
 
@@ -487,9 +554,13 @@ bool Stage::release_prim_id(const uint64_t prim_id) const {
   return _prim_id_allocator.Release(prim_id);
 }
 
+bool Stage::has_prim_id(const uint64_t prim_id) const {
+  return _prim_id_allocator.Has(prim_id);
+}
+
 namespace {
 
-bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path &parentPath, uint32_t depth) {
+bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path &parentPath, uint32_t depth, bool assign_prim_id, bool force_assign_prim_id = true) {
   if (depth > 1024*1024*128) {
     // too deep node.
     return false;
@@ -500,16 +571,18 @@ bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path
   Path abs_path = parentPath.AppendPrim(prim.element_name());
 
   prim.absolute_path() = abs_path;
-  if (prim.prim_id() < 1) {
-    uint64_t prim_id{0};
-    if (!stage.allocate_prim_id(&prim_id)) {
-      return false;
+  if (assign_prim_id) {
+    if (force_assign_prim_id || (prim.prim_id() < 1)) {
+      uint64_t prim_id{0};
+      if (!stage.allocate_prim_id(&prim_id)) {
+        return false;
+      }
+      prim.prim_id() = int64_t(prim_id);
     }
-    prim.prim_id() = int64_t(prim_id);
   }
 
   for (Prim &child : prim.children()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(stage, child, abs_path, depth+1)) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(stage, child, abs_path, depth+1, assign_prim_id, force_assign_prim_id)) {
       return false;
     }
   }
@@ -519,16 +592,32 @@ bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path
 
 } // namespace local
 
-bool Stage::compute_absolute_prim_path_and_assign_prim_id() {
+bool Stage::compute_absolute_prim_path_and_assign_prim_id(bool force_assign_prim_id) {
 
   Path rootPath("/", "");
   for (Prim &root : root_prims()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1)) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1, /* assign_prim_id */true, force_assign_prim_id)) {
+      return false;
+    }
+  }
+
+  // TODO: Only set dirty when prim_id changed.
+  _prim_id_dirty = true;
+
+  return true;
+}
+
+bool Stage::compute_absolute_prim_path() {
+
+  Path rootPath("/", "");
+  for (Prim &root : root_prims()) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1, /* assign prim_id */false)) {
       return false;
     }
   }
 
   return true;
+
 }
 
 }  // namespace tinyusdz
