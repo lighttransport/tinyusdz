@@ -275,9 +275,13 @@ int main(int argc, char **argv) {
 }
 ```
 
-### With Tydra
+### With Core TinyUSDZ API
 
-T.B.W.
+Please see [api_tutorial](examples/api_tutorial/)
+
+### With Tydra API
+
+Please see [tydra_api](examples/tydra_api/)
 
 
 ## TODO
@@ -302,7 +306,7 @@ T.B.W.
 ### Middle priority
 
 * [ ] Composition arcs
-* [ ] Code optimization
+* [ ] Code refactoring, code optimization
 
 ### Lower priority
 
