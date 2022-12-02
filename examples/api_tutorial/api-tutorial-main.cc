@@ -9,6 +9,7 @@
 
 // Tydra is a collection of APIs to access/convert USD Prim data
 // (e.g. Can get Attribute by name)
+// See <tinyusdz>/examples/tydra_api for more Tydra API examples.
 #include "tydra/scene-access.hh"
 
 //
@@ -225,7 +226,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         uvIndices.push_back(2);
 
         uvPrimvar.set_indices(uvIndices);
-      
+
         // primvar name is extracted from Primvar::name
         std::string err;
         if (!mesh.set_primvar(uvPrimvar, &err)) {
@@ -235,46 +236,6 @@ void CreateScene(tinyusdz::Stage *stage) {
     }
 
 
-    // Access GeomPrimvar
-    {
-      std::cout << "uv is primvar? " << mesh.has_primvar("uv") << "\n";
-      tinyusdz::GeomPrimvar primvar;
-      std::string err;
-      if (mesh.get_primvar("uv", &primvar, &err)) {
-        std::cout << "uv primvar is Indexed Primvar? " << primvar.has_indices() << "\n";
-      } else {
-        std::cerr << "get_primvar(\"uv\") failed. err = " << err << "\n";
-      }
-
-      // Equivalent to pxr::UsdGeomPrimvar::ComputeFlattened().
-      // elems[i] = values[indices[i]]
-      tinyusdz::value::Value value;
-      if (primvar.flatten_with_indices(&value, &err)) {
-        // value;:Value can contain any types, but value.array_size() should work well only for primvar types(e.g. `float[]`, `color3f[]`)
-        // It would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
-        std::cout << "uv primvars. array size = " << value.array_size() << "\n";
-        std::cout << "uv primvars. expand_by_indices result = " << tinyusdz::value::pprint_value(value) << "\n";
-      } else {
-        std::cerr << "expand_by_indices failed. err = " << err << "\n";
-      }
-
-      // Typed version
-      std::vector<tinyusdz::value::texcoord2f> uvs;
-      if (primvar.flatten_with_indices(&uvs, &err)) {
-        // value;:Value can contain any types, but value.array_size() should work well only for primvar types(e.g. `float[]`, `color3f[]`)
-        // It would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
-        std::cout << "uv primvars. array size = " << uvs.size() << "\n";
-        std::cout << "uv primvars. expand_by_indices result = " << tinyusdz::value::pprint_value(uvs) << "\n";
-      } else {
-        std::cerr << "expand_by_indices failed. err = " << err << "\n";
-      }
-
-      std::vector<tinyusdz::GeomPrimvar> gpvars = mesh.get_primvars();
-      std::cout << "# of primvars = " << gpvars.size();
-      for (const auto &item : gpvars) {
-        std::cout << "  primvar = " << item.name() << "\n";
-      }
-    }
   }
 
   tinyusdz::GeomSphere sphere;
@@ -294,7 +255,7 @@ void CreateScene(tinyusdz::Stage *stage) {
   //  +- [Mesh]
   //  +- [Sphere]
   //
-  
+
 
 
   // Prim's elementName is read from concrete Prim class(GeomMesh::name,
@@ -342,7 +303,7 @@ void CreateScene(tinyusdz::Stage *stage) {
 
 
     // You can also use SetCustomDataByKey to set custom value with key having namespaces(':')
-    
+
     tinyusdz::MetaVariable intval = int(5);
     tinyusdz::SetCustomDataByKey("mydict:myval", intval, /* inout */customData);
 
@@ -392,11 +353,23 @@ int main(int argc, char **argv) {
 
   }
 
-  // GeomPrimvar
+  // find Prim by prim_id
   {
+    uint64_t prim_id = 2;
+
+    const tinyusdz::Prim *prim{nullptr};
+    std::string err;
+    bool ret = stage.find_prim_by_prim_id(prim_id, prim, &err);
+    if (ret && prim) {
+      std::cout << "Found Prim by ID: " << prim_id << "\n";
+      std::cout << "Prim's absolute_path: " << tinyusdz::to_string(prim->absolute_path()) << "\n";
+    } else {
+      std::cerr << err << "\n";
+    }
 
   }
 
+  // GetAttribute and GeomPrimvar
   {
     tinyusdz::Path path(/* absolute prim path */ "/root/quad",
                         /* property path */ "");
@@ -436,6 +409,55 @@ int main(int argc, char **argv) {
 
     } else {
       std::cerr << err << "\n";
+    }
+
+
+    const tinyusdz::GeomMesh *mesh = prim->as<tinyusdz::GeomMesh>();
+    if (!mesh) {
+      std::cerr << "Expected GeomMesh.\n";
+      return -1;
+    }
+
+    // GeomPrimvar
+    // Access GeomPrimvar
+    {
+      std::cout << "uv is primvar? " << mesh->has_primvar("uv") << "\n";
+      tinyusdz::GeomPrimvar primvar;
+      std::string err;
+      if (mesh->get_primvar("uv", &primvar, &err)) {
+        std::cout << "uv primvar is Indexed Primvar? " << primvar.has_indices() << "\n";
+      } else {
+        std::cerr << "get_primvar(\"uv\") failed. err = " << err << "\n";
+      }
+
+      // Equivalent to pxr::UsdGeomPrimvar::ComputeFlattened().
+      // elems[i] = values[indices[i]]
+      tinyusdz::value::Value value;
+      if (primvar.flatten_with_indices(&value, &err)) {
+        // value;:Value can contain any types, but value.array_size() should work well only for primvar types(e.g. `float[]`, `color3f[]`)
+        // It would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
+        std::cout << "uv primvars. array size = " << value.array_size() << "\n";
+        std::cout << "uv primvars. expand_by_indices result = " << tinyusdz::value::pprint_value(value) << "\n";
+      } else {
+        std::cerr << "expand_by_indices failed. err = " << err << "\n";
+      }
+
+      // Typed version
+      std::vector<tinyusdz::value::texcoord2f> uvs;
+      if (primvar.flatten_with_indices(&uvs, &err)) {
+        // value;:Value can contain any types, but value.array_size() should work well only for primvar types(e.g. `float[]`, `color3f[]`)
+        // It would report 0 for non-primvar types(e.g.`std::vector<Xform>`)
+        std::cout << "uv primvars. array size = " << uvs.size() << "\n";
+        std::cout << "uv primvars. expand_by_indices result = " << tinyusdz::value::pprint_value(uvs) << "\n";
+      } else {
+        std::cerr << "expand_by_indices failed. err = " << err << "\n";
+      }
+
+      std::vector<tinyusdz::GeomPrimvar> gpvars = mesh->get_primvars();
+      std::cout << "# of primvars = " << gpvars.size();
+      for (const auto &item : gpvars) {
+        std::cout << "  primvar = " << item.name() << "\n";
+      }
     }
   }
 
