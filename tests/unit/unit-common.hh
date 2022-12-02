@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <limits>
+#include <cmath>
 
 namespace tinyusdz_test {
 

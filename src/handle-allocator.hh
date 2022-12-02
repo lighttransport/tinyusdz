@@ -3,6 +3,8 @@
 #pragma once
 
 #include <cstdint>
+#include <algorithm>
+//#include <iostream>
 //#include <cassert>
 #include <limits>
 #include <vector>
@@ -31,9 +33,11 @@ public:
     T handle = 0;
 
     if (!freeList_.empty()) {
-      // Reuse previously issued handle.
+      // Reuse last element.
       handle = freeList_.back();
       freeList_.pop_back();
+      // Delay sort until required
+      dirty_ = true;
       (*dst) = handle;
       return true;
     }
@@ -41,6 +45,7 @@ public:
     handle = counter_;
     if ((handle >= static_cast<T>(1)) && (handle < std::numeric_limits<T>::max())) {
       counter_++;
+      //std::cout << "conter = " << counter_ << "\n";
       (*dst) = handle;
       return true;
     }
@@ -53,10 +58,14 @@ public:
     if (handle == counter_ - static_cast<T>(1)) {
       if (counter_ > static_cast<T>(1)) {
         counter_--;
+      } else {
+        return false;
       }
     } else {
       if (handle >= static_cast<T>(1)) {
         freeList_.push_back(handle);
+        // Delay sort until required
+        dirty_ = true;
       } else {
         // invalid handle
         return false;
@@ -66,9 +75,38 @@ public:
     return true;
   }
 
+  bool Has(const T handle) const {
+    if (dirty_) {
+      std::sort(freeList_.begin(), freeList_.end());
+      dirty_ = false;
+    }
+
+    if (handle < 1) {
+      return false;
+    }
+
+    // Do binary search.
+    if (std::binary_search(freeList_.begin(), freeList_.end(), handle)) {
+      return false;
+    }
+
+    if (handle >= counter_) {
+      return false;
+    }
+
+    return true;
+  }
+
+  int64_t Size() const {
+    return counter_ - freeList_.size() - 1;
+  }
+
 private:
-  std::vector<T> freeList_;
+  // TODO: Use unorderd_set or unorderd_map for efficiency?
+  // worst case complexity is still c.size() though.
+  mutable std::vector<T> freeList_; // will be sorted in `Has` call.
   T counter_{};
+  mutable bool dirty_{true};
 };
 
 } // namespace tinyusdz

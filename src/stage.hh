@@ -102,11 +102,21 @@ class Stage {
   ///
   /// @param[in] root Find from this Prim
   /// @param[in] relative_path relative path(e.g. `dora/muda`)
-  /// @param[out] prim const reference to Prim(if found)
+  /// @param[out] prim const reference to the pointer to Prim(if found)
   /// @param[out] err Error message(filled when false is returned)
   ///
   /// @returns true if found a Prim.
   bool find_prim_from_relative_path(const Prim &root, const Path &relative_path, const Prim *&prim, std::string *err) const;
+
+  ///
+  /// Find(Get) Prim from Prim ID. Prim with no Prim ID assigned(-1 or 0) are ignored.
+  ///
+  /// @param[in] prim_id Prim ID(1 or greater)
+  /// @param[out] prim const reference to the pointer to Prim(if found)
+  /// @param[out] err Error message(filled when false is returned)
+  ///
+  /// @returns true if found a Prim.
+  bool find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim, std::string *err = nullptr) const;
 
   const std::vector<Prim> &root_prims() const {
     return root_nodes;
@@ -128,18 +138,26 @@ class Stage {
   /// Assign unique Prim id inside this Stage.
   ///
   bool allocate_prim_id(uint64_t *prim_id) const;
+
   bool release_prim_id(const uint64_t prim_id) const;
+  bool has_prim_id(const uint64_t prim_id) const;
   
   ///
   /// Call this function after you finished adding Prims manually to Stage.
   /// (No need to call this if you just use ether USDA/USDC/USDZ reader).
   ///
   /// - Compute absolute path and set it to Prim::abs_path for each Prim currently added to this Stage.
-  /// - Assign unique ID to Prim(if Prim does not have prim_id)
+  /// - Assign unique ID to Prim
   ///
+  /// @param[in] force_assign_prim_id true Overwrite `prim_id` of each Prim. false only assign Prim id when `prim_id` is -1(preserve user-assgiend prim_id). Setting `false` is not recommended since prim_id may not be unique over Prims in Stage.
   /// @return false when the Stage contains any invalid Prim 
   ///
-  bool compute_absolute_prim_path_and_assign_prim_id();
+  bool compute_absolute_prim_path_and_assign_prim_id(bool force_assign_prim_id=true);
+
+  ///
+  /// Compute absolute Prim path only.
+  ///
+  bool compute_absolute_prim_path();
 
   ///
   /// Compose scene(Not implemented yet).
@@ -182,7 +200,13 @@ class Stage {
   // key : prim_part string (e.g. "/path/bora")
   mutable std::map<std::string, const Prim *> _prim_path_cache;
 
-  mutable bool _dirty{false}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
+  // Cached prim_id -> Prim lookup
+  // key : prim_id
+  mutable std::map<uint64_t, const Prim *> _prim_id_cache;
+
+  mutable bool _dirty{true}; // True when Stage content changes(addition, deletion, composition/flatten, etc.)
+
+  mutable bool _prim_id_dirty{true}; // True when Prim Id assignent changed(TODO: Unify with `_dirty` flag)
 
   mutable HandleAllocator<uint64_t> _prim_id_allocator;
 

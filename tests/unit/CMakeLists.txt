@@ -4,6 +4,7 @@ set(TEST_SOURCES
 	unit-main.cc
 
 	unit-customdata.cc
+	unit-handle-allocator.cc
 	unit-prim-types.cc
 	unit-primvar.cc
 	unit-value-types.cc
