@@ -304,8 +304,12 @@ struct XformNode
   bool has_xform() const { return _has_xform; }
   bool &has_xform() { return _has_xform; }
 
+  bool has_resetXformStack() const { return _has_resetXformStack; }
+  bool &has_resetXformStack() { return _has_resetXformStack; }
+
  private:
   bool _has_xform{false};
+  bool _has_resetXformStack{false}; // !resetXformStack! in xformOps
   value::matrix4d _local_matrix{value::matrix4d::identity()};
   value::matrix4d _world_matrix{value::matrix4d::identity()};
   value::matrix4d _parent_world_matrix{value::matrix4d::identity()};
