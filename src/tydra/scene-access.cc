@@ -1583,6 +1583,7 @@ bool BuildXformNodeFromStageRec(
       // FIXME. Is it correct to reset parent's world matrix?
       worldMat = value::matrix4d::identity();
     }
+    node.has_resetXformStack() = resetXformStack;
 
     value::matrix4d m = worldMat * localMat;
 
@@ -1593,6 +1594,7 @@ bool BuildXformNodeFromStageRec(
   } else {
     DCOUT("Not xformable");
     node.has_xform() = false;
+    node.has_resetXformStack() = false;
     node.set_parent_world_matrix(rootMat);
     node.set_world_matrix(rootMat);
     node.set_local_matrix(value::matrix4d::identity());
@@ -1620,7 +1622,7 @@ std::string DumpXformNodeRec(
 {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << "Prim name: " << node.element_name << " PrimID: " << node.prim_id << " (Path " << node.absolute_path << ") Xformable? " << node.has_xform() << " {\n";
+  ss << pprint::Indent(indent) << "Prim name: " << node.element_name << " PrimID: " << node.prim_id << " (Path " << node.absolute_path << ") Xformable? " << node.has_xform() << " resetXformStack? " << node.has_resetXformStack() << " {\n";
   ss << pprint::Indent(indent+1) << "parent_world: " << node.get_parent_world_matrix() << "\n";
   ss << pprint::Indent(indent+1) << "world: " << node.get_world_matrix() << "\n";
   ss << pprint::Indent(indent+1) << "local: " << node.get_local_matrix() << "\n";
@@ -1652,6 +1654,7 @@ bool BuildXformNodeFromStage(
   stage_root.parent = nullptr;
   stage_root.prim = nullptr; // No prim for stage root.
   stage_root.prim_id = -1;
+  stage_root.has_resetXformStack() = false;
   stage_root.set_parent_world_matrix(value::matrix4d::identity());
   stage_root.set_world_matrix(value::matrix4d::identity());
   stage_root.set_local_matrix(value::matrix4d::identity());
