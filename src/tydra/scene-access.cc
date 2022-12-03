@@ -1545,7 +1545,7 @@ namespace {
 bool BuildXformNodeFromStageRec(
   const tinyusdz::Stage &stage,
   const Path &parent_abs_path,
-  const Prim &prim,
+  const Prim *prim,
   XformNode *nodeOut, /* out */
   value::matrix4d rootMat,
   const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
@@ -1560,20 +1560,22 @@ bool BuildXformNodeFromStageRec(
 
   XformNode node;
 
-  if (prim.element_name().empty()) {
+  if (prim->element_name().empty()) {
     // TODO: report error
   }
 
-  node.element_name = prim.element_name();
-  node.absolute_path = parent_abs_path.AppendPrim(prim.element_name());
+  node.element_name = prim->element_name();
+  node.absolute_path = parent_abs_path.AppendPrim(prim->element_name());
+  node.prim_id = prim->prim_id();
+  node.prim = prim; // Assume Prim's address does not change.
 
-  DCOUT(prim.element_name() << ": IsXformablePrim" << IsXformablePrim(prim));
+  DCOUT(prim->element_name() << ": IsXformablePrim" << IsXformablePrim(*prim));
 
-  if (IsXformablePrim(prim)) {
+  if (IsXformablePrim(*prim)) {
     bool resetXformStack{false};
 
     // TODO: t, tinterp
-    value::matrix4d localMat = GetLocalTransform(prim, &resetXformStack);
+    value::matrix4d localMat = GetLocalTransform(*prim, &resetXformStack);
     DCOUT("local mat = " << localMat);
 
     value::matrix4d worldMat = rootMat;
@@ -1596,12 +1598,13 @@ bool BuildXformNodeFromStageRec(
     node.set_local_matrix(value::matrix4d::identity());
   }
 
-  for (const auto &childPrim : prim.children()) {
+  for (const auto &childPrim : prim->children()) {
     XformNode childNode;
-    if (!BuildXformNodeFromStageRec(stage, node.absolute_path, childPrim, &childNode, node.get_world_matrix(), t, tinterp)) {
+    if (!BuildXformNodeFromStageRec(stage, node.absolute_path, &childPrim, &childNode, node.get_world_matrix(), t, tinterp)) {
       return false;
     }
 
+    childNode.parent = &node;
     node.children.emplace_back(std::move(childNode));
   }
 
@@ -1617,7 +1620,7 @@ std::string DumpXformNodeRec(
 {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << "Prim name: " << node.element_name << "(Path " << node.absolute_path << ") Xformable? " << node.has_xform() << " {\n";
+  ss << pprint::Indent(indent) << "Prim name: " << node.element_name << " PrimID: " << node.prim_id << " (Path " << node.absolute_path << ") Xformable? " << node.has_xform() << " {\n";
   ss << pprint::Indent(indent+1) << "parent_world: " << node.get_parent_world_matrix() << "\n";
   ss << pprint::Indent(indent+1) << "world: " << node.get_world_matrix() << "\n";
   ss << pprint::Indent(indent+1) << "local: " << node.get_local_matrix() << "\n";
@@ -1647,6 +1650,8 @@ bool BuildXformNodeFromStage(
   stage_root.absolute_path = Path("/", "");
   stage_root.has_xform() = false;
   stage_root.parent = nullptr;
+  stage_root.prim = nullptr; // No prim for stage root.
+  stage_root.prim_id = -1;
   stage_root.set_parent_world_matrix(value::matrix4d::identity());
   stage_root.set_world_matrix(value::matrix4d::identity());
   stage_root.set_local_matrix(value::matrix4d::identity());
@@ -1656,7 +1661,7 @@ bool BuildXformNodeFromStage(
 
     value::matrix4d rootMat{value::matrix4d::identity()};
 
-    if (!BuildXformNodeFromStageRec(stage, stage_root.absolute_path, root, &node, rootMat, t, tinterp)) {
+    if (!BuildXformNodeFromStageRec(stage, stage_root.absolute_path, &root, &node, rootMat, t, tinterp)) {
       return false;
     }
 
