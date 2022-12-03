@@ -2050,8 +2050,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           // Prim name
           prim.value().element_path() = elemPath;
 
+#if 0
           // Prim id = Path ID
-          prim.value().prim_id() = int64_t(current);
+          //prim.value().prim_id() = int64_t(current);
+#endif
         }
 
         if (primOut) {
@@ -2410,6 +2412,8 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
                                         root_node_id, /* root Prim */ nullptr,
                                         /* level */ 0,
                                         path_index_to_spec_index_map, stage);
+
+  stage->compute_absolute_prim_path_and_assign_prim_id();
 
   if (!ret) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage(Prim hierarchy)");

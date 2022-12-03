@@ -159,6 +159,12 @@ class Stage {
   ///
   bool compute_absolute_prim_path();
 
+
+  ///
+  /// Dump Prim tree info(mainly for debugging).
+  ///
+  std::string dump_prim_tree() const;
+
   ///
   /// Compose scene(Not implemented yet).
   ///

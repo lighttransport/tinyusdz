@@ -1209,7 +1209,7 @@ void ReconstructNodeRec(const size_t idx,
 
   Prim prim(node.prim);
   DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
-  prim.prim_id() = int64_t(idx);
+  //prim.prim_id() = int64_t(idx);
 
   for (const auto &cidx : node.children) {
     ReconstructNodeRec(cidx, prim_nodes, prim);
@@ -1232,7 +1232,7 @@ bool USDAReader::Impl::ReconstructStage() {
 
     Prim prim(node.prim);
     DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
-    prim.prim_id() = int64_t(idx);
+    //prim.prim_id() = int64_t(idx);
 
     for (const auto &cidx : node.children) {
 #if 0
@@ -1252,6 +1252,9 @@ bool USDAReader::Impl::ReconstructStage() {
 
     DCOUT("num_children = " << _stage.root_prims()[size_t(_stage.root_prims().size() - 1)].children().size());
   }
+
+  // Compute Abs Path from built Prim tree and Assign prim id.
+  _stage.compute_absolute_prim_path_and_assign_prim_id();
 
   return true;
 }
