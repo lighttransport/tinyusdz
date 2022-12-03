@@ -316,7 +316,11 @@ int main(int argc, char **argv) {
 
   CreateScene(&stage);
 
+  // Print USD scene as Ascii.
   std::cout << stage.ExportToString() << "\n";
+
+  // Dump Prim tree info.
+  std::cout << stage.dump_prim_tree() << "\n";
 
   {
     tinyusdz::Path path(/* absolute prim path */ "/root",
