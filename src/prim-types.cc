@@ -1083,7 +1083,7 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
 }
 
 bool IsXformablePrim(const Prim &prim) {
-  
+
   uint32_t tyid = prim.type_id();
 
   // GeomSubset is not xformable
@@ -1091,27 +1091,28 @@ bool IsXformablePrim(const Prim &prim) {
   switch (tyid) {
   case value::TYPE_ID_GPRIM: { return true; }
   case value::TYPE_ID_GEOM_XFORM: { return true; }
-  case value::TYPE_ID_GEOM_MESH: { return true; } 
-  case value::TYPE_ID_GEOM_BASIS_CURVES: { return true; } 
-  case value::TYPE_ID_GEOM_SPHERE: { return true; } 
-  case value::TYPE_ID_GEOM_CUBE: { return true; } 
-  case value::TYPE_ID_GEOM_CYLINDER: { return true; } 
-  case value::TYPE_ID_GEOM_CONE: { return true; } 
-  case value::TYPE_ID_GEOM_CAPSULE: { return true; } 
-  case value::TYPE_ID_GEOM_POINTS: { return true; } 
+  case value::TYPE_ID_GEOM_MESH: { return true; }
+  case value::TYPE_ID_GEOM_BASIS_CURVES: { return true; }
+  case value::TYPE_ID_GEOM_SPHERE: { return true; }
+  case value::TYPE_ID_GEOM_CUBE: { return true; }
+  case value::TYPE_ID_GEOM_CYLINDER: { return true; }
+  case value::TYPE_ID_GEOM_CONE: { return true; }
+  case value::TYPE_ID_GEOM_CAPSULE: { return true; }
+  case value::TYPE_ID_GEOM_POINTS: { return true; }
   // value::TYPE_ID_GEOM_GEOMSUBSET
-  case value::TYPE_ID_GEOM_POINT_INSTANCER: { return true; } 
-  case value::TYPE_ID_GEOM_CAMERA: { return true; } 
-  case value::TYPE_ID_SKEL_ROOT: { return true; } 
-  case value::TYPE_ID_LUX_DOME: { return true; } 
-  case value::TYPE_ID_LUX_CYLINDER: { return true; } 
-  case value::TYPE_ID_LUX_SPHERE: { return true; } 
-  case value::TYPE_ID_LUX_DISK: { return true; } 
-  case value::TYPE_ID_LUX_DISTANT: { return true; } 
-  case value::TYPE_ID_LUX_RECT: { return true; } 
-  case value::TYPE_ID_LUX_GEOMETRY: { return true; } 
-  case value::TYPE_ID_LUX_PORTAL: { return true; } 
-  case value::TYPE_ID_LUX_PLUGIN: { return true; } 
+  case value::TYPE_ID_GEOM_POINT_INSTANCER: { return true; }
+  case value::TYPE_ID_GEOM_CAMERA: { return true; }
+  case value::TYPE_ID_LUX_DOME: { return true; }
+  case value::TYPE_ID_LUX_CYLINDER: { return true; }
+  case value::TYPE_ID_LUX_SPHERE: { return true; }
+  case value::TYPE_ID_LUX_DISK: { return true; }
+  case value::TYPE_ID_LUX_DISTANT: { return true; }
+  case value::TYPE_ID_LUX_RECT: { return true; }
+  case value::TYPE_ID_LUX_GEOMETRY: { return true; }
+  case value::TYPE_ID_LUX_PORTAL: { return true; }
+  case value::TYPE_ID_LUX_PLUGIN: { return true; }
+  case value::TYPE_ID_SKEL_ROOT: { return true; }
+  case value::TYPE_ID_SKELETON: { return true; }
   default:
     return false;
   }
@@ -1130,7 +1131,7 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable) {
     (*xformable) = pv; \
     return true; \
   }
-  
+
   // TODO: Use tydra::ApplyToXformable
   TRY_CAST(GPrim)
   TRY_CAST(Xform)
@@ -1156,6 +1157,8 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable) {
   TRY_CAST(GeometryLight)
   TRY_CAST(PortalLight)
   TRY_CAST(PluginLight)
+  TRY_CAST(SkelRoot)
+  TRY_CAST(Skeleton)
 
   return false;
 
@@ -1190,7 +1193,7 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack, doubl
       return ret.value();
     }
   }
-  
+
   return value::matrix4d::identity();
 }
 
