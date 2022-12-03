@@ -1063,6 +1063,9 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
 
   std::stringstream ss;
 
+  // To prevent printing xformOp attributes multiple times.
+  std::set<std::string> printed_vars;
+
   // xforms props
   if (xformOps.size()) {
     for (size_t i = 0; i < xformOps.size(); i++) {
@@ -1073,14 +1076,22 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
         continue;
       }
 
+      std::string varname = to_string(xformOp.op_type);
+      if (!xformOp.suffix.empty()) {
+        varname += ":" + xformOp.suffix;
+      }
+
+      if (printed_vars.count(varname)) {
+        continue;
+      }
+
+      printed_vars.insert(varname);
+
       ss << pprint::Indent(indent);
 
       ss << xformOp.get_value_type_name() << " " ;
 
-      ss << to_string(xformOp.op_type);
-      if (!xformOp.suffix.empty()) {
-        ss << ":" << xformOp.suffix;
-      }
+      ss << varname;
 
       if (xformOp.is_timesamples()) {
         ss << ".timeSamples";
