@@ -620,4 +620,35 @@ bool Stage::compute_absolute_prim_path() {
 
 }
 
+namespace {
+
+std::string DumpPrimTreeRec(const Prim &prim, uint32_t depth) {
+  std::stringstream ss;
+
+  if (depth > 1024*1024*128) {
+    // too deep node.
+    return ss.str();
+  }
+
+  ss << pprint::Indent(depth) << "\"" << prim.element_name() << "\" " << prim.absolute_path() << "\n";
+  ss << pprint::Indent(depth+1) << fmt::format("prim_id {}", prim.prim_id()) << "\n";
+
+  for (const Prim &child : prim.children()) {
+    ss << DumpPrimTreeRec(child, depth+1);
+  }
+
+  return ss.str();
+}
+
+} // namespace local
+
+std::string Stage::dump_prim_tree() const {
+  std::stringstream ss;
+
+  for (const Prim &root : root_prims()) {
+    ss << DumpPrimTreeRec(root, 0);
+  }
+  return ss.str();
+}
+
 }  // namespace tinyusdz
