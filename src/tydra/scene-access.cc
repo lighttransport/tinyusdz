@@ -307,17 +307,47 @@ template bool ListShaders(const tinyusdz::Stage &stage,
 namespace {
 
 bool VisitPrimsRec(const tinyusdz::Path &root_abs_path, const tinyusdz::Prim &root, int32_t level,
-                   VisitPrimFunction visitor_fun, void *userdata) {
+                   VisitPrimFunction visitor_fun, void *userdata, std::string *err) {
   bool ret = visitor_fun(root_abs_path, root, level, userdata);
   if (!ret) {
+    if (err) {
+      (*err) += fmt::format("Visit function returned an error for Prim {} (id {})", root_abs_path.full_path_name(), root.prim_id());
+    }
     return false;
   }
 
-  for (const auto &child : root.children()) {
-    const Path child_abs_path = root_abs_path.AppendPrim(child.element_name());
-    if (!VisitPrimsRec(child_abs_path, child, level + 1, visitor_fun, userdata)) {
-      return false;
+  // if `primChildren` is available, use it
+  if (root.metas().primChildren.size() == root.children().size()) {
+    std::map<std::string, const Prim *> primNameTable;
+    for (size_t i = 0; i < root.children().size(); i++) {
+      primNameTable.emplace(root.children()[i].element_name(), &root.children()[i]);
     }
+
+    for (size_t i = 0; i < root.metas().primChildren.size(); i++) {
+      value::token nameTok = root.metas().primChildren[i];
+      const auto it = primNameTable.find(nameTok.str());
+      if (it != primNameTable.end()) {
+        const Path child_abs_path = root_abs_path.AppendPrim(nameTok.str());
+        if (!VisitPrimsRec(child_abs_path, *it->second, level + 1, visitor_fun, userdata, err)) {
+          return false;
+        }
+      } else {
+        if (err) {
+          (*err) += fmt::format("Prim name `{}` in `primChildren` metadatum not found in this Prim's children", nameTok.str()); 
+        }
+        return false;
+      }
+    }
+
+  } else {
+
+    for (const auto &child : root.children()) {
+      const Path child_abs_path = root_abs_path.AppendPrim(child.element_name());
+      if (!VisitPrimsRec(child_abs_path, child, level + 1, visitor_fun, userdata, err)) {
+        return false;
+      }
+    }
+
   }
 
   return true;
@@ -1417,14 +1447,42 @@ bool EvaluateAttributeImpl(
 
 }  // namespace
 
-void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
-                void *userdata) {
-  for (const auto &root : stage.root_prims()) {
-    const Path root_abs_path("/" + root.element_name(), /* prop part */"");
-    if (!VisitPrimsRec(root_abs_path, root, /* root level */ 0, visitor_fun, userdata)) {
-      return;
+bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
+                void *userdata, std::string *err) {
+
+  // if `primChildren` is available, use it
+  if (stage.metas().primChildren.size() == stage.root_prims().size()) {
+    std::map<std::string, const Prim *> primNameTable;
+    for (size_t i = 0; i < stage.root_prims().size(); i++) {
+      primNameTable.emplace(stage.root_prims()[i].element_name(), &stage.root_prims()[i]);
+    }
+
+    for (size_t i = 0; i < stage.metas().primChildren.size(); i++) {
+      value::token nameTok = stage.metas().primChildren[i];
+      const auto it = primNameTable.find(nameTok.str());
+      if (it != primNameTable.end()) {
+        const Path root_abs_path("/" + nameTok.str(), "");
+        if (!VisitPrimsRec(root_abs_path, *it->second, 0, visitor_fun, userdata, err)) {
+          return false;
+        }
+      } else {
+        if (err) {
+          (*err) += fmt::format("Prim name `{}` in root Layer's `primChildren` metadatum not found in Layer root.", nameTok.str()); 
+        }
+        return false;
+      }
+    }
+
+  } else {
+    for (const auto &root : stage.root_prims()) {
+      const Path root_abs_path("/" + root.element_name(), /* prop part */"");
+      if (!VisitPrimsRec(root_abs_path, root, /* root level */ 0, visitor_fun, userdata, err)) {
+        return false;
+      }
     }
   }
+
+  return true;
 }
 
 bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,

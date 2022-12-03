@@ -78,8 +78,15 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
 typedef bool (*VisitPrimFunction)(const Path &abs_path, const Prim &prim, const int32_t tree_depth,
                                   void *userdata);
 
-void VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
-                void *userdata = nullptr);
+///
+/// Visit Prims in Stage.
+/// Use `primChildren` metadatum to determine traversal order of Prims if exists(USDC usually contains `primChildren`)
+/// Traversal will be failed when no Prim found specified in `primChildren`(if exists)
+///
+/// @param[out] err Error message.
+///
+bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
+                void *userdata = nullptr, std::string *err = nullptr);
 
 ///
 /// Get Property(Attribute or Relationship) of given Prim by name.
