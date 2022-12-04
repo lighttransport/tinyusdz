@@ -427,6 +427,11 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
 
 template <typename T>
 bool GeomPrimvar::get_value(T *dest, std::string *err) {
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::string>::type_id(), "`string` type is not supported as a GeomPrimvar");
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<std::string>>::type_id(), "`string[]` type is not supported as a GeomPrimvar");
+
   if (!dest) {
     if (err) {
       (*err) += "Output value is nullptr.";
