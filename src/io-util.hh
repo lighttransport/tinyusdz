@@ -48,6 +48,9 @@ bool WriteWholeFile(const std::wstring &filepath,
 #endif
 
 std::string GetBaseDir(const std::string &filepath);
+std::string GetBaseFilename(const std::string &filepath);
+std::string GetFileExtension(const std::string &filepath);
+
 std::string JoinPath(const std::string &dir, const std::string &filename);
 bool IsAbsPath(const std::string &filepath);
 
