@@ -205,16 +205,19 @@ int main(int argc, char **argv) {
             << "\n";
 
   // Visit all Prims in the Stage.
-  auto prim_visit_fun = [](const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim, const int32_t level, void *userdata) -> bool {
+  auto prim_visit_fun = [](const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim, const int32_t level, void *userdata, std::string *err) -> bool {
+    (void)err;
     std::cout << tinyusdz::pprint::Indent(level) << "[" << level << "] (" << prim.data().type_name() << ") " << prim.local_path().prim_part() << " : AbsPath " << tinyusdz::to_string(abs_path) << "\n";
 
     // Use as() or is() for Prim specific processing.
     if (const tinyusdz::Material *pm = prim.as<tinyusdz::Material>()) {
       (void)pm;
       std::cout << tinyusdz::pprint::Indent(level) << "  Got Material!\n";
+      // return false + `err` empty if you want to terminate traversal earlier.
+      //return false;
     }
 
-    return true; // return false if you want to terminate traversal earlier.
+    return true; 
   };
 
   void *userdata = nullptr;
