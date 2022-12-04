@@ -70,6 +70,7 @@ struct VertexAttribute {
   std::vector<T> data;
   std::vector<uint32_t> indices; // indexed primvar(vertex attribute). Used when variability == Indexed
   VertexVariability variability;
+  uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
 enum class ColorSpace {
@@ -91,6 +92,8 @@ struct ImageData {
   int32_t width{-1};
   int32_t height{-1};
   int32_t channels{-1};  // e.g. 3 for RGB.
+
+  uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
 // Simple LDR image
@@ -106,6 +109,8 @@ struct Node {
   // Every node have its transform.
   value::matrix4d local_matrix;
   value::matrix4d global_matrix;
+
+  uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
 struct RenderMesh {
@@ -121,6 +126,8 @@ struct RenderMesh {
 
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
+
+  uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
 struct UVTexture {
@@ -132,6 +139,7 @@ struct UVTexture {
              Channel channel = Channel::RGB);
 
   int32_t imageId{-1};  // Index to Image
+  uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
 struct UDIMTexture {
@@ -185,6 +193,8 @@ struct PreviewSurfaceShader {
   ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<float> displacement{0.0f};
   ShaderParam<float> occlusion{0.0f};
+
+  uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
 // Material + Shader
@@ -192,6 +202,8 @@ struct RenderMaterial {
   std::string name;
 
   PreviewSurfaceShader shader;
+
+  uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
 // Simple glTF-like Scene Graph
