@@ -411,6 +411,19 @@ std::string GetBaseDir(const std::string &filepath) {
   return "";
 }
 
+std::string GetFileExtension(const std::string &FileName) {
+  if (FileName.find_last_of(".") != std::string::npos)
+    return FileName.substr(FileName.find_last_of(".") + 1);
+  return "";
+}
+
+std::string GetBaseFilename(const std::string &filepath) {
+  auto idx = filepath.find_last_of("/\\");
+  if (idx != std::string::npos)
+    return filepath.substr(idx + 1);
+  return filepath;
+}
+
 bool IsAbsPath(const std::string &filename) {
   if (filename.size() > 0) {
     if (filename[0] == '/') {
