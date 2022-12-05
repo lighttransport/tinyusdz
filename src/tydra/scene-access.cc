@@ -308,10 +308,16 @@ namespace {
 
 bool VisitPrimsRec(const tinyusdz::Path &root_abs_path, const tinyusdz::Prim &root, int32_t level,
                    VisitPrimFunction visitor_fun, void *userdata, std::string *err) {
-  bool ret = visitor_fun(root_abs_path, root, level, userdata);
+
+  std::string fun_error;
+  bool ret = visitor_fun(root_abs_path, root, level, userdata, &fun_error);
   if (!ret) {
-    if (err) {
-      (*err) += fmt::format("Visit function returned an error for Prim {} (id {})", root_abs_path.full_path_name(), root.prim_id());
+    if (fun_error.empty()) {
+      // early termination request.
+    } else {
+      if (err) {
+        (*err) += fmt::format("Visit function returned an error for Prim {} (id {})", root_abs_path.full_path_name(), root.prim_id());
+      }
     }
     return false;
   }

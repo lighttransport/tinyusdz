@@ -72,11 +72,12 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
 /// @param[in] prim Prim
 /// @param[in] tree_depth Tree depth of this Prim. 0 = root prim.
 /// @param[inout] userdata User data.
+/// @param[out] error message.
 ///
-/// @return Usually true. false to notify stop visiting Prims further.
+/// @return Usually true. return false + no error message to notify early termination of visiting Prims.
 ///
 typedef bool (*VisitPrimFunction)(const Path &abs_path, const Prim &prim, const int32_t tree_depth,
-                                  void *userdata);
+                                  void *userdata, std::string *err);
 
 ///
 /// Visit Prims in Stage.
