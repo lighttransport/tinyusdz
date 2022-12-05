@@ -736,7 +736,7 @@ MTy Mult(const MTy &m, const MTy &n) {
     for (size_t i = 0; i < N; i++) {
       STy value = static_cast<STy>(0);
       for (size_t k = 0; k < N; k++) {
-        value += m.m[k][i] * n.m[j][k];
+        value += m.m[j][k] * n.m[k][i];
       }
       ret.m[j][i] = value;
     }

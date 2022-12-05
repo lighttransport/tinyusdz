@@ -9,8 +9,8 @@
 namespace tinyusdz_test {
 
 template <typename T>
-static bool float_equals(T x, T y) {
-  if (std::fabs(x - y) < std::numeric_limits<T>::epsilon()) {
+static bool float_equals(T x, T y, T eps = std::numeric_limits<T>::epsilon()) {
+  if (std::fabs(x - y) < eps) {
     return true;
   }
 
