@@ -2,6 +2,8 @@
 #define NOMINMAX
 #endif
 
+#include <iostream>
+
 #define TEST_NO_MAIN
 #include "acutest.h"
 
@@ -10,6 +12,7 @@
 #include "prim-types.hh"
 #include "xform.hh"
 #include "unit-common.hh"
+#include "value-pprint.hh"
 
 
 using namespace tinyusdz;
@@ -34,13 +37,63 @@ void xformOp_test(void) {
     std::string err;
     double t = value::TimeCode::Default();
     value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
- 
+
     bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
     TEST_CHECK(ret == true);
 
     TEST_CHECK(float_equals(m.m[0][0], 1.0));
     TEST_CHECK(float_equals(m.m[1][1], 1.0/2.0));
     TEST_CHECK(float_equals(m.m[2][2], 1.0/3.0));
+
+  }
+
+  {
+    value::matrix4d a;
+    a.m[0][0] = 0;
+    a.m[0][1] = 0;
+    a.m[0][2] = 1;
+    a.m[0][3] = 0;
+    a.m[1][0] = 0;
+    a.m[1][1] = 1;
+    a.m[1][2] = 0;
+    a.m[1][3] = 0;
+
+    a.m[2][0] = -1;
+    a.m[2][1] = 0;
+    a.m[2][2] = 0;
+    a.m[2][3] = 0;
+    a.m[3][0] = 0.44200000166893005;
+    a.m[3][1] = -7.5320000648498535;
+    a.m[3][2] = 18.611000061035156;
+    a.m[3][3] = 1;
+
+    value::matrix4d b = value::matrix4d::identity();
+    b.m[3][2] = -30.0;
+
+    value::matrix4d c = a * b;
+    std::cout << c << "\n";
+
+    // expected: (0, 0, 1, 0), (0, 1, 0, 0), (-1, 0, 0, 0), (0.442, -7.532, -11.389, 1)
+    TEST_CHECK(float_equals(c.m[0][0], 0.0));
+    TEST_CHECK(float_equals(c.m[0][1], 0.0));
+    TEST_CHECK(float_equals(c.m[0][2], 1.0));
+    TEST_CHECK(float_equals(c.m[0][3], 0.0));
+
+    TEST_CHECK(float_equals(c.m[1][0], 0.0));
+    TEST_CHECK(float_equals(c.m[1][1], 1.0));
+    TEST_CHECK(float_equals(c.m[1][2], 0.0));
+    TEST_CHECK(float_equals(c.m[1][3], 0.0));
+
+    TEST_CHECK(float_equals(c.m[2][0], -1.0));
+    TEST_CHECK(float_equals(c.m[2][1], 0.0));
+    TEST_CHECK(float_equals(c.m[2][2], 0.0));
+    TEST_CHECK(float_equals(c.m[2][3], 0.0));
+
+    TEST_CHECK(float_equals(c.m[3][0], 0.442, 0.001));
+    TEST_CHECK(float_equals(c.m[3][1], -7.532, 0.001));
+    TEST_CHECK(float_equals(c.m[3][2], -11.389, 0.001));
+    TEST_CHECK(float_equals(c.m[3][3], 1.0));
+
 
   }
 
