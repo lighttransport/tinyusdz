@@ -530,7 +530,10 @@ using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
 //
-// OpenGL-like Column-major order
+// Matrix is represented as row-major order as done in pxrUSD.
+// m[i][j] is read as: i'th row, j'th column
+// memory layout is same both for column-major and row-major.
+// (e.g. m[3][0], m[3][1], m[3][2] or a[13], a[14], a[15] are translation components for 4x4 matrix)
 //
 struct matrix2f {
   matrix2f() {
@@ -726,9 +729,39 @@ struct frame4d {
   double m[4][4];
 };
 
-// ret = m x n
+// ret = m x n in row-major(n x m in column-major)
+// i.e. You can express TRS transform as
+//
+// p * S * R * T = p'
+// p' = Mult(Mult(S, R), T)
+// 
+// you can express world matrix as
+//
+// node.world = parent.world * node.local
+//            = Mult(parent.world, node.local)
 template <typename MTy, typename STy, size_t N>
 MTy Mult(const MTy &m, const MTy &n) {
+  MTy ret;
+  //memset(ret.m, 0, sizeof(MTy)); 
+
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      STy value = static_cast<STy>(0);
+      for (size_t k = 0; k < N; k++) {
+        value += m.m[j][k] * n.m[k][i];
+      }
+      ret.m[j][i] = value;
+    }
+  }
+
+  return ret;
+}
+
+#if 0
+// Deprecated.
+// TODO: remove column-major functions.
+template <typename MTy, typename STy, size_t N>
+MTy MultColumnMajor(const MTy &m, const MTy &n) {
   MTy ret;
   memset(ret.m, 0, sizeof(MTy));
 
@@ -744,6 +777,7 @@ MTy Mult(const MTy &m, const MTy &n) {
 
   return ret;
 }
+#endif
 
 // ret = matrix x vector
 // Assume matrixN >= vecN
@@ -770,7 +804,7 @@ MTy MatAdd(const MTy &m, const MTy &n) {
 
   for (size_t j = 0; j < N; j++) {
     for (size_t i = 0; i < N; i++) {
-      ret.m[j][i] = m.m[i][j] + n.m[i][j];
+      ret.m[j][i] = m.m[j][i] + n.m[j][i];
     }
   }
 
@@ -784,7 +818,7 @@ MTy MatSub(const MTy &m, const MTy &n) {
 
   for (size_t j = 0; j < N; j++) {
     for (size_t i = 0; i < N; i++) {
-      ret.m[j][i] = m.m[i][j] - n.m[i][j];
+      ret.m[j][i] = m.m[j][i] - n.m[j][i];
     }
   }
 

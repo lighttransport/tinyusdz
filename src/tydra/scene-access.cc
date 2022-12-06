@@ -1643,13 +1643,17 @@ bool BuildXformNodeFromStageRec(
     DCOUT("local mat = " << localMat);
 
     value::matrix4d worldMat = rootMat;
-    if (resetXformStack) {
-      // FIXME. Is it correct to reset parent's world matrix?
-      worldMat = value::matrix4d::identity();
-    }
     node.has_resetXformStack() = resetXformStack;
 
-    value::matrix4d m = worldMat * localMat;
+    value::matrix4d m;
+
+    if (resetXformStack) {
+      // Ignore parent Xform.
+      m = localMat;
+    } else {
+      // matrix is row-major, so local first
+      m = localMat * worldMat;
+    }
 
     node.set_parent_world_matrix(rootMat);
     node.set_local_matrix(localMat);
