@@ -466,6 +466,55 @@ inline value::normal3f operator/(const value::normal3f &a, const float b) {
   return {a[0] / b, a[1] / b, a[2] / b};
 }
 
+// normal
+inline value::normal3d operator+(const value::normal3d &a, const value::normal3d &b) {
+  return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+}
+
+inline value::normal3d operator+(const double a, const value::normal3d &b) {
+  return {a + b[0], a + b[1], a + b[2]};
+}
+
+inline value::normal3d operator+(const value::normal3d &a, const double b) {
+  return {a[0] + b, a[1] + b, a[2] + b};
+}
+
+inline value::normal3d operator-(const value::normal3d &a, const value::normal3d &b) {
+  return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+inline value::normal3d operator-(const double a, const value::normal3d &b) {
+  return {a - b[0], a - b[1], a - b[2]};
+}
+
+inline value::normal3d operator-(const value::normal3d &a, const double b) {
+  return {a[0] - b, a[1] - b, a[2] - b};
+}
+
+inline value::normal3d operator*(const value::normal3d &a, const value::normal3d &b) {
+  return {a[0] * b[0], a[1] * b[1], a[2] * b[2]};
+}
+
+inline value::normal3d operator*(const double a, const value::normal3d &b) {
+  return {a * b[0], a * b[1], a * b[2]};
+}
+
+inline value::normal3d operator*(const value::normal3d &a, const double b) {
+  return {a[0] * b, a[1] * b, a[2] * b};
+}
+
+inline value::normal3d operator/(const value::normal3d &a, const value::normal3d &b) {
+  return {a[0] / b[0], a[1] / b[1], a[2] / b[2]};
+}
+
+inline value::normal3d operator/(const double a, const value::normal3d &b) {
+  return {a / b[0], a / b[1], a / b[2]};
+}
+
+inline value::normal3d operator/(const value::normal3d &a, const double b) {
+  return {a[0] / b, a[1] / b, a[2] / b};
+}
+
 // vector
 inline value::vector3f operator+(const value::vector3f &a, const value::vector3f &b) {
   return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};

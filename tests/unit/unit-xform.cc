@@ -97,6 +97,163 @@ void xformOp_test(void) {
 
   }
 
+  // RotateXYZ 000
+  {
+    value::double3 rotXYZ = {90.0, 0.0, 0.0};
+
+    XformOp op;
+    op.op_type = XformOp::OpType::RotateXYZ;
+    op.inverted = false;
+    op.set_value(rotXYZ);
+
+    Xformable x;
+    x.xformOps.push_back(op);
+
+    value::matrix4d m;
+    bool resetXformStack;
+    std::string err;
+    double t = value::TimeCode::Default();
+    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+
+    bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
+
+    TEST_CHECK(ret);
+    
+    std::cout << "rotXYZ = " << m << "\n";
+
+    // ret = ( (1, 0, 0, 0), (0, 6.12323e-17, 1, 0), (0, -1, 6.12323e-17, 0), (0, 0, 0, 1) )
+    TEST_CHECK(float_equals(m.m[0][0], 1.0));
+    TEST_CHECK(float_equals(m.m[0][1], 0.0));
+    TEST_CHECK(float_equals(m.m[0][2], 0.0));
+    TEST_CHECK(float_equals(m.m[0][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[1][0], 0.0));
+    TEST_CHECK(float_equals(m.m[1][1], 0.0, 0.000001));
+    TEST_CHECK(float_equals(m.m[1][2], 1.0));
+    TEST_CHECK(float_equals(m.m[1][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[2][0], 0.0));
+    TEST_CHECK(float_equals(m.m[2][1], -1.0));
+    TEST_CHECK(float_equals(m.m[2][2], 0.0, 0.000001));
+    TEST_CHECK(float_equals(m.m[2][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[3][0], 0.0));
+    TEST_CHECK(float_equals(m.m[3][1], 0.0));
+    TEST_CHECK(float_equals(m.m[3][2], 0.0));
+    TEST_CHECK(float_equals(m.m[3][3], 1.0));
+
+
+
+  }
+
+  // RotateXYZ 001
+  {
+    value::double3 rotXYZ = {0.0, 0.0, -65.66769};
+
+    XformOp op;
+    op.op_type = XformOp::OpType::RotateXYZ;
+    op.inverted = false;
+    op.set_value(rotXYZ);
+
+    Xformable x;
+    x.xformOps.push_back(op);
+
+    value::matrix4d m;
+    bool resetXformStack;
+    std::string err;
+    double t = value::TimeCode::Default();
+    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+
+    bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
+
+    TEST_CHECK(ret);
+    
+    std::cout << "rotXYZ = " << m << "\n";
+
+    // 0.4120283041870241, -0.9111710468121587, 0, 0
+    // 0.9111710468121587, 0.4120283041870241, 0, 0
+    // 0, 0, 1, 0
+    // 0, 0, 0, 1
+    TEST_CHECK(float_equals(m.m[0][0], 0.4120283041870241, 0.0001));
+    TEST_CHECK(float_equals(m.m[0][1], -0.9111710468121587, 0.0001));
+    TEST_CHECK(float_equals(m.m[0][2], 0.0));
+    TEST_CHECK(float_equals(m.m[0][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[1][0], 0.9111710468121587, 0.0001));
+    TEST_CHECK(float_equals(m.m[1][1], 0.4120283041870241, 0.0001));
+    TEST_CHECK(float_equals(m.m[1][2], 0.0));
+    TEST_CHECK(float_equals(m.m[1][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[2][0], 0.0));
+    TEST_CHECK(float_equals(m.m[2][1], 0.0));
+    TEST_CHECK(float_equals(m.m[2][2], 1.0));
+    TEST_CHECK(float_equals(m.m[2][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[3][0], 0.0));
+    TEST_CHECK(float_equals(m.m[3][1], 0.0));
+    TEST_CHECK(float_equals(m.m[3][2], 0.0));
+    TEST_CHECK(float_equals(m.m[3][3], 1.0));
+
+  }
+
+  // trans x scale
+  {
+    value::double3 trans = {1.0, 1.0, 1.0};
+    value::double3 scale = {1.5, 0.5, 2.5};
+
+    Xformable x;
+    {
+      XformOp op;
+      op.op_type = XformOp::OpType::Translate;
+      op.inverted = false;
+      op.set_value(trans);
+
+      x.xformOps.push_back(op);
+    }
+
+    {
+      XformOp op;
+      op.op_type = XformOp::OpType::Scale;
+      op.inverted = false;
+      op.set_value(scale);
+
+      x.xformOps.push_back(op);
+    }
+
+    value::matrix4d m;
+    bool resetXformStack;
+    std::string err;
+    double t = value::TimeCode::Default();
+    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+
+    bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
+
+    TEST_CHECK(ret);
+    
+    std::cout << "trans x scale = " << m << "\n";
+
+    // 1.5 0 0 0, 0 1.5 0 0, 0 0 1.5 0, 1 0 0 1
+    TEST_CHECK(float_equals(m.m[0][0], 1.5, 0.0001));
+    TEST_CHECK(float_equals(m.m[0][1], 0.0));
+    TEST_CHECK(float_equals(m.m[0][2], 0.0));
+    TEST_CHECK(float_equals(m.m[0][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[1][0], 0.0));
+    TEST_CHECK(float_equals(m.m[1][1], 0.5, 0.0001));
+    TEST_CHECK(float_equals(m.m[1][2], 0.0));
+    TEST_CHECK(float_equals(m.m[1][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[2][0], 0.0));
+    TEST_CHECK(float_equals(m.m[2][1], 0.0));
+    TEST_CHECK(float_equals(m.m[2][2], 2.5, 0.0001));
+    TEST_CHECK(float_equals(m.m[2][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[3][0], 1.0));
+    TEST_CHECK(float_equals(m.m[3][1], 1.0));
+    TEST_CHECK(float_equals(m.m[3][2], 1.0));
+    TEST_CHECK(float_equals(m.m[3][3], 1.0));
+
+  }
 
 
 }

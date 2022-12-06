@@ -808,7 +808,8 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
       }
     }
 
-    cm = value::Mult<value::matrix4d, double, 4>(cm, m);
+    // FIXME: In C code, M = A x B is expressed as Mult(B, A)
+    cm = value::Mult<value::matrix4d, double, 4>(m, cm);
   }
 
   (*out_matrix) = cm;
@@ -837,6 +838,54 @@ std::vector<value::token> Xformable::xformOpOrder() const {
 
   return toks;
 
+}
+
+value::float3 transform(const value::matrix4d &m, const value::float3 &p) {
+  value::float3 tx{float(m.m[3][0]), float(m.m[3][1]), float(m.m[3][2])};
+  // MatTy, VecTy, VecBaseTy, vecN
+  return value::MultV<value::matrix4d, value::float3, float, 3>(m, p) + tx;
+}
+
+value::vector3f transform(const value::matrix4d &m, const value::vector3f &p) {
+  value::vector3f tx{float(m.m[3][0]), float(m.m[3][1]), float(m.m[3][2])};
+  return value::MultV<value::matrix4d, value::vector3f, float, 3>(m, p) + tx;
+}
+
+value::normal3f transform(const value::matrix4d &m, const value::normal3f &p) {
+  value::normal3f tx{float(m.m[3][0]), float(m.m[3][1]), float(m.m[3][2])};
+  return value::MultV<value::matrix4d, value::normal3f, float, 3>(m, p) + tx;
+}
+value::point3f transform(const value::matrix4d &m, const value::point3f &p) {
+  value::point3f tx{float(m.m[3][0]), float(m.m[3][1]), float(m.m[3][2])};
+  return value::MultV<value::matrix4d, value::point3f, float, 3>(m, p) + tx;
+}
+value::double3 transform(const value::matrix4d &m, const value::double3 &p) {
+  value::double3 tx{m.m[3][0], m.m[3][1], m.m[3][2]};
+  return value::MultV<value::matrix4d, value::double3, double, 3>(m, p) + tx;
+}
+value::vector3d transform(const value::matrix4d &m, const value::vector3d &p) {
+  value::vector3d tx{m.m[3][0], m.m[3][1], m.m[3][2]};
+  value::vector3d v = value::MultV<value::matrix4d, value::vector3d, double, 3>(m, p);
+  v.x += tx.x;
+  v.y += tx.y;
+  v.z += tx.z;
+  return v;
+}
+value::normal3d transform(const value::matrix4d &m, const value::normal3d &p) {
+  value::normal3d tx{m.m[3][0], m.m[3][1], m.m[3][2]};
+  value::normal3d v = value::MultV<value::matrix4d, value::normal3d, double, 3>(m, p);
+  v.x += tx.x;
+  v.y += tx.y;
+  v.z += tx.z;
+  return v;
+}
+value::point3d transform(const value::matrix4d &m, const value::point3d &p) {
+  value::point3d tx{m.m[3][0], m.m[3][1], m.m[3][2]};
+  value::point3d v = value::MultV<value::matrix4d, value::point3d, double, 3>(m, p);
+  v.x += tx.x;
+  v.y += tx.y;
+  v.z += tx.z;
+  return v;
 }
 
 value::float3 transform_dir(const value::matrix4d &m, const value::float3 &p) {
