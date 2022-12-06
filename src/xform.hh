@@ -64,6 +64,19 @@ value::float4 matmul(const value::matrix4d &m, const value::float4 &p);
 value::double4 matmul(const value::matrix4d &m, const value::double4 &p);
 
 //
+// Transform 3d vector using 4x4 matrix.
+// ([3][3] is not used)
+//
+value::float3 transform(const value::matrix4d &m, const value::float3 &p);
+value::vector3f transform(const value::matrix4d &m, const value::vector3f &p);
+value::normal3f transform(const value::matrix4d &m, const value::normal3f &p);
+value::point3f transform(const value::matrix4d &m, const value::point3f &p);
+value::double3 transform(const value::matrix4d &m, const value::double3 &p);
+value::vector3d transform(const value::matrix4d &m, const value::vector3d &p);
+value::normal3d transform(const value::matrix4d &m, const value::normal3d &p);
+value::point3d transform(const value::matrix4d &m, const value::point3d &p);
+
+//
 // Transform 3d vector using upper-left 3x3 matrix elements.
 // ([3][3] is not used)
 //
