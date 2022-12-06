@@ -43,7 +43,7 @@ public:
     }
 
     handle = counter_;
-    if ((handle >= static_cast<T>(1)) && (handle < std::numeric_limits<T>::max())) {
+    if ((handle >= static_cast<T>(1)) && (handle < (std::numeric_limits<T>::max)())) {
       counter_++;
       //std::cout << "conter = " << counter_ << "\n";
       (*dst) = handle;

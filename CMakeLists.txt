@@ -46,6 +46,26 @@ else()
   set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
 endif()
 
+# Enable /MP flags(multi processor build) for Visual Studio
+# Based on VTK's Cmake
+# No need to set this if you use Ninja Generator
+if(MSVC)
+  # default on.
+  # disable MP or reduce cores if you have less memory
+  set(TINYUSDZ_CXX_MP_FLAG ON CACHE BOOL "Build with /MP flag enabled")
+  set(TINYUSDZ_PROCESSOR_COUNT "$ENV{NUMBER_OF_PROCESSORS}")
+  set(TINYUSDZ_CXX_MP_NUM_PROCESSORS ${TINYUSDZ_PROCESSOR_COUNT} CACHE STRING "The maximum number of processes for the /MP flag")
+
+
+  message(STATUS "Use procesors : " ${TINYUSDZ_PROCESSOR_COUNT})
+
+  # /MP flag is set as target_compile_options, so do not add /MP to global CMAKE_CXX_FLAGS variable.
+  #if (CMAKE_CXX_MP_FLAG)
+  #  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP${CMAKE_CXX_MP_NUM_PROCESSORS}")
+  #  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP${CMAKE_CXX_MP_NUM_PROCESSORS}")
+  #endif ()
+endif()
+
 option(TINYUSDZ_CXX_EXCEPTIONS
        "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
@@ -513,6 +533,12 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
     add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_OSD_SOURCES})
     target_include_directories(osd_cpu PRIVATE ${osd_DIR})
 
+    if (MSVC)
+      if (TINYUSDZ_CXX_MP_FLAG)
+        target_compile_options(osd_cpu PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+      endif()
+    endif()
+
   endfunction()
 
   add_osd_lib()
@@ -565,6 +591,12 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   #if(MSVC)
   #  target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
   #endif()
+
+  if (MSVC)
+    if (TINYUSDZ_CXX_MP_FLAG)
+      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+    endif()
+  endif()
 
   if(TINYUSDZ_DEBUG_PRINT)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
