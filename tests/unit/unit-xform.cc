@@ -197,6 +197,7 @@ void xformOp_test(void) {
   }
 
   // trans x scale
+  // scale firstly applied, then translation.
   {
     value::double3 trans = {1.0, 1.0, 1.0};
     value::double3 scale = {1.5, 0.5, 2.5};

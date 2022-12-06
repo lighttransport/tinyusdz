@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present, Syoyo Fujita.
 
+//
+// NOTE: pxrUSD uses row-major format for matrix, so use row-major format in tinyusdz as well.
+// 
 #pragma once
 
 #include "value-types.hh"
@@ -48,7 +51,7 @@ value::matrix3d transpose(const value::matrix3d &m);
 // then transpose(inverse(upper_left_3x3_only(M)))
 value::matrix4d transpose(const value::matrix4d &m); 
 
-#if 0 // Use transform_dir() for a while.
+#if 0 // Use transform() or transform_dir() for a while.
 value::float3 matmul(const value::matrix4d &m, const value::float3 &p);
 value::point3f matmul(const value::matrix4d &m, const value::point3f &p);
 value::normal3f matmul(const value::matrix4d &m, const value::normal3f &p);
