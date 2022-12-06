@@ -331,7 +331,7 @@ class XformEvaluator {
     rm.m[2][1] = -std::sin(rad);
     rm.m[2][2] = std::cos(rad);
 
-    m = value::Mult<value::matrix4d, double, 4>(m, rm);
+    m = value::Mult<value::matrix4d, double, 4>(rm, m);
 
     return (*this);
   }
@@ -347,7 +347,7 @@ class XformEvaluator {
     rm.m[2][0] = std::sin(rad);
     rm.m[2][2] = std::cos(rad);
 
-    m = value::Mult<value::matrix4d, double, 4>(m, rm);
+    m = value::Mult<value::matrix4d, double, 4>(rm, m);
 
     return (*this);
   }
@@ -363,7 +363,7 @@ class XformEvaluator {
     rm.m[1][0] = -std::sin(rad);
     rm.m[1][1] = std::cos(rad);
 
-    m = value::Mult<value::matrix4d, double, 4>(m, rm);
+    m = value::Mult<value::matrix4d, double, 4>(rm, m);
 
     return (*this);
   }
@@ -500,6 +500,9 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
   // xformOpOrder = [A, B, C]
   //
   // M = A x B x C
+  //
+  // p' = A x B x C x p
+  // (C is first applied to p)
   //
   value::matrix4d cm;
   Identity(&cm);
@@ -808,8 +811,9 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
       }
     }
 
-    // FIXME: In C code, M = A x B is expressed as Mult(B, A)
-    cm = value::Mult<value::matrix4d, double, 4>(m, cm);
+    cm = m * cm; // row-major, so `m` fistly.
+    // operator* is equivalent to
+    //cm = value::Mult<value::matrix4d, double, 4>(m, cm);
   }
 
   (*out_matrix) = cm;

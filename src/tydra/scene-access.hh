@@ -285,6 +285,9 @@ struct XformNode {
   const value::matrix4d &get_local_matrix() const { return _local_matrix; }
 
   // world matrix = parent_world_matrix x local_matrix
+  // Equivalent to GetLocalToWorldMatrix in pxrUSD
+  // if !resetXformStack! exists in Prim's xformOpOrder, this returns Prim's local matrix
+  // (clears parent's world matrix)
   const value::matrix4d &get_world_matrix() const { return _world_matrix; }
 
   const value::matrix4d &get_parent_world_matrix() const {
