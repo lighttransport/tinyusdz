@@ -92,6 +92,13 @@ value::vector3d transform_dir(const value::matrix4d &m, const value::vector3d &p
 value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p);
 value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p);
 
+#if 0 // TODO
+// default eps is grabbed from pxrUSD. 
+bool orthonormalize_basis(value::double3 *tx, value::double3 *ty, value::double3 *tz, const bool normalize, const double eps = 1e-6);
+
+// valid become set to false when orthonormalization failed(did not converged.)
+value::matrix4d orthonormalize(value::matrix4d &m, bool *valid);
+#endif
 
 ///
 /// For usdGeom, usdSkel, usdLux
