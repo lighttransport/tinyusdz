@@ -27,16 +27,29 @@ inline double angle(double radian)
   return radian * 180.0 / 3.141592653589793;
 }
 
+// TODO: simple subtraction is not robust. Use more robust fp diff compare.
 inline bool is_close(float a, float b, const float eps) {
-  // TODO: Use more robust fp diff compare.
   float d = a - b;
   return (d * d) <= (eps * eps);
 }
 
 inline bool is_close(double a, double b, const double eps) {
-  // TODO: Use more robust fp diff compare.
   double d = a - b;
   return (d * d) <= (eps * eps);
+}
+
+inline bool is_close(value::float3 a, value::float3 b, const float eps) {
+  value::float3 d = a - b;
+  d = d * d;
+
+  return (d[0] <= (eps * eps)) && (d[1] <= (eps * eps)) && (d[2] <= (eps * eps));
+}
+
+inline bool is_close(value::double3 a, value::double3 b, const double eps) {
+  value::double3 d = a - b;
+  d = d * d;
+
+  return (d[0] <= (eps * eps)) && (d[1] <= (eps * eps)) && (d[2] <= (eps * eps));
 }
 
 } // namespace math

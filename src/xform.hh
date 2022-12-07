@@ -92,13 +92,33 @@ value::vector3d transform_dir(const value::matrix4d &m, const value::vector3d &p
 value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p);
 value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p);
 
-#if 0 // TODO
+// tx, ty, tz = [inout]
 // default eps is grabbed from pxrUSD. 
-bool orthonormalize_basis(value::double3 *tx, value::double3 *ty, value::double3 *tz, const bool normalize, const double eps = 1e-6);
+bool orthonormalize_basis(value::double3 &tx, value::double3 &ty, value::double3 &tz, const bool normalize, const double eps = 1e-6);
+// `result_valid` become set to false when orthonormalization failed(did not converged.)
+value::matrix4d orthonormalize(const value::matrix4d &m, bool *result_valid = nullptr);
 
-// valid become set to false when orthonormalization failed(did not converged.)
-value::matrix4d orthonormalize(value::matrix4d &m, bool *valid);
-#endif
+//
+// Build matrix from T R S.
+// Rotation is given by angle in degree and its ordering is XYZ.
+// (equivalent to [xformOp:translation, xformOp:RotateXYZ, xformOp:scale])
+// 
+value::matrix4d trs_angle_xyz(
+  const value::double3 &translation,
+  const value::double3 &rotation_angles_xyz,
+  const value::double3 &scale);
+
+//
+// Build matrix from T R S.
+//
+// Rotation is given by 3 vectors axis(orthonormalized inside trs()).
+// 
+value::matrix4d trs_rot_axis(
+  const value::double3 &translation,
+  const value::double3 &rotation_x_axis,
+  const value::double3 &rotation_y_axis,
+  const value::double3 &rotation_z_axis,
+  const value::double3 &scale);
 
 ///
 /// For usdGeom, usdSkel, usdLux

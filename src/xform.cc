@@ -953,7 +953,6 @@ value::matrix4d upper_left_3x3_only(const value::matrix4d &m) {
   return dst;
 }
 
-#if 0 // TODO
 // -------------------------------------------------------------------------------
 // From pxrUSD
 //
@@ -984,6 +983,103 @@ value::matrix4d upper_left_3x3_only(const value::matrix4d &m) {
 ////////////////////////////////////////////////////////////////////////
 
 /*
+ * Given 3 basis vectors tx, ty, tz, orthogonalize and optionally normalize
+ * them.
+ *
+ * This uses an iterative method that is very stable even when the vectors
+ * are far from orthogonal (close to colinear).  The number of iterations
+ * and thus the computation time does increase as the vectors become
+ * close to colinear, however.
+ *
+ * If the iteration fails to converge, returns false with vectors as close to
+ * orthogonal as possible.
+ */
+bool orthonormalize_basis(value::double3 &tx, value::double3 &ty,
+                          value::double3 &tz, const bool normalize,
+                          const double eps) {
+  value::double3 ax, bx, cx, ay, by, cy, az, bz, cz;
+
+  if (normalize) {
+    tx = vnormalize(tx);
+    ty = vnormalize(ty);
+    tz = vnormalize(tz);
+    ax = tx;
+    ay = ty;
+    az = tz;
+  } else {
+    ax = vnormalize(tx);
+    ay = vnormalize(ty);
+    az = vnormalize(tz);
+  }
+
+  /* Check for colinear vectors. This is not only a quick-out: the
+   * error computation below will evaluate to zero if there's no change
+   * after an iteration, which can happen either because we have a good
+   * solution or because the vectors are colinear.   So we have to check
+   * the colinear case beforehand, or we'll get fooled in the error
+   * computation.
+   */
+  if (math::is_close(ax, ay, eps) || math::is_close(ax, az, eps) ||
+      math::is_close(ay, az, eps)) {
+    return false;
+  }
+
+  constexpr int kMAX_ITERS = 20;
+  int iter;
+  for (iter = 0; iter < kMAX_ITERS; ++iter) {
+    bx = tx;
+    by = ty;
+    bz = tz;
+
+    bx = bx - vdot(ay, bx) * ay;
+    bx = bx - vdot(az, bx) * az;
+
+    by = by - vdot(ax, by) * ax;
+    by = by - vdot(az, by) * az;
+
+    bz = bz - vdot(ax, bz) * ax;
+    bz = bz - vdot(ay, bz) * ay;
+
+    cx = 0.5 * (tx + bx);
+    cy = 0.5 * (ty + by);
+    cz = 0.5 * (tz + bz);
+
+    if (normalize) {
+      cx = vnormalize(cx);
+      cy = vnormalize(cy);
+      cz = vnormalize(cz);
+    }
+
+    value::double3 xDiff = tx - cx;
+    value::double3 yDiff = ty - cy;
+    value::double3 zDiff = tz - cz;
+
+    double error = vdot(xDiff, xDiff) + vdot(yDiff, yDiff) + vdot(zDiff, zDiff);
+
+    // error is squared, so compare to squared tolerance
+    if (error < (eps * eps)) {
+      break;
+    }
+
+    tx = cx;
+    ty = cy;
+    tz = cz;
+
+    ax = tx;
+    ay = ty;
+    az = tz;
+
+    if (!normalize) {
+      ax = vnormalize(ax);
+      ax = vnormalize(ay);
+      ax = vnormalize(az);
+    }
+  }
+
+  return iter < kMAX_ITERS;
+}
+
+/*
  * Make the matrix orthonormal in place using an iterative method.
  * It is potentially slower if the matrix is far from orthonormal (i.e. if
  * the row basis vectors are close to colinear) but in the common case
@@ -993,14 +1089,14 @@ value::matrix4d upper_left_3x3_only(const value::matrix4d &m) {
  * a homogenous coordinate (i.e. a non-unity lower right corner), it is divided
  * out.
  */
-value::matrix4d orthonormalize(value::matrix4d &m, bool *valid) {
+value::matrix4d orthonormalize(const value::matrix4d &m, bool *result_valid) {
   value::matrix4d ret = value::matrix4d::identity();
 
   // orthogonalize and normalize row vectors
   value::double3 r0{m.m[0][0], m.m[0][1], m.m[0][2]};
   value::double3 r1{m.m[1][0], m.m[1][1], m.m[1][2]};
   value::double3 r2{m.m[2][0], m.m[2][1], m.m[2][2]};
-  bool result = orthonormalize_basis(&r0, &r1, &r2, true);
+  bool result = orthonormalize_basis(r0, r1, r2, true);
   ret.m[0][0] = r0[0];
   ret.m[0][1] = r0[1];
   ret.m[0][2] = r0[2];
@@ -1022,8 +1118,8 @@ value::matrix4d orthonormalize(value::matrix4d &m, bool *valid) {
     ret.m[3][3] = 1.0;
   }
 
-  if (valid) {
-    (*valid) = !result;
+  if (result_valid) {
+    (*result_valid) = result;
     // TF_WARN("OrthogonalizeBasis did not converge, matrix may not be "
     //               "orthonormal.");
   }
@@ -1034,6 +1130,83 @@ value::matrix4d orthonormalize(value::matrix4d &m, bool *valid) {
 // End pxrUSD
 // -------------------------------------------------------------------------------
 
-#endif
+value::matrix4d trs_angle_xyz(
+  const value::double3 &translation,
+  const value::double3 &rotation_angles_xyz,
+  const value::double3 &scale) {
+
+  value::matrix4d m{value::matrix4d::identity()};
+
+  XformEvaluator eval;
+  eval.RotateX(rotation_angles_xyz[0]);
+  eval.RotateY(rotation_angles_xyz[1]);
+  eval.RotateZ(rotation_angles_xyz[2]);
+
+  auto ret = eval.result();
+  if (!ret) {
+    // This should not happend though.
+    return m;
+  }
+  value::matrix4d rMat = ret.value();
+
+  value::matrix4d tMat{value::matrix4d::identity()};
+  tMat.m[3][0] = translation[0];
+  tMat.m[3][1] = translation[1];
+  tMat.m[3][2] = translation[2];
+
+  value::matrix4d sMat{value::matrix4d::identity()};
+  sMat.m[0][0] = scale[0];
+  sMat.m[1][1] = scale[1];
+  sMat.m[2][2] = scale[2];
+  
+  m = sMat * rMat * tMat;
+
+  return m;
+}
+
+//
+// Build matrix from T R S.
+//
+// Rotation is given by 3 vectors axis(orthonormalized inside trs()).
+// 
+value::matrix4d trs_rot_axis(
+  const value::double3 &translation,
+  const value::double3 &rotation_x_axis,
+  const value::double3 &rotation_y_axis,
+  const value::double3 &rotation_z_axis,
+  const value::double3 &scale) {
+
+  value::matrix4d m{value::matrix4d::identity()};
+
+  value::matrix4d rMat{value::matrix4d::identity()};
+  rMat.m[0][0] = rotation_x_axis[0];
+  rMat.m[0][1] = rotation_x_axis[1];
+  rMat.m[0][2] = rotation_x_axis[2];
+  rMat.m[1][0] = rotation_y_axis[0];
+  rMat.m[1][1] = rotation_y_axis[1];
+  rMat.m[1][2] = rotation_y_axis[2];
+  rMat.m[2][0] = rotation_z_axis[0];
+  rMat.m[2][1] = rotation_z_axis[1];
+  rMat.m[2][2] = rotation_z_axis[2];
+
+  bool result_valid{true};
+  value::matrix4d orMat = orthonormalize(rMat, &result_valid);
+  // TODO: report error when orthonormalize failed.
+
+  value::matrix4d tMat{value::matrix4d::identity()};
+  tMat.m[3][0] = translation[0];
+  tMat.m[3][1] = translation[1];
+  tMat.m[3][2] = translation[2];
+
+  value::matrix4d sMat{value::matrix4d::identity()};
+  sMat.m[0][0] = scale[0];
+  sMat.m[1][1] = scale[1];
+  sMat.m[2][2] = scale[2];
+  
+  m = sMat * orMat * tMat;
+
+  return m;
+}
+
 
 }  // namespace tinyusdz
