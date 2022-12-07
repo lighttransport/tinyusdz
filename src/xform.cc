@@ -12,12 +12,12 @@
 #pragma clang diagnostic pop
 #endif
 
-#include "value-types.hh"
-#include "prim-types.hh"
 #include "math-util.inc"
-#include "xform.hh"
-#include "tiny-format.hh"
 #include "pprinter.hh"
+#include "prim-types.hh"
+#include "tiny-format.hh"
+#include "value-types.hh"
+#include "xform.hh"
 
 namespace tinyusdz {
 
@@ -28,9 +28,10 @@ using double3x3 = linalg::aliases::double3x3;
 
 // linalg quat: (x, y, z, w)
 
-value::matrix3d to_matrix3x3(const value::quath &q)
-{
-  double3x3 m33 = linalg::qmat<double>({double(half_to_float(q.imag[0])), double(half_to_float(q.imag[1])), double(half_to_float(q.imag[2])), double(half_to_float(q.real))});
+value::matrix3d to_matrix3x3(const value::quath &q) {
+  double3x3 m33 = linalg::qmat<double>(
+      {double(half_to_float(q.imag[0])), double(half_to_float(q.imag[1])),
+       double(half_to_float(q.imag[2])), double(half_to_float(q.real))});
 
   value::matrix3d m;
   Identity(&m);
@@ -40,9 +41,9 @@ value::matrix3d to_matrix3x3(const value::quath &q)
   return m;
 }
 
-value::matrix3d to_matrix3x3(const value::quatf &q)
-{
-  double3x3 m33 = linalg::qmat<double>({double(q.imag[0]), double(q.imag[1]), double(q.imag[2]), double(q.real)});
+value::matrix3d to_matrix3x3(const value::quatf &q) {
+  double3x3 m33 = linalg::qmat<double>({double(q.imag[0]), double(q.imag[1]),
+                                        double(q.imag[2]), double(q.real)});
 
   value::matrix3d m;
   Identity(&m);
@@ -52,9 +53,9 @@ value::matrix3d to_matrix3x3(const value::quatf &q)
   return m;
 }
 
-value::matrix3d to_matrix3x3(const value::quatd &q)
-{
-  double3x3 m33 = linalg::qmat<double>({q.imag[0], q.imag[1], q.imag[2], q.real});
+value::matrix3d to_matrix3x3(const value::quatd &q) {
+  double3x3 m33 =
+      linalg::qmat<double>({q.imag[0], q.imag[1], q.imag[2], q.real});
 
   value::matrix3d m;
   Identity(&m);
@@ -64,9 +65,8 @@ value::matrix3d to_matrix3x3(const value::quatd &q)
   return m;
 }
 
-value::matrix4d to_matrix(const value::matrix3d &m33, const value::double3 &tx)
-{
-
+value::matrix4d to_matrix(const value::matrix3d &m33,
+                          const value::double3 &tx) {
   value::matrix4d m;
   Identity(&m);
 
@@ -87,9 +87,7 @@ value::matrix4d to_matrix(const value::matrix3d &m33, const value::double3 &tx)
   return m;
 }
 
-value::matrix3d to_matrix3x3(const value::matrix4d &m44, value::double3 *tx)
-{
-
+value::matrix3d to_matrix3x3(const value::matrix4d &m44, value::double3 *tx) {
   value::matrix3d m;
   Identity(&m);
 
@@ -112,32 +110,12 @@ value::matrix3d to_matrix3x3(const value::matrix4d &m44, value::double3 *tx)
   return m;
 }
 
+value::matrix4d to_matrix(const value::quath &q) {
+  // using double4 = linalg::aliases::double4;
 
-value::matrix4d to_matrix(const value::quath &q)
-{
-  //using double4 = linalg::aliases::double4;
-
-  double3x3 m33 = linalg::qmat<double>({double(half_to_float(q.imag[0])), double(half_to_float(q.imag[1])), double(half_to_float(q.imag[2])), double(half_to_float(q.real))});
-
-  value::matrix4d m;
-  Identity(&m);
-
-  m.m[0][0] = m33[0][0];
-  m.m[0][1] = m33[0][1];
-  m.m[0][2] = m33[0][2];
-  m.m[1][0] = m33[1][0];
-  m.m[1][1] = m33[1][1];
-  m.m[1][2] = m33[1][2];
-  m.m[2][0] = m33[2][0];
-  m.m[2][1] = m33[2][1];
-  m.m[2][2] = m33[2][2];
-
-  return m;
-}
-
-value::matrix4d to_matrix(const value::quatf &q)
-{
-  double3x3 m33 = linalg::qmat<double>({double(q.imag[0]), double(q.imag[1]), double(q.imag[2]), double(q.real)});
+  double3x3 m33 = linalg::qmat<double>(
+      {double(half_to_float(q.imag[0])), double(half_to_float(q.imag[1])),
+       double(half_to_float(q.imag[2])), double(half_to_float(q.real))});
 
   value::matrix4d m;
   Identity(&m);
@@ -155,9 +133,29 @@ value::matrix4d to_matrix(const value::quatf &q)
   return m;
 }
 
-value::matrix4d to_matrix(const value::quatd &q)
-{
-  double3x3 m33 = linalg::qmat<double>({q.imag[0], q.imag[1], q.imag[2], q.real});
+value::matrix4d to_matrix(const value::quatf &q) {
+  double3x3 m33 = linalg::qmat<double>({double(q.imag[0]), double(q.imag[1]),
+                                        double(q.imag[2]), double(q.real)});
+
+  value::matrix4d m;
+  Identity(&m);
+
+  m.m[0][0] = m33[0][0];
+  m.m[0][1] = m33[0][1];
+  m.m[0][2] = m33[0][2];
+  m.m[1][0] = m33[1][0];
+  m.m[1][1] = m33[1][1];
+  m.m[1][2] = m33[1][2];
+  m.m[2][0] = m33[2][0];
+  m.m[2][1] = m33[2][1];
+  m.m[2][2] = m33[2][2];
+
+  return m;
+}
+
+value::matrix4d to_matrix(const value::quatd &q) {
+  double3x3 m33 =
+      linalg::qmat<double>({q.imag[0], q.imag[1], q.imag[2], q.real});
 
   value::matrix4d m;
   Identity(&m);
@@ -176,7 +174,6 @@ value::matrix4d to_matrix(const value::quatd &q)
 }
 
 value::matrix4d inverse(const value::matrix4d &_m) {
-
   matrix44d m;
   // memory layout is same
   memcpy(&m[0][0], _m.m, sizeof(double) * 4 * 4);
@@ -191,7 +188,6 @@ value::matrix4d inverse(const value::matrix4d &_m) {
 }
 
 value::matrix3d inverse(const value::matrix3d &_m) {
-
   matrix33d m;
   // memory layout is same
   memcpy(&m[0][0], _m.m, sizeof(double) * 3 * 3);
@@ -206,7 +202,6 @@ value::matrix3d inverse(const value::matrix3d &_m) {
 }
 
 double determinant(const value::matrix4d &_m) {
-
   matrix44d m;
   // memory layout is same
   memcpy(&m[0][0], _m.m, sizeof(double) * 4 * 4);
@@ -217,7 +212,6 @@ double determinant(const value::matrix4d &_m) {
 }
 
 double determinant(const value::matrix3d &_m) {
-
   matrix33d m;
   // memory layout is same
   memcpy(&m[0][0], _m.m, sizeof(double) * 3 * 3);
@@ -228,7 +222,6 @@ double determinant(const value::matrix3d &_m) {
 }
 
 bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m) {
-
   double det = determinant(_m);
 
   // 1e-9 comes from pxrUSD
@@ -242,7 +235,6 @@ bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m) {
 }
 
 bool inverse(const value::matrix3d &_m, value::matrix3d &inv_m) {
-
   double det = determinant(_m);
 
   // 1e-9 comes from pxrUSD
@@ -256,7 +248,6 @@ bool inverse(const value::matrix3d &_m, value::matrix3d &inv_m) {
 }
 
 value::matrix2d transpose(const value::matrix2d &_m) {
-
   matrix22d m;
   matrix22d tm;
   // memory layout is same
@@ -272,7 +263,6 @@ value::matrix2d transpose(const value::matrix2d &_m) {
 }
 
 value::matrix3d transpose(const value::matrix3d &_m) {
-
   matrix33d m;
   matrix33d tm;
   // memory layout is same
@@ -288,7 +278,6 @@ value::matrix3d transpose(const value::matrix3d &_m) {
 }
 
 value::matrix4d transpose(const value::matrix4d &_m) {
-
   matrix44d m;
   matrix44d tm;
   // memory layout is same
@@ -320,7 +309,7 @@ class XformEvaluator {
  public:
   XformEvaluator() { Identity(&m); }
 
-  XformEvaluator &RotateX(const double angle) { // in degrees
+  XformEvaluator &RotateX(const double angle) {  // in degrees
 
     double rad = math::radian(angle);
 
@@ -336,7 +325,7 @@ class XformEvaluator {
     return (*this);
   }
 
-  XformEvaluator &RotateY(const double angle) { // in degrees
+  XformEvaluator &RotateY(const double angle) {  // in degrees
 
     double rad = math::radian(angle);
 
@@ -352,7 +341,7 @@ class XformEvaluator {
     return (*this);
   }
 
-  XformEvaluator &RotateZ(const double angle) { // in degrees
+  XformEvaluator &RotateZ(const double angle) {  // in degrees
 
     double rad = math::radian(angle);
 
@@ -368,9 +357,7 @@ class XformEvaluator {
     return (*this);
   }
 
-  std::string error() const {
-    return err;
-  }
+  std::string error() const { return err; }
 
   nonstd::expected<value::matrix4d, std::string> result() const {
     if (err.empty()) {
@@ -384,14 +371,15 @@ class XformEvaluator {
   value::matrix4d m;
 };
 
-} // namespace local
+}  // namespace
 
-bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType tinterp,
+bool Xformable::EvaluateXformOps(double t,
+                                 value::TimeSampleInterpolationType tinterp,
                                  value::matrix4d *out_matrix,
                                  bool *resetXformStack,
                                  std::string *err) const {
-  const auto RotateABC = [](const XformOp &x) -> nonstd::expected<value::matrix4d, std::string>  {
-
+  const auto RotateABC =
+      [](const XformOp &x) -> nonstd::expected<value::matrix4d, std::string> {
     value::double3 v;
     if (auto h = x.get_value<value::half3>()) {
       v[0] = double(half_to_float(h.value()[0]));
@@ -405,9 +393,13 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
       v = d.value();
     } else {
       if (x.suffix.empty()) {
-        return nonstd::make_unexpected(fmt::format("`{}` is not half3, float3 or double3 type.\n", to_string(x.op_type)));
+        return nonstd::make_unexpected(
+            fmt::format("`{}` is not half3, float3 or double3 type.\n",
+                        to_string(x.op_type)));
       } else {
-        return nonstd::make_unexpected(fmt::format("`{}:{}` is not half3, float3 or double3 type.\n", to_string(x.op_type), x.suffix));
+        return nonstd::make_unexpected(
+            fmt::format("`{}:{}` is not half3, float3 or double3 type.\n",
+                        to_string(x.op_type), x.suffix));
       }
     }
 
@@ -488,9 +480,7 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
     }
 
     return eval.result();
-
   };
-
 
   // Concat matrices
   //
@@ -510,7 +500,7 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
   for (size_t i = 0; i < xformOps.size(); i++) {
     const auto x = xformOps[i];
 
-    value::matrix4d m; // local matrix
+    value::matrix4d m;  // local matrix
     Identity(&m);
 
     if (x.is_timesamples()) {
@@ -557,7 +547,6 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         }
 
         if (x.inverted) {
-
           // Singular check.
           // pxrUSD uses 1e-9
           double det = determinant(m);
@@ -565,9 +554,14 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
           if (std::fabs(det) < 1e-9) {
             if (err) {
               if (x.suffix.empty()) {
-                (*err) += "`xformOp:transform` is singular matrix and cannot be inverted.\n";
+                (*err) +=
+                    "`xformOp:transform` is singular matrix and cannot be "
+                    "inverted.\n";
               } else {
-                (*err) += fmt::format("`xformOp:transform:{}` is singular matrix and cannot be inverted.\n", x.suffix);
+                (*err) += fmt::format(
+                    "`xformOp:transform:{}` is singular matrix and cannot be "
+                    "inverted.\n",
+                    x.suffix);
               }
             }
 
@@ -630,7 +624,8 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
           tz = txd.value()[2];
         } else {
           if (err) {
-            (*err) += "`xformOp:translate` is not half3, float3 or double3 type.\n";
+            (*err) +=
+                "`xformOp:translate` is not half3, float3 or double3 type.\n";
           }
           return false;
         }
@@ -649,8 +644,7 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
       }
       // FIXME: Validate ROTATE_X, _Y, _Z implementation
       case XformOp::OpType::RotateX: {
-
-        double angle; // in degrees
+        double angle;  // in degrees
         if (auto h = x.get_value<value::half>()) {
           angle = double(half_to_float(h.value()));
         } else if (auto f = x.get_value<float>()) {
@@ -660,9 +654,12 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         } else {
           if (err) {
             if (x.suffix.empty()) {
-              (*err) += "`xformOp:rotateX` is not half, float or double type.\n";
+              (*err) +=
+                  "`xformOp:rotateX` is not half, float or double type.\n";
             } else {
-              (*err) += fmt::format("`xformOp:rotateX:{}` is not half, float or double type.\n", x.suffix);
+              (*err) += fmt::format(
+                  "`xformOp:rotateX:{}` is not half, float or double type.\n",
+                  x.suffix);
             }
           }
           return false;
@@ -683,7 +680,7 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         break;
       }
       case XformOp::OpType::RotateY: {
-        double angle; // in degrees
+        double angle;  // in degrees
         if (auto h = x.get_value<value::half>()) {
           angle = double(half_to_float(h.value()));
         } else if (auto f = x.get_value<float>()) {
@@ -693,9 +690,12 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         } else {
           if (err) {
             if (x.suffix.empty()) {
-              (*err) += "`xformOp:rotateY` is not half, float or double type.\n";
+              (*err) +=
+                  "`xformOp:rotateY` is not half, float or double type.\n";
             } else {
-              (*err) += fmt::format("`xformOp:rotateY:{}` is not half, float or double type.\n", x.suffix);
+              (*err) += fmt::format(
+                  "`xformOp:rotateY:{}` is not half, float or double type.\n",
+                  x.suffix);
             }
           }
           return false;
@@ -716,7 +716,7 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         break;
       }
       case XformOp::OpType::RotateZ: {
-        double angle; // in degrees
+        double angle;  // in degrees
         if (auto h = x.get_value<value::half>()) {
           angle = double(half_to_float(h.value()));
         } else if (auto f = x.get_value<float>()) {
@@ -726,9 +726,12 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         } else {
           if (err) {
             if (x.suffix.empty()) {
-              (*err) += "`xformOp:rotateZ` is not half, float or double type.\n";
+              (*err) +=
+                  "`xformOp:rotateZ` is not half, float or double type.\n";
             } else {
-              (*err) += fmt::format("`xformOp:rotateZ:{}` is not half, float or double type.\n", x.suffix);
+              (*err) += fmt::format(
+                  "`xformOp:rotateZ:{}` is not half, float or double type.\n",
+                  x.suffix);
             }
           }
           return false;
@@ -764,7 +767,9 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
             if (x.suffix.empty()) {
               (*err) += "`xformOp:orient` is not quath, quatf or quatd type.\n";
             } else {
-              (*err) += fmt::format("`xformOp:orient:{}` is not quath, quatf or quatd type.\n", x.suffix);
+              (*err) += fmt::format(
+                  "`xformOp:orient:{}` is not quath, quatf or quatd type.\n",
+                  x.suffix);
             }
           }
           return false;
@@ -774,13 +779,15 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         if (x.inverted) {
           value::matrix3d inv_rm;
           if (inverse(rm, inv_rm)) {
-
           } else {
             if (err) {
               if (x.suffix.empty()) {
-                (*err) += "`xformOp:orient` is singular and cannot be inverted.\n";
+                (*err) +=
+                    "`xformOp:orient` is singular and cannot be inverted.\n";
               } else {
-                (*err) += fmt::format("`xformOp:orient:{}` is singular and cannot be inverted.\n", x.suffix);
+                (*err) += fmt::format(
+                    "`xformOp:orient:{}` is singular and cannot be inverted.\n",
+                    x.suffix);
               }
             }
           }
@@ -807,13 +814,12 @@ bool Xformable::EvaluateXformOps(double t, value::TimeSampleInterpolationType ti
         }
 
         m = ret.value();
-
       }
     }
 
-    cm = m * cm; // row-major, so `m` fistly.
+    cm = m * cm;  // row-major, so `m` fistly.
     // operator* is equivalent to
-    //cm = value::Mult<value::matrix4d, double, 4>(m, cm);
+    // cm = value::Mult<value::matrix4d, double, 4>(m, cm);
   }
 
   (*out_matrix) = cm;
@@ -841,7 +847,6 @@ std::vector<value::token> Xformable::xformOpOrder() const {
   }
 
   return toks;
-
 }
 
 value::float3 transform(const value::matrix4d &m, const value::float3 &p) {
@@ -869,7 +874,8 @@ value::double3 transform(const value::matrix4d &m, const value::double3 &p) {
 }
 value::vector3d transform(const value::matrix4d &m, const value::vector3d &p) {
   value::vector3d tx{m.m[3][0], m.m[3][1], m.m[3][2]};
-  value::vector3d v = value::MultV<value::matrix4d, value::vector3d, double, 3>(m, p);
+  value::vector3d v =
+      value::MultV<value::matrix4d, value::vector3d, double, 3>(m, p);
   v.x += tx.x;
   v.y += tx.y;
   v.z += tx.z;
@@ -877,7 +883,8 @@ value::vector3d transform(const value::matrix4d &m, const value::vector3d &p) {
 }
 value::normal3d transform(const value::matrix4d &m, const value::normal3d &p) {
   value::normal3d tx{m.m[3][0], m.m[3][1], m.m[3][2]};
-  value::normal3d v = value::MultV<value::matrix4d, value::normal3d, double, 3>(m, p);
+  value::normal3d v =
+      value::MultV<value::matrix4d, value::normal3d, double, 3>(m, p);
   v.x += tx.x;
   v.y += tx.y;
   v.z += tx.z;
@@ -885,7 +892,8 @@ value::normal3d transform(const value::matrix4d &m, const value::normal3d &p) {
 }
 value::point3d transform(const value::matrix4d &m, const value::point3d &p) {
   value::point3d tx{m.m[3][0], m.m[3][1], m.m[3][2]};
-  value::point3d v = value::MultV<value::matrix4d, value::point3d, double, 3>(m, p);
+  value::point3d v =
+      value::MultV<value::matrix4d, value::point3d, double, 3>(m, p);
   v.x += tx.x;
   v.y += tx.y;
   v.z += tx.z;
@@ -897,26 +905,33 @@ value::float3 transform_dir(const value::matrix4d &m, const value::float3 &p) {
   return value::MultV<value::matrix4d, value::float3, float, 3>(m, p);
 }
 
-value::vector3f transform_dir(const value::matrix4d &m, const value::vector3f &p) {
+value::vector3f transform_dir(const value::matrix4d &m,
+                              const value::vector3f &p) {
   return value::MultV<value::matrix4d, value::vector3f, float, 3>(m, p);
 }
 
-value::normal3f transform_dir(const value::matrix4d &m, const value::normal3f &p) {
+value::normal3f transform_dir(const value::matrix4d &m,
+                              const value::normal3f &p) {
   return value::MultV<value::matrix4d, value::normal3f, float, 3>(m, p);
 }
-value::point3f transform_dir(const value::matrix4d &m, const value::point3f &p) {
+value::point3f transform_dir(const value::matrix4d &m,
+                             const value::point3f &p) {
   return value::MultV<value::matrix4d, value::point3f, float, 3>(m, p);
 }
-value::double3 transform_dir(const value::matrix4d &m, const value::double3 &p) {
+value::double3 transform_dir(const value::matrix4d &m,
+                             const value::double3 &p) {
   return value::MultV<value::matrix4d, value::double3, double, 3>(m, p);
 }
-value::vector3d transform_dir(const value::matrix4d &m, const value::vector3d &p) {
+value::vector3d transform_dir(const value::matrix4d &m,
+                              const value::vector3d &p) {
   return value::MultV<value::matrix4d, value::vector3d, double, 3>(m, p);
 }
-value::normal3d transform_dir(const value::matrix4d &m, const value::normal3d &p) {
+value::normal3d transform_dir(const value::matrix4d &m,
+                              const value::normal3d &p) {
   return value::MultV<value::matrix4d, value::normal3d, double, 3>(m, p);
 }
-value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p) {
+value::point3d transform_dir(const value::matrix4d &m,
+                             const value::point3d &p) {
   return value::MultV<value::matrix4d, value::point3d, double, 3>(m, p);
 }
 
@@ -938,5 +953,87 @@ value::matrix4d upper_left_3x3_only(const value::matrix4d &m) {
   return dst;
 }
 
+#if 0 // TODO
+// -------------------------------------------------------------------------------
+// From pxrUSD
+//
 
-} // namespace tinyusdz
+//
+// Copyright 2016 Pixar
+//
+// Licensed under the Apache License, Version 2.0 (the "Apache License")
+// with the following modification; you may not use this file except in
+// compliance with the Apache License and the following modification to it:
+// Section 6. Trademarks. is deleted and replaced with:
+//
+// 6. Trademarks. This License does not grant permission to use the trade
+//    names, trademarks, service marks, or product names of the Licensor
+//    and its affiliates, except as required to comply with Section 4(c) of
+//    the License and to reproduce the content of the NOTICE file.
+//
+// You may obtain a copy of the Apache License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the Apache License with the above modification is
+// distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the Apache License for the specific
+// language governing permissions and limitations under the Apache License.
+//
+////////////////////////////////////////////////////////////////////////
+
+/*
+ * Make the matrix orthonormal in place using an iterative method.
+ * It is potentially slower if the matrix is far from orthonormal (i.e. if
+ * the row basis vectors are close to colinear) but in the common case
+ * of near-orthonormality it should be just as fast.
+ *
+ * The translation part is left intact.  If the translation is represented as
+ * a homogenous coordinate (i.e. a non-unity lower right corner), it is divided
+ * out.
+ */
+value::matrix4d orthonormalize(value::matrix4d &m, bool *valid) {
+  value::matrix4d ret = value::matrix4d::identity();
+
+  // orthogonalize and normalize row vectors
+  value::double3 r0{m.m[0][0], m.m[0][1], m.m[0][2]};
+  value::double3 r1{m.m[1][0], m.m[1][1], m.m[1][2]};
+  value::double3 r2{m.m[2][0], m.m[2][1], m.m[2][2]};
+  bool result = orthonormalize_basis(&r0, &r1, &r2, true);
+  ret.m[0][0] = r0[0];
+  ret.m[0][1] = r0[1];
+  ret.m[0][2] = r0[2];
+  ret.m[1][0] = r1[0];
+  ret.m[1][1] = r1[1];
+  ret.m[1][2] = r1[2];
+  ret.m[2][0] = r2[0];
+  ret.m[2][1] = r2[1];
+  ret.m[2][2] = r2[2];
+
+  // divide out any homogeneous coordinate - unless it's zero
+  const double min_vector_length = 1e-10;  //
+  if (!math::is_close(ret.m[3][3], 1.0,
+                      std::numeric_limits<double>::epsilon()) &&
+      !math::is_close(ret.m[3][3], 0.0, min_vector_length)) {
+    ret.m[3][0] /= ret.m[3][3];
+    ret.m[3][1] /= ret.m[3][3];
+    ret.m[3][2] /= ret.m[3][3];
+    ret.m[3][3] = 1.0;
+  }
+
+  if (valid) {
+    (*valid) = !result;
+    // TF_WARN("OrthogonalizeBasis did not converge, matrix may not be "
+    //               "orthonormal.");
+  }
+
+  return ret;
+}
+
+// End pxrUSD
+// -------------------------------------------------------------------------------
+
+#endif
+
+}  // namespace tinyusdz

@@ -27,49 +27,17 @@ inline double angle(double radian)
   return radian * 180.0 / 3.141592653589793;
 }
 
-// `theta` in radian
-// Moved to xform.hh
-#if 0
-inline value::matrix3f RotateX(float theta)
-{
-  value::matrix3f m;
-
-  auto sth = std::sin(theta);
-  auto cth = std::cos(theta);
-
-  m.m[0][0] = 1.0f;
-  m.m[0][1] = 0.0f;
-  m.m[0][2] = 0.0f;
-  m.m[1][0] = 0.0f;
-  m.m[1][1] = cth;
-  m.m[1][2] = -sth;
-  m.m[2][0] = 0.0f;
-  m.m[2][1] = sth;
-  m.m[2][2] = cth;
-
-  return m;
+inline bool is_close(float a, float b, const float eps) {
+  // TODO: Use more robust fp diff compare.
+  float d = a - b;
+  return (d * d) <= (eps * eps);
 }
 
-inline value::matrix3d RotateX(double theta)
-{
-  value::matrix3d m;
-
-  auto sth = std::sin(theta);
-  auto cth = std::cos(theta);
-
-  m.m[0][0] = 1.0;
-  m.m[0][1] = 0.0;
-  m.m[0][2] = 0.0;
-  m.m[1][0] = 0.0;
-  m.m[1][1] = cth;
-  m.m[1][2] = -sth;
-  m.m[2][0] = 0.0;
-  m.m[2][1] = sth;
-  m.m[2][2] = cth;
-
-  return m;
+inline bool is_close(double a, double b, const double eps) {
+  // TODO: Use more robust fp diff compare.
+  double d = a - b;
+  return (d * d) <= (eps * eps);
 }
-#endif
 
 } // namespace math
 
