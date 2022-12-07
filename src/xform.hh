@@ -123,8 +123,7 @@ struct Xformable {
         // FIXME: Validate this is the correct way of handling !resetXformStack! op.
         return m.value();
       } else {
-        value::matrix4d cm =
-            value::Mult<value::matrix4d, double, 4>(parentMatrix, m.value());
+        value::matrix4d cm = m.value() * parentMatrix; // row-major so local matrix first.
         return cm;
       }
     } else {
