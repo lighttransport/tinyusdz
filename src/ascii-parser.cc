@@ -419,18 +419,18 @@ static void RegisterAPISchemas(std::set<std::string> &d) {
   d.insert("SkelBindingAPI");
 
   // TODO:
-  // d.insett("PhysicsCollisionAPI");
-  // d.insett("PhysicsRigidBodyAPI");
+  // d.insert("PhysicsCollisionAPI");
+  // d.insert("PhysicsRigidBodyAPI");
 
   // TODO: Support Multi-apply API(`CollectionAPI`)
-  // d.insett("PhysicsLimitAPI");
-  // d.insett("PhysicsDriveAPI");
-  // d.insett("CollectionAPI");
+  // d.insert("PhysicsLimitAPI");
+  // d.insert("PhysicsDriveAPI");
+  // d.insert("CollectionAPI");
 }
 
 namespace {
 
-#if 0
+#if 0 // TODO: Remove
 // parseInt
 // 0 = success
 // -1 = bad input
@@ -535,7 +535,7 @@ inline bool is_digit(char x) {
   return (static_cast<unsigned int>((x) - '0') < static_cast<unsigned int>(10));
 }
 
-#if 0
+#if 0 // TODO: Remove
 static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
   // Parse with fast_float
   float result;
@@ -4343,10 +4343,11 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 /// Parser entry point
 /// TODO: Refactor and use unified code path regardless of LoadState.
 ///
-bool AsciiParser::Parse(LoadState state) {
+bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option) {
   _sub_layered = (state == LoadState::Sublayer);
   _referenced = (state == LoadState::Reference);
   _payloaded = (state == LoadState::Payload);
+  _option = parser_option;
 
   bool header_ok = ParseMagicHeader();
   if (!header_ok) {
