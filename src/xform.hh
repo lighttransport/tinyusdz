@@ -95,6 +95,10 @@ value::point3d transform_dir(const value::matrix4d &m, const value::point3d &p);
 // tx, ty, tz = [inout]
 // default eps is grabbed from pxrUSD. 
 bool orthonormalize_basis(value::double3 &tx, value::double3 &ty, value::double3 &tz, const bool normalize, const double eps = 1e-6);
+
+// `result_valid` become set to false when orthonormalization failed(did not converged.)
+value::matrix3d orthonormalize(const value::matrix3d &m, bool *result_valid = nullptr);
+
 // `result_valid` become set to false when orthonormalization failed(did not converged.)
 value::matrix4d orthonormalize(const value::matrix4d &m, bool *result_valid = nullptr);
 
