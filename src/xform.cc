@@ -1080,15 +1080,42 @@ bool orthonormalize_basis(value::double3 &tx, value::double3 &ty,
 }
 
 /*
- * Make the matrix orthonormal in place using an iterative method.
+ * Return the matrix orthonormal using an iterative method.
  * It is potentially slower if the matrix is far from orthonormal (i.e. if
  * the row basis vectors are close to colinear) but in the common case
  * of near-orthonormality it should be just as fast.
  *
- * The translation part is left intact.  If the translation is represented as
+ * For 4f, The translation part is left intact.  If the translation is represented as
  * a homogenous coordinate (i.e. a non-unity lower right corner), it is divided
  * out.
  */
+value::matrix3d orthonormalize(const value::matrix3d &m, bool *result_valid) {
+  value::matrix3d ret = value::matrix3d::identity();
+
+  // orthogonalize and normalize row vectors
+  value::double3 r0{m.m[0][0], m.m[0][1], m.m[0][2]};
+  value::double3 r1{m.m[1][0], m.m[1][1], m.m[1][2]};
+  value::double3 r2{m.m[2][0], m.m[2][1], m.m[2][2]};
+  bool result = orthonormalize_basis(r0, r1, r2, true);
+  ret.m[0][0] = r0[0];
+  ret.m[0][1] = r0[1];
+  ret.m[0][2] = r0[2];
+  ret.m[1][0] = r1[0];
+  ret.m[1][1] = r1[1];
+  ret.m[1][2] = r1[2];
+  ret.m[2][0] = r2[0];
+  ret.m[2][1] = r2[1];
+  ret.m[2][2] = r2[2];
+
+  if (result_valid) {
+    (*result_valid) = result;
+    // TF_WARN("OrthogonalizeBasis did not converge, matrix may not be "
+    //               "orthonormal.");
+  }
+
+  return ret;
+}
+
 value::matrix4d orthonormalize(const value::matrix4d &m, bool *result_valid) {
   value::matrix4d ret = value::matrix4d::identity();
 
