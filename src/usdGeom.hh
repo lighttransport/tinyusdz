@@ -734,4 +734,64 @@ DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
 
 }  // namespace value
 
+// For geomprimvar template
+
+// NOTE: Some types are not supported on pxrUSD(e.g. string)
+#define APPLY_GEOMPRIVAR_TYPE(__FUNC) \
+  __FUNC(value::half)                 \
+  __FUNC(value::half2)                \
+  __FUNC(value::half3)                \
+  __FUNC(value::half4)                \
+  __FUNC(int)                         \
+  __FUNC(value::int2)                 \
+  __FUNC(value::int3)                 \
+  __FUNC(value::int4)                 \
+  __FUNC(uint32_t)                    \
+  __FUNC(value::uint2)                \
+  __FUNC(value::uint3)                \
+  __FUNC(value::uint4)                \
+  __FUNC(float)                       \
+  __FUNC(value::float2)               \
+  __FUNC(value::float3)               \
+  __FUNC(value::float4)               \
+  __FUNC(double)                      \
+  __FUNC(value::double2)              \
+  __FUNC(value::double3)              \
+  __FUNC(value::double4)              \
+  __FUNC(value::matrix2d)             \
+  __FUNC(value::matrix3d)             \
+  __FUNC(value::matrix4d)             \
+  __FUNC(value::quath)                \
+  __FUNC(value::quatf)                \
+  __FUNC(value::quatd)                \
+  __FUNC(value::normal3h)             \
+  __FUNC(value::normal3f)             \
+  __FUNC(value::normal3d)             \
+  __FUNC(value::vector3h)             \
+  __FUNC(value::vector3f)             \
+  __FUNC(value::vector3d)             \
+  __FUNC(value::point3h)              \
+  __FUNC(value::point3f)              \
+  __FUNC(value::point3d)              \
+  __FUNC(value::color3f)              \
+  __FUNC(value::color3d)              \
+  __FUNC(value::color4f)              \
+  __FUNC(value::color4d)              \
+  __FUNC(value::texcoord2h)           \
+  __FUNC(value::texcoord2f)           \
+  __FUNC(value::texcoord2d)           \
+  __FUNC(value::texcoord3h)           \
+  __FUNC(value::texcoord3f)           \
+  __FUNC(value::texcoord3d)
+
+#define EXTERN_TEMPLATE_GET_VALUE(__ty) \
+  extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err); \
+  extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err);
+
+APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)
+
+#undef EXTERN_TEMPLATE_GET_VALUE
+#undef APPLY_GEOMPRIVAR_TYPE
+
+
 }  // namespace tinyusdz
