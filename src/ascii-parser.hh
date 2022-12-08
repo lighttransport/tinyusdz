@@ -51,6 +51,12 @@ struct PathIdentifier : std::string {
   // using std::string;
 };
 
+
+// Parser option.
+struct AsciiParserOption {
+  bool allow_unknown_apiSchema{false};  
+};
+
 ///
 /// Test if input file is USDA ascii format.
 ///
@@ -58,6 +64,7 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
  public:
+
   // TODO: refactor
   struct PrimMetas {
     // Frequently used prim metas
@@ -286,7 +293,7 @@ class AsciiParser {
   ///
   /// Parser entry point
   ///
-  bool Parse(LoadState state = LoadState::Toplevel);
+  bool Parse(LoadState state = LoadState::Toplevel, const AsciiParserOption &parser_option=AsciiParserOption());
 
   ///
   /// Parse TimeSample value with specified array type of
@@ -776,6 +783,8 @@ class AsciiParser {
   bool _sub_layered{false};
   bool _referenced{false};
   bool _payloaded{false};
+
+  AsciiParserOption _option;
 
   std::string _base_dir;
 
