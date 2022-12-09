@@ -106,6 +106,7 @@ constexpr auto kAscii = "[ASCII]";
 
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<bool>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int32_t>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int2>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint32_t>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int64_t>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint64_t>> *result);
@@ -154,6 +155,7 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::option
 
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
@@ -306,6 +308,8 @@ static void RegisterPropMetas(
   metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
 
   metas["interpolation"] = AsciiParser::VariableDef(value::kToken, "interpolation");
+
+  metas["bindMaterialAs"] = AsciiParser::VariableDef(value::kToken, "bindMaterialAs");
 }
 
 
@@ -707,6 +711,20 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       }
       var.set_value(val);
     }
+  } else if (type_name == value::kInt2) {
+    if (array_qual) {
+      std::vector<value::int2> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `int2[]`");
+      }
+      var.set_value(vss);
+    } else {
+      value::int2 str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `int2`");
+      }
+      var.set_value(str);
+    }
   } else if (type_name == value::kUInt) {
     if (array_qual) {
       std::vector<uint32_t> vss;
@@ -735,6 +753,34 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       }
       var.set_value(val);
     }
+  } else if (type_name == value::kFloat2) {
+    if (array_qual) {
+      std::vector<value::float2> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float2[]`");
+      }
+      var.set_value(vss);
+    } else {
+      value::float2 str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float2`");
+      }
+      var.set_value(str);
+    }
+  } else if (type_name == value::kFloat3) {
+    if (array_qual) {
+      std::vector<value::float3> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float3[]`");
+      }
+      var.set_value(vss);
+    } else {
+      value::float3 str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `float3`");
+      }
+      var.set_value(str);
+    }
   } else if (type_name == value::kDouble) {
     if (array_qual) {
       std::vector<double> vss;
@@ -746,6 +792,20 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       double str;
       if (!ReadBasicType(&str)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `double`");
+      }
+      var.set_value(str);
+    }
+  } else if (type_name == value::kDouble3) {
+    if (array_qual) {
+      std::vector<value::double3> vss;
+      if (!ParseBasicTypeArray(&vss)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `double3[]`");
+      }
+      var.set_value(vss);
+    } else {
+      value::double3 str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `double3`");
       }
       var.set_value(str);
     }
@@ -3087,6 +3147,15 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         DCOUT("Got `customData` meta");
         out_meta->customData = dict;
 
+      } else if (varname == "bindMaterialAs") {
+        value::token tok;
+        if (!ReadBasicType(&tok)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `bindMaterialAs`");
+        }
+        // Add as custom meta value.
+        MetaVariable metavar;
+        metavar.set_value("bindMaterialAs", tok);
+        out_meta->meta.emplace("bindMaterialAs", metavar);
       } else {
         if (auto pv = GetPropMetaDefinition(varname)) {
           // Parse as generic metadata variable
@@ -3156,6 +3225,13 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
     std::vector<Path> value;
     if (!ParseBasicTypeArray(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse PathVector.");
+    }
+    result->set(value);
+  } else if (c == 'N') {
+    // None
+    Path value;
+    if (!ReadBasicType(&value)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse Path.");
     }
     result->set(value);
   } else {
@@ -3367,7 +3443,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     if (MaybeNone()) {
-      PUSH_ERROR_AND_RETURN("TODO: Support `None` for property.");
+      //PUSH_ERROR_AND_RETURN("TODO: Support `None` for property.");
+      return true;
     }
 
     Relationship rel;
@@ -3622,7 +3699,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
   } else {
     Attribute attr;
-
     if (!value_blocked) {
 
       // TODO: Refactor. ParseAttrMeta is currently called inside
@@ -3633,6 +3709,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
         }
       } else if (type_name == value::kInt) {
         if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kInt2) {
+        if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == value::kUInt) {
@@ -3681,6 +3761,86 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
         }
       } else if (type_name == value::kFloat2) {
         if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kFloat3) {
+        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kFloat4) {
+        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kDouble2) {
+        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kDouble3) {
+        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kDouble4) {
+        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kPoint3f) {
+        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor3f) {
+        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor4f) {
+        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kPoint3d) {
+        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kNormal3f) {
+        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kNormal3d) {
+        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kVector3f) {
+        if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kVector3d) {
+        if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor3d) {
+        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor4d) {
+        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix2d) {
+        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
                                                &attr)) {
           return false;
         }
@@ -4134,7 +4294,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     if (!ReadIdentifier(&prim_type)) {
       return false;
     }
-
+#if 0
     if (!IsSupportedPrimType(prim_type)) {
       std::string msg =
           "`" + prim_type +
@@ -4142,6 +4302,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       PushError(msg);
       return false;
     }
+#endif    
   }
 
   if (!SkipWhitespaceAndNewline()) {
@@ -4324,7 +4485,12 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
       pTy = "Model";
     }
-
+#if 1
+    if (prim_type == "OmniGraphNode" || prim_type == "Output" || prim_type == "OmniGraph") {
+      // Unknown Prim type specified. Treat it as Model
+      pTy = "Model";
+    }
+#endif
     if (_prim_construct_fun_map.count(pTy)) {
       auto construct_fun = _prim_construct_fun_map[pTy];
 
