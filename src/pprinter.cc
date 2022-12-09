@@ -930,7 +930,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
 
     ss << print_rel_prop(prop, prop_name, indent);
 
-  } else {
+  } else if (prop.is_attribute()) {
     const Attribute &attr = prop.get_attribute();
 
     ss << pprint::Indent(indent);
@@ -945,10 +945,10 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
 
     std::string ty;
 
-    ty = prop.value_type_name();
+    ty = attr.type_name();
     ss << ty << " " << prop_name;
 
-    if (prop.is_connection()) {
+    if (attr.is_connection()) {
 
       ss << ".connect = ";
       if (prop.get_relationship().is_path()) {
@@ -968,7 +968,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
 
       if (attr.get_var().is_timesamples()) {
         ss << print_timesamples(attr.get_var().ts_raw(), indent+1);
-      } else if (attr.get_var().is_blocked()) {
+      } else if (attr.is_blocked()) {
         ss << "None";
       } else {
         // is_scalar
@@ -980,6 +980,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
       ss << " (\n" << print_attr_metas(prop.get_attribute().metas(), indent+1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
+  } else {
+    ss << "[Invalid Property] " << prop_name << "\n";
   }
 
   return ss.str();

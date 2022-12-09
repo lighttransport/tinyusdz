@@ -3549,16 +3549,27 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     return false;
   }
 
+  bool value_blocked{false};
+
+  if (MaybeNone()) {
+    value_blocked = true;
+  } 
+
   if (isConnection) {
     DCOUT("isConnection");
 
-    // Target Must be Path
     Path path;
-    if (!ReadBasicType(&path)) {
-      PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
+    if (!value_blocked) {
+      // Target Must be Path
+      if (!ReadBasicType(&path)) {
+        PUSH_ERROR_AND_RETURN("Path expected for .connect target.");
+      }
     }
 
     Property p(path, /* value typename */ type_name, custom_qual);
+    if (value_blocked) {
+      p.relationship().set_blocked();
+    }
 
     (*props)[attr_name] = p;
 
@@ -3567,6 +3578,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     return true;
 
   } else if (isTimeSample) {
+    // float.timeSamples = None is not supported
+    if (value_blocked) {
+      PUSH_ERROR_AND_RETURN("ValueBlock to .timeSamples is not supported.");
+    }
+
     //
     // TODO(syoyo): Refactror and implement value parser dispatcher.
     //
@@ -3607,189 +3623,201 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
   } else {
     Attribute attr;
 
-    // TODO: Refactor. ParseAttrMeta is currently called inside
-    // ParseBasicPrimAttr()
-    if (type_name == value::kBool) {
-      if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kInt) {
-      if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kUInt) {
-      if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kInt64) {
-      if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kUInt64) {
-      if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kDouble) {
-      if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kString) {
-      if (!ParseBasicPrimAttr<value::StringData>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kToken) {
-      if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kHalf) {
-      if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kHalf2) {
-      if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kHalf3) {
-      if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kHalf4) {
-      if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kFloat) {
-      if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kFloat2) {
-      if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
-                                             &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kFloat3) {
-      if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                             &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kFloat4) {
-      if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                             &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kDouble2) {
-      if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kDouble3) {
-      if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kDouble4) {
-      if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kPoint3f) {
-      if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kColor3f) {
-      if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kColor4f) {
-      if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kPoint3d) {
-      if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kNormal3f) {
-      if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                               &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kNormal3d) {
-      if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                               &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kVector3f) {
-      if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                               &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kVector3d) {
-      if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                               &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kColor3d) {
-      if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kColor4d) {
-      if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                              &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kMatrix2d) {
-      if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                               &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kMatrix3d) {
-      if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
-                                               &attr)) {
-        return false;
-      }
-    } else if (type_name == value::kMatrix4d) {
-      if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
-                                               &attr)) {
-        return false;
-      }
+    if (!value_blocked) {
 
-    } else if (type_name == value::kTexCoord2f) {
-      if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
+      // TODO: Refactor. ParseAttrMeta is currently called inside
+      // ParseBasicPrimAttr()
+      if (type_name == value::kBool) {
+        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kInt) {
+        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kUInt) {
+        if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kInt64) {
+        if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kUInt64) {
+        if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kDouble) {
+        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kString) {
+        if (!ParseBasicPrimAttr<value::StringData>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kToken) {
+        if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kHalf) {
+        if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kHalf2) {
+        if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kHalf3) {
+        if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kHalf4) {
+        if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kFloat) {
+        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kFloat2) {
+        if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kFloat3) {
+        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kFloat4) {
+        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kDouble2) {
+        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kDouble3) {
+        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kDouble4) {
+        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kPoint3f) {
+        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor3f) {
+        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor4f) {
+        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kPoint3d) {
+        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kNormal3f) {
+        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
                                                  &attr)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse texCoord2f data.");
+          return false;
+        }
+      } else if (type_name == value::kNormal3d) {
+        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kVector3f) {
+        if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kVector3d) {
+        if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor3d) {
+        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kColor4d) {
+        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix2d) {
+        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix3d) {
+        if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix4d) {
+        if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+
+      } else if (type_name == value::kTexCoord2f) {
+        if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
+                                                   &attr)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse texCoord2f data.");
+        }
+
+      } else if (type_name == value::kAssetPath) {
+        Reference asset_ref;
+        bool triple_deliminated{false};
+        if (!ParseReference(&asset_ref, &triple_deliminated)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
+        }
+
+        DCOUT("Asset path = " << asset_ref.asset_path);
+        value::AssetPath assetp(asset_ref.asset_path);
+        primvar::PrimVar var;
+        var.set_value(assetp);
+        attr.set_var(std::move(var));
+
+        // optional: attribute meta.
+        AttrMeta meta;
+        if (!ParseAttrMeta(&meta)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
+        }
+        attr.metas() = meta;
+
+      } else {
+        PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
       }
-
-    } else if (type_name == value::kAssetPath) {
-      Reference asset_ref;
-      bool triple_deliminated{false};
-      if (!ParseReference(&asset_ref, &triple_deliminated)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
-      }
-
-      DCOUT("Asset path = " << asset_ref.asset_path);
-      value::AssetPath assetp(asset_ref.asset_path);
-      primvar::PrimVar var;
-      var.set_value(assetp);
-      attr.set_var(std::move(var));
-
-      // optional: attribute meta.
-      AttrMeta meta;
-      if (!ParseAttrMeta(&meta)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
-      }
-      attr.metas() = meta;
-
-    } else {
-      PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
     }
 
     if (uniform_qual) {
       attr.variability() = Variability::Uniform;
     }
+    if (value_blocked) {
+      if (array_qual) {
+        attr.set_type_name(type_name + "[]");
+      } else {
+        attr.set_type_name(type_name);
+      }
+      attr.set_blocked(true);
+    }
+
     attr.set_name(primattr_name);
 
     DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);

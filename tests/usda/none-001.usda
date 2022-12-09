@@ -2,5 +2,6 @@
 
 def Mesh "bora"
 {
+	int primvars:myint = None
 	int[] primvars:displayColor:indices = None
 }
