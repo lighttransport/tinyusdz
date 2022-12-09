@@ -104,6 +104,41 @@
             PushError("Failed to parse int value.\n");
           }
         }
+      }  else if (type_name == "double2") {
+        if (array_qual) {
+          std::vector<std::array<double, 2>> values;
+          if (!ParseTupleArray(&values)) {
+            PushError("Failed to parse double2 array.\n");
+          }
+          std::cout << "double2 = \n";
+          for (size_t i = 0; i < values.size(); i++) {
+            std::cout << "(" << values[i][0] << ", " << values[i][1] << ")\n";
+          }
+
+          Variable::Array arr;
+          for (size_t i = 0; i < values.size(); i++) {
+            Variable v;
+            v.value = values[i];
+            arr.values.push_back(v);
+          }
+
+          Variable var;
+          var.custom = custom_qual;
+          (*props)[primattr_name] = var;
+        } else {
+          std::array<int, 2> value;
+          if (!ParseBasicTypeTuple<int, 2>(&value)) {
+            PushError("Failed to parse int2.\n");
+          }
+          std::cout << "int2 = (" << value[0] << ", " << value[1] << ")\n";
+
+          Variable var;
+          var.value = value;
+          var.custom = custom_qual;
+
+          (*props)[primattr_name] = var;
+        }
+
       } else if (type_name == "float") {
         if (array_qual) {
           std::vector<nonstd::optional<float>> value;
