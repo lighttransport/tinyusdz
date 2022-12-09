@@ -926,7 +926,7 @@ class USDAReader::Impl {
               if (ret) {
                 apiSchemas.names.push_back({ret.value(), /* instanceName */""});
               } else {
-                PUSH_ERROR_AND_RETURN("(PrimMeta) " << ret.error());
+                PUSH_WARN("(PrimMeta) " << ret.error());       
               }
             }
           } else {
