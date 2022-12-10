@@ -107,7 +107,12 @@ constexpr auto kAscii = "[ASCII]";
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<bool>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int32_t>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int2>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int3>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int4>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint32_t>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uint2>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uint3>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uint4>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int64_t>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint64_t>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half>> *result);
@@ -122,6 +127,9 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::option
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double2>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double3>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double4>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::quath>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::quatf>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::quatd>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2h>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2f>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2d>> *result);
@@ -156,7 +164,12 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::option
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int3> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int4> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
@@ -171,6 +184,9 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *resu
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2h> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2f> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2d> *result);
@@ -609,6 +625,62 @@ std::string AsciiParser::GetWarning() {
 
 // -- end basic
 
+
+// types: Allowd in dict.
+// std::string is not included since its represented as StringData.
+// TODO: Include timecode?
+#define APPLY_TO_METAVARIABLE_TYPE(__FUNC) \
+  __FUNC(value::token)         \
+  __FUNC(bool)                 \
+  __FUNC(value::half)                 \
+  __FUNC(value::half2)                \
+  __FUNC(value::half3)                \
+  __FUNC(value::half4)                \
+  __FUNC(int32_t)              \
+  __FUNC(uint32_t)             \
+  __FUNC(value::int2)                 \
+  __FUNC(value::int3)                 \
+  __FUNC(value::int4)                 \
+  __FUNC(value::uint2)                \
+  __FUNC(value::uint3)                \
+  __FUNC(value::uint4)                \
+  __FUNC(int64_t)              \
+  __FUNC(uint64_t)             \
+  __FUNC(float)                \
+  __FUNC(value::float2)               \
+  __FUNC(value::float3)               \
+  __FUNC(value::float4)               \
+  __FUNC(double)               \
+  __FUNC(value::double2)              \
+  __FUNC(value::double3)              \
+  __FUNC(value::double4)              \
+  __FUNC(value::matrix2d)             \
+  __FUNC(value::matrix3d)             \
+  __FUNC(value::matrix4d)             \
+  __FUNC(value::quath)                \
+  __FUNC(value::quatf)                \
+  __FUNC(value::quatd)                \
+  __FUNC(value::normal3h)             \
+  __FUNC(value::normal3f)             \
+  __FUNC(value::normal3d)             \
+  __FUNC(value::vector3h)             \
+  __FUNC(value::vector3f)             \
+  __FUNC(value::vector3d)             \
+  __FUNC(value::point3h)              \
+  __FUNC(value::point3f)              \
+  __FUNC(value::point3d)              \
+  __FUNC(value::color3f)              \
+  __FUNC(value::color3d)              \
+  __FUNC(value::color4f)              \
+  __FUNC(value::color4d)              \
+  __FUNC(value::texcoord2h)           \
+  __FUNC(value::texcoord2f)           \
+  __FUNC(value::texcoord2d)           \
+  __FUNC(value::texcoord3h)           \
+  __FUNC(value::texcoord3f)           \
+  __FUNC(value::texcoord3d)
+  
+
 bool AsciiParser::ParseDictElement(std::string *out_key,
                                    MetaVariable *out_var) {
   (void)out_key;
@@ -686,11 +758,16 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     return false;
   }
 
+  uint32_t tyid = value::GetTypeId(type_name);
+
+  primvar::PrimVar var;
+
   //
   // Supports limited types for customData/Dictionary.
-  // TODO: support more types?
   //
-  primvar::PrimVar var;
+
+#if 0
+  // TODO: support more types
   if (type_name == value::kBool) {
     bool val;
     if (!ReadBasicType(&val)) {
@@ -848,18 +925,64 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   } else {
     PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
   }
+#else
+
+#define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
+    if (array_qual) { \
+      std::vector<__ty> vss; \
+      if (!ParseBasicTypeArray(&vss)) { \
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}[]`", value::TypeTraits<__ty>::type_name())); \
+      } \
+      var.set_value(vss); \
+    } else { \
+      __ty val; \
+      if (!ReadBasicType(&val)) { \
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<__ty>::type_name())); \
+      } \
+      var.set_value(val); \
+    } \
+    break; \
+  }
+
+  switch (tyid) {
+  APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE)
+  case value::TYPE_ID_STRING: {
+    if (array_qual) {
+      std::vector<value::StringData> strs;
+      if (!ParseBasicTypeArray(&strs)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
+      }
+      var.set_value(strs);
+    } else {
+      value::StringData str;
+      if (!ReadBasicType(&str)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+      }
+      var.set_value(str);
+    }
+    break;
+  }
+  case value::TYPE_ID_DICT: {
+    CustomDataType dict;
+
+    DCOUT("Parse dictionary");
+    if (!ParseDict(&dict)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+    }
+    var.set_value(dict);
+    break;
+  }
+  default: {
+    PUSH_ERROR_AND_RETURN("Unsupported or invalid type for Metadatum:" + type_name);
+  }
+  }
+
+#undef PARSE_BASE_TYPE
+
+#endif
 
   MetaVariable metavar;
   metavar.set_value(key_name, var.value_raw());
-
-#if 0
-  var.type = type_name;
-  if (array_qual) {
-    // TODO: 2D array
-    var.type += "[]";
-  }
-  var.name = key_name;
-#endif
 
   DCOUT("key: " << key_name << ", type: " << type_name);
 

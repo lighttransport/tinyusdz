@@ -518,6 +518,8 @@ class MetaVariable;
 
 using CustomDataType = std::map<std::string, MetaVariable>;
 
+using Dictionary = CustomDataType; // alias to CustomDataType
+
 ///
 /// Helper function to access CustomData(dictionary).
 /// Recursively process into subdictionaries when a key contains namespaces(':') 
