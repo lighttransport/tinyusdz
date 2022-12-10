@@ -42,6 +42,10 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
 * [ ] Web demo with Three.js?
   * [ ] Three.js started to support USDZ with Ascii format, but no USDC support yet: https://github.com/mrdoob/three.js/issues/14219
 
+## Discussions
+
+We've opened Github Discussions page! https://github.com/syoyo/tinyusdz/discussions
+
 ### Security and memory budget
 
 TinyUSDZ has first priority of considering security and stability.
