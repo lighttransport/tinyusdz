@@ -22,6 +22,11 @@
 #include <utility>
 #include <vector>
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#include <mutex>
+#endif
+
 //
 #include "value-types.hh"
 
@@ -123,16 +128,16 @@ enum class Axis { X, Y, Z, Invalid };
 // metrics(UsdGeomLinearUnits in pxrUSD)
 // To avoid linkage error, defined as static constexpr function.
 struct Units {
-  static constexpr double Nanometers = 1e-9; 
-  static constexpr double Micrometers=  1e-6; 
-  static constexpr double Millimeters = 0.001; 
-  static constexpr double Centimeters = 0.01; 
-  static constexpr double Meters = 1.0; 
-  static constexpr double Kilometers = 1000; 
-  static constexpr double LightYears = 9.4607304725808e15; 
-  static constexpr double Inches = 0.0254; 
-  static constexpr double Feet = 0.3048; 
-  static constexpr double Yards = 0.9144; 
+  static constexpr double Nanometers = 1e-9;
+  static constexpr double Micrometers=  1e-6;
+  static constexpr double Millimeters = 0.001;
+  static constexpr double Centimeters = 0.01;
+  static constexpr double Meters = 1.0;
+  static constexpr double Kilometers = 1000;
+  static constexpr double LightYears = 9.4607304725808e15;
+  static constexpr double Inches = 0.0254;
+  static constexpr double Feet = 0.3048;
+  static constexpr double Yards = 0.9144;
   static constexpr double Miles = 1609.344;
 };
 
@@ -211,7 +216,7 @@ class Path {
   }
 
   // Create Path both from Prim Path and Prop
-  // If `prim` starts 
+  // If `prim` starts
   // "/aaa", "bora" => /aaa.bora
   // "/aaa", "" => /aaa (prim only)
   // "", "bora" => .bora (property only)
@@ -520,8 +525,8 @@ using CustomDataType = std::map<std::string, MetaVariable>;
 
 ///
 /// Helper function to access CustomData(dictionary).
-/// Recursively process into subdictionaries when a key contains namespaces(':') 
-/// 
+/// Recursively process into subdictionaries when a key contains namespaces(':')
+///
 bool HasCustomDataKey(const CustomDataType &customData, const std::string &key);
 bool GetCustomDataByKey(const CustomDataType &customData, const std::string &key, /* out */MetaVariable *dst);
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &val, /* inout */CustomDataType &customData);
@@ -718,6 +723,12 @@ struct PrimMeta {
   nonstd::optional<APISchemas> apiSchemas;      // 'apiSchemas'
 
   //
+  // MaterialBinding
+  //
+  // Could be arbitrary token value, but `weakerThanDescendants` or `strongerThanDescendants` for now.
+  nonstd::optional<value::token> bindMaterialAs; // 'bindMaterialAs'
+
+  //
   // Compositions
   //
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
@@ -757,12 +768,12 @@ struct PrimMeta {
   //
   // Infos used indirectly.
   //
-  
-  // Used to display/traverse Prim items based on this array 
+
+  // Used to display/traverse Prim items based on this array
   // USDA: By appearance. USDC: "primChildren" TokenVector field
   std::vector<value::token> primChildren;
 
-  // Used to display/traverse Property items based on this array 
+  // Used to display/traverse Property items based on this array
   // USDA: By appearance. USDC: "properties" TokenVector field
   std::vector<value::token> properties;
 
@@ -2325,6 +2336,12 @@ class Prim {
     _elementPath = Path(elementName, "");
   }
 
+  void add_child(Prim &&prim) {
+    _children.emplace_back(std::move(prim));
+    _child_dirty = true;
+  }
+
+  // TODO: Deprecate this API to disallow modification of children.
   std::vector<Prim> &children() { return _children; }
 
   const std::vector<Prim> &children() const { return _children; }
@@ -2396,10 +2413,29 @@ class Prim {
     return _prim_id;
   }
 
+  ///
+  /// Get indices for children().
+  ///
+  /// This is an utility API to traverse child Prims according to `primChildren` Prim metadata.
+  /// If you want to traverse child Prims as done in pxrUSD(which used `primChildren` to determine the order of traversal), use this function.
+  ///
+  /// If no `primChildren` Prim metadata, it will simply returns [0, children().size()) sequence.
+  ///
+  /// index may have -1, which means invalid(child Prim not found described in by primChildren)
+  /// Also, app should extra check of the value of index if `indices_is_valid` is set to false(index may be duplicated(Duplicated Prim name exits in `primChildren`)  and not in range `[0, children() -1`)
+  ///
+  /// NOTE: This function build a cache.
+  ///
+  /// @param[in] force_update Always rebuild child_indices. false = use cache if exits.
+  /// @param[out] indices_is_valid Optional. Set true when returned indices are valid.
+  ///
+  const std::vector<int64_t> &get_child_indices_from_primChildren(bool force_update = true, bool *indices_is_valid = nullptr) const;
+
+
   // TODO: Add API to get parent Prim directly?
   // (Currently we need to traverse parent Prim using Stage)
 
- 
+
  private:
   Path _abs_path; // Absolute Prim path in a freezed(after composition state). Usually set by Stage::compute_absolute_path()
   Path _path;  // Prim's local path name. May contain Property, Relationship and
@@ -2416,8 +2452,15 @@ class Prim {
       _data;  // Generic container for concrete Prim object. GPrim, Xform, ...
   std::vector<Prim> _children;  // child Prim nodes
 
-  // NOTE: Not used at the moment. 
-  int64_t _prim_id{-1}; // Unique Prim id when positive. Id is usually [0, NumPrimsInStage) when reading from USDA, PathIndex from USDC.
+  mutable bool _child_dirty{false};
+  mutable bool _primChildrenIndicesIsValid{false}; // true when indices in _primChildrenIndices are not -1, unique, and index value are within [0, children().size()), and also _primChildrenIndices.size() == children().size()
+  mutable std::vector<int64_t> _primChildrenIndices; // Get corresponding array index in _children, based on `metas().primChildren` token[] info. -1 = invalid.
+
+  int64_t _prim_id{-1}; // Unique Prim id when positive(starts with 1). Id is assigned by Stage::compute_absolute_prim_path_and_assign_prim_id. Usually [1, NumPrimsInStage)
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  mutable std::mutex _mutex;
+#endif
 
 };
 
@@ -2427,7 +2470,7 @@ bool IsXformablePrim(const Prim &prim);
 struct Xformable;
 bool CastToXformable(const Prim &prim, const Xformable **xformable);
 
-/// 
+///
 /// Get Prim's local transform(xformOps) at specified time.
 /// For non-Xformable Prim it returns identity matrix.
 ///
