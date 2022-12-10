@@ -2914,7 +2914,12 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<valu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
