@@ -31,6 +31,7 @@ endif ()
 # options
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
+option(TINYUSDZ_ENABLE_THREAD "Build with C++11 std::thread support?(threading support is not implemented yet)" OFF)
 option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
 option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
 option(TINYUSDZ_BUILD_BENCHMARKS
@@ -178,6 +179,12 @@ option(TINYUSDZ_TEST_CIFUZZ "Run cifuzz test" OFF)
 if (TINYUSDZ_TEST_CIFUZZ)
   find_package(cifuzz NO_SYSTEM_ENVIRONMENT_PATH)
   enable_fuzz_testing()
+endif()
+
+if (TINYUSDZ_ENABLE_THREAD)
+  find_package(Threads REQUIRED)
+  # prefer adding "-pthread" compile flag
+  set(THREADS_PREFER_PTHREAD_FLAG ON)
 endif()
 
 if(TINYUSDZ_WITH_EXR OR TINYUSDZ_WITH_TIFF)
@@ -665,6 +672,13 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
                         ${CMAKE_DL_LIBS})
+
+  if (TINYUSDZ_ENABLE_THREAD)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_ENABLE_THREAD")
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
+  endif()
+
 
   if(IOS)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

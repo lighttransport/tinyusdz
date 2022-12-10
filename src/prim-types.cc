@@ -2,6 +2,7 @@
 // Copyright 2021 - Present, Syoyo Fujita.
 #include <algorithm>
 #include <limits>
+#include <numeric>
 //
 #include "prim-types.hh"
 #include "str-util.hh"
@@ -785,6 +786,76 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
     // TODO: Raise an error if rhs is not an Prim
   }
 }
+
+const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force_update, bool *indices_is_valid) const {
+#if defined(TINYUSD_ENABLE_THREAD)
+  // TODO: Only take a lock when dirty.
+  std::lock_guard<std::mutex> lock(_mutex);
+#endif
+
+  if (!force_update && (_primChildrenIndices.size() == _children.size()) && !_child_dirty) {
+    // got cache.
+    if (indices_is_valid) {
+      (*indices_is_valid) = _primChildrenIndicesIsValid;
+    }
+    return _primChildrenIndices;
+  }
+
+  if (!force_update) {
+    _child_dirty = false;
+  }
+
+  if (metas().primChildren.empty()) {
+    _primChildrenIndices.resize(_children.size());
+    std::iota(_primChildrenIndices.begin(), _primChildrenIndices.end(), 0);
+    _primChildrenIndicesIsValid = true;
+    if (indices_is_valid) {
+      (*indices_is_valid) = _primChildrenIndicesIsValid;
+    }
+    return _primChildrenIndices;
+  }
+
+  std::map<std::string, size_t> m; // name -> children() index map
+  for (size_t i = 0; i < _children.size(); i++) {
+    m.emplace(_children[i].element_name(), i);
+  }
+  std::set<size_t> table; // to check uniqueness
+
+  // Use the length of primChildren.
+  _primChildrenIndices.resize(metas().primChildren.size());
+
+  bool valid = true;
+
+  for (size_t i = 0; i < _primChildrenIndices.size(); i++) {
+    std::string tok = metas().primChildren[i].str();
+    const auto it = m.find(tok);
+    if (it != m.end()) {
+
+      _primChildrenIndices[i] = int64_t(it->second);
+
+      table.insert(it->second);
+    } else {
+      // Prim name not found.
+      _primChildrenIndices[i] = -1;
+      valid = false;      
+    }
+  }
+
+  if (table.size() != _primChildrenIndices.size()) {
+    // duplicated index exists.
+    valid = false;
+  }
+
+  _primChildrenIndicesIsValid = valid;
+  if (indices_is_valid) {
+    (*indices_is_valid) = _primChildrenIndicesIsValid;
+  }
+  
+  return _primChildrenIndices;
+}
+
+
+
 
 //
 // To deal with clang's -Wexit-time-destructors, dynamically allocate buffer for

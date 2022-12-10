@@ -152,6 +152,7 @@ class Stage {
   /// @param[in] force_assign_prim_id true Overwrite `prim_id` of each Prim. false only assign Prim id when `prim_id` is -1(preserve user-assgiend prim_id). Setting `false` is not recommended since prim_id may not be unique over Prims in Stage.
   /// @return false when the Stage contains any invalid Prim 
   ///
+  /// TODO: Use simply `commit()` for API signature?
   bool compute_absolute_prim_path_and_assign_prim_id(bool force_assign_prim_id=true);
 
   ///
