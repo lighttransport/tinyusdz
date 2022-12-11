@@ -4,13 +4,13 @@
 // To reduce compilation time and sections generated in .obj(object file),
 // We split implementaion to multiple of .cc for ascii-parser.hh
 
-#include <cstdio>
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #endif
-
+//
+#include <cstdio>
 #include <algorithm>
 #include <atomic>
 //#include <cassert>
@@ -2492,7 +2492,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
   }
 
-  // TODO: Refactor.
+  // TODO: Refactor. 
   if (vartype == value::kBool) {
     bool value;
     if (!ReadBasicType(&value)) {
@@ -3275,10 +3275,14 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         if (!ReadBasicType(&tok)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `bindMaterialAs`");
         }
-        // Add as custom meta value.
-        MetaVariable metavar;
-        metavar.set_value("bindMaterialAs", tok);
-        out_meta->meta.emplace("bindMaterialAs", metavar);
+        if ((tok.str() == kWeaderThanDescendants) || (tok.str() == kStrongerThanDescendants)) {
+          // ok
+        } else {
+          // still valid though
+          PUSH_WARN("Unsupported token for bindMaterialAs: " << tok.str());
+        }
+        DCOUT("bindMaterialAs: " << tok);
+        out_meta->bindMaterialAs = tok;
       } else {
         if (auto pv = GetPropMetaDefinition(varname)) {
           // Parse as generic metadata variable
@@ -3544,7 +3548,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
       if (metap) {
         // TODO: metadataum for Rel
-        p.attribute().metas() = metap.value();
+        p.relationship().metas() = metap.value();
       }
 
       (*props)[attr_name] = p;
@@ -3605,7 +3609,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     p.set_listedit_qual(listop_qual);
 
     if (metap) {
-      p.attribute().metas() = metap.value();
+      p.relationship().metas() = metap.value();
     }
 
     (*props)[attr_name] = p;
@@ -4608,25 +4612,29 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
       pTy = "Model";
     }
-#if 1
-    if (prim_type == "OmniGraphNode" || prim_type == "Output" || prim_type == "OmniGraph") {
-      // Unknown Prim type specified. Treat it as Model
-      pTy = "Model";
+
+    if (!_prim_construct_fun_map.count(pTy)) {
+      if (_option.allow_unknown_prim) {
+        // Unknown Prim type specified. Treat it as Model
+        // Prim's type name will be storead in Model::prim_type_name
+        pTy = "Model";
+      }
     }
-#endif
+
     if (_prim_construct_fun_map.count(pTy)) {
       auto construct_fun = _prim_construct_fun_map[pTy];
 
       Path fullpath(GetCurrentPath(), "");
       Path pname(prim_name, "");
       nonstd::expected<bool, std::string> ret = construct_fun(
-          fullpath, spec, pname, primIdx, parentPrimIdx, props, in_metas);
+          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas);
 
       if (!ret) {
         // construction failed.
         PUSH_ERROR_AND_RETURN("Constructing Prim type `" + pTy +
                               "` failed: " + ret.error());
       }
+
     } else {
       PUSH_WARN(fmt::format(
           "TODO: Unsupported/Unimplemented Prim type: `{}`. Skipping parsing.",

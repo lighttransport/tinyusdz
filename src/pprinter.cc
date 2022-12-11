@@ -297,9 +297,8 @@ std::string print_rel_only(const Relationship &rel, const std::string &name, uin
     ss << "[InternalErrror]";
   }
 
-  // Metadata is stored in attrib.meta.
-  if (rel.meta.authored()) {
-    ss << " (\n" << print_attr_metas(rel.meta, indent+1) << pprint::Indent(indent) << ")";
+  if (rel.metas().authored()) {
+    ss << " (\n" << print_attr_metas(rel.metas(), indent+1) << pprint::Indent(indent) << ")";
   }
 
   ss << "\n";
@@ -483,9 +482,9 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << print_meta(item.second, indent+1, item.first);
   }
 
-  for (const auto &item : meta.stringData) {
-    ss << pprint::Indent(indent) << to_string(item) << "\n";
-  }
+  //for (const auto &item : meta.stringData) {
+  //  ss << pprint::Indent(indent) << to_string(item) << "\n";
+  //}
 
   return ss.str();
 }
@@ -500,6 +499,10 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   if (meta.elementSize) {
     ss << pprint::Indent(indent) << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
+  }
+
+  if (meta.bindMaterialAs) {
+    ss << pprint::Indent(indent) << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value())) << "\n";
   }
 
   if (meta.hidden) {
@@ -562,13 +565,13 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
             ss << " = " << a;
           } else {
             ss << " = [InternalError]";
-          } 
+          }
         }
       }
     }
 
     if (attr.metas().authored()) {
-      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << "(\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   }
@@ -957,7 +960,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
         ss << prop.get_relationship().targetPathVector;
       }
     } else if (prop.is_empty()) {
-      ss << "\n";
+      // Nothing to do
     } else {
       // has value content
 
@@ -1020,8 +1023,8 @@ std::string print_props(const std::map<std::string, Property> &props, std::set<s
 
         tok_table.insert(propNames[i].str());
       }
-      
-    } 
+
+    }
   } else {
 
     ss << print_props(props, indent);
@@ -1274,7 +1277,7 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, const st
   std::stringstream ss;
 
   //ss << "TODO: isObject " << meta.is_object() << ", isValue " << meta.IsValue() << "\n";
-  
+
   // Use varname if meta.name is empty
   std::string name = meta.get_name();
   if (name.empty()) {
@@ -1634,11 +1637,12 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
 std::string to_string(const Model &model, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
-  // Currently, `Model` is used for typeless `def`
-  ss << pprint::Indent(indent) << to_string(model.spec) << " \"" << model.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(model.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << to_string(model.spec) << " " << model.prim_type_name << " \"" << model.name << "\"\n";
+  if (model.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(model.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   std::set<std::string> tokset;
@@ -1655,9 +1659,11 @@ std::string to_string(const Scope &scope, const uint32_t indent, bool closing_br
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(scope.spec) << " Scope \"" << scope.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(scope.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (scope.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(scope.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   std::set<std::string> tokset;
@@ -1695,9 +1701,11 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(xform.spec) << " Xform \"" << xform.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(xform.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (xform.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(xform.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   ss << print_gprim_predefined(xform, indent+1);
@@ -1715,9 +1723,11 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(camera.spec) << " Camera \"" << camera.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  // args
-  ss << pprint::Indent(indent) << ")\n";
+  if (camera.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(camera.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -1752,9 +1762,11 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(sphere.spec) << " Sphere \"" << sphere.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  // args
-  ss << pprint::Indent(indent) << ")\n";
+  if (sphere.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(sphere.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -1775,11 +1787,11 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(mesh.spec) << " Mesh \"" << mesh.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
   if (mesh.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
     ss << print_prim_metas(mesh.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
   }
-  ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -1796,7 +1808,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   if (mesh.blendShapeTargets) {
     ss << print_relationship(mesh.blendShapeTargets.value(), mesh.blendShapeTargets.value().get_listedit_qual(), /* custom */false, "skel:blendShapeTargets", indent+1);
   }
-  
+
 
   // subdiv
   ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
@@ -1850,9 +1862,11 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " Points \"" << geom.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(geom.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -1917,9 +1931,11 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " BasisCurves \"" << geom.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(geom.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -1957,9 +1973,11 @@ std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " Cube \"" << geom.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(geom.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -1980,9 +1998,11 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " Cone \"" << geom.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(geom.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -2015,9 +2035,11 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool clos
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " Cylinder \"" << geom.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(geom.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -2050,9 +2072,11 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(geom.spec) << " Capsule \"" << geom.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(geom.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -2085,9 +2109,11 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(root.spec) << " SkelRoot \"" << root.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(root.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (root.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(root.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   ss << print_typed_token_attr(root.visibility, "visibility", indent+1);
@@ -2117,9 +2143,11 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(skel.spec) << " Skeleton \"" << skel.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(skel.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (skel.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(skel.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   ss << print_typed_attr(skel.bindTransforms, "bindTransforms", indent+1);
@@ -2154,9 +2182,11 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(skelanim.spec) << " SkelAnimation \"" << skelanim.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(skelanim.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (skelanim.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(skelanim.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent+1);
@@ -2180,9 +2210,11 @@ std::string to_string(const BlendShape &prim, const uint32_t indent, bool closin
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(prim.spec) << " BlendShape \"" << prim.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(prim.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (prim.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(prim.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   ss << print_typed_attr(prim.offsets, "offsets", indent+1);
@@ -2202,9 +2234,11 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(material.spec) << " Material \"" << material.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(material.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (material.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(material.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   if (material.surface) {
@@ -2321,8 +2355,8 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
     if (shader.outputsSurface.value().is_path()) {
       ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath);
     }
-    if (shader.outputsSurface.value().meta.authored()) {
-      ss << "(\n" << print_attr_metas(shader.outputsSurface.value().meta, indent+1) << pprint::Indent(indent+1) << ")";
+    if (shader.outputsSurface.value().metas().authored()) {
+      ss << "(\n" << print_attr_metas(shader.outputsSurface.value().metas(), indent+1) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
@@ -2332,8 +2366,8 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
     if (shader.outputsDisplacement.value().is_path()) {
       ss << ".connect = " << pquote(shader.outputsDisplacement.value().targetPath) << "\n";
     }
-    if (shader.outputsDisplacement.value().meta.authored()) {
-      ss << "(\n" << print_attr_metas(shader.outputsDisplacement.value().meta, indent+1) << pprint::Indent(indent+1) << ")";
+    if (shader.outputsDisplacement.value().metas().authored()) {
+      ss << "(\n" << print_attr_metas(shader.outputsDisplacement.value().metas(), indent+1) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
@@ -2364,44 +2398,44 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
 
 std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
 
-  {
-    // generic Shader class
-    std::stringstream ss;
+  // generic Shader class
+  std::stringstream ss;
 
-    ss << pprint::Indent(indent) << to_string(shader.spec) << " Shader \"" << shader.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(shader.spec) << " Shader \"" << shader.name << "\"\n";
+  if (shader.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
     ss << print_prim_metas(shader.meta, indent+1);
     ss << pprint::Indent(indent) << ")\n";
-    ss << pprint::Indent(indent) << "{\n";
-
-    // members
-    ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
-
-    if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
-      ss << print_shader_params(pvr.value(), indent+1);
-    } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
-      ss << print_shader_params(pvr2.value(), indent+1);
-    } else if (auto pvr3 = shader.value.get_value<UsdPrimvarReader_float3>()) {
-      ss << print_shader_params(pvr3.value(), indent+1);
-    } else if (auto pvr4 = shader.value.get_value<UsdPrimvarReader_float4>()) {
-      ss << print_shader_params(pvr4.value(), indent+1);
-    } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
-      ss << print_shader_params(pvtex.value(), indent+1);
-    } else if (auto pvtx2d = shader.value.get_value<UsdTransform2d>()) {
-      ss << print_shader_params(pvtx2d.value(), indent+1);
-    } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
-      ss << print_shader_params(pvs.value(), indent+1);
-    } else {
-      ss << pprint::Indent(indent+1) << "[TODO] Generic Shader\n";
-    }
-
-
-    if (closing_brace) {
-      ss << pprint::Indent(indent) << "}\n";
-    }
-
-    return ss.str();
   }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
+
+  if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
+    ss << print_shader_params(pvr.value(), indent+1);
+  } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
+    ss << print_shader_params(pvr2.value(), indent+1);
+  } else if (auto pvr3 = shader.value.get_value<UsdPrimvarReader_float3>()) {
+    ss << print_shader_params(pvr3.value(), indent+1);
+  } else if (auto pvr4 = shader.value.get_value<UsdPrimvarReader_float4>()) {
+    ss << print_shader_params(pvr4.value(), indent+1);
+  } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
+    ss << print_shader_params(pvtex.value(), indent+1);
+  } else if (auto pvtx2d = shader.value.get_value<UsdTransform2d>()) {
+    ss << print_shader_params(pvtx2d.value(), indent+1);
+  } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
+    ss << print_shader_params(pvs.value(), indent+1);
+  } else {
+    ss << pprint::Indent(indent+1) << "[TODO] Generic Shader\n";
+  }
+
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
 
 }
 
@@ -2450,9 +2484,11 @@ std::string to_string(const SphereLight &light, const uint32_t indent, bool clos
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " SphereLight \"" << light.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(light.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -2474,9 +2510,11 @@ std::string to_string(const DistantLight &light, const uint32_t indent, bool clo
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " DistantLight \"" << light.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(light.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -2499,9 +2537,11 @@ std::string to_string(const CylinderLight &light, const uint32_t indent, bool cl
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " CylinderLight \"" << light.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(light.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -2526,9 +2566,11 @@ std::string to_string(const DiskLight &light, const uint32_t indent, bool closin
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " DiskLight \"" << light.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(light.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
@@ -2552,9 +2594,11 @@ std::string to_string(const DomeLight &light, const uint32_t indent, bool closin
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(light.spec) << " DomeLight \"" << light.name << "\"\n";
-  ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(light.meta, indent+1);
-  ss << pprint::Indent(indent) << ")\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
   ss << pprint::Indent(indent) << "{\n";
 
   // members

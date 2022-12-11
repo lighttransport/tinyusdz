@@ -21,6 +21,9 @@ struct USDCReaderConfig {
   uint32_t kMaxStringLength = 1024*1024*64; // Max length of `string` data
   uint32_t kMaxElementSize = 512; // Max allowed value for `elementSize`
   size_t kMaxAllowedMemoryInMB = 1024*16; //Max allowed memory usage in [mb]
+
+  bool allow_unknown_prims = true;
+  bool allow_unknown_apiSchemas = true;
 };
 
 class USDCReader {
@@ -28,6 +31,9 @@ class USDCReader {
   USDCReader(StreamReader *sr,
              const USDCReaderConfig &config = USDCReaderConfig());
   ~USDCReader();
+
+  void set_reader_config(const USDCReaderConfig &config);
+  const USDCReaderConfig get_reader_config() const;
 
   bool ReadUSDC();
 
