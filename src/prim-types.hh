@@ -523,6 +523,8 @@ class MetaVariable;
 
 using CustomDataType = std::map<std::string, MetaVariable>;
 
+using Dictionary = CustomDataType; // alias to CustomDataType
+
 ///
 /// Helper function to access CustomData(dictionary).
 /// Recursively process into subdictionaries when a key contains namespaces(':')
@@ -719,14 +721,8 @@ struct PrimMeta {
       assetInfo;  // 'assetInfo' // TODO: Use AssetInfo
   nonstd::optional<CustomDataType> customData;  // `customData`
   nonstd::optional<value::StringData> doc;      // 'documentation'
-  nonstd::optional<value::StringData> comment;  // 'comment'
+  nonstd::optional<value::StringData> comment;  // 'comment'  (String only metadata value)
   nonstd::optional<APISchemas> apiSchemas;      // 'apiSchemas'
-
-  //
-  // MaterialBinding
-  //
-  // Could be arbitrary token value, but `weakerThanDescendants` or `strongerThanDescendants` for now.
-  nonstd::optional<value::token> bindMaterialAs; // 'bindMaterialAs'
 
   //
   // Compositions
@@ -753,16 +749,18 @@ struct PrimMeta {
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
+#if 0
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
   std::vector<value::StringData> stringData;
+#endif
 
   // FIXME: Find a better way to detect Prim meta is authored...
   bool authored() const {
     return (active || hidden || kind || customData || references || payload ||
             inherits || variants || variantSets || specializes || displayName ||
             sceneName || doc || comment || meta.size() || apiSchemas ||
-            stringData.size() || assetInfo);
+            assetInfo);
   }
 
   //
@@ -794,6 +792,14 @@ struct AttrMeta {
   nonstd::optional<value::StringData> comment;    // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
+  //
+  // MaterialBinding
+  //
+  // Could be arbitrary token value so use `token[]` type.
+  // For now, either `weakerThanDescendants` or `strongerThanDescendants` are valid token.
+  nonstd::optional<value::token> bindMaterialAs; // 'bindMaterialAs'
+
+
   std::map<std::string, MetaVariable> meta;  // other meta values
 
   // String only metadataum.
@@ -801,7 +807,7 @@ struct AttrMeta {
   std::vector<value::StringData> stringData;
 
   bool authored() const {
-    return (interpolation || elementSize || hidden || customData ||
+    return (interpolation || elementSize || hidden || customData || bindMaterialAs ||
             meta.size() || stringData.size());
   }
 };
@@ -1590,7 +1596,11 @@ class Relationship {
 
   bool is_blocked() const { return type == Type::ValueBlock; }
 
-  AttrMeta meta;
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
+
+ private:
+  AttrMeta _metas;
 };
 
 //
@@ -2066,9 +2076,11 @@ struct VariantSet {
 };
 
 // Generic primspec container.
+// Unknown or unsupported Prim type are also reprenseted as Model for now.
 struct Model {
   std::string name;
 
+  std::string prim_type_name; // e.g. "" for `def "bora" {}`, "UnknownPrim" for `def UnknownPrim "bora" {}`
   Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};  // Index to parent node
@@ -2374,6 +2386,9 @@ class Prim {
 
   uint32_t type_id() const { return _data.type_id(); }
 
+  std::string &prim_type_name() { return _prim_type_name; }
+  const std::string &prim_type_name() const { return _prim_type_name; }
+
   template <typename T>
   bool is() const {
     return (_data.type_id() == value::TypeTraits<T>::type_id());
@@ -2446,6 +2461,9 @@ class Prim {
   Path _elementPath;  // leaf("terminal") Prim name.(e.g. "myxform" for `def
                       // Xform "myform"`). For root node, elementPath name is
                       // empty string("").
+
+  std::string _prim_type_name; // Prim's type name. e.g. "Xform", "Mesh", "UnknownPrim", ... Could be empty for `def "myprim" {}` 
+
   Specifier _specifier{
       Specifier::Invalid};  // `def`, `over` or `class`. Usually `def`
   value::Value

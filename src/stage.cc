@@ -455,77 +455,97 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 std::string Stage::ExportToString() const {
   std::stringstream ss;
 
+  bool authored = false;
+
   ss << "#usda 1.0\n";
-  ss << "(\n";
+
+  std::stringstream meta_ss;
   if (stage_metas.doc.value.empty()) {
-    ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
-       << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
-       << tinyusdz::version_rev << "\"\n";
+    //ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
+    //   << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
+    //   << tinyusdz::version_rev << "\"\n";
   } else {
-    ss << pprint::Indent(1) << "doc = " << to_string(stage_metas.doc) << "\n";
+    meta_ss << pprint::Indent(1) << "doc = " << to_string(stage_metas.doc) << "\n";
+    authored = true;
   }
 
   if (stage_metas.metersPerUnit.authored()) {
-    ss << pprint::Indent(1) << "metersPerUnit = " << stage_metas.metersPerUnit.get_value() << "\n";
+    meta_ss << pprint::Indent(1) << "metersPerUnit = " << stage_metas.metersPerUnit.get_value() << "\n";
+    authored = true;
   }
 
   if (stage_metas.upAxis.authored()) {
-    ss << pprint::Indent(1) << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
+    meta_ss << pprint::Indent(1) << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
        << "\n";
+    authored = true;
   }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
-    ss << pprint::Indent(1) << "timeCodesPerSecond = "
+    meta_ss << pprint::Indent(1) << "timeCodesPerSecond = "
        << stage_metas.timeCodesPerSecond.get_value() << "\n";
+    authored = true;
   }
 
   if (stage_metas.startTimeCode.authored()) {
-    ss << pprint::Indent(1) << "startTimeCode = " << stage_metas.startTimeCode.get_value() << "\n";
+    meta_ss << pprint::Indent(1) << "startTimeCode = " << stage_metas.startTimeCode.get_value() << "\n";
+    authored = true;
   }
 
   if (stage_metas.endTimeCode.authored()) {
-    ss << pprint::Indent(1) << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
+    meta_ss << pprint::Indent(1) << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
+    authored = true;
   }
 
   if (stage_metas.framesPerSecond.authored()) {
-    ss << pprint::Indent(1) << "framesPerSecond = " << stage_metas.framesPerSecond.get_value() << "\n";
+    meta_ss << pprint::Indent(1) << "framesPerSecond = " << stage_metas.framesPerSecond.get_value() << "\n";
+    authored = true;
   }
 
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (stage_metas.subLayers.size()) {
-    ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers << "\n";
+    meta_ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers << "\n";
+    authored = true;
   }
 
   if (stage_metas.defaultPrim.str().size()) {
-    ss << pprint::Indent(1) << "defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
+    meta_ss << pprint::Indent(1) << "defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
        << "\n";
+    authored = true;
   }
 
   if (stage_metas.autoPlay.authored()) {
-    ss << pprint::Indent(1) << "autoPlay = " << to_string(stage_metas.autoPlay.get_value()) << "\n";
+    meta_ss << pprint::Indent(1) << "autoPlay = " << to_string(stage_metas.autoPlay.get_value()) << "\n";
+    authored = true;
   }
 
   if (stage_metas.playbackMode.authored()) {
     auto v = stage_metas.playbackMode.get_value();
     if (v == StageMetas::PlaybackMode::PlaybackModeLoop) {
-      ss << pprint::Indent(1) << "playbackMode = \"loop\"\n";
+      meta_ss << pprint::Indent(1) << "playbackMode = \"loop\"\n";
     } else { // None
-      ss << pprint::Indent(1) << "playbackMode = \"none\"\n";
+      meta_ss << pprint::Indent(1) << "playbackMode = \"none\"\n";
     }
+    authored = true;
   }
 
   if (!stage_metas.comment.value.empty()) {
     // Stage meta omits 'comment'
-    ss << pprint::Indent(1) << to_string(stage_metas.comment) << "\n";
+    meta_ss << pprint::Indent(1) << to_string(stage_metas.comment) << "\n";
+    authored = true;
   }
 
   if (stage_metas.customLayerData.size()) {
-    ss << print_customData(stage_metas.customLayerData, "customLayerData",
+    meta_ss << print_customData(stage_metas.customLayerData, "customLayerData",
                            /* indent */ 1);
+    authored = true;
   }
 
-  // TODO: write other header data.
-  ss << ")\n";
+  if (authored) {
+    ss << "(\n";
+    ss << meta_ss.str();
+    ss << ")\n";
+  }
+
   ss << "\n";
 
   for (const auto &item : root_nodes) {
