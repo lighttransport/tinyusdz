@@ -18,6 +18,10 @@ namespace tinyusdz {
 constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
 
+// for bindMaterialAs
+constexpr auto kWeaderThanDescendants = "weakerThanDescendants"; 
+constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
+
 //
 // Similar to Maya's ShadingGroup
 //

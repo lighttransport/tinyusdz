@@ -11,6 +11,11 @@ namespace tinyusdz {
 
 namespace usda {
 
+struct USDAReaderConfig {
+  bool allow_unknown_prims{true};
+  bool allow_unknown_apiSchema{true};
+};
+
 ///
 /// Test if input file is USDA format.
 ///
@@ -37,6 +42,16 @@ class USDAReader {
   void SetBaseDir(const std::string &base_dir);
 
   ///
+  /// Set reader option
+  ///
+  void set_reader_config(const USDAReaderConfig &config);
+
+  ///
+  /// Get reader option
+  ///
+  const USDAReaderConfig get_reader_config() const; // NOTE: Not returning reference to avoid static memory allocation.
+
+  ///
   /// Check if header data is USDA
   ///
   bool CheckHeader();
@@ -46,6 +61,7 @@ class USDAReader {
   ///
   bool Read(LoadState state = LoadState::Toplevel);
 
+#if 0
   ///
   ///
   ///
@@ -55,6 +71,7 @@ class USDAReader {
   /// Get parsed toplevel "def" nodes(GPrim)
   ///
   std::vector<GPrim> GetGPrims();
+#endif
 
   ///
   /// Get error message(when `Parse` failed)

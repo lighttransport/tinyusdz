@@ -10,6 +10,7 @@
 // - [ ] GeomSubset
 //
 
+#include "usdShade.hh"
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -146,6 +147,15 @@ struct VariantPrimNode {
 class USDCReader::Impl {
  public:
   Impl(StreamReader *sr, const USDCReaderConfig &config) : _sr(sr) {
+    set_reader_config(config);
+  }
+
+  ~Impl() {
+    delete crate_reader;
+    crate_reader = nullptr;
+  }
+
+  void set_reader_config(const USDCReaderConfig &config) {
     _config = config;
 
 #if defined(__wasi__)
@@ -160,9 +170,8 @@ class USDCReader::Impl {
 #endif
   }
 
-  ~Impl() {
-    delete crate_reader;
-    crate_reader = nullptr;
+  const USDCReaderConfig get_reader_config() const {
+    return _config;
   }
 
   bool ReadUSDC();
@@ -226,7 +235,7 @@ class USDCReader::Impl {
   /// Reconstruct Prim from given `typeName` string(e.g. "Xform")
   ///
   nonstd::optional<Prim> ReconstructPrimFromTypeName(
-      const std::string &typeName, const std::string &prim_name,
+      const std::string &typeName, const std::string &primTypeName, const std::string &prim_name,
       const crate::CrateReader::Node &node, const Specifier spec,
       const std::vector<value::token> &primChildren,
       const std::vector<value::token> &properties,
@@ -756,6 +765,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<int> elementSize;
   nonstd::optional<bool> hidden;
   nonstd::optional<CustomDataType> customData;
+  nonstd::optional<value::token> bindMaterialAs;
   nonstd::optional<value::StringData> comment;
   Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
@@ -943,6 +953,23 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`elementSize` field is not `int` type.");
       }
+    } else if (fv.first == "bindMaterialAs") {
+      // Attribute Meta
+      if (auto pv = fv.second.get_value<value::token>()) {
+        auto p = pv.value();
+        DCOUT("bindMaterialAs = " << to_string(p));
+
+        if ((p.str() == kWeaderThanDescendants) || (p.str() == kStrongerThanDescendants)) {
+          // ok
+        } else {
+          // still any token is valid(for future usecase)
+          PUSH_WARN("Unsupported bindMaterialAs token: " << p.str()); 
+        }
+        bindMaterialAs = p;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`bindMaterialAs` field is not `token` type.");
+      }
     } else if (fv.first == "targetChildren") {
       // `targetChildren` seems optionally exist to validate the existence of
       // target Paths when `targetPaths` field exists.
@@ -1057,44 +1084,53 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   }
 
   // metas
+  AttrMeta meta;
   if (interpolation) {
-    attr.metas().interpolation = interpolation.value();
+    meta.interpolation = interpolation.value();
   }
   if (elementSize) {
-    attr.metas().elementSize = elementSize.value();
+    meta.elementSize = elementSize.value();
   }
   if (hidden) {
-    attr.metas().hidden = hidden.value();
+    meta.hidden = hidden.value();
   }
   if (customData) {
-    attr.metas().customData = customData.value();
+    meta.customData = customData.value();
   }
   if (comment) {
-    attr.metas().comment = comment.value();
+    meta.comment = comment.value();
+  }
+  if (bindMaterialAs) {
+    meta.bindMaterialAs = bindMaterialAs.value();
   }
 
   // FIXME: SpecType supercedes propType.
   if (propType == Property::Type::EmptyAttrib) {
     if (typeName) {
+      // Assume Attribute
       (*prop) = Property(typeName.value().str(), custom);
+      prop->attribute().metas() = meta;
     } else {
       DCOUT("spec_type = " << to_string(spec_type));
       if (spec_type == SpecType::Relationship) {
         // `rel` with no target. e.g. `rel target`
         rel = Relationship();
         rel.set_novalue();
+        rel.metas() = meta;
         (*prop) = Property(rel, custom);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
       }
     }
   } else if (propType == Property::Type::Attrib) {
+    attr.metas() = meta;
     (*prop) = Property(attr, custom);
   } else if (propType == Property::Type::Connection) {
     if (!typeName) {
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "`typeName` field is missing for Attribute Connection.");
     }
+    rel.metas() = meta;
     if (rel.is_path()) {
       (*prop) = Property(rel.targetPath, typeName.value().str(), custom);
     } else if (rel.is_pathvector()) {
@@ -1104,6 +1140,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
     }
   } else if (propType == Property::Type::Relation) {
+    rel.metas() = meta;
     (*prop) = Property(rel, custom);
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
@@ -1459,11 +1496,14 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 }
 
 nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
-    const std::string &typeName, const std::string &prim_name,
+    const std::string &typeName, // TinyUSDZ's Prim type name
+    const std::string &primTypeName, // USD's Prim typeName
+    const std::string &prim_name,
     const crate::CrateReader::Node &node, const Specifier spec,
     const std::vector<value::token> &primChildren,
     const std::vector<value::token> &properties,
     const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta) {
+
 #define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec) \
   if (__node_ty == value::TypeTraits<__primty>::type_name()) {     \
     __primty typed_prim;                                           \
@@ -1478,7 +1518,30 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.primChildrenNames() = primChildren; \
     value::Value primdata = typed_prim;                            \
     Prim prim(__prim_name, primdata);                            \
+    prim.prim_type_name() = primTypeName; \
     /* also add primChildren to Prim */ \
+    prim.metas().primChildren = primChildren; \
+    return std::move(prim); \
+  } else
+
+  if (typeName == "Model") { 
+    // Code is mostly identical to RECONSTRUCT_PRIM.
+    // Difference is store primTypeName to Model class itself.
+    Model typed_prim;
+    if (!ReconstructPrim(node, psmap, &typed_prim)) {         
+      PUSH_ERROR("Failed to reconstruct Model");      
+      return nonstd::nullopt;                                      
+    }                                                              
+    typed_prim.meta = meta;                                        
+    typed_prim.name = prim_name;                                 
+    typed_prim.prim_type_name = primTypeName;                                 
+    typed_prim.spec = spec;                                      
+    typed_prim.propertyNames() = properties; 
+    typed_prim.primChildrenNames() = primChildren; 
+    value::Value primdata = typed_prim;                            
+    Prim prim(prim_name, primdata);                            
+    prim.prim_type_name() = primTypeName; 
+    /* also add primChildren to Prim */ 
     prim.metas().primChildren = primChildren; \
     return std::move(prim); \
   } else
@@ -1510,6 +1573,8 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     PUSH_WARN("TODO or unsupported prim type: " << typeName);
     return nonstd::nullopt;
   }
+
+
 
 #undef RECONSTRUCT_PRIM
 }
@@ -2028,13 +2093,17 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                   "with SpecType::Prim.");
       }
 
+      std::string pTyName;
       if (!typeName) {
         PUSH_WARN("Treat this node as Model(where `typeName` is missing.");
-        typeName = "Model";
+        pTyName = "Model";
+      } else {
+        pTyName = typeName.value();
       }
 
-      if (typeName) {
+      {
         std::string prim_name = elemPath.prim_part();
+        std::string primTypeName = typeName.has_value() ? typeName.value() : "";
 
         // Validation check should be already done in crate-reader, so no
         // further validation required.
@@ -2042,19 +2111,26 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
         }
 
-        auto prim = ReconstructPrimFromTypeName(typeName.value(), prim_name,
+        auto prim = ReconstructPrimFromTypeName(pTyName, primTypeName, prim_name,
                                                 node, specifier.value(), primChildren, properties,
                                                 psmap, primMeta);
 
         if (prim) {
           // Prim name
           prim.value().element_path() = elemPath;
-
-#if 0
-          // Prim id = Path ID
-          //prim.value().prim_id() = int64_t(current);
-#endif
+        } else {
+          if (_config.allow_unknown_prims) {
+            // Try to reconsrtuct as Model
+            prim = ReconstructPrimFromTypeName("Model", primTypeName, prim_name,
+                                                    node, specifier.value(), primChildren, properties,
+                                                    psmap, primMeta);
+            if (prim) {
+              // Prim name
+              prim.value().element_path() = elemPath;
+            }
+          }
         }
+      
 
         if (primOut) {
           (*primOut) = prim;
@@ -2173,16 +2249,21 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         specifier = Specifier::Def;
       }
 
+      std::string pTyName; // TinyUSDZ' prim typename
       if (!typeName) {
         PUSH_WARN("Treat this node as Model(where `typeName` is missing.");
-        typeName = "Model";
+        pTyName = "Model";
+      } else {
+        pTyName = typeName.value();
       }
 
       nonstd::optional<Prim> variantPrim;
-      if (typeName) {
+      {
         std::string prim_name = elemPath.prim_part();
         DCOUT("elemPath = " << dump_path(elemPath));
         DCOUT("prim_name = " << prim_name);
+
+        std::string primTypeName = typeName.has_value() ? typeName.value() : "";
 
         // Something like '{shapeVariant=Capsule}'
 
@@ -2202,7 +2283,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         variantPrim = ReconstructPrimFromTypeName(
-            typeName.value(), variantPrimName, node, specifier.value(), primChildren, properties,
+            pTyName, primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
             psmap, primMeta);
 
         if (variantPrim) {
@@ -2219,6 +2300,30 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
             DCOUT("??? prim idx already set " << current);
           } else {
             _variantPrims.emplace(current, variantPrim.value());
+          }
+        } else {
+          if (_config.allow_unknown_prims) {
+            // Try to reconstruct as Model
+            variantPrim = ReconstructPrimFromTypeName(
+                "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
+                psmap, primMeta);
+
+            if (variantPrim) {
+              // Prim name
+              variantPrim.value().element_path() =
+                  elemPath;  // FIXME: Use variantPrimName?
+
+              // Prim Specifier
+              variantPrim.value().specifier() = specifier.value();
+
+              // Store variantPrim to temporary buffer.
+              DCOUT("add prim idx as variant: " << current);
+              if (_variantPrims.count(current)) {
+                DCOUT("??? prim idx already set " << current);
+              } else {
+                _variantPrims.emplace(current, variantPrim.value());
+              }
+            }
           }
         }
       }
@@ -2532,6 +2637,14 @@ USDCReader::~USDCReader() {
   impl_ = nullptr;
 }
 
+void USDCReader::set_reader_config(const USDCReaderConfig &config) {
+  impl_->set_reader_config(config);
+}
+
+const USDCReaderConfig USDCReader::get_reader_config() const {
+  return impl_->get_reader_config();
+}
+
 bool USDCReader::ReconstructStage(Stage *stage) {
   DCOUT("Reconstruct Stage.");
   return impl_->ReconstructStage(stage);
@@ -2560,6 +2673,14 @@ USDCReader::USDCReader(StreamReader *sr, USDCReaderConfig &config) {
 }
 
 USDCReader::~USDCReader() {}
+
+void USDCReader::set_reader_config(const USDCReaderConfig &config) {
+  (void)config;
+}
+
+const USDCReaderConfig USDCReader::get_reader_config() const {
+  return USDCReaderConfig();
+}
 
 bool USDCReader::ReconstructStage(Stage *stage) {
   (void)scene;
