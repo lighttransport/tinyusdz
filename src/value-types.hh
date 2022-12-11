@@ -543,7 +543,7 @@ struct matrix2f {
     m[1][0] = 0.0f;
     m[1][1] = 1.0f;
   }
-
+  
   float m[2][2];
 };
 

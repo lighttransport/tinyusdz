@@ -546,11 +546,29 @@ std::string Stage::ExportToString() const {
     ss << ")\n";
   }
 
-  ss << "\n";
+  //ss << "\n";
 
-  for (const auto &item : root_nodes) {
-    // TODO: Traverse according to StageMeta:primChildren
-    PrimPrintRec(ss, item, 0);
+  if (stage_metas.primChildren.size() == root_nodes.size()) {
+
+    std::map<std::string, const Prim *> primNameTable;
+    for (size_t i = 0; i < root_nodes.size(); i++) {
+      primNameTable.emplace(root_nodes[i].element_name(), &root_nodes[i]);
+    }
+
+    for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
+      value::token nameTok = stage_metas.primChildren[i];
+      DCOUT(fmt::format("primChildren  {}/{} = {}", i, stage_metas.primChildren.size(), nameTok.str()));
+      const auto it = primNameTable.find(nameTok.str());
+      if (it != primNameTable.end()) {
+        PrimPrintRec(ss, *(it->second), 0);
+      } else {
+        // TODO: Report warning?
+      }
+    }
+  } else {
+    for (const auto &item : root_nodes) {
+      PrimPrintRec(ss, item, 0);
+    }
   }
 
   return ss.str();
