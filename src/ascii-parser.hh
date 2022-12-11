@@ -51,10 +51,12 @@ struct PathIdentifier : std::string {
   // using std::string;
 };
 
-
 // Parser option.
+// For strict configuration(e.g. read USDZ on Mobile), should disallow unknown
+// items.
 struct AsciiParserOption {
-  bool allow_unknown_apiSchema{false};  
+  bool allow_unknown_prim{true};
+  bool allow_unknown_apiSchema{true};
 };
 
 ///
@@ -64,7 +66,6 @@ bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
 class AsciiParser {
  public:
-
   // TODO: refactor
   struct PrimMetas {
     // Frequently used prim metas
@@ -230,7 +231,8 @@ class AsciiParser {
   ///
   using PrimConstructFunction =
       std::function<nonstd::expected<bool, std::string>(
-          const Path &full_path, const Specifier spec, const Path &prim_name,
+          const Path &full_path, const Specifier spec,
+          const std::string &primTypeName, const Path &prim_name,
           const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
           const PrimMetaMap &in_meta)>;
@@ -268,8 +270,9 @@ class AsciiParser {
   /// AsciiParser(i.e. USDAReader)
   ///
   using PrimSpecFunction = std::function<nonstd::expected<bool, std::string>(
-      const Path &full_path, const Specifier spec, const std::string &primTypeName,
-      const Path &prim_name, const int64_t primIdx, const int64_t parentPrimIdx,
+      const Path &full_path, const Specifier spec,
+      const std::string &primTypeName, const Path &prim_name,
+      const int64_t primIdx, const int64_t parentPrimIdx,
       const std::map<std::string, Property> &properties,
       const PrimMetaMap &in_meta)>;
 
@@ -293,7 +296,8 @@ class AsciiParser {
   ///
   /// Parser entry point
   ///
-  bool Parse(LoadState state = LoadState::Toplevel, const AsciiParserOption &parser_option=AsciiParserOption());
+  bool Parse(LoadState state = LoadState::Toplevel,
+             const AsciiParserOption &parser_option = AsciiParserOption());
 
   ///
   /// Parse TimeSample value with specified array type of
@@ -675,7 +679,8 @@ class AsciiParser {
   bool Eof() { return _sr->eof(); }
 
   bool ParseRelationship(Relationship *result);
-  bool ParseProperties(std::map<std::string, Property> *props, std::vector<value::token> *propNames);
+  bool ParseProperties(std::map<std::string, Property> *props,
+                       std::vector<value::token> *propNames);
 
   //
   // Look***() : Fetch chars but do not change input stream position.
@@ -726,9 +731,9 @@ class AsciiParser {
   ///
   void Setup();
 
-
   nonstd::optional<std::pair<ListEditQual, MetaVariable>> ParsePrimMeta();
-  bool ParsePrimProps(std::map<std::string, Property> *props, std::vector<value::token> *propNames);
+  bool ParsePrimProps(std::map<std::string, Property> *props,
+                      std::vector<value::token> *propNames);
 
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
