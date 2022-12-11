@@ -1090,7 +1090,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
     if (auto pv = prop.get_relationTarget()) {
       Relationship rel;
       rel.set(pv.value());
-      rel.meta = prop.get_attribute().metas();
+      rel.metas() = prop.get_attribute().metas();
       target = rel;
       table.insert(propname);
       ret.code = ParseResult::ResultCode::Success;
@@ -1120,7 +1120,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
           rel.set(conns);
         }
 
-        rel.meta = prop.get_attribute().metas();
+        rel.metas() = prop.get_attribute().metas();
         target = rel;
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
@@ -1140,7 +1140,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
         if (prop.get_property_type() == Property::Type::EmptyAttrib) {
           Relationship rel;
           rel.set_novalue();
-          rel.meta = prop.get_attribute().metas();
+          rel.metas() = prop.get_attribute().metas();
           table.insert(name);
           target = rel;
           ret.code = ParseResult::ResultCode::Success;
@@ -1236,27 +1236,6 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
-
-#if 0
-#define PARSE_PROXY_PRIM_RELATION(__table, __prop, __ptarget) \
-  if (prop.first == kProxyPrim) { \
-    if (__table.count(kProxyPrim)) { \
-       continue; \
-    } \
-    if (prop.second.is_relationship() && prop.second.is_empty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", kProxyPrim)); \
-    } \
-    const Relationship &rel = prop.second.get_relationship(); \
-    if (rel.is_path()) { \
-      __ptarget->proxyPrim = rel; \
-      table.insert(prop.first); \
-      DCOUT("Added rel proxyPrim."); \
-      continue; \
-    } else { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", kProxyPrim)); \
-    } \
-  }
-#endif
 
 // Rel with single targetPath
 #define PARSE_SINGLE_TARGET_PATH_RELATION(__table, __prop, __propname, __target) \
