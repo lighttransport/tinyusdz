@@ -8,9 +8,10 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
+#include "tiny-format.hh"
 
 // TODO:
-// - [ ] Print properties based on its appearance(USDA) or "properties" Prim field(USC)
+// - [ ] Print properties based on its appearance(USDA) or "properties" Prim field(USDC)
 
 namespace tinyusdz {
 namespace {
@@ -1128,6 +1129,67 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
   return ss.str();
 }
 
+static std::string print_xformOp(const std::vector<XformOp>& xformOps, const std::string &prop_name, const uint32_t indent, std::set<std::string> &table) {
+
+  std::stringstream ss;
+
+  if (xformOps.empty()) {
+    return ss.str();
+  }
+
+  // simple linear search
+  for (size_t i = 0; i < xformOps.size(); i++) {
+    const auto xformOp = xformOps[i];
+
+    if (xformOp.op_type == XformOp::OpType::ResetXformStack) {
+      // No need to print value.
+      continue;
+    }
+
+    std::string varname = to_string(xformOp.op_type);
+    if (!xformOp.suffix.empty()) {
+      varname += ":" + xformOp.suffix;
+    }
+
+    if (prop_name != varname) {
+      continue;
+    }
+
+    ss << pprint::Indent(indent);
+
+    ss << xformOp.get_value_type_name() << " " ;
+
+    ss << varname;
+
+    if (xformOp.is_timesamples()) {
+      ss << ".timeSamples";
+    }
+
+    ss << " = ";
+
+    if (xformOp.is_timesamples()) {
+      if (auto pv = xformOp.get_timesamples()) {
+        ss << print_timesamples(pv.value(), indent);
+      } else {
+        ss << "[InternalError]";
+      }
+    } else {
+      if (auto pv = xformOp.get_scalar()) {
+        ss << value::pprint_value(pv.value(), indent);
+      } else {
+        ss << "[InternalError]";
+      }
+    }
+
+    ss << "\n";
+
+    table.insert(prop_name);
+    break;
+  }
+
+  return ss.str();
+}
+
 template<typename T>
 std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
@@ -1155,6 +1217,52 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   ss << print_xformOps(gprim.xformOps, indent);
 
   return ss.str();
+}
+
+static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim, const std::string &prop_name, const uint32_t indent, std::set<std::string> &table) {
+
+  if (prop_name == "doubleSided") {
+    ss << print_typed_attr(gprim->doubleSided, "doubleSided", indent);
+    table.insert("doubleSided");
+  } else if (prop_name == "orientation") {
+    ss << print_typed_token_attr(gprim->orientation, "orientation", indent);
+    table.insert("orientation");
+  } else if (prop_name == "purpose") {
+    ss << print_typed_token_attr(gprim->purpose, "purpose", indent);
+    table.insert("purpose");
+  } else if (prop_name == "extent") {
+    ss << print_typed_attr(gprim->extent, "extent", indent);
+    table.insert("extent");
+  } else if (prop_name == "visibility") {
+    ss << print_typed_token_attr(gprim->visibility, "visibility", indent);
+    table.insert("visibility");
+  } else if (prop_name == "material:binding") {
+    if (gprim->materialBinding) {
+      ss << print_relationship(gprim->materialBinding.value(), gprim->materialBinding.value().get_listedit_qual(), /* custom */false, "material:binding", indent);
+      table.insert("material:binding");
+    }
+  } else if (prop_name == "material:binding:correction") {
+    if (gprim->materialBindingCorrection) {
+      ss << print_relationship(gprim->materialBindingCorrection.value(), gprim->materialBindingCorrection.value().get_listedit_qual(), /* custom */false, "material:binding:correction", indent);
+      table.insert("material:binding:correction");
+    }
+  } else if (prop_name == "material:binding:preview") {
+    if (gprim->materialBindingPreview) {
+      ss << print_relationship(gprim->materialBindingPreview.value(), gprim->materialBindingPreview.value().get_listedit_qual(), /* custom */false, "material:binding:preview", indent);
+      table.insert("material:binding:preview");
+    }
+  } else if (prop_name == "xformOpOrder") {
+    ss << print_xformOpOrder(gprim->xformOps, indent);
+    table.insert("xformOpOrder");
+  } else if (startsWith(prop_name, "xformOp:")) {
+    ss << print_xformOp(gprim->xformOps, prop_name, indent, table);
+  } else {
+    // not found
+    return false;
+  }
+
+  return true;
+
 }
 
 std::string to_string(bool v) {
@@ -1757,7 +1865,13 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
   return ss.str();
 }
 
-
+#define PRINT_TYPED_ATTR(__table, __propName, __var, __name, __indent) \
+  if (__propName == __name) { \
+    ss << print_typed_attr(__var, __name, __indent); \
+    __table.insert(__name); \
+    continue; \
+  }
+  
 std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -1769,12 +1883,42 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  // members
-  ss << print_typed_attr(sphere.radius, "radius", indent+1);
+  std::set<std::string> table;
 
-  ss << print_gprim_predefined(sphere, indent+1);
+  if (sphere.propertyNames().size()) {
+    // pxrUSD sorts property, so does TinyUSDZ also.
+    std::vector<std::string> sortedPropertyNames;
+    for (size_t i = 0; i < sphere.propertyNames().size(); i++) {
+      sortedPropertyNames.push_back(sphere.propertyNames()[i].str());
+    }
+    std::sort(sortedPropertyNames.begin(), sortedPropertyNames.end());
+    
+    for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
+      std::string propName = sortedPropertyNames[i];
 
-  ss << print_props(sphere.props, indent+1);
+      PRINT_TYPED_ATTR(table, propName, sphere.radius, "radius", indent+1)
+
+      if (emit_gprim_predefined(ss, &sphere, propName, indent+1, table)) {
+        continue;
+      }
+      if (sphere.props.count(propName)) {
+        ss << print_prop(sphere.props.at(propName), propName, indent+1);
+        table.insert(propName);
+        continue;
+      }
+
+      // not found
+      ss << fmt::format("# Property `{}` is described in `properties` Prim metadatum, but not found in this Prim. Possibly USDC file is corrupted.\n");
+      
+    }
+  } else {
+    // members
+    ss << print_typed_attr(sphere.radius, "radius", indent+1);
+
+    ss << print_gprim_predefined(sphere, indent+1);
+
+    ss << print_props(sphere.props, indent+1);
+  }
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
