@@ -3613,6 +3613,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     (*props)[attr_name] = p;
+    if (propNames) {
+      propNames->push_back(value::token(attr_name));
+    }
 
     return true;
   }
@@ -3744,6 +3747,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     p.attribute().metas() = meta;
 
     (*props)[attr_name] = p;
+    if (propNames) {
+      propNames->push_back(value::token(attr_name));
+    }
 
     return true;
   }
@@ -3776,6 +3782,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     (*props)[attr_name] = p;
+    if (propNames) {
+      propNames->push_back(value::token(attr_name));
+    }
 
     DCOUT(fmt::format("Added {} as a attribute connection.", primattr_name));
 
@@ -3821,6 +3830,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     Property p(attr, custom_qual);
     p.set_property_type(Property::Type::Attrib);
     (*props)[attr_name] = p;
+    if (propNames) {
+      propNames->push_back(value::token(attr_name));
+    }
 
     return true;
 
@@ -4112,6 +4124,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     Property p(attr, custom_qual);
 
     (*props)[primattr_name] = p;
+    if (propNames) {
+      propNames->push_back(value::token(attr_name));
+    }
 
     return true;
   }

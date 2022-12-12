@@ -9,6 +9,8 @@
 #include "value-pprint.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
+//
+#include "common-macros.inc"
 
 // TODO:
 // - [ ] Print properties based on its appearance(USDA) or "properties" Prim field(USDC)
@@ -151,16 +153,21 @@ void SetIndentString(const std::string &s) {
   sIndentString = s;
 }
 
+
 } // namespace pprint
 
 
 namespace {
 
-//std::string to_string(const double &v) {
-//  std::stringstream ss;
-//  ss << v;
-//  return ss.str();
-//}
+std::vector<std::string> GetSortedPropertyNames(const std::vector<value::token> &propertyNames) {
+  std::vector<std::string> sortedPropertyNames;
+  for (size_t i = 0; i < propertyNames.size(); i++) {
+    sortedPropertyNames.push_back(propertyNames[i].str());
+  }
+  std::sort(sortedPropertyNames.begin(), sortedPropertyNames.end());
+
+  return sortedPropertyNames;
+}
 
 } // namespace local
 
@@ -1784,6 +1791,32 @@ std::string to_string(const Scope &scope, const uint32_t indent, bool closing_br
   return ss.str();
 }
 
+#define EMIT_TYPED_ATTR(__table, __propName, __var, __name, __indent) \
+  if (__propName == __name) { \
+    ss << print_typed_attr(__var, __name, __indent); \
+    __table.insert(__name); \
+    continue; \
+  }
+
+#define EMIT_TYPED_TOKEN_ATTR(__table, __propName, __var, __name, __indent) \
+  if (__propName == __name) { \
+    ss << print_typed_token_attr(__var, __name, __indent); \
+    __table.insert(__name); \
+    continue; \
+  }
+
+#define EMIT_RELATIONSHIP(__table, __propName, __relvar, __name, __indent) \
+  if (__propName == __name) { \
+    if (__relvar) { \
+      ss << print_relationship(__relvar.value(), __relvar.value().get_listedit_qual(), /* custom */false, __name, __indent); \
+    } \
+    /* set visited even corresponding Relationship is not authored */ \
+    __table.insert(__name); \
+   continue; \
+  }
+
+#if 0
+// Generic Geometry Prim is now represented as Model
 std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -1804,6 +1837,7 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
 
   return ss.str();
 }
+#endif
 
 std::string to_string(const Xform &xform, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
@@ -1816,9 +1850,31 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_gprim_predefined(xform, indent+1);
+  if (xform.propertyNames().size()) {
 
-  ss << print_props(xform.props, indent+1);
+    std::set<std::string> table;
+
+    std::vector<std::string> sortedPropertyNames = GetSortedPropertyNames(xform.propertyNames());
+
+    for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
+      std::string propName = sortedPropertyNames[i];
+
+      if (emit_gprim_predefined(ss, &xform, propName, indent+1, table)) {
+        continue;
+      }
+      if (xform.props.count(propName)) {
+        ss << print_prop(xform.props.at(propName), propName, indent+1);
+        table.insert(propName);
+        continue;
+      }
+    }
+
+  } else {
+
+    ss << print_gprim_predefined(xform, indent+1);
+
+    ss << print_props(xform.props, indent+1);
+  }
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -1865,29 +1921,6 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
   return ss.str();
 }
 
-#define PRINT_TYPED_ATTR(__table, __propName, __var, __name, __indent) \
-  if (__propName == __name) { \
-    ss << print_typed_attr(__var, __name, __indent); \
-    __table.insert(__name); \
-    continue; \
-  }
-
-#define PRINT_TYPED_TOKEN_ATTR(__table, __propName, __var, __name, __indent) \
-  if (__propName == __name) { \
-    ss << print_typed_token_attr(__var, __name, __indent); \
-    __table.insert(__name); \
-    continue; \
-  }
-
-#define PRINT_RELATIONSHIP(__table, __propName, __relvar, __name, __indent) \
-  if (__propName == __name) { \
-    if (__relvar) { \
-      ss << print_relationship(__relvar.value(), __relvar.value().get_listedit_qual(), /* custom */false, __name, __indent); \
-    } \
-    /* set visited even corresponding Relationship is not authored */ \
-    __table.insert(__name); \
-   continue; \
-  }
   
 std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
@@ -1906,16 +1939,12 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
     std::set<std::string> table;
 
     // pxrUSD sorts property, so does TinyUSDZ also.
-    std::vector<std::string> sortedPropertyNames;
-    for (size_t i = 0; i < sphere.propertyNames().size(); i++) {
-      sortedPropertyNames.push_back(sphere.propertyNames()[i].str());
-    }
-    std::sort(sortedPropertyNames.begin(), sortedPropertyNames.end());
+    std::vector<std::string> sortedPropertyNames = GetSortedPropertyNames(sphere.propertyNames());
     
     for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
       std::string propName = sortedPropertyNames[i];
 
-      PRINT_TYPED_ATTR(table, propName, sphere.radius, "radius", indent+1)
+      EMIT_TYPED_ATTR(table, propName, sphere.radius, "radius", indent+1)
 
       if (emit_gprim_predefined(ss, &sphere, propName, indent+1, table)) {
         continue;
@@ -1958,40 +1987,37 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   if (mesh.propertyNames().size()) {
+    //DCOUT("GeomMesh has propertyNames()");
 
     std::set<std::string> table;
 
     // pxrUSD sorts property, so does TinyUSDZ also.
-    std::vector<std::string> sortedPropertyNames;
-    for (size_t i = 0; i < mesh.propertyNames().size(); i++) {
-      sortedPropertyNames.push_back(mesh.propertyNames()[i].str());
-    }
-    std::sort(sortedPropertyNames.begin(), sortedPropertyNames.end());
+    std::vector<std::string> sortedPropertyNames = GetSortedPropertyNames(mesh.propertyNames());
 
     for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
       std::string propName = sortedPropertyNames[i];
 
-      PRINT_TYPED_ATTR(table, propName, mesh.points, "points", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.normals, "normals", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.faceVertexIndices, "faceVertexIndices", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.faceVertexCounts, "faceVertexCounts", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.points, "points", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.normals, "normals", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.faceVertexIndices, "faceVertexIndices", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.faceVertexCounts, "faceVertexCounts", indent+1)
 
       // usdSkel
-      PRINT_TYPED_ATTR(table, propName, mesh.blendShapes, "skel:blendShapes", indent+1)
-      PRINT_RELATIONSHIP(table, propName, mesh.skeleton, "skel:skeleton", indent+1)
-      PRINT_RELATIONSHIP(table, propName, mesh.blendShapeTargets, "skel:blenShapeTargets", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.blendShapes, "skel:blendShapes", indent+1)
+      EMIT_RELATIONSHIP(table, propName, mesh.skeleton, "skel:skeleton", indent+1)
+      EMIT_RELATIONSHIP(table, propName, mesh.blendShapeTargets, "skel:blenShapeTargets", indent+1)
 
       // subdiv
-      PRINT_TYPED_ATTR(table, propName, mesh.cornerIndices, "cornerIndices", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.cornerSharpnesses, "cornerSharpnesses", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.creaseIndices, "creaseIndices", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.creaseLengths, "creaseLengths", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.creaseSharpnesses, "creaseSharpnesses", indent+1)
-      PRINT_TYPED_ATTR(table, propName, mesh.holeIndices, "holeIndices", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.cornerIndices, "cornerIndices", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.cornerSharpnesses, "cornerSharpnesses", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.creaseIndices, "creaseIndices", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.creaseLengths, "creaseLengths", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.creaseSharpnesses, "creaseSharpnesses", indent+1)
+      EMIT_TYPED_ATTR(table, propName, mesh.holeIndices, "holeIndices", indent+1)
 
-      PRINT_TYPED_TOKEN_ATTR(table, propName, mesh.subdivisionScheme, "subdivisonScheme", indent+1)
-      PRINT_TYPED_TOKEN_ATTR(table, propName, mesh.interpolateBoundary, "interpolateBoundary", indent+1)
-      PRINT_TYPED_TOKEN_ATTR(table, propName, mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1)
+      EMIT_TYPED_TOKEN_ATTR(table, propName, mesh.subdivisionScheme, "subdivisonScheme", indent+1)
+      EMIT_TYPED_TOKEN_ATTR(table, propName, mesh.interpolateBoundary, "interpolateBoundary", indent+1)
+      EMIT_TYPED_TOKEN_ATTR(table, propName, mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1)
 
       if (emit_gprim_predefined(ss, &mesh, propName, indent+1, table)) {
         continue;
@@ -2010,6 +2036,8 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
 
 
   } else {
+
+    // TODO: Build propertyNames() and print properties alphabetically
 
     // members
     ss << print_typed_attr(mesh.points, "points", indent+1);
@@ -2040,7 +2068,6 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
     ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1);
 
     ss << print_gprim_predefined(mesh, indent+1);
-
 
     ss << print_props(mesh.props, indent+1);
   }
@@ -2335,21 +2362,57 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_token_attr(root.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(root.purpose, "purpose", indent+1);
-  ss << print_typed_attr(root.extent, "extent", indent+1);
+  if (root.propertyNames().size()) {
 
-  if (root.proxyPrim) {
-    ss << print_relationship(root.proxyPrim.value(), root.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
+    std::vector<std::string> sortedPropertyNames = GetSortedPropertyNames(root.propertyNames());
+    
+    std::set<std::string> table;
+    for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
+      std::string propName = sortedPropertyNames[i];
+
+      EMIT_TYPED_TOKEN_ATTR(table, propName, root.visibility, "visibility", indent+1)
+      EMIT_TYPED_TOKEN_ATTR(table, propName, root.purpose, "purpose", indent+1)
+      EMIT_TYPED_ATTR(table, propName, root.extent, "extent", indent+1)
+      EMIT_RELATIONSHIP(table, propName, root.proxyPrim, "proxyPrim", indent+1)
+
+      ss << print_xformOps(root.xformOps, indent+1);
+
+      ss << print_props(root.props, indent+1);
+
+      if (propName == "xformOpOrder") {
+        ss << print_xformOpOrder(root.xformOps, indent);
+        table.insert("xformOpOrder");
+        continue;
+      } else if (startsWith(propName, "xformOp:")) {
+        ss << print_xformOp(root.xformOps, propName, indent, table);
+        continue;
+      }
+
+      if (root.props.count(propName)) {
+        ss << print_prop(root.props.at(propName), propName, indent+1);
+        table.insert(propName);
+        continue;
+      }
+
+      // not found
+      ss << fmt::format("# Property `{}` is described in `properties` Prim metadatum, but not found in this Prim. Possibly USDC file is corrupted.\n");
+
+    }
+  } else {
+
+    ss << print_typed_token_attr(root.visibility, "visibility", indent+1);
+    ss << print_typed_token_attr(root.purpose, "purpose", indent+1);
+    ss << print_typed_attr(root.extent, "extent", indent+1);
+
+    if (root.proxyPrim) {
+      ss << print_relationship(root.proxyPrim.value(), root.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
+    }
+
+    ss << print_xformOps(root.xformOps, indent+1);
+
+    ss << print_props(root.props, indent+1);
   }
 
-  // TODO
-  // Skeleton id
-  //ss << pprint::Indent(indent) << "skelroot.skeleton_id << "\n"
-
-  ss << print_xformOps(root.xformOps, indent+1);
-
-  ss << print_props(root.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2369,26 +2432,65 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_attr(skel.bindTransforms, "bindTransforms", indent+1);
-  ss << print_typed_attr(skel.jointNames, "jointNames", indent+1);
-  ss << print_typed_attr(skel.joints, "joints", indent+1);
-  ss << print_typed_attr(skel.restTransforms, "restTransforms", indent+1);
+  if (skel.propertyNames().size()) {
 
-  if (skel.animationSource) {
-    ss << print_relationship(skel.animationSource.value(), skel.animationSource.value().get_listedit_qual(), /* custom */false, "skel:animationSource", indent+1);
+    std::vector<std::string> sortedPropertyNames = GetSortedPropertyNames(skel.propertyNames());
+    
+    std::set<std::string> table;
+    for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
+      std::string propName = sortedPropertyNames[i];
+
+      EMIT_TYPED_ATTR(table, propName, skel.bindTransforms, "bindTransforms", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skel.jointNames, "jointNames", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skel.joints, "joints", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skel.restTransforms, "restTransforms", indent+1)
+
+      EMIT_RELATIONSHIP(table, propName, skel.animationSource, "skel:animationSource", indent+1)
+      EMIT_RELATIONSHIP(table, propName, skel.proxyPrim, "proxyPrim", indent+1)
+
+      EMIT_TYPED_TOKEN_ATTR(table, propName, skel.visibility, "visibility", indent+1)
+      EMIT_TYPED_TOKEN_ATTR(table, propName, skel.purpose, "purpose", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skel.extent, "extent", indent+1)
+
+      if (propName == "xformOpOrder") {
+        ss << print_xformOpOrder(skel.xformOps, indent);
+        table.insert("xformOpOrder");
+        continue;
+      } else if (startsWith(propName, "xformOp:")) {
+        ss << print_xformOp(skel.xformOps, propName, indent, table);
+        continue;
+      } else if (skel.props.count(propName)) {
+        ss << print_prop(skel.props.at(propName), propName, indent+1);
+        table.insert(propName);
+        continue;
+      }
+
+      // not found
+      ss << fmt::format("# Property `{}` is described in `properties` Prim metadatum, but not found in this Prim. Possibly USDC file is corrupted.\n");
+    }
+  } else {
+
+    ss << print_typed_attr(skel.bindTransforms, "bindTransforms", indent+1);
+    ss << print_typed_attr(skel.jointNames, "jointNames", indent+1);
+    ss << print_typed_attr(skel.joints, "joints", indent+1);
+    ss << print_typed_attr(skel.restTransforms, "restTransforms", indent+1);
+
+    if (skel.animationSource) {
+      ss << print_relationship(skel.animationSource.value(), skel.animationSource.value().get_listedit_qual(), /* custom */false, "skel:animationSource", indent+1);
+    }
+
+    if (skel.proxyPrim) {
+      ss << print_relationship(skel.proxyPrim.value(), skel.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
+    }
+
+    ss << print_xformOps(skel.xformOps, indent+1);
+
+    ss << print_typed_token_attr(skel.visibility, "visibility", indent+1);
+    ss << print_typed_token_attr(skel.purpose, "purpose", indent+1);
+    ss << print_typed_attr(skel.extent, "extent", indent+1);
+
+    ss << print_props(skel.props, indent+1);
   }
-
-  if (skel.proxyPrim) {
-    ss << print_relationship(skel.proxyPrim.value(), skel.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
-  }
-
-  ss << print_xformOps(skel.xformOps, indent+1);
-
-  ss << print_typed_token_attr(skel.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(skel.purpose, "purpose", indent+1);
-  ss << print_typed_attr(skel.extent, "extent", indent+1);
-
-  ss << print_props(skel.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2408,14 +2510,43 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent+1);
-  ss << print_typed_attr(skelanim.blendShapeWeights, "blendShapeWeights", indent+1);
-  ss << print_typed_attr(skelanim.joints, "joints", indent+1);
-  ss << print_typed_attr(skelanim.rotations, "rotations", indent+1);
-  ss << print_typed_attr(skelanim.scales, "scales", indent+1);
-  ss << print_typed_attr(skelanim.translations, "translations", indent+1);
+  if (skelanim.propertyNames().size()) {
 
-  ss << print_props(skelanim.props, indent+1);
+    std::vector<std::string> sortedPropertyNames = GetSortedPropertyNames(skelanim.propertyNames());
+    
+    std::set<std::string> table;
+    for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
+      std::string propName = sortedPropertyNames[i];
+
+      EMIT_TYPED_ATTR(table, propName, skelanim.blendShapes, "blendShapes", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skelanim.blendShapeWeights, "blendShapeWeights", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skelanim.joints, "joints", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skelanim.rotations, "rotations", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skelanim.scales, "scales", indent+1)
+      EMIT_TYPED_ATTR(table, propName, skelanim.translations, "translations", indent+1)
+
+    
+      if (skelanim.props.count(propName)) {
+        ss << print_prop(skelanim.props.at(propName), propName, indent+1);
+        table.insert(propName);
+        continue;
+      }
+
+      // not found
+      ss << fmt::format("# Property `{}` is described in `properties` Prim metadatum, but not found in this Prim. Possibly USDC file is corrupted.\n");
+    }
+
+  } else {
+
+    ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent+1);
+    ss << print_typed_attr(skelanim.blendShapeWeights, "blendShapeWeights", indent+1);
+    ss << print_typed_attr(skelanim.joints, "joints", indent+1);
+    ss << print_typed_attr(skelanim.rotations, "rotations", indent+1);
+    ss << print_typed_attr(skelanim.scales, "scales", indent+1);
+    ss << print_typed_attr(skelanim.translations, "translations", indent+1);
+
+    ss << print_props(skelanim.props, indent+1);
+  }
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

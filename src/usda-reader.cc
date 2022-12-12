@@ -485,6 +485,7 @@ class USDAReader::Impl {
 
           DCOUT("full_path = " << full_path.full_path_name());
           DCOUT("primName = " << prim_name.full_path_name());
+          DCOUT("propNames = " << propNames);
 
           prim::ReferenceList references;
           if (prim.meta.references) {
@@ -500,6 +501,7 @@ class USDAReader::Impl {
 
           prim.spec = spec;
           prim.name = prim_name.prim_part();
+          prim.propertyNames() = propNames;
 
           // Add to scene graph.
           // NOTE: Scene graph is constructed from bottom up manner(Children

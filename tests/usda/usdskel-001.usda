@@ -28,7 +28,7 @@ def SkelRoot "Model" {
             half3[] scales = [(1,1,1)]
         }
         
-        rel skel:animationSource = <Anim>
+        rel skel:animationSource = </Model/Skel/Anim>
     }
     def Mesh "Arm" {
  

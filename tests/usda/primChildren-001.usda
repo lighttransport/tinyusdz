@@ -1,0 +1,12 @@
+#usda 1.0
+
+def Sphere "world"
+{
+  double radius = 1.2
+  double ev = 3.3
+}
+
+def Sphere "aworld"
+{
+  double radius = 2.0
+}
