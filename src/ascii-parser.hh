@@ -235,6 +235,7 @@ class AsciiParser {
           const std::string &primTypeName, const Path &prim_name,
           const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
+          const std::vector<value::token> &propNames, // Equivalent to 'properties' metadatum in USDC
           const PrimMetaMap &in_meta)>;
 
   struct VariantContent {

@@ -4627,7 +4627,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       Path fullpath(GetCurrentPath(), "");
       Path pname(prim_name, "");
       nonstd::expected<bool, std::string> ret = construct_fun(
-          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas);
+          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, propNames, in_metas);
 
       if (!ret) {
         // construction failed.

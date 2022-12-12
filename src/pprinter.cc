@@ -1871,6 +1871,23 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
     __table.insert(__name); \
     continue; \
   }
+
+#define PRINT_TYPED_TOKEN_ATTR(__table, __propName, __var, __name, __indent) \
+  if (__propName == __name) { \
+    ss << print_typed_token_attr(__var, __name, __indent); \
+    __table.insert(__name); \
+    continue; \
+  }
+
+#define PRINT_RELATIONSHIP(__table, __propName, __relvar, __name, __indent) \
+  if (__propName == __name) { \
+    if (__relvar) { \
+      ss << print_relationship(__relvar.value(), __relvar.value().get_listedit_qual(), /* custom */false, __name, __indent); \
+    } \
+    /* set visited even corresponding Relationship is not authored */ \
+    __table.insert(__name); \
+   continue; \
+  }
   
 std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
@@ -1883,9 +1900,11 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  std::set<std::string> table;
 
   if (sphere.propertyNames().size()) {
+
+    std::set<std::string> table;
+
     // pxrUSD sorts property, so does TinyUSDZ also.
     std::vector<std::string> sortedPropertyNames;
     for (size_t i = 0; i < sphere.propertyNames().size(); i++) {
@@ -1938,42 +1957,98 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  // members
-  ss << print_typed_attr(mesh.points, "points", indent+1);
-  ss << print_typed_attr(mesh.normals, "normals", indent+1);
-  ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
-  ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
+  if (mesh.propertyNames().size()) {
 
-  if (mesh.skeleton) {
-    ss << print_relationship(mesh.skeleton.value(), mesh.skeleton.value().get_listedit_qual(), /* custom */false, "skel:skeketon", indent+1);
+    std::set<std::string> table;
+
+    // pxrUSD sorts property, so does TinyUSDZ also.
+    std::vector<std::string> sortedPropertyNames;
+    for (size_t i = 0; i < mesh.propertyNames().size(); i++) {
+      sortedPropertyNames.push_back(mesh.propertyNames()[i].str());
+    }
+    std::sort(sortedPropertyNames.begin(), sortedPropertyNames.end());
+
+    for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
+      std::string propName = sortedPropertyNames[i];
+
+      PRINT_TYPED_ATTR(table, propName, mesh.points, "points", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.normals, "normals", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.faceVertexIndices, "faceVertexIndices", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.faceVertexCounts, "faceVertexCounts", indent+1)
+
+      // usdSkel
+      PRINT_TYPED_ATTR(table, propName, mesh.blendShapes, "skel:blendShapes", indent+1)
+      PRINT_RELATIONSHIP(table, propName, mesh.skeleton, "skel:skeleton", indent+1)
+      PRINT_RELATIONSHIP(table, propName, mesh.blendShapeTargets, "skel:blenShapeTargets", indent+1)
+
+      // subdiv
+      PRINT_TYPED_ATTR(table, propName, mesh.cornerIndices, "cornerIndices", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.cornerSharpnesses, "cornerSharpnesses", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.creaseIndices, "creaseIndices", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.creaseLengths, "creaseLengths", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.creaseSharpnesses, "creaseSharpnesses", indent+1)
+      PRINT_TYPED_ATTR(table, propName, mesh.holeIndices, "holeIndices", indent+1)
+
+      PRINT_TYPED_TOKEN_ATTR(table, propName, mesh.subdivisionScheme, "subdivisonScheme", indent+1)
+      PRINT_TYPED_TOKEN_ATTR(table, propName, mesh.interpolateBoundary, "interpolateBoundary", indent+1)
+      PRINT_TYPED_TOKEN_ATTR(table, propName, mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1)
+
+      if (emit_gprim_predefined(ss, &mesh, propName, indent+1, table)) {
+        continue;
+      }
+
+      if (mesh.props.count(propName)) {
+        ss << print_prop(mesh.props.at(propName), propName, indent+1);
+        table.insert(propName);
+        continue;
+      }
+
+      // not found
+      ss << fmt::format("# Property `{}` is described in `properties` Prim metadatum, but not found in this Prim. Possibly USDC file is corrupted.\n");
+      
+    }
+
+
+  } else {
+
+    // members
+    ss << print_typed_attr(mesh.points, "points", indent+1);
+    ss << print_typed_attr(mesh.normals, "normals", indent+1);
+    ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
+    ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
+
+    if (mesh.skeleton) {
+      ss << print_relationship(mesh.skeleton.value(), mesh.skeleton.value().get_listedit_qual(), /* custom */false, "skel:skeketon", indent+1);
+    }
+
+    ss << print_typed_attr(mesh.blendShapes, "skel:blendShapes", indent+1);
+    if (mesh.blendShapeTargets) {
+      ss << print_relationship(mesh.blendShapeTargets.value(), mesh.blendShapeTargets.value().get_listedit_qual(), /* custom */false, "skel:blendShapeTargets", indent+1);
+    }
+
+
+    // subdiv
+    ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
+    ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
+    ss << print_typed_attr(mesh.creaseIndices, "creaseIndices", indent+1);
+    ss << print_typed_attr(mesh.creaseLengths, "creaseLengths", indent+1);
+    ss << print_typed_attr(mesh.creaseSharpnesses, "creaseSharpnesses", indent+1);
+    ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent+1);
+
+    ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme", indent+1);
+    ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary", indent+1);
+    ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1);
+
+    ss << print_gprim_predefined(mesh, indent+1);
+
+
+    ss << print_props(mesh.props, indent+1);
   }
-
-  ss << print_typed_attr(mesh.blendShapes, "skel:blendShapes", indent+1);
-  if (mesh.blendShapeTargets) {
-    ss << print_relationship(mesh.blendShapeTargets.value(), mesh.blendShapeTargets.value().get_listedit_qual(), /* custom */false, "skel:blendShapeTargets", indent+1);
-  }
-
-
-  // subdiv
-  ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
-  ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
-  ss << print_typed_attr(mesh.creaseIndices, "creaseIndices", indent+1);
-  ss << print_typed_attr(mesh.creaseLengths, "creaseLengths", indent+1);
-  ss << print_typed_attr(mesh.creaseSharpnesses, "creaseSharpnesses", indent+1);
-  ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent+1);
-
-  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme", indent+1);
-  ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary", indent+1);
-  ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1);
-
-  ss << print_gprim_predefined(mesh, indent+1);
 
   // GeomSubset.
   for (const auto &subset : mesh.geom_subset_children) {
     ss << to_string(subset, indent+1, /* closing_brace */true);
   }
-
-  ss << print_props(mesh.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

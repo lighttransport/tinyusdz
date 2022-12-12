@@ -444,6 +444,7 @@ class USDAReader::Impl {
         [&](const Path &full_path, const Specifier spec, const std::string &primTypeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const prim::PropertyMap &properties,
+            const std::vector<value::token> &propNames,
             const ascii::AsciiParser::PrimMetaMap &in_meta)
             -> nonstd::expected<bool, std::string> {
           if (!prim_name.is_valid()) {
@@ -1353,6 +1354,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
       [&](const Path &full_path, const Specifier spec, const std::string &primTypeName, const Path &prim_name, const int64_t primIdx,
           const int64_t parentPrimIdx,
           const prim::PropertyMap &properties,
+          const std::vector<value::token> &propNames,
           //const prim::ReferenceList &references,
           const ascii::AsciiParser::PrimMetaMap &in_meta)
           -> nonstd::expected<bool, std::string> {
