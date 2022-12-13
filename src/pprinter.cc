@@ -500,25 +500,28 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   std::stringstream ss;
+  
+  // Try to print variables alphabetically
 
-  if (meta.interpolation) {
-    ss << pprint::Indent(indent) << "interpolation = " << quote(to_string(meta.interpolation.value())) << "\n";
+  if (meta.bindMaterialAs) {
+    ss << pprint::Indent(indent) << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value())) << "\n";
+  }
+
+  if (meta.comment) {
+    ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
   }
 
   if (meta.elementSize) {
     ss << pprint::Indent(indent) << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
   }
 
-  if (meta.bindMaterialAs) {
-    ss << pprint::Indent(indent) << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value())) << "\n";
+  if (meta.interpolation) {
+    ss << pprint::Indent(indent) << "interpolation = " << quote(to_string(meta.interpolation.value())) << "\n";
   }
+
 
   if (meta.hidden) {
     ss << pprint::Indent(indent) << "hidden = " << to_string(meta.hidden.value()) << "\n";
-  }
-
-  if (meta.comment) {
-    ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
   }
 
   if (meta.customData) {
@@ -566,7 +569,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
       if (pv) {
         if (pv.value().is_timesamples()) {
-          ss << ".timeSamples = " << print_typed_timesamples(pv.value().get_timesamples(), indent+1);
+          ss << ".timeSamples = " << print_typed_timesamples(pv.value().get_timesamples(), indent);
         } else {
           T a;
           if (pv.value().get_scalar(&a)) {
@@ -978,7 +981,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
       ss << " = ";
 
       if (attr.get_var().is_timesamples()) {
-        ss << print_timesamples(attr.get_var().ts_raw(), indent+1);
+        ss << print_timesamples(attr.get_var().ts_raw(), indent);
       } else if (attr.is_blocked()) {
         ss << "None";
       } else {

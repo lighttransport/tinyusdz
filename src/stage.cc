@@ -459,6 +459,8 @@ std::string Stage::ExportToString() const {
 
   ss << "#usda 1.0\n";
 
+  // TODO: alphabet order
+
   std::stringstream meta_ss;
   if (stage_metas.doc.value.empty()) {
     //ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
@@ -474,15 +476,16 @@ std::string Stage::ExportToString() const {
     authored = true;
   }
 
-  if (stage_metas.upAxis.authored()) {
-    meta_ss << pprint::Indent(1) << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
-       << "\n";
-    authored = true;
-  }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
     meta_ss << pprint::Indent(1) << "timeCodesPerSecond = "
        << stage_metas.timeCodesPerSecond.get_value() << "\n";
+    authored = true;
+  }
+
+  if (stage_metas.upAxis.authored()) {
+    meta_ss << pprint::Indent(1) << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
+       << "\n";
     authored = true;
   }
 
@@ -545,8 +548,6 @@ std::string Stage::ExportToString() const {
     ss << meta_ss.str();
     ss << ")\n";
   }
-
-  //ss << "\n";
 
   if (stage_metas.primChildren.size() == root_nodes.size()) {
 
