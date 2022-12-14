@@ -8,92 +8,29 @@
 #include "unit-primvar.h"
 #include "primvar.hh"
 #include "value-pprint.hh"
+#include "usdGeom.hh"
 
 using namespace tinyusdz::value;
 using namespace tinyusdz::primvar;
 
-#if 0 // TODO:  move to type-reconstruction-test?
-struct Mesh {
-  std::vector<vector3f> vertices;
-  std::vector<int32_t> indices;
-};
-
-static bool ReconstructAttribTest0() {
-  Mesh mesh;
-  Reconstructor r;
-
-  r.property("vertices", &mesh.vertices)
-   .property("indices", &mesh.indices);
-
-  AttribMap amap;
-  amap.attribs["vertices"] =
-      std::vector<vector3f>({{1.0f, 2.0f, 3.0f}, {0.5f, 2.1f, 4.3f}});
-  amap.attribs["indices"] =
-      std::vector<int32_t>({0, 1, 2, 0, 3, 4});
-
-  bool ret = r.reconstruct(amap);
-
-  if (!ret) {
-    std::cerr << r.get_error() << "\n";
-  }
-
-  return ret;
-}
-
-
-static bool ReconstructVertrices(const any_value &v, Mesh &mesh) {
-  if (v.type_id() == (TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT)) {
-    mesh.vertices = *reinterpret_cast<const std::vector<vector3f> *>(v.value());
-    return true;
-  }
-
-  return false;
-}
-#endif
-
 void primvar_test(void) {
 
-#if 0
+  // geom primvar
   {
-    any_value f = 1.2f;
-    TEST_CHECK(is_float(f));
-    TEST_CHECK(is_type<float>()(f));
-    float a = typecast<TYPE_ID_FLOAT>::to(f);
-    std::cout << "a = " << a << "\n";
+    tinyusdz::GeomMesh mesh;
+    std::vector<float> scalar_array = {1.0, 2.0, 3.0, 4.0};
+    tinyusdz::Attribute attr;
+    attr.set_value(scalar_array);
+    tinyusdz::Property prop(attr, /* custom */false);
 
-    f = double(4.5);
-    TEST_CHECK(is_double(f));
-    TEST_CHECK(is_type<double>()(f));
-    double b = typecast<TYPE_ID_DOUBLE>::to(f);
-    std::cout << "b = " << b << "\n";
+    mesh.props.emplace("primvars:myvar", prop);
 
-    std::vector<float> v = {1.0f, 2.0f};
-    f = v;
-    TEST_CHECK(is_type<std::vector<float>>()(f));
-    TEST_CHECK(!is_type<std::vector<double>>()(f));
-    TEST_CHECK(!is_type<std::vector<std::vector<double>>>()(f));
-    auto c = typecast<TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT>::to(f);
-    std::cout << "c = " << c << "\n";
+    tinyusdz::GeomPrimvar primvar;
+    TEST_CHECK(mesh.get_primvar("myvar", &primvar) == true);
+
+    // non-existing primvar
+    TEST_CHECK(mesh.get_primvar("myvar0", &primvar) == false);
+    
   }
-#endif
-
-#if 0
-  {
-    Mesh mesh;
-    std::vector<vector3f> p = {{0.0f, 1.0f, 2.0f}, {3.0f, 4.0f, 5.0f}};
-    any_value f = p;
-
-    TEST_CHECK(ReconstructVertrices(f, mesh));
-
-    std::vector<float> vf = {0.0f, 1.0f, 2.0f};
-    f = vf;
-
-    TEST_CHECK(!ReconstructVertrices(f, mesh));
-  }
-
-  {
-    TEST_CHECK(ReconstructAttribTest0());
-  }
-#endif
 
 }
