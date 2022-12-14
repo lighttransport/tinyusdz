@@ -203,58 +203,60 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   std::string primvar_name = kPrimvars + varname;
 
   const auto it = props.find(primvar_name);
-  if (it != props.end()) {
-    // Currently connection attribute is not supported.
-    if (it->second.is_attribute()) {
-      const Attribute &attr = it->second.get_attribute();
+  if (it == props.end()) {
+    return false;
+  }
 
-      primvar.set_value(attr);
-      primvar.set_name(varname);
-      if (attr.metas().interpolation.has_value()) {
-        primvar.set_interpolation(attr.metas().interpolation.value());
-      }
-      if (attr.metas().elementSize.has_value()) {
-        primvar.set_elementSize(attr.metas().elementSize.value());
-      }
+  // Currently connection attribute is not supported.
+  if (it->second.is_attribute()) {
+    const Attribute &attr = it->second.get_attribute();
 
-    } else {
-      return false;
+    primvar.set_value(attr);
+    primvar.set_name(varname);
+    if (attr.metas().interpolation.has_value()) {
+      primvar.set_interpolation(attr.metas().interpolation.value());
+    }
+    if (attr.metas().elementSize.has_value()) {
+      primvar.set_elementSize(attr.metas().elementSize.value());
     }
 
-    // has indices?
-    std::string index_name = primvar_name + kIndices;
-    const auto indexIt = props.find(index_name);
+  } else {
+    SET_ERROR_AND_RETURN("GeomPrimvar of non-Attribute property is not supported.");
+  }
 
-    if (indexIt != props.end()) {
-      if (indexIt->second.is_attribute()) {
-        const Attribute &indexAttr = indexIt->second.get_attribute();
+  // has indices?
+  std::string index_name = primvar_name + kIndices;
+  const auto indexIt = props.find(index_name);
 
-        if (indexAttr.is_connection()) {
+  if (indexIt != props.end()) {
+    if (indexIt->second.is_attribute()) {
+      const Attribute &indexAttr = indexIt->second.get_attribute();
+
+      if (indexAttr.is_connection()) {
+        SET_ERROR_AND_RETURN(
+            "TODO: Connetion is not supported for index Attribute at the "
+            "moment.");
+      } else if (indexAttr.is_timesamples()) {
+        SET_ERROR_AND_RETURN(
+            "TODO: Index attribute with timeSamples is not supported yet.");
+      } else if (indexAttr.is_blocked()) {
+        SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
+      } else if (indexAttr.is_value()) {
+        // Check if int[] type.
+        // TODO: Support uint[]?
+        std::vector<int32_t> indices;
+        if (!indexAttr.get_value(&indices)) {
           SET_ERROR_AND_RETURN(
-              "TODO: Connetion is not supported for index Attribute at the "
-              "moment.");
-        } else if (indexAttr.is_timesamples()) {
-          SET_ERROR_AND_RETURN(
-              "TODO: Index attribute with timeSamples is not supported yet.");
-        } else if (indexAttr.is_blocked()) {
-          SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
-        } else if (indexAttr.is_value()) {
-          // Check if int[] type.
-          // TODO: Support uint[]?
-          std::vector<int32_t> indices;
-          if (!indexAttr.get_value(&indices)) {
-            SET_ERROR_AND_RETURN(
-                fmt::format("Index Attribute is not int[] type. Got {}",
-                            indexAttr.type_name()));
-          }
-
-          primvar.set_indices(indices);
-        } else {
-          SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+              fmt::format("Index Attribute is not int[] type. Got {}",
+                          indexAttr.type_name()));
         }
+
+        primvar.set_indices(indices);
       } else {
-        // indices are optional, so ok to skip it.
+        SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
       }
+    } else {
+      // indices are optional, so ok to skip it.
     }
   }
 
