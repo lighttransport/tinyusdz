@@ -651,8 +651,8 @@ template <typename T, class M>
 class Scene {
  public:
   Scene() {
-    bmin_[0] = bmin_[1] = bmin_[2] = std::numeric_limits<T>::max();
-    bmax_[0] = bmax_[1] = bmax_[2] = -std::numeric_limits<T>::max();
+    bmin_[0] = bmin_[1] = bmin_[2] = (std::numeric_limits<T>::max)();
+    bmax_[0] = bmax_[1] = bmax_[2] = -(std::numeric_limits<T>::max)();
   }
 
   ~Scene() {}
