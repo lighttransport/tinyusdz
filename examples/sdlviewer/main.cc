@@ -198,7 +198,7 @@ inline float linearToSrgb(float x) {
 
 inline uint8_t ftouc(float f) {
   int val = int(f * 255.0f);
-  val = std::max(0, std::min(255, val));
+  val = (std::max)(0, (std::min)(255, val));
 
   return static_cast<uint8_t>(val);
 }

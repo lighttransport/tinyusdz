@@ -508,7 +508,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
 
   // auto startT = std::chrono::system_clock::now();
 
-  for (auto t = 0; t < num_threads; t++) {
+  for (uint32_t t = 0; t < num_threads; t++) {
     workers.emplace_back(std::thread([&]() {
       int y = 0;
       while ((y = i++) < height) {
