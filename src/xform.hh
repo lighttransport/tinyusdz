@@ -40,8 +40,12 @@ double determinant(const value::matrix3d &m);
 
 // Do singular matrix check.
 // Return true and set `inv_m` when input matrix `m` can be inverted
-bool inverse(const value::matrix4d &m, value::matrix4d &inv_m);
-bool inverse(const value::matrix3d &m, value::matrix3d &inv_m);
+bool inverse(const value::matrix4d &m, value::matrix4d &inv_m, double eps = 0.0);
+bool inverse(const value::matrix3d &m, value::matrix3d &inv_m, double eps = 0.0);
+
+// pxrUSD compatible inverse
+value::matrix3d inverse_pxr(const value::matrix3d &m, double *determinant, double eps = 0.0);
+value::matrix4d inverse_pxr(const value::matrix4d &m, double *determinant, double eps = 0.0);
 
 value::matrix2d transpose(const value::matrix2d &m);
 value::matrix3d transpose(const value::matrix3d &m);
