@@ -221,12 +221,10 @@ double determinant(const value::matrix3d &_m) {
   return det;
 }
 
-bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m) {
+bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m, double eps) {
   double det = determinant(_m);
 
-  // 1e-9 comes from pxrUSD
-  // determinant should be positive(absolute), but take a fabs() just in case.
-  if (std::fabs(det) < 1e-9) {
+  if (math::is_close(std::fabs(det), 0.0, eps)) {
     return false;
   }
 
@@ -234,12 +232,10 @@ bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m) {
   return true;
 }
 
-bool inverse(const value::matrix3d &_m, value::matrix3d &inv_m) {
+bool inverse(const value::matrix3d &_m, value::matrix3d &inv_m, double eps) {
   double det = determinant(_m);
 
-  // 1e-9 comes from pxrUSD
-  // determinant should be positive(absolute), but take a fabs() just in case.
-  if (std::fabs(det) < 1e-9) {
+  if (math::is_close(std::fabs(det), 0.0, eps)) {
     return false;
   }
 
@@ -982,6 +978,159 @@ value::matrix4d upper_left_3x3_only(const value::matrix4d &m) {
 //
 ////////////////////////////////////////////////////////////////////////
 
+value::matrix3d inverse_pxr(const value::matrix3d &m, double *detp,
+                            double eps) {
+  double a00, a01, a02, a10, a11, a12, a20, a21, a22;
+  double det, rcp;
+
+  a00 = m.m[0][0];
+  a01 = m.m[0][1];
+  a02 = m.m[0][2];
+  a10 = m.m[1][0];
+  a11 = m.m[1][1];
+  a12 = m.m[1][2];
+  a20 = m.m[2][0];
+  a21 = m.m[2][1];
+  a22 = m.m[2][2];
+  det = -(a02 * a11 * a20) + a01 * a12 * a20 + a02 * a10 * a21 -
+        a00 * a12 * a21 - a01 * a10 * a22 + a00 * a11 * a22;
+
+  if (detp) {
+    *detp = det;
+  }
+
+  value::matrix3d inv;
+
+  if (std::fabs(det) > eps) {
+    rcp = 1.0 / det;
+    inv.m[0][0] = (-(a12 * a21) + a11 * a22) * rcp;
+    inv.m[0][1] = (a02 * a21 - a01 * a22) * rcp;
+    inv.m[0][2] = (-(a02 * a11) + a01 * a12) * rcp;
+    inv.m[1][0] = (a12 * a20 - a10 * a22) * rcp;
+    inv.m[1][1] = (-(a02 * a20) + a00 * a22) * rcp;
+    inv.m[1][2] = (a02 * a10 - a00 * a12) * rcp;
+    inv.m[2][0] = (-(a11 * a20) + a10 * a21) * rcp;
+    inv.m[2][1] = (a01 * a20 - a00 * a21) * rcp;
+    inv.m[2][2] = (-(a01 * a10) + a00 * a11) * rcp;
+
+  } else {
+    inv = value::matrix3d::identity();
+    // scale = FLT_MAX
+    inv.m[0][0] = double((std::numeric_limits<float>::max)());
+    inv.m[1][1] = double((std::numeric_limits<float>::max)());
+    inv.m[2][2] = double((std::numeric_limits<float>::max)());
+  }
+
+  return inv;
+}
+
+value::matrix4d inverse_pxr(const value::matrix4d &m, double *detp,
+                            double eps) {
+  double x00, x01, x02, x03;
+  double x10, x11, x12, x13;
+  double x20, x21, x22, x23;
+  double x30, x31, x32, x33;
+  double y01, y02, y03, y12, y13, y23;
+  double z00, z10, z20, z30;
+  double z01, z11, z21, z31;
+  double z02, z03, z12, z13, z22, z23, z32, z33;
+
+  // Pickle 1st two columns of matrix into registers
+  x00 = m.m[0][0];
+  x01 = m.m[0][1];
+  x10 = m.m[1][0];
+  x11 = m.m[1][1];
+  x20 = m.m[2][0];
+  x21 = m.m[2][1];
+  x30 = m.m[3][0];
+  x31 = m.m[3][1];
+
+  // Compute all six 2x2 determinants of 1st two columns
+  y01 = x00 * x11 - x10 * x01;
+  y02 = x00 * x21 - x20 * x01;
+  y03 = x00 * x31 - x30 * x01;
+  y12 = x10 * x21 - x20 * x11;
+  y13 = x10 * x31 - x30 * x11;
+  y23 = x20 * x31 - x30 * x21;
+
+  // Pickle 2nd two columns of matrix into registers
+  x02 = m.m[0][2];
+  x03 = m.m[0][3];
+  x12 = m.m[1][2];
+  x13 = m.m[1][3];
+  x22 = m.m[2][2];
+  x23 = m.m[2][3];
+  x32 = m.m[3][2];
+  x33 = m.m[3][3];
+
+  // Compute all 3x3 cofactors for 2nd two columns */
+  z33 = x02 * y12 - x12 * y02 + x22 * y01;
+  z23 = x12 * y03 - x32 * y01 - x02 * y13;
+  z13 = x02 * y23 - x22 * y03 + x32 * y02;
+  z03 = x22 * y13 - x32 * y12 - x12 * y23;
+  z32 = x13 * y02 - x23 * y01 - x03 * y12;
+  z22 = x03 * y13 - x13 * y03 + x33 * y01;
+  z12 = x23 * y03 - x33 * y02 - x03 * y23;
+  z02 = x13 * y23 - x23 * y13 + x33 * y12;
+
+  // Compute all six 2x2 determinants of 2nd two columns
+  y01 = x02 * x13 - x12 * x03;
+  y02 = x02 * x23 - x22 * x03;
+  y03 = x02 * x33 - x32 * x03;
+  y12 = x12 * x23 - x22 * x13;
+  y13 = x12 * x33 - x32 * x13;
+  y23 = x22 * x33 - x32 * x23;
+
+  // Compute all 3x3 cofactors for 1st two columns
+  z30 = x11 * y02 - x21 * y01 - x01 * y12;
+  z20 = x01 * y13 - x11 * y03 + x31 * y01;
+  z10 = x21 * y03 - x31 * y02 - x01 * y23;
+  z00 = x11 * y23 - x21 * y13 + x31 * y12;
+  z31 = x00 * y12 - x10 * y02 + x20 * y01;
+  z21 = x10 * y03 - x30 * y01 - x00 * y13;
+  z11 = x00 * y23 - x20 * y03 + x30 * y02;
+  z01 = x20 * y13 - x30 * y12 - x10 * y23;
+
+  // compute 4x4 determinant & its reciprocal
+  double det = x30 * z30 + x20 * z20 + x10 * z10 + x00 * z00;
+  if (detp) {
+    *detp = det;
+  }
+
+  value::matrix4d inv;
+
+  if (std::fabs(det) > eps) {
+    double rcp = 1.0 / det;
+    // Multiply all 3x3 cofactors by reciprocal & transpose
+    inv.m[0][0] = z00 * rcp;
+    inv.m[0][1] = z10 * rcp;
+    inv.m[1][0] = z01 * rcp;
+    inv.m[0][2] = z20 * rcp;
+    inv.m[2][0] = z02 * rcp;
+    inv.m[0][3] = z30 * rcp;
+    inv.m[3][0] = z03 * rcp;
+    inv.m[1][1] = z11 * rcp;
+    inv.m[1][2] = z21 * rcp;
+    inv.m[2][1] = z12 * rcp;
+    inv.m[1][3] = z31 * rcp;
+    inv.m[3][1] = z13 * rcp;
+    inv.m[2][2] = z22 * rcp;
+    inv.m[2][3] = z32 * rcp;
+    inv.m[3][2] = z23 * rcp;
+    inv.m[3][3] = z33 * rcp;
+
+  } else {
+    inv = value::matrix4d::identity();
+    // scale = FLT_MAX
+    inv.m[0][0] = double((std::numeric_limits<float>::max)());
+    inv.m[1][1] = double((std::numeric_limits<float>::max)());
+    inv.m[2][2] = double((std::numeric_limits<float>::max)());
+    // [3][3] = 1.0
+  }
+
+  return inv;
+}
+
 /*
  * Given 3 basis vectors tx, ty, tz, orthogonalize and optionally normalize
  * them.
@@ -1085,9 +1234,9 @@ bool orthonormalize_basis(value::double3 &tx, value::double3 &ty,
  * the row basis vectors are close to colinear) but in the common case
  * of near-orthonormality it should be just as fast.
  *
- * For 4f, The translation part is left intact.  If the translation is represented as
- * a homogenous coordinate (i.e. a non-unity lower right corner), it is divided
- * out.
+ * For 4f, The translation part is left intact.  If the translation is
+ * represented as a homogenous coordinate (i.e. a non-unity lower right corner),
+ * it is divided out.
  */
 value::matrix3d orthonormalize(const value::matrix3d &m, bool *result_valid) {
   value::matrix3d ret = value::matrix3d::identity();
@@ -1157,11 +1306,9 @@ value::matrix4d orthonormalize(const value::matrix4d &m, bool *result_valid) {
 // End pxrUSD
 // -------------------------------------------------------------------------------
 
-value::matrix4d trs_angle_xyz(
-  const value::double3 &translation,
-  const value::double3 &rotation_angles_xyz,
-  const value::double3 &scale) {
-
+value::matrix4d trs_angle_xyz(const value::double3 &translation,
+                              const value::double3 &rotation_angles_xyz,
+                              const value::double3 &scale) {
   value::matrix4d m{value::matrix4d::identity()};
 
   XformEvaluator eval;
@@ -1185,7 +1332,7 @@ value::matrix4d trs_angle_xyz(
   sMat.m[0][0] = scale[0];
   sMat.m[1][1] = scale[1];
   sMat.m[2][2] = scale[2];
-  
+
   m = sMat * rMat * tMat;
 
   return m;
@@ -1195,14 +1342,12 @@ value::matrix4d trs_angle_xyz(
 // Build matrix from T R S.
 //
 // Rotation is given by 3 vectors axis(orthonormalized inside trs()).
-// 
-value::matrix4d trs_rot_axis(
-  const value::double3 &translation,
-  const value::double3 &rotation_x_axis,
-  const value::double3 &rotation_y_axis,
-  const value::double3 &rotation_z_axis,
-  const value::double3 &scale) {
-
+//
+value::matrix4d trs_rot_axis(const value::double3 &translation,
+                             const value::double3 &rotation_x_axis,
+                             const value::double3 &rotation_y_axis,
+                             const value::double3 &rotation_z_axis,
+                             const value::double3 &scale) {
   value::matrix4d m{value::matrix4d::identity()};
 
   value::matrix4d rMat{value::matrix4d::identity()};
@@ -1229,11 +1374,10 @@ value::matrix4d trs_rot_axis(
   sMat.m[0][0] = scale[0];
   sMat.m[1][1] = scale[1];
   sMat.m[2][2] = scale[2];
-  
+
   m = sMat * orMat * tMat;
 
   return m;
 }
-
 
 }  // namespace tinyusdz
