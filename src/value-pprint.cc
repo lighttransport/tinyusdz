@@ -33,8 +33,23 @@ void itoa(uint64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 #endif
 
+inline std::string dtos(const float v) {
+
+  char buf[32];
+  dtoa_milo(double(v), buf);
+
+  return std::string(buf);
 }
 
+inline std::string dtos(const double v) {
+
+  char buf[32];
+  dtoa_milo(v, buf);
+
+  return std::string(buf);
+}
+
+} // local
 
 } // namespace tinyusdz
 
@@ -91,32 +106,32 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v) {
-  os << "(" << v[0] << ", " << v[1] << ")";
+  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", " << tinyusdz::dtos(v[2]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float4 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", " << tinyusdz::dtos(v[2]) << ", " << tinyusdz::dtos(v[3]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double2 &v) {
-  os << "(" << v[0] << ", " << v[1] << ")";
+  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double3 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", " << tinyusdz::dtos(v[2]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double4 &v) {
-  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", " << tinyusdz::dtos(v[2]) << ", " << tinyusdz::dtos(v[3]) << ")";
   return os;
 }
 
@@ -126,12 +141,12 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", " << tinyusdz::dtos(v.z) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3d &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", " << tinyusdz::dtos(v.z) << ")";
   return os;
 }
 
@@ -141,12 +156,12 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3f &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", " << tinyusdz::dtos(v.z) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3d &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", " << tinyusdz::dtos(v.z) << ")";
   return os;
 }
 
@@ -156,12 +171,12 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3f &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", " << tinyusdz::dtos(v.z) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3d &v) {
-  os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", " << tinyusdz::dtos(v.z) << ")";
   return os;
 }
 
@@ -173,12 +188,12 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
+  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", " << tinyusdz::dtos(v.b) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ")";
+  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", " << tinyusdz::dtos(v.b) << ")";
   return os;
 }
 
@@ -190,12 +205,12 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
+  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", " << tinyusdz::dtos(v.b) << ", " << tinyusdz::dtos(v.a) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v) {
-  os << "(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ")";
+  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", " << tinyusdz::dtos(v.b) << ", " << tinyusdz::dtos(v.a) << ")";
   return os;
 }
 
@@ -208,14 +223,14 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quath &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatf &v) {
-  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
-     << v.imag[2] << ")";
+  os << "(" << tinyusdz::dtos(v.real) << ", " << tinyusdz::dtos(v.imag[0]) << ", " << tinyusdz::dtos(v.imag[1]) << ", "
+     << tinyusdz::dtos(v.imag[2]) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatd &v) {
-  os << "(" << v.real << ", " << v.imag[0] << ", " << v.imag[1] << ", "
-     << v.imag[2] << ")";
+  os << "(" << tinyusdz::dtos(v.real) << ", " << tinyusdz::dtos(v.imag[0]) << ", " << tinyusdz::dtos(v.imag[1]) << ", "
+     << tinyusdz::dtos(v.imag[2]) << ")";
   return os;
 }
 
@@ -227,13 +242,13 @@ std::ostream &operator<<(std::ostream &os,
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord2f &v) {
-  os << "(" << v.s << ", " << v.t << ")";
+  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord2d &v) {
-  os << "(" << v.s << ", " << v.t << ")";
+  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ")";
   return os;
 }
 
@@ -245,13 +260,13 @@ std::ostream &operator<<(std::ostream &os,
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord3f &v) {
-  os << "(" << v.s << ", " << v.t << ", " << v.r << ")";
+  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ", " << tinyusdz::dtos(v.r) << ")";
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord3d &v) {
-  os << "(" << v.s << ", " << v.t << ", " << v.r << ")";
+  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ", " << tinyusdz::dtos(v.r) << ")";
   return os;
 }
 
@@ -259,8 +274,8 @@ std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix2d &m) {
   ofs << "( ";
 
-  ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << "), ";
-  ofs << "(" << m.m[1][0] << ", " << m.m[1][1] << ")";
+  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1]) << ")";
 
   ofs << " )";
 
@@ -271,9 +286,9 @@ std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix3d &m) {
   ofs << "( ";
 
-  ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << "), ";
-  ofs << "(" << m.m[1][0] << ", " << m.m[1][1] << ", " << m.m[1][2] << "), ";
-  ofs << "(" << m.m[2][0] << ", " << m.m[2][1] << ", " << m.m[2][2] << ")";
+  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1]) << ", " << tinyusdz::dtos(m.m[0][2]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1]) << ", " << tinyusdz::dtos(m.m[1][2]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1]) << ", " << tinyusdz::dtos(m.m[2][2]) << ")";
 
   ofs << " )";
 
@@ -284,14 +299,14 @@ std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix4d &m) {
   ofs << "( ";
 
-  ofs << "(" << m.m[0][0] << ", " << m.m[0][1] << ", " << m.m[0][2] << ", "
-      << m.m[0][3] << "), ";
-  ofs << "(" << m.m[1][0] << ", " << m.m[1][1] << ", " << m.m[1][2] << ", "
-      << m.m[1][3] << "), ";
-  ofs << "(" << m.m[2][0] << ", " << m.m[2][1] << ", " << m.m[2][2] << ", "
-      << m.m[2][3] << "), ";
-  ofs << "(" << m.m[3][0] << ", " << m.m[3][1] << ", " << m.m[3][2] << ", "
-      << m.m[3][3] << ")";
+  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1]) << ", " << tinyusdz::dtos(m.m[0][2]) << ", "
+      << tinyusdz::dtos(m.m[0][3]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1]) << ", " << tinyusdz::dtos(m.m[1][2]) << ", "
+      << tinyusdz::dtos(m.m[1][3]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1]) << ", " << tinyusdz::dtos(m.m[2][2]) << ", "
+      << tinyusdz::dtos(m.m[2][3]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[3][0]) << ", " << tinyusdz::dtos(m.m[3][1]) << ", " << tinyusdz::dtos(m.m[3][2]) << ", "
+      << tinyusdz::dtos(m.m[3][3]) << ")";
 
   ofs << " )";
 
@@ -353,8 +368,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
   // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
   // but according to std::numeric_limits<double>::digits10(=15),
-  // 256 should be sufficient
-  char buf[256];
+  // 32 should be sufficient
+  char buf[32];
 
   // TODO: multi-threading for further performance gain?
 
@@ -375,7 +390,7 @@ template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
 
   // Use dtoa
-  char buf[256];
+  char buf[32];
 
   // TODO: multi-threading for further performance gain?
 
@@ -499,6 +514,7 @@ namespace value {
 
 // Simple brute-force way..
 // TODO: Use std::function or some template technique?
+// NOTE: Use dedicated path for `float` and `double`
 
 #define CASE_EXPR_LIST(__FUNC) \
   __FUNC(bool)                 \
@@ -516,11 +532,9 @@ namespace value {
   __FUNC(uint4)                \
   __FUNC(int64_t)              \
   __FUNC(uint64_t)             \
-  __FUNC(float)                \
   __FUNC(float2)               \
   __FUNC(float3)               \
   __FUNC(float4)               \
-  __FUNC(double)               \
   __FUNC(double2)              \
   __FUNC(double3)              \
   __FUNC(double4)              \
@@ -715,8 +729,48 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     // base type
     CASE_EXPR_LIST(BASETYPE_CASE_EXPR)
 
+    case TypeTraits<float>::type_id(): {
+      auto p = v.as<float>();
+      if (p) {
+        os << dtos(*p);
+      } else {
+        os << "[InternalError: TypeId mismatch(`float` expected).]";
+      }
+      break;
+    }
+
+    case TypeTraits<double>::type_id(): {
+      auto p = v.as<double>();
+      if (p) {
+        os << dtos(*p);
+      } else {
+        os << "[InternalError: TypeId mismatch(`double` expected).]";
+      }
+      break;
+    }
+
     // 1D array
     CASE_EXPR_LIST(ARRAY1DTYPE_CASE_EXPR)
+
+    case TypeTraits<std::vector<float>>::type_id(): {
+      auto p = v.as<std::vector<float>>();
+      if (p) {
+        os << (*p); 
+      } else {
+        os << "[InternalError: TypeId mismatch(`float[]` expected).]";
+      }
+      break;
+    }
+
+    case TypeTraits<std::vector<double>>::type_id(): {
+      auto p = v.as<std::vector<double>>();
+      if (p) {
+        os << (*p);
+      } else {
+        os << "[InternalError: TypeId mismatch(`double[]` expected).]";
+      }
+      break;
+    }
 
     // 2D array
     //CASE_EXPR_LIST(ARRAY2DTYPE_CASE_EXPR)
