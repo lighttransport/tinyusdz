@@ -20,7 +20,22 @@
 #include "external/jeaiii_to_text.h"
 #endif
 
+// dtoa_milo does not work well for float types
+// (e.g. it prints float 0.01 as 0.009999999997),
+// so use floaxie for float types
+// TODO: Use floaxie also for double?
 #include "external/dtoa_milo.h"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "external/floaxie/floaxie/ftoa.h"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace tinyusdz {
 
@@ -35,15 +50,15 @@ void itoa(int64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 
 inline std::string dtos(const float v) {
 
-  char buf[32];
-  dtoa_milo(double(v), buf);
+  char buf[128];
+  floaxie::ftoa(v, buf);
 
   return std::string(buf);
 }
 
 inline std::string dtos(const double v) {
 
-  char buf[32];
+  char buf[128];
   dtoa_milo(v, buf);
 
   return std::string(buf);
@@ -368,8 +383,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
   // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
   // but according to std::numeric_limits<double>::digits10(=15),
-  // 32 should be sufficient
-  char buf[32];
+  // 32 should be sufficient, but allocate 128 just in case
+  char buf[128];
 
   // TODO: multi-threading for further performance gain?
 
@@ -389,8 +404,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 template<>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
 
-  // Use dtoa
-  char buf[32];
+  // Use floaxie
+  char buf[128];
 
   // TODO: multi-threading for further performance gain?
 
@@ -399,7 +414,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-    dtoa_milo(double(v[i]), buf);
+    floaxie::ftoa(v[i], buf);
     ofs << std::string(buf);
   }
   ofs << "]";
