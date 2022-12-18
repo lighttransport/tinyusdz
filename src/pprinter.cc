@@ -559,7 +559,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
       if (pv) {
         if (pv.value().is_timesamples()) {
-          ss << ".timeSamples = " << print_typed_timesamples(pv.value().get_timesamples(), indent+1);
+          ss << ".timeSamples = " << print_typed_timesamples(pv.value().get_timesamples(), indent);
         } else {
           T a;
           if (pv.value().get_scalar(&a)) {
@@ -725,7 +725,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
         ss << ".timeSamples";
       }
 
-      ss << " = " <<  print_animatable(v, indent+1);
+      ss << " = " <<  print_animatable(v, indent);
     }
 
     if (attr.metas().authored()) {
@@ -830,7 +830,7 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
         ss << ".timeSamples";
       }
 
-      ss << " = " <<  print_animatable_token(v, indent+1);
+      ss << " = " <<  print_animatable_token(v, indent);
     }
 
     if (attr.metas().authored()) {
@@ -971,7 +971,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
       ss << " = ";
 
       if (attr.get_var().is_timesamples()) {
-        ss << print_timesamples(attr.get_var().ts_raw(), indent+1);
+        ss << print_timesamples(attr.get_var().ts_raw(), indent);
       } else if (attr.is_blocked()) {
         ss << "None";
       } else {
@@ -1745,7 +1745,12 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
 std::string to_string(const Model &model, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(model.spec) << " " << model.prim_type_name << " \"" << model.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(model.spec);
+  if (model.prim_type_name.size()) {
+    ss << " " << model.prim_type_name;
+  }
+  ss << " \"" << model.name << "\"\n";
+
   if (model.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
     ss << print_prim_metas(model.meta, indent+1);
