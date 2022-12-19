@@ -374,6 +374,35 @@ Path Path::append_element(const std::string &elem) {
   }
 }
 
+Path Path::get_parent_path() const {
+  if (!_valid) {
+    return Path();
+  }
+
+  if (is_root_path()) {
+    Path p("", "");
+    return p;
+  }
+
+  if (is_prim_property_path()) {
+    // return prim part
+    return Path(prim_part(), "");
+  }
+
+  size_t n = _prim_part.find_last_of('/');
+  if (n == std::string::npos) {
+    // relative path(e.g. "bora") or propery only path(e.g. ".myval").
+    return Path();
+  }
+
+  if (n == 0) {
+    // return root
+    return Path("/", "");
+  }
+
+  return Path(_prim_part.substr(0, n), "");
+}
+
 Path Path::get_parent_prim_path() const {
   if (!_valid) {
     return Path();
@@ -381,6 +410,11 @@ Path Path::get_parent_prim_path() const {
 
   if (is_root_prim()) {
     return *this;
+  }
+
+  if (is_prim_property_path()) {
+    // return prim part
+    return Path(prim_part(), "");
   }
 
   size_t n = _prim_part.find_last_of('/');
