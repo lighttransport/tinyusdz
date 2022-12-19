@@ -2730,7 +2730,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     DCOUT("Parse dict in meta.");
     CustomDataType dict;
     if (!ParseDict(&dict)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `dictonary` data in metadataum.");
+      PUSH_ERROR_AND_RETURN("Failed to parse `dictionary` data in metadataum.");
     }
     var.set_value(dict);
   } else {
