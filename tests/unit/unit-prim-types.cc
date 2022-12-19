@@ -16,6 +16,8 @@ void prim_type_test(void) {
     Path path("/", "");
     TEST_CHECK(path.is_root_path() == true);
     TEST_CHECK(path.is_root_prim() == false);
+    // invalid 
+    TEST_CHECK(path.get_parent_path().is_valid() == false);
   }
 
   {
@@ -23,6 +25,8 @@ void prim_type_test(void) {
     auto ret = path.split_at_root();
     TEST_CHECK(std::get<0>(ret).full_path_name() == "/bora");
     TEST_CHECK(std::get<1>(ret).is_empty() == true);
+    TEST_CHECK(path.get_parent_path().full_path_name() == "/");
+    TEST_CHECK(path.get_parent_prim_path().full_path_name() == "/bora");
   }
 
   {
@@ -41,6 +45,7 @@ void prim_type_test(void) {
     TEST_CHECK(std::get<0>(ret).is_empty() == true);
     TEST_CHECK(std::get<1>(ret).is_valid() == true);
     TEST_CHECK(std::get<1>(ret).full_path_name() == "dora");
+    TEST_CHECK(path.get_parent_path().is_valid() == false);
   }
 
   {
@@ -59,11 +64,21 @@ void prim_type_test(void) {
     Path rpath("/dora", "bora");
     TEST_CHECK(rpath.full_path_name() == "/dora.bora");
 
-    // Allow prop path in prim
+    // Currently Allow prop path in prim
+    // TODO: Disallow prop path in prim
     Path apath("/dora.bora", "");
     TEST_CHECK(apath.full_path_name() == "/dora.bora");
     TEST_CHECK(apath.element_name() == "bora");
+  }
 
+  {
+    Path apath("/dora", "bora");
+    TEST_CHECK(apath.full_path_name() == "/dora.bora");
+    TEST_CHECK(apath.element_name() == "bora");
+    std::cout << "parent_path = " << apath.get_parent_path().full_path_name() << "\n";
+    std::cout << "parent_path = " << apath.get_parent_prim_path().full_path_name() << "\n";
+
+    TEST_CHECK(apath.get_parent_path().full_path_name() == "/dora");
   }
 
   {

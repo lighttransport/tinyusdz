@@ -351,17 +351,36 @@ class Path {
   std::pair<Path, Path> split_at_root() const;
 
   ///
-  /// Get parent Prim path
+  /// TODO: Deprecate(use get_parent_path() instead)
+  ///
+  /// Get parent Prim path.
+  /// If the given path is a root Prim path(e.g. "/bora"), same Path is returned.
   ///
   /// example:
   ///
   /// - / -> invalid Path
-  /// - /bora -> invalid Path(since `/` is not the Prim path)
+  /// - /bora -> /bora
   /// - /bora/dora -> /bora
+  /// - /bora/dora.prop -> /bora/dora
   /// - dora/bora -> dora
   /// - dora -> invalid Path
   /// - .dora -> invalid Path(path is property path)
   Path get_parent_prim_path() const;
+
+  ///
+  /// Get parent Path.
+  /// If the given path is the root path("/") same Path is returned.
+  ///
+  /// example:
+  ///
+  /// - / -> invalid Path
+  /// - /bora -> /
+  /// - /bora/dora -> /bora
+  /// - /bora/dora.prop -> /bora/dora
+  /// - dora/bora -> dora
+  /// - dora -> invalid Path
+  /// - .dora -> invalid Path(path is property path)
+  Path get_parent_path() const;
 
   ///
   /// @returns true if a path is '/' only
