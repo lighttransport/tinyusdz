@@ -1113,78 +1113,76 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
   if (lhs.is_valid() && rhs.is_valid()) {
     // ok
   } else {
-    DCOUT("invalid");
-    return false;
+    // Even though this should not happen,
+    // valid paths is less than invalid paths
+    return lhs.is_valid();
   }
 
   // TODO: handle relative path correctly.
   if (lhs.is_absolute_path() && rhs.is_absolute_path()) {
     // ok
   } else {
-    DCOUT("not absolute path");
-    return false;
+    // Absolute paths are less than relative paths
+    return lhs.is_absolute_path();
   }
 
+  if (lhs.prim_part() == rhs.prim_part()) {
 
-  const std::string &lhs_prop_part = lhs.prop_part();
-  const std::string &rhs_prop_part = rhs.prop_part();
+    // compare property
+    const std::string &lhs_prop_part = lhs.prop_part();
+    const std::string &rhs_prop_part = rhs.prop_part();
 
-  const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
-  const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
-  DCOUT("lhs_names = " << to_string(lhs_prim_names));
-  DCOUT("rhs_names = " << to_string(rhs_prim_names));
+    if (lhs_prop_part.empty() || rhs_prop_part.empty()) {
+      return lhs_prop_part.empty();
+    }
 
-  // less Prim depth = less than.
-  // same Prim depth, lexicographically compare each Prim name
-  // When Prim path is same, compare property name
+    return std::lexicographical_compare(lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(), rhs_prop_part.end());
 
-  if (lhs_prim_names.size() < rhs_prim_names.size()) {
-    return true;
-  } else if (lhs_prim_names.size() == rhs_prim_names.size()) {
-    // continue
   } else {
-    DCOUT("greater");
-    return false;
-  }
 
-  for (size_t i = 0; i < lhs_prim_names.size(); i++) {
-    DCOUT(fmt::format("{}/{} compare = {}", i, lhs_prim_names.size(), lhs_prim_names[i].compare(rhs_prim_names[i])));
+    const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
+    const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
+    DCOUT("lhs_names = " << to_string(lhs_prim_names));
+    DCOUT("rhs_names = " << to_string(rhs_prim_names));
 
-#if 1
-    const std::string &lhs_name = lhs_prim_names[i];
-    const std::string &rhs_name = rhs_prim_names[i];
-
-    if (lhs_name.compare(rhs_name) == 0) {
-      // equal. continue check.
-    } else {
-      // FIXME: We can simply use std::string::compare?
-      return std::lexicographical_compare(lhs_name.begin(), lhs_name.end(), rhs_name.begin(), rhs_name.end());
-    }
-#else
-    if (lhs_prim_names[i].compare(rhs_prim_names[i]) < 0) {
-      return true;
-    } else if (lhs_prim_names[i].compare(rhs_prim_names[i]) > 0) {
-      return false;
-    } else {
-      // equal. continue check.
+    if (lhs_prim_names.empty() || rhs_prim_names.empty()) {
+      return lhs_prim_names.empty() && rhs_prim_names.size();
     }
 
-#endif
+    // common shortest depth.
+    size_t didx = (std::min)(lhs_prim_names.size(), rhs_prim_names.size());
+
+    bool same_until_common_depth = true;
+    for (size_t i = 0; i < didx; i++) {
+      if (lhs_prim_names[i] != rhs_prim_names[i]) {
+        same_until_common_depth = false;
+        break;
+      }
+    }
+
+    if (same_until_common_depth) {
+      // tail differs. compare by depth count.
+      return lhs_prim_names.size() < rhs_prim_names.size();
+    }
+
+    // Walk until common ancestor is found
+    size_t child_idx = didx - 1;
+    DCOUT("common_depth_idx = " << didx << ", lcount = " << lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
+    if (didx > 1) {
+      for (size_t parent_idx = didx - 2; parent_idx > 0; parent_idx--) {
+        DCOUT("parent_idx = " << parent_idx);
+        if (lhs_prim_names[parent_idx] != rhs_prim_names[parent_idx]) {
+          child_idx--;
+        }
+      }
+    }
+    DCOUT("child_idx = " << child_idx);
+
+    // compare child
+    return std::lexicographical_compare(lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(), rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
+
   }
 
-  // prim path is equal.
-  if (lhs_prop_part.empty() && rhs_prop_part.empty()) {
-    // no prop part
-    return false;
-  }
-
-  if (lhs_prop_part.empty()) {
-    DCOUT("rhs has prim part.");
-    return true;
-  }
-
-  DCOUT("prop compare." << lhs_prop_part.compare(rhs_prop_part));
-  return (lhs_prop_part.compare(rhs_prop_part) < 0);
 }
 
 bool IsXformablePrim(const Prim &prim) {
