@@ -19,14 +19,22 @@
 #include "value-types.hh"
 #include "xform.hh"
 
+// Use pxrUSD approach to generate rotation matrix.
+// This will give (probably) identical xformOps matrix operation, but the resulting matrix contains some numerical error.
+// https://github.com/PixarAnimationStudios/USD/issues/2136
+//#define PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION
+
 namespace tinyusdz {
 
 using matrix44d = linalg::aliases::double4x4;
 using matrix33d = linalg::aliases::double3x3;
 using matrix22d = linalg::aliases::double2x2;
 using double3x3 = linalg::aliases::double3x3;
+using double3 = linalg::aliases::double3;
+using double4 = linalg::aliases::double4;
 
-// linalg quat: (x, y, z, w)
+// linalg quat memory layout: (x, y, z, w)
+// value::quat memory layout: (imag[0], imag[1], imag[2], real)
 
 value::matrix3d to_matrix3x3(const value::quath &q) {
   double3x3 m33 = linalg::qmat<double>(
@@ -353,6 +361,44 @@ class XformEvaluator {
     return (*this);
   }
 
+  // From arbitrary rotation axis
+  XformEvaluator &Rotation(const double3 &axis, const double angle) {  // in degrees
+
+    // to quaternion, then create rotation matrix.
+
+    // linalg uses radians
+    double4 q = linalg::rotation_quat(axis, math::radian(angle));
+
+    double3x3 m33 =
+        linalg::qmat<double>({q[0], q[1], q[2], q[3]});
+
+    value::matrix4d rm;
+
+    rm.m[0][0] = m33[0][0];
+    rm.m[0][1] = m33[0][1];
+    rm.m[0][2] = m33[0][2];
+    rm.m[0][3] = 0.0;
+
+    rm.m[1][0] = m33[1][0];
+    rm.m[1][1] = m33[1][1];
+    rm.m[1][2] = m33[1][2];
+    rm.m[1][3] = 0.0;
+
+    rm.m[2][0] = m33[2][0];
+    rm.m[2][1] = m33[2][1];
+    rm.m[2][2] = m33[2][2];
+    rm.m[2][3] = 0.0;
+
+    rm.m[3][0] = m33[3][0];
+    rm.m[3][1] = m33[3][1];
+    rm.m[3][2] = m33[3][2];
+    rm.m[3][3] = 1.0;
+
+    m = value::Mult<value::matrix4d, double, 4>(rm, m);
+
+    return (*this);
+  }
+
   std::string error() const { return err; }
 
   nonstd::expected<value::matrix4d, std::string> result() const {
@@ -417,9 +463,16 @@ bool Xformable::EvaluateXformOps(double t,
 
     if (x.inverted) {
       if (x.op_type == XformOp::OpType::RotateXYZ) {
+        // TODO: Apply defined switch for all Rotate*** op.
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+#else
         eval.RotateZ(zAngle);
         eval.RotateY(yAngle);
         eval.RotateX(xAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateXZY) {
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
@@ -446,9 +499,17 @@ bool Xformable::EvaluateXformOps(double t,
       }
     } else {
       if (x.op_type == XformOp::OpType::RotateXYZ) {
+
+        // TODO: Apply defined switch for all Rotate*** op.
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+#else
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateXZY) {
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
@@ -662,7 +723,11 @@ bool Xformable::EvaluateXformOps(double t,
         }
 
         XformEvaluator xe;
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        xe.Rotation({1.0, 0.0, 0.0}, angle);
+#else
         xe.RotateX(angle);
+#endif
         auto ret = xe.result();
 
         if (ret) {
@@ -698,7 +763,11 @@ bool Xformable::EvaluateXformOps(double t,
         }
 
         XformEvaluator xe;
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        xe.Rotation({0.0, 1.0, 0.0}, angle);
+#else
         xe.RotateY(angle);
+#endif
         auto ret = xe.result();
 
         if (ret) {
@@ -734,7 +803,11 @@ bool Xformable::EvaluateXformOps(double t,
         }
 
         XformEvaluator xe;
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        xe.Rotation({0.0, 0.0, 1.0}, angle);
+#else
         xe.RotateZ(angle);
+#endif
         auto ret = xe.result();
 
         if (ret) {
