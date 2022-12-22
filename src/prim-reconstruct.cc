@@ -2862,6 +2862,10 @@ bool ReconstructPrim<GeomCamera>(
                    camera->horizontalAperture)
     PARSE_TYPED_ATTRIBUTE(table, prop, "horizontalApertureOffset", GeomCamera,
                    camera->horizontalApertureOffset)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "verticalAperture", GeomCamera,
+                   camera->verticalAperture)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "verticalApertureOffset", GeomCamera,
+                   camera->verticalApertureOffset)
     PARSE_TYPED_ATTRIBUTE(table, prop, "clippingRange", GeomCamera,
                    camera->clippingRange)
     PARSE_TYPED_ATTRIBUTE(table, prop, "clippingPlanes", GeomCamera,
