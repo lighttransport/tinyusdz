@@ -2540,6 +2540,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   ss << print_typed_terminal_attr(shader.outputsR, "outputs:r", indent);
   ss << print_typed_terminal_attr(shader.outputsG, "outputs:g", indent);
   ss << print_typed_terminal_attr(shader.outputsB, "outputs:b", indent);
+  ss << print_typed_terminal_attr(shader.outputsA, "outputs:a", indent);
   ss << print_typed_terminal_attr(shader.outputsRGB, "outputs:rgb", indent);
 
   return ss.str();
