@@ -193,7 +193,103 @@ void xformOp_test(void) {
     TEST_CHECK(float_equals(m.m[3][1], 0.0));
     TEST_CHECK(float_equals(m.m[3][2], 0.0));
     TEST_CHECK(float_equals(m.m[3][3], 1.0));
+  }
 
+  // RotateXYZ 002
+  {
+    value::double3 rotXYZ = {10.0, 23.0, 43.2};
+
+    XformOp op;
+    op.op_type = XformOp::OpType::RotateXYZ;
+    op.inverted = false;
+    op.set_value(rotXYZ);
+
+    Xformable x;
+    x.xformOps.push_back(op);
+
+    value::matrix4d m;
+    bool resetXformStack;
+    std::string err;
+    double t = value::TimeCode::Default();
+    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+
+    bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
+
+    TEST_CHECK(ret);
+    
+    std::cout << "rotXYZ = " << m << "\n";
+
+    double eps = std::numeric_limits<double>::epsilon();
+
+    // numeric value is grabbed from pxrUSD.
+    // There are slight eps error for [0][1], [1][0] and [1][1], so twice eps
+    TEST_CHECK(float_equals(m.m[0][0], 0.6710191595559729, eps));
+    TEST_CHECK(float_equals(m.m[0][1], 0.6301289334241799, 2*eps));
+    TEST_CHECK(float_equals(m.m[0][2], -0.39073112848927377, eps));
+    TEST_CHECK(float_equals(m.m[0][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[1][0], -0.6246869592440953, 2*eps));
+    TEST_CHECK(float_equals(m.m[1][1], 0.7643403049061097, 2*eps));
+    TEST_CHECK(float_equals(m.m[1][2], 0.15984399033558103, eps));
+    TEST_CHECK(float_equals(m.m[1][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[2][0], 0.3993738730302244, eps));
+    TEST_CHECK(float_equals(m.m[2][1], 0.13682626048292368, eps));
+    TEST_CHECK(float_equals(m.m[2][2], 0.9065203163653295, eps));
+    TEST_CHECK(float_equals(m.m[2][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[3][0], 0.0));
+    TEST_CHECK(float_equals(m.m[3][1], 0.0));
+    TEST_CHECK(float_equals(m.m[3][2], 0.0));
+    TEST_CHECK(float_equals(m.m[3][3], 1.0));
+  }
+
+  // Rotate 003
+  {
+    value::double3 rotXYZ = {-10.0, 13.0, 43.2};
+
+    XformOp op;
+    op.op_type = XformOp::OpType::RotateXYZ;
+    op.inverted = true;
+    op.set_value(rotXYZ);
+
+    Xformable x;
+    x.xformOps.push_back(op);
+
+    value::matrix4d m;
+    bool resetXformStack;
+    std::string err;
+    double t = value::TimeCode::Default();
+    value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held;
+
+    bool ret = x.EvaluateXformOps(t, tinterp, &m, &resetXformStack, &err);
+
+    TEST_CHECK(ret);
+    
+    std::cout << "rotXYZ = " << m << "\n";
+
+    double eps = std::numeric_limits<double>::epsilon();
+
+  
+    TEST_CHECK(float_equals(m.m[0][0], 0.7102852087270047, eps));
+    TEST_CHECK(float_equals(m.m[0][1], -0.7026225180689177, eps));
+    TEST_CHECK(float_equals(m.m[0][2], 0.0426206448347375, eps));
+    TEST_CHECK(float_equals(m.m[0][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[1][0], 0.6670022079522818, 2*eps));
+    TEST_CHECK(float_equals(m.m[1][1], 0.6911539437437854, 2*eps));
+    TEST_CHECK(float_equals(m.m[1][2], 0.2782342190209419, eps));
+    TEST_CHECK(float_equals(m.m[1][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[2][0], -0.224951054343865, eps));
+    TEST_CHECK(float_equals(m.m[2][1], -0.16919758612316493, eps));
+    TEST_CHECK(float_equals(m.m[2][2], 0.9595671941035071, eps));
+    TEST_CHECK(float_equals(m.m[2][3], 0.0));
+
+    TEST_CHECK(float_equals(m.m[3][0], 0.0));
+    TEST_CHECK(float_equals(m.m[3][1], 0.0));
+    TEST_CHECK(float_equals(m.m[3][2], 0.0));
+    TEST_CHECK(float_equals(m.m[3][3], 1.0));
   }
 
   // trans x scale
