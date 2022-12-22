@@ -14,10 +14,12 @@
 
 #include "math-util.inc"
 #include "pprinter.hh"
+#include "value-pprint.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"
 #include "value-types.hh"
 #include "xform.hh"
+#include "common-macros.inc"
 
 // Use pxrUSD approach to generate rotation matrix.
 // This will give (probably) identical xformOps matrix operation, but the resulting matrix contains some numerical error.
@@ -308,6 +310,19 @@ namespace {
 
 ///
 /// Xform evaluation with method chain style.
+/// so if you want to get RotateXYZ,
+///
+/// xRot * yRot * zRot
+///
+/// this is implemented in C++ as
+///
+/// XformEvaluator xe
+/// xe.RotateX()
+/// xe.RotateY()
+/// xe.RotateZ()
+///
+/// NOTE: Matrix multiplication order is post-multiply in XformEvaluator for C++ readabilty
+/// (otherwise we need to invoke xe.RotateZ(), xe.RotateY() then xe.RotateX())
 ///
 class XformEvaluator {
  public:
@@ -317,14 +332,14 @@ class XformEvaluator {
 
     double rad = math::radian(angle);
 
-    value::matrix4d rm;
+    value::matrix4d rm = value::matrix4d::identity();
 
     rm.m[1][1] = std::cos(rad);
     rm.m[1][2] = std::sin(rad);
     rm.m[2][1] = -std::sin(rad);
     rm.m[2][2] = std::cos(rad);
 
-    m = value::Mult<value::matrix4d, double, 4>(rm, m);
+    m = m * rm;
 
     return (*this);
   }
@@ -333,14 +348,14 @@ class XformEvaluator {
 
     double rad = math::radian(angle);
 
-    value::matrix4d rm;
+    value::matrix4d rm = value::matrix4d::identity();
 
     rm.m[0][0] = std::cos(rad);
     rm.m[0][2] = -std::sin(rad);
     rm.m[2][0] = std::sin(rad);
     rm.m[2][2] = std::cos(rad);
 
-    m = value::Mult<value::matrix4d, double, 4>(rm, m);
+    m = m * rm;
 
     return (*this);
   }
@@ -349,14 +364,14 @@ class XformEvaluator {
 
     double rad = math::radian(angle);
 
-    value::matrix4d rm;
+    value::matrix4d rm = value::matrix4d::identity();
 
     rm.m[0][0] = std::cos(rad);
     rm.m[0][1] = std::sin(rad);
     rm.m[1][0] = -std::sin(rad);
     rm.m[1][1] = std::cos(rad);
 
-    m = value::Mult<value::matrix4d, double, 4>(rm, m);
+    m = m * rm;
 
     return (*this);
   }
@@ -389,12 +404,12 @@ class XformEvaluator {
     rm.m[2][2] = m33[2][2];
     rm.m[2][3] = 0.0;
 
-    rm.m[3][0] = m33[3][0];
-    rm.m[3][1] = m33[3][1];
-    rm.m[3][2] = m33[3][2];
+    rm.m[3][0] = 0.0;
+    rm.m[3][1] = 0.0;
+    rm.m[3][2] = 0.0;
     rm.m[3][3] = 1.0;
 
-    m = value::Mult<value::matrix4d, double, 4>(rm, m);
+    m = m * rm;
 
     return (*this);
   }
@@ -461,7 +476,9 @@ bool Xformable::EvaluateXformOps(double t,
 
     XformEvaluator eval;
 
+    DCOUT("angles = " << xAngle << ", " << yAngle << ", " << zAngle);
     if (x.inverted) {
+      DCOUT("!inverted!\n");
       if (x.op_type == XformOp::OpType::RotateXYZ) {
         // TODO: Apply defined switch for all Rotate*** op.
 #if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
@@ -474,25 +491,55 @@ bool Xformable::EvaluateXformOps(double t,
         eval.RotateX(xAngle);
 #endif
       } else if (x.op_type == XformOp::OpType::RotateXZY) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+#else
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateYXZ) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+#else
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateYZX) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+#else
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
         eval.RotateY(yAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateZYX) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+#else
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateZXY) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+#else
         eval.RotateY(yAngle);
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
+#endif
       } else {
         /// ???
         return nonstd::make_unexpected("[InternalError] RotateABC");
@@ -500,7 +547,6 @@ bool Xformable::EvaluateXformOps(double t,
     } else {
       if (x.op_type == XformOp::OpType::RotateXYZ) {
 
-        // TODO: Apply defined switch for all Rotate*** op.
 #if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
         eval.Rotation({1.0, 0.0, 0.0}, xAngle);
         eval.Rotation({0.0, 1.0, 0.0}, yAngle);
@@ -511,25 +557,55 @@ bool Xformable::EvaluateXformOps(double t,
         eval.RotateZ(zAngle);
 #endif
       } else if (x.op_type == XformOp::OpType::RotateXZY) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+#else
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
         eval.RotateY(yAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateYXZ) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+#else
         eval.RotateY(yAngle);
         eval.RotateX(xAngle);
         eval.RotateZ(zAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateYZX) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+#else
         eval.RotateY(yAngle);
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateZYX) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+#else
         eval.RotateZ(zAngle);
-        eval.RotateX(xAngle);
         eval.RotateY(yAngle);
+        eval.RotateX(xAngle);
+#endif
       } else if (x.op_type == XformOp::OpType::RotateZXY) {
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+        eval.Rotation({0.0, 0.0, 1.0}, zAngle);
+        eval.Rotation({1.0, 0.0, 0.0}, xAngle);
+        eval.Rotation({0.0, 1.0, 0.0}, yAngle);
+#else
         eval.RotateZ(zAngle);
         eval.RotateX(xAngle);
         eval.RotateY(yAngle);
+#endif
       } else {
         /// ???
         return nonstd::make_unexpected("[InternalError] RotateABC");
@@ -549,7 +625,14 @@ bool Xformable::EvaluateXformOps(double t,
   // M = A x B x C
   //
   // p' = A x B x C x p
-  // (C is first applied to p)
+  // 
+  // in post-multiply order.
+  //
+  // But in pre-multiply order system(pxrUSD and TinyUSDZ),
+  // C++ code is
+  // 
+  // p' = p x C x B x A
+  // 
   //
   value::matrix4d cm;
   Identity(&cm);
@@ -886,9 +969,7 @@ bool Xformable::EvaluateXformOps(double t,
       }
     }
 
-    cm = m * cm;  // row-major, so `m` fistly.
-    // operator* is equivalent to
-    // cm = value::Mult<value::matrix4d, double, 4>(m, cm);
+    cm = m * cm;  // `m` fist for pre-multiply system.
   }
 
   (*out_matrix) = cm;
@@ -1385,9 +1466,15 @@ value::matrix4d trs_angle_xyz(const value::double3 &translation,
   value::matrix4d m{value::matrix4d::identity()};
 
   XformEvaluator eval;
+#if defined(PXR_COMPATIBLE_ROTATE_MATRIX_GENERATION)
+  eval.Rotation({1.0, 0.0, 0.0}, rotation_angles_xyz[0]);
+  eval.Rotation({0.0, 1.0, 0.0}, rotation_angles_xyz[1]);
+  eval.Rotation({0.0, 0.0, 1.0}, rotation_angles_xyz[2]);
+#else
   eval.RotateX(rotation_angles_xyz[0]);
   eval.RotateY(rotation_angles_xyz[1]);
   eval.RotateZ(rotation_angles_xyz[2]);
+#endif
 
   auto ret = eval.result();
   if (!ret) {
