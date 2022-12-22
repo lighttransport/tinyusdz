@@ -50,10 +50,10 @@ void itoa(int64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 
 inline std::string dtos(const float v) {
 
-  char buf[128];
-  floaxie::ftoa(v, buf);
+  char buf[floaxie::max_buffer_size<float>()];
+  size_t n = floaxie::ftoa(v, buf);
 
-  return std::string(buf);
+  return std::string(buf, buf + n);
 }
 
 inline std::string dtos(const double v) {
