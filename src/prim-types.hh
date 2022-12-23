@@ -383,6 +383,20 @@ class Path {
   Path get_parent_path() const;
 
   ///
+  /// Check if this Path has same prefix for given Path 
+  ///
+  /// example.
+  /// rhs path: /bora/dora
+  ///
+  /// /bora/dora/muda -> true
+  /// /bora/dora2 -> fase
+  /// 
+  /// If the prefix path contains prop part, compare it with ==
+  /// (assume no hierarchy in property part)
+  ///
+  bool has_prefix(const Path &rhs) const;
+
+  ///
   /// @returns true if a path is '/' only
   ///
   bool is_root_path() const {
