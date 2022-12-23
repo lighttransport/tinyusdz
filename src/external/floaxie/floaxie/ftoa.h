@@ -121,7 +121,7 @@ namespace floaxie
 		else if (v == 0)
 		{
 			buffer[0] = '0';
-			buffer[3] = '\0';
+			buffer[1] = '\0';
 
 			return 1;
 		}
