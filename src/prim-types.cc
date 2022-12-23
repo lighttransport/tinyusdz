@@ -295,6 +295,85 @@ const Path Path::AppendProperty(const std::string &elem) const {
   return p;
 }
 
+// TODO: Do test more.
+// Current implementation may not behave as in pxrUSD's SdfPath's _LessThanInternal implementation
+bool Path::LessThan(const Path &lhs, const Path &rhs) {
+  //DCOUT("LessThan");
+  if (lhs.is_valid() && rhs.is_valid()) {
+    // ok
+  } else {
+    // Even though this should not happen,
+    // valid paths is less than invalid paths
+    return lhs.is_valid();
+  }
+
+  // TODO: handle relative path correctly.
+  if (lhs.is_absolute_path() && rhs.is_absolute_path()) {
+    // ok
+  } else {
+    // Absolute paths are less than relative paths
+    return lhs.is_absolute_path();
+  }
+
+  if (lhs.prim_part() == rhs.prim_part()) {
+
+    // compare property
+    const std::string &lhs_prop_part = lhs.prop_part();
+    const std::string &rhs_prop_part = rhs.prop_part();
+
+    if (lhs_prop_part.empty() || rhs_prop_part.empty()) {
+      return lhs_prop_part.empty();
+    }
+
+    return std::lexicographical_compare(lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(), rhs_prop_part.end());
+
+  } else {
+
+    const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
+    const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
+    //DCOUT("lhs_names = " << to_string(lhs_prim_names));
+    //DCOUT("rhs_names = " << to_string(rhs_prim_names));
+
+    if (lhs_prim_names.empty() || rhs_prim_names.empty()) {
+      return lhs_prim_names.empty() && rhs_prim_names.size();
+    }
+
+    // common shortest depth.
+    size_t didx = (std::min)(lhs_prim_names.size(), rhs_prim_names.size());
+
+    bool same_until_common_depth = true;
+    for (size_t i = 0; i < didx; i++) {
+      if (lhs_prim_names[i] != rhs_prim_names[i]) {
+        same_until_common_depth = false;
+        break;
+      }
+    }
+
+    if (same_until_common_depth) {
+      // tail differs. compare by depth count.
+      return lhs_prim_names.size() < rhs_prim_names.size();
+    }
+
+    // Walk until common ancestor is found
+    size_t child_idx = didx - 1;
+    //DCOUT("common_depth_idx = " << didx << ", lcount = " << lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
+    if (didx > 1) {
+      for (size_t parent_idx = didx - 2; parent_idx > 0; parent_idx--) {
+        //DCOUT("parent_idx = " << parent_idx);
+        if (lhs_prim_names[parent_idx] != rhs_prim_names[parent_idx]) {
+          child_idx--;
+        }
+      }
+    }
+    //DCOUT("child_idx = " << child_idx);
+
+    // compare child node
+    return std::lexicographical_compare(lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(), rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
+
+  }
+
+}
+
 std::pair<Path, Path> Path::split_at_root() const {
   if (is_absolute_path()) {
     if (is_root_path()) {
@@ -331,6 +410,67 @@ std::pair<Path, Path> Path::split_at_root() const {
     return std::make_pair(*this, Path());
   } else {
     return std::make_pair(Path(), *this);
+  }
+}
+
+bool Path::has_prefix(const Path &prefix) const {
+  if (!is_valid() || !prefix.is_valid()) {
+    return false;
+  } 
+
+  if (prefix.is_prim_property_path()) {
+    // No hierarchy in Prim's property path, so use ==.
+    return full_path_name() == prefix.full_path_name();
+  } else if (prefix.is_prim_path()) {
+
+    // '/', prefix = '/'
+    if (is_root_path() && prefix.is_root_path()) {
+      //DCOUT("both are root path");
+      return true;
+    }
+
+    // example:
+    // - '/bora', prefix = '/'
+    // - '/bora/dora', prefix = '/'
+    if (is_absolute_path() && prefix.is_root_path()) {
+      //DCOUT("prefix is root path");
+      return true;
+    }
+
+    const std::vector<std::string> prim_names = split(prim_part(), "/");
+    const std::vector<std::string> prefix_prim_names = split(prefix.prim_part(), "/");
+    //DCOUT("prim_names = " << to_string(prim_names));
+    //DCOUT("prefix.prim_names = " << to_string(prefix_prim_names));
+
+    if (prim_names.empty() || prefix_prim_names.empty()) {
+      return false;
+    }
+
+    if (prim_names.size() < prefix_prim_names.size()) {
+      return false;
+    }
+
+    size_t depth = prefix_prim_names.size();
+    if (depth < 1) { // just in case
+      return false;
+    }
+
+    // Move to prefix's path depth and compare each elementName of Prim tree towards the root.
+    // comapre from tail would find a difference earlier.
+    while (depth > 0) {
+      if (prim_names[depth-1] != prefix_prim_names[depth-1]) {
+        return false;
+      }
+      depth--;
+    }
+  
+    //DCOUT("has_prefix");
+    return true;
+
+  } else {
+    // TODO: property-only path.
+    DCOUT("TODO: Unsupported Path type in has_prefix()");
+    return false;
   }
 }
 
@@ -1106,84 +1246,6 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
   return true;
 }
 
-// TODO: Do test more.
-// Current implementation may not behave as in pxrUSD's SdfPath's _LessThanInternal implementation
-bool Path::LessThan(const Path &lhs, const Path &rhs) {
-  DCOUT("LessThan");
-  if (lhs.is_valid() && rhs.is_valid()) {
-    // ok
-  } else {
-    // Even though this should not happen,
-    // valid paths is less than invalid paths
-    return lhs.is_valid();
-  }
-
-  // TODO: handle relative path correctly.
-  if (lhs.is_absolute_path() && rhs.is_absolute_path()) {
-    // ok
-  } else {
-    // Absolute paths are less than relative paths
-    return lhs.is_absolute_path();
-  }
-
-  if (lhs.prim_part() == rhs.prim_part()) {
-
-    // compare property
-    const std::string &lhs_prop_part = lhs.prop_part();
-    const std::string &rhs_prop_part = rhs.prop_part();
-
-    if (lhs_prop_part.empty() || rhs_prop_part.empty()) {
-      return lhs_prop_part.empty();
-    }
-
-    return std::lexicographical_compare(lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(), rhs_prop_part.end());
-
-  } else {
-
-    const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
-    const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
-    DCOUT("lhs_names = " << to_string(lhs_prim_names));
-    DCOUT("rhs_names = " << to_string(rhs_prim_names));
-
-    if (lhs_prim_names.empty() || rhs_prim_names.empty()) {
-      return lhs_prim_names.empty() && rhs_prim_names.size();
-    }
-
-    // common shortest depth.
-    size_t didx = (std::min)(lhs_prim_names.size(), rhs_prim_names.size());
-
-    bool same_until_common_depth = true;
-    for (size_t i = 0; i < didx; i++) {
-      if (lhs_prim_names[i] != rhs_prim_names[i]) {
-        same_until_common_depth = false;
-        break;
-      }
-    }
-
-    if (same_until_common_depth) {
-      // tail differs. compare by depth count.
-      return lhs_prim_names.size() < rhs_prim_names.size();
-    }
-
-    // Walk until common ancestor is found
-    size_t child_idx = didx - 1;
-    DCOUT("common_depth_idx = " << didx << ", lcount = " << lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
-    if (didx > 1) {
-      for (size_t parent_idx = didx - 2; parent_idx > 0; parent_idx--) {
-        DCOUT("parent_idx = " << parent_idx);
-        if (lhs_prim_names[parent_idx] != rhs_prim_names[parent_idx]) {
-          child_idx--;
-        }
-      }
-    }
-    DCOUT("child_idx = " << child_idx);
-
-    // compare child
-    return std::lexicographical_compare(lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(), rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
-
-  }
-
-}
 
 bool IsXformablePrim(const Prim &prim) {
 
