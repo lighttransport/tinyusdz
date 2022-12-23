@@ -86,6 +86,10 @@ float vlength(const value::vector3f &a) {
   return vlength(value::float3{a.x, a.y, a.z});
 }
 
+float vlength(const value::point3f &a) {
+  return vlength(value::float3{a.x, a.y, a.z});
+}
+
 value::float3 vnormalize(const value::float3 &a) {
   float len = vlength(a);
   return value::float3({a[0] / len, a[1] / len, a[2] / len});
@@ -101,6 +105,11 @@ value::vector3f vnormalize(const value::vector3f &a) {
   return value::vector3f({a[0] / len, a[1] / len, a[2] / len});
 }
 
+value::point3f vnormalize(const value::point3f &a) {
+  float len = vlength(a);
+  return value::point3f({a[0] / len, a[1] / len, a[2] / len});
+}
+
 double vlength(const value::double3 &a) {
   double d2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
   if (d2 > std::numeric_limits<double>::epsilon()) {
@@ -109,9 +118,36 @@ double vlength(const value::double3 &a) {
   return 0.0;
 }
 
+double vlength(const value::normal3d &a) {
+  return vlength(value::double3{a.x, a.y, a.z});
+}
+
+double vlength(const value::vector3d &a) {
+  return vlength(value::double3{a.x, a.y, a.z});
+}
+
+double vlength(const value::point3d &a) {
+  return vlength(value::double3{a.x, a.y, a.z});
+}
+
 value::double3 vnormalize(const value::double3 &a) {
   double len = vlength(a);
   return value::double3({a[0] / len, a[1] / len, a[2] / len});
+}
+
+value::normal3d vnormalize(const value::normal3d &a) {
+  double len = vlength(a);
+  return value::normal3d({a[0] / len, a[1] / len, a[2] / len});
+}
+
+value::vector3d vnormalize(const value::vector3d &a) {
+  double len = vlength(a);
+  return value::vector3d({a[0] / len, a[1] / len, a[2] / len});
+}
+
+value::point3d vnormalize(const value::point3d &a) {
+  double len = vlength(a);
+  return value::point3d({a[0] / len, a[1] / len, a[2] / len});
 }
 
 value::float3 vcross(const value::float3 &a, const value::float3 &b)
@@ -124,14 +160,6 @@ value::float3 vcross(const value::float3 &a, const value::float3 &b)
   return n;
 }
 
-value::float3 geometric_normal(const value::float3 &p0, const value::float3 &p1, const value::float3 &p2)
-{
-  // CCW
-  value::float3 n = vcross(p1 - p0, p2 - p0);
-
-  return vnormalize(n);
-}
-
 value::double3 vcross(const value::double3 &a, const value::double3 &b)
 {
   value::double3 n;
@@ -142,10 +170,92 @@ value::double3 vcross(const value::double3 &a, const value::double3 &b)
   return n;
 }
 
+value::normal3f vcross(const value::normal3f &a, const value::normal3f &b)
+{
+  value::normal3f n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+value::normal3d vcross(const value::normal3d &a, const value::normal3d &b)
+{
+  value::normal3d n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+value::vector3f vcross(const value::vector3f &a, const value::vector3f &b)
+{
+  value::vector3f n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+value::vector3d vcross(const value::vector3d &a, const value::vector3d &b)
+{
+  value::vector3d n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+value::point3f vcross(const value::point3f &a, const value::point3f &b)
+{
+  value::point3f n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+value::point3d vcross(const value::point3d &a, const value::point3d &b)
+{
+  value::point3d n;
+  n[0] = a[1] * b[2] - a[2] * b[1];
+  n[1] = a[2] * b[0] - a[0] * b[2];
+  n[2] = a[0] * b[1] - a[1] * b[0];
+
+  return n;
+}
+
+// CCW
+
+value::float3 geometric_normal(const value::float3 &p0, const value::float3 &p1, const value::float3 &p2)
+{
+  value::float3 n = vcross(p1 - p0, p2 - p0);
+
+  return vnormalize(n);
+}
+
 value::double3 geometric_normal(const value::double3 &p0, const value::double3 &p1, const value::double3 &p2)
 {
-  // CCW
   value::double3 n = vcross(p1 - p0, p2 - p0);
+
+  return vnormalize(n);
+}
+
+value::point3f geometric_normal(const value::point3f &p0, const value::point3f &p1, const value::point3f &p2)
+{
+  value::point3f n = vcross(p1 - p0, p2 - p0);
+
+  return vnormalize(n);
+}
+
+value::point3d geometric_normal(const value::point3d &p0, const value::point3d &p1, const value::point3d &p2)
+{
+  value::point3d n = vcross(p1 - p0, p2 - p0);
 
   return vnormalize(n);
 }
