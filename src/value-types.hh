@@ -1120,6 +1120,87 @@ struct point3d {
   double &operator[](size_t idx) { return *(&x + idx); }
 };
 
+inline point3d operator+(const double a, const point3d &b) {
+  return {a + b.x, a + b.y, a + b.z};
+}
+
+inline point3d operator-(const double a, const point3d &b) {
+  return {a - b.x, a - b.y, a - b.z};
+}
+
+inline point3d operator*(const double a, const point3d &b) {
+  return {a * b.x, a * b.y, a * b.z};
+}
+
+// TODO: safe div
+inline point3d operator/(const double a, const point3d &b) {
+  return {a / b.x, a / b.y, a / b.z};
+}
+
+inline point3d operator+(const float a, const point3d &b) {
+  return {double(a) + b.x, double(a) + b.y, double(a) + b.z};
+}
+
+inline point3d operator-(const float a, const point3d &b) {
+  return {double(a) - b.x, double(a) - b.y, double(a) - b.z};
+}
+
+inline point3d operator*(const float a, const point3d &b) {
+  return {double(a) * b.x, double(a) * b.y, double(a) * b.z};
+}
+
+inline point3d operator/(const float a, const point3d &b) {
+  return {double(a) / b.x, double(a) / b.y, double(a) / b.z};
+}
+
+inline point3d operator+(const point3d &a, const double b) {
+  return {a.x + b, a.y + b, a.z + b};
+}
+
+inline point3d operator-(const point3d &a, const double b) {
+  return {a.x - b, a.y - b, a.z - b};
+}
+
+inline point3d operator*(const point3d &a, const double b) {
+  return {a.x * b, a.y * b, a.z * b};
+}
+
+inline point3d operator/(const point3d &a, const double b) {
+  return {a.x / b, a.y / b, a.z / b};
+}
+
+inline point3d operator+(const point3d &a, const float b) {
+  return {a.x + double(b), a.y + double(b), a.z + double(b)};
+}
+
+inline point3d operator-(const point3d &a, const float b) {
+  return {a.x - double(b), a.y - double(b), a.z - double(b)};
+}
+
+inline point3d operator*(const point3d &a, const float b) {
+  return {a.x * double(b), a.y * double(b), a.z * double(b)};
+}
+
+inline point3d operator/(const point3d &a, const float b) {
+  return {a.x / double(b), a.y / double(b), a.z / double(b)};
+}
+
+inline point3d operator+(const point3d &a, const point3d &b) {
+  return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+inline point3d operator-(const point3d &a, const point3d &b) {
+  return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+inline point3d operator*(const point3d &a, const point3d &b) {
+  return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+
+inline point3d operator/(const point3d &a, const point3d &b) {
+  return {a.x / b.x, a.y / b.y, a.z / b.z};
+}
+
 struct color3h {
   half r, g, b;
 
