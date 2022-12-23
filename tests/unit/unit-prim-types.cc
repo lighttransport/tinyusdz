@@ -96,4 +96,22 @@ void prim_type_test(void) {
     TEST_CHECK(epath < dpath);
   }
 
+  {
+    Path apath("/dora/bora", "");
+    Path bpath("/dora/bora2", "");
+    Path cpath("/doraa", "");
+    Path dpath("/", "");
+    Path epath("/dora", "");
+    Path fpath("/dora", "bora");
+    Path gpath("/dora2", "bora");
+
+    TEST_CHECK(apath.has_prefix(dpath) == true);
+    TEST_CHECK(apath.has_prefix(epath) == true);
+    TEST_CHECK(bpath.has_prefix(apath) == false);
+    TEST_CHECK(apath.has_prefix(cpath) == false);
+    TEST_CHECK(fpath.has_prefix(dpath) == true);
+    TEST_CHECK(fpath.has_prefix(fpath) == true);
+    TEST_CHECK(gpath.has_prefix(fpath) == false);
+  }
+
 }

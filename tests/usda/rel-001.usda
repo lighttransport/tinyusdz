@@ -2,5 +2,5 @@
 
 def "bora"
 {
-  rel myrel = </bora>
+  varying rel myrel = </bora>
 }
