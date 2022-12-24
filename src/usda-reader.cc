@@ -1716,7 +1716,7 @@ bool USDAReader::Impl::Read(LoadState state) {
       PUSH_WARN("<parser> " + warn);
     }
 
-    PUSH_ERROR_AND_RETURN("Parse failed:" + _parser.GetError());
+    PUSH_ERROR_AND_RETURN("Parse failed:\n" + _parser.GetError());
   }
 
   return true;

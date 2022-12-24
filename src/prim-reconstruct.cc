@@ -13,22 +13,19 @@
 #include "common-macros.inc"
 
 // For PUSH_ERROR_AND_RETURN
-#define PushError(s) if (err) { (*err) += s; }
-#define PushWarn(s) if (warn) { (*warn) += s; }
-
-// TODO:
-// - [ ] PathList for `.connect` (e.g. string con.connect = [ </root>, </root.a>])
-//
+#define PushError(s) if (err) { (*err) = s + (*err); }
+#define PushWarn(s) if (warn) { (*warn) = s + (*err); }
 
 //
 // NOTE:
 //
-// There are mainly 4 variant of Primtive property(attribute)
+// There are mainly 5 variant of Primtive property(relationship/attribute)
 //
 // - TypedAttribute<T> : Uniform only. `uniform T` or `uniform T var.connect`
 // - TypedAttribute<Animatable<T>> : Varying. `T var`, `T var = val`, `T var.connect` or `T value.timeSamples`
 // - optional<T> : For output attribute(Just author it. e.g. `float outputs:rgb`)
 // - Relationship : Typeless relation(e.g. `rel material:binding`)
+// - TypedConnection : Typed relation(e.g. `token outputs:result = </material/diffuse.rgb>`)
 
 namespace tinyusdz {
 namespace prim {
@@ -1204,7 +1201,14 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       return ret;
     }
 
-    if (prop.is_connection()) {
+    // allow empty value
+    if (prop.is_empty()) {
+      target.set_empty();
+      target.metas() = prop.get_attribute().metas();
+      table.insert(prop_name);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
+    } else if (prop.is_connection()) {
       const Attribute &attr = prop.get_attribute();
       if (attr.is_connection()) {
         target.set(attr.connections());
@@ -1215,12 +1219,12 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
         return ret;
       } else {
         ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Property does not contain connectionPath.";
+        ret.err = "Property is invalid Attribute connection.";
         return ret;
       }
     } else {
       std::stringstream ss;
-      ss  << "Property must have connection path.";
+      ss  << "Property must be Attribute connection.";
       ret.code = ParseResult::ResultCode::InternalError;
       ret.err = ss.str();
       return ret;
@@ -3281,8 +3285,7 @@ bool ReconstructPrim<Shader>(
   } else {
     // TODO: string, point, vector, matrix
     PUSH_ERROR_AND_RETURN(
-        "Invalid or Unsupported Shader type. info:id = \"" + shader_type +
-        "\n");
+        "Invalid or Unsupported Shader type. info:id = \"" + shader_type);
   }
 
   DCOUT("Shader reconstructed.");
