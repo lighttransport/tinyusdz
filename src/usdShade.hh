@@ -19,7 +19,7 @@ constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
 
 // for bindMaterialAs
-constexpr auto kWeaderThanDescendants = "weakerThanDescendants"; 
+constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
 constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
 
 //
@@ -33,9 +33,9 @@ struct Material {
 
   PrimMeta meta;
 
-  // Terminal attribute.
-  nonstd::optional<Connection<Path>> surface; // "token outputs:surface.connect"
-  nonstd::optional<Connection<Path>> volume; // "token outputs:volume.connect"
+  TypedConnection<value::token> surface; // "token outputs:surface.connect"
+  TypedConnection<value::token> displacement; // "token outputs:displacement.connect"
+  TypedConnection<value::token> volume; // "token outputs:volume.connect"
 
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"

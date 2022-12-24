@@ -1172,11 +1172,12 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
   const std::string prop_name,
   const Property &prop,
   const std::string &name,
-  nonstd::optional<Connection<Path>> &target) /* out */
+  TypedConnection<value::token> &target) /* out */
 {
   ParseResult ret;
   ret.code = ParseResult::ResultCode::InternalError;
 
+#if 0
   if (prop_name.compare(name + ".connect") == 0) {
     std::string propname = removeSuffix(name, ".connect");
     if (table.count(propname)) {
@@ -1184,10 +1185,10 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       return ret;
     }
     if (auto pv = prop.get_relationTarget()) {
-      Connection<Path> conn;
-      conn.target = pv.value();
+      TypedConnection<value::token> conn;
+      conn.set(pv.value());
+      conn.metas() = prop.get_attribute().metas();
       target = conn;
-      /* conn.meta = prop.attrib.meta; */ // TODO
       table.insert(propname);
       ret.code = ParseResult::ResultCode::Success;
       return ret;
@@ -1196,7 +1197,8 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       ret.err = "Property does not contain connectionPath.";
       return ret;
     }
-  } else if (prop_name.compare(name) == 0) {
+#endif
+  if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
@@ -1205,17 +1207,9 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (prop.is_connection()) {
       const Attribute &attr = prop.get_attribute();
       if (attr.is_connection()) {
-        Connection<Path> conn;
+        target.set(attr.connections());
+        target.metas() = prop.get_attribute().metas();
 
-        if (attr.connections().size() == 1) {
-          conn.target = attr.connections()[0];
-        } else {
-          ret.code = ParseResult::ResultCode::InternalError;
-          ret.err = "Attribute does not contain connectionPath or multiple connetionPaths.";
-          return ret;
-        }
-        target = conn;
-        /* conn.meta = prop.attrib.meta; */ // TODO
         table.insert(prop_name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -3313,6 +3307,8 @@ bool ReconstructPrim<Material>(
   for (auto &prop : properties) {
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:surface",
                                   Material, material->surface)
+    PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:displacement",
+                                  Material, material->displacement)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
                                   Material, material->volume)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Material,

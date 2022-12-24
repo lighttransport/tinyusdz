@@ -1876,7 +1876,7 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
     __table.insert(__name); \
     continue; \
   }
-  
+
 std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -1897,7 +1897,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
       sortedPropertyNames.push_back(sphere.propertyNames()[i].str());
     }
     std::sort(sortedPropertyNames.begin(), sortedPropertyNames.end());
-    
+
     for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
       std::string propName = sortedPropertyNames[i];
 
@@ -1914,7 +1914,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
 
       // not found
       ss << fmt::format("# Property `{}` is described in `properties` Prim metadatum, but not found in this Prim. Possibly USDC file is corrupted.\n");
-      
+
     }
   } else {
     // members
@@ -2390,23 +2390,78 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  if (material.surface) {
+  if (material.surface.authored()) {
+    // TODO: list edit?.
     ss << pprint::Indent(indent+1) << "token outputs:surface ";
-    // Must have connection though.
-    if (material.surface.value().target) {
-      ss << "= " << pquote(material.surface.value().target.value());
+
+    const auto &conns = material.surface.get_connections();
+    if (conns.size() == 1) {
+      ss << "= " << pquote(conns[0]);
+    } else if (conns.size() > 1) {
+      ss << "= [";
+      for (size_t i = 0; i < conns.size(); i++) {
+        ss << pquote(conns[i]);
+        if (i != (conns.size() - 1)) {
+          ss << ", ";
+        }
+      }
+      ss << "]";
+    }
+
+    if (material.surface.metas().authored()) {
+      ss << "(\n" << print_attr_metas(material.surface.metas(), indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
 
-  if (material.volume) {
-    ss << pprint::Indent(indent+1) << "token outputs:volume ";
-    // Must have connection though.
-    if (material.volume.value().target) {
-      ss << "= " << pquote(material.volume.value().target.value());
+  if (material.displacement.authored()) {
+    // TODO: list edit?.
+    ss << pprint::Indent(indent+1) << "token outputs:displacement ";
+
+    const auto &conns = material.displacement.get_connections();
+    if (conns.size() == 1) {
+      ss << "= " << pquote(conns[0]);
+    } else if (conns.size() > 1) {
+      ss << "= [";
+      for (size_t i = 0; i < conns.size(); i++) {
+        ss << pquote(conns[i]);
+        if (i != (conns.size() - 1)) {
+          ss << ", ";
+        }
+      }
+      ss << "]";
+    }
+
+    if (material.displacement.metas().authored()) {
+      ss << "(\n" << print_attr_metas(material.displacement.metas(), indent + 2) << pprint::Indent(indent+1) << ")";
     }
     ss << "\n";
   }
+
+  if (material.volume.authored()) {
+    // TODO: list edit?.
+    ss << pprint::Indent(indent+1) << "token outputs:volume ";
+
+    const auto &conns = material.volume.get_connections();
+    if (conns.size() == 1) {
+      ss << "= " << pquote(conns[0]);
+    } else if (conns.size() > 1) {
+      ss << "= [";
+      for (size_t i = 0; i < conns.size(); i++) {
+        ss << pquote(conns[i]);
+        if (i != (conns.size() - 1)) {
+          ss << ", ";
+        }
+      }
+      ss << "]";
+    }
+
+    if (material.volume.metas().authored()) {
+      ss << "(\n" << print_attr_metas(material.volume.metas(), indent + 2) << pprint::Indent(indent+1) << ")";
+    }
+    ss << "\n";
+  }
+
 
   ss << print_props(material.props, indent+1);
 
