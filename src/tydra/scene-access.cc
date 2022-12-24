@@ -339,7 +339,7 @@ bool VisitPrimsRec(const tinyusdz::Path &root_abs_path, const tinyusdz::Prim &ro
         }
       } else {
         if (err) {
-          (*err) += fmt::format("Prim name `{}` in `primChildren` metadatum not found in this Prim's children", nameTok.str()); 
+          (*err) += fmt::format("Prim name `{}` in `primChildren` metadatum not found in this Prim's children", nameTok.str());
         }
         return false;
       }
@@ -1169,29 +1169,40 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   DCOUT("prop_name = " << prop_name);
   if (prop_name == "outputs:surface") {
-    if (material.surface) {
-      Connection<Path> conn = material.surface.value();
-      if (conn.target) {
-        (*out_prop) =
-            Property(conn.target.value(), conn.type_name(), /* custom */ false);
-      } else {
-        // empty. type info only
-        (*out_prop) = Property(conn.type_name(), /* custom */ false);
-      }
+    if (material.surface.authored()) {
+      Attribute attr;
+      attr.set_type_name(value::TypeTraits<value::token>::type_name());
+      attr.set_connections(material.surface.get_connections());
+      attr.metas() = material.surface.metas();
+      (*out_prop) =
+            Property(attr, /* custom */ false);
+      out_prop->set_listedit_qual(material.surface.get_listedit_qual());
+    } else {
+      // Not authored
+      return false;
+    }
+  } else if (prop_name == "outputs:displacement") {
+    if (material.displacement.authored()) {
+      Attribute attr;
+      attr.set_type_name(value::TypeTraits<value::token>::type_name());
+      attr.set_connections(material.displacement.get_connections());
+      attr.metas() = material.displacement.metas();
+      (*out_prop) =
+            Property(attr, /* custom */ false);
+      out_prop->set_listedit_qual(material.displacement.get_listedit_qual());
     } else {
       // Not authored
       return false;
     }
   } else if (prop_name == "outputs:volume") {
-    if (material.volume) {
-      Connection<Path> conn = material.volume.value();
-      if (conn.target) {
-        (*out_prop) =
-            Property(conn.target.value(), conn.type_name(), /* custom */ false);
-      } else {
-        // empty. type info only
-        (*out_prop) = Property(conn.type_name(), /* custom */ false);
-      }
+    if (material.volume.authored()) {
+      Attribute attr;
+      attr.set_type_name(value::TypeTraits<value::token>::type_name());
+      attr.set_connections(material.volume.get_connections());
+      attr.metas() = material.volume.metas();
+      (*out_prop) =
+            Property(attr, /* custom */ false);
+      out_prop->set_listedit_qual(material.volume.get_listedit_qual());
     } else {
       // Not authored
       return false;
@@ -1473,7 +1484,7 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
         }
       } else {
         if (err) {
-          (*err) += fmt::format("Prim name `{}` in root Layer's `primChildren` metadatum not found in Layer root.", nameTok.str()); 
+          (*err) += fmt::format("Prim name `{}` in root Layer's `primChildren` metadatum not found in Layer root.", nameTok.str());
         }
         return false;
       }

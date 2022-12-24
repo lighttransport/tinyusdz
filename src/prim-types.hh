@@ -1637,19 +1637,72 @@ class Relationship {
 };
 
 //
-// Connection is a typed version of Relation
+// TypedConnection is a typed version of Relationship
+// example:
+//
+// token varname.connect = </Material/uv.name>
+// float specular.connect = </Material/uv.specular>
+// float specular:collection.connect = [</Material/uv.specular>, </Material/uv.specular_lod0>]
+//
 //
 template <typename T>
-class Connection {
+class TypedConnection {
  public:
   using type = typename value::TypeTraits<T>::value_type;
 
   static std::string type_name() { return value::TypeTraits<T>::type_name(); }
 
-  // Connection() = delete;
-  // Connection(const T &v) : fallback(v) {}
+  void set_listedit_qual(ListEditQual q) { _listOpQual = q; }
+  ListEditQual get_listedit_qual() const { return _listOpQual; }
 
-  nonstd::optional<Path> target;
+  // Define-only: token output:surface
+  void set_empty() {
+    _authored = true;
+  }
+
+  void set(const Path &p) {
+    _targetPaths.clear();
+    _targetPaths.push_back(p);
+    _authored = true;
+  }
+
+  void set(const std::vector<Path> &pv) {
+    _targetPaths = pv;
+    _authored = true;
+  }
+
+  void set(const value::ValueBlock &v) {
+    (void)v;
+    _blocked = true;
+    _authored = true;
+  }
+
+  void set_blocked() {
+    _blocked = true;
+    _authored = true;
+  }
+
+  const std::vector<Path> &get_connections() const {
+    return _targetPaths;
+  }
+
+  bool authored() const {
+    return _authored;
+  }
+
+  bool has_value() const { return _targetPaths.size(); }
+
+  bool is_blocked() const { return _blocked; }
+
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
+
+ private:
+  std::vector<Path> _targetPaths;
+  bool _authored{false};
+  bool _blocked{false};
+  AttrMeta _metas;
+  ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 };
 
 #if 0  // Moved to value::TimeSampleInterpolationType

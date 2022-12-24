@@ -1,0 +1,7 @@
+#usda 1.0
+
+def Material "mymat" ()
+{
+  # syntax allows multiple paths.
+  token outputs:surface.connect = [</bora>, </dora>]
+}
