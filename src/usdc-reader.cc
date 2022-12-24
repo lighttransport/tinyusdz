@@ -10,7 +10,6 @@
 // - [ ] GeomSubset
 //
 
-#include "usdShade.hh"
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -45,6 +44,7 @@
 #include "stream-reader.hh"
 #include "tiny-format.hh"
 #include "value-pprint.hh"
+#include "usdShade.hh"
 
 //
 #ifdef __clang__
@@ -234,12 +234,14 @@ class USDCReader::Impl {
   ///
   /// Reconstruct Prim from given `typeName` string(e.g. "Xform")
   ///
+  /// @param[out] is_unsupported_prim true when encounter Unsupported Prim type(and returns nullopt)
+  ///
   nonstd::optional<Prim> ReconstructPrimFromTypeName(
       const std::string &typeName, const std::string &primTypeName, const std::string &prim_name,
       const crate::CrateReader::Node &node, const Specifier spec,
       const std::vector<value::token> &primChildren,
       const std::vector<value::token> &properties,
-      const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta);
+      const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta, bool *is_unsupported_prim = nullptr);
 
   bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrim,
                                   int level,
@@ -255,9 +257,9 @@ class USDCReader::Impl {
   /// --------------------------------------------------
   ///
 
-  void PushError(const std::string &s) { _err += s; }
+  void PushError(const std::string &s) { _err = s + _err; }
 
-  void PushWarn(const std::string &s) { _warn += s; }
+  void PushWarn(const std::string &s) { _warn = s + _warn; }
 
   std::string GetError() { return _err; }
 
@@ -1288,10 +1290,9 @@ bool USDCReader::Impl::ReconstructPrim(const crate::CrateReader::Node &node,
   }
 
   prim::ReferenceList refs;  // TODO:
-  std::string err;
 
-  if (!prim::ReconstructPrim<T>(properties, refs, prim, &_warn, &err)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, err);
+  if (!prim::ReconstructPrim<T>(properties, refs, prim, &_warn, &_err)) {
+    return false;
   }
 
   return true;
@@ -1457,18 +1458,16 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
     } else if (fv.first == "primChildren") {  // only appears in USDC.
       auto v = fv.second.get_value<std::vector<value::token>>();
       if (!v) {
-        PUSH_ERROR("Type must be `token[]` for `primChildren`, but got " +
-                   fv.second.type_name() + "\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("Type must be `token[]` for `primChildren`, but got " +
+                   fv.second.type_name());
       }
 
       metas->primChildren = v.value();
     } else if (fv.first == "documentation") {  // 'doc'
       auto v = fv.second.get_value<std::string>();
       if (!v) {
-        PUSH_ERROR("Type must be `string` for `documentation`, but got " +
-                   fv.second.type_name() + "\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("Type must be `string` for `documentation`, but got " +
+                   fv.second.type_name());
       }
       value::StringData sdata;
       sdata.value = v.value();
@@ -1478,9 +1477,8 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
     } else if (fv.first == "comment") {  // 'comment'
       auto v = fv.second.get_value<std::string>();
       if (!v) {
-        PUSH_ERROR("Type must be `string` for `comment`, but got " +
-                   fv.second.type_name() + "\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("Type must be `string` for `comment`, but got " +
+                   fv.second.type_name());
       }
       value::StringData sdata;
       sdata.value = v.value();
@@ -1488,7 +1486,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       metas->comment = sdata;
       DCOUT("comment = " << metas->comment.value);
     } else {
-      PUSH_WARN("[StageMeta] TODO: " + fv.first + "\n");
+      PUSH_WARN("[StageMeta] TODO: " + fv.first);
     }
   }
 
@@ -1502,13 +1500,17 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     const crate::CrateReader::Node &node, const Specifier spec,
     const std::vector<value::token> &primChildren,
     const std::vector<value::token> &properties,
-    const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta) {
+    const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta, bool *is_unsupported_prim) {
+
+  if (is_unsupported_prim) {
+    (*is_unsupported_prim) = false; // init with false
+  }
 
 #define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec) \
   if (__node_ty == value::TypeTraits<__primty>::type_name()) {     \
     __primty typed_prim;                                           \
     if (!ReconstructPrim(node, psmap, &typed_prim)) {         \
-      PUSH_ERROR("Failed to reconstruct Prim " << __node_ty);      \
+      PUSH_ERROR("Failed to reconstruct Prim " << __node_ty << " elementName: " << __prim_name);      \
       return nonstd::nullopt;                                      \
     }                                                              \
     typed_prim.meta = meta;                                        \
@@ -1571,10 +1573,11 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(Shader, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Material, typeName, prim_name, spec) {
     PUSH_WARN("TODO or unsupported prim type: " << typeName);
+    if (is_unsupported_prim) {
+      (*is_unsupported_prim) = true;
+    }
     return nonstd::nullopt;
   }
-
-
 
 #undef RECONSTRUCT_PRIM
 }
@@ -2111,15 +2114,16 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
         }
 
+        bool is_unsupported_prim{false};
         auto prim = ReconstructPrimFromTypeName(pTyName, primTypeName, prim_name,
                                                 node, specifier.value(), primChildren, properties,
-                                                psmap, primMeta);
+                                                psmap, primMeta, &is_unsupported_prim);
 
         if (prim) {
           // Prim name
           prim.value().element_path() = elemPath;
         } else {
-          if (_config.allow_unknown_prims) {
+          if (_config.allow_unknown_prims && is_unsupported_prim) {
             // Try to reconsrtuct as Model
             prim = ReconstructPrimFromTypeName("Model", primTypeName, prim_name,
                                                     node, specifier.value(), primChildren, properties,
@@ -2127,10 +2131,13 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
             if (prim) {
               // Prim name
               prim.value().element_path() = elemPath;
+            } else {
+              return false;
             }
+          } else {
+            return false;
           }
         }
-      
 
         if (primOut) {
           (*primOut) = prim;
@@ -2282,9 +2289,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                 variantPrimName));
         }
 
+        bool is_unsupported_prim{false};
         variantPrim = ReconstructPrimFromTypeName(
             pTyName, primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
-            psmap, primMeta);
+            psmap, primMeta, &is_unsupported_prim);
 
         if (variantPrim) {
           // Prim name
@@ -2302,7 +2310,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
             _variantPrims.emplace(current, variantPrim.value());
           }
         } else {
-          if (_config.allow_unknown_prims) {
+          if (_config.allow_unknown_prims && is_unsupported_prim) {
             // Try to reconstruct as Model
             variantPrim = ReconstructPrimFromTypeName(
                 "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
@@ -2323,7 +2331,11 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
               } else {
                 _variantPrims.emplace(current, variantPrim.value());
               }
+            } else {
+              return false;
             }
+          } else {
+            return false;
           }
         }
       }
@@ -2518,11 +2530,11 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
                                         /* level */ 0,
                                         path_index_to_spec_index_map, stage);
 
-  stage->compute_absolute_prim_path_and_assign_prim_id();
-
   if (!ret) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage(Prim hierarchy)");
   }
+
+  stage->compute_absolute_prim_path_and_assign_prim_id();
 
   return true;
 }
@@ -2609,7 +2621,7 @@ bool USDCReader::Impl::ReadUSDC() {
   ///
   /// Reconstruct C++ representation of USD scene graph.
   ///
-  DCOUT("BuildLiveFieldSets\n");
+  DCOUT("BuildLiveFieldSets");
   if (!crate_reader->BuildLiveFieldSets()) {
     _warn = crate_reader->GetWarning();
     _err = crate_reader->GetError();
@@ -2620,7 +2632,7 @@ bool USDCReader::Impl::ReadUSDC() {
   _warn += crate_reader->GetWarning();
   _err += crate_reader->GetError();
 
-  DCOUT("Read Crate.\n");
+  DCOUT("Read Crate.");
 
   return true;
 }
