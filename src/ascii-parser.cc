@@ -590,13 +590,14 @@ std::string AsciiParser::GetError() {
     return std::string();
   }
 
+  
   std::stringstream ss;
   while (!err_stack.empty()) {
     ErrorDiagnositc diag = err_stack.top();
 
-    ss << "Near line " << (diag.cursor.row + 1) << ", col "
+    ss << "err_stack[" << (err_stack.size() - 1) << "] USDA source near line " << (diag.cursor.row + 1) << ", col "
        << (diag.cursor.col + 1) << ": ";
-    ss << diag.err << "\n";
+    ss << diag.err; // assume message contains newline.
 
     err_stack.pop();
   }
@@ -613,9 +614,9 @@ std::string AsciiParser::GetWarning() {
   while (!warn_stack.empty()) {
     ErrorDiagnositc diag = warn_stack.top();
 
-    ss << "Near line " << (diag.cursor.row + 1) << ", col "
+    ss << "USDA source near line " << (diag.cursor.row + 1) << ", col "
        << (diag.cursor.col + 1) << ": ";
-    ss << diag.err << "\n";
+    ss << diag.err; // assume message contains newline.
 
     warn_stack.pop();
   }
@@ -720,8 +721,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
         array_qual = true;
       } else {
         // Invalid syntax
-        PushError("Invalid syntax found.\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("Invalid syntax found.");
       }
 
     } else {
@@ -741,8 +741,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     if (ReadStringLiteral(&key_name)) {
       // ok
     } else {
-      PushError("Failed to parse dictionary key identifier.\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Failed to parse dictionary key identifier.\n");
     }
   }
 
@@ -1090,8 +1089,7 @@ bool AsciiParser::ParseVariantsElement(std::string *out_key,
     if (ReadStringLiteral(&key_name)) {
       // ok
     } else {
-      PushError("Failed to parse dictionary key identifier.\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Failed to parse dictionary key identifier.\n");
     }
   }
 
@@ -1526,21 +1524,18 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     } else if (c == ':') {  // namespace
       // ':' must lie in the middle of string literal
       if (ss.str().size() == 0) {
-        PushError("PrimAttr name must not starts with `:`\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `:`");
       }
     } else if (c == '.') {  // delimiter for `connect`
       // '.' must lie in the middle of string literal
       if (ss.str().size() == 0) {
-        PushError("PrimAttr name must not starts with `.`\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `.`");
       }
     } else if (std::isalnum(int(c))) {
       // number must not be allowed for the first char.
       if (ss.str().size() == 0) {
         if (!std::isalpha(int(c))) {
-          PushError("PrimAttr name must not starts with number.\n");
-          return false;
+          PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with number.");
         }
       }
     } else {
@@ -1555,13 +1550,13 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
 
   // ':' must lie in the middle of string literal
   if (ss.str().back() == ':') {
-    PushError("PrimAttr name must not ends with `:`\n");
+    PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `:`\n");
     return false;
   }
 
   // '.' must lie in the middle of string literal
   if (ss.str().back() == '.') {
-    PushError("PrimAttr name must not ends with `.`\n");
+    PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `.`\n");
     return false;
   }
 
@@ -1750,7 +1745,7 @@ bool AsciiParser::ParseStageMetaOpt() {
 
   if (!IsStageMeta(varname)) {
     std::string msg = "'" + varname + "' is not a Stage Metadata variable.\n";
-    PushError(msg);
+    PUSH_ERROR_AND_RETURN(msg);
     return false;
   }
 
@@ -1766,7 +1761,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   const VariableDef &vardef = _supported_stage_metas.at(varname);
   MetaVariable var;
   if (!ParseMetaValue(vardef, &var)) {
-    PushError("Failed to parse meta value.\n");
+    PUSH_ERROR_AND_RETURN("Failed to parse meta value.\n");
     return false;
   }
   var.set_name(varname);
@@ -2218,7 +2213,7 @@ bool AsciiParser::Expect(char expect_c) {
   if (!ret) {
     std::string msg = "Expected `" + std::string(&expect_c, 1) + "` but got `" +
                       std::string(&c, 1) + "`\n";
-    PushError(msg);
+    PUSH_ERROR_AND_RETURN(msg);
 
     // unwind
     _sr->seek_from_current(-1);
@@ -2255,8 +2250,6 @@ bool AsciiParser::ParseMagicHeader() {
           "Magic header must start with `#usda `(at least single whitespace "
           "after 'a') but got `" +
           std::string(magic, 6));
-
-      return false;
     }
   }
 
@@ -2515,7 +2508,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       value::token value;
       if (!ReadBasicType(&value)) {
         std::string msg = "Token expected for `" + varname + "`.\n";
-        PushError(msg);
+        PUSH_ERROR_AND_RETURN(msg);
         return false;
       }
       DCOUT("token = " << value);
@@ -2526,7 +2519,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     std::vector<value::token> value;
     if (!ParseBasicTypeArray(&value)) {
       std::string msg = "Token array expected for `" + varname + "`.\n";
-      PushError(msg);
+      PUSH_ERROR_AND_RETURN(msg);
       return false;
     }
     // TODO
@@ -2566,7 +2559,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     std::vector<int32_t> values;
     if (!ParseBasicTypeArray(&values)) {
       // std::string msg = "Array of int values expected for `" + var.name +
-      // "`.\n"; PushError(msg);
+      // "`.\n"; PUSH_ERROR_AND_RETURN(msg);
       return false;
     }
 
@@ -2902,7 +2895,6 @@ bool AsciiParser::LexFloat(std::string *result) {
         if (has_exp_sign) {
           // No multiple sign characters
           PUSH_ERROR_AND_RETURN("No multiple exponential sign characters.");
-          return false;
         }
 
         ss << curr;
@@ -2981,7 +2973,7 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
   }
 
   if (!Expect('=')) {
-    PushError("`=` expected.");
+    PUSH_ERROR_AND_RETURN("`=` expected.");
     return false;
   }
 
@@ -3056,13 +3048,13 @@ AsciiParser::ParsePrimMeta() {
   DCOUT("Identifier = " << varname);
 
   if (!IsPrimMeta(varname)) {
-    std::string msg = "'" + varname + "' is not a Prim Metadata variable.\n";
-    PushError(msg);
+    std::string msg = "'" + varname + "' is not a Prim Metadata variable.";
+    PUSH_ERROR(msg);
     return nonstd::nullopt;
   }
 
   if (!Expect('=')) {
-    PushError("'=' expected in Prim Metadata line.\n");
+    PUSH_ERROR("'=' expected in Prim Metadata line.");
     return nonstd::nullopt;
   }
   SkipWhitespace();
@@ -3071,14 +3063,14 @@ AsciiParser::ParsePrimMeta() {
     MetaVariable var;
     const auto vardef = pv.value();
     if (!ParseMetaValue(vardef, &var)) {
-      PushError("Failed to parse Prim meta value.\n");
+      PUSH_ERROR("Failed to parse Prim meta value.");
       return nonstd::nullopt;
     }
     var.set_name(varname);
 
     return std::make_pair(qual, var);
   } else {
-    PushError(fmt::format("Unsupported/unimplemented PrimSpec metadata {}", varname));
+    PUSH_ERROR(fmt::format("Unsupported/unimplemented PrimSpec metadata {}", varname));
     return nonstd::nullopt;
   }
 
@@ -3389,7 +3381,6 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
         PUSH_ERROR_AND_RETURN("Failed to parse " +
                               std::string(value::TypeTraits<T>::type_name()) +
                               " array.");
-        return false;
       }
 
       // Empty array allowed.
@@ -3401,8 +3392,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   } else if (hasConnect(primattr_name)) {
     std::string value;  // TODO: Path
     if (!ReadPathIdentifier(&value)) {
-      PushError("Failed to parse path identifier for `token`.\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Failed to parse path identifier for `token`.");
     }
 
     var.set_value(value);
@@ -3411,7 +3401,6 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse " +
                             std::string(value::TypeTraits<T>::type_name()));
-      return false;
     }
 
     if (value) {
@@ -3570,7 +3559,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     if (MaybeNone()) {
-      //PUSH_ERROR_AND_RETURN("TODO: Support `None` for property.");
       return true;
     }
 
@@ -3631,8 +3619,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
     // next token should be type
     if (!ReadIdentifier(&type_name)) {
-      PushError("`type` identifier expected but got non-identifier\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("`type` identifier expected but got non-identifier.");
     }
 
     // `type_name` is then overwritten.
@@ -3640,7 +3627,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
   if (!IsSupportedPrimAttrType(type_name)) {
     PUSH_ERROR_AND_RETURN("Unknown or unsupported primtive attribute type `" +
-                          type_name + "`\n");
+                          type_name);
   }
 
   // Has array qualifier? `[]`
@@ -3660,8 +3647,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
         array_qual = true;
       } else {
         // Invalid syntax
-        PushError("Invalid syntax found.\n");
-        return false;
+        PUSH_ERROR_AND_RETURN("Invalid syntax found.");
       }
 
     } else {
@@ -4426,7 +4412,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       std::string msg =
           "`" + prim_type +
           "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
-      PushError(msg);
+      PUSH_ERROR_AND_RETURN(msg);
       return false;
     }
 #endif    
@@ -4676,8 +4662,7 @@ bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option)
 
   bool header_ok = ParseMagicHeader();
   if (!header_ok) {
-    PushError("Failed to parse USDA magic header.\n");
-    return false;
+    PUSH_ERROR_AND_RETURN("Failed to parse USDA magic header.\n");
   }
 
   SkipCommentAndWhitespaceAndNewline();
@@ -4728,8 +4713,7 @@ bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option)
 
     Identifier tok;
     if (!ReadBasicType(&tok)) {
-      PushError("Identifier expected.\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Identifier expected.\n");
     }
 
     // Rewind
@@ -4745,8 +4729,7 @@ bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option)
     } else if (tok == "class") {
       spec = Specifier::Class;
     } else {
-      PushError("Invalid specifier token '" + tok + "'");
-      return false;
+      PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
     }
 
     int64_t primIdx = _prim_idx_assign_fun(-1);
@@ -4754,8 +4737,7 @@ bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option)
                                        << ", parentPrimIdx = root(-1)");
     bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */0, /* in_variantStmt */false);
     if (!block_ok) {
-      PushError("Failed to parse `def` block.\n");
-      return false;
+      PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
     }
   }
 
