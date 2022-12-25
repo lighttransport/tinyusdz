@@ -1487,6 +1487,18 @@ std::string GetUnderlyingTypeName(uint32_t tyid);
 nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname);
 uint32_t GetUnderlyingTypeId(const std::string &tyname);
 
+// TODO: uint32_t GetUnderlyingTypeId(const uint32_t tyid)
+
+/// @brief Check if given typeName string is a role-type(e.g. "vector3f")
+/// @param[in] tyname typeName string
+/// @return true if a type is role-type.
+bool IsRoleType(const std::string &tyname);
+
+/// @brief Check if given type_id is a role-type(e.g. "vector3f")
+/// @param[in] tyid type id(value::TYPE_ID_***)
+/// @return true if a type is role-type.
+bool IsRoleType(const uint32_t tyid);
+
 }  // namespace value
 }  // namespace tinyusdz
 
@@ -1857,7 +1869,7 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout);
 
 ///
 /// Upcast value to specified type(e.g. `half` -> `float`)
-/// Return Upcast success.
+/// Return true: Upcast success.
 ///
 bool UpcastType(const std::string &toType, value::Value &inout);
 
