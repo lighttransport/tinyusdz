@@ -2712,6 +2712,7 @@ std::string to_string(const SphereLight &light, const uint32_t indent, bool clos
   ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
+  ss << print_props(light.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2739,6 +2740,7 @@ std::string to_string(const DistantLight &light, const uint32_t indent, bool clo
   ss << print_typed_attr(light.angle, "inputs:angle", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
+  ss << print_props(light.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2768,6 +2770,7 @@ std::string to_string(const CylinderLight &light, const uint32_t indent, bool cl
   ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
+  ss << print_props(light.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2796,6 +2799,7 @@ std::string to_string(const DiskLight &light, const uint32_t indent, bool closin
   ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
+  ss << print_props(light.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2820,6 +2824,8 @@ std::string to_string(const DomeLight &light, const uint32_t indent, bool closin
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
+
+  ss << print_props(light.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
