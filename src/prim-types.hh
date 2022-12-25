@@ -1199,8 +1199,23 @@ class TypedTerminalAttribute {
   bool authored() const { return _authored; }
 
   std::string type_name() const { return value::TypeTraits<T>::type_name(); }
-
   uint32_t type_id() const { return value::TypeTraits<T>::type_id(); }
+
+  // Actual type is a typeName in USDA or USDC
+  // for example, we accect float3 type for TypedTerminalAttribute<color3f> and print/serialize
+  // this attribute value with actual type.
+  // 
+  void set_actual_type_name(const std::string &type_name) {
+    _actual_type_name = type_name;
+  }
+
+  bool has_actual_type() const {
+    return _actual_type_name.size();
+  }
+
+  const std::string &get_actual_type_name() const {
+    return _actual_type_name;
+  }
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
@@ -1208,6 +1223,7 @@ class TypedTerminalAttribute {
  private:
   AttrMeta _metas;
   bool _authored{false};
+  std::string _actual_type_name;
 };
 
 template <typename T>
