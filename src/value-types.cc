@@ -547,6 +547,14 @@ std::string GetUnderlyingTypeName(uint32_t tyid) {
   return ret.value();
 }
 
+bool IsRoleType(const std::string &tyname) {
+  return GetUnderlyingTypeId(tyname) != value::TYPE_ID_INVALID;
+}
+
+bool IsRoleType(const uint32_t tyid) {
+  return GetUnderlyingTypeId(GetTypeName(tyid)) != value::TYPE_ID_INVALID;
+}
+
 //
 // half float
 //

@@ -746,7 +746,11 @@ std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, con
 
     ss << pprint::Indent(indent);
 
-    ss << value::TypeTraits<T>::type_name() << " " << name;
+    if (attr.has_actual_type()) {
+      ss << attr.get_actual_type_name() << " " << name;
+    } else {
+      ss << value::TypeTraits<T>::type_name() << " " << name;
+    }
 
     if (attr.metas().authored()) {
       ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";

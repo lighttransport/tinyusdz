@@ -148,7 +148,7 @@ struct UsdUVTexture {
   TypedTerminalAttribute<float> outputsG; // "float outputs:g"
   TypedTerminalAttribute<float> outputsB; // "float outputs:b"
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
-  TypedTerminalAttribute<value::float3> outputsRGB; // "float3 outputs:rgb"
+  TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
 
   // Custom properties
   std::map<std::string, Property> props;
@@ -206,56 +206,17 @@ struct UsdPreviewSurface {
   PrimMeta meta;
 };
 
-#if 0 // TODO: Move to Tydra
-struct PreviewSurface {
-  std::string doc;
-
-  //
-  // Infos
-  //
-  std::string info_id;  // `uniform token`
-
-  //
-  // Inputs
-  //
-  // Currently we don't support nested shader description.
-  //
-  Color3OrTexture diffuseColor{0.18f, 0.18f, 0.18f};
-  Color3OrTexture emissiveColor{0.0f, 0.0f, 0.0f};
-  int usdSpecularWorkflow{0};  // 0 = metalness workflow, 1 = specular workflow
-
-  // specular workflow
-  Color3OrTexture specularColor{0.0f, 0.0f, 0.0f};
-
-  // metalness workflow
-  FloatOrTexture metallic{0.0f};
-
-  FloatOrTexture roughness{0.5f};
-  FloatOrTexture clearcoat{0.0f};
-  FloatOrTexture clearcoatRoughness{0.01f};
-  FloatOrTexture opacity{1.0f};
-  FloatOrTexture opacityThreshold{0.0f};
-  FloatOrTexture ior{1.5f};
-  Color3OrTexture normal{0.0f, 0.0f, 1.0f};
-  FloatOrTexture displacement{0.0f};
-  FloatOrTexture occlusion{1.0f};
-
-  // Blender Specific?
-  FloatOrTexture specular{0.5f};
-
-  //
-  // Outputs
-  //
-  int64_t surface_id{-1};       // index to `Scene::shaders`
-  int64_t displacement_id{-1};  // index to `Scene::shaders`
-};
-#endif
-
+// Transform texture coordinates.
 struct UsdTransform2d {
 
   std::string name;
 
   TypedAttributeWithFallback<Animatable<value::float2>> in{value::float2{0.0f, 0.0f}};  // "inputs:in" Usually connected to UsdPrimvarReader_float2
+
+  // Transform is TRS order:
+  //
+  // result = in * scale * rotate * translation (in USD's notation(row-major, pre-multiply matrix mul))
+  // result = translation * rotate * scale * in (in OpenGL's notation(column-major, post-multiply matrix mul))
 
   TypedAttributeWithFallback<Animatable<float>> rotation{0.0f};  // "inputs:rotation" CCW, in degree.
   TypedAttributeWithFallback<Animatable<value::float2>> scale{value::float2{1.0f, 1.0f}};  // "inputs:scale"

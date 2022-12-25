@@ -1,4 +1,5 @@
 // TODO: Use (inline) constexpr for C++17
+// TODO: Deprecate ndim()
 #define DEFINE_TYPE_TRAIT(__dty, __name, __tyid, __nc)                \
   template <>                                                         \
   struct TypeTraits<__dty> {                                          \
@@ -13,6 +14,7 @@
     static constexpr uint32_t underlying_type_id() { return __tyid; } \
     static std::string type_name() { return __name; }                 \
     static std::string underlying_type_name() { return __name; }      \
+    static bool is_role_type() { return false; }      \
   }
 
 // `role` type. Requies underlying type.
@@ -32,4 +34,5 @@
     static std::string underlying_type_name() {                              \
       return TypeTraits<__uty>::type_name();                                 \
     }                                                                        \
+    static bool is_role_type() { return true; }      \
   }

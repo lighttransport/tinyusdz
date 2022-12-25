@@ -11,6 +11,7 @@
 #include "usdShade.hh"
 
 #include "common-macros.inc"
+#include "value-types.hh"
 
 // For PUSH_ERROR_AND_RETURN
 #define PushError(s) if (err) { (*err) = s + (*err); }
@@ -1021,11 +1022,13 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
 {
   ParseResult ret;
 
+#if 0 // Old code: TODO: Remove
   if (prop_name.compare(name + ".connect") == 0) {
     ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
     ret.err = "Connection is not allowed for output terminal attribute.";
     return ret;
-  } else if (prop_name.compare(name) == 0) {
+#endif
+  if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
@@ -1037,23 +1040,68 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       return ret;
     } else {
 
+      if (prop.get_property_type() != Property::Type::EmptyAttrib) {
+          DCOUT("Output Invalid shader output terminal attribute");
+          ret.err = "No value should be assigned for shader output terminal attribute.";
+          ret.code = ParseResult::ResultCode::InvalidConnection;
+          return ret;
+      }
+
       const Attribute &attr = prop.get_attribute();
 
       std::string attr_type_name = attr.type_name();
+
+      bool attr_is_role_type = value::IsRoleType(attr_type_name);
+
+      // First check if both types are same, then
+      // Allow either type is role-types(e.g. allow color3f attribute for TypedTerminalAttribute<float3>)
+      // TODO: Allow both role-types case?(e.g. point3f attribute for TypedTerminalAttribute<vector3f>)
       if (value::TypeTraits<T>::type_name() == attr_type_name) {
-        if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-          // OK
-          target.set_authored(true);
-          target.metas() = prop.get_attribute().metas();
-          table.insert(name);
-          ret.code = ParseResult::ResultCode::Success;
+        target.set_authored(true);
+        target.metas() = prop.get_attribute().metas();
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      } else if (value::TypeTraits<T>::is_role_type()) {
+        if (attr_is_role_type) {
+          ret.code = ParseResult::ResultCode::TypeMismatch;
+          ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
           return ret;
         } else {
-          DCOUT("Output Invalid Property.type");
-          ret.err = "Invalid connection or value assigned for output terminal attribute.";
-          ret.code = ParseResult::ResultCode::InvalidConnection;
-          return ret;
+          if (value::TypeTraits<T>::underlying_type_name() == attr_type_name) {
+            target.set_authored(true);
+            target.set_actual_type_name(attr_type_name);
+            target.metas() = prop.get_attribute().metas();
+            table.insert(name);
+            ret.code = ParseResult::ResultCode::Success;
+            return ret;
+          } else {
+            ret.code = ParseResult::ResultCode::TypeMismatch;
+            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}`(and its underlying types) but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
+            return ret;
+          }
         }
+      } else if (attr_is_role_type) {
+        if (value::TypeTraits<T>::is_role_type()) {
+          ret.code = ParseResult::ResultCode::TypeMismatch;
+          ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`.", name, value::TypeTraits<T>::type_name(), attr_type_name);
+          return ret;
+        } else {
+          uint32_t attr_underlying_type_id = value::GetUnderlyingTypeId(attr_type_name);
+          if (value::TypeTraits<T>::type_id() == attr_underlying_type_id) {
+            target.set_authored(true);
+            target.set_actual_type_name(attr_type_name);
+            target.metas() = prop.get_attribute().metas();
+            table.insert(name);
+            ret.code = ParseResult::ResultCode::Success;
+            return ret;
+          } else {
+            ret.code = ParseResult::ResultCode::TypeMismatch;
+            ret.err = fmt::format("Attribute type mismatch. {} expects type `{}` but defined as type `{}`(and its underlying types).", name, value::TypeTraits<T>::type_name(), attr_type_name);
+            return ret;
+          }
+        }
+
       } else {
         DCOUT("attr.type = " << attr_type_name);
         ret.code = ParseResult::ResultCode::TypeMismatch;
