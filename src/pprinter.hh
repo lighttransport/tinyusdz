@@ -150,6 +150,12 @@ std::string to_string(const DomeLight &light, const uint32_t indent = 0, bool cl
 std::string to_string(const DiskLight &light, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const DistantLight &light, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const CylinderLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const RectLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const GeometryLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const PortalLight &light, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const PluginLight &light, const uint32_t indent = 0, bool closing_brace = true);
+
+std::string to_string(const DomeLight::TextureFormat &texformat);
 
 std::string to_string(const Material &material, const uint32_t indent = 0, bool closing_brace = true);
 
