@@ -154,16 +154,6 @@ void SetIndentString(const std::string &s) {
 } // namespace pprint
 
 
-namespace {
-
-//std::string to_string(const double &v) {
-//  std::stringstream ss;
-//  ss << v;
-//  return ss.str();
-//}
-
-} // namespace local
-
 
 template<typename T>
 std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t indent = 0) {
@@ -2707,9 +2697,19 @@ std::string to_string(const SphereLight &light, const uint32_t indent, bool clos
 
   // members
   ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
+  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+
+  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+
+  ss << print_typed_attr(light.extent, "extent", indent+1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
   ss << print_props(light.props, indent+1);
@@ -2734,10 +2734,19 @@ std::string to_string(const DistantLight &light, const uint32_t indent, bool clo
 
   // members
   ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
+  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
 
   ss << print_typed_attr(light.angle, "inputs:angle", indent+1);
+
+  ss << print_typed_attr(light.extent, "extent", indent+1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
   ss << print_props(light.props, indent+1);
@@ -2762,12 +2771,21 @@ std::string to_string(const CylinderLight &light, const uint32_t indent, bool cl
 
   // members
   ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
+  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
 
   ss << print_typed_attr(light.length, "inputs:length", indent+1);
   ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+
+  ss << print_typed_attr(light.extent, "extent", indent+1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+
 
   ss << print_xformOps(light.xformOps, indent+1);
   ss << print_props(light.props, indent+1);
@@ -2792,11 +2810,19 @@ std::string to_string(const DiskLight &light, const uint32_t indent, bool closin
 
   // members
   ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
+  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
 
   ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+
+  ss << print_typed_attr(light.extent, "extent", indent+1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
   ss << print_props(light.props, indent+1);
@@ -2821,10 +2847,64 @@ std::string to_string(const DomeLight &light, const uint32_t indent, bool closin
 
   // members
   ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
+  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
   ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+
+  ss << print_typed_attr(light.guideRadius, "inputs:guideRadius", indent+1);
+  ss << print_typed_attr(light.file, "inputs:file", indent+1);
+  ss << print_typed_token_attr(light.textureFormat, "inputs:textureFormat", indent+1);
+
+  ss << print_typed_attr(light.extent, "extent", indent+1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
 
   ss << print_xformOps(light.xformOps, indent+1);
 
+  ss << print_props(light.props, indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const RectLight &light, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(light.spec) << " RectLight \"" << light.name << "\"\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(light.color, "inputs:color", indent+1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
+  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+
+  ss << print_typed_attr(light.file, "inputs:file", indent+1);
+  ss << print_typed_attr(light.height, "inputs:height", indent+1);
+  ss << print_typed_attr(light.width, "inputs:width", indent+1);
+  ss << print_typed_attr(light.height, "inputs:height", indent+1);
+
+  ss << print_typed_attr(light.extent, "extent", indent+1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+
+  ss << print_xformOps(light.xformOps, indent+1);
   ss << print_props(light.props, indent+1);
 
   if (closing_brace) {
@@ -2905,6 +2985,31 @@ std::string to_string(const XformOp::OpType &op) {
 
 std::string to_string(const tinyusdz::value::token &v) {
   return v.str();
+}
+
+std::string to_string(const DomeLight::TextureFormat &texformat) {
+  std::string s = "[InvalidTextureFormat]";
+
+  switch (texformat) {
+    case DomeLight::TextureFormat::Automatic: {
+      s = "automatic";
+      break;
+    }
+    case DomeLight::TextureFormat::Latlong: {
+      s = "latlong";
+      break;
+    }
+    case DomeLight::TextureFormat::MirroredBall: {
+      s = "mirroedBall";
+      break;
+    }
+    case DomeLight::TextureFormat::Angular: {
+      s = "angular";
+      break;
+    }
+  }
+
+  return s;
 }
 
 std::string dump_path(const Path &path) {
