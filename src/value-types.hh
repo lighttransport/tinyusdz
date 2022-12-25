@@ -781,17 +781,24 @@ MTy MultColumnMajor(const MTy &m, const MTy &n) {
 
 // ret = matrix x vector
 // Assume matrixN >= vecN
-template <typename MTy, typename VTy, typename VBaseTy, size_t N>
+template <typename MTy, typename VTy, typename MBaseTy, typename VBaseTy, size_t N>
 VTy MultV(const MTy &m, const VTy &v) {
+  // MBaseTy must be float or double
+  // TODO: use std::enable_if?
+  static_assert(std::is_same<MBaseTy, double>::value || std::is_same<MBaseTy, float>::value,
+    "Matrix element type must be `float` or `double`");
+
+  // Intermediate type. Choose higher precision based on its size.
+  typedef typename std::conditional<sizeof(MBaseTy) >= sizeof(VBaseTy), MBaseTy, VBaseTy>::type Ty;
+
   VTy ret;
 
   for (size_t j = 0; j < N; j++) {
-    VBaseTy value = static_cast<VBaseTy>(0);
+    Ty value = static_cast<Ty>(0);
     for (size_t i = 0; i < N; i++) {
-      // TODO: Use MBaseTy for better precison.
-      value += static_cast<VBaseTy>(m.m[i][j]) * v[i];
+      value += static_cast<Ty>(m.m[i][j]) * static_cast<Ty>(v[i]);
     }
-    ret[j] = value;
+    ret[j] = static_cast<VBaseTy>(value);
   }
 
   return ret;
