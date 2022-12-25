@@ -2587,10 +2587,15 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
 static std::string print_shader_params(const UsdUVTexture &shader, const uint32_t indent) {
   std::stringstream ss;
 
+
   ss << print_typed_attr(shader.file, "inputs:file", indent);
 
   ss << print_typed_token_attr(shader.sourceColorSpace, "inputs:sourceColorSpace", indent);
 
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
+
+  ss << print_typed_attr(shader.bias, "inputs:bias", indent);
+  ss << print_typed_attr(shader.scale, "inputs:scale", indent);
 
   ss << print_typed_attr(shader.st, "inputs:st", indent);
   ss << print_typed_token_attr(shader.wrapS, "inputs:wrapT", indent);
