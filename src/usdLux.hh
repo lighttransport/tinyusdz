@@ -42,13 +42,14 @@ struct SphereLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
+
   TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   //
   // Properties
   //
-  Animatable<Visibility> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -86,15 +87,14 @@ struct CylinderLight : public Xformable {
 
   TypedAttributeWithFallback<Animatable<float>> length{1.0f}; // inputs:length size in Y axis
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius  size in X axis
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
-  // asset inputs:texture:file
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   //
   // Properties
   //
-  Animatable<Visibility> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -134,15 +134,14 @@ struct RectLight : public Xformable {
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
   TypedAttributeWithFallback<Animatable<float>> width{1.0f}; // inputs:width  size in X axis
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
-  // asset inputs:texture:file
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   //
   // Properties
   //
-  Animatable<Visibility> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -179,15 +178,14 @@ struct DiskLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
-  // asset inputs:texture:file
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   //
   // Properties
   //
-  Animatable<Visibility> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -225,15 +223,14 @@ struct DistantLight : public Xformable {
   // rel light:filters
 
   TypedAttributeWithFallback<Animatable<float>> angle{0.53f}; // inputs:angle in degrees
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
 
-  // asset inputs:texture:file
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   //
   // Properties
   //
-  Animatable<Visibility> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -279,17 +276,18 @@ struct DomeLight : public Xformable {
 
   // DomeLight specific
   TypedAttributeWithFallback<Animatable<float>> guideRadius{1.0e5f};
-  // asset inputs:texture:file
-  TextureFormat textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
+  TypedAttributeWithFallback<Animatable<TextureFormat>> textureFormat{TextureFormat::Automatic}; // token inputs:texture:format
   // rel portals
   // rel proxyPrim
+  
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   //
   // Properties
   //
-  Animatable<Visibility> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
   std::vector<value::token> xformOpOrder;
 
   std::map<std::string, Property> props;
@@ -310,6 +308,10 @@ struct GeometryLight : public Xformable {
   Specifier spec{Specifier::Def};
   nonstd::optional<Relationship> geometry; // `rel geometry`
 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
+
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
@@ -323,7 +325,10 @@ struct GeometryLight : public Xformable {
 // TODO
 struct PortalLight : public Xformable {
   Specifier spec{Specifier::Def};
+
   TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
@@ -339,6 +344,10 @@ struct PortalLight : public Xformable {
 struct PluginLight : public Xformable {
   Specifier spec{Specifier::Def};
 
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
+
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
@@ -352,6 +361,10 @@ struct PluginLight : public Xformable {
 // TODO
 struct PluginLightFilter : public Xformable {
   Specifier spec{Specifier::Def};
+
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
