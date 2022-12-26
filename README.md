@@ -240,8 +240,8 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 // TinyUSDZ is not a header-only library, so no TINYUSDZ_IMPLEMENTATIONS
 #include "tinyusdz.hh"
 
-// If you want to print TinyUSDZ classes/enums.
-// to_string() and operator<< against TinyUSDZ classes/enums are provided separately.
+// Include pprinter.hh and value-pprint.hh if you want to print TinyUSDZ classes/structs/enums.
+// `tinyusdz::to_string()` and `std::operator<<` for TinyUSDZ classes/enums are provided separately for faster compilation
 #include <iostream>
 #include "pprinter.hh"
 #include "value-pprint.hh"
@@ -249,14 +249,14 @@ See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_su
 int main(int argc, char **argv) {
 
   std::string filename = "input.usd";
-  std::string warn;
-  std::string err;
 
   if (argc > 1) {
     filename = argv[1];
   }
 
-  tinyusdz::Stage stage; // Scene
+  tinyusdz::Stage stage; // Stage in USD terminology is nearly meant for Scene in generic 3D graphics terminology.
+  std::string warn;
+  std::string err;
 
   // Auto detect USDA/USDC/USDZ
   bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
@@ -274,6 +274,13 @@ int main(int argc, char **argv) {
 
   // Print Stage(Scene graph) 
   std::cout << stage.ExportToString() << "\n";
+
+  // stage.metas() To get Scene metadatum, 
+  for (const Prim &root_prim : stage.root_prims()) {
+    std::cout << root_prim.absolute_path() << "\n";
+    // You can traverse Prim(scene graph object) using Prim::children()
+    // See examples/api_tutorial and examples/tydra_api for details.
+  }
 
   return EXIT_SUCCESS;
 }
