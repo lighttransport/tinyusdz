@@ -13,6 +13,7 @@ namespace tinyusdz {
 // forward decl
 class Stage;
 class Prim;
+struct Material;
 struct GeomMesh;
 struct Xform;
 
@@ -85,10 +86,10 @@ enum class ColorSpace {
 // is much more generic image class. This `ImageData` class has typed pixel
 // format and has colorspace info, which is suited for renderer/viewer/DCC
 // backends.
-template <typename T, ColorSpace cs>
+template <typename T>
 struct ImageData {
   std::vector<T> image;  // raw pixel data
-  ColorSpace colorSpace{cs};
+  ColorSpace colorSpace{ColorSpace::sRGB};
   int32_t width{-1};
   int32_t height{-1};
   int32_t channels{-1};  // e.g. 3 for RGB.
@@ -97,7 +98,7 @@ struct ImageData {
 };
 
 // Simple LDR image
-using LDRImage = ImageData<uint8_t, ColorSpace::sRGB>;
+using LDRImage = ImageData<uint8_t>;
 
 struct Node {
   NodeType nodeType{NodeType::Xform};
@@ -130,13 +131,43 @@ struct RenderMesh {
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
+enum class UVReaderFloatComponentType
+{
+  COMPONENT_FLOAT,
+  COMPONENT_FLOAT2,
+  COMPONENT_FLOAT3,
+  COMPONENT_FLOAT4,
+};
+
+// float, float2, float3 or float4 only
+struct UVReaderFloat {
+  UVReaderFloatComponentType componentType{UVReaderFloatComponentType::COMPONENT_FLOAT2};
+  int32_t meshId{-1};   // index to RenderMesh
+  int32_t coordId{-1};  // index to RenderMesh::facevaryingTexcoords
+
+  mat2 transform; // UsdTransform2d
+
+  // Returns interpolated UV coordinate with UV transform
+  // # of components filled are equal to `componentType`.
+  vec4 fetchUV(size_t faceId, float varyu, float varyv);
+};
+
 struct UVTexture {
   enum class Channel { R, G, B, RGB, RGBA };
+
+  // TextureWrap `black` in UsdUVTexture is mapped to `CLAMP_TO_BORDER`(app must set border color to black)
+  // default is CLAMP_TO_EDGE and `useMetadata` wrap mode is ignored.
+  enum class WrapMode { CLAMP_TO_EDGE, REPEAT, MIRROR, CLAMP_TO_BORDER };
+
+  WrapMode wrapS{WrapMode::CLAMP_TO_EDGE};
+  WrapMode wrapT{WrapMode::CLAMP_TO_EDGE};
 
   // NOTE: for single channel(e.g. R) fetch, Only [0] will be filled for the
   // return value.
   vec4 fetch(size_t faceId, float varyu, float varyv, float varyw = 1.0f,
              Channel channel = Channel::RGB);
+
+  UVReaderFloat uvreader;
 
   int32_t imageId{-1};  // Index to Image
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
@@ -154,20 +185,6 @@ struct UDIMTexture {
   std::unordered_map<uint32_t, int32_t> imageTileIds;
 };
 
-template <typename T>
-struct UVReader {
-  static_assert(std::is_same<T, float>::type || std::is_same<T, vec2>::type ||
-                    std::is_same<T, vec3>::type || std::is_same<T, vec4>::type,
-                "Type must be float, float2, float3 or float4");
-
-  uint32_t meshId;   // index to RenderMesh
-  uint32_t coordId;  // index to RenderMesh::facevaryingTexcoords
-
-  mat2 transform;
-
-  // Returns interpolated UV coordinate with UV transform
-  T fetchUV(size_t faceId, float varyu, float varyv);
-};
 
 // base color(fallback color) or Texture
 template <typename T>
@@ -219,85 +236,6 @@ class RenderScene {
   // uint32_t rootNodeId{0}; // root node = nodes[rootNodeId]
 };
 
-#if 0  // TODO:
-// result = (texture_id == -1) ? use color : lookup texture
-struct Color3OrTexture {
-  Color3OrTexture(float x, float y, float z) {
-    color[0] = x;
-    color[1] = y;
-    color[2] = z;
-  }
-
-  std::array<float, 3> color{{0.0f, 0.0f, 0.0f}};
-
-  std::string path;  // path to .connect(We only support texture file connection
-                     // at the moment)
-  int64_t texture_id{-1};
-
-  bool HasTexture() const { return texture_id > -1; }
-};
-
-struct FloatOrTexture {
-  FloatOrTexture(float x) { value = x; }
-
-  float value{0.0f};
-
-  std::string path;  // path to .connect(We only support texture file connection
-                     // at the moment)
-  int64_t texture_id{-1};
-
-  bool HasTexture() const { return texture_id > -1; }
-};
-
-enum TextureWrap {
-  TextureWrapUseMetadata,  // look for wrapS and wrapT metadata in the texture
-                           // file itself
-  TextureWrapBlack,
-  TextureWrapClamp,
-  TextureWrapRepeat,
-  TextureWrapMirror
-};
-
-// For texture transform
-// result = in * scale * rotate * translation
-struct UsdTranform2d {
-  float rotation =
-      0.0f;  // counter-clockwise rotation in degrees around the origin.
-  std::array<float, 2> scale{{1.0f, 1.0f}};
-  std::array<float, 2> translation{{0.0f, 0.0f}};
-};
-
-// UsdUvTexture
-struct UVTexture {
-  std::string asset;  // asset name(usually file path)
-  int64_t image_id{
-      -1};  // TODO(syoyo): Consider UDIM `@textures/occlusion.<UDIM>.tex@`
-
-  TextureWrap wrapS{};
-  TextureWrap wrapT{};
-
-  std::array<float, 4> fallback{
-      {0.0f, 0.0f, 0.0f,
-       1.0f}};  // fallback color used when texture cannot be read.
-  std::array<float, 4> scale{
-      {1.0f, 1.0f, 1.0f, 1.0f}};  // scale to be applied to output texture value
-  std::array<float, 4> bias{
-      {0.0f, 0.0f, 0.0f, 0.0f}};  // bias to be applied to output texture value
-
-  UsdTranform2d texture_transfom;  // texture coordinate orientation.
-
-  // key = connection name: e.g. "outputs:rgb"
-  // item = pair<type, name> : example: <"float3", "outputs:rgb">
-  std::map<std::string, std::pair<std::string, std::string>> outputs;
-
-  PrimvarReaderType st;  // texture coordinate(`inputs:st`). We assume there is
-                         // a connection to this.
-
-  // TODO: orientation?
-  // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
-};
-#endif
-
 nonstd::expected<Node, std::string> Convert(const Stage &stage,
                                                   const Xform &xform);
 
@@ -306,6 +244,22 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 
 // Currently float2 only
 std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
+
+///
+/// Convert USD Material/Shader to renderer-friendly Material
+/// Assume single UsdPreviewSurface is assigned to a USD Material.
+/// UVTexture and Images are managed by an array index,
+/// so converted RenderMaterial, UVTexture and Images are appended to materials, textures, and images.
+///
+/// TODO: Support HDR image
+///
+bool ConvertMaterial(
+  const Stage &stage,
+  const tinyusdz::Material &material,
+  std::vector<RenderMaterial> &materials, // [input]
+  std::vector<UVTexture> &textures, // [inout]
+  std::vector<LDRImage> &images); // [inout]
+
 
 }  // namespace tydra
 }  // namespace tinyusdz
