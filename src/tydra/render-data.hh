@@ -30,6 +30,30 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using mat2 = value::matrix2f;  // float precision
 
+// Simple string <-> id map
+struct StringAndIdMap {
+  void add(uint64_t key, const std::string &val) {
+    _i_to_s[key] = val;
+    _s_to_i[val] = key;
+  }
+
+  void add(const std::string &key, uint64_t val) {
+    _s_to_i[key] = val;
+    _i_to_s[val] = key;
+  }
+
+  size_t count(uint64_t i) const { return _i_to_s.count(i); }
+
+  size_t count(const std::string &s) const { return _s_to_i.count(s); }
+
+  std::string at(uint64_t i) const { return _i_to_s.at(i); }
+
+  uint64_t at(std::string s) const { return _s_to_i.at(s); }
+
+  std::map<uint64_t, std::string> _i_to_s;  // index -> string
+  std::map<std::string, uint64_t> _s_to_i;  // string -> index
+};
+
 enum class VertexVariability
 {
   //Constant,
@@ -256,6 +280,9 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 bool ConvertMaterial(
   const Stage &stage,
   const tinyusdz::Material &material,
+  StringAndIdMap materialMap, // [inout]
+  StringAndIdMap textureMap, // [inout]
+  StringAndIdMap imageMap, // [inout]
   std::vector<RenderMaterial> &materials, // [input]
   std::vector<UVTexture> &textures, // [inout]
   std::vector<LDRImage> &images); // [inout]
