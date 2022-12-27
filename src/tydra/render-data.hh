@@ -30,8 +30,8 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using mat2 = value::matrix2f;  // float precision
 
-// Simple string <-> id pair
-struct StringAndIdPair {
+// Simple string <-> id map
+struct StringAndIdMap {
   void add(uint64_t key, const std::string &val) {
     _i_to_s[key] = val;
     _s_to_i[val] = key;
@@ -56,10 +56,10 @@ struct StringAndIdPair {
 
 enum class VertexVariability
 {
-  //Constant,
-  //Uniform,
-  //Varying,
-  Vertex,
+  Constant,
+  Uniform,
+  Varying, // per-vertex
+  Vertex, // basically per-vertex(it depends on Subdivision scheme)
   FaceVarying,
   Indexed, // Need to supply index buffer
 };
@@ -90,10 +90,25 @@ struct Attribute {
   int64_t buffer_id{-1};  // index to buffer_id
 };
 
-template<typename T>
+// TODO: Support more format
+enum class VertexAttributeFormat {
+  Float, // float
+  Vec2,  // float2
+  Vec3,  // float3
+  Vec4,  // float4
+  Ivec2, // int2
+  Uvec4, // uint4
+  Double, // double
+  Dvec2, // double2
+  Dvec3, // double3
+  Dvec4, // double4
+};
+
 struct VertexAttribute {
-  std::vector<T> data;
-  std::vector<uint32_t> indices; // indexed primvar(vertex attribute). Used when variability == Indexed
+  VertexAttributeFormat format;
+  uint32_t stride; //  We don't support packed(interleaved) vertex data, so stride is usually sizeof(VertexAttributeFormat type)
+  std::vector<uint8_t> data; // raw binary data(TODO: Use Buffer ID?)
+  std::vector<uint32_t> indices; // For indexed primvar(vertex attribute). Used when variability == Indexed
   VertexVariability variability;
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
@@ -142,22 +157,26 @@ struct Node {
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
+// Currently normals and texcoords are converted all to facevarying.
+// TODO: Support `varying`(per-vertex)usually p`vertex`)
 struct RenderMesh {
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
-  std::vector<uint32_t> faceVertexCounts;
+  std::vector<uint32_t> faceVertexCounts; // TODO: Trianglulated face only
 
-  // non-facevarying normal and texcoords are converted to facevarying
   std::vector<vec3> facevaryingNormals;
 
   // key = slot ID.
-  std::unordered_map<uint32_t, Attribute> facevaryingTexcoords;
+  // vec2(texCoord2f) only
+  std::unordered_map<uint32_t, std::vector<vec2>> facevaryingTexcoords;
 
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
 
-  // key = primar name/ID
-  std::map<StringAndIdPair, Attribute> facevaryingPrimvars;
+  std::map<uint32_t, VertexAttribute> primvars;
+
+  // Index = key to `facevaryingPrimvars`
+  StringAndIdMap primvarsMap;
 
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
@@ -288,10 +307,10 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 bool ConvertMaterial(
   const Stage &stage,
   const tinyusdz::Material &material,
-  std::map<StringAndIdPair, uint64_t> materialMap, // [inout]
-  std::map<StringAndIdPair, uint64_t> textureMap, // [inout]
-  std::map<StringAndIdPair, uint64_t> imageMap, // [inout]
-  std::map<StringAndIdPair, uint64_t> bufferMap, // [inout]
+  std::map<StringAndIdMap, uint64_t> materialMap, // [inout]
+  std::map<StringAndIdMap, uint64_t> textureMap, // [inout]
+  std::map<StringAndIdMap, uint64_t> imageMap, // [inout]
+  std::map<StringAndIdMap, uint64_t> bufferMap, // [inout]
   std::vector<RenderMaterial> &materials, // [input]
   std::vector<UVTexture> &textures, // [inout]
   std::vector<TextureImage> &images, // [inout]
