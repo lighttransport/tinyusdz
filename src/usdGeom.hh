@@ -151,6 +151,26 @@ class GeomPrimvar {
     return _has_value;
   }
 
+  ///
+  /// Get type name of primvar.
+  ///
+  std::string get_type_name() const {
+    if (!_has_value) {
+      return "null";
+    }
+    
+    return _attr.type_name();
+  }
+
+  ///
+  /// Get type id of primvar.
+  ///
+  uint32_t get_type_id() const {
+    if (!_has_value) {
+      return value::TYPE_ID_NULL;
+    }
+    return _attr.type_id();
+  }
 
   ///
   /// Get Attribute value.
