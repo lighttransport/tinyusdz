@@ -4,6 +4,7 @@
 #include "prim-types.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
+#include "usdGeom.hh"
 #include "usdShade.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
@@ -28,6 +29,9 @@
 #include "math-util.inc"
 
 namespace tinyusdz {
+
+extern template bool GeomPrimvar::flatten_with_indices(std::vector<value::texcoord2f> *dst, std::string *err);
+
 namespace tydra {
 
 namespace {
@@ -44,18 +48,45 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 
 //
 // name does not include "primvars:" prefix.
+// TODO: timeSamples, connected attribute.
 //
-template <typename T>
-nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
+nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &state, const GeomMesh &mesh, const std::string &name) {
-  VertexAttribute<T> vattr;
+  VertexAttribute vattr;
 
   (void)state;
-  (void)mesh;
 
-  constexpr auto kPrimvars = "primvars:";
-  constexpr auto kIndices = ":indices";
+  GeomPrimvar primvar;
+  if (!mesh.get_primvar(name, &primvar)) {
+    return nonstd::make_unexpected(fmt::format("No primvars:{}", name));
+  }
 
+  if (!primvar.has_value()) {
+    return nonstd::make_unexpected("No value exist for primvars:" + name);
+  }
+
+  if (primvar.get_type_id() != value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
+    return nonstd::make_unexpected("Texture coordinate primvar must be texCoord2f[] type, but got " + primvar.get_type_name());
+  }
+
+  if (primvar.get_interpolation() == Interpolation::Varying) {
+    vattr.variability = VertexVariability::Varying;
+  } else if (primvar.get_interpolation() == Interpolation::Constant) {
+    vattr.variability = VertexVariability::Constant;
+  } else if (primvar.get_interpolation() == Interpolation::Uniform) {
+    vattr.variability = VertexVariability::Uniform;
+  } else if (primvar.get_interpolation() == Interpolation::Vertex) {
+    vattr.variability = VertexVariability::Vertex;
+  } else if (primvar.get_interpolation() == Interpolation::FaceVarying) {
+    vattr.variability = VertexVariability::FaceVarying;
+  }
+
+  std::vector<value::texcoord2f> uvs;
+  if (!primvar.flatten_with_indices(&uvs)) {
+    return nonstd::make_unexpected("Failed to retrieve texture coordinate primvar with concrete type.");
+  }
+
+#if 0
   // TODO: timeSamples, connect
   {
     const std::string primvar_name = kPrimvars + name;
@@ -148,6 +179,7 @@ nonstd::expected<VertexAttribute<T>, std::string> GetTextureCoordinate(
       }
     }
   }
+#endif
 
   return std::move(vattr);
 }
@@ -477,9 +509,9 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   //}
   {
     std::string uvname = "st";
-    auto ret = GetTextureCoordinate<vec2>(stage, mesh, uvname);
+    auto ret = GetTextureCoordinate(stage, mesh, uvname);
     if (ret) {
-      const VertexAttribute<vec2> vattr = ret.value();
+      const VertexAttribute vattr = ret.value();
 
       if (vattr.variability != VertexVariability::FaceVarying) {
         return nonstd::make_unexpected(
