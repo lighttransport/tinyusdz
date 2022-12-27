@@ -30,8 +30,8 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using mat2 = value::matrix2f;  // float precision
 
-// Simple string <-> id map
-struct StringAndIdMap {
+// Simple string <-> id pair
+struct StringAndIdPair {
   void add(uint64_t key, const std::string &val) {
     _i_to_s[key] = val;
     _s_to_i[val] = key;
@@ -106,23 +106,27 @@ enum class ColorSpace {
   Custom,  // TODO: Custom colorspace
 };
 
-// NOTE: Please distinguish with image::Image(src/image-types.hh). image::Image
-// is much more generic image class. This `ImageData` class has typed pixel
-// format and has colorspace info, which is suited for renderer/viewer/DCC
-// backends.
-template <typename T>
-struct ImageData {
-  std::vector<T> image;  // raw pixel data
+// TODO: Support more texel format.
+enum class TextureImageTexelFormat {
+  UINT8_RGB,
+  FP16_RGB, // half float
+  FP32_RGB,
+};
+
+struct TextureImage {
+  TextureImageTexelFormat texel_format{TextureImageTexelFormat::UINT8_RGB};
   ColorSpace colorSpace{ColorSpace::sRGB};
+  int32_t bps{8}; //
   int32_t width{-1};
   int32_t height{-1};
   int32_t channels{-1};  // e.g. 3 for RGB.
+  int32_t miplevel{0};
+
+  int64_t buffer_id{-1}; // index to buffer_id(texel data)
 
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
-// Simple LDR image
-using LDRImage = ImageData<uint8_t>;
 
 struct Node {
   NodeType nodeType{NodeType::Xform};
@@ -152,6 +156,9 @@ struct RenderMesh {
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
 
+  // key = primar name/ID
+  std::map<StringAndIdPair, Attribute> facevaryingPrimvars;
+
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
@@ -166,8 +173,8 @@ enum class UVReaderFloatComponentType
 // float, float2, float3 or float4 only
 struct UVReaderFloat {
   UVReaderFloatComponentType componentType{UVReaderFloatComponentType::COMPONENT_FLOAT2};
-  int32_t meshId{-1};   // index to RenderMesh
-  int32_t coordId{-1};  // index to RenderMesh::facevaryingTexcoords
+  int64_t mesh_id{-1};   // index to RenderMesh
+  int64_t coord_id{-1};  // index to RenderMesh::facevaryingTexcoords
 
   mat2 transform; // UsdTransform2d
 
@@ -193,7 +200,7 @@ struct UVTexture {
 
   UVReaderFloat uvreader;
 
-  int32_t imageId{-1};  // Index to Image
+  int64_t image_id{-1};  // Index to TextureImage
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
@@ -249,15 +256,15 @@ struct RenderMaterial {
 
 // Simple glTF-like Scene Graph
 class RenderScene {
-  std::vector<Node> nodes;
-  std::vector<LDRImage> images;
+  std::vector<Node> nodes; // Prims in USD
+  std::vector<TextureImage> images;
   std::vector<RenderMaterial> materials;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. primvar texcoords)
 
-  // uint32_t rootNodeId{0}; // root node = nodes[rootNodeId]
+  //int64_t default_root_node{-1}; // index to `nodes`. `defaultPrim` in USD
 };
 
 nonstd::expected<Node, std::string> Convert(const Stage &stage,
@@ -272,20 +279,23 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 ///
 /// Convert USD Material/Shader to renderer-friendly Material
 /// Assume single UsdPreviewSurface is assigned to a USD Material.
-/// UVTexture and Images are managed by an array index,
-/// so converted RenderMaterial, UVTexture and Images are appended to materials, textures, and images.
 ///
-/// TODO: Support HDR image
+/// RenderMaterial, UVTexture and Images/Buffers are managed by an map(key = Resource name and handle ID, value = array index to corresponding linearlized resource array(e.g. materialMap.second => array index to `materials`)
+///
+/// Newly created RenderMaterial, UVTexture and TextureImage/BufferData are appended to `materials`, `textures`, and `images`/`buffers` respectively.
+///
 ///
 bool ConvertMaterial(
   const Stage &stage,
   const tinyusdz::Material &material,
-  StringAndIdMap materialMap, // [inout]
-  StringAndIdMap textureMap, // [inout]
-  StringAndIdMap imageMap, // [inout]
+  std::map<StringAndIdPair, uint64_t> materialMap, // [inout]
+  std::map<StringAndIdPair, uint64_t> textureMap, // [inout]
+  std::map<StringAndIdPair, uint64_t> imageMap, // [inout]
+  std::map<StringAndIdPair, uint64_t> bufferMap, // [inout]
   std::vector<RenderMaterial> &materials, // [input]
   std::vector<UVTexture> &textures, // [inout]
-  std::vector<LDRImage> &images); // [inout]
+  std::vector<TextureImage> &images, // [inout]
+  std::vector<BufferData> &buffers); // [inout]
 
 
 }  // namespace tydra
