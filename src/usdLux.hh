@@ -19,16 +19,16 @@ constexpr auto kGeometryLight = "GeometryLight";
 constexpr auto kPortalLight = "PortalLight";
 constexpr auto kPluginLight = "PluginLight";
 
+class Light : public Xformable {
 
-struct SphereLight : public Xformable {
+ public:
   std::string name;
   Specifier spec{Specifier::Def};
-
   int64_t parent_id{-1};  // Index to xform node
 
-  //
-  // Predefined attribs.
-  //
+  TypedAttribute<Animatable<Extent>> extent; // float3[]
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   // Light API
   TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
@@ -41,15 +41,6 @@ struct SphereLight : public Xformable {
   TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
   // rel light:filters
 
-  TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
-
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  //
-  // Properties
-  //
 
   std::map<std::string, Property> props;
   PrimMeta meta;
@@ -60,195 +51,47 @@ struct SphereLight : public Xformable {
   std::vector<value::token> &propertyNames() { return _properties; }
 
  private:
+
   std::vector<value::token> _primChildren;
   std::vector<value::token> _properties;
 };
 
-struct CylinderLight : public Xformable {
-  std::string name;
-  Specifier spec{Specifier::Def};
+struct SphereLight : public Light {
 
-  int64_t parent_id{-1};  // Index to xform node
+  TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
 
-  //
-  // Predefined attribs.
-  //
+};
 
-  // Light API
-  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
-  TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f}; // inputs:exposure EV
-  TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
-  TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
+struct CylinderLight : public Light {
 
   TypedAttributeWithFallback<Animatable<float>> length{1.0f}; // inputs:length size in Y axis
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius  size in X axis
 
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  //
-  // Properties
-  //
-
-  std::map<std::string, Property> props;
-  PrimMeta meta;
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 
-struct RectLight : public Xformable {
-  std::string name;
-  Specifier spec{Specifier::Def};
-
-  int64_t parent_id{-1};  // Index to xform node
-
-  //
-  // Predefined attribs.
-  //
-
-  // Light API
-  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
-  TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f}; // inputs:exposure EV
-  TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
-  TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
+struct RectLight : public Light {
 
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
   TypedAttributeWithFallback<Animatable<float>> width{1.0f}; // inputs:width  size in X axis
 
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  //
-  // Properties
-  //
-
-  std::map<std::string, Property> props;
-  PrimMeta meta;
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
-struct DiskLight : public Xformable {
-  std::string name;
-  Specifier spec{Specifier::Def};
-
-  int64_t parent_id{-1};  // Index to xform node
-
-  //
-  // Predefined attribs.
-  //
-
-  // Light API
-  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
-  TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f}; // inputs:exposure EV
-  TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
-  TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
+struct DiskLight : public Light {
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
 
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  //
-  // Properties
-  //
-
-  std::map<std::string, Property> props;
-  PrimMeta meta;
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 // NOTE: Make Distance xformable?
-struct DistantLight : public Xformable {
-  std::string name;
-  Specifier spec{Specifier::Def};
-
-  int64_t parent_id{-1};  // Index to xform node
-
-  //
-  // Predefined attribs.
-  //
-
-  // Light API
-  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
-  TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f}; // inputs:exposure EV
-  TypedAttributeWithFallback<Animatable<float>> intensity{50000.0f}; // inputs:intensity
-  TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
+struct DistantLight : public Light {
 
   TypedAttributeWithFallback<Animatable<float>> angle{0.53f}; // inputs:angle in degrees
 
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  //
-  // Properties
-  //
-
-  std::map<std::string, Property> props;
-  PrimMeta meta;
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
-struct DomeLight : public Xformable {
-  std::string name;
-  Specifier spec{Specifier::Def};
-  int64_t parent_id{-1};  // Index to xform node
+struct DomeLight : public Light {
 
   enum class TextureFormat {
     Automatic, // "automatic"
@@ -257,23 +100,6 @@ struct DomeLight : public Xformable {
     Angular // "angular"
   };
 
-  //
-  // Predefined attribs.
-  //
-  // TODO: Support texture
-
-  // Light API
-  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
-  TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f}; // inputs:exposure EV
-  TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
-  TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
-
-
   // DomeLight specific
   TypedAttributeWithFallback<Animatable<float>> guideRadius{1.0e5f};
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
@@ -281,101 +107,28 @@ struct DomeLight : public Xformable {
   // rel portals
   // rel proxyPrim
   
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  //
-  // Properties
-  //
-  std::vector<value::token> xformOpOrder;
-
-  std::map<std::string, Property> props;
-  PrimMeta meta;
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 // TODO:
-struct GeometryLight : public Xformable {
-  Specifier spec{Specifier::Def};
+struct GeometryLight : public Light {
+
   nonstd::optional<Relationship> geometry; // `rel geometry`
 
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 // TODO
-struct PortalLight : public Xformable {
-  Specifier spec{Specifier::Def};
+struct PortalLight : public Light {
 
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 // TODO
-struct PluginLight : public Xformable {
-  Specifier spec{Specifier::Def};
-
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
+struct PluginLight : public Light {
 };
 
-// TODO
-struct PluginLightFilter : public Xformable {
-  Specifier spec{Specifier::Def};
-
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
+#if 0 // TODO
+struct PluginLightFilter : public Light {
 };
-
+#endif
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
