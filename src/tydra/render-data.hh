@@ -105,11 +105,11 @@ enum class VertexAttributeFormat {
 };
 
 struct VertexAttribute {
-  VertexAttributeFormat format;
-  uint32_t stride; //  We don't support packed(interleaved) vertex data, so stride is usually sizeof(VertexAttributeFormat type)
+  VertexAttributeFormat format{VertexAttributeFormat::Vec3};
+  uint32_t stride{0}; //  We don't support packed(interleaved) vertex data, so stride is usually sizeof(VertexAttributeFormat type). 0 = tightly packed. Let app/gfx API decide actual stride bytes.
   std::vector<uint8_t> data; // raw binary data(TODO: Use Buffer ID?)
-  std::vector<uint32_t> indices; // For indexed primvar(vertex attribute). Used when variability == Indexed
-  VertexVariability variability;
+  std::vector<uint32_t> indices; // Dedicated Index buffer. Set when variability == Indexed. empty = Use vertex index buffer 
+  VertexVariability variability{VertexVariability::FaceVarying};
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
@@ -162,7 +162,9 @@ struct Node {
 struct RenderMesh {
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
-  std::vector<uint32_t> faceVertexCounts; // TODO: Trianglulated face only
+  // For triangulated mesh, array elements are all 3.
+  // TODO: Make `faceVertexCounts` empty for Trianglulated mesh.
+  std::vector<uint32_t> faceVertexCounts; 
 
   std::vector<vec3> facevaryingNormals;
 
