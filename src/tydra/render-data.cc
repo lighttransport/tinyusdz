@@ -638,7 +638,7 @@ bool ConvertMaterial(
 
         puser->pmaterials->push_back(RenderMaterial());
 
-        render_material = &(*puser->pmaterials)[mat_id];
+        render_material = &(*puser->pmaterials)[size_t(mat_id)];
       }
 
       if (!render_material) {
