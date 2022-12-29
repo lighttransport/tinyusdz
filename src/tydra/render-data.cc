@@ -1,6 +1,6 @@
-#include "render-data.hh"
 
 #include "pprinter.hh"
+#include "value-pprint.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
@@ -27,6 +27,11 @@
 //
 #include "common-macros.inc"
 #include "math-util.inc"
+
+//
+#include "tydra/render-data.hh"
+#include "tydra/scene-access.hh"
+#include "tydra/shader-network.hh"
 
 namespace tinyusdz {
 
@@ -553,6 +558,118 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   }  // triangulate
 
   return std::move(dst);
+}
+
+// W.I.P.
+bool ConvertMaterial(
+  const Stage &stage,
+  const tinyusdz::Material &material,
+  StringAndIdMap &materialMap, // [inout]
+  StringAndIdMap &textureMap, // [inout]
+  StringAndIdMap &imageMap, // [inout]
+  StringAndIdMap &bufferMap, // [inout]
+  std::vector<RenderMaterial> &materials, // [input]
+  std::vector<UVTexture> &textures, // [inout]
+  std::vector<TextureImage> &images, // [inout]
+  std::vector<BufferData> &buffers) { // [input]
+
+  (void)textureMap;
+  (void)imageMap;
+  (void)bufferMap;
+  (void)material;
+  (void)textures;
+  (void)images;
+  (void)buffers;
+
+  // TODO: GeomMesh(per-face material)
+
+
+  // Env
+  struct UserData {
+    const Stage *pstage{nullptr};
+    StringAndIdMap *pmaterialMap{nullptr};
+    std::vector<RenderMaterial> *pmaterials{nullptr};
+  }; 
+  
+  // 1. Visit GeomMesh
+  // 2. If the mesh has bound material 
+  //   1. Create Material 
+
+  // TODO: 
+  auto mesh_visit = [](const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim, const int32_t level, void *userdata, std::string *err) -> bool {
+
+    if (level > 1024*1024) {
+      if (err) {
+        (*err) += "Scene graph is too deep.\n";
+      }
+      // Too deep
+      return false;
+    }
+
+    if (!userdata) {
+      return false;
+    }
+
+    UserData *puser = reinterpret_cast<UserData *>(userdata);
+
+    if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
+      DCOUT("Material: " << abs_path);
+
+      const std::string path_str = abs_path.full_path_name();
+      const auto matIt = puser->pmaterialMap->find(path_str);
+
+      const RenderMaterial *render_material{nullptr};
+      if (matIt != puser->pmaterialMap->s_end()) {
+        // Got material
+        uint64_t mat_id = matIt->second;
+        if (mat_id >= puser->pmaterials->size()) { // this should not happen though
+          if (err) {
+            (*err) += "Material index out-of-range.\n";
+          }
+          return false;
+        }
+        render_material = &(*puser->pmaterials)[size_t(mat_id)];
+
+      } else { 
+        
+        // Assign new material ID
+        uint64_t mat_id = puser->pmaterials->size();
+        puser->pmaterialMap->add(path_str, mat_id);
+
+        puser->pmaterials->push_back(RenderMaterial());
+
+        render_material = &(*puser->pmaterials)[mat_id];
+      }
+
+      if (!render_material) {
+        if (err) {
+          (*err) += "[InternalError] render_material ptr is null.\n";
+        }
+        return false;
+      }
+
+      tinyusdz::Path bound_material_path;
+      const tinyusdz::Material *bound_material{nullptr};
+      bool ret = tinyusdz::tydra::FindBoundMaterial(*puser->pstage, /* GeomMesh prim path */abs_path, /* suffix */"", &bound_material_path, &bound_material, err);
+
+      if (ret && bound_material) {
+        DCOUT("Bound material path: " << bound_material_path);
+        // TODO
+      }
+
+    }
+
+    return true; // continue traversal
+  };
+
+  UserData uenv;
+  uenv.pstage = &stage;
+  uenv.pmaterialMap = &materialMap;
+  uenv.pmaterials = &materials;
+
+  tydra::VisitPrims(stage, mesh_visit, &uenv);
+
+  return false; // TODO
 }
 
 }  // namespace tydra

@@ -53,6 +53,22 @@ struct StringAndIdMap {
 
   uint64_t at(std::string s) const { return _s_to_i.at(s); }
 
+  std::map<uint64_t, std::string>::const_iterator find(uint64_t key) const {
+    return _i_to_s.find(key);
+  }
+
+  std::map<uint64_t, std::string>::const_iterator i_end() const {
+    return _i_to_s.end();
+  }
+
+  std::map<std::string, uint64_t>::const_iterator find(const std::string &key) const {
+    return _s_to_i.find(key);
+  }
+
+  std::map<std::string, uint64_t>::const_iterator s_end() const {
+    return _s_to_i.end();
+  }
+
   std::map<uint64_t, std::string> _i_to_s;  // index -> string
   std::map<std::string, uint64_t> _s_to_i;  // string -> index
 };
@@ -373,10 +389,10 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 bool ConvertMaterial(
   const Stage &stage,
   const tinyusdz::Material &material,
-  std::map<StringAndIdMap, uint64_t> materialMap, // [inout]
-  std::map<StringAndIdMap, uint64_t> textureMap, // [inout]
-  std::map<StringAndIdMap, uint64_t> imageMap, // [inout]
-  std::map<StringAndIdMap, uint64_t> bufferMap, // [inout]
+  StringAndIdMap &materialMap, // [inout]
+  StringAndIdMap &textureMap, // [inout]
+  StringAndIdMap &imageMap, // [inout]
+  StringAndIdMap &bufferMap, // [inout]
   std::vector<RenderMaterial> &materials, // [input]
   std::vector<UVTexture> &textures, // [inout]
   std::vector<TextureImage> &images, // [inout]
