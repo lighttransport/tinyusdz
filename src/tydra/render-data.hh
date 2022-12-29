@@ -28,7 +28,10 @@ namespace tydra {
 using vec2 = value::float2;
 using vec3 = value::float3;
 using vec4 = value::float4;
+using quat = value::float4;
 using mat2 = value::matrix2f;  // float precision
+using mat4 = value::matrix4f;  // float precision
+using dmat4 = value::matrix4d;  // float precision
 
 // Simple string <-> id map
 struct StringAndIdMap {
@@ -52,6 +55,14 @@ struct StringAndIdMap {
 
   std::map<uint64_t, std::string> _i_to_s;  // index -> string
   std::map<std::string, uint64_t> _s_to_i;  // string -> index
+};
+
+// timeSamples in USD
+// TODO: AttributeBlock support
+template<typename T>
+struct AnimationSample {
+  float t{0.0}; // time is represented as float
+  T value;
 };
 
 enum class VertexVariability
@@ -142,6 +153,49 @@ struct TextureImage {
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
+// glTF-lie animation data
+
+template<typename T>
+struct AnimationSampler {
+
+  std::vector<AnimationSample<T>> samples;
+
+  // No cubicSpline 
+  enum class Interpolation {
+    Linear,
+    Step, // Held in USD
+  };
+
+  Interpolation interpolation{Interpolation::Linear};
+
+};
+
+struct AnimationChannel {
+  enum class ChannelType {
+    Transform,
+    Translation,
+    Rotation,
+    Scale
+  };
+
+  // Matrix precision is recuded to float-precision
+  // NOTE: transform is not supported in glTF(you need to decompose transform matrix into TRS)
+  AnimationSampler<mat4> transforms;
+
+  // half-types are upcasted to float precision
+  AnimationSampler<vec3> translations;
+  AnimationSampler<quat> rotations; // Rotation is converted to quaternions
+  AnimationSampler<vec3> scales;
+
+  int64_t taget_node{-1}; // array index to RenderScene::nodes
+};
+
+
+struct Animation {
+  std::string path; // USD Prim path
+  std::vector<AnimationChannel> channels;
+};
+
 
 struct Node {
   NodeType nodeType{NodeType::Xform};
@@ -150,7 +204,7 @@ struct Node {
 
   std::vector<uint32_t> children;
 
-  // Every node have its transform.
+  // Every node have its transform at `default` timecode.
   value::matrix4d local_matrix;
   value::matrix4d global_matrix;
 
@@ -282,11 +336,21 @@ class RenderScene {
   std::vector<RenderMaterial> materials;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
+  std::vector<Animation> animations;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. primvar texcoords)
 
   //int64_t default_root_node{-1}; // index to `nodes`. `defaultPrim` in USD
 };
+
+///
+/// Easy API to convert USD Stage to RenderScene(glTF-like scene graph)
+///
+bool ConvertToRenderScene(
+  const Stage &stage,
+  RenderScene *scene,
+  std::string *warn,
+  std::string *err);
 
 nonstd::expected<Node, std::string> Convert(const Stage &stage,
                                                   const Xform &xform);
