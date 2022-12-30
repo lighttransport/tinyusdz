@@ -61,6 +61,8 @@ bool EvaluateShaderAttribute(
   T * out_val,
   std::string *err,
   const value::TimeCode timeCode = value::TimeCode::Default());
+
+extern template bool EvaluateShaderAttribute(const Stage &stage, const Shader &shader, const std::string &attr_name, value::token * out_val, std::string *err, const value::TimeCode timeCode);
  
 // Currently float2 only
 //std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
