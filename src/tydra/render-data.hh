@@ -290,6 +290,10 @@ struct UVTexture {
              Channel channel = Channel::RGB);
 
   UVReaderFloat uvreader;
+  vec4 fallback_uv{0.0f, 0.0f, 0.0f, 0.0f};
+
+  // UV primvars name(UsdPrimvarReader's inputs:varname)
+  std::string varname_uv; 
 
   int64_t image_id{-1};  // Index to TextureImage
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
@@ -387,8 +391,11 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 /// Newly created RenderMaterial, UVTexture and TextureImage/BufferData are appended to `materials`, `textures`, and `images`/`buffers` respectively.
 ///
 ///
-bool ConvertMaterial(
+/// @return true when success. false when failed to convert(returns error message)
+///
+nonstd::expected<bool, std::string> ConvertMaterial(
   const Stage &stage,
+  const tinyusdz::Path &abs_mat_path,
   const tinyusdz::Material &material,
   StringAndIdMap &materialMap, // [inout]
   StringAndIdMap &textureMap, // [inout]
