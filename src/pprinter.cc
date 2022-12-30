@@ -311,6 +311,10 @@ std::string print_relationship(const Relationship &rel, const ListEditQual &qual
     ss << to_string(qual) << " ";
   }
 
+  if (rel.is_varying_authored()) {
+    ss << "varying ";
+  }
+
   ss << print_rel_only(rel, name, indent);
 
   return ss.str();
@@ -915,6 +919,10 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   }
 
   const Relationship &rel = prop.get_relationship();
+  if (rel.is_varying_authored()) {
+    ss << "varying ";
+  }
+
   ss << print_rel_only(rel, name, indent);
 
   return ss.str();
@@ -939,6 +947,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
 
     if (attr.variability() == Variability::Uniform) {
       ss << "uniform ";
+    } else if (attr.is_varying_authored()) {
+      ss << "varying ";
     }
 
     std::string ty;

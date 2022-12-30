@@ -769,6 +769,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<CustomDataType> customData;
   nonstd::optional<value::token> bindMaterialAs;
   nonstd::optional<value::StringData> comment;
+  nonstd::optional<Variability> variability;
   Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
 
@@ -797,8 +798,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "variability") {
       if (auto pv = fv.second.get_value<Variability>()) {
-        attr.variability() = pv.value();
-        DCOUT("  variability = " << to_string(attr.variability()));
+        variability = pv.value();
+        DCOUT("  variability = " << to_string(variability.value()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`variability` field is not `varibility` type.");
@@ -1111,6 +1112,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     if (typeName) {
       // Assume Attribute
       (*prop) = Property(typeName.value().str(), custom);
+
+      if (variability) {
+        prop->attribute().variability() = variability.value();
+        if (variability.value() == Variability::Varying) {
+          prop->attribute().set_varying_authored();
+        }
+      }
       prop->attribute().metas() = meta;
     } else {
       DCOUT("spec_type = " << to_string(spec_type));
@@ -1118,6 +1126,9 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         // `rel` with no target. e.g. `rel target`
         rel = Relationship();
         rel.set_novalue();
+        if (variability == Variability::Varying) {
+          rel.set_varying_authored();
+        }
         rel.metas() = meta;
         (*prop) = Property(rel, custom);
       } else {
@@ -1125,6 +1136,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     }
   } else if (propType == Property::Type::Attrib) {
+    if (variability) {
+      attr.variability() = variability.value();
+      if (variability.value() == Variability::Varying) {
+        attr.set_varying_authored();
+      }
+    }
     attr.metas() = meta;
     (*prop) = Property(attr, custom);
   } else if (propType == Property::Type::Connection) {
@@ -1132,7 +1149,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "`typeName` field is missing for Attribute Connection.");
     }
-    rel.metas() = meta;
     if (rel.is_path()) {
       (*prop) = Property(rel.targetPath, typeName.value().str(), custom);
     } else if (rel.is_pathvector()) {
@@ -1141,7 +1157,20 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // ???
       PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
     }
+
+    if (variability) {
+      if (variability.value() == Variability::Varying) {
+        prop->attribute().set_varying_authored();
+      }
+    }
+
+    prop->attribute().metas() = meta;
   } else if (propType == Property::Type::Relation) {
+    if (variability) {
+      if (variability.value() == Variability::Varying) {
+        rel.set_varying_authored();
+      }
+    }
     rel.metas() = meta;
     (*prop) = Property(rel, custom);
   } else {

@@ -566,6 +566,7 @@ class AsciiParser {
   bool ParseVariants(VariantSelectionMap *out_map);
 
   bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
+  bool MaybeVariability(tinyusdz::Variability *variability, bool *varying_authored);
 
   ///
   /// Try parsing single-quoted(`"`) string
