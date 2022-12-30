@@ -701,13 +701,21 @@ bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
   }
 
   StringAndIdMap materialMap;
-  std::vector<RenderMaterial> materials;
+  StringAndIdMap textureMap;
+  StringAndIdMap imageMap;
+  StringAndIdMap bufferMap;
+
+  RenderScene render_scene;
 
   // Env
   struct UserData {
     const Stage *pstage{nullptr};
     StringAndIdMap *pmaterialMap{nullptr};
-    std::vector<RenderMaterial> *pmaterials{nullptr};
+    StringAndIdMap *ptextureMap{nullptr};
+    StringAndIdMap *pimageMap{nullptr};
+    StringAndIdMap *pbufferMap{nullptr};
+    //std::vector<RenderMaterial> *pmaterials{nullptr};
+    RenderScene *prenderscene{nullptr};
   };
 
   // 1. Visit GeomMesh
@@ -738,26 +746,29 @@ bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
       const auto matIt = puser->pmaterialMap->find(path_str);
 
       const RenderMaterial *render_material{nullptr};
+
+      std::vector<RenderMaterial> &rmaterials = puser->prenderscene->materials;
+
       if (matIt != puser->pmaterialMap->s_end()) {
         // Got material
         uint64_t mat_id = matIt->second;
         if (mat_id >=
-            puser->pmaterials->size()) {  // this should not happen though
+            puser->prenderscene->materials.size()) {  // this should not happen though
           if (err) {
             (*err) += "Material index out-of-range.\n";
           }
           return false;
         }
-        render_material = &(*puser->pmaterials)[size_t(mat_id)];
+        render_material = &(puser->prenderscene->materials[size_t(mat_id)]);
 
       } else {
         // Assign new material ID
-        uint64_t mat_id = puser->pmaterials->size();
+        uint64_t mat_id = rmaterials.size();
         puser->pmaterialMap->add(path_str, mat_id);
 
-        puser->pmaterials->push_back(RenderMaterial());
+        rmaterials.push_back(RenderMaterial());
 
-        render_material = &(*puser->pmaterials)[size_t(mat_id)];
+        render_material = &(rmaterials[size_t(mat_id)]);
       }
 
       if (!render_material) {
@@ -773,9 +784,29 @@ bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
           *puser->pstage, /* GeomMesh prim path */ abs_path, /* suffix */ "",
           &bound_material_path, &bound_material, err);
 
+      RenderScene *prenderscene = puser->prenderscene;
+
       if (ret && bound_material) {
         DCOUT("Bound material path: " << bound_material_path);
         // TODO
+
+        if (!ConvertMaterial(
+          *puser->pstage,
+          *bound_material,
+          *puser->pmaterialMap,
+          *puser->ptextureMap,
+          *puser->pimageMap,
+          *puser->pbufferMap,
+          prenderscene->materials,
+          prenderscene->textures,
+          prenderscene->images,
+          prenderscene->buffers)) {
+          if (err) {
+            // TODO: More expressive error report.
+            (*err) += "Material conversion failed.\n";
+          }
+        }
+
       }
     }
 
@@ -785,11 +816,14 @@ bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
   UserData uenv;
   uenv.pstage = &stage;
   uenv.pmaterialMap = &materialMap;
-  uenv.pmaterials = &materials;
+  uenv.ptextureMap = &textureMap;
+  uenv.pimageMap = &imageMap;
+  uenv.pbufferMap = &bufferMap;
+  uenv.prenderscene = &render_scene;
 
   tydra::VisitPrims(stage, mesh_visit, &uenv);
 
- 
+
 
   return false;  // TODO
 }
