@@ -1,11 +1,11 @@
 
 #include "pprinter.hh"
-#include "value-pprint.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "value-pprint.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -35,7 +35,8 @@
 
 namespace tinyusdz {
 
-extern template bool GeomPrimvar::flatten_with_indices(std::vector<value::texcoord2f> *dst, std::string *err);
+extern template bool GeomPrimvar::flatten_with_indices(
+    std::vector<value::texcoord2f> *dst, std::string *err);
 
 namespace tydra {
 
@@ -70,8 +71,11 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     return nonstd::make_unexpected("No value exist for primvars:" + name);
   }
 
-  if (primvar.get_type_id() != value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
-    return nonstd::make_unexpected("Texture coordinate primvar must be texCoord2f[] type, but got " + primvar.get_type_name());
+  if (primvar.get_type_id() !=
+      value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
+    return nonstd::make_unexpected(
+        "Texture coordinate primvar must be texCoord2f[] type, but got " +
+        primvar.get_type_name());
   }
 
   if (primvar.get_interpolation() == Interpolation::Varying) {
@@ -88,7 +92,8 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
 
   std::vector<value::texcoord2f> uvs;
   if (!primvar.flatten_with_indices(&uvs)) {
-    return nonstd::make_unexpected("Failed to retrieve texture coordinate primvar with concrete type.");
+    return nonstd::make_unexpected(
+        "Failed to retrieve texture coordinate primvar with concrete type.");
   }
 
 #if 0
@@ -191,61 +196,61 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
 
 ///
 /// Input: points, faceVertexCounts, faceVertexIndices
-/// Output: triangulated faceVertexCounts(all filled with 3), triangulated faceVertexIndices, indexMap
-/// (length = triangulated faceVertexIndices. indexMap[i] stores array index in original faceVertexIndices.
-/// For remapping primvar attributes.)
+/// Output: triangulated faceVertexCounts(all filled with 3), triangulated
+/// faceVertexIndices, indexMap (length = triangulated faceVertexIndices.
+/// indexMap[i] stores array index in original faceVertexIndices. For remapping
+/// primvar attributes.)
 ///
 /// Return false when a polygon is degenerated.
 /// No overlap check at the moment
 ///
 /// T = value::float3 or value::double3
 /// BaseTy = float or double
-template<typename T, typename BaseTy>
-bool TriangulatePolygon(
-    const std::vector<T> &points,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices,
-    std::vector<uint32_t> &triangulatedFaceVertexCounts,
-    std::vector<uint32_t> &triangulatedFaceVertexIndices,
-    std::vector<size_t> &faceVertexIndexMap,
-    std::string &err) {
+template <typename T, typename BaseTy>
+bool TriangulatePolygon(const std::vector<T> &points,
+                        const std::vector<uint32_t> &faceVertexCounts,
+                        const std::vector<uint32_t> &faceVertexIndices,
+                        std::vector<uint32_t> &triangulatedFaceVertexCounts,
+                        std::vector<uint32_t> &triangulatedFaceVertexIndices,
+                        std::vector<size_t> &faceVertexIndexMap,
+                        std::string &err) {
+  triangulatedFaceVertexCounts.clear();
+  triangulatedFaceVertexIndices.clear();
 
-    triangulatedFaceVertexCounts.clear();
-    triangulatedFaceVertexIndices.clear();
+  faceVertexIndexMap.clear();
 
-    faceVertexIndexMap.clear();
+  size_t faceIndexOffset = 0;
 
-    size_t faceIndexOffset = 0;
+  // For each polygon(face)
+  for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+    uint32_t npolys = faceVertexCounts[i];
 
-    // For each polygon(face)
-    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-      uint32_t npolys = faceVertexCounts[i];
+    if (npolys < 3) {
+      err = fmt::format(
+          "faceVertex count must be 3(triangle) or "
+          "more(polygon), but got faceVertexCounts[{}] = {}",
+          i, npolys);
+      return false;
+    }
 
-      if (npolys < 3) {
-        err = fmt::format("faceVertex count must be 3(triangle) or "
-                        "more(polygon), but got faceVertexCounts[{}] = {}",
-                        i, npolys);
-        return false;
-      }
+    if (faceIndexOffset + npolys > faceVertexIndices.size()) {
+      err = fmt::format(
+          "Invalid faceVertexIndices or faceVertexCounts. faceVertex index "
+          "exceeds faceVertexIndices.size() at [{}]",
+          i);
+      return false;
+    }
 
-      if (faceIndexOffset + npolys > faceVertexIndices.size()) {
-        err = fmt::format(
-            "Invalid faceVertexIndices or faceVertexCounts. faceVertex index "
-            "exceeds faceVertexIndices.size() at [{}]",
-            i);
-        return false;
-      }
-
-      if (npolys == 3) {
-        // No need for triangulation.
-        triangulatedFaceVertexCounts.push_back(3);
-        triangulatedFaceVertexIndices.push_back(
-            faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(
-            faceVertexIndices[faceIndexOffset + 1]);
-        triangulatedFaceVertexIndices.push_back(
-            faceVertexIndices[faceIndexOffset + 2]);
-        faceVertexIndexMap.push_back(i);
+    if (npolys == 3) {
+      // No need for triangulation.
+      triangulatedFaceVertexCounts.push_back(3);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 0]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 1]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 2]);
+      faceVertexIndexMap.push_back(i);
 #if 0
       } else if (npolys == 4) {
         // Use simple split
@@ -264,118 +269,115 @@ bool TriangulatePolygon(
         faceVertexIndexMap.push_back(i);
         faceVertexIndexMap.push_back(i);
 #endif
-      } else {
-        // Find the normal axis of the polygon using Newell's method
-        T n = {BaseTy(0), BaseTy(0), BaseTy(0)};
+    } else {
+      // Find the normal axis of the polygon using Newell's method
+      T n = {BaseTy(0), BaseTy(0), BaseTy(0)};
 
-        size_t vi0;
-        size_t vi0_2;
+      size_t vi0;
+      size_t vi0_2;
 
-        for (size_t k = 0; k < npolys; ++k) {
-          vi0 = faceVertexIndices[faceIndexOffset + k];
+      for (size_t k = 0; k < npolys; ++k) {
+        vi0 = faceVertexIndices[faceIndexOffset + k];
 
-          size_t j = (k + 1) % npolys;
-          vi0_2 = faceVertexIndices[faceIndexOffset + j];
+        size_t j = (k + 1) % npolys;
+        vi0_2 = faceVertexIndices[faceIndexOffset + j];
 
-          if (vi0 >= points.size()) {
-            err =
-                fmt::format("Invalid vertex index.");
-            return false;
-          }
-
-          if (vi0_2 >= points.size()) {
-            err =
-                fmt::format("Invalid vertex index.");
-            return false;
-          }
-
-          T v0 = points[vi0];
-          T v1 = points[vi0_2];
-
-          const T point1 = {v0[0], v0[1], v0[2]};
-          const T point2 = {v1[0], v1[1], v1[2]};
-
-          T a = {point1[0] - point2[0], point1[1] - point2[1],
-                             point1[2] - point2[2]};
-          T b = {point1[0] + point2[0], point1[1] + point2[1],
-                             point1[2] + point2[2]};
-
-          n[0] += (a[1] * b[2]);
-          n[1] += (a[2] * b[0]);
-          n[2] += (a[0] * b[1]);
-        }
-        BaseTy length_n = vlength(n);
-        // Check if zero length normal
-        if (std::fabs(length_n) < std::numeric_limits<BaseTy>::epsilon()) {
-          err = "Degenerated polygon found.";
+        if (vi0 >= points.size()) {
+          err = fmt::format("Invalid vertex index.");
           return false;
         }
 
-        // Negative is to flip the normal to the correct direction
-        n = vnormalize(n);
-
-        T axis_w, axis_v, axis_u;
-        axis_w = n;
-        T a;
-        if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
-          a = {BaseTy(0), BaseTy(1), BaseTy(0)};
-        } else {
-          a = {BaseTy(1), BaseTy(0), BaseTy(0)};
-        }
-        axis_v = vnormalize(vcross(axis_w, a));
-        axis_u = vcross(axis_w, axis_v);
-
-        using Point3D = std::array<BaseTy, 3>;
-        using Point2D = std::array<BaseTy, 2>;
-        std::vector<Point2D> polyline;
-
-        // TMW change: Find best normal and project v0x and v0y to those
-        // coordinates, instead of picking a plane aligned with an axis (which
-        // can flip polygons).
-
-        // Fill polygon data.
-        for (size_t k = 0; k < npolys; k++) {
-          size_t vidx = faceVertexIndices[faceIndexOffset + k];
-
-          value::float3 v = points[vidx];
-          // Point3 polypoint = {v0[0],v0[1],v0[2]};
-
-          // world to local
-          Point3D loc = {vdot(v, axis_u), vdot(v, axis_v),
-                         vdot(v, axis_w)};
-
-          polyline.push_back({loc[0], loc[1]});
-        }
-
-        std::vector<std::vector<Point2D>> polygon_2d;
-        // Single polygon only(no holes)
-
-        std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
-        //  => result = 3 * faces, clockwise
-
-        if ((indices.size() % 3) != 0) {
-          // This should not be happen, though.
-          err = "Failed to triangulate.\n";
+        if (vi0_2 >= points.size()) {
+          err = fmt::format("Invalid vertex index.");
           return false;
         }
 
-        size_t ntris = indices.size() / 3;
+        T v0 = points[vi0];
+        T v1 = points[vi0_2];
 
-        for (size_t k = 0; k < ntris; k++) {
-          triangulatedFaceVertexCounts.push_back(3);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+        const T point1 = {v0[0], v0[1], v0[2]};
+        const T point2 = {v1[0], v1[1], v1[2]};
 
-          faceVertexIndexMap.push_back(i);
-        }
+        T a = {point1[0] - point2[0], point1[1] - point2[1],
+               point1[2] - point2[2]};
+        T b = {point1[0] + point2[0], point1[1] + point2[1],
+               point1[2] + point2[2]};
+
+        n[0] += (a[1] * b[2]);
+        n[1] += (a[2] * b[0]);
+        n[2] += (a[0] * b[1]);
+      }
+      BaseTy length_n = vlength(n);
+      // Check if zero length normal
+      if (std::fabs(length_n) < std::numeric_limits<BaseTy>::epsilon()) {
+        err = "Degenerated polygon found.";
+        return false;
       }
 
-      faceIndexOffset += npolys;
+      // Negative is to flip the normal to the correct direction
+      n = vnormalize(n);
+
+      T axis_w, axis_v, axis_u;
+      axis_w = n;
+      T a;
+      if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
+        a = {BaseTy(0), BaseTy(1), BaseTy(0)};
+      } else {
+        a = {BaseTy(1), BaseTy(0), BaseTy(0)};
+      }
+      axis_v = vnormalize(vcross(axis_w, a));
+      axis_u = vcross(axis_w, axis_v);
+
+      using Point3D = std::array<BaseTy, 3>;
+      using Point2D = std::array<BaseTy, 2>;
+      std::vector<Point2D> polyline;
+
+      // TMW change: Find best normal and project v0x and v0y to those
+      // coordinates, instead of picking a plane aligned with an axis (which
+      // can flip polygons).
+
+      // Fill polygon data.
+      for (size_t k = 0; k < npolys; k++) {
+        size_t vidx = faceVertexIndices[faceIndexOffset + k];
+
+        value::float3 v = points[vidx];
+        // Point3 polypoint = {v0[0],v0[1],v0[2]};
+
+        // world to local
+        Point3D loc = {vdot(v, axis_u), vdot(v, axis_v), vdot(v, axis_w)};
+
+        polyline.push_back({loc[0], loc[1]});
+      }
+
+      std::vector<std::vector<Point2D>> polygon_2d;
+      // Single polygon only(no holes)
+
+      std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
+      //  => result = 3 * faces, clockwise
+
+      if ((indices.size() % 3) != 0) {
+        // This should not be happen, though.
+        err = "Failed to triangulate.\n";
+        return false;
+      }
+
+      size_t ntris = indices.size() / 3;
+
+      for (size_t k = 0; k < ntris; k++) {
+        triangulatedFaceVertexCounts.push_back(3);
+        triangulatedFaceVertexIndices.push_back(
+            faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
+        triangulatedFaceVertexIndices.push_back(
+            faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
+        triangulatedFaceVertexIndices.push_back(
+            faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+
+        faceVertexIndexMap.push_back(i);
+      }
     }
+
+    faceIndexOffset += npolys;
+  }
 
   return true;
 }
@@ -412,7 +414,6 @@ nonstd::optional<UsdPrimvarReader_float2> FindPrimvarReader_float2Rec(
   return true;
 }
 #endif
-
 
 }  // namespace
 
@@ -549,9 +550,10 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
     std::vector<uint32_t> triangulatedFaceVertexCounts;
     std::vector<uint32_t> triangulatedFaceVertexIndices;
     std::vector<size_t> faceVertexIndexMap;
-    if (!TriangulatePolygon<value::float3, float>(dst.points, dst.faceVertexCounts, dst.faceVertexIndices,
-      triangulatedFaceVertexCounts, triangulatedFaceVertexIndices, faceVertexIndexMap, err)) {
-
+    if (!TriangulatePolygon<value::float3, float>(
+            dst.points, dst.faceVertexCounts, dst.faceVertexIndices,
+            triangulatedFaceVertexCounts, triangulatedFaceVertexIndices,
+            faceVertexIndexMap, err)) {
       return nonstd::make_unexpected("Triangulation failed: " + err);
     }
 
@@ -561,44 +563,47 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 }
 
 // W.I.P.
-bool ConvertMaterial(
-  const Stage &stage,
-  const tinyusdz::Material &material,
-  StringAndIdMap &materialMap, // [inout]
-  StringAndIdMap &textureMap, // [inout]
-  StringAndIdMap &imageMap, // [inout]
-  StringAndIdMap &bufferMap, // [inout]
-  std::vector<RenderMaterial> &materials, // [input]
-  std::vector<UVTexture> &textures, // [inout]
-  std::vector<TextureImage> &images, // [inout]
-  std::vector<BufferData> &buffers) { // [input]
+bool ConvertMaterial(const Stage &stage, const tinyusdz::Material &material,
+                     StringAndIdMap &materialMap,             // [inout]
+                     StringAndIdMap &textureMap,              // [inout]
+                     StringAndIdMap &imageMap,                // [inout]
+                     StringAndIdMap &bufferMap,               // [inout]
+                     std::vector<RenderMaterial> &materials,  // [input]
+                     std::vector<UVTexture> &textures,        // [inout]
+                     std::vector<TextureImage> &images,       // [inout]
+                     std::vector<BufferData> &buffers) {      // [input]
 
+  (void)stage;
+  (void)material;
+  (void)materialMap;
   (void)textureMap;
   (void)imageMap;
   (void)bufferMap;
-  (void)material;
+  (void)materials;
   (void)textures;
   (void)images;
   (void)buffers;
 
-  // TODO: GeomMesh(per-face material)
+#if 0
 
+  // TODO: GeomMesh(per-face material)
 
   // Env
   struct UserData {
     const Stage *pstage{nullptr};
     StringAndIdMap *pmaterialMap{nullptr};
     std::vector<RenderMaterial> *pmaterials{nullptr};
-  }; 
-  
+  };
+
   // 1. Visit GeomMesh
-  // 2. If the mesh has bound material 
-  //   1. Create Material 
+  // 2. If the mesh has bound material
+  //   1. Create Material
 
-  // TODO: 
-  auto mesh_visit = [](const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim, const int32_t level, void *userdata, std::string *err) -> bool {
-
-    if (level > 1024*1024) {
+  // TODO:
+  auto mesh_visit = [](const tinyusdz::Path &abs_path,
+                       const tinyusdz::Prim &prim, const int32_t level,
+                       void *userdata, std::string *err) -> bool {
+    if (level > 1024 * 1024) {
       if (err) {
         (*err) += "Scene graph is too deep.\n";
       }
@@ -622,7 +627,8 @@ bool ConvertMaterial(
       if (matIt != puser->pmaterialMap->s_end()) {
         // Got material
         uint64_t mat_id = matIt->second;
-        if (mat_id >= puser->pmaterials->size()) { // this should not happen though
+        if (mat_id >=
+            puser->pmaterials->size()) {  // this should not happen though
           if (err) {
             (*err) += "Material index out-of-range.\n";
           }
@@ -630,8 +636,7 @@ bool ConvertMaterial(
         }
         render_material = &(*puser->pmaterials)[size_t(mat_id)];
 
-      } else { 
-        
+      } else {
         // Assign new material ID
         uint64_t mat_id = puser->pmaterials->size();
         puser->pmaterialMap->add(path_str, mat_id);
@@ -650,16 +655,131 @@ bool ConvertMaterial(
 
       tinyusdz::Path bound_material_path;
       const tinyusdz::Material *bound_material{nullptr};
-      bool ret = tinyusdz::tydra::FindBoundMaterial(*puser->pstage, /* GeomMesh prim path */abs_path, /* suffix */"", &bound_material_path, &bound_material, err);
+      bool ret = tinyusdz::tydra::FindBoundMaterial(
+          *puser->pstage, /* GeomMesh prim path */ abs_path, /* suffix */ "",
+          &bound_material_path, &bound_material, err);
 
       if (ret && bound_material) {
         DCOUT("Bound material path: " << bound_material_path);
         // TODO
       }
-
     }
 
-    return true; // continue traversal
+    return true;  // continue traversal
+  };
+
+  UserData uenv;
+  uenv.pstage = &stage;
+  uenv.pmaterialMap = &materialMap;
+  uenv.pmaterials = &materials;
+
+  tydra::VisitPrims(stage, mesh_visit, &uenv);
+#endif
+
+  return false;  // TODO
+}
+
+// W.I.P.
+bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
+                          std::string *warn, std::string *err_out) {
+
+  (void)warn;
+
+  if (!scene) {
+    if (err_out) {
+      (*err_out) += "nullptr for RenderScene argument.\n";
+    }
+    return false;
+  }
+
+  // Build Xform at default time.
+  XformNode xform_node;
+  if (!BuildXformNodeFromStage(stage, &xform_node)) {
+    if (err_out) {
+      (*err_out) += "Failed to build Xform node hierarchy.\n";
+    }
+  }
+
+  StringAndIdMap materialMap;
+  std::vector<RenderMaterial> materials;
+
+  // Env
+  struct UserData {
+    const Stage *pstage{nullptr};
+    StringAndIdMap *pmaterialMap{nullptr};
+    std::vector<RenderMaterial> *pmaterials{nullptr};
+  };
+
+  // 1. Visit GeomMesh
+  // 2. If the mesh has bound material
+  //   1. Create Material
+
+  auto mesh_visit = [](const tinyusdz::Path &abs_path,
+                       const tinyusdz::Prim &prim, const int32_t level,
+                       void *userdata, std::string *err) -> bool {
+    if (level > 1024 * 1024) {
+      if (err) {
+        (*err) += "Scene graph is too deep.\n";
+      }
+      // Too deep
+      return false;
+    }
+
+    if (!userdata) {
+      return false;
+    }
+
+    UserData *puser = reinterpret_cast<UserData *>(userdata);
+
+    if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
+      DCOUT("Material: " << abs_path);
+
+      const std::string path_str = abs_path.full_path_name();
+      const auto matIt = puser->pmaterialMap->find(path_str);
+
+      const RenderMaterial *render_material{nullptr};
+      if (matIt != puser->pmaterialMap->s_end()) {
+        // Got material
+        uint64_t mat_id = matIt->second;
+        if (mat_id >=
+            puser->pmaterials->size()) {  // this should not happen though
+          if (err) {
+            (*err) += "Material index out-of-range.\n";
+          }
+          return false;
+        }
+        render_material = &(*puser->pmaterials)[size_t(mat_id)];
+
+      } else {
+        // Assign new material ID
+        uint64_t mat_id = puser->pmaterials->size();
+        puser->pmaterialMap->add(path_str, mat_id);
+
+        puser->pmaterials->push_back(RenderMaterial());
+
+        render_material = &(*puser->pmaterials)[size_t(mat_id)];
+      }
+
+      if (!render_material) {
+        if (err) {
+          (*err) += "[InternalError] render_material ptr is null.\n";
+        }
+        return false;
+      }
+
+      tinyusdz::Path bound_material_path;
+      const tinyusdz::Material *bound_material{nullptr};
+      bool ret = tinyusdz::tydra::FindBoundMaterial(
+          *puser->pstage, /* GeomMesh prim path */ abs_path, /* suffix */ "",
+          &bound_material_path, &bound_material, err);
+
+      if (ret && bound_material) {
+        DCOUT("Bound material path: " << bound_material_path);
+        // TODO
+      }
+    }
+
+    return true;  // continue traversal
   };
 
   UserData uenv;
@@ -669,7 +789,9 @@ bool ConvertMaterial(
 
   tydra::VisitPrims(stage, mesh_visit, &uenv);
 
-  return false; // TODO
+ 
+
+  return false;  // TODO
 }
 
 }  // namespace tydra
