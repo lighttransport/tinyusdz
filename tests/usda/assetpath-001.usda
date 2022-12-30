@@ -3,6 +3,6 @@ def Cone "hello"
 (
 )
 {
-  # looks double quotes are allowd for asset path.
+  # looks double quotes are allowd for asset path in pxrUSD.
   asset myval = "bora.jpg"
 }

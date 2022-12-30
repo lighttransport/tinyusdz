@@ -590,7 +590,7 @@ std::string AsciiParser::GetError() {
     return std::string();
   }
 
-  
+
   std::stringstream ss;
   while (!err_stack.empty()) {
     ErrorDiagnositc diag = err_stack.top();
@@ -680,7 +680,7 @@ std::string AsciiParser::GetWarning() {
   __FUNC(value::texcoord3h)           \
   __FUNC(value::texcoord3f)           \
   __FUNC(value::texcoord3d)
-  
+
 
 bool AsciiParser::ParseDictElement(std::string *out_key,
                                    MetaVariable *out_var) {
@@ -1210,12 +1210,47 @@ bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
   } else if (tok == "delete") {
     DCOUT("`delete` list edit qualifier.");
     (*qual) = tinyusdz::ListEditQual::Delete;
+  } else if (tok == "order") {
+    DCOUT("`order` list edit qualifier.");
+    (*qual) = tinyusdz::ListEditQual::Order;
   } else {
     DCOUT("No ListEdit qualifier.");
     // unqualified
     // rewind
     SeekTo(loc);
     (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
+  }
+
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  return true;
+}
+
+bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability, bool *varying_authored) {
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  std::string tok;
+
+  auto loc = CurrLoc();
+  if (!ReadIdentifier(&tok)) {
+    SeekTo(loc);
+    return false;
+  }
+
+  if (tok == "uniform") {
+    (*variability) = tinyusdz::Variability::Uniform;
+    (*varying_authored) = false;
+  } else if (tok == "varying") {
+    (*variability) = tinyusdz::Variability::Varying;
+    (*varying_authored) = true;
+  } else {
+    (*varying_authored) = false;
+    // rewind
+    SeekTo(loc);
   }
 
   if (!SkipWhitespace()) {
@@ -2485,7 +2520,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
   }
 
-  // TODO: Refactor. 
+  // TODO: Refactor.
   if (vartype == value::kBool) {
     bool value;
     if (!ReadBasicType(&value)) {
@@ -3444,15 +3479,22 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
 }
 
 bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::vector<value::token> *propNames) {
-  // prim_prop : (custom?) uniform type (array_qual?) name '=' value
+
+
+  // prim_prop : (custom?) (variability?) type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
-  //           | (custom?) uniform type (array_qual?) name interpolation?
-  //           | (custom?) (listeditqual?) rel attr_name = None
-  //           | (custom?) (listeditqual?) rel attr_name = string meta
-  //           | (custom?) (listeditqual?) rel attr_name = path meta
-  //           | (custom?) (listeditqual?) rel attr_name = pathvector meta
-  //           | (custom?) (listeditqual?) rel attr_name meta
+  //           | (custom?) (variability?) type (array_qual?) name interpolation?
+  //           | (custom?) (listeditqual?) (variability?) rel attr_name = None
+  //           | (custom?) (listeditqual?) (variability?) rel attr_name = string meta
+  //           | (custom?) (listeditqual?) (variability?) rel attr_name = path meta
+  //           | (custom?) (listeditqual?) (variability?) rel attr_name = pathvector meta
+  //           | (custom?) (listeditqual?) (variability?) rel attr_name meta
   //           ;
+
+  // NOTE:
+  //  custom append varying ... is not allowed.
+  //  append varying custom ... is not allowed.
+  //  append custom varying ... is allowed(decomposed into `custom varying ...` and `append varying ...`
 
   // Skip comment
   if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -3466,13 +3508,29 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     return false;
   }
 
-  // List editing only applicable for Relation for Primitive attributes.
   ListEditQual listop_qual;
   if (!MaybeListEditQual(&listop_qual)) {
     return false;
   }
 
-  bool uniform_qual{false};
+  // `custom` then listop is not allowed.
+  if (listop_qual != ListEditQual::ResetToExplicit) {
+    if (custom_qual) {
+      PUSH_ERROR_AND_RETURN("`custom` then ListEdit qualifier is not allowed.");
+    }
+
+    // listop then `custom` is allowed.
+    custom_qual = MaybeCustom();
+  }
+
+  bool varying_authored{false};
+  tinyusdz::Variability variability{tinyusdz::Variability::Varying};
+
+  if (!MaybeVariability(&variability, &varying_authored)) {
+    return false;
+  }
+  DCOUT("variability = " << to_string(variability) << ", varying_authored " << varying_authored);
+
   std::string type_name;
 
   if (!ReadIdentifier(&type_name)) {
@@ -3485,9 +3543,16 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
   DCOUT("type_name = " << type_name);
 
+  // `uniform` or `varying`
+
   // Relation('rel')
   if (type_name == kRel) {
     DCOUT("relation");
+
+    if (variability == Variability::Uniform) {
+      PUSH_ERROR_AND_RETURN(
+          "Explicit `uniform` variability keyword is not allowed for Relationship.");
+    }
 
     // - prim_identifier
     // - prim_identifier, '(' metadataum ')'
@@ -3534,6 +3599,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       Property p(type_name, custom_qual);
       p.set_property_type(Property::Type::NoTargetsRelation);
       p.set_listedit_qual(listop_qual);
+
+      if (varying_authored) {
+        p.relationship().set_varying_authored();
+      }
 
       if (metap) {
         // TODO: metadataum for Rel
@@ -3596,6 +3665,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     Property p(rel, custom_qual);
     p.set_listedit_qual(listop_qual);
 
+    if (varying_authored) {
+      p.relationship().set_varying_authored();
+    }
+
     if (metap) {
       p.relationship().metas() = metap.value();
     }
@@ -3612,17 +3685,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
   if (listop_qual != ListEditQual::ResetToExplicit) {
     PUSH_ERROR_AND_RETURN_TAG(
         kAscii, "List editing qualifier is not allowed for Attribute.");
-  }
-
-  if (type_name == "uniform") {
-    uniform_qual = true;
-
-    // next token should be type
-    if (!ReadIdentifier(&type_name)) {
-      PUSH_ERROR_AND_RETURN("`type` identifier expected but got non-identifier.");
-    }
-
-    // `type_name` is then overwritten.
   }
 
   if (!IsSupportedPrimAttrType(type_name)) {
@@ -3724,9 +3786,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     // Empty Attribute. type info only
     Property p(type_name, custom_qual);
 
-    if (uniform_qual) {
-      p.attribute().variability() = Variability::Uniform;
+    p.attribute().variability() = variability;
+    if (varying_authored) {
+      p.attribute().set_varying_authored();
     }
+
     p.attribute().metas() = meta;
 
     (*props)[attr_name] = p;
@@ -3743,9 +3807,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
   if (MaybeNone()) {
     value_blocked = true;
-  } 
+  }
 
   if (isConnection) {
+    // atribute connection
     DCOUT("isConnection");
 
     Path path;
@@ -3758,7 +3823,12 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
     Property p(path, /* value typename */ type_name, custom_qual);
     if (value_blocked) {
-      p.relationship().set_blocked();
+      p.attribute().set_blocked(true);
+    }
+
+    p.attribute().variability() = variability;
+    if (varying_authored) {
+      p.attribute().set_varying_authored();
     }
 
     (*props)[attr_name] = p;
@@ -3800,6 +3870,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
     attr.name() = attr_name;
     attr.set_var(std::move(var));
+
+    attr.variability() = variability;
+    if (varying_authored) {
+      attr.set_varying_authored();
+    }
 
     DCOUT("timeSamples primattr: type = " << type_name
                                           << ", name = " << attr_name);
@@ -4079,9 +4154,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       }
     }
 
-    if (uniform_qual) {
-      attr.variability() = Variability::Uniform;
+    attr.variability() = variability;
+    if (varying_authored) {
+      attr.set_varying_authored();
     }
+
     if (value_blocked) {
       if (array_qual) {
         attr.set_type_name(type_name + "[]");
@@ -4415,7 +4492,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       PUSH_ERROR_AND_RETURN(msg);
       return false;
     }
-#endif    
+#endif
   }
 
   if (!SkipWhitespaceAndNewline()) {

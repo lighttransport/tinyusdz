@@ -1596,15 +1596,18 @@ struct ConnectionPath {
 
 //
 // Relationship(typeless property)
-// TODO: Support variability?
 //
 class Relationship {
  public:
 
-  // rel myrel    : DefineOnly(or empty)
-  // rel myrel = </a> : Path
-  // rel myrel = [</a>, </b>, ...] : PathVector
-  // rel myrel = None : ValueBlock
+  // NOTE: no explicit `uniform` variability for Relationship
+  // Relatinship have `uniform` variability implicitly.
+  // (in Crate, variability is encoded as `uniform`)
+  
+  // (varying?) rel myrel    : DefineOnly(or empty)
+  // (varying?) rel myrel = </a> : Path
+  // (varying?) rel myrel = [</a>, </b>, ...] : PathVector
+  // (varying?) rel myrel = None : ValueBlock
   //
   enum class Type { DefineOnly, Path, PathVector, ValueBlock };
 
@@ -1645,11 +1648,20 @@ class Relationship {
 
   bool is_blocked() const { return type == Type::ValueBlock; }
 
+  void set_varying_authored() {
+    _varying_authored = true;
+  }
+
+  bool is_varying_authored() const { return _varying_authored; }
+
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
 
  private:
   AttrMeta _metas;
+
+  // `varying` keyword is explicitly specified?
+  bool _varying_authored{false};
 };
 
 //
@@ -1858,6 +1870,12 @@ struct Attribute {
 
   bool is_uniform() const { return _variability == Variability::Uniform; }
 
+  void set_varying_authored() {
+    _varying_authored = true;
+  }
+
+  bool is_varying_authored() const { return _varying_authored; }
+
   bool is_connection() const { return _paths.size(); }
 
   bool is_value() const {
@@ -1901,6 +1919,10 @@ struct Attribute {
   Variability _variability{
       Variability::Varying};  // 'uniform` qualifier is handled with
                               // `variability=uniform`
+
+  // `varying` keyword is explicitly specified?
+  bool _varying_authored{false};
+
   // bool _blocked{false};       // Attribute Block('None')
   std::string _type_name;
   primvar::PrimVar _var;
