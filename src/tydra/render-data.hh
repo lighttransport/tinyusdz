@@ -347,6 +347,7 @@ struct RenderMaterial {
 
 // Simple glTF-like Scene Graph
 class RenderScene {
+ public:
   std::vector<Node> nodes; // Prims in USD
   std::vector<TextureImage> images;
   std::vector<RenderMaterial> materials;
