@@ -543,6 +543,33 @@ struct matrix2f {
     m[1][0] = 0.0f;
     m[1][1] = 1.0f;
   }
+
+  inline void set_row(uint32_t row, float x, float y) {
+    if (row < 2) {
+      m[row][0] = x;
+      m[row][1] = y;
+    }
+  }
+
+  inline void set_scale(float sx, float sy) {
+    m[0][0] = sx;
+    m[0][1] = 0.0f;
+
+    m[1][0] = 0.0f;
+    m[1][1] = sy;
+  }
+
+  static matrix2f identity() {
+    matrix2f m;
+
+    m.m[0][0] = 1.0f;
+    m.m[0][1] = 0.0f;
+
+    m.m[1][0] = 0.0f;
+    m.m[1][1] = 1.0f;
+
+    return m;
+  }
   
   float m[2][2];
 };
@@ -560,6 +587,53 @@ struct matrix3f {
     m[2][0] = 0.0f;
     m[2][1] = 0.0f;
     m[2][2] = 1.0f;
+  }
+
+  inline void set_row(uint32_t row, float x, float y, float z) {
+    if (row < 3) {
+      m[row][0] = x;
+      m[row][1] = y;
+      m[row][2] = z;
+    }
+  }
+
+  inline void set_scale(float sx, float sy, float sz) {
+    m[0][0] = sx;
+    m[0][1] = 0.0f;
+    m[0][2] = 0.0f;
+
+    m[1][0] = 0.0f;
+    m[1][1] = sy;
+    m[1][2] = 0.0f;
+
+    m[2][0] = 0.0f;
+    m[2][1] = 0.0f;
+    m[2][2] = sz;
+
+  }
+
+  inline void set_translation(float tx, float ty, float tz) {
+    m[2][0] = tx;
+    m[2][1] = ty;
+    m[2][2] = tz;
+  }
+
+  static matrix3f identity() {
+    matrix3f m;
+
+    m.m[0][0] = 1.0f;
+    m.m[0][1] = 0.0f;
+    m.m[0][2] = 0.0f;
+
+    m.m[1][0] = 0.0f;
+    m.m[1][1] = 1.0f;
+    m.m[1][2] = 0.0f;
+
+    m.m[2][0] = 0.0f;
+    m.m[2][1] = 0.0f;
+    m.m[2][2] = 1.0f;
+
+    return m;
   }
 
   float m[3][3];
@@ -588,6 +662,69 @@ struct matrix4f {
     m[3][3] = 1.0f;
   }
 
+  inline void set_row(uint32_t row, float x, float y, float z, float w) {
+    if (row < 4) {
+      m[row][0] = x;
+      m[row][1] = y;
+      m[row][2] = z;
+      m[row][3] = w;
+    }
+  }
+
+  inline void set_scale(float sx, float sy, float sz) {
+    m[0][0] = sx;
+    m[0][1] = 0.0f;
+    m[0][2] = 0.0f;
+    m[0][3] = 0.0f;
+
+    m[1][0] = 0.0f;
+    m[1][1] = sy;
+    m[1][2] = 0.0f;
+    m[1][3] = 0.0f;
+
+    m[2][0] = 0.0f;
+    m[2][1] = 0.0f;
+    m[2][2] = sz;
+    m[2][3] = 0.0f; 
+
+    m[3][0] = 0.0f;
+    m[3][1] = 0.0f;
+    m[3][2] = 0.0f;
+    m[3][3] = 1.0f;
+  }
+
+  inline void set_translation(float tx, float ty, float tz) {
+    m[3][0] = tx;
+    m[3][1] = ty;
+    m[3][2] = tz;
+  }
+
+  static matrix4f identity() {
+    matrix4f m;
+
+    m.m[0][0] = 1.0f;
+    m.m[0][1] = 0.0f;
+    m.m[0][2] = 0.0f;
+    m.m[0][3] = 0.0f;
+
+    m.m[1][0] = 0.0f;
+    m.m[1][1] = 1.0f;
+    m.m[1][2] = 0.0f;
+    m.m[1][3] = 0.0f;
+
+    m.m[2][0] = 0.0f;
+    m.m[2][1] = 0.0f;
+    m.m[2][2] = 1.0f;
+    m.m[2][3] = 0.0f;
+
+    m.m[3][0] = 0.0f;
+    m.m[3][1] = 0.0f;
+    m.m[3][2] = 0.0f;
+    m.m[3][3] = 1.0f;
+
+    return m;
+  }
+
   float m[4][4];
 };
 
@@ -598,6 +735,21 @@ struct matrix2d {
 
     m[1][0] = 0.0;
     m[1][1] = 1.0;
+  }
+
+  inline void set_row(uint32_t row, double x, double y) {
+    if (row < 2) {
+      m[row][0] = x;
+      m[row][1] = y;
+    }
+  }
+
+  inline void set_scale(double sx, double sy) {
+    m[0][0] = sx;
+    m[0][1] = 0.0;
+
+    m[1][0] = 0.0;
+    m[1][1] = sy;
   }
 
   static matrix2d identity() {
@@ -628,6 +780,28 @@ struct matrix3d {
     m[2][0] = 0.0;
     m[2][1] = 0.0;
     m[2][2] = 1.0;
+  }
+
+  inline void set_row(uint32_t row, double x, double y, double z) {
+    if (row < 3) {
+      m[row][0] = x;
+      m[row][1] = y;
+      m[row][2] = z;
+    }
+  }
+
+  inline void set_scale(double sx, double sy, double sz) {
+    m[0][0] = sx;
+    m[0][1] = 0.0;
+    m[0][2] = 0.0;
+
+    m[1][0] = 0.0;
+    m[1][1] = sy;
+    m[1][2] = 0.0;
+
+    m[2][0] = 0.0;
+    m[2][1] = 0.0;
+    m[2][2] = sz;
   }
 
   static matrix3d identity() {
@@ -667,6 +841,37 @@ struct matrix4d {
     m[2][1] = 0.0;
     m[2][2] = 1.0;
     m[2][3] = 0.0;
+
+    m[3][0] = 0.0;
+    m[3][1] = 0.0;
+    m[3][2] = 0.0;
+    m[3][3] = 1.0;
+  }
+
+  inline void set_row(uint32_t row, double x, double y, double z, double w) {
+    if (row < 4) {
+      m[row][0] = x;
+      m[row][1] = y;
+      m[row][2] = z;
+      m[row][3] = w;
+    }
+  }
+
+  inline void set_scale(double sx, double sy, double sz) {
+    m[0][0] = sx;
+    m[0][1] = 0.0;
+    m[0][2] = 0.0;
+    m[0][3] = 0.0;
+
+    m[1][0] = 0.0;
+    m[1][1] = sy;
+    m[1][2] = 0.0;
+    m[1][3] = 0.0;
+
+    m[2][0] = 0.0;
+    m[2][1] = 0.0;
+    m[2][2] = sz;
+    m[2][3] = 0.0; 
 
     m[3][0] = 0.0;
     m[3][1] = 0.0;
@@ -829,6 +1034,51 @@ MTy MatSub(const MTy &m, const MTy &n) {
     }
   }
 
+  return ret;
+}
+
+inline matrix2f operator+(const matrix2f &a, const matrix2f &b) {
+  matrix2f ret = MatAdd<matrix2f, float, 2>(a, b);
+  return ret;
+}
+
+inline matrix2f operator-(const matrix2f &a, const matrix2f &b) {
+  matrix2f ret = MatSub<matrix2f, float, 2>(a, b);
+  return ret;
+}
+
+inline matrix2f operator*(const matrix2f &a, const matrix2f &b) {
+  matrix2f ret = Mult<matrix2f, float, 2>(a, b);
+  return ret;
+}
+
+inline matrix3f operator+(const matrix3f &a, const matrix3f &b) {
+  matrix3f ret = MatAdd<matrix3f, float, 3>(a, b);
+  return ret;
+}
+
+inline matrix3f operator-(const matrix3f &a, const matrix3f &b) {
+  matrix3f ret = MatSub<matrix3f, float, 3>(a, b);
+  return ret;
+}
+
+inline matrix3f operator*(const matrix3f &a, const matrix3f &b) {
+  matrix3f ret = Mult<matrix3f, float, 3>(a, b);
+  return ret;
+}
+
+inline matrix4f operator+(const matrix4f &a, const matrix4f &b) {
+  matrix4f ret = MatAdd<matrix4f, float, 4>(a, b);
+  return ret;
+}
+
+inline matrix4f operator-(const matrix4f &a, const matrix4f &b) {
+  matrix4f ret = MatSub<matrix4f, float, 4>(a, b);
+  return ret;
+}
+
+inline matrix4f operator*(const matrix4f &a, const matrix4f &b) {
+  matrix4f ret = Mult<matrix4f, float, 4>(a, b);
   return ret;
 }
 
