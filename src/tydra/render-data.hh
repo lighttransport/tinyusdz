@@ -30,6 +30,7 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using quat = value::float4;
 using mat2 = value::matrix2f;  // float precision
+using mat3 = value::matrix3f;  // float precision
 using mat4 = value::matrix4f;  // float precision
 using dmat4 = value::matrix4d;  // float precision
 
@@ -135,7 +136,7 @@ struct VertexAttribute {
   VertexAttributeFormat format{VertexAttributeFormat::Vec3};
   uint32_t stride{0}; //  We don't support packed(interleaved) vertex data, so stride is usually sizeof(VertexAttributeFormat type). 0 = tightly packed. Let app/gfx API decide actual stride bytes.
   std::vector<uint8_t> data; // raw binary data(TODO: Use Buffer ID?)
-  std::vector<uint32_t> indices; // Dedicated Index buffer. Set when variability == Indexed. empty = Use vertex index buffer 
+  std::vector<uint32_t> indices; // Dedicated Index buffer. Set when variability == Indexed. empty = Use vertex index buffer
   VertexVariability variability{VertexVariability::FaceVarying};
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
@@ -176,7 +177,7 @@ struct AnimationSampler {
 
   std::vector<AnimationSample<T>> samples;
 
-  // No cubicSpline 
+  // No cubicSpline
   enum class Interpolation {
     Linear,
     Step, // Held in USD
@@ -234,7 +235,7 @@ struct RenderMesh {
   std::vector<uint32_t> faceVertexIndices;
   // For triangulated mesh, array elements are all 3.
   // TODO: Make `faceVertexCounts` empty for Trianglulated mesh.
-  std::vector<uint32_t> faceVertexCounts; 
+  std::vector<uint32_t> faceVertexCounts;
 
   std::vector<vec3> facevaryingNormals;
 
@@ -267,7 +268,7 @@ struct UVReaderFloat {
   int64_t mesh_id{-1};   // index to RenderMesh
   int64_t coord_id{-1};  // index to RenderMesh::facevaryingTexcoords
 
-  mat2 transform; // UsdTransform2d
+  //mat2 transform; // UsdTransform2d
 
   // Returns interpolated UV coordinate with UV transform
   // # of components filled are equal to `componentType`.
@@ -289,11 +290,26 @@ struct UVTexture {
   vec4 fetch(size_t faceId, float varyu, float varyv, float varyw = 1.0f,
              Channel channel = Channel::RGB);
 
+  // bias and scale for texel value
+  vec4 bias{0.0f, 0.0f, 0.0f, 0.0f};
+  vec4 scale{1.0f, 1.0f, 1.0f, 1.0f};
+
   UVReaderFloat uvreader;
   vec4 fallback_uv{0.0f, 0.0f, 0.0f, 0.0f};
 
+  // UsdTransform2d
+  // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
+  // = scale * rotate + translation
+  bool has_transform2d{false}; // true = `transform`, `tx_rotation`, `tx_scale` and `tx_translation` are filled;
+  mat3 transform{value::matrix3f::identity()};
+
+  // raw transform2d value
+  float tx_rotation{0.0f};
+  vec2 tx_scale{1.0f, 1.0f};
+  vec2 tx_translation{0.0f, 0.0f};
+
   // UV primvars name(UsdPrimvarReader's inputs:varname)
-  std::string varname_uv; 
+  std::string varname_uv;
 
   int64_t image_id{-1};  // Index to TextureImage
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid

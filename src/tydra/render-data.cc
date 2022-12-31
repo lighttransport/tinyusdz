@@ -1,4 +1,7 @@
-
+//
+// TODO:
+//   - [ ] Support time-varying shader attribute(timeSamples)
+//
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"
@@ -565,6 +568,117 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 namespace {
 
 #if 0
+// Convert UsdTranform2d -> PrimvarReader_float2 shader network.
+nonstd::expected<bool, std::string> ConvertTexTransform2d(
+  const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
+  UVTexture *tex_out) {
+
+  float rotation; // in angles
+  if (!tx.rotation.get_value().get_scalar(&rotation)) {
+    return nonstd::make_unexpected(fmt::format("Failed to retrieve rotation attribute from {}", tx_abs_path.full_path_name()));
+  }
+
+  value::float2 scale;
+  if (!tx.scale.get_value().get_scalar(&scale)) {
+    return nonstd::make_unexpected(fmt::format("Failed to retrieve scale attribute from {}", tx_abs_path.full_path_name()));
+  }
+
+  value::float2 translation;
+  if (!tx.translation.get_value().get_scalar(&translation)) {
+    return nonstd::make_unexpected(fmt::format("Failed to retrieve translation attribute from {}", tx_abs_path.full_path_name()));
+  }
+
+
+
+  // must be authored and connected to PrimvarReader.
+  if (!tx.in.authored()) {
+    return nonstd::make_unexpected("`inputs:in` must be authored.");
+  }
+
+  if (!tx.in.is_connection()) {
+    return nonstd::make_unexpected("`inputs:in` must be a connection.");
+  }
+
+  const auto &paths = tx.in.get_connections();
+  if (paths.size() != 1) {
+    return nonstd::make_unexpected("`inputs:in` must be a single connection Path.");
+  }
+
+  std::string prim_part = paths[0].prim_part();
+  std::string prop_part = paths[0].prop_part();
+
+  if (prop_part != "outputs:result") {
+    return nonstd::make_unexpected("`inputs:in` connection Path's property part must be `outputs:result`");
+  }
+
+  std::string err;
+
+  const Prim *pprim{nullptr};
+  if (!stage.find_prim_at_path(Path(prim_part, ""), pprim, &err)) {
+    return nonstd::make_unexpected(fmt::format("`inputs:in` connection Path not found in the Stage. {}", prim_part));
+  }
+
+  if (!pprim) {
+    return nonstd::make_unexpected(fmt::format("[InternalError] Prim is nullptr: {}", prim_part));
+  }
+
+  const Shader *pshader = pprim->as<Shader>();
+  if (!pshader) {
+    return nonstd::make_unexpected(fmt::format("{} must be Shader Prim, but got {}", prim_part, pprim->prim_type_name()));
+  }
+
+  const UsdPrimvarReader_float2 *preader = pshader->value.as<UsdPrimvarReader_float2>();
+  if (preader) {
+    return nonstd::make_unexpected(fmt::format("Shader {} must be UsdPrimvarReader_float2 type, but got {}", prim_part, pshader->info_id));
+  }
+
+  // Get value producing attribute(i.e, follow .connection and return
+  // terminal Attribute value)
+  value::token varname;
+  if (!tydra::EvaluateShaderAttribute(stage, *pshader, "inputs:varname",
+                                      &varname, &err)) {
+    return nonstd::make_unexpected(
+        fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
+                    "inputs:varname: {}\n",
+                    err));
+  }
+
+  // Build transform matrix.
+  // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
+  // Since USD uses post-multiply,
+  //
+  // matrix = scale * rotate * translate
+  //
+  {
+    mat3 s;
+    s.set_scale(scale[0], scale[1], 1.0f);
+
+    mat3 r = mat3::identity();
+
+    r.m[0][0] = std::cos(math::radian(rotation));
+    r.m[0][1] = std::sin(math::radian(rotation));
+
+    r.m[1][0] = -std::sin(math::radian(rotation));
+    r.m[1][1] = std::cos(math::radian(rotation));
+
+    mat3 t = mat3::identity();
+    t.set_translation(translation[0], translation[1], 1.0f);
+
+    tex_out->transform = s * r * t;
+  }
+
+  tex_out->tx_rotation = rotation;
+  tex_out->tx_translation = translation;
+  tex_out->tx_scale = scale;
+  tex_out->has_transform2d = true;
+
+  tex_out->varname_uv = varname.str();
+
+  return true;
+}
+#endif
+
+#if 0
 // W.I.P.
 nonstd::expected<bool, std::string> ConvertUVTexture(
     const Stage &stage, const Path &tex_abs_path, const UsdUVTexture &texture,
@@ -595,6 +709,14 @@ nonstd::expected<bool, std::string> ConvertUVTexture(
       return nonstd::make_unexpected(
           "Invalid UsdUVTexture inputs:sourceColorSpace value.");
     }
+  }
+
+  if (texture.bias.authored()) {
+    tex.bias = texture.bias.get_value();
+  }
+
+  if (texture.scale.authored()) {
+    tex.scale = texture.scale.get_value();
   }
 
   if (texture.st.authored()) {
@@ -628,11 +750,8 @@ nonstd::expected<bool, std::string> ConvertUVTexture(
                         readerPrim->prim_type_name()));
       }
 
-      // currently PrimvarReaer_float2 only for inputs:st
-      // TODO: Support UsdTransform2d for inputs:st
-      {
-        const UsdPrimvarReader_float2 *preader =
-            pshader->value.as<UsdPrimvarReader_float2>();
+      // currently UsdTranform2d or PrimvarReaer_float2 only for inputs:st
+      if (const UsdPrimvarReader_float2 *preader = pshader->value.as<UsdPrimvarReader_float2>()) {
         if (!preader) {
           return nonstd::make_unexpected(
               fmt::format("Shader's info:id must be UsdPrimvarReader_float2, "
@@ -652,6 +771,14 @@ nonstd::expected<bool, std::string> ConvertUVTexture(
         }
 
         tex.varname_uv = varname.str();
+      } else if (const UsdTransform2d *ptransform = pshader->value.as<UsdTransform2d>()) {
+
+        auto result = ConvertTexTransform2d(stage, path, *ptransform, &tex);
+        if (!result) {
+          return nonstd::make_unexpected(result.error());
+        }
+      } else {
+        return nonstd::make_unexpected("Unsupported Shader type for `inputs:st` connection: " + pshader->info_id + "\n");
       }
 
     } else {
