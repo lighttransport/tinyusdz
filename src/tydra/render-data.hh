@@ -16,6 +16,7 @@ class Prim;
 struct Material;
 struct GeomMesh;
 struct Xform;
+struct AssetInfo;
 
 template<typename T>
 struct UsdPrimvarReader;
@@ -23,6 +24,8 @@ struct UsdPrimvarReader;
 using UsdPrimvarReader_float2 = UsdPrimvarReader<value::float2>;
 
 namespace tydra {
+
+
 
 // GLSL like data types
 using vec2 = value::float2;
@@ -159,7 +162,6 @@ enum class TextureImageTexelFormat {
 struct TextureImage {
   TextureImageTexelFormat texel_format{TextureImageTexelFormat::UINT8_RGB};
   ColorSpace colorSpace{ColorSpace::sRGB};
-  int32_t bps{8}; //
   int32_t width{-1};
   int32_t height{-1};
   int32_t channels{-1};  // e.g. 3 for RGB.
@@ -381,6 +383,47 @@ class RenderScene {
 };
 
 ///
+/// Texture image loader callback
+///
+/// The callback function should return TextureImage and Raw image data.
+///
+/// NOTE: TextureImage::buffer_id is filled in Tydra side after calling this callback.
+/// NOTE: TextureImage::colorSpace will be overwritten if `asset:sourceColorSpace` is authored in UsdUVTexture.
+///
+/// @param[in] asset Asset path
+/// @param[in] assetInfo AssetInfo
+/// @param[out] texImageOut TextureImage info.
+/// @param[out] imageData Raw texture image data.
+/// @param[inout] userdata User data.
+/// @param[out] warn Optional. Warning message.
+/// @param[out] error Optional. Error message.
+///
+/// @return true upon success.
+/// termination of visiting Prims.
+///
+typedef bool (*TextureImageLoaderFuncton)(
+  const value::AssetPath &assetPath,
+  const AssetInfo &assetInfo,
+  TextureImage *imageOut,
+  std::vector<uint8_t> *imageData,
+  void *userdata,
+  std::string *warn,
+  std::string *err);
+
+bool DefaultTextureImageLoaderFuncton(
+  const value::AssetPath &assetPath,
+  const AssetInfo &assetInfo,
+  TextureImage *imageOut,
+  std::vector<uint8_t> *imageData,
+  void *userdata,
+  std::string *warn,
+  std::string *err);
+
+///
+/// TODO: UDIM loder
+///
+
+///
 /// Easy API to convert USD Stage to RenderScene(glTF-like scene graph)
 ///
 bool ConvertToRenderScene(
@@ -398,6 +441,15 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 // Currently float2 only
 std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
 
+struct MaterialConverterConfig
+{
+  // DefaultTextureImageLoader will be used when nullptr;
+  TextureImageLoaderFuncton *texture_image_loader_function{nullptr};
+  void *texture_image_loader_function_userdata{nullptr};
+
+  // TODO: AssetResolver
+};
+
 ///
 /// Convert USD Material/Shader to renderer-friendly Material
 /// Assume single UsdPreviewSurface is assigned to a USD Material.
@@ -410,6 +462,7 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 /// @return true when success. false when failed to convert(returns error message)
 ///
 nonstd::expected<bool, std::string> ConvertMaterial(
+  const MaterialConverterConfig &config,
   const Stage &stage,
   const tinyusdz::Path &abs_mat_path,
   const tinyusdz::Material &material,

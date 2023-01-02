@@ -567,7 +567,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 
 namespace {
 
-#if 0
+#if 1
 // Convert UsdTranform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
   const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
@@ -678,8 +678,13 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 }
 #endif
 
-#if 0
+#if 1
 // W.I.P.
+// Convert UsdUVTexture shader node.
+// Possible network configuration
+//
+// - UsdUVTexture -> UsdPrimvarReader
+// - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
 nonstd::expected<bool, std::string> ConvertUVTexture(
     const Stage &stage, const Path &tex_abs_path, const UsdUVTexture &texture,
     StringAndIdMap &textureMap,          // [inout]
@@ -840,10 +845,94 @@ nonstd::expected<bool, std::string> ConvertUVTexture(
 }
 #endif
 
+template<typename T>
+nonstd::expected<bool, std::string> GetConnectedUVTexture(
+  const Stage &stage,
+  const TypedAnimatableAttributeWithFallback<T> &src,
+  const UsdUVTexture **dst){
+
+  if (!src.is_connection()) {
+    return nonstd::make_unexpected("Attribute must be connection.\n");
+  }
+
+  if (!src.get_connections().size() != 1) {
+    return nonstd::make_unexpected("Attribute connections must be single connection Path.\n");
+  }
+
+  const Path &path = src.get_connections()[0];
+
+  const std::string prim_part = path.prim_part();
+  const std::string prop_part = path.prop_part();
+
+  if (prop_part != "outputs:result") {
+    return nonstd::make_unexpected("connection Path's property part must be `outputs:result` for UsdUVTexture.\n");
+  }
+
+  const Prim *prim{nullptr};
+  std::string err;
+  if (stage.find_prim_at_path(Path(prim_part, ""), prim, &err)) {
+    return nonstd::make_unexpected(fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
+  }
+
+  if (!prim) {
+    return nonstd::make_unexpected("[InternalError] Prim ptr is null.\n");
+  }
+
+  if (const Shader *pshader = prim->as<Shader>()) {
+    if (const UsdUVTexture *ptex = pshader->value.as<UsdUVTexture>()) {
+      (*dst) = ptex;
+      return true;
+    }
+  }
+
+  return nonstd::make_unexpected(fmt::format("Prim {} must be Shader, but got {}", prim_part, prim->prim_type_name()));
+
+}
+
+nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
+    const Stage &stage, const Path &shader_abs_path,
+    const UsdPreviewSurface &shader,
+    TextureImageLoaderFuncton textureLoaderFunction,
+    StringAndIdMap &textureMap,          // [inout]
+    StringAndIdMap &imageMap,            // [inout]
+    StringAndIdMap &bufferMap,           // [inout]
+    std::vector<UVTexture> &textures,    // [inout]
+    std::vector<TextureImage> &images,   // [inout]
+    std::vector<BufferData> &buffers) {  // [inout]
+
+  PreviewSurfaceShader rshader;
+
+  if (shader.diffuseColor.authored()) {
+    if (shader.diffuseColor.is_blocked()) {
+      return nonstd::make_unexpected("diffuseColor attribute is blocked.\n");
+    } else if (shader.diffuseColor.is_connection()) {
+      UVTexture rtex;
+
+      const UsdUVTexture *ptex{nullptr};
+      auto result = GetConnectedUVTexture(stage, shader.diffuseColor, &ptex);
+
+      rshader.diffuseColor.textureId = int(textures.size());
+      textures.emplace_back(rtex);
+    } else {
+      value::color3f col;
+      if (!shader.diffuseColor.get_value().get_scalar(&col)) {
+        return nonstd::make_unexpected("Failed to get diffuseColor at `default` timecode.\n");
+      }
+
+      rshader.diffuseColor.value[0] = col[0];
+      rshader.diffuseColor.value[1] = col[1];
+      rshader.diffuseColor.value[2] = col[2];
+
+    }
+  }
+
+  return false;
+
 }  // namespace
 
 // W.I.P.
 nonstd::expected<bool, std::string> ConvertMaterial(
+  const MaterialConverterConfig &config,
     const Stage &stage, const Path &mat_abs_path,
     const tinyusdz::Material &material,
     StringAndIdMap &materialMap,             // [inout]
@@ -926,6 +1015,7 @@ nonstd::expected<bool, std::string> ConvertMaterial(
                       "`outputs:surface`, but got `{}`",
                       mat_abs_path.full_path_name(), surfacePath.prop_part()));
     }
+
   }
 
 #if 0
