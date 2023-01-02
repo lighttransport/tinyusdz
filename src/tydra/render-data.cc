@@ -849,7 +849,12 @@ template<typename T>
 nonstd::expected<bool, std::string> GetConnectedUVTexture(
   const Stage &stage,
   const TypedAnimatableAttributeWithFallback<T> &src,
+  Path *tex_abs_path,
   const UsdUVTexture **dst){
+
+  if (!dst) {
+    return nonstd::make_unexpected("[InternalError] dst is nullptr.\n");
+  }
 
   if (!src.is_connection()) {
     return nonstd::make_unexpected("Attribute must be connection.\n");
@@ -885,10 +890,15 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     }
   }
 
+  if (tex_abs_path) {
+    (*tex_abs_path) = Path(prim_part, "");
+  }
+
   return nonstd::make_unexpected(fmt::format("Prim {} must be Shader, but got {}", prim_part, prim->prim_type_name()));
 
 }
 
+// TODO: timeSamples
 nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
     const Stage &stage, const Path &shader_abs_path,
     const UsdPreviewSurface &shader,
@@ -900,6 +910,9 @@ nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
     std::vector<TextureImage> &images,   // [inout]
     std::vector<BufferData> &buffers) {  // [inout]
 
+  (void)shader_abs_path;
+  (void)imageMap;
+
   PreviewSurfaceShader rshader;
 
   if (shader.diffuseColor.authored()) {
@@ -909,10 +922,35 @@ nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
       UVTexture rtex;
 
       const UsdUVTexture *ptex{nullptr};
-      auto result = GetConnectedUVTexture(stage, shader.diffuseColor, &ptex);
+      Path texPath;
+      auto result = GetConnectedUVTexture(stage, shader.diffuseColor, &texPath, &ptex);
+
+      // TODO: assetInfo
+      AssetInfo assetInfo;
+      //if (shader.meta.assetInfo) {
+      //  CustomDataType = shader.meta.assetInfo.value();
+      //}
+     
+      if (!ptex->file.authored()) {
+        return nonstd::make_unexpected(fmt::format("`asset:file` is not authored. Path = {}", texPath.prim_part()));
+      }
+
+      value::AssetPath assetPath;
+      if (auto apath = ptex->file.get_value()) {
+        if (!apath.value().get_scalar(&assetPath)) {
+          return nonstd::make_unexpected(fmt::format("Failed to get `asset:file` value from Path {} (Maybe `asset:file` is timeSample value?)", texPath.prim_part()));
+        }
+      } else {
+        return nonstd::make_unexpected(fmt::format("Failed to get `asset:file` value from Path {}", texPath.prim_part()));
+      }
+      
+      bool tex_ok = textureLoaderFunction(assetPath, assetInfo, 
 
       rshader.diffuseColor.textureId = int(textures.size());
       textures.emplace_back(rtex);
+
+      textureMap.add(uint64_t(rshader.diffuseColor.textureId), shader_abs_path.prim_part() + ".dffuseColor");
+
     } else {
       value::color3f col;
       if (!shader.diffuseColor.get_value().get_scalar(&col)) {

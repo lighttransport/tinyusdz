@@ -330,13 +330,17 @@ struct UDIMTexture {
 };
 
 
-// base color(fallback color) or Texture
+// T or TextureId
 template <typename T>
 struct ShaderParam {
   ShaderParam(const T &t) { value = t; }
 
+  bool is_texture() const {
+    return textureId >= 0;
+  }
+
   T value;
-  int32_t textureId{-1};
+  int32_t textureId{-1}; // negative = invalid
 };
 
 // UsdPreviewSurface
