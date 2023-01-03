@@ -105,9 +105,21 @@ enum class NodeType {
   // TODO...
 };
 
+enum class ComponentType {
+  UInt8,
+  Int8,
+  UInt16,
+  Int16,
+  UInt32,
+  Int32,
+  Float,
+  Double,
+};
+
 // glTF-like BufferData
 struct BufferData {
-  value::TypeId type_id{value::TypeId::TYPE_ID_VOID};
+  ComponentType componentType{ComponentType::UInt8};
+  uint8_t count{1}; // up to 256
   std::vector<uint8_t> data;  // binary data
 
   // TODO: Stride
@@ -152,16 +164,10 @@ enum class ColorSpace {
   Custom,  // TODO: Custom colorspace
 };
 
-// TODO: Support more texel format.
-enum class TextureImageTexelFormat {
-  UINT8_RGB,
-  FP16_RGB, // half float
-  FP32_RGB,
-};
-
 struct TextureImage {
-  TextureImageTexelFormat texel_format{TextureImageTexelFormat::UINT8_RGB};
+  ComponentType texelComponentType{ComponentType::UInt8};
   ColorSpace colorSpace{ColorSpace::sRGB};
+
   int32_t width{-1};
   int32_t height{-1};
   int32_t channels{-1};  // e.g. 3 for RGB.
@@ -313,7 +319,7 @@ struct UVTexture {
   // UV primvars name(UsdPrimvarReader's inputs:varname)
   std::string varname_uv;
 
-  int64_t image_id{-1};  // Index to TextureImage
+  int64_t texture_image_id{-1};  // Index to TextureImage
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
@@ -405,7 +411,7 @@ class RenderScene {
 /// @return true upon success.
 /// termination of visiting Prims.
 ///
-typedef bool (*TextureImageLoaderFuncton)(
+typedef bool (*TextureImageLoaderFunction)(
   const value::AssetPath &assetPath,
   const AssetInfo &assetInfo,
   TextureImage *imageOut,
@@ -414,7 +420,7 @@ typedef bool (*TextureImageLoaderFuncton)(
   std::string *warn,
   std::string *err);
 
-bool DefaultTextureImageLoaderFuncton(
+bool DefaultTextureImageLoaderFunction(
   const value::AssetPath &assetPath,
   const AssetInfo &assetInfo,
   TextureImage *imageOut,
@@ -448,7 +454,7 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 struct MaterialConverterConfig
 {
   // DefaultTextureImageLoader will be used when nullptr;
-  TextureImageLoaderFuncton *texture_image_loader_function{nullptr};
+  TextureImageLoaderFunction *texture_image_loader_function{nullptr};
   void *texture_image_loader_function_userdata{nullptr};
 
   // TODO: AssetResolver
@@ -478,7 +484,6 @@ nonstd::expected<bool, std::string> ConvertMaterial(
   std::vector<UVTexture> &textures, // [inout]
   std::vector<TextureImage> &images, // [inout]
   std::vector<BufferData> &buffers); // [inout]
-
 
 }  // namespace tydra
 }  // namespace tinyusdz
