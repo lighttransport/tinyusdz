@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "nonstd/expected.hpp"
+#include "usdShade.hh"
 #include "value-types.hh"
 
 namespace tinyusdz {
@@ -17,6 +18,10 @@ struct Material;
 struct GeomMesh;
 struct Xform;
 struct AssetInfo;
+class Path;
+
+struct UsdPreviewSurface;
+struct UsdUVTexture;
 
 template<typename T>
 struct UsdPrimvarReader;
@@ -454,36 +459,82 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 struct MaterialConverterConfig
 {
   // DefaultTextureImageLoader will be used when nullptr;
-  TextureImageLoaderFunction *texture_image_loader_function{nullptr};
+  TextureImageLoaderFunction texture_image_loader_function{nullptr};
   void *texture_image_loader_function_userdata{nullptr};
 
   // TODO: AssetResolver
 };
 
-///
-/// Convert USD Material/Shader to renderer-friendly Material
-/// Assume single UsdPreviewSurface is assigned to a USD Material.
-///
-/// RenderMaterial, UVTexture and Images/Buffers are managed by an map(key = Resource name and handle ID, value = array index to corresponding linearlized resource array(e.g. materialMap.second => array index to `materials`)
-///
-/// Newly created RenderMaterial, UVTexture and TextureImage/BufferData are appended to `materials`, `textures`, and `images`/`buffers` respectively.
-///
-///
-/// @return true when success. false when failed to convert(returns error message)
-///
-nonstd::expected<bool, std::string> ConvertMaterial(
-  const MaterialConverterConfig &config,
-  const Stage &stage,
-  const tinyusdz::Path &abs_mat_path,
-  const tinyusdz::Material &material,
-  StringAndIdMap &materialMap, // [inout]
-  StringAndIdMap &textureMap, // [inout]
-  StringAndIdMap &imageMap, // [inout]
-  StringAndIdMap &bufferMap, // [inout]
-  std::vector<RenderMaterial> &materials, // [input]
-  std::vector<UVTexture> &textures, // [inout]
-  std::vector<TextureImage> &images, // [inout]
-  std::vector<BufferData> &buffers); // [inout]
+class RenderSceneConverter
+{
+ public:
+  RenderSceneConverter() = default;
+  RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
+  RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
+
+  void SetMaterialConverterConfig(const MaterialConverterConfig &config) {
+    _material_config = config;
+  }
+
+  ///
+  /// Convert Stage to RenderScene.
+  /// Must be called after SetStage, SetMaterialConverterConfig(optional)
+  ///
+  bool ConvertToRenderScene(const Stage &stage, RenderScene *scene);
+
+  const std::string &GetWarning() const {
+    return _warn;
+  }
+
+  const std::string &GetError() const {
+    return _err;
+  }
+
+  StringAndIdMap materialMap;
+  StringAndIdMap textureMap;
+  StringAndIdMap imageMap;
+  StringAndIdMap bufferMap;
+  std::vector<RenderMaterial> materials;
+  std::vector<UVTexture> textures;
+  std::vector<TextureImage> images;
+  std::vector<BufferData> buffers;
+
+  ///
+  /// Convert USD Material/Shader to renderer-friendly Material
+  /// Assume UsdPreviewSurface is assigned to a USD Material `outputs:surface`.
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertMaterial(
+    const tinyusdz::Path &abs_mat_path,
+    const tinyusdz::Material &material);
+
+  bool ConvertPreviewSurfaceShader(
+    const tinyusdz::Path &shader_abs_path,
+    const tinyusdz::UsdPreviewSurface &shader);
+
+  bool ConvertUVTexture(
+    const Path &tex_abs_path, const UsdUVTexture &texture);
+
+  const Stage *GetStagePtr() const {
+    return _stage;
+  }
+
+ private:
+
+  MaterialConverterConfig _material_config;
+  const Stage *_stage{nullptr};
+
+  void PushWarn(const std::string &msg) {
+    _warn += msg;
+  }
+
+  void PushError(const std::string &msg) {
+    _err += msg;
+  }
+  std::string _err;
+  std::string _warn;
+};
 
 }  // namespace tydra
 }  // namespace tinyusdz
