@@ -567,6 +567,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 
 namespace {
 
+
 #if 1
 // Convert UsdTranform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
@@ -679,14 +680,19 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 #endif
 
 #if 1
+
 // W.I.P.
 // Convert UsdUVTexture shader node.
+// @return true upon conversion success(textures.back() contains the converted UVTexture)
+//
 // Possible network configuration
 //
 // - UsdUVTexture -> UsdPrimvarReader
 // - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
 nonstd::expected<bool, std::string> ConvertUVTexture(
     const Stage &stage, const Path &tex_abs_path, const UsdUVTexture &texture,
+    TextureImageLoaderFunction textureLoaderFunction,
+    void *textureLoaderUserData,
     StringAndIdMap &textureMap,          // [inout]
     StringAndIdMap &imageMap,            // [inout]
     StringAndIdMap &bufferMap,           // [inout]
@@ -705,14 +711,61 @@ nonstd::expected<bool, std::string> ConvertUVTexture(
 
   UVTexture tex;
 
-  if (texture.file.authored()) {
+  AssetInfo assetInfo = texture.meta.get_assetInfo();
+
+  // First load texture file.
+  if (!texture.file.authored()) {
+    return nonstd::make_unexpected(fmt::format("`asset:file` is not authored. Path = {}", tex_abs_path.prim_part()));
   }
 
+  value::AssetPath assetPath;
+  if (auto apath = texture.file.get_value()) {
+    if (!apath.value().get_scalar(&assetPath)) {
+      return nonstd::make_unexpected(fmt::format("Failed to get `asset:file` value from Path {} (Maybe `asset:file` is timeSample value?)", tex_abs_path.prim_part()));
+    }
+  } else {
+    return nonstd::make_unexpected(fmt::format("Failed to get `asset:file` value from Path {}", tex_abs_path.prim_part()));
+  }
+
+  TextureImage texImage;
+  BufferData imageBuffer;
+  // Texel data is treated as byte array
+  imageBuffer.componentType = ComponentType::UInt8;
+  imageBuffer.count = 1;
+
+  std::string warn;
+  bool tex_ok = textureLoaderFunction(assetPath, assetInfo, &texImage, &imageBuffer.data, textureLoaderUserData, &warn, &err);
+
+  if (!tex_ok) {
+    return nonstd::make_unexpected("Failed to load texture image: " + err + "\n");
+  }
+
+  if (warn.size()) {
+    DCOUT("WARN: " << warn);
+    // TODO: propagate warnining message
+  }
+
+  // TODO: Share image data as much as possible.
+  // e.g. Texture A and B uses same image file, but texturing parameter is different.
+  buffers.emplace_back(imageBuffer);
+
+  // Overwrite colorSpace
   if (texture.sourceColorSpace.authored()) {
     UsdUVTexture::SourceColorSpace cs;
-    if (!texture.sourceColorSpace.get_value().get_scalar(&cs)) {
-      return nonstd::make_unexpected(
-          "Invalid UsdUVTexture inputs:sourceColorSpace value.");
+    if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
+      if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
+        texImage.colorSpace = tydra::ColorSpace::sRGB;
+      } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
+        texImage.colorSpace = tydra::ColorSpace::Linear;
+      } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
+        // TODO: Read colorspace from a file.
+        if ((texImage.texelComponentType == ComponentType::UInt8) ||
+            (texImage.texelComponentType == ComponentType::Int8)) {
+          texImage.colorSpace = tydra::ColorSpace::sRGB;
+        } else {
+          texImage.colorSpace = tydra::ColorSpace::Linear;
+        }
+      }
     }
   }
 
@@ -860,7 +913,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     return nonstd::make_unexpected("Attribute must be connection.\n");
   }
 
-  if (!src.get_connections().size() != 1) {
+  if (src.get_connections().size() != 1) {
     return nonstd::make_unexpected("Attribute connections must be single connection Path.\n");
   }
 
@@ -902,7 +955,8 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
     const Stage &stage, const Path &shader_abs_path,
     const UsdPreviewSurface &shader,
-    TextureImageLoaderFuncton textureLoaderFunction,
+    TextureImageLoaderFunction textureLoaderFunction,
+    void *textureLoaderUserData,
     StringAndIdMap &textureMap,          // [inout]
     StringAndIdMap &imageMap,            // [inout]
     StringAndIdMap &bufferMap,           // [inout]
@@ -912,8 +966,11 @@ nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
 
   (void)shader_abs_path;
   (void)imageMap;
+  (void)bufferMap;
+  (void)images;
 
   PreviewSurfaceShader rshader;
+
 
   if (shader.diffuseColor.authored()) {
     if (shader.diffuseColor.is_blocked()) {
@@ -925,31 +982,21 @@ nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
       Path texPath;
       auto result = GetConnectedUVTexture(stage, shader.diffuseColor, &texPath, &ptex);
 
-      // TODO: assetInfo
-      AssetInfo assetInfo;
-      //if (shader.meta.assetInfo) {
-      //  CustomDataType = shader.meta.assetInfo.value();
-      //}
-     
-      if (!ptex->file.authored()) {
-        return nonstd::make_unexpected(fmt::format("`asset:file` is not authored. Path = {}", texPath.prim_part()));
+      if (result) {
+
+        auto texResult = ConvertUVTexture(stage, texPath, *ptex,
+            textureLoaderFunction, textureLoaderUserData,
+            textureMap, imageMap, bufferMap,
+            textures, images, buffers);
+
+        // textures.back() is newly added UVTexture, so subtract 1.
+        rshader.diffuseColor.textureId = int(textures.size() - 1);
       }
 
-      value::AssetPath assetPath;
-      if (auto apath = ptex->file.get_value()) {
-        if (!apath.value().get_scalar(&assetPath)) {
-          return nonstd::make_unexpected(fmt::format("Failed to get `asset:file` value from Path {} (Maybe `asset:file` is timeSample value?)", texPath.prim_part()));
-        }
-      } else {
-        return nonstd::make_unexpected(fmt::format("Failed to get `asset:file` value from Path {}", texPath.prim_part()));
-      }
-      
-      bool tex_ok = textureLoaderFunction(assetPath, assetInfo, 
-
-      rshader.diffuseColor.textureId = int(textures.size());
-      textures.emplace_back(rtex);
+      //textures.emplace_back(rtex);
 
       textureMap.add(uint64_t(rshader.diffuseColor.textureId), shader_abs_path.prim_part() + ".dffuseColor");
+
 
     } else {
       value::color3f col;
@@ -965,6 +1012,7 @@ nonstd::expected<bool, std::string> ConvertPreviewSurfaceShader(
   }
 
   return false;
+}
 
 }  // namespace
 
@@ -991,6 +1039,7 @@ nonstd::expected<bool, std::string> ConvertMaterial(
   (void)textures;
   (void)images;
   (void)buffers;
+  (void)config;
 
   std::string err;
 
@@ -1053,6 +1102,17 @@ nonstd::expected<bool, std::string> ConvertMaterial(
                       "`outputs:surface`, but got `{}`",
                       mat_abs_path.full_path_name(), surfacePath.prop_part()));
     }
+
+    auto result = ConvertPreviewSurfaceShader(
+      stage, surfacePath, *psurface,
+      config.texture_image_loader_function,
+      config.texture_image_loader_function_userdata,
+   textureMap,          // [inout]
+   imageMap,            // [inout]
+   bufferMap,           // [inout]
+    textures,    // [inout]
+    images,   // [inout]
+    buffers);  // [inout]
 
   }
 
@@ -1257,10 +1317,14 @@ bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
 
       RenderScene *prenderscene = puser->prenderscene;
 
+      // TODO: MaterialConverterConfig
+      MaterialConverterConfig material_converter_config;
+
       if (ret && bound_material) {
         DCOUT("Bound material path: " << bound_material_path);
 
         auto result = ConvertMaterial(
+            material_converter_config,
             *puser->pstage, bound_material_path, *bound_material, *puser->pmaterialMap,
             *puser->ptextureMap, *puser->pimageMap, *puser->pbufferMap,
             prenderscene->materials, prenderscene->textures,

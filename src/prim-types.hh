@@ -691,7 +691,7 @@ struct AssetInfo {
   // builtin fields
   value::AssetPath identifier;
   std::string name;
-  std::string payloadAssetDependencies;
+  std::vector<value::AssetPath> payloadAssetDependencies;
   std::string version;
 
   // Other fields
@@ -751,11 +751,17 @@ struct PrimMeta {
   nonstd::optional<bool> hidden;  // 'hidden'
   nonstd::optional<Kind> kind;    // 'kind'
   nonstd::optional<CustomDataType>
-      assetInfo;  // 'assetInfo' // TODO: Use AssetInfo
+      assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
   nonstd::optional<CustomDataType> customData;  // `customData`
   nonstd::optional<value::StringData> doc;      // 'documentation'
   nonstd::optional<value::StringData> comment;  // 'comment'  (String only metadata value)
   nonstd::optional<APISchemas> apiSchemas;      // 'apiSchemas'
+
+  //
+  // AssetInfo utility function
+  //
+  // Convert CustomDataType to AssetInfo
+  AssetInfo get_assetInfo(bool *authored = nullptr) const;
 
   //
   // Compositions
@@ -814,6 +820,7 @@ struct PrimMeta {
   nonstd::optional<std::vector<value::token>> variantChildren;
   nonstd::optional<std::vector<value::token>> variantSetChildren;
 };
+
 
 // Metadata for Attribute
 struct AttrMeta {
