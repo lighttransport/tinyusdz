@@ -416,7 +416,7 @@ std::pair<Path, Path> Path::split_at_root() const {
 bool Path::has_prefix(const Path &prefix) const {
   if (!is_valid() || !prefix.is_valid()) {
     return false;
-  } 
+  }
 
   if (prefix.is_prim_property_path()) {
     // No hierarchy in Prim's property path, so use ==.
@@ -463,7 +463,7 @@ bool Path::has_prefix(const Path &prefix) const {
       }
       depth--;
     }
-  
+
     //DCOUT("has_prefix");
     return true;
 
@@ -1011,7 +1011,7 @@ const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force
     } else {
       // Prim name not found.
       _primChildrenIndices[i] = -1;
-      valid = false;      
+      valid = false;
     }
   }
 
@@ -1024,7 +1024,7 @@ const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force
   if (indices_is_valid) {
     (*indices_is_valid) = _primChildrenIndicesIsValid;
   }
-  
+
   return _primChildrenIndices;
 }
 
@@ -1246,6 +1246,66 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
   return true;
 }
 
+
+AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
+
+  AssetInfo ainfo;
+
+  if (is_authored) {
+    (*is_authored) = authored();
+  }
+
+  if (authored()) {
+
+    ainfo._fields = meta;
+
+    {
+      MetaVariable identifier_var;
+      if (GetCustomDataByKey(meta, "identifier", &identifier_var)) {
+        std::string identifier;
+        if (identifier_var.get_value<std::string>(&identifier)) {
+          ainfo.identifier = identifier;
+          ainfo._fields.erase("identifier");
+        }
+      }
+    }
+
+    {
+      MetaVariable name_var;
+      if (GetCustomDataByKey(meta, "name", &name_var)) {
+        std::string name;
+        if (name_var.get_value<std::string>(&name)) {
+          ainfo.name = name;
+          ainfo._fields.erase("name");
+        }
+      }
+    }
+
+    {
+      MetaVariable payloadDeps_var;
+      if (GetCustomDataByKey(meta, "payloadAssetDependencies", &payloadDeps_var)) {
+        std::vector<value::AssetPath> assets;
+        if (payloadDeps_var.get_value<std::vector<value::AssetPath>>(&assets)) {
+          ainfo.payloadAssetDependencies = assets;
+          ainfo._fields.erase("payloadAssetDependencies");
+        }
+      }
+    }
+
+    {
+      MetaVariable version_var;
+      if (GetCustomDataByKey(meta, "version", &version_var)) {
+        std::string version;
+        if (version_var.get_value<std::string>(&version)) {
+          ainfo.version = version;
+          ainfo._fields.erase("version");
+        }
+      }
+    }
+  }
+
+  return ainfo;
+}
 
 bool IsXformablePrim(const Prim &prim) {
 
