@@ -128,15 +128,16 @@ int main(int argc, char **argv) {
 
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
   tinyusdz::tydra::RenderScene render_scene;
-  bool ret =
-      tinyusdz::tydra::ConvertToRenderScene(stage, &render_scene, &warn, &err);
+  tinyusdz::tydra::RenderSceneConverter converter;
+
+  bool ret = converter.ConvertToRenderScene(stage, &render_scene);
   if (!ret) {
-    std::cerr << "Failed to convert USD Stage to RenderScene: " << err << "\n";
+    std::cerr << "Failed to convert USD Stage to RenderScene: " << converter.GetError() << "\n";
     return EXIT_FAILURE;
   }
 
-  if (warn.size()) {
-    std::cout << "ConvertToRenderScene warn: " << warn << "\n";
+  if (converter.GetWarning().size()) {
+    std::cout << "ConvertToRenderScene warn: " << converter.GetWarning() << "\n";
   }
 
   return EXIT_SUCCESS;
