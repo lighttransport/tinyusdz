@@ -375,7 +375,8 @@ struct PreviewSurfaceShader {
 
 // Material + Shader
 struct RenderMaterial {
-  std::string name;
+  std::string name; // elementName in USD (e.g. "pbrMat")
+  std::string abs_path; // abosolute Prim path in USD (e.g. "/_material/scope/pbrMat")
 
   PreviewSurfaceShader surfaceShader;
   // TODO: displacement, volume.
@@ -439,6 +440,7 @@ bool DefaultTextureImageLoaderFunction(
 /// TODO: UDIM loder
 ///
 
+#if 0 // TODO: remove
 ///
 /// Easy API to convert USD Stage to RenderScene(glTF-like scene graph)
 ///
@@ -456,6 +458,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 
 // Currently float2 only
 std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
+#endif
 
 struct MaterialConverterConfig
 {
@@ -491,31 +494,41 @@ class RenderSceneConverter
     return _err;
   }
 
+  StringAndIdMap nodeMap;
+  StringAndIdMap meshMap;
   StringAndIdMap materialMap;
   StringAndIdMap textureMap;
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
+  std::vector<Node> nodes;
+  std::vector<RenderMesh> meshes;
   std::vector<RenderMaterial> materials;
   std::vector<UVTexture> textures;
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
 
+  bool ConvertMesh(
+    const tinyusdz::Path &abs_mat_path,
+    const tinyusdz::GeomMesh &mesh,
+    const bool triangulate);
+
   ///
   /// Convert USD Material/Shader to renderer-friendly Material
-  /// Assume UsdPreviewSurface is assigned to a USD Material `outputs:surface`.
   ///
   /// @return true when success.
   ///
   bool ConvertMaterial(
     const tinyusdz::Path &abs_mat_path,
-    const tinyusdz::Material &material);
+    const tinyusdz::Material &material,
+    RenderMaterial *rmat_out);
 
   bool ConvertPreviewSurfaceShader(
     const tinyusdz::Path &shader_abs_path,
-    const tinyusdz::UsdPreviewSurface &shader);
+    const tinyusdz::UsdPreviewSurface &shader,
+    PreviewSurfaceShader *pss_out);
 
   bool ConvertUVTexture(
-    const Path &tex_abs_path, const UsdUVTexture &texture);
+    const Path &tex_abs_path, const UsdUVTexture &texture, UVTexture *tex_out);
 
   const Stage *GetStagePtr() const {
     return _stage;
