@@ -420,6 +420,7 @@ nonstd::optional<UsdPrimvarReader_float2> FindPrimvarReader_float2Rec(
 
 }  // namespace
 
+#if 0
 // Currently float2 only
 std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(
     const Prim &node) {
@@ -450,10 +451,13 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage,
 
   return std::move(node);
 }
+#endif
 
-nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
-                                                  const GeomMesh &mesh,
-                                                  bool triangulate) {
+bool RenderSceneConverter::ConvertMesh(const Path &abs_path,
+                                       const GeomMesh &mesh,
+                                       const bool triangulate) {
+  (void)abs_path;
+
   RenderMesh dst;
 
   // TODO: timeSamples
@@ -470,14 +474,14 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
     Interpolation interp = mesh.get_normalsInterpolation();
 
     if (interp == Interpolation::Vertex) {
-      return nonstd::make_unexpected(
+      PUSH_ERROR_AND_RETURN(
           "TODO: `vertex` interpolation for `normals` attribute.\n");
     } else if (interp == Interpolation::FaceVarying) {
       dst.facevaryingNormals.resize(normals.size());
       memcpy(dst.facevaryingNormals.data(), normals.data(),
              sizeof(value::normal3f) * normals.size());
     } else {
-      return nonstd::make_unexpected(
+      PUSH_ERROR_AND_RETURN(
           "Unsupported/unimplemented interpolation for `normals` attribute: " +
           to_string(interp) + ".\n");
     }
@@ -494,7 +498,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   size_t num_fvs = 0;
   for (size_t i = 0; i < dst.faceVertexIndices.size(); i++) {
     if (dst.faceVertexIndices[i] > dst.faceVertexCounts.size()) {
-      return nonstd::make_unexpected(fmt::format(
+      PUSH_ERROR_AND_RETURN(fmt::format(
           "faceVertexIndices[{}] is out-of-bounds(faceVertexCounts.size {})",
           dst.faceVertexIndices[i], dst.faceVertexCounts.size()));
 
@@ -518,12 +522,12 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
   //}
   {
     std::string uvname = "st";
-    auto ret = GetTextureCoordinate(stage, mesh, uvname);
+    auto ret = GetTextureCoordinate(*_stage, mesh, uvname);
     if (ret) {
       const VertexAttribute vattr = ret.value();
 
       if (vattr.variability != VertexVariability::FaceVarying) {
-        return nonstd::make_unexpected(
+        PUSH_ERROR_AND_RETURN(
             fmt::format("TODO: non-facevarying UV texcoord attribute is not "
                         "support yet: {}.",
                         uvname));
@@ -533,7 +537,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
         // TODO: Reorder
       } else {
         if (vattr.data.size() != num_fvs) {
-          return nonstd::make_unexpected(
+          PUSH_ERROR_AND_RETURN(
               fmt::format("The number of UV texcoord attribute {} does not "
                           "match to the number of facevarying elements {}",
                           vattr.data.size(), num_fvs));
@@ -541,7 +545,7 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
       }
 
     } else {
-      return nonstd::make_unexpected(ret.error());
+      PUSH_ERROR_AND_RETURN(ret.error());
     }
   }
 
@@ -557,12 +561,13 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
             dst.points, dst.faceVertexCounts, dst.faceVertexIndices,
             triangulatedFaceVertexCounts, triangulatedFaceVertexIndices,
             faceVertexIndexMap, err)) {
-      return nonstd::make_unexpected("Triangulation failed: " + err);
+      PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
 
   }  // triangulate
 
-  return std::move(dst);
+  meshes.emplace_back(std::move(dst));
+  return true;
 }
 
 namespace {
@@ -712,15 +717,15 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   const std::string prim_part = path.prim_part();
   const std::string prop_part = path.prop_part();
 
-  if (prop_part != "outputs:result") {
+  if (prop_part != "outputs:rgb") {
     return nonstd::make_unexpected(
-        "connection Path's property part must be `outputs:result` for "
-        "UsdUVTexture.\n");
+        "connection Path's property part must be `outputs:rgb` at the moment for "
+        "UsdUVTexture, but got " + prop_part + " \n");
   }
 
   const Prim *prim{nullptr};
   std::string err;
-  if (stage.find_prim_at_path(Path(prim_part, ""), prim, &err)) {
+  if (!stage.find_prim_at_path(Path(prim_part, ""), prim, &err)) {
     return nonstd::make_unexpected(
         fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
   }
@@ -729,24 +734,24 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     return nonstd::make_unexpected("[InternalError] Prim ptr is null.\n");
   }
 
+  if (tex_abs_path) {
+    (*tex_abs_path) = Path(prim_part, "");
+  }
+
   if (const Shader *pshader = prim->as<Shader>()) {
     if (const UsdUVTexture *ptex = pshader->value.as<UsdUVTexture>()) {
+      DCOUT("ptex = " << ptex);
       (*dst) = ptex;
       return true;
     }
   }
 
-  if (tex_abs_path) {
-    (*tex_abs_path) = Path(prim_part, "");
-  }
 
   return nonstd::make_unexpected(fmt::format(
       "Prim {} must be Shader, but got {}", prim_part, prim->prim_type_name()));
 }
 
 }  // namespace
-
-#if 1
 
 // W.I.P.
 // Convert UsdUVTexture shader node.
@@ -758,7 +763,13 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 // - UsdUVTexture -> UsdPrimvarReader
 // - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
 bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
-                                            const UsdUVTexture &texture) {
+                                            const UsdUVTexture &texture,
+                                            UVTexture *tex_out) {
+  DCOUT("ConvertUVTexture " << tex_abs_path);
+
+  if (!tex_out) {
+    PUSH_ERROR_AND_RETURN("tex_out arg is nullptr.");
+  }
   std::string err;
 
   UVTexture tex;
@@ -792,7 +803,13 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   imageBuffer.count = 1;
 
   std::string warn;
-  bool tex_ok = _material_config.texture_image_loader_function(
+
+  TextureImageLoaderFunction tex_loader_fun = _material_config.texture_image_loader_function;
+  if (!tex_loader_fun) {
+    tex_loader_fun = DefaultTextureImageLoaderFunction;
+  }
+
+  bool tex_ok = tex_loader_fun(
       assetPath, assetInfo, &texImage, &imageBuffer.data,
       _material_config.texture_image_loader_function_userdata, &warn, &err);
 
@@ -955,42 +972,60 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     }
   }
 
-  return false;
+  DCOUT("Converted UVTexture.");
+
+  (*tex_out) = tex;
+  return true;
 }
-#endif
 
 // TODO: timeSamples
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
-    const Path &shader_abs_path, const UsdPreviewSurface &shader) {
+    const Path &shader_abs_path, const UsdPreviewSurface &shader,
+    PreviewSurfaceShader *rshader_out) {
+  if (!rshader_out) {
+    PUSH_ERROR_AND_RETURN("rshader_out arg is nullptr.");
+  }
+
   PreviewSurfaceShader rshader;
 
   if (shader.diffuseColor.authored()) {
     if (shader.diffuseColor.is_blocked()) {
       PUSH_ERROR_AND_RETURN("diffuseColor attribute is blocked.\n");
     } else if (shader.diffuseColor.is_connection()) {
-      UVTexture rtex;
+      DCOUT("diffuseColor is attribute connection.");
 
       const UsdUVTexture *ptex{nullptr};
       Path texPath;
       auto result =
           GetConnectedUVTexture(*_stage, shader.diffuseColor, &texPath, &ptex);
 
-      if (result) {
-        if (!ConvertUVTexture(texPath, *ptex)) {
-          return false;
-        }
-
-        // textures.back() is newly added UVTexture, so subtract 1.
-        rshader.diffuseColor.textureId = int(textures.size() - 1);
+      if (!result) {
+        PUSH_ERROR_AND_RETURN(result.error());
       }
 
-      // textures.emplace_back(rtex);
+      if (!ptex) {
+        PUSH_ERROR_AND_RETURN("[InternalError] ptex is nullptr.");
+      }
+      DCOUT("ptex = " << ptex->name);
+
+      DCOUT("Get connected UsdUVTexture Prim: " << texPath);
+
+      UVTexture rtex;
+      if (!ConvertUVTexture(texPath, *ptex, &rtex)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert UVTexture connected to diffuseColor");
+      }
+
+      uint64_t texId = textures.size();
+      textures.push_back(rtex);
+
+      rshader.diffuseColor.textureId = int32_t(texId);
 
       textureMap.add(uint64_t(rshader.diffuseColor.textureId),
                      shader_abs_path.prim_part() + ".dffuseColor");
 
-      DCOUT(fmt::format("{} = {}", shader_abs_path.prim_part() + ".diffuseColor", rshader.diffuseColor.textureId));
-
+      DCOUT(fmt::format("TexId {} = {}",
+                        shader_abs_path.prim_part() + ".diffuseColor",
+                        rshader.diffuseColor.textureId));
     } else {
       value::color3f col;
       if (!shader.diffuseColor.get_value().get_scalar(&col)) {
@@ -1006,14 +1041,26 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
   PushWarn("TODO: Convert other shader params.\n");
 
+  (*rshader_out) = rshader;
   return true;
 }
 
 bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
-                                           const tinyusdz::Material &material) {
+                                           const tinyusdz::Material &material,
+                                           RenderMaterial *rmat_out) {
   if (!_stage) {
     PUSH_ERROR_AND_RETURN("stage is nullptr.");
   }
+
+  if (!rmat_out) {
+    PUSH_ERROR_AND_RETURN("rmat_out argument is nullptr.");
+  }
+
+  RenderMaterial rmat;
+  rmat.abs_path = mat_abs_path.prim_part();
+  rmat.name = mat_abs_path.element_name();
+  DCOUT("rmat.abs_path = " << rmat.abs_path);
+  DCOUT("rmat.name = " << rmat.name);
 
   std::string err;
 
@@ -1078,12 +1125,18 @@ bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
                       mat_abs_path.full_path_name(), surfacePath.prop_part()));
     }
 
-    if (!ConvertPreviewSurfaceShader(surfacePath, *psurface)) {
+    PreviewSurfaceShader pss;
+    if (!ConvertPreviewSurfaceShader(surfacePath, *psurface, &pss)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
     }
+
+    rmat.surfaceShader = pss;
   }
 
+  DCOUT("Converted Material: " << mat_abs_path);
+
+  (*rmat_out) = rmat;
   return true;
 }
 
@@ -1112,7 +1165,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     const std::string path_str = abs_path.full_path_name();
     const auto matIt = converter->materialMap.find(path_str);
 
-    const RenderMaterial *render_material{nullptr};
+    const RenderMaterial *prender_material{nullptr};
 
     std::vector<RenderMaterial> &rmaterials = converter->materials;
 
@@ -1126,40 +1179,41 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
-      render_material = &(converter->materials[size_t(mat_id)]);
+      prender_material = &(converter->materials[size_t(mat_id)]);
 
     } else {
-      // Assign new material ID
-      uint64_t mat_id = rmaterials.size();
-      converter->materialMap.add(path_str, mat_id);
+      tinyusdz::Path bound_material_path;
+      const tinyusdz::Material *bound_material{nullptr};
+      bool ret = tinyusdz::tydra::FindBoundMaterial(
+          *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
+          /* suffix */ "", &bound_material_path, &bound_material, err);
 
-      rmaterials.push_back(RenderMaterial());
+      if (ret && bound_material) {
+        DCOUT("Bound material path: " << bound_material_path);
 
-      render_material = &(rmaterials[size_t(mat_id)]);
-    }
-
-    if (!render_material) {
-      if (err) {
-        (*err) += "[InternalError] render_material ptr is null.\n";
-      }
-      return false;
-    }
-
-    tinyusdz::Path bound_material_path;
-    const tinyusdz::Material *bound_material{nullptr};
-    bool ret = tinyusdz::tydra::FindBoundMaterial(
-        *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
-        /* suffix */ "", &bound_material_path, &bound_material, err);
-
-    if (ret && bound_material) {
-      DCOUT("Bound material path: " << bound_material_path);
-
-      if (!converter->ConvertMaterial(bound_material_path, *bound_material)) {
-        if (err) {
-          (*err) += fmt::format("Material conversion failed: {}",
-                                bound_material_path);
+        RenderMaterial rmat;
+        if (!converter->ConvertMaterial(bound_material_path, *bound_material,
+                                        &rmat)) {
+          if (err) {
+            (*err) += fmt::format("Material conversion failed: {}",
+                                  bound_material_path);
+          }
+          return false;
         }
+
+        // Assign new material ID
+        uint64_t mat_id = rmaterials.size();
+        converter->materialMap.add(path_str, mat_id);
+
+        DCOUT("Add material: " << mat_id << " " << rmat.abs_path << " ( " << rmat.name << " ) ");
+        rmaterials.push_back(rmat);
+
+        prender_material = &(rmaterials.back());
       }
+    }
+
+    if (prender_material) {
+      // TODO:
     }
   }
 
@@ -1191,11 +1245,58 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
   //
   // TODO: GeomSubset(per-face material)
 
+  std::string err;
+
   // Pass `this` through userdata ptr
-  tydra::VisitPrims(stage, MeshVisitor, this);
+  bool ret = tydra::VisitPrims(stage, MeshVisitor, this, &err);
+
+  if (!ret) {
+    _err += err;
+
+    return false;
+  }
+
+  // render_scene.meshMap = std::move(meshMap);
+  // render_scene.materialMap = std::move(materialMap);
+  // render_scene.textureMap = std::move(textureMap);
+  // render_scene.imageMap = std::move(imageMap);
+  // render_scene.bufferMap = std::move(bufferMap);
+
+  render_scene.nodes = std::move(nodes);
+  render_scene.meshes = std::move(meshes);
+  render_scene.textures = std::move(textures);
+  render_scene.images = std::move(images);
+  render_scene.buffers = std::move(buffers);
+  render_scene.materials = std::move(materials);
+
+  (*scene) = std::move(render_scene);
+  return true;
+}
+
+bool DefaultTextureImageLoaderFunction(
+  const value::AssetPath &assetPath,
+  const AssetInfo &assetInfo,
+  TextureImage *imageOut,
+  std::vector<uint8_t> *imageData,
+  void *userdata,
+  std::string *warn,
+  std::string *err) {
+
+  (void)assetPath;
+  (void)assetInfo;
+  (void)imageOut;
+  (void)imageData;
+  (void)userdata;
+  (void)err;
+
+  // TODO:
+  if (warn) {
+    (*warn) += "TODO: texture image loader.\n";
+  }
 
   return true;
 }
+
 
 //
 // --
@@ -1203,13 +1304,13 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
 
 namespace {
 
-std::string DumpPreviewSurface(const PreviewSurfaceShader &shader, uint32_t indent) {
-
+std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
+                               uint32_t indent) {
   std::stringstream ss;
 
   ss << "PreviewSurfaceShader {\n";
 
-  ss << pprint::Indent(indent+1) << "diffuseColor = ";
+  ss << pprint::Indent(indent + 1) << "diffuseColor = ";
   if (shader.diffuseColor.is_texture()) {
     ss << "textureId[" << shader.diffuseColor.textureId << "]";
   } else {
@@ -1220,29 +1321,26 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader, uint32_t inde
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
-
 }
 
 std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
-
   std::stringstream ss;
 
-  ss << "RenderMaterial {\n";
+  ss << "RenderMaterial " << material.abs_path << " ( " << material.name
+     << " ) {\n";
 
-  ss << pprint::Indent(indent+1) << "surfaceShader = ";
-  DumpPreviewSurface(material.surfaceShader, indent+1);
+  ss << pprint::Indent(indent + 1) << "surfaceShader = ";
+  ss << DumpPreviewSurface(material.surfaceShader, indent + 1);
   ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
-
 }
 
-} // namespace
+}  // namespace
 
 std::string DumpRenderScene(const RenderScene &scene) {
-
   std::stringstream ss;
 
   ss << "# of Meshes : " << scene.meshes.size() << "\n";
