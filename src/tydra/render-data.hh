@@ -377,7 +377,8 @@ struct PreviewSurfaceShader {
 struct RenderMaterial {
   std::string name;
 
-  PreviewSurfaceShader shader;
+  PreviewSurfaceShader surfaceShader;
+  // TODO: displacement, volume.
 
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
@@ -535,6 +536,9 @@ class RenderSceneConverter
   std::string _err;
   std::string _warn;
 };
+
+// For debug
+std::string DumpRenderScene(const RenderScene &scene);
 
 }  // namespace tydra
 }  // namespace tinyusdz
