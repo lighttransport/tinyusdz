@@ -12,5 +12,14 @@ Currently Tydra is considering following three usecases in mind:
 - Scene conversion to Ray tracing renderer(e.g. Vulkan/OptiX ray tracing)
   See `../../examples/sdlviewer/` for SW raytracing example.
 
+## RenderScene
+
+Scene graph representation suited for OpenGL/Vulkan renderer.
+
+## TODO
+
+- Data structure suited for realtime DCC.
+- Data structure suited for Ray tracing
+
 EoL.
 

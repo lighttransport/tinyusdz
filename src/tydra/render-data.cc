@@ -567,29 +567,31 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 
 namespace {
 
-
 #if 1
 // Convert UsdTranform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
-  const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
-  UVTexture *tex_out) {
-
-  float rotation; // in angles
+    const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
+    UVTexture *tex_out) {
+  float rotation;  // in angles
   if (!tx.rotation.get_value().get_scalar(&rotation)) {
-    return nonstd::make_unexpected(fmt::format("Failed to retrieve rotation attribute from {}", tx_abs_path.full_path_name()));
+    return nonstd::make_unexpected(
+        fmt::format("Failed to retrieve rotation attribute from {}",
+                    tx_abs_path.full_path_name()));
   }
 
   value::float2 scale;
   if (!tx.scale.get_value().get_scalar(&scale)) {
-    return nonstd::make_unexpected(fmt::format("Failed to retrieve scale attribute from {}", tx_abs_path.full_path_name()));
+    return nonstd::make_unexpected(
+        fmt::format("Failed to retrieve scale attribute from {}",
+                    tx_abs_path.full_path_name()));
   }
 
   value::float2 translation;
   if (!tx.translation.get_value().get_scalar(&translation)) {
-    return nonstd::make_unexpected(fmt::format("Failed to retrieve translation attribute from {}", tx_abs_path.full_path_name()));
+    return nonstd::make_unexpected(
+        fmt::format("Failed to retrieve translation attribute from {}",
+                    tx_abs_path.full_path_name()));
   }
-
-
 
   // must be authored and connected to PrimvarReader.
   if (!tx.in.authored()) {
@@ -602,35 +604,44 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   const auto &paths = tx.in.get_connections();
   if (paths.size() != 1) {
-    return nonstd::make_unexpected("`inputs:in` must be a single connection Path.");
+    return nonstd::make_unexpected(
+        "`inputs:in` must be a single connection Path.");
   }
 
   std::string prim_part = paths[0].prim_part();
   std::string prop_part = paths[0].prop_part();
 
   if (prop_part != "outputs:result") {
-    return nonstd::make_unexpected("`inputs:in` connection Path's property part must be `outputs:result`");
+    return nonstd::make_unexpected(
+        "`inputs:in` connection Path's property part must be `outputs:result`");
   }
 
   std::string err;
 
   const Prim *pprim{nullptr};
   if (!stage.find_prim_at_path(Path(prim_part, ""), pprim, &err)) {
-    return nonstd::make_unexpected(fmt::format("`inputs:in` connection Path not found in the Stage. {}", prim_part));
+    return nonstd::make_unexpected(fmt::format(
+        "`inputs:in` connection Path not found in the Stage. {}", prim_part));
   }
 
   if (!pprim) {
-    return nonstd::make_unexpected(fmt::format("[InternalError] Prim is nullptr: {}", prim_part));
+    return nonstd::make_unexpected(
+        fmt::format("[InternalError] Prim is nullptr: {}", prim_part));
   }
 
   const Shader *pshader = pprim->as<Shader>();
   if (!pshader) {
-    return nonstd::make_unexpected(fmt::format("{} must be Shader Prim, but got {}", prim_part, pprim->prim_type_name()));
+    return nonstd::make_unexpected(
+        fmt::format("{} must be Shader Prim, but got {}", prim_part,
+                    pprim->prim_type_name()));
   }
 
-  const UsdPrimvarReader_float2 *preader = pshader->value.as<UsdPrimvarReader_float2>();
+  const UsdPrimvarReader_float2 *preader =
+      pshader->value.as<UsdPrimvarReader_float2>();
   if (preader) {
-    return nonstd::make_unexpected(fmt::format("Shader {} must be UsdPrimvarReader_float2 type, but got {}", prim_part, pshader->info_id));
+    return nonstd::make_unexpected(fmt::format(
+        "Shader {} must be UsdPrimvarReader_float2 type, but got {}", prim_part,
+        pshader->info_id));
   }
 
   // Get value producing attribute(i.e, follow .connection and return
@@ -679,14 +690,10 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 }
 #endif
 
-
-template<typename T>
+template <typename T>
 nonstd::expected<bool, std::string> GetConnectedUVTexture(
-  const Stage &stage,
-  const TypedAnimatableAttributeWithFallback<T> &src,
-  Path *tex_abs_path,
-  const UsdUVTexture **dst){
-
+    const Stage &stage, const TypedAnimatableAttributeWithFallback<T> &src,
+    Path *tex_abs_path, const UsdUVTexture **dst) {
   if (!dst) {
     return nonstd::make_unexpected("[InternalError] dst is nullptr.\n");
   }
@@ -696,7 +703,8 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   }
 
   if (src.get_connections().size() != 1) {
-    return nonstd::make_unexpected("Attribute connections must be single connection Path.\n");
+    return nonstd::make_unexpected(
+        "Attribute connections must be single connection Path.\n");
   }
 
   const Path &path = src.get_connections()[0];
@@ -705,13 +713,16 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   const std::string prop_part = path.prop_part();
 
   if (prop_part != "outputs:result") {
-    return nonstd::make_unexpected("connection Path's property part must be `outputs:result` for UsdUVTexture.\n");
+    return nonstd::make_unexpected(
+        "connection Path's property part must be `outputs:result` for "
+        "UsdUVTexture.\n");
   }
 
   const Prim *prim{nullptr};
   std::string err;
   if (stage.find_prim_at_path(Path(prim_part, ""), prim, &err)) {
-    return nonstd::make_unexpected(fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
+    return nonstd::make_unexpected(
+        fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
   }
 
   if (!prim) {
@@ -729,10 +740,9 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     (*tex_abs_path) = Path(prim_part, "");
   }
 
-  return nonstd::make_unexpected(fmt::format("Prim {} must be Shader, but got {}", prim_part, prim->prim_type_name()));
-
+  return nonstd::make_unexpected(fmt::format(
+      "Prim {} must be Shader, but got {}", prim_part, prim->prim_type_name()));
 }
-
 
 }  // namespace
 
@@ -740,16 +750,15 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 
 // W.I.P.
 // Convert UsdUVTexture shader node.
-// @return true upon conversion success(textures.back() contains the converted UVTexture)
+// @return true upon conversion success(textures.back() contains the converted
+// UVTexture)
 //
 // Possible network configuration
 //
 // - UsdUVTexture -> UsdPrimvarReader
 // - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
-bool RenderSceneConverter::ConvertUVTexture(
-    const Path &tex_abs_path, const UsdUVTexture &texture)
-  {
-
+bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
+                                            const UsdUVTexture &texture) {
   std::string err;
 
   UVTexture tex;
@@ -758,16 +767,22 @@ bool RenderSceneConverter::ConvertUVTexture(
 
   // First load texture file.
   if (!texture.file.authored()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("`asset:file` is not authored. Path = {}", tex_abs_path.prim_part()));
+    PUSH_ERROR_AND_RETURN(fmt::format("`asset:file` is not authored. Path = {}",
+                                      tex_abs_path.prim_part()));
   }
 
   value::AssetPath assetPath;
   if (auto apath = texture.file.get_value()) {
     if (!apath.value().get_scalar(&assetPath)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `asset:file` value from Path {} (Maybe `asset:file` is timeSample value?)", tex_abs_path.prim_part()));
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to get `asset:file` value from Path {} (Maybe "
+                      "`asset:file` is timeSample value?)",
+                      tex_abs_path.prim_part()));
     }
   } else {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `asset:file` value from Path {}", tex_abs_path.prim_part()));
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to get `asset:file` value from Path {}",
+                    tex_abs_path.prim_part()));
   }
 
   TextureImage texImage;
@@ -777,7 +792,9 @@ bool RenderSceneConverter::ConvertUVTexture(
   imageBuffer.count = 1;
 
   std::string warn;
-  bool tex_ok = _material_config.texture_image_loader_function(assetPath, assetInfo, &texImage, &imageBuffer.data, _material_config.texture_image_loader_function_userdata, &warn, &err);
+  bool tex_ok = _material_config.texture_image_loader_function(
+      assetPath, assetInfo, &texImage, &imageBuffer.data,
+      _material_config.texture_image_loader_function_userdata, &warn, &err);
 
   if (!tex_ok) {
     PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
@@ -789,7 +806,8 @@ bool RenderSceneConverter::ConvertUVTexture(
   }
 
   // TODO: Share image data as much as possible.
-  // e.g. Texture A and B uses same image file, but texturing parameter is different.
+  // e.g. Texture A and B uses same image file, but texturing parameter is
+  // different.
   buffers.emplace_back(imageBuffer);
 
   // Overwrite colorSpace
@@ -831,10 +849,11 @@ bool RenderSceneConverter::ConvertUVTexture(
 
       const Prim *readerPrim{nullptr};
       if (!_stage->find_prim_at_path(Path(path.prim_part(), ""), readerPrim,
-                                   &err)) {
+                                     &err)) {
         PUSH_ERROR_AND_RETURN(
             "UsdUVTexture inputs:st connection targetPath not found in the "
-            "Stage: " + err);
+            "Stage: " +
+            err);
       }
 
       if (!readerPrim) {
@@ -851,7 +870,8 @@ bool RenderSceneConverter::ConvertUVTexture(
       }
 
       // currently UsdTranform2d or PrimvarReaer_float2 only for inputs:st
-      if (const UsdPrimvarReader_float2 *preader = pshader->value.as<UsdPrimvarReader_float2>()) {
+      if (const UsdPrimvarReader_float2 *preader =
+              pshader->value.as<UsdPrimvarReader_float2>()) {
         if (!preader) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("Shader's info:id must be UsdPrimvarReader_float2, "
@@ -871,14 +891,16 @@ bool RenderSceneConverter::ConvertUVTexture(
         }
 
         tex.varname_uv = varname.str();
-      } else if (const UsdTransform2d *ptransform = pshader->value.as<UsdTransform2d>()) {
-
+      } else if (const UsdTransform2d *ptransform =
+                     pshader->value.as<UsdTransform2d>()) {
         auto result = ConvertTexTransform2d(*_stage, path, *ptransform, &tex);
         if (!result) {
           PUSH_ERROR_AND_RETURN(result.error());
         }
       } else {
-        PUSH_ERROR_AND_RETURN("Unsupported Shader type for `inputs:st` connection: " + pshader->info_id + "\n");
+        PUSH_ERROR_AND_RETURN(
+            "Unsupported Shader type for `inputs:st` connection: " +
+            pshader->info_id + "\n");
       }
 
     } else {
@@ -897,8 +919,7 @@ bool RenderSceneConverter::ConvertUVTexture(
     tinyusdz::UsdUVTexture::Wrap wrap;
 
     if (!texture.wrapS.get_value().get_scalar(&wrap)) {
-      PUSH_ERROR_AND_RETURN(
-          "Invalid UsdUVTexture inputs:wrapS value.");
+      PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapS value.");
     }
 
     if (wrap == UsdUVTexture::Wrap::Repeat) {
@@ -918,8 +939,7 @@ bool RenderSceneConverter::ConvertUVTexture(
     tinyusdz::UsdUVTexture::Wrap wrap;
 
     if (!texture.wrapT.get_value().get_scalar(&wrap)) {
-      PUSH_ERROR_AND_RETURN(
-          "Invalid UsdUVTexture inputs:wrapT value.");
+      PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapT value.");
     }
 
     if (wrap == UsdUVTexture::Wrap::Repeat) {
@@ -941,9 +961,7 @@ bool RenderSceneConverter::ConvertUVTexture(
 
 // TODO: timeSamples
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
-    const Path &shader_abs_path,
-    const UsdPreviewSurface &shader) {
-
+    const Path &shader_abs_path, const UsdPreviewSurface &shader) {
   PreviewSurfaceShader rshader;
 
   if (shader.diffuseColor.authored()) {
@@ -954,10 +972,10 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
       const UsdUVTexture *ptex{nullptr};
       Path texPath;
-      auto result = GetConnectedUVTexture(*_stage, shader.diffuseColor, &texPath, &ptex);
+      auto result =
+          GetConnectedUVTexture(*_stage, shader.diffuseColor, &texPath, &ptex);
 
       if (result) {
-
         if (!ConvertUVTexture(texPath, *ptex)) {
           return false;
         }
@@ -966,32 +984,33 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
         rshader.diffuseColor.textureId = int(textures.size() - 1);
       }
 
-      //textures.emplace_back(rtex);
+      // textures.emplace_back(rtex);
 
-      textureMap.add(uint64_t(rshader.diffuseColor.textureId), shader_abs_path.prim_part() + ".dffuseColor");
+      textureMap.add(uint64_t(rshader.diffuseColor.textureId),
+                     shader_abs_path.prim_part() + ".dffuseColor");
 
+      DCOUT(fmt::format("{} = {}", shader_abs_path.prim_part() + ".diffuseColor", rshader.diffuseColor.textureId));
 
     } else {
       value::color3f col;
       if (!shader.diffuseColor.get_value().get_scalar(&col)) {
-        PUSH_ERROR_AND_RETURN("Failed to get diffuseColor at `default` timecode.\n");
+        PUSH_ERROR_AND_RETURN(
+            "Failed to get diffuseColor at `default` timecode.\n");
       }
 
       rshader.diffuseColor.value[0] = col[0];
       rshader.diffuseColor.value[1] = col[1];
       rshader.diffuseColor.value[2] = col[2];
-
     }
   }
 
-  return false;
+  PushWarn("TODO: Convert other shader params.\n");
+
+  return true;
 }
 
-// W.I.P.
-bool RenderSceneConverter::ConvertMaterial(
-    const Path &mat_abs_path,
-    const tinyusdz::Material &material)
-{
+bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
+                                           const tinyusdz::Material &material) {
   if (!_stage) {
     PUSH_ERROR_AND_RETURN("stage is nullptr.");
   }
@@ -1005,15 +1024,18 @@ bool RenderSceneConverter::ConvertMaterial(
   {
     if (material.surface.authored()) {
       auto paths = material.surface.get_connections();
+      DCOUT("paths = " << paths);
       // must have single targetPath.
-      if (paths.size() != 0) {
-        PUSH_ERROR_AND_RETURN(fmt::format("{}'s outputs:surface must be connection with single "
+      if (paths.size() != 1) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("{}'s outputs:surface must be connection with single "
                         "target Path.\n",
                         mat_abs_path.full_path_name()));
       }
       surfacePath = paths[0];
     } else {
-      PUSH_ERROR_AND_RETURN(fmt::format("{}'s outputs:surface isn't authored.\n",
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("{}'s outputs:surface isn't authored.\n",
                       mat_abs_path.full_path_name()));
     }
 
@@ -1056,192 +1078,97 @@ bool RenderSceneConverter::ConvertMaterial(
                       mat_abs_path.full_path_name(), surfacePath.prop_part()));
     }
 
-    if (!ConvertPreviewSurfaceShader(
-      surfacePath, *psurface)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
+    if (!ConvertPreviewSurfaceShader(surfacePath, *psurface)) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
     }
-
   }
 
-#if 0
-
-  // TODO: GeomMesh(per-face material)
-
-  // Env
-  struct UserData {
-    const Stage *pstage{nullptr};
-    StringAndIdMap *pmaterialMap{nullptr};
-    std::vector<RenderMaterial> *pmaterials{nullptr};
-  };
-
-  // 1. Visit GeomMesh
-  // 2. If the mesh has bound material
-  //   1. Create Material
-
-  // TODO:
-  auto mesh_visit = [](const tinyusdz::Path &abs_path,
-                       const tinyusdz::Prim &prim, const int32_t level,
-                       void *userdata, std::string *err) -> bool {
-    if (level > 1024 * 1024) {
-      if (err) {
-        (*err) += "Scene graph is too deep.\n";
-      }
-      // Too deep
-      return false;
-    }
-
-    if (!userdata) {
-      return false;
-    }
-
-    UserData *puser = reinterpret_cast<UserData *>(userdata);
-
-    if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
-      DCOUT("Material: " << abs_path);
-
-      const std::string path_str = abs_path.full_path_name();
-      const auto matIt = puser->pmaterialMap->find(path_str);
-
-      const RenderMaterial *render_material{nullptr};
-      if (matIt != puser->pmaterialMap->s_end()) {
-        // Got material
-        uint64_t mat_id = matIt->second;
-        if (mat_id >=
-            puser->pmaterials->size()) {  // this should not happen though
-          if (err) {
-            (*err) += "Material index out-of-range.\n";
-          }
-          return false;
-        }
-        render_material = &(*puser->pmaterials)[size_t(mat_id)];
-
-      } else {
-        // Assign new material ID
-        uint64_t mat_id = puser->pmaterials->size();
-        puser->pmaterialMap->add(path_str, mat_id);
-
-        puser->pmaterials->push_back(RenderMaterial());
-
-        render_material = &(*puser->pmaterials)[size_t(mat_id)];
-      }
-
-      if (!render_material) {
-        if (err) {
-          (*err) += "[InternalError] render_material ptr is null.\n";
-        }
-        return false;
-      }
-
-      tinyusdz::Path bound_material_path;
-      const tinyusdz::Material *bound_material{nullptr};
-      bool ret = tinyusdz::tydra::FindBoundMaterial(
-          *puser->pstage, /* GeomMesh prim path */ abs_path, /* suffix */ "",
-          &bound_material_path, &bound_material, err);
-
-      if (ret && bound_material) {
-        DCOUT("Bound material path: " << bound_material_path);
-        // TODO
-      }
-    }
-
-    return true;  // continue traversal
-  };
-
-  UserData uenv;
-  uenv.pstage = &stage;
-  uenv.pmaterialMap = &materialMap;
-  uenv.pmaterials = &materials;
-
-  tydra::VisitPrims(stage, mesh_visit, &uenv);
-#endif
-
-  return false;  // TODO
+  return true;
 }
 
 namespace {
 
-bool MeshVisitor(const tinyusdz::Path &abs_path,
-                 const tinyusdz::Prim &prim, const int32_t level,
-                 void *userdata, std::string *err) {
+bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
+                 const int32_t level, void *userdata, std::string *err) {
+  if (!userdata) {
+    return false;
+  }
 
-    if (!userdata) {
-      return false;
+  RenderSceneConverter *converter =
+      reinterpret_cast<RenderSceneConverter *>(userdata);
+
+  if (level > 1024 * 1024) {
+    if (err) {
+      (*err) += "Scene graph is too deep.\n";
     }
+    // Too deep
+    return false;
+  }
 
-    RenderSceneConverter *converter = reinterpret_cast<RenderSceneConverter *>(userdata);
-  
-    if (level > 1024 * 1024) {
-      if (err) {
-        (*err) += "Scene graph is too deep.\n";
-      }
-      // Too deep
-      return false;
-    }
+  if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
+    DCOUT("Material: " << abs_path);
 
-    if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
-      DCOUT("Material: " << abs_path);
+    const std::string path_str = abs_path.full_path_name();
+    const auto matIt = converter->materialMap.find(path_str);
 
-      const std::string path_str = abs_path.full_path_name();
-      const auto matIt = converter->materialMap.find(path_str);
+    const RenderMaterial *render_material{nullptr};
 
-      const RenderMaterial *render_material{nullptr};
+    std::vector<RenderMaterial> &rmaterials = converter->materials;
 
-      std::vector<RenderMaterial> &rmaterials = converter->materials;
-
-      if (matIt != converter->materialMap.s_end()) {
-        // Got material
-        uint64_t mat_id = matIt->second;
-        if (mat_id >= converter->materials
-                          .size()) {  // this should not happen though
-          if (err) {
-            (*err) += "Material index out-of-range.\n";
-          }
-          return false;
-        }
-        render_material = &(converter->materials[size_t(mat_id)]);
-
-      } else {
-        // Assign new material ID
-        uint64_t mat_id = rmaterials.size();
-        converter->materialMap.add(path_str, mat_id);
-
-        rmaterials.push_back(RenderMaterial());
-
-        render_material = &(rmaterials[size_t(mat_id)]);
-      }
-
-      if (!render_material) {
+    if (matIt != converter->materialMap.s_end()) {
+      // Got material
+      uint64_t mat_id = matIt->second;
+      if (mat_id >=
+          converter->materials.size()) {  // this should not happen though
         if (err) {
-          (*err) += "[InternalError] render_material ptr is null.\n";
+          (*err) += "Material index out-of-range.\n";
         }
         return false;
       }
+      render_material = &(converter->materials[size_t(mat_id)]);
 
-      tinyusdz::Path bound_material_path;
-      const tinyusdz::Material *bound_material{nullptr};
-      bool ret = tinyusdz::tydra::FindBoundMaterial(
-          *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path, /* suffix */ "",
-          &bound_material_path, &bound_material, err);
+    } else {
+      // Assign new material ID
+      uint64_t mat_id = rmaterials.size();
+      converter->materialMap.add(path_str, mat_id);
 
-      if (ret && bound_material) {
-        DCOUT("Bound material path: " << bound_material_path);
+      rmaterials.push_back(RenderMaterial());
 
-        if (!converter->ConvertMaterial(
-            bound_material_path, *bound_material)) {
-          if (err) {
-            (*err) += fmt::format("Material conversion failed: {}", bound_material_path);
-          }
+      render_material = &(rmaterials[size_t(mat_id)]);
+    }
+
+    if (!render_material) {
+      if (err) {
+        (*err) += "[InternalError] render_material ptr is null.\n";
+      }
+      return false;
+    }
+
+    tinyusdz::Path bound_material_path;
+    const tinyusdz::Material *bound_material{nullptr};
+    bool ret = tinyusdz::tydra::FindBoundMaterial(
+        *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
+        /* suffix */ "", &bound_material_path, &bound_material, err);
+
+    if (ret && bound_material) {
+      DCOUT("Bound material path: " << bound_material_path);
+
+      if (!converter->ConvertMaterial(bound_material_path, *bound_material)) {
+        if (err) {
+          (*err) += fmt::format("Material conversion failed: {}",
+                                bound_material_path);
         }
       }
     }
-
-    return true;  // continue traversal
   }
+
+  return true;  // continue traversal
 }
+}  // namespace
 
-// W.I.P.
-bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage, RenderScene *scene) {
-
+bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
+                                                RenderScene *scene) {
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
@@ -1254,16 +1181,85 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage, RenderScene 
     PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
   }
 
+  // W.I.P.
+
   RenderScene render_scene;
 
   // 1. Visit GeomMesh
   // 2. If the mesh has bound material
   //   1. Create Material
+  //
+  // TODO: GeomSubset(per-face material)
 
   // Pass `this` through userdata ptr
   tydra::VisitPrims(stage, MeshVisitor, this);
 
-  return false;  // TODO
+  return true;
+}
+
+//
+// --
+//
+
+namespace {
+
+std::string DumpPreviewSurface(const PreviewSurfaceShader &shader, uint32_t indent) {
+
+  std::stringstream ss;
+
+  ss << "PreviewSurfaceShader {\n";
+
+  ss << pprint::Indent(indent+1) << "diffuseColor = ";
+  if (shader.diffuseColor.is_texture()) {
+    ss << "textureId[" << shader.diffuseColor.textureId << "]";
+  } else {
+    ss << shader.diffuseColor.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+
+}
+
+std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
+
+  std::stringstream ss;
+
+  ss << "RenderMaterial {\n";
+
+  ss << pprint::Indent(indent+1) << "surfaceShader = ";
+  DumpPreviewSurface(material.surfaceShader, indent+1);
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+
+}
+
+} // namespace
+
+std::string DumpRenderScene(const RenderScene &scene) {
+
+  std::stringstream ss;
+
+  ss << "# of Meshes : " << scene.meshes.size() << "\n";
+  ss << "# of Animations : " << scene.animations.size() << "\n";
+  ss << "# of Materials : " << scene.materials.size() << "\n";
+  ss << "# of UVTextures : " << scene.textures.size() << "\n";
+  ss << "# of TextureImages : " << scene.images.size() << "\n";
+  ss << "# of Buffers : " << scene.buffers.size() << "\n";
+
+  ss << "-- materials --\n";
+  for (size_t i = 0; i < scene.materials.size(); i++) {
+    ss << "[" << i << "] " << DumpMaterial(scene.materials[i], 0);
+  }
+
+  ss << "TODO: Meshes, Animations, ...\n";
+
+  return ss.str();
 }
 
 }  // namespace tydra
