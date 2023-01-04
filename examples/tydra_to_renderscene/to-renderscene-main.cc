@@ -132,13 +132,15 @@ int main(int argc, char **argv) {
 
   bool ret = converter.ConvertToRenderScene(stage, &render_scene);
   if (!ret) {
-    std::cerr << "Failed to convert USD Stage to RenderScene: " << converter.GetError() << "\n";
+    std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
     return EXIT_FAILURE;
   }
 
   if (converter.GetWarning().size()) {
     std::cout << "ConvertToRenderScene warn: " << converter.GetWarning() << "\n";
   }
+
+  std::cout << DumpRenderScene(render_scene) << "\n";
 
   return EXIT_SUCCESS;
 }
