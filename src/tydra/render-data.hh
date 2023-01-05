@@ -551,7 +551,9 @@ class RenderSceneConverter
 };
 
 // For debug
-std::string DumpRenderScene(const RenderScene &scene);
+// Supported format: "kdl" (default. https://kdl.dev/), "json"
+//
+std::string DumpRenderScene(const RenderScene &scene, const std::string &format = "kdl");
 
 }  // namespace tydra
 }  // namespace tinyusdz

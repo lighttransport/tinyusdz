@@ -1043,6 +1043,58 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_float3 &preader, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "inputs:varname") {
+    ToProperty(preader.varname, (*out_prop));
+
+  } else {
+    const auto it = preader.props.find(prop_name);
+    if (it == preader.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_float4 &preader, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "inputs:varname") {
+    ToProperty(preader.varname, (*out_prop));
+
+  } else {
+    const auto it = preader.props.find(prop_name);
+    if (it == preader.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float &preader, const std::string &prop_name,
     Property *out_prop) {
   if (!out_prop) {
@@ -1057,6 +1109,46 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else {
     const auto it = preader.props.find(prop_name);
     if (it == preader.props.end()) {
+      // Attribute not found.
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdTransform2d &tx, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  if (prop_name == "rotation") {
+    ToProperty(tx.rotation, (*out_prop));
+
+  } else if (prop_name == "scale") {
+    ToProperty(tx.scale, (*out_prop));
+  } else if (prop_name == "translation") {
+    ToProperty(tx.translation, (*out_prop));
+  } else if (prop_name == "outputs:result") {
+    // Terminal attribute
+    if (!tx.result.authored()) {
+      // not authored
+      return false;
+    }
+
+    // empty. type info only
+    std::string typeName = tx.result.has_actual_type() ? tx.result.get_actual_type_name() : tx.result.type_name();
+    (*out_prop) = Property(typeName, /* custom */ false);
+  } else {
+    const auto it = tx.props.find(prop_name);
+    if (it == tx.props.end()) {
       // Attribute not found.
       return false;
     }
@@ -1105,7 +1197,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     ToProperty(surface.displacement, *out_prop);
   } else if (prop_name == "occlusion") {
     ToProperty(surface.occlusion, *out_prop);
-  } else if (prop_name == "outputsSurface") {
+  } else if (prop_name == "outputs:surface") {
     if (surface.outputsSurface) {
       const Relationship &rel = surface.outputsSurface.value();
       if (!rel.has_value()) {
@@ -1124,7 +1216,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
       // Not authored
       return false;
     }
-  } else if (prop_name == "outputsDisplacement") {
+  } else if (prop_name == "outputs:displacement") {
     if (surface.outputsDisplacement) {
       const Relationship &rel = surface.outputsDisplacement.value();
       if (!rel.has_value()) {
@@ -1365,6 +1457,14 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (const auto preader_f2 =
                  shader.value.as<UsdPrimvarReader_float2>()) {
     return GetPrimProperty(*preader_f2, prop_name, out_prop);
+  } else if (const auto preader_f3 =
+                 shader.value.as<UsdPrimvarReader_float3>()) {
+    return GetPrimProperty(*preader_f3, prop_name, out_prop);
+  } else if (const auto preader_f4 =
+                 shader.value.as<UsdPrimvarReader_float4>()) {
+    return GetPrimProperty(*preader_f4, prop_name, out_prop);
+  } else if (const auto ptx2d = shader.value.as<UsdTransform2d>()) {
+    return GetPrimProperty(*ptx2d, prop_name, out_prop);
   } else if (const auto ptex = shader.value.as<UsdUVTexture>()) {
     return GetPrimProperty(*ptex, prop_name, out_prop);
   } else if (const auto psurf = shader.value.as<UsdPreviewSurface>()) {

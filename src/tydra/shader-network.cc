@@ -8,11 +8,15 @@
 #include "value-pprint.hh"
 #include "stage.hh"
 #include "common-macros.inc"
+#include "tydra/scene-access.hh"
 
 namespace tinyusdz {
 namespace tydra {
 
 namespace {
+
+// TODO: There are lots of duplicated codes with EvaluateAttribute()
+// Use EvaluateAttribute and deprecate EvaluateShaderAttribute?
 
 bool EvaluateUsdPreviewSurfaceAttribute(
   const Stage &stage,

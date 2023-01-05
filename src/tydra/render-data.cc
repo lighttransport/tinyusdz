@@ -580,37 +580,37 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
   float rotation;  // in angles
   if (!tx.rotation.get_value().get_scalar(&rotation)) {
     return nonstd::make_unexpected(
-        fmt::format("Failed to retrieve rotation attribute from {}",
+        fmt::format("Failed to retrieve rotation attribute from {}\n",
                     tx_abs_path.full_path_name()));
   }
 
   value::float2 scale;
   if (!tx.scale.get_value().get_scalar(&scale)) {
     return nonstd::make_unexpected(
-        fmt::format("Failed to retrieve scale attribute from {}",
+        fmt::format("Failed to retrieve scale attribute from {}\n",
                     tx_abs_path.full_path_name()));
   }
 
   value::float2 translation;
   if (!tx.translation.get_value().get_scalar(&translation)) {
     return nonstd::make_unexpected(
-        fmt::format("Failed to retrieve translation attribute from {}",
+        fmt::format("Failed to retrieve translation attribute from {}\n",
                     tx_abs_path.full_path_name()));
   }
 
   // must be authored and connected to PrimvarReader.
   if (!tx.in.authored()) {
-    return nonstd::make_unexpected("`inputs:in` must be authored.");
+    return nonstd::make_unexpected("`inputs:in` must be authored.\n");
   }
 
   if (!tx.in.is_connection()) {
-    return nonstd::make_unexpected("`inputs:in` must be a connection.");
+    return nonstd::make_unexpected("`inputs:in` must be a connection.\n");
   }
 
   const auto &paths = tx.in.get_connections();
   if (paths.size() != 1) {
     return nonstd::make_unexpected(
-        "`inputs:in` must be a single connection Path.");
+        "`inputs:in` must be a single connection Path.\n");
   }
 
   std::string prim_part = paths[0].prim_part();
@@ -618,7 +618,7 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   if (prop_part != "outputs:result") {
     return nonstd::make_unexpected(
-        "`inputs:in` connection Path's property part must be `outputs:result`");
+        "`inputs:in` connection Path's property part must be `outputs:result`\n");
   }
 
   std::string err;
@@ -626,18 +626,18 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
   const Prim *pprim{nullptr};
   if (!stage.find_prim_at_path(Path(prim_part, ""), pprim, &err)) {
     return nonstd::make_unexpected(fmt::format(
-        "`inputs:in` connection Path not found in the Stage. {}", prim_part));
+        "`inputs:in` connection Path not found in the Stage. {}\n", prim_part));
   }
 
   if (!pprim) {
     return nonstd::make_unexpected(
-        fmt::format("[InternalError] Prim is nullptr: {}", prim_part));
+        fmt::format("[InternalError] Prim is nullptr: {}\n", prim_part));
   }
 
   const Shader *pshader = pprim->as<Shader>();
   if (!pshader) {
     return nonstd::make_unexpected(
-        fmt::format("{} must be Shader Prim, but got {}", prim_part,
+        fmt::format("{} must be Shader Prim, but got {}\n", prim_part,
                     pprim->prim_type_name()));
   }
 
@@ -645,13 +645,14 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
       pshader->value.as<UsdPrimvarReader_float2>();
   if (preader) {
     return nonstd::make_unexpected(fmt::format(
-        "Shader {} must be UsdPrimvarReader_float2 type, but got {}", prim_part,
+        "Shader {} must be UsdPrimvarReader_float2 type, but got {}\n", prim_part,
         pshader->info_id));
   }
 
   // Get value producing attribute(i.e, follow .connection and return
   // terminal Attribute value)
   value::token varname;
+#if 0
   if (!tydra::EvaluateShaderAttribute(stage, *pshader, "inputs:varname",
                                       &varname, &err)) {
     return nonstd::make_unexpected(
@@ -659,6 +660,21 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
                     "inputs:varname: {}\n",
                     err));
   }
+#else
+  TerminalAttributeValue attr;
+  if (!tydra::EvaluateAttribute(stage, *pprim, "inputs:varname", &attr, &err)) {
+    return nonstd::make_unexpected("`inputs:varname` evaluation failed: " + err + "\n");
+  }
+  if (auto pv = attr.as<value::token>()) {
+    varname = *pv;
+  } else {
+    return nonstd::make_unexpected("`inputs:varname` must be `token` type, but got " + attr.type_name() + "\n");
+  }
+  if (varname.str().empty()) {
+    return nonstd::make_unexpected("`inputs:varname` is empty token\n");
+  }
+  DCOUT("inputs:varname = " << varname);
+#endif
 
   // Build transform matrix.
   // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
@@ -892,13 +908,14 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         if (!preader) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("Shader's info:id must be UsdPrimvarReader_float2, "
-                          "but got {}\n",
+                          "but got {}",
                           pshader->info_id));
         }
 
         // Get value producing attribute(i.e, follow .connection and return
         // terminal Attribute value)
         value::token varname;
+#if 0
         if (!tydra::EvaluateShaderAttribute(*_stage, *pshader, "inputs:varname",
                                             &varname, &err)) {
           PUSH_ERROR_AND_RETURN(
@@ -906,6 +923,25 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
                           "inputs:varname: {}\n",
                           err));
         }
+#else
+        TerminalAttributeValue attr;
+        if (!tydra::EvaluateAttribute(*_stage, *readerPrim, "inputs:varname", &attr, &err)) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
+                          "inputs:varname: {}",
+                          err));
+        }
+
+        if (auto pv = attr.as<value::token>()) {
+          varname = *pv;
+        } else {
+          PUSH_ERROR_AND_RETURN("`inputs:varname` must be `token` type, but got " + attr.type_name());
+        }
+        if (varname.str().empty()) {
+          PUSH_ERROR_AND_RETURN("`inputs:varname` is empty token.");
+        }
+        DCOUT("inputs:varname = " << varname);
+#endif
 
         tex.varname_uv = varname.str();
       } else if (const UsdTransform2d *ptransform =
@@ -1300,6 +1336,7 @@ bool DefaultTextureImageLoaderFunction(
 
 //
 // --
+// TODO: Dump data in strict KDL format https://kdl.dev/
 //
 
 namespace {
@@ -1338,22 +1375,52 @@ std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
   return ss.str();
 }
 
-}  // namespace
-
-std::string DumpRenderScene(const RenderScene &scene) {
+std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
   std::stringstream ss;
 
-  ss << "# of Meshes : " << scene.meshes.size() << "\n";
-  ss << "# of Animations : " << scene.animations.size() << "\n";
-  ss << "# of Materials : " << scene.materials.size() << "\n";
-  ss << "# of UVTextures : " << scene.textures.size() << "\n";
-  ss << "# of TextureImages : " << scene.images.size() << "\n";
-  ss << "# of Buffers : " << scene.buffers.size() << "\n";
+  // TODO
+  ss << "UVTexture {\n";
+  ss << pprint::Indent(indent+1) << "bias " << texture.bias << "\n";
 
-  ss << "-- materials --\n";
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+}  // namespace
+
+std::string DumpRenderScene(const RenderScene &scene, const std::string &format) {
+  std::stringstream ss;
+
+  // Currently kdl only.
+  if (format == "json") {
+    // not supported yet.
+  }
+
+  ss << "title RenderScene\n";
+  ss << "// # of Meshes : " << scene.meshes.size() << "\n";
+  ss << "// # of Animations : " << scene.animations.size() << "\n";
+  ss << "// # of Materials : " << scene.materials.size() << "\n";
+  ss << "// # of UVTextures : " << scene.textures.size() << "\n";
+  ss << "// # of TextureImages : " << scene.images.size() << "\n";
+  ss << "// # of Buffers : " << scene.buffers.size() << "\n";
+
+  ss << "\n";
+
+  ss << "materials {\n";
   for (size_t i = 0; i < scene.materials.size(); i++) {
     ss << "[" << i << "] " << DumpMaterial(scene.materials[i], 0);
   }
+  ss << "}\n";
+
+  ss << "\n";
+  ss << "textures {\n";
+  for (size_t i = 0; i < scene.textures.size(); i++) {
+    ss << "[" << i << "] " << DumpUVTexture(scene.textures[i], 0);
+  }
+  ss << "}\n";
 
   ss << "TODO: Meshes, Animations, ...\n";
 
