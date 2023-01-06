@@ -9,6 +9,7 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
+#include "str-util.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -1380,7 +1381,7 @@ std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
 
   // TODO
   ss << "UVTexture {\n";
-  ss << pprint::Indent(indent+1) << "bias " << texture.bias << "\n";
+  ss << pprint::Indent(indent+1) << "bias " << quote(to_string(texture.bias)) << "\n";
 
   ss << "\n";
 
@@ -1398,6 +1399,8 @@ std::string DumpRenderScene(const RenderScene &scene, const std::string &format)
   if (format == "json") {
     // not supported yet.
   }
+
+  // KDL does not support array, so quote it as done in USD
 
   ss << "title RenderScene\n";
   ss << "// # of Meshes : " << scene.meshes.size() << "\n";

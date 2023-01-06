@@ -9,6 +9,8 @@
 #include "value-pprint.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
+//
+#include "common-macros.inc"
 
 // TODO:
 // - [ ] Print properties based on its appearance(USDA) or "properties" Prim field(USDC)
@@ -1300,6 +1302,115 @@ std::string to_string(uint64_t v) {
   ss << v;
   return ss.str();
 }
+
+std::string to_string(const value::int2 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::int3 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::int4 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::uint2 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::uint3 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::uint4 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::float2 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::float3 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::float4 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::double2 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::double3 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::double4 &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::texcoord2h &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::texcoord2f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::texcoord2d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::texcoord3h &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::texcoord3f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::texcoord3d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
 
 std::string to_string(const APISchemas::APIName &name) {
   std::string s;
