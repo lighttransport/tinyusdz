@@ -6,6 +6,12 @@
 
 namespace tinyusdz {
 
+constexpr float kFloatNormalizeEps = std::numeric_limits<float>::epsilon();
+constexpr double kDoubleNormalizeEps = std::numeric_limits<double>::epsilon();
+
+// GF_MIN_VECTOR_LENGTH in pxrUSD
+constexpr double kPXRNormalizeEps = 1.0e-10;
+
 value::quath slerp(const value::quath &a, const value::quath &b, const float t);
 value::quatf slerp(const value::quatf &a, const value::quatf &b, const float t);
 value::quatd slerp(const value::quatd &a, const value::quatd &b, const double t);
@@ -19,14 +25,14 @@ double vlength(const value::normal3d &a);
 double vlength(const value::vector3d &a);
 double vlength(const value::point3d &a);
 
-value::float3 vnormalize(const value::float3 &a);
-value::double3 vnormalize(const value::double3 &a);
-value::normal3f vnormalize(const value::normal3f &a);
-value::normal3d vnormalize(const value::normal3d &a);
-value::vector3f vnormalize(const value::vector3f &a);
-value::vector3d vnormalize(const value::vector3d &a);
-value::point3f vnormalize(const value::point3f &a);
-value::point3d vnormalize(const value::point3d &a);
+value::float3 vnormalize(const value::float3 &a, const float eps = kFloatNormalizeEps);
+value::double3 vnormalize(const value::double3 &a, const double eps = kDoubleNormalizeEps);
+value::normal3f vnormalize(const value::normal3f &a, const float eps = kFloatNormalizeEps);
+value::normal3d vnormalize(const value::normal3d &a, const double eps = kDoubleNormalizeEps);
+value::vector3f vnormalize(const value::vector3f &a, const float eps = kFloatNormalizeEps);
+value::vector3d vnormalize(const value::vector3d &a, const double eps = kDoubleNormalizeEps);
+value::point3f vnormalize(const value::point3f &a, const float eps = kFloatNormalizeEps);
+value::point3d vnormalize(const value::point3d &a, const double eps = kDoubleNormalizeEps);
 
 // Assume CCW(Counter ClockWise)
 value::float3 vcross(const value::float3 &a, const value::float3 &b);

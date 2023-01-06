@@ -1341,6 +1341,21 @@ bool DefaultTextureImageLoaderFunction(
 
 namespace {
 
+std::string DumpMesh(const RenderMesh &mesh,
+                               uint32_t indent) {
+  std::stringstream ss;
+
+  ss << "RenderMesh {\n";
+
+  ss << pprint::Indent(indent + 1) << "\"" << value::print_array_snipped(mesh.faceVertexCounts) << "\"\n";
+
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
                                uint32_t indent) {
   std::stringstream ss;
@@ -1380,7 +1395,9 @@ std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
 
   // TODO
   ss << "UVTexture {\n";
+  ss << pprint::Indent(indent+1) << "primvar_name " << texture.varname_uv << "\n";
   ss << pprint::Indent(indent+1) << "bias " << texture.bias << "\n";
+  ss << pprint::Indent(indent+1) << "scale " << texture.scale << "\n";
 
   ss << "\n";
 
@@ -1409,16 +1426,22 @@ std::string DumpRenderScene(const RenderScene &scene, const std::string &format)
 
   ss << "\n";
 
+  ss << "meshes {\n";
+  for (size_t i = 0; i < scene.meshes.size(); i++) {
+    ss << "[" << i << "] " << DumpMesh(scene.meshes[i], 1);
+  }
+  ss << "}\n";
+
   ss << "materials {\n";
   for (size_t i = 0; i < scene.materials.size(); i++) {
-    ss << "[" << i << "] " << DumpMaterial(scene.materials[i], 0);
+    ss << "[" << i << "] " << DumpMaterial(scene.materials[i], 1);
   }
   ss << "}\n";
 
   ss << "\n";
   ss << "textures {\n";
   for (size_t i = 0; i < scene.textures.size(); i++) {
-    ss << "[" << i << "] " << DumpUVTexture(scene.textures[i], 0);
+    ss << "[" << i << "] " << DumpUVTexture(scene.textures[i], 1);
   }
   ss << "}\n";
 
