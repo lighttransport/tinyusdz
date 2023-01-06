@@ -9,6 +9,7 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
+#include "str-util.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -1415,6 +1416,8 @@ std::string DumpRenderScene(const RenderScene &scene, const std::string &format)
   if (format == "json") {
     // not supported yet.
   }
+
+  // KDL does not support array, so quote it as done in USD
 
   ss << "title RenderScene\n";
   ss << "// # of Meshes : " << scene.meshes.size() << "\n";

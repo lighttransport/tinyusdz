@@ -15,6 +15,7 @@
 #include "usdSkel.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"
+#include "value-pprint.hh"
 
 
 namespace tinyusdz {
@@ -26,13 +27,6 @@ std::string Indent(uint32_t level);
 
 } // namespace pprint
 
-//constexpr char kIndentString[] = "  ";
-
-std::string to_string(bool v);
-std::string to_string(int32_t v);
-std::string to_string(uint32_t v);
-std::string to_string(int64_t v);
-std::string to_string(uint64_t v);
 std::string to_string(Visibility v);
 std::string to_string(Orientation o);
 std::string to_string(Extent e);
@@ -60,10 +54,6 @@ std::string to_string(const std::vector<Path> &v, bool show_full_path = true);
 std::string dump_path(const Path &p);
 
 
-// TODO: move to value-types.hh
-std::string to_string(const value::StringData &s);
-std::string to_string(const value::token &s);
-std::string to_string(const std::string &s);
 
 template<typename T>
 std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
