@@ -90,23 +90,27 @@ float vlength(const value::point3f &a) {
   return vlength(value::float3{a.x, a.y, a.z});
 }
 
-value::float3 vnormalize(const value::float3 &a) {
+value::float3 vnormalize(const value::float3 &a, const float eps) {
   float len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::float3({a[0] / len, a[1] / len, a[2] / len});
 }
 
-value::normal3f vnormalize(const value::normal3f &a) {
+value::normal3f vnormalize(const value::normal3f &a, const float eps) {
   float len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::normal3f({a[0] / len, a[1] / len, a[2] / len});
 }
 
-value::vector3f vnormalize(const value::vector3f &a) {
+value::vector3f vnormalize(const value::vector3f &a, const float eps) {
   float len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::vector3f({a[0] / len, a[1] / len, a[2] / len});
 }
 
-value::point3f vnormalize(const value::point3f &a) {
+value::point3f vnormalize(const value::point3f &a, const float eps) {
   float len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::point3f({a[0] / len, a[1] / len, a[2] / len});
 }
 
@@ -130,23 +134,27 @@ double vlength(const value::point3d &a) {
   return vlength(value::double3{a.x, a.y, a.z});
 }
 
-value::double3 vnormalize(const value::double3 &a) {
+value::double3 vnormalize(const value::double3 &a, const double eps) {
   double len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::double3({a[0] / len, a[1] / len, a[2] / len});
 }
 
-value::normal3d vnormalize(const value::normal3d &a) {
+value::normal3d vnormalize(const value::normal3d &a, const double eps) {
   double len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::normal3d({a[0] / len, a[1] / len, a[2] / len});
 }
 
-value::vector3d vnormalize(const value::vector3d &a) {
+value::vector3d vnormalize(const value::vector3d &a, const double eps) {
   double len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::vector3d({a[0] / len, a[1] / len, a[2] / len});
 }
 
-value::point3d vnormalize(const value::point3d &a) {
+value::point3d vnormalize(const value::point3d &a, const double eps) {
   double len = vlength(a);
+  len = (len > eps) ? len : eps;
   return value::point3d({a[0] / len, a[1] / len, a[2] / len});
 }
 
