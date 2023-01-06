@@ -809,6 +809,18 @@ class AsciiParser {
   PrimSpecFunction _primspec_fun{nullptr};
 };
 
+///
+/// For USDC.
+/// Parse string representation of UnregisteredValue(Attribute value).
+/// e.g. "[(0, 1), (2, 3)]" for uint2[] type
+///
+/// @param[in] typeName typeName(e.g. "uint2")
+/// @param[in] str Ascii representation of value.
+/// @param[out] value Ascii representation of value.
+/// @param[out] err Parse error message when returning false.
+///
+bool ParseUnregistredValue(const std::string &typeName, const std::string &str, value::Value *value, std::string *err);
+
 }  // namespace ascii
 
 }  // namespace tinyusdz
