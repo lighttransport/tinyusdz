@@ -2,9 +2,9 @@
 // Copyright 2022 - Present, Syoyo Fujita.
 #pragma once
 
-#include <sstream>
-#include <iostream>
 #include <algorithm>
+#include <iostream>
+#include <sstream>
 
 #include "value-types.hh"
 
@@ -17,7 +17,7 @@ struct Reference;
 struct Payload;
 struct LayerOffset;
 
-} // namespace tinyusdz
+}  // namespace tinyusdz
 
 namespace std {
 
@@ -53,7 +53,6 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3d &v);
 
-
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3d &v);
@@ -61,13 +60,19 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4d &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::texcoord2h &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::texcoord2f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::texcoord2d &v);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord2h &v);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord2f &v);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord2d &v);
 
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::texcoord3h &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::texcoord3f &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::texcoord3d &v);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord3h &v);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord3f &v);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::texcoord3d &v);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quath &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatf &v);
@@ -75,7 +80,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::quatd &v);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::token &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::dict &v);
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::TimeSamples &ts);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::TimeSamples &ts);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3d &v);
@@ -84,7 +90,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
 
 // NOTE: Implemented in pprinter.cc
-std::ostream &operator<<(std::ostream &os, const tinyusdz::value::StringData &v);
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::StringData &v);
 
 // NOTE: Implemented in pprinter.cc
 std::ostream &operator<<(std::ostream &os, const tinyusdz::Path &v);
@@ -125,18 +132,72 @@ std::ostream &operator<<(std::ostream &os, const std::vector<int64_t> &v);
 template <>
 std::ostream &operator<<(std::ostream &os, const std::vector<uint64_t> &v);
 
-
-} // namespace std
+}  // namespace std
 
 namespace tinyusdz {
+
+std::string to_string(bool v);
+std::string to_string(int32_t v);
+std::string to_string(uint32_t v);
+std::string to_string(int64_t v);
+std::string to_string(uint64_t v);
+std::string to_string(const value::int2 &v);
+std::string to_string(const value::int3 &v);
+std::string to_string(const value::int4 &v);
+std::string to_string(const value::uint2 &v);
+std::string to_string(const value::uint3 &v);
+std::string to_string(const value::uint4 &v);
+std::string to_string(const value::float2 &v);
+std::string to_string(const value::float3 &v);
+std::string to_string(const value::float4 &v);
+std::string to_string(const value::double2 &v);
+std::string to_string(const value::double3 &v);
+std::string to_string(const value::double4 &v);
+std::string to_string(const value::double4 &v);
+std::string to_string(const value::texcoord2h &v);
+std::string to_string(const value::texcoord2f &v);
+std::string to_string(const value::texcoord2d &v);
+std::string to_string(const value::texcoord3h &v);
+std::string to_string(const value::texcoord3f &v);
+std::string to_string(const value::texcoord3d &v);
+std::string to_string(const value::StringData &s);
+std::string to_string(const value::token &s);
+std::string to_string(const std::string &s);
+std::string to_string(const value::quath &v);
+std::string to_string(const value::quatf &v);
+std::string to_string(const value::quatd &v);
+std::string to_string(const value::matrix2d &v);
+std::string to_string(const value::matrix3d &v);
+std::string to_string(const value::matrix4d &v);
+std::string to_string(const value::frame4d &v);
+std::string to_string(const value::half);
+std::string to_string(const value::half2);
+std::string to_string(const value::half3);
+std::string to_string(const value::half4);
+std::string to_string(const value::normal3h);
+std::string to_string(const value::normal3f);
+std::string to_string(const value::normal3d);
+std::string to_string(const value::vector3h);
+std::string to_string(const value::vector3f);
+std::string to_string(const value::vector3d);
+std::string to_string(const value::point3h);
+std::string to_string(const value::point3f);
+std::string to_string(const value::point3d);
+std::string to_string(const value::color3f);
+std::string to_string(const value::color3d);
+std::string to_string(const value::color4h);
+std::string to_string(const value::color4f);
+std::string to_string(const value::color4d);
+
 namespace value {
 
-std::string pprint_value(const tinyusdz::value::Value &v, const uint32_t indent = 0, bool closing_brace = true);
+std::string pprint_value(const tinyusdz::value::Value &v,
+                         const uint32_t indent = 0, bool closing_brace = true);
 
 // Print first N and last N items.
 // 0 = print all items.
 // Useful when dump
-template<typename T>
+template <typename T>
 std::string print_array_snipped(const std::vector<T> &vals, size_t N = 16) {
   std::stringstream os;
 
@@ -150,7 +211,6 @@ std::string print_array_snipped(const std::vector<T> &vals, size_t N = 16) {
     }
     os << "]";
   } else {
-
     size_t head_end = (std::min)(N, vals.size());
     size_t tail_start = (std::max)(vals.size() - N, head_end);
 
@@ -173,14 +233,13 @@ std::string print_array_snipped(const std::vector<T> &vals, size_t N = 16) {
     }
 
     os << "]";
-
   }
   return os.str();
-
 }
 
 // TODO: Remove
-//std::string pprint_any(const linb::any &v, const uint32_t indent = 0, bool closing_brace = true);
+// std::string pprint_any(const linb::any &v, const uint32_t indent = 0, bool
+// closing_brace = true);
 
-} // namespace primvar
-} // namespace tinyusdz
+}  // namespace value
+}  // namespace tinyusdz
