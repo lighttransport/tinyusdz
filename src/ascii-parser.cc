@@ -4,6 +4,7 @@
 // To reduce compilation time and sections generated in .obj(object file),
 // We split implementaion to multiple of .cc for ascii-parser.hh
 
+#include "usdGeom.hh"
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -4821,9 +4822,81 @@ bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option)
   return true;
 }
 
+bool ParseUnregistredValue(const std::string &typeName, const std::string &str, value::Value *value, std::string *err) {
+  if (!value) {
+    if (err) {
+      (*err) += "`value` argument is nullptr.\n";
+    }
+    return false;
+  }
+
+  nonstd::optional<uint32_t> typeId = value::TryGetTypeId(typeName);
+
+  if (!typeId) {
+    if (err) {
+      (*err) += "Unsupported type: " + typeName + "\n";
+    }
+    return false;
+  } 
+
+  bool array_qual = typeId.value() & value::TYPE_ID_1D_ARRAY_BIT;
+
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+  tinyusdz::ascii::AsciiParser parser(&sr);
+
+#define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
+    if (array_qual) { \
+      std::vector<__ty> vss; \
+      if (!parser.ParseBasicTypeArray(&vss)) { \
+        if (err) { \
+          (*err) = fmt::format("Failed to parse a value of type `{}[]`", value::TypeTraits<__ty>::type_name()); \
+        } \
+        return false; \
+      } \
+      dst = vss; \
+    } else { \
+      __ty val; \
+      if (!parser.ReadBasicType(&val)) { \
+        if (err) { \
+          (*err) = fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<__ty>::type_name()); \
+        } \
+        return false; \
+      } \
+      dst = val; \
+    } \
+    break; \
+  }
+
+  value::Value dst;
+
+
+  switch (typeId.value()) {
+  PARSE_BASE_TYPE(value::uint2)
+  PARSE_BASE_TYPE(value::uint3)
+  PARSE_BASE_TYPE(value::uint4)
+  default: {
+    if (err) {
+      (*err) = fmt::format("Unsupported or unimplemeneted type `{}`", typeName);
+    } 
+    return false; 
+  }
+  }
+
+  (*value) = std::move(dst);
+
+  return true;
+}
+
 }  // namespace ascii
 }  // namespace tinyusdz
 
 #else  // TINYUSDZ_DISABLE_MODULE_USDA_READER
+
+bool ParseUnregistredValue(const std::string &typeName, const std::string &str, value::Value *value, std::string *err) {
+  if (err) {
+    (*err) += "USDA_READER module is disabled.\n";
+  }
+  return false;
+}
 
 #endif  // TINYUSDZ_DISABLE_MODULE_USDA_READER
