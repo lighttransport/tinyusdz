@@ -45,6 +45,7 @@
 #include "tiny-format.hh"
 #include "value-pprint.hh"
 #include "usdShade.hh"
+#include "ascii-parser.hh"
 
 //
 #ifdef __clang__
@@ -817,6 +818,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
       // Set scalar
       // TODO: Easier CrateValue to Attribute.var conversion
+      // TODO: Parse UnregisteredValue(value is string type and `typeName` field is non-string type)
       scalar = fv.second.get_raw();
       is_scalar = true;
 
