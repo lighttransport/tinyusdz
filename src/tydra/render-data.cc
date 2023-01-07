@@ -1348,7 +1348,10 @@ std::string DumpMesh(const RenderMesh &mesh,
 
   ss << "RenderMesh {\n";
 
-  ss << pprint::Indent(indent + 1) << "\"" << value::print_array_snipped(mesh.faceVertexCounts) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "points \"" << value::print_array_snipped(mesh.points) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "faceVertexCounts \"" << value::print_array_snipped(mesh.faceVertexCounts) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "faceVertexIndices \"" << value::print_array_snipped(mesh.faceVertexIndices) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "materialIds \"" << value::print_array_snipped(mesh.materialIds) << "\"\n";
 
   ss << "\n";
 
