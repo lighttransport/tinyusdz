@@ -1,7 +1,0 @@
-#usda 1.0
-
-def "bora"
-{
-  # uint2 is represented as UnregisteredValue(string data) in Crate.
-  uint2[] v.timeSamples = {0: [(0, 1), (2, 3)], 7.2: [(5, 8), (9, 6)]}
-}
