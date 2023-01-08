@@ -4822,12 +4822,19 @@ bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option)
   return true;
 }
 
-bool ParseUnregistredValue(const std::string &typeName, const std::string &str, value::Value *value, std::string *err) {
+bool ParseUnregistredValue(const std::string &_typeName, const std::string &str, value::Value *value, std::string *err) {
   if (!value) {
     if (err) {
       (*err) += "`value` argument is nullptr.\n";
     }
     return false;
+  }
+
+  bool array_qual = false;
+  std::string typeName = _typeName; 
+  if (endsWith(typeName, "[]")) {
+    typeName = removeSuffix(typeName, "[]");
+    array_qual = true;
   }
 
   nonstd::optional<uint32_t> typeId = value::TryGetTypeId(typeName);
@@ -4838,8 +4845,6 @@ bool ParseUnregistredValue(const std::string &typeName, const std::string &str, 
     }
     return false;
   } 
-
-  bool array_qual = typeId.value() & value::TYPE_ID_1D_ARRAY_BIT;
 
   tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
   tinyusdz::ascii::AsciiParser parser(&sr);

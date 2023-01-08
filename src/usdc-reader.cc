@@ -145,6 +145,31 @@ struct VariantPrimNode {
 };
 #endif
 
+static bool IsUnregisteredValueType(const std::string &typeName)
+{
+  std::string tyname = typeName;
+
+  //bool array_type = false;
+  if (endsWith(typeName, "[]")) {
+    tyname = removeSuffix(typeName, "[]");
+    //array_type = true;
+  }
+
+  // TODO: Define in crate-format?
+  if (tyname == value::TypeTraits<value::uint2>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uint3>::type_name()) {
+    return true;
+  }
+  if (tyname == value::TypeTraits<value::uint4>::type_name()) {
+    return true;
+  }
+
+  return false;
+
+}
+
 class USDCReader::Impl {
  public:
   Impl(StreamReader *sr, const USDCReaderConfig &config) : _sr(sr) {
@@ -786,6 +811,20 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   bool hasTargetPaths{false};
 
   DCOUT("== List of Fields");
+
+  // first detect typeName
+  for (auto &fv : fvs) {
+    if (fv.first == "typeName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        DCOUT("  typeName = " << pv.value().str());
+        typeName = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`typeName` field is not `token` type.");
+      }
+    }
+  }
+
   for (auto &fv : fvs) {
     DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
                       << ")");
@@ -806,21 +845,30 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`variability` field is not `varibility` type.");
       }
     } else if (fv.first == "typeName") {
-      if (auto pv = fv.second.get_value<value::token>()) {
-        DCOUT("  typeName = " << pv.value().str());
-        typeName = pv.value();
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`typeName` field is not `token` type.");
-      }
+      // 'typeName' is already processed. nothing to do here.
+      continue;
     } else if (fv.first == "default") {
       propType = Property::Type::Attrib;
 
       // Set scalar
       // TODO: Easier CrateValue to Attribute.var conversion
-      // TODO: Parse UnregisteredValue(value is string type and `typeName` field is non-string type)
       scalar = fv.second.get_raw();
       is_scalar = true;
+
+      // TODO: Handle UnregisteredValue in crate-reader.cc
+      // UnregisteredValue is represented as string.
+      if (const auto pv = scalar.get_value<std::string>()) {
+        if (typeName && (typeName.value().str() != "string")) {
+          if (IsUnregisteredValueType(typeName.value().str())) {
+            DCOUT("UnregisteredValue type: " << typeName.value().str());
+
+            std::string local_err;
+            if (!ascii::ParseUnregistredValue(typeName.value().str(), pv.value(), &scalar, &local_err)) {
+              PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse UnregisteredValue string with type `{}`: {}", typeName.value().str(), local_err));
+            }
+          }
+        }
+      }
 
     } else if (fv.first == "timeSamples") {
       propType = Property::Type::Attrib;
@@ -2129,7 +2177,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       std::string pTyName;
       if (!typeName) {
-        PUSH_WARN("Treat this node as Model(where `typeName` is missing.");
+        PUSH_WARN("Treat this node as Model(`typeName` field is missing).");
         pTyName = "Model";
       } else {
         pTyName = typeName.value();
