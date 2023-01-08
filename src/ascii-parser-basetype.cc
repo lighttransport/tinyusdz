@@ -731,24 +731,114 @@ bool AsciiParser::ReadBasicType(value::int2 *value) {
   return ParseBasicTypeTuple<int32_t, 2>(value);
 }
 
+bool AsciiParser::ReadBasicType(nonstd::optional<value::int2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::int2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(value::int3 *value) {
   return ParseBasicTypeTuple<int32_t, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::int3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::int3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
 }
 
 bool AsciiParser::ReadBasicType(value::int4 *value) {
   return ParseBasicTypeTuple<int32_t, 4>(value);
 }
 
+bool AsciiParser::ReadBasicType(nonstd::optional<value::int4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::int4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(value::uint2 *value) {
   return ParseBasicTypeTuple<uint32_t, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uint2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uint2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
 }
 
 bool AsciiParser::ReadBasicType(value::uint3 *value) {
   return ParseBasicTypeTuple<uint32_t, 3>(value);
 }
 
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uint3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uint3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(value::uint4 *value) {
   return ParseBasicTypeTuple<uint32_t, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uint4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uint4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
 }
 
 
@@ -2415,51 +2505,6 @@ bool AsciiParser::ReadBasicType(nonstd::optional<int> *value) {
   }
 
   int v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-bool AsciiParser::ReadBasicType(nonstd::optional<value::int2> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  value::int2 v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-bool AsciiParser::ReadBasicType(nonstd::optional<value::int3> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  value::int3 v;
-  if (ReadBasicType(&v)) {
-    (*value) = v;
-    return true;
-  }
-
-  return false;
-}
-
-bool AsciiParser::ReadBasicType(nonstd::optional<value::int4> *value) {
-  if (MaybeNone()) {
-    (*value) = nonstd::nullopt;
-    return true;
-  }
-
-  value::int4 v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;

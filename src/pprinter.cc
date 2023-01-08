@@ -950,7 +950,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     if (attr.variability() == Variability::Uniform) {
       ss << "uniform ";
     } else if (attr.is_varying_authored()) {
-      ss << "varying ";
+      // For Attribute, `varying` is the default variability and does not shown in USDA
+      // do nothing
     }
 
     std::string ty;

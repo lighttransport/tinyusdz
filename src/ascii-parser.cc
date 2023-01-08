@@ -335,10 +335,19 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
 
   d.insert(value::kBool);
 
+  d.insert(value::kInt64);
+
   d.insert(value::kInt);
   d.insert(value::kInt2);
   d.insert(value::kInt3);
   d.insert(value::kInt4);
+
+  d.insert(value::kUInt64);
+
+  d.insert(value::kUInt);
+  d.insert(value::kUInt2);
+  d.insert(value::kUInt3);
+  d.insert(value::kUInt4);
 
   d.insert(value::kFloat);
   d.insert(value::kFloat2);
@@ -3904,8 +3913,28 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
         if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name, &attr)) {
           return false;
         }
+      } else if (type_name == value::kInt3) {
+        if (!ParseBasicPrimAttr<value::int3>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kInt4) {
+        if (!ParseBasicPrimAttr<value::int4>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
       } else if (type_name == value::kUInt) {
         if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kUInt2) {
+        if (!ParseBasicPrimAttr<value::uint2>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kUInt3) {
+        if (!ParseBasicPrimAttr<value::uint3>(array_qual, primattr_name, &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kUInt4) {
+        if (!ParseBasicPrimAttr<value::uint4>(array_qual, primattr_name, &attr)) {
           return false;
         }
       } else if (type_name == value::kInt64) {
