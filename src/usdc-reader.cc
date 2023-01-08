@@ -1165,9 +1165,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
       if (variability) {
         prop->attribute().variability() = variability.value();
-        if (variability.value() == Variability::Varying) {
-          prop->attribute().set_varying_authored();
-        }
       }
       prop->attribute().metas() = meta;
     } else {
@@ -1188,9 +1185,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   } else if (propType == Property::Type::Attrib) {
     if (variability) {
       attr.variability() = variability.value();
-      if (variability.value() == Variability::Varying) {
-        attr.set_varying_authored();
-      }
     }
     attr.metas() = meta;
     (*prop) = Property(attr, custom);
@@ -1206,12 +1200,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     } else {
       // ???
       PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
-    }
-
-    if (variability) {
-      if (variability.value() == Variability::Varying) {
-        prop->attribute().set_varying_authored();
-      }
     }
 
     prop->attribute().metas() = meta;
