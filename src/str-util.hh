@@ -13,7 +13,7 @@ namespace tinyusdz {
 enum class CharEncoding
 {
   None,
-  UTF8, 
+  UTF8,
   UTF8BOM, // UTF8 + BOM
   UTF16LE  // UTF16 LE(Windows Unicode)
 };
@@ -211,8 +211,53 @@ inline bool tokenize_variantElement(const std::string &elementName, std::array<s
     return true;
   } else {
     return false;
-  } 
+  }
 
+}
+
+///
+/// Test if str contains " or '
+///
+/// @param[in] is_double_quote true: find escaped triple double quotes. false find escaped single double quotes.
+///
+inline bool hasQuotes(const std::string &str, bool is_double_quote) {
+
+  for (size_t i = 0; i < str.size(); i++) {
+    if (is_double_quote) {
+      if (str[i] == '"') {
+        return true;
+      }
+    } else {
+      if (str[i] == '\'') {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+///
+/// Test if str contains """ or '''
+///
+/// @param[in] is_double_quote true: find escaped triple double quotes. false find escaped single double quotes.
+inline bool hasTripleQuotes(const std::string &str, bool is_double_quote) {
+
+  for (size_t i = 0; i < str.size(); i++) {
+    if (i + 3 < str.size()) {
+      if (is_double_quote) {
+        if ((str[i+0] == '"') && (str[i+1] == '"') && (str[i+2] == '"')) {
+          return true;
+        }
+      } else {
+        if ((str[i+0] == '\'') && (str[i+1] == '\'') && (str[i+2] == '\'')) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 ///
@@ -258,6 +303,31 @@ inline bool hasEscapedTripleQuotes(const std::string &str, bool is_double_quote,
   return count > 0;
 }
 
+inline std::string escapeSingleQuote(const std::string &str, const bool is_double_quote) {
+
+  std::string s;
+
+  if (is_double_quote) {
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '"') {
+        s += "\\\"";
+      } else {
+        s += str[i];
+      }
+    }
+  } else {
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '\'') {
+        s += "\\'";
+      } else {
+        s += str[i];
+      }
+    }
+  }
+
+  return s;
+}
+
 // Escape backslash('\') to '\\'
 inline std::string escapeBackslash(const std::string &str, const bool triple_quoted_string = false) {
 
@@ -266,7 +336,7 @@ inline std::string escapeBackslash(const std::string &str, const bool triple_quo
     std::string s;
 
     // Do not escape \""" or \'''
-    
+
     for (size_t i = 0; i < str.size(); i++) {
       if (str[i] == '\\') {
         if (i + 3 < str.size()) {
@@ -278,7 +348,7 @@ inline std::string escapeBackslash(const std::string &str, const bool triple_quo
             i += 3;
           } else {
             s += "\\\\";
-          } 
+          }
         } else {
           s += "\\\\";
         }
@@ -322,6 +392,55 @@ inline std::string unescapeBackslash(const std::string &str) {
   return s;
 }
 
+inline std::string buildEescapedStringForUSDA(const std::string &str) {
+  // Rule for triple quote string:
+  //
+  // if str contains newline
+  //   if str contains """ and '''
+  //      use quote """ and escape " to \\", no escape for '''
+  //   elif str contains """ only
+  //      use quote ''' and no escape for """
+  //   elif str contains ''' only
+  //      use quote """ and no escape for '''
+  //   else
+  //      use quote """
+  //
+  // Rule for single quote string
+  //   if str contains " and '
+  //      use quote " and escape " to \\", no escape for '
+  //   elif str contains " only
+  //      use quote ' and no escape for "
+  //   elif str contains ' only
+  //      use quote " and no escape for '
+  //   else
+  //      use quote "
+
+  bool has_newline = hasNewline(str);
+  bool has_triple_single_quoted_string = hasTripleQuotes(str, false);
+  bool has_triple_double_quoted_string = hasTripleQuotes(str, true);
+
+  std::string s;
+
+  if (has_newline || has_triple_single_quoted_string || has_triple_double_quoted_string) {
+
+  } else {
+    // single quote string.
+    bool has_single_quote = hasQuotes(str, false);
+    bool has_double_quote = hasQuotes(str, true);
+
+    std::string delim = "\"";
+    if (has_single_quote && has_double_quote) {
+      s = escapeSingleQuote(str, true);
+    } else if (has_single_quote) {
+      s = escapeSingleQuote(str, false);
+    } else {
+      s = escapeSingleQuote(str, true);
+    }
+  }
+
+  return s;
+}
+
 // TfIsValidIdentifier in pxrUSD equivalanet
 inline bool isValidIdentifier(const std::string &str) {
 
@@ -346,7 +465,7 @@ inline bool isValidIdentifier(const std::string &str) {
       return false;
     }
   }
-  
+
   return true;
 }
 
@@ -377,7 +496,7 @@ inline std::string makeIdentifierValid(const std::string &str) {
       s.push_back('_');
     }
   }
-  
+
   return s;
 }
 
