@@ -12,6 +12,9 @@
 #include "usdLux.hh"
 #include "value-types.hh"
 
+//
+#include "common-macros.inc"
+
 // For fast int/float to ascii
 // Default disabled.
 //#define TINYUSDZ_LOCAL_USE_JEAIII_ITOA
@@ -829,7 +832,15 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTraits<std::string>::type_id(): {
       auto p = v.as<std::string>();
       if (p) {
-        os << quote(escapeBackslash(*p));
+        std::string delim = "\"";
+        if (hasNewline(*p)) {
+          if (hasTripleQuotes(*p, /* double quote*/false)) {
+            delim = "\"\"\"";
+          } else if (hasTripleQuotes(*p, /* double quote*/true)) {
+            delim = "'''";
+          }
+        }
+        os << quote(escapeBackslash(*p), delim);
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
@@ -846,13 +857,20 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     }
     case TypeTraits<std::vector<std::string>>::type_id(): {
       auto p = v.as<std::vector<std::string>>();
-      // Escape each string.
-      std::vector<std::string> ss;
-      for (const auto &item : *p) {
-        ss.push_back(escapeBackslash(item));
-      }
       if (p) {
-        os << quote(ss);
+        std::vector<std::string> ss;
+        for (const auto &item : *p) {
+          std::string delim = "\"";
+          if (hasNewline(item)) {
+            if (hasTripleQuotes(item, /* double quote*/false)) {
+              delim = "\"\"\"";
+            } else if (hasTripleQuotes(item, /* double quote*/true)) {
+              delim = "'''";
+            }
+          }
+          ss.push_back(quote(escapeBackslash(item), delim));
+        }
+        os << ss; // Use operator<<(std::vector<T>)
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
       }
