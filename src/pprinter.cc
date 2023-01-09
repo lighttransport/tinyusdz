@@ -109,11 +109,20 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v
   std::string delim = v.single_quote ? "'" : "\"";
 
   if (v.is_triple_quoted) {
-    delim = v.single_quote ? "'''" : "\"\"\"";
+    if (v.single_quote) {
+      if (tinyusdz::hasEscapedTripleQuotes(v.value, /* double quote */false)) {
+        // Change to use """
+        delim = "\"\"\"";
+      } else {
+        delim = "'''";
+      }
+    } else {
+      delim = "\"\"\"";
+    }
   }
 
   ofs << delim;
-  ofs << tinyusdz::escapeBackslash(v.value);
+  ofs << tinyusdz::escapeBackslash(v.value, v.is_triple_quoted);
   ofs << delim;
 
   return ofs;

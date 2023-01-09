@@ -215,20 +215,95 @@ inline bool tokenize_variantElement(const std::string &elementName, std::array<s
 
 }
 
-// Escape backslash('\') to '\\'
-inline std::string escapeBackslash(const std::string &str) {
-  std::string s = str;
+///
+/// Test if str contains \""" or \'''
+///
+/// @param[in] is_double_quote true: find escaped triple double quotes. false find escaped single double quotes.
+/// @param[out] n The number of escaped triple quotes
+///
+/// Return true immediately when an escaped triple quotes found when `n` is nullptr.
+///
+inline bool hasEscapedTripleQuotes(const std::string &str, bool is_double_quote, size_t *n = nullptr) {
+  size_t count = 0;
 
-  std::string bs = "\\";
-  std::string bs_escaped = "\\\\";
+  for (size_t i = 0; i < str.size(); i++) {
+    if (str[i] == '\\') {
+      if (i + 3 < str.size()) {
+        if (is_double_quote) {
+          if ((str[i+1] == '"') && (str[i+2] == '"') && (str[i+3] == '"')) {
+            if (!n) { // early exit
+              return true;
+            }
 
-  std::string::size_type pos = 0;
-  while ((pos = s.find(bs, pos)) != std::string::npos) {
-    s.replace(pos, bs.length(), bs_escaped);
-    pos += bs_escaped.length();
+            count++;
+            i += 3;
+          }
+        } else {
+          if ((str[i+1] == '\'') && (str[i+2] == '\'') && (str[i+3] == '\'')) {
+            if (!n) { // early exit
+              return true;
+            }
+            count++;
+            i += 3;
+          }
+        }
+      }
+    }
   }
 
-  return s;
+  if (n) {
+    (*n) = count;
+  }
+
+  return count > 0;
+}
+
+// Escape backslash('\') to '\\'
+inline std::string escapeBackslash(const std::string &str, const bool triple_quoted_string = false) {
+
+  if (triple_quoted_string) {
+
+    std::string s;
+
+    // Do not escape \""" or \'''
+    
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '\\') {
+        if (i + 3 < str.size()) {
+          if ((str[i+1] == '\'') && (str[i+1] == '\'') && (str[i+2] == '\'')) {
+            s += "\\'''";
+            i += 3;
+          } else if ((str[i+1] == '"') && (str[i+1] == '"') && (str[i+2] == '"')) {
+            s += "\\\"\"\"";
+            i += 3;
+          } else {
+            s += "\\\\";
+          } 
+        } else {
+          s += "\\\\";
+        }
+      } else {
+        s += str[i];
+      }
+    }
+
+    return s;
+  } else {
+
+    const std::string bs = "\\";
+    const std::string bs_escaped = "\\\\";
+
+    std::string s = str;
+
+    std::string::size_type pos = 0;
+    while ((pos = s.find(bs, pos)) != std::string::npos) {
+      s.replace(pos, bs.length(), bs_escaped);
+      pos += bs_escaped.length();
+    }
+
+    return s;
+  }
+
 }
 
 // Unescape backslash('\\' -> '\')
