@@ -1450,7 +1450,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     return false;
   }
 
-  // Read until next triple-quote `"""`
+  // Read until next triple-quote `"""` or "'''"
   std::stringstream str_buf;
 
   auto locinfo = _curr_cursor;
@@ -1470,6 +1470,43 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
     str_buf << c;
 
+    // Seek \""" or \'''
+    if (c == '\\') {
+      if (single_quote) {
+        std::vector<char> buf(3, '\0');
+        if (!LookCharN(3, &buf)) {
+          // at least 3 chars should be read
+          return false;
+        }
+
+        if (buf[0] == '\'' &&
+            buf[1] == '\'' &&
+            buf[2] == '\'') {
+          str_buf << "'''";
+          // advance
+          _sr->seek_from_current(3);
+          locinfo.col += 3;
+          continue;
+        }
+      } else {
+        std::vector<char> buf(3, '\0');
+        if (!LookCharN(3, &buf)) {
+          // at least 3 chars should be read
+          return false;
+        }
+
+        if (buf[0] == '"' &&
+            buf[1] == '"' &&
+            buf[2] == '"') {
+          str_buf << "\"\"\"";
+          // advance
+          _sr->seek_from_current(3);
+          locinfo.col += 3;
+          continue;
+        }
+      }
+    }
+
     if (c == '"') {
       double_quote_count++;
       single_quote_count = 0;
@@ -1480,6 +1517,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       double_quote_count = 0;
       single_quote_count = 0;
     }
+
 
     // Update loc info
     locinfo.col++;
