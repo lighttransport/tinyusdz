@@ -1407,9 +1407,8 @@ bool AsciiParser::MaybeString(value::StringData *str) {
   DCOUT("Single quoted string found. col " << start_cursor.col << ", row "
                                            << start_cursor.row);
 
-  // Unescape backslash required.
   size_t displayed_string_len = ss.str().size();
-  str->value = unescapeBackslash(ss.str());
+  str->value = unescapeControlSequence(ss.str());
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = false;
@@ -1468,9 +1467,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       return false;
     }
 
-    str_buf << c;
-
     // Seek \""" or \'''
+    // Unescape '\'
     if (c == '\\') {
       if (single_quote) {
         std::vector<char> buf(3, '\0');
@@ -1506,6 +1504,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
         }
       }
     }
+
+    str_buf << c;
 
     if (c == '"') {
       double_quote_count++;
@@ -1577,8 +1577,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   if (s.size() > 3) {  // just in case
     s.erase(s.size() - 3);
   }
-  // Unescape backslash required.
-  str->value = unescapeBackslash(s);
+
+  str->value = unescapeControlSequence(s);
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = true;

@@ -392,54 +392,11 @@ inline std::string unescapeBackslash(const std::string &str) {
   return s;
 }
 
-inline std::string buildEescapedStringForUSDA(const std::string &str) {
-  // Rule for triple quote string:
-  //
-  // if str contains newline
-  //   if str contains """ and '''
-  //      use quote """ and escape " to \\", no escape for '''
-  //   elif str contains """ only
-  //      use quote ''' and no escape for """
-  //   elif str contains ''' only
-  //      use quote """ and no escape for '''
-  //   else
-  //      use quote """
-  //
-  // Rule for single quote string
-  //   if str contains " and '
-  //      use quote " and escape " to \\", no escape for '
-  //   elif str contains " only
-  //      use quote ' and no escape for "
-  //   elif str contains ' only
-  //      use quote " and no escape for '
-  //   else
-  //      use quote "
+std::string escapeControlSequence(const std::string &str);
 
-  bool has_newline = hasNewline(str);
-  bool has_triple_single_quoted_string = hasTripleQuotes(str, false);
-  bool has_triple_double_quoted_string = hasTripleQuotes(str, true);
+std::string unescapeControlSequence(const std::string &str);
 
-  std::string s;
-
-  if (has_newline || has_triple_single_quoted_string || has_triple_double_quoted_string) {
-
-  } else {
-    // single quote string.
-    bool has_single_quote = hasQuotes(str, false);
-    bool has_double_quote = hasQuotes(str, true);
-
-    std::string delim = "\"";
-    if (has_single_quote && has_double_quote) {
-      s = escapeSingleQuote(str, true);
-    } else if (has_single_quote) {
-      s = escapeSingleQuote(str, false);
-    } else {
-      s = escapeSingleQuote(str, true);
-    }
-  }
-
-  return s;
-}
+std::string buildEscapedAndQuotedStringForUSDA(const std::string &str);
 
 // TfIsValidIdentifier in pxrUSD equivalanet
 inline bool isValidIdentifier(const std::string &str) {

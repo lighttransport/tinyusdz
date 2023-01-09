@@ -542,6 +542,7 @@ include src/lz4/lz4.c
 include src/lz4/lz4.h
 include src/python-bindings.cc
 include src/str-util.hh
+include src/str-util.cc
 include src/stream-reader.hh
 include src/stream-writer.hh
 include src/subdiv.cc
