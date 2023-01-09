@@ -28,7 +28,7 @@ std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
   //      use quote " and no escape for '
   //   else
   //      use quote "
-
+  
   bool has_newline = hasNewline(str);
 
   std::string s;
@@ -45,9 +45,13 @@ std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
     } else if (has_triple_double_quoted_string) {
       delim = "'''";
       s = str;
+    } else {
+      s = str;
     }
 
+
     s = quote(escapeControlSequence(s), delim);
+
 
   } else {
     // single quote string.
@@ -61,6 +65,8 @@ std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
       s = escapeSingleQuote(str, false);
     } else if (has_double_quote) {
       delim = "'";
+      s = str;
+    } else {
       s = str;
     }
 
@@ -137,5 +143,164 @@ std::string unescapeControlSequence(const std::string &str) {
   return s;
 
 }
+
+bool hasQuotes(const std::string &str, bool is_double_quote) {
+
+  for (size_t i = 0; i < str.size(); i++) {
+    if (is_double_quote) {
+      if (str[i] == '"') {
+        return true;
+      }
+    } else {
+      if (str[i] == '\'') {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+bool hasTripleQuotes(const std::string &str, bool is_double_quote) {
+
+  for (size_t i = 0; i < str.size(); i++) {
+    if (i + 3 < str.size()) {
+      if (is_double_quote) {
+        if ((str[i+0] == '"') && (str[i+1] == '"') && (str[i+2] == '"')) {
+          return true;
+        }
+      } else {
+        if ((str[i+0] == '\'') && (str[i+1] == '\'') && (str[i+2] == '\'')) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+bool hasEscapedTripleQuotes(const std::string &str, bool is_double_quote, size_t *n) {
+  size_t count = 0;
+
+  for (size_t i = 0; i < str.size(); i++) {
+    if (str[i] == '\\') {
+      if (i + 3 < str.size()) {
+        if (is_double_quote) {
+          if ((str[i+1] == '"') && (str[i+2] == '"') && (str[i+3] == '"')) {
+            if (!n) { // early exit
+              return true;
+            }
+
+            count++;
+            i += 3;
+          }
+        } else {
+          if ((str[i+1] == '\'') && (str[i+2] == '\'') && (str[i+3] == '\'')) {
+            if (!n) { // early exit
+              return true;
+            }
+            count++;
+            i += 3;
+          }
+        }
+      }
+    }
+  }
+
+  if (n) {
+    (*n) = count;
+  }
+
+  return count > 0;
+}
+
+std::string escapeSingleQuote(const std::string &str, const bool is_double_quote) {
+
+  std::string s;
+
+  if (is_double_quote) {
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '"') {
+        s += "\\\"";
+      } else {
+        s += str[i];
+      }
+    }
+  } else {
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '\'') {
+        s += "\\'";
+      } else {
+        s += str[i];
+      }
+    }
+  }
+
+  return s;
+}
+
+std::string escapeBackslash(const std::string &str, const bool triple_quoted_string) {
+
+  if (triple_quoted_string) {
+
+    std::string s;
+
+    // Do not escape \""" or \'''
+
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '\\') {
+        if (i + 3 < str.size()) {
+          if ((str[i+1] == '\'') && (str[i+1] == '\'') && (str[i+2] == '\'')) {
+            s += "\\'''";
+            i += 3;
+          } else if ((str[i+1] == '"') && (str[i+1] == '"') && (str[i+2] == '"')) {
+            s += "\\\"\"\"";
+            i += 3;
+          } else {
+            s += "\\\\";
+          }
+        } else {
+          s += "\\\\";
+        }
+      } else {
+        s += str[i];
+      }
+    }
+
+    return s;
+  } else {
+
+    const std::string bs = "\\";
+    const std::string bs_escaped = "\\\\";
+
+    std::string s = str;
+
+    std::string::size_type pos = 0;
+    while ((pos = s.find(bs, pos)) != std::string::npos) {
+      s.replace(pos, bs.length(), bs_escaped);
+      pos += bs_escaped.length();
+    }
+
+    return s;
+  }
+
+}
+
+std::string unescapeBackslash(const std::string &str) {
+  std::string s = str;
+
+  std::string bs = "\\\\";
+  std::string bs_unescaped = "\\";
+
+  std::string::size_type pos = 0;
+  while ((pos = s.find(bs, pos)) != std::string::npos) {
+    s.replace(pos, bs.length(), bs_unescaped);
+    pos += bs_unescaped.length();
+  }
+
+  return s;
+}
+
 
 }  // namespace tinyusdz
