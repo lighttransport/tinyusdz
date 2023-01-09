@@ -832,15 +832,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTraits<std::string>::type_id(): {
       auto p = v.as<std::string>();
       if (p) {
-        std::string delim = "\"";
-        if (hasNewline(*p)) {
-          if (hasTripleQuotes(*p, /* double quote*/false)) {
-            delim = "\"\"\"";
-          } else if (hasTripleQuotes(*p, /* double quote*/true)) {
-            delim = "'''";
-          }
-        }
-        os << quote(escapeBackslash(*p), delim);
+        os << buildEscapedAndQuotedStringForUSDA(*p);
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
@@ -849,7 +841,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTraits<value::StringData>::type_id(): {
       auto p = v.as<value::StringData>();
       if (p) {
-        os << (*p);
+        os << (*p); // FIXME: Call buildEscapedAndQuotedStringForUSDA() here?
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
@@ -860,17 +852,9 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       if (p) {
         std::vector<std::string> ss;
         for (const auto &item : *p) {
-          std::string delim = "\"";
-          if (hasNewline(item)) {
-            if (hasTripleQuotes(item, /* double quote*/false)) {
-              delim = "\"\"\"";
-            } else if (hasTripleQuotes(item, /* double quote*/true)) {
-              delim = "'''";
-            }
-          }
-          ss.push_back(quote(escapeBackslash(item), delim));
+          ss.push_back(buildEscapedAndQuotedStringForUSDA(item));
         }
-        os << ss; // Use operator<<(std::vector<T>)
+        os << ss; // Use operator<<(std::vector<std::string>)
       } else {
         os << "[InternalError: `string[]` type TypeId mismatch.]";
       }

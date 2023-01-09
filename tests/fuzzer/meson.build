@@ -6,6 +6,7 @@ tinyusdz_sources=[
   '../../src/lz4-compression.cc',
   '../../src/integerCoding.cpp',
   '../../src/io-util.cc',
+  '../../src/str-util.cc',
   '../../src/pprinter.cc',
   '../../src/performance.cc',
   '../../src/prim-types.cc',

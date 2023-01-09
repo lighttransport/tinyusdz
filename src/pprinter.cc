@@ -106,6 +106,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v) {
 
+#if 0
   std::string delim = v.single_quote ? "'" : "\"";
 
   if (v.is_triple_quoted) {
@@ -124,6 +125,9 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v
   ofs << delim;
   ofs << tinyusdz::escapeBackslash(v.value, v.is_triple_quoted);
   ofs << delim;
+#else
+  ofs << tinyusdz::buildEscapedAndQuotedStringForUSDA(v.value);
+#endif
 
   return ofs;
 }
