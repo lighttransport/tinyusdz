@@ -810,7 +810,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTraits<value::token>::type_id(): {
       auto p = v.as<value::token>();
       if (p) {
-        os << quote(p->str());
+        os << buildEscapedAndQuotedStringForUSDA(p->str());
       } else {
         os << "[InternalError: Token type TypeId mismatch.]";
       }
@@ -821,7 +821,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       if (p) {
         std::vector<std::string> vs;
         std::transform(p->begin(), p->end(), std::back_inserter(vs),
-                       [](const value::token &tok) { return tok.str(); });
+                       [](const value::token &tok) { return buildEscapedAndQuotedStringForUSDA(tok.str()); });
 
         os << quote(vs);
       } else {
