@@ -81,6 +81,7 @@ std::string escapeControlSequence(const std::string &str) {
   std::string s;
 
   for (size_t i = 0; i < str.size(); i++) {
+
     if (str[i] == '\a') {
       s += "\\x07";
     } else if (str[i] == '\b') {
@@ -92,7 +93,16 @@ std::string escapeControlSequence(const std::string &str) {
     } else if (str[i] == '\f') {
       s += "\\x0c";
     } else if (str[i] == '\\') {
-      s += "\\\\";
+      // skip escaping backshash for escaped quote string: \' \"
+      if (i + 1 < str.size()) {
+        if ((str[i+1] == '"') || (str[i+1] == '\'')) {
+          s += str[i];
+        } else {
+          s += "\\\\";
+        }
+      } else {
+        s += "\\\\";
+      }
     } else {
       s += str[i];
     }

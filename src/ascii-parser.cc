@@ -1384,6 +1384,24 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       return false;
     }
 
+    if (c == '\\') {
+      // escaped quote? \" \'
+      char nc;
+      if (!LookChar1(&nc)) {
+        return false;
+      }
+
+      if (nc == '\'') {
+        ss << "'";
+        _sr->seek_from_current(1); // advance 1 char
+        continue;
+      } else if (nc == '"') {
+        ss << "\"";
+        _sr->seek_from_current(1); // advance 1 char
+        continue;
+      }
+    }
+
     if (single_quote) {
       if (c == '\'') {
         end_with_quotation = true;
@@ -1457,7 +1475,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   int single_quote_count = 0;  // '
   int double_quote_count = 0;  // "
 
-  bool got_triple_quote{false};
+  bool got_closing_triple_quote{false};
 
   while (!Eof()) {
     char c;
@@ -1470,6 +1488,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     // Seek \""" or \'''
     // Unescape '\'
     if (c == '\\') {
+#if 0
       if (single_quote) {
         std::vector<char> buf(3, '\0');
         if (!LookCharN(3, &buf)) {
@@ -1503,6 +1522,31 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
           continue;
         }
       }
+#else
+      std::vector<char> buf(3, '\0');
+      if (!LookCharN(3, &buf)) {
+        // at least 3 chars should be read
+        return false;
+      }
+
+      if (buf[0] == '\'' &&
+          buf[1] == '\'' &&
+          buf[2] == '\'') {
+        str_buf << "'''";
+        // advance
+        _sr->seek_from_current(3);
+        locinfo.col += 3;
+        continue;
+      } else if (buf[0] == '"' &&
+            buf[1] == '"' &&
+            buf[2] == '"') {
+          str_buf << "\"\"\"";
+          // advance
+          _sr->seek_from_current(3);
+          locinfo.col += 3;
+          continue;
+      }
+#endif
     }
 
     str_buf << c;
@@ -1552,17 +1596,25 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
     if (double_quote_count == 3) {
       // got '"""'
-      got_triple_quote = true;
-      break;
+      if (single_quote) {
+        // continue
+      } else {
+        got_closing_triple_quote = true;
+        break;
+      }
     }
     if (single_quote_count == 3) {
       // got '''
-      got_triple_quote = true;
-      break;
+      if (double_quote_count) {
+        // continue
+      } else {
+        got_closing_triple_quote = true;
+        break;
+      }
     }
   }
 
-  if (!got_triple_quote) {
+  if (!got_closing_triple_quote) {
     SeekTo(loc);
     return false;
   }
@@ -1578,7 +1630,12 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     s.erase(s.size() - 3);
   }
 
+  DCOUT("str = " << s);
+
   str->value = unescapeControlSequence(s);
+
+  DCOUT("unescape str = " << str->value);
+
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = true;
@@ -4898,7 +4955,7 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
   }
 
   bool array_qual = false;
-  std::string typeName = _typeName; 
+  std::string typeName = _typeName;
   if (endsWith(typeName, "[]")) {
     typeName = removeSuffix(typeName, "[]");
     array_qual = true;
@@ -4911,7 +4968,7 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
       (*err) += "Unsupported type: " + typeName + "\n";
     }
     return false;
-  } 
+  }
 
   tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
   tinyusdz::ascii::AsciiParser parser(&sr);
@@ -4949,8 +5006,8 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
   default: {
     if (err) {
       (*err) = fmt::format("Unsupported or unimplemeneted type `{}`", typeName);
-    } 
-    return false; 
+    }
+    return false;
   }
   }
 
