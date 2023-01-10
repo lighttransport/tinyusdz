@@ -5,9 +5,11 @@
 
 #include <unordered_map>
 
+#include "asset-resolution.hh"
 #include "nonstd/expected.hpp"
 #include "usdShade.hh"
 #include "value-types.hh"
+#include "asset-resolution.hh"
 
 namespace tinyusdz {
 
@@ -409,6 +411,7 @@ class RenderScene {
 ///
 /// @param[in] asset Asset path
 /// @param[in] assetInfo AssetInfo
+/// @param[in] assetResolver AssetResolutionResolver context. Please pass DefaultAssetResolutionResolver() if you don't have custom AssetResolutionResolver.
 /// @param[out] texImageOut TextureImage info.
 /// @param[out] imageData Raw texture image data.
 /// @param[inout] userdata User data.
@@ -421,6 +424,7 @@ class RenderScene {
 typedef bool (*TextureImageLoaderFunction)(
   const value::AssetPath &assetPath,
   const AssetInfo &assetInfo,
+  AssetResolutionResolver &assetResolver,
   TextureImage *imageOut,
   std::vector<uint8_t> *imageData,
   void *userdata,
@@ -430,6 +434,7 @@ typedef bool (*TextureImageLoaderFunction)(
 bool DefaultTextureImageLoaderFunction(
   const value::AssetPath &assetPath,
   const AssetInfo &assetInfo,
+  AssetResolutionResolver &assetResolver,
   TextureImage *imageOut,
   std::vector<uint8_t> *imageData,
   void *userdata,
@@ -476,8 +481,12 @@ class RenderSceneConverter
   RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
   RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
 
-  void SetMaterialConverterConfig(const MaterialConverterConfig &config) {
+  void set_material_config(const MaterialConverterConfig &config) {
     _material_config = config;
+  }
+
+  void set_asset_resoluition_resolver(AssetResolutionResolver &&rhs) {
+    _asset_resolver = std::move(rhs);
   }
 
   ///
@@ -535,6 +544,8 @@ class RenderSceneConverter
   }
 
  private:
+
+  AssetResolutionResolver _asset_resolver;
 
   MaterialConverterConfig _material_config;
   const Stage *_stage{nullptr};
