@@ -40,7 +40,17 @@ typedef bool (*ResolvePathHandler)(const std::string &path, const ResolverAssetI
 class AssetResolutionResolver
 {
  public:
-  static void SetDefaultSearchPath(const std::string &p);
+  // TinyUSDZ does not provide global search paths at the moment.
+  //static void SetDefaultSearchPath(const std::vector<std::string> &p);
+  
+  void set_search_paths(const std::vector<std::string> &paths) {
+    // TODO: Validate input paths.
+    _search_paths = paths;
+  }
+
+  const std::vector<std::string> &search_paths() const {
+    return _search_paths;
+  }
 
   ///
   /// Register user defined filesystem handler.
@@ -51,6 +61,17 @@ class AssetResolutionResolver
     _resolve_path_handler = handler;
   }
 
+  ///
+  /// Check if input asset exists(do asset resolution inside the function).
+  ///
+  bool find(const std::string &assetPath);
+
+  ///
+  /// Resolve asset path and returns resolved path as string.
+  /// Returns empty string when the asset does not exit.
+  ///
+  std::string resolve(const std::string &assetPath);
+
   void set_userdata(void *userdata) { _userdata = userdata; }
   void *get_userdata() { return _userdata; }
 
@@ -58,10 +79,11 @@ class AssetResolutionResolver
 
   ResolvePathHandler _resolve_path_handler{nullptr};
   void *_userdata{nullptr};
-  std::vector<std::string> search_paths;
-  static std::vector<std::string> _default_search_paths;
+  std::vector<std::string> _search_paths;
+  //static std::vector<std::string> _default_search_paths;
   
 };
+
 
 
 } // namespace tinyusdz 

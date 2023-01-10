@@ -2,6 +2,7 @@
 // TODO:
 //   - [ ] Support time-varying shader attribute(timeSamples)
 //
+#include "asset-resolution.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"
@@ -10,6 +11,7 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
+#include "image-loader.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -827,7 +829,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   }
 
   bool tex_ok = tex_loader_fun(
-      assetPath, assetInfo, &texImage, &imageBuffer.data,
+      assetPath, assetInfo, _asset_resolver, &texImage, &imageBuffer.data,
       _material_config.texture_image_loader_function_userdata, &warn, &err);
 
   if (!tex_ok) {
@@ -1313,23 +1315,71 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
 bool DefaultTextureImageLoaderFunction(
   const value::AssetPath &assetPath,
   const AssetInfo &assetInfo,
+  AssetResolutionResolver &assetResolver,
   TextureImage *imageOut,
   std::vector<uint8_t> *imageData,
   void *userdata,
   std::string *warn,
   std::string *err) {
 
-  (void)assetPath;
-  (void)assetInfo;
-  (void)imageOut;
-  (void)imageData;
-  (void)userdata;
-  (void)err;
-
-  // TODO:
-  if (warn) {
-    (*warn) += "TODO: texture image loader.\n";
+  if (!imageOut) {
+    if (err) {
+      (*err) = "`imageOut` argument is nullptr\n";
+    }
+    return false;
   }
+
+  if (!imageData) {
+    if (err) {
+      (*err) = "`imageData` argument is nullptr\n";
+    }
+    return false;
+  }
+
+  // TODO: assetInfo
+  (void)assetInfo;
+  (void)userdata;
+  (void)warn;
+
+  std::string resolvedPath = assetResolver.resolve(assetPath.GetAssetPath());
+
+  if (resolvedPath.empty()) {
+    if (err) {
+      (*err) += fmt::format("Failed to resolve asset path: {}", assetPath.GetAssetPath()); 
+    }
+    return false;
+  }
+
+  DCOUT("Resolved asset path = " << resolvedPath);
+  auto result = tinyusdz::image::LoadImageFromFile(resolvedPath);
+  if (!result) {
+    if (err) {
+      (*err) += "Failed to load image file: " + result.error() + "\n";
+    }
+    return false;
+  }
+
+  TextureImage texImage;
+  
+  texImage.channels = result.value().image.channels;
+
+  if (result.value().image.bpp == 8) {
+    // assume uint8
+    texImage.texelComponentType = ComponentType::UInt8;
+  } else {
+    DCOUT("TODO: bpp = " << result.value().image.bpp);
+    if (err) {
+      (*err) = "TODO or unsupported bpp: " + std::to_string(result.value().image.bpp) + "\n";
+    }
+    return false;
+  }
+
+  texImage.channels = result.value().image.channels;
+  texImage.width = result.value().image.width;
+  texImage.height = result.value().image.height;
+
+  // raw image data
+  (*imageData) = result.value().image.data;
 
   return true;
 }
