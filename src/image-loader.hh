@@ -29,9 +29,10 @@ struct ImageInfoResult {
 /// Load image from a file.
 /// 
 /// @param[in] filename Input filename(or URI)
+/// @param[in] max_memory_limit_in_mb Optional. Maximum image file size in [MB]. Default = 1 TB.
 /// @return ImageResult or error message(std::string)
 ///
-nonstd::expected<ImageResult, std::string> LoadImageFromFile(const std::string &filename);
+nonstd::expected<ImageResult, std::string> LoadImageFromFile(const std::string &filename, const size_t max_memory_limit_in_mb = 1024*1024);
 
 ///
 /// Get Image info from file.
