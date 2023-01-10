@@ -42,6 +42,7 @@
 #endif
 
 #include "image-loader.hh"
+#include "io-util.hh"
 
 namespace tinyusdz {
 namespace image {
@@ -328,6 +329,28 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   }
 
   return std::move(ret);
+}
+
+nonstd::expected<image::ImageResult, std::string> LoadImageFromFile(
+    const std::string &filename, const size_t max_memory_limit_in_mb) {
+
+  // Assume filename is already resolved.
+  std::string filepath = filename;
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = size_t(1024 * 1024 * max_memory_limit_in_mb);
+  std::string err;
+  if (!io::ReadWholeFile(&data, &err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    return nonstd::make_unexpected("File not found or failed to read : \"" + filepath + "\"\n");
+  }
+
+  if (data.size() < 4) {
+    return nonstd::make_unexpected("File size too short. Looks like this file is not an image file : \"" +
+                filepath + "\"\n");
+  }
+
+  return LoadImageFromMemory(data.data(), data.size(), filename);
 }
 
 }  // namespace image
