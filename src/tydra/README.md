@@ -1,5 +1,7 @@
 # What is Tydra?
 
+![Tydra](tydra.png)
+
 TinyUSDZ does not support Hydra interface at the moment.
 We think Hydra(multi-purpose sceneDelegate/renderDelegate interface) is too much for TinyUSDZ usecases(AR, lightweight 3D viewer/runtime, DCC exchange, etc).
 
