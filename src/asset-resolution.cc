@@ -4,5 +4,15 @@
 
 namespace tinyusdz {
 
+bool AssetResolutionResolver::find(const std::string &assetPath) {
+  (void)assetPath;
+  // TODO: Implement
+  return true;
+}
+
+std::string AssetResolutionResolver::resolve(const std::string &assetPath) {
+  // TODO: Implement
+  return assetPath;
+}
 
 } // namespace tinyusdz
