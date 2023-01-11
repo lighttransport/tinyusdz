@@ -142,25 +142,25 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
   // if (auto pv = GetPrimElementName(parent->data())) {
   {
     std::string elementName = parent->element_path().prim_part();
-    DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
-    DCOUT(pprint::Indent(depth) << "Given Path = " << path);
+    //DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
+    //DCOUT(pprint::Indent(depth) << "Given Path = " << path);
     // fully absolute path
     abs_path = parent_path + "/" + elementName;
-    DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
-    DCOUT(pprint::Indent(depth)
-          << "queriying path = " << path.full_path_name());
+    //DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
+    //DCOUT(pprint::Indent(depth)
+    //      << "queriying path = " << path.full_path_name());
     if (abs_path == path.full_path_name()) {
-      DCOUT(pprint::Indent(depth)
-            << "Got it! Found Prim at Path = " << abs_path);
+      //DCOUT(pprint::Indent(depth)
+      //      << "Got it! Found Prim at Path = " << abs_path);
       return parent;
     }
   }
 
-  DCOUT(pprint::Indent(depth)
-        << "# of children : " << parent->children().size());
+  //DCOUT(pprint::Indent(depth)
+  //      << "# of children : " << parent->children().size());
   for (const auto &child : parent->children()) {
     // const std::string &p = parent->elementPath.full_path_name();
-    DCOUT(pprint::Indent(depth + 1) << "Parent path : " << abs_path);
+    //DCOUT(pprint::Indent(depth + 1) << "Parent path : " << abs_path);
     if (auto pv = GetPrimAtPathRec(&child, abs_path, path, depth + 1)) {
       return pv.value();
     }

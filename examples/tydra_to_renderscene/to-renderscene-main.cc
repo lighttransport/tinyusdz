@@ -9,6 +9,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "tinyusdz.hh"
@@ -129,6 +130,15 @@ int main(int argc, char **argv) {
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
   tinyusdz::tydra::RenderScene render_scene;
   tinyusdz::tydra::RenderSceneConverter converter;
+
+  // Add base directory of .usd file to search path.
+  std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
+  std::cout << "Add seach path: " << usd_basedir << "\n";
+
+  converter.set_search_paths({usd_basedir});
+  // TODO: Set user-defined AssetResolutionResolver
+  // AssetResolutionResolver arr;
+  // converter.set_asset_resoluition_resolver(arr);
 
   bool ret = converter.ConvertToRenderScene(stage, &render_scene);
   if (!ret) {

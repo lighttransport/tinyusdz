@@ -119,6 +119,7 @@ enum class ComponentType {
   Int16,
   UInt32,
   Int32,
+  Half,
   Float,
   Double,
 };
@@ -487,6 +488,10 @@ class RenderSceneConverter
 
   void set_asset_resoluition_resolver(AssetResolutionResolver &&rhs) {
     _asset_resolver = std::move(rhs);
+  }
+
+  void set_search_paths(const std::vector<std::string> &paths) {
+    _asset_resolver.set_search_paths(paths);
   }
 
   ///
