@@ -815,56 +815,71 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
                     tex_abs_path.prim_part()));
   }
 
-  TextureImage texImage;
-  BufferData imageBuffer;
-  // Texel data is treated as byte array
-  imageBuffer.componentType = ComponentType::UInt8;
-  imageBuffer.count = 1;
+  // TextureImage and BufferData
+  {
+    TextureImage texImage;
+    BufferData imageBuffer;
+    // Texel data is treated as byte array
+    imageBuffer.componentType = ComponentType::UInt8;
+    imageBuffer.count = 1;
 
-  std::string warn;
+    std::string warn;
 
-  TextureImageLoaderFunction tex_loader_fun = _material_config.texture_image_loader_function;
-  if (!tex_loader_fun) {
-    tex_loader_fun = DefaultTextureImageLoaderFunction;
-  }
+    TextureImageLoaderFunction tex_loader_fun = _material_config.texture_image_loader_function;
+    if (!tex_loader_fun) {
+      tex_loader_fun = DefaultTextureImageLoaderFunction;
+    }
 
-  bool tex_ok = tex_loader_fun(
-      assetPath, assetInfo, _asset_resolver, &texImage, &imageBuffer.data,
-      _material_config.texture_image_loader_function_userdata, &warn, &err);
+    bool tex_ok = tex_loader_fun(
+        assetPath, assetInfo, _asset_resolver, &texImage, &imageBuffer.data,
+        _material_config.texture_image_loader_function_userdata, &warn, &err);
 
-  if (!tex_ok) {
-    PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
-  }
+    if (!tex_ok) {
+      PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
+    }
 
-  if (warn.size()) {
-    DCOUT("WARN: " << warn);
-    // TODO: propagate warnining message
-  }
+    if (warn.size()) {
+      DCOUT("WARN: " << warn);
+      // TODO: propagate warnining message
+    }
 
-  // TODO: Share image data as much as possible.
-  // e.g. Texture A and B uses same image file, but texturing parameter is
-  // different.
-  buffers.emplace_back(imageBuffer);
+    // Assign buffer id
+    texImage.buffer_id = int64_t(buffers.size());
 
-  // Overwrite colorSpace
-  if (texture.sourceColorSpace.authored()) {
-    UsdUVTexture::SourceColorSpace cs;
-    if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
-      if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
-        texImage.colorSpace = tydra::ColorSpace::sRGB;
-      } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
-        texImage.colorSpace = tydra::ColorSpace::Linear;
-      } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
-        // TODO: Read colorspace from a file.
-        if ((texImage.texelComponentType == ComponentType::UInt8) ||
-            (texImage.texelComponentType == ComponentType::Int8)) {
+    // TODO: Share image data as much as possible.
+    // e.g. Texture A and B uses same image file, but texturing parameter is
+    // different.
+    buffers.emplace_back(imageBuffer);
+
+    // Overwrite colorSpace
+    if (texture.sourceColorSpace.authored()) {
+      UsdUVTexture::SourceColorSpace cs;
+      if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
+        if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
           texImage.colorSpace = tydra::ColorSpace::sRGB;
-        } else {
+        } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
           texImage.colorSpace = tydra::ColorSpace::Linear;
+        } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
+          // TODO: Read colorspace from a file.
+          if ((texImage.texelComponentType == ComponentType::UInt8) ||
+              (texImage.texelComponentType == ComponentType::Int8)) {
+            texImage.colorSpace = tydra::ColorSpace::sRGB;
+          } else {
+            texImage.colorSpace = tydra::ColorSpace::Linear;
+          }
         }
       }
     }
+
+    tex.texture_image_id = int64_t(images.size());
+
+    images.emplace_back(texImage);
   }
+
+
+  //
+  // Convert other UVTexture parameters
+  // 
 
   if (texture.bias.authored()) {
     tex.bias = texture.bias.get_value();
@@ -918,15 +933,6 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         // Get value producing attribute(i.e, follow .connection and return
         // terminal Attribute value)
         value::token varname;
-#if 0
-        if (!tydra::EvaluateShaderAttribute(*_stage, *pshader, "inputs:varname",
-                                            &varname, &err)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
-                          "inputs:varname: {}\n",
-                          err));
-        }
-#else
         TerminalAttributeValue attr;
         if (!tydra::EvaluateAttribute(*_stage, *readerPrim, "inputs:varname", &attr, &err)) {
           PUSH_ERROR_AND_RETURN(
@@ -944,7 +950,6 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
           PUSH_ERROR_AND_RETURN("`inputs:varname` is empty token.");
         }
         DCOUT("inputs:varname = " << varname);
-#endif
 
         tex.varname_uv = varname.str();
       } else if (const UsdTransform2d *ptransform =
@@ -967,6 +972,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         tex.fallback_uv[1] = uv[1];
       } else {
         // TODO: report warning.
+        PUSH_WARN("Failed to get fallback `st` texcoord attribute. Maybe `st` is timeSamples attribute?\n");
       }
     }
   }
@@ -1316,13 +1322,13 @@ bool DefaultTextureImageLoaderFunction(
   const value::AssetPath &assetPath,
   const AssetInfo &assetInfo,
   AssetResolutionResolver &assetResolver,
-  TextureImage *imageOut,
+  TextureImage *texImageOut,
   std::vector<uint8_t> *imageData,
   void *userdata,
   std::string *warn,
   std::string *err) {
 
-  if (!imageOut) {
+  if (!texImageOut) {
     if (err) {
       (*err) = "`imageOut` argument is nullptr\n";
     }
@@ -1378,6 +1384,8 @@ bool DefaultTextureImageLoaderFunction(
   texImage.width = result.value().image.width;
   texImage.height = result.value().image.height;
 
+  (*texImageOut) = texImage;
+
   // raw image data
   (*imageData) = result.value().image.data;
 
@@ -1417,6 +1425,18 @@ std::string to_string(ComponentType cty) {
   case ComponentType::Half: { s = "half"; break;}
   case ComponentType::Float: { s = "float"; break;}
   case ComponentType::Double: { s = "double"; break;}
+  }
+
+  return s;
+}
+
+std::string to_string(UVTexture::WrapMode mode) {
+  std::string s;
+  switch (mode) {
+  case UVTexture::WrapMode::REPEAT: { s = "repeat"; break; }
+  case UVTexture::WrapMode::CLAMP_TO_BORDER: { s = "clamp_to_border"; break; }
+  case UVTexture::WrapMode::CLAMP_TO_EDGE: { s = "clamp_to_edge"; break; }
+  case UVTexture::WrapMode::MIRROR: { s = "mirror"; break; }
   }
 
   return s;
@@ -1482,6 +1502,17 @@ std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
   ss << pprint::Indent(indent+1) << "primvar_name " << texture.varname_uv << "\n";
   ss << pprint::Indent(indent+1) << "bias " << texture.bias << "\n";
   ss << pprint::Indent(indent+1) << "scale " << texture.scale << "\n";
+  ss << pprint::Indent(indent+1) << "wrapS " << to_string(texture.wrapS) << "\n";
+  ss << pprint::Indent(indent+1) << "wrapT " << to_string(texture.wrapT) << "\n";
+  ss << pprint::Indent(indent+1) << "fallback_uv " << texture.fallback_uv << "\n";
+  ss << pprint::Indent(indent+1) << "textureImageID " << std::to_string(texture.texture_image_id) << "\n";
+  ss << pprint::Indent(indent+1) << "has UsdTransform2d " << std::to_string(texture.has_transform2d) << "\n";
+  if (texture.has_transform2d) {
+    ss << pprint::Indent(indent+2) << "rotation " << texture.tx_rotation << "\n";
+    ss << pprint::Indent(indent+2) << "scale " << texture.tx_scale << "\n";
+    ss << pprint::Indent(indent+2) << "translation " << texture.tx_translation << "\n";
+    ss << pprint::Indent(indent+2) << "computed_transform " << texture.transform << "\n";
+  }
 
   ss << "\n";
 
@@ -1499,6 +1530,7 @@ std::string DumpImage(const TextureImage &image, uint32_t indent) {
   ss << pprint::Indent(indent+1) << "height " << std::to_string(image.height) << "\n";
   ss << pprint::Indent(indent+1) << "miplevel " << std::to_string(image.miplevel) << "\n";
   ss << pprint::Indent(indent+1) << "colorSpace " << to_string(image.colorSpace) << "\n";
+  ss << pprint::Indent(indent+1) << "bufferID " << std::to_string(image.buffer_id) << "\n";
 
   ss << "\n";
 

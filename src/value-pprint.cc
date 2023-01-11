@@ -289,6 +289,49 @@ std::ostream &operator<<(std::ostream &os,
 }
 
 std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::matrix2f &m) {
+  ofs << "( ";
+
+  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1]) << ")";
+
+  ofs << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::matrix3f &m) {
+  ofs << "( ";
+
+  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1]) << ", " << tinyusdz::dtos(m.m[0][2]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1]) << ", " << tinyusdz::dtos(m.m[1][2]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1]) << ", " << tinyusdz::dtos(m.m[2][2]) << ")";
+
+  ofs << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::matrix4f &m) {
+  ofs << "( ";
+
+  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1]) << ", " << tinyusdz::dtos(m.m[0][2]) << ", "
+      << tinyusdz::dtos(m.m[0][3]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1]) << ", " << tinyusdz::dtos(m.m[1][2]) << ", "
+      << tinyusdz::dtos(m.m[1][3]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1]) << ", " << tinyusdz::dtos(m.m[2][2]) << ", "
+      << tinyusdz::dtos(m.m[2][3]) << "), ";
+  ofs << "(" << tinyusdz::dtos(m.m[3][0]) << ", " << tinyusdz::dtos(m.m[3][1]) << ", " << tinyusdz::dtos(m.m[3][2]) << ", "
+      << tinyusdz::dtos(m.m[3][3]) << ")";
+
+  ofs << " )";
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix2d &m) {
   ofs << "( ";
 

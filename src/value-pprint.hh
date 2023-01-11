@@ -83,6 +83,10 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::dict &v);
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::TimeSamples &ts);
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2f &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3f &v);
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4f &v);
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
