@@ -1345,7 +1345,7 @@ bool DefaultTextureImageLoaderFunction(
 
   if (resolvedPath.empty()) {
     if (err) {
-      (*err) += fmt::format("Failed to resolve asset path: {}", assetPath.GetAssetPath()); 
+      (*err) += fmt::format("Failed to resolve asset path: {}", assetPath.GetAssetPath());
     }
     return false;
   }
@@ -1360,7 +1360,7 @@ bool DefaultTextureImageLoaderFunction(
   }
 
   TextureImage texImage;
-  
+
   texImage.channels = result.value().image.channels;
 
   if (result.value().image.bpp == 8) {
@@ -1391,6 +1391,36 @@ bool DefaultTextureImageLoaderFunction(
 //
 
 namespace {
+
+std::string to_string(ColorSpace cty) {
+  std::string s;
+  switch (cty) {
+  case ColorSpace::sRGB: { s = "srgb"; break; }
+  case ColorSpace::Linear: { s = "linear"; break; }
+  case ColorSpace::Rec709: { s = "rec709"; break; }
+  case ColorSpace::OCIO: { s = "ocio"; break; }
+  case ColorSpace::Custom: { s = "custom"; break; }
+  }
+
+  return s;
+}
+
+std::string to_string(ComponentType cty) {
+  std::string s;
+  switch (cty) {
+  case ComponentType::UInt8: { s = "uint8"; break; }
+  case ComponentType::Int8: { s = "int8"; break;}
+  case ComponentType::UInt16: { s = "uint16"; break;}
+  case ComponentType::Int16: { s = "int16"; break;}
+  case ComponentType::UInt32: { s = "uint32"; break;}
+  case ComponentType::Int32: { s = "int32"; break;}
+  case ComponentType::Half: { s = "half"; break;}
+  case ComponentType::Float: { s = "float"; break;}
+  case ComponentType::Double: { s = "double"; break;}
+  }
+
+  return s;
+}
 
 std::string DumpMesh(const RenderMesh &mesh,
                                uint32_t indent) {
@@ -1460,6 +1490,38 @@ std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
   return ss.str();
 }
 
+std::string DumpImage(const TextureImage &image, uint32_t indent) {
+  std::stringstream ss;
+
+  ss << "TextureImage {\n";
+  ss << pprint::Indent(indent+1) << "channels " << std::to_string(image.channels) << "\n";
+  ss << pprint::Indent(indent+1) << "width " << std::to_string(image.width) << "\n";
+  ss << pprint::Indent(indent+1) << "height " << std::to_string(image.height) << "\n";
+  ss << pprint::Indent(indent+1) << "miplevel " << std::to_string(image.miplevel) << "\n";
+  ss << pprint::Indent(indent+1) << "colorSpace " << to_string(image.colorSpace) << "\n";
+
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+std::string DumpBuffer(const BufferData &buffer, uint32_t indent) {
+  std::stringstream ss;
+
+  ss << "Buffer {\n";
+  ss << pprint::Indent(indent+1) << "bytes " << buffer.data.size() << "\n";
+  ss << pprint::Indent(indent+1) << "count " << std::to_string(buffer.count) << "\n";
+  ss << pprint::Indent(indent+1) << "componentType " << to_string(buffer.componentType) << "\n";
+
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 }  // namespace
 
 std::string DumpRenderScene(const RenderScene &scene, const std::string &format) {
@@ -1498,6 +1560,20 @@ std::string DumpRenderScene(const RenderScene &scene, const std::string &format)
   ss << "textures {\n";
   for (size_t i = 0; i < scene.textures.size(); i++) {
     ss << "[" << i << "] " << DumpUVTexture(scene.textures[i], 1);
+  }
+  ss << "}\n";
+
+  ss << "\n";
+  ss << "images {\n";
+  for (size_t i = 0; i < scene.images.size(); i++) {
+    ss << "[" << i << "] " << DumpImage(scene.images[i], 1);
+  }
+  ss << "}\n";
+
+  ss << "\n";
+  ss << "buffers {\n";
+  for (size_t i = 0; i < scene.buffers.size(); i++) {
+    ss << "[" << i << "] " << DumpBuffer(scene.buffers[i], 1);
   }
   ss << "}\n";
 
