@@ -24,6 +24,15 @@ std::string WcharToUTF8(const std::wstring &wstr);
 std::string ExpandFilePath(const std::string &filepath,
                            void *userdata = nullptr);
 
+bool FileExists(const std::string &filepath, void *userdata = nullptr);
+
+///
+/// Find file from search paths.
+/// Returns empty string if a file is not found.
+/// TODO: Filesystem callback.
+///
+std::string FindFile(const std::string &filepath, const std::vector<std::string> &search_paths);
+
 bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
                    const std::string &filepath, size_t filesize_max = 0,
                    void *userdata = nullptr);

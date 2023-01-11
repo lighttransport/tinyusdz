@@ -109,6 +109,7 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   std::string quoted_path = "\"" + filepath + "\"";
   // char** w;
   // TODO: wordexp() is a awful API. Implement our own file path expansion routine.
+  // Set NOCMD for security.
   int ret = wordexp(quoted_path.c_str(), &p, WRDE_NOCMD);
   if (ret) {
     // err
@@ -385,7 +386,7 @@ bool WriteWholeFile(const std::wstring &filepath,
 
   if (!f) {
     if (err) {
-      // This would print garbage character... 
+      // This would print garbage character...
       // FIXME: First create string in wchar, then convert to wstring?
       (*err) += "File open error for writing : " + WcharToUTF8(filepath) + "\n";
     }
@@ -504,6 +505,72 @@ bool SplitUDIMPath(const std::string &path, std::string *pre, std::string *post)
   }
 
   return true;
+}
+
+bool FileExists(const std::string &filepath, void *userdata) {
+  (void)userdata;
+
+  bool ret{false};
+#ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
+  if (asset_manager) {
+    AAsset *asset = AAssetManager_open(asset_manager, abs_filename.c_str(),
+                                       AASSET_MODE_STREAMING);
+    if (!asset) {
+      return false;
+    }
+    AAsset_close(asset);
+    ret = true;
+  } else {
+    return false;
+  }
+#else
+#ifdef _WIN32
+#if defined(_MSC_VER) || defined(__GLIBCXX__) || defined(_LIBCPP_VERSION)
+  FILE *fp = nullptr;
+  errno_t err = _wfopen_s(&fp, UTF8ToWchar(abs_filename).c_str(), L"rb");
+  if (err != 0) {
+    return false;
+  }
+#else
+  FILE *fp = nullptr;
+  errno_t err = fopen_s(&fp, abs_filename.c_str(), "rb");
+  if (err != 0) {
+    return false;
+  }
+#endif
+
+#else
+  FILE *fp = fopen(filepath.c_str(), "rb");
+#endif
+  if (fp) {
+    ret = true;
+    fclose(fp);
+  } else {
+    ret = false;
+  }
+#endif
+
+  return ret;
+}
+
+
+std::string FindFile(const std::string &filename, const std::vector<std::string> &search_paths) {
+  // TODO: Use ghc filesystem?
+
+  if (filename.empty()) {
+    return filename;
+  }
+
+  for (size_t i = 0; i < search_paths.size(); i++) {
+    std::string absPath =
+        io::ExpandFilePath(io::JoinPath(search_paths[i], filename), /* userdata */nullptr);
+    if (io::FileExists(absPath, /* userdata */nullptr)) {
+      return absPath;
+    }
+  }
+
+  return std::string();
+
 }
 
 } // namespace io
