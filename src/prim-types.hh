@@ -2199,11 +2199,42 @@ struct XformOp {
   primvar::PrimVar &var() { return _var; }
 };
 
-// Prim metas, Prim tree and properties.
+// forward decl
+struct Model;
+
+// Variant item in VariantSet.
+// Variant can contain Prim metas, Prim tree and properties.
+struct Variant  {
+
+  const std::string &name() const { return _name; }
+  std::string &name() { return _name; }
+
+  const PrimMeta &metas() const { return _metas; }
+  PrimMeta &metas() { return _metas; }
+
+  std::map<std::string, Property> &properties() { return _props; }
+
+  
+  const std::vector<PrimNode> &primChildren() const { return _primChildren; }
+  std::vector<PrimNode> &primChildren() { return _primChildren; }
+  
+ private:
+  //std::vector<int64_t> primIndices;
+  std::map<std::string, Property> _props;
+
+  std::string _name;
+  PrimMeta _metas;
+
+  // We represent Prim children as `PrimNode` for a while.
+  // TODO: Use PrimSpec?
+  std::vector<PrimNode> _primChildren;
+};
+
 struct VariantSet {
-  PrimMeta metas;
-  std::vector<int64_t> primIndices;
-  std::map<std::string, Property> props;
+
+  std::string name;
+  std::map<std::string, Variant> variantSet;
+
 };
 
 // Generic primspec container.
@@ -2221,7 +2252,7 @@ struct Model {
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
 
-  std::map<std::string, VariantSet> variantSet;
+  std::map<std::string, VariantSet> variantSetList;
 
   std::map<std::string, Property> props;
 
