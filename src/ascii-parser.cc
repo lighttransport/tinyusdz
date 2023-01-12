@@ -2590,17 +2590,38 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   /*
     Asset reference = AsssetIdentifier + optially followd by prim path
 
+    AssetIdentifier could be empty(self-reference?)
+
     Example:
      "bora"
      @bora@
      @bora@</dora>
+     </bora>
   */
 
-  value::AssetPath ap;
-  if (!ParseAssetIdentifier(&ap, triple_deliminated)) {
-    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse asset path identifier.");
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
   }
-  out->asset_path = ap;
+
+  // Parse AssetIdentifier
+  {
+    char nc;
+    if (!LookChar1(&nc)) {
+      return false;
+    }
+
+    if (nc == '<') {
+      // No Asset Identifier.
+      out->asset_path = value::AssetPath("");
+    } else {
+
+      value::AssetPath ap;
+      if (!ParseAssetIdentifier(&ap, triple_deliminated)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse asset path identifier.");
+      }
+      out->asset_path = ap;
+    }
+  }
 
   // Parse optional prim_path
   if (!SkipWhitespace()) {
@@ -2636,7 +2657,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 
 bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   std::string vartype = def.type;
-  const std::string varname = def.name; 
+  const std::string varname = def.name;
 
   MetaVariable var;
 
@@ -2978,7 +2999,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
   } else {
     switch (tyid) {
-    APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE) 
+    APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE)
     case value::TYPE_ID_STRING: {
       if (array_qual) {
         std::vector<std::string> strs;
