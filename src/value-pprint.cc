@@ -397,30 +397,32 @@ std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::AssetPath &asset) {
   std::string in_s = asset.GetAssetPath();
 
-  std::string quote_str = "@";
+  if (!in_s.empty()) {
+    std::string quote_str = "@";
 
-  std::string s;
+    std::string s;
 
-  if (tinyusdz::contains(in_s, '@')) {
-    // Escape '@@@'(to '\@@@') if the input path contains '@@@'
-    for (size_t i = 0; i < in_s.length(); i++) {
-      if ((i + 2) < in_s.length()) {
-        if (in_s[i] == '@' && in_s[i + 1] == '@' && in_s[i + 2] == '@') {
-          s += "\\@@@";
-          i += 2;
-        } else {
-          s += in_s[i];
+    if (tinyusdz::contains(in_s, '@')) {
+      // Escape '@@@'(to '\@@@') if the input path contains '@@@'
+      for (size_t i = 0; i < in_s.length(); i++) {
+        if ((i + 2) < in_s.length()) {
+          if (in_s[i] == '@' && in_s[i + 1] == '@' && in_s[i + 2] == '@') {
+            s += "\\@@@";
+            i += 2;
+          } else {
+            s += in_s[i];
+          }
         }
       }
+
+      quote_str = "@@@";
+    } else {
+      s = in_s;
     }
 
-    quote_str = "@@@";
-  } else {
-    s = in_s;
+    // Do not escape backslash for asset path
+    ofs << quote_str << s << quote_str;
   }
-
-  // Do not escape backslash for asset path
-  ofs << quote_str << s << quote_str;
 
   return ofs;
 }
