@@ -271,6 +271,8 @@ static void RegisterPrimMetas(
   // Type can be array. i.e. path, path[]
   metas["references"] = AsciiParser::VariableDef("Reference", "references",
                                                  /* allow array type */ true);
+
+  // TODO: Use relatioship type?
   metas["inherits"] = AsciiParser::VariableDef(value::kPath, "inherits", true);
   metas["payload"] = AsciiParser::VariableDef("Reference", "payload", true);
   metas["specializes"] =
@@ -638,7 +640,7 @@ std::string AsciiParser::GetWarning() {
 
 
 // types: Allowd in dict.
-// std::string is not included since its represented as StringData.
+// std::string is not included since its represented as StringData or std::string.
 // TODO: Include timecode?
 #define APPLY_TO_METAVARIABLE_TYPE(__FUNC) \
   __FUNC(value::token)         \
@@ -936,6 +938,8 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   }
 #else
 
+  // TODO: Unify ParseMetaValue()
+
 #define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
     if (array_qual) { \
       std::vector<__ty> vss; \
@@ -968,6 +972,22 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
         PUSH_ERROR_AND_RETURN("Failed to parse `string`");
       }
       var.set_value(str);
+    }
+    break;
+  }
+  case value::TYPE_ID_ASSET_PATH: {
+    if (array_qual) {
+      std::vector<value::AssetPath> arrs;
+      if (!ParseBasicTypeArray(&arrs)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
+      }
+      var.set_value(arrs);
+    } else {
+      value::AssetPath asset;
+      if (!ReadBasicType(&asset)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `asset`");
+      }
+      var.set_value(asset);
     }
     break;
   }
@@ -2428,6 +2448,7 @@ bool AsciiParser::ParseCustomMetaValue() {
 
 bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
                                        bool *triple_deliminated) {
+  // '..' or "..." are also allowed.
   // @...@
   // or @@@...@@@ (Triple '@'-deliminated asset identifier.)
   // @@@ = Path containing '@'. '@@@' in Path is encoded as '\@@@'
@@ -2457,7 +2478,7 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
   bool valid{false};
 
   if (!maybe_triple) {
-    // std::cout << "maybe single-'@' asset reference\n";
+    // delimiter = " ' @
 
     SeekTo(curr);
     char s;
@@ -2465,15 +2486,19 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
       return false;
     }
 
-    if (s != '@') {
+    char delim = s;
+
+    if ((s == '@') || (s == '\'') || (s == '"')) {
+      // ok
+    } else {
       std::string sstr{s};
-      PUSH_ERROR_AND_RETURN("Reference must start with '@', but got '" + sstr +
+      PUSH_ERROR_AND_RETURN("Asset must start with '@', '\'' or '\"', but got '" + sstr +
                             "'");
     }
 
     std::string tok;
 
-    // Read until '@'
+    // Read until next delimiter
     bool found_delimiter = false;
     while (!Eof()) {
       char c;
@@ -2482,7 +2507,7 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
         return false;
       }
 
-      if (c == '@') {
+      if (c == delim) {
         found_delimiter = true;
         break;
       }
@@ -2566,6 +2591,7 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
     Asset reference = AsssetIdentifier + optially followd by prim path
 
     Example:
+     "bora"
      @bora@
      @bora@</dora>
   */
@@ -2609,22 +2635,29 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
 }
 
 bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
-  const std::string vartype = def.type;
-  const std::string varname = def.name;
+  std::string vartype = def.type;
+  const std::string varname = def.name; 
 
   MetaVariable var;
 
-  bool is_array_type{false};
-  if (def.allow_array_type) {
+  bool array_qual{false};
+
+  if (endsWith(vartype, "[]")) {
+    vartype = removeSuffix(vartype, "[]");
+    array_qual = true;
+  } else if (def.allow_array_type) { // variable can be array
     // Seek '['
     char c;
     if (LookChar1(&c)) {
       if (c == '[') {
-        is_array_type = true;
+        array_qual = true;
       }
     }
   }
 
+
+
+#if 0
   // TODO: Refactor.
   if (vartype == value::kBool) {
     bool value;
@@ -2655,6 +2688,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
 
       var.set_value(value);
     }
+#if 0
   } else if (vartype == "token[]") {
     std::vector<value::token> value;
     if (!ParseBasicTypeArray(&value)) {
@@ -2666,26 +2700,31 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     // DCOUT("token[] = " << to_string(value));
 
     var.set_value(value);
+#endif
   } else if (vartype == value::kString) {
-    value::StringData sdata;
-    if (MaybeTripleQuotedString(&sdata)) {
-      var.set_value(sdata);
-    } else {
-      std::string value;
-      if (!ReadStringLiteral(&value)) {
-        PUSH_ERROR_AND_RETURN("String literal expected for `" + varname + "`.");
+    if (is_array_type) {
+      std::vector<value::StringData> value;
+      if (!ParseBasicTypeArray(&value)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii, fmt::format("string[] expected for `{}`.", varname));
       }
+      DCOUT("string[] = " << value);
+
       var.set_value(value);
+    } else {
+      value::StringData sdata;
+      if (MaybeTripleQuotedString(&sdata)) {
+        var.set_value(sdata);
+      } else {
+        std::string value;
+        if (!ReadStringLiteral(&value)) {
+          PUSH_ERROR_AND_RETURN("String literal expected for `" + varname + "`.");
+        }
+        var.set_value(value);
+      }
     }
 
-  } else if (vartype == "string[]") {
-    // TODO: Support multi-line string?
-    std::vector<std::string> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
+#if 0 // no ref
   } else if (vartype == "ref[]") {
     std::vector<Reference> values;
     if (!ParseBasicTypeArray(&values)) {
@@ -2695,6 +2734,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
 
     var.set_value(values);
 
+#endif
   } else if (vartype == "int[]") {
     std::vector<int32_t> values;
     if (!ParseBasicTypeArray(&values)) {
@@ -2869,13 +2909,129 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   } else {
     PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
   }
+#else
 
-#if 0
-  if (is_array_type) {
-    var.type = vartype + "[]";
-  } else {
-    var.type = vartype;
+
+  // refactored version
+  uint32_t tyid = value::GetTypeId(vartype);
+
+#define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
+    if (array_qual) { \
+      std::vector<__ty> vss; \
+      if (!ParseBasicTypeArray(&vss)) { \
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}[]`", value::TypeTraits<__ty>::type_name())); \
+      } \
+      var.set_value(vss); \
+    } else { \
+      __ty val; \
+      if (!ReadBasicType(&val)) { \
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<__ty>::type_name())); \
+      } \
+      var.set_value(val); \
+    } \
+    break; \
   }
+
+  // Special treatment for "Reference"
+  // FIXME: use assetPath for "Reference"?
+  if (vartype == "Reference") {
+    if (array_qual) {
+      std::vector<Reference> refs;
+      if (!ParseBasicTypeArray(&refs)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      var.set_value(refs);
+    } else {
+      nonstd::optional<Reference> ref;
+      if (!ReadBasicType(&ref)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      if (ref) {
+        var.set_value(ref.value());
+      } else {
+        // None
+        var.set_value(value::ValueBlock());
+      }
+    }
+  } else if (vartype == value::kPath) {
+    if (array_qual) {
+      std::vector<Path> paths;
+      if (!ParseBasicTypeArray(&paths)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+      }
+      var.set_value(paths);
+
+    } else {
+      Path path;
+      if (!ReadBasicType(&path)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+      }
+      var.set_value(path);
+    }
+  } else {
+    switch (tyid) {
+    APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE) 
+    case value::TYPE_ID_STRING: {
+      if (array_qual) {
+        std::vector<std::string> strs;
+        if (!ParseBasicTypeArray(&strs)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
+        }
+        var.set_value(strs);
+      } else {
+        std::string str;
+        if (!ReadBasicType(&str)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+        }
+        var.set_value(str);
+      }
+      break;
+    }
+    case value::TYPE_ID_ASSET_PATH: {
+      if (array_qual) {
+        std::vector<value::AssetPath> arrs;
+        if (!ParseBasicTypeArray(&arrs)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
+        }
+        var.set_value(arrs);
+      } else {
+        value::AssetPath asset;
+        if (!ReadBasicType(&asset)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `asset`");
+        }
+        var.set_value(asset);
+      }
+      break;
+    }
+    case value::TYPE_ID_DICT: {
+      CustomDataType dict;
+
+      DCOUT("Parse dictionary");
+      if (!ParseDict(&dict)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+      }
+      var.set_value(dict);
+      break;
+    }
+    default: {
+      std::string tyname = vartype;
+      if (array_qual) {
+        tyname += "[]";
+      }
+      PUSH_ERROR_AND_RETURN("Unsupported or invalid type for Metadatum:" + tyname);
+    }
+    }
+  }
+
+#undef PARSE_BASE_TYPE
 #endif
 
   (*outvar) = var;

@@ -278,7 +278,11 @@ std::string print_references(const prim::ReferenceList &references, const uint32
   if (vars.empty()) {
     ss << "None";
   } else {
-    ss << vars;
+    if (vars.size() == 1) {
+      ss << vars[0];
+    } else {
+      ss << vars;
+    }
   }
   ss << "\n";
 
@@ -353,6 +357,11 @@ std::string print_payload(const prim::PayloadList &payload, const uint32_t inden
   if (vars.empty()) {
     ss << "None";
   } else {
+    if (vars.size() == 1) {
+      ss << vars[0];
+    } else {
+      ss << vars;
+    }
     ss << vars;
   }
   ss << "\n";
@@ -399,7 +408,12 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
       ss << to_string(listEditQual) << " ";
     }
 
-    ss << "inherits = " << var;
+    if (var.size() == 1) {
+      // print as scalar
+      ss << "inherits = " << var[0];
+    } else {
+      ss << "inherits = " << var;
+    }
     ss << "\n";
   }
 
@@ -412,7 +426,12 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
       ss << to_string(listEditQual) << " ";
     }
 
-    ss << "specializes = " << var;
+    if (var.size() == 1) {
+      // print as scalar
+      ss << "specializes = " << var[0];
+    } else {
+      ss << "specializes = " << var;
+    }
     ss << "\n";
   }
 

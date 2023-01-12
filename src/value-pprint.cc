@@ -419,7 +419,8 @@ std::ostream &operator<<(std::ostream &ofs,
     s = in_s;
   }
 
-  ofs << quote_str << tinyusdz::escapeBackslash(s) << quote_str;
+  // Do not escape backslash for asset path
+  ofs << quote_str << s << quote_str;
 
   return ofs;
 }
@@ -846,6 +847,24 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
         os << print_customData(*p, "", indent);
       } else {
         os << "[InternalError: Dict type TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTraits<value::AssetPath>::type_id(): {
+      auto p = v.as<value::AssetPath>();
+      if (p) {
+        os << (*p);
+      } else {
+        os << "[InternalError: asset type TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTraits<std::vector<value::AssetPath>>::type_id(): {
+      auto p = v.as<std::vector<value::AssetPath>>();
+      if (p) {
+        os << (*p);
+      } else {
+        os << "[InternalError: asset[] type TypeId mismatch.]";
       }
       break;
     }
