@@ -1890,6 +1890,36 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
 }
 #endif
 
+std::string print_variantSetList(
+  const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
+  std::stringstream ss;
+
+  for (const auto &variantSet : vslist) {
+
+    if (variantSet.second.variantSet.empty()) {
+      continue;
+    }
+
+    ss << pprint::Indent(indent) << "variantSet " << quote(variantSet.first) << " = {\n";
+
+    for (const auto &item : variantSet.second.variantSet) {
+      ss << pprint::Indent(indent+1) << quote(item.first);
+
+      if (item.second.metas().authored()) {
+        ss << " (\n";
+        ss << pprint::Indent(indent+1) << ") ";
+      }
+
+      ss << "{\n";
+      ss << pprint::Indent(indent+1) << "{\n";
+
+    }
+
+  }
+  
+  return ss.str();
+}
+
 std::string to_string(const Model &model, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
@@ -1908,6 +1938,10 @@ std::string to_string(const Model &model, const uint32_t indent, bool closing_br
 
   std::set<std::string> tokset;
   ss << print_props(model.props, tokset, model.propertyNames(), indent+1);
+
+  if (model.variantSetList.size()) {
+    ss << print_variantSetList(model.variantSetList, indent+1);
+  }
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
