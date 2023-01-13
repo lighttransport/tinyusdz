@@ -286,6 +286,8 @@ struct GPrim : Xformable {
 
   std::map<std::string, Property> props;
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
 
   bool _valid{true};  // default behavior is valid(allow empty GPrim)
