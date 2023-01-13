@@ -40,6 +40,9 @@ struct Material {
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   // Custom properties
   std::map<std::string, Property> props;
 
@@ -63,6 +66,9 @@ struct NodeGraph {
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   // Custom properties
   std::map<std::string, Property> props;
 
@@ -91,6 +97,9 @@ struct UsdPrimvarReader {
 
   TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   // Custom properties
   std::map<std::string, Property> props;
 };
@@ -150,6 +159,9 @@ struct UsdUVTexture {
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
   TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   // Custom properties
   std::map<std::string, Property> props;
 
@@ -200,6 +212,9 @@ struct UsdPreviewSurface {
   nonstd::optional<Relationship> outputsSurface; // "token outputs:surface", "outputs:surface.connect"
   nonstd::optional<Relationship> outputsDisplacement; // "token outputs:displacement", "outputs:displacement.connect"
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   // Custom properties
   std::map<std::string, Property> props;
 
@@ -228,6 +243,9 @@ struct UsdTransform2d {
   ///
   TypedTerminalAttribute<value::float2> result; // "float2 outputs:result"
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   // Custom properties
   std::map<std::string, Property> props;
 

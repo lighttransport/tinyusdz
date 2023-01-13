@@ -1,0 +1,27 @@
+#usda 1.0
+def SkelRoot "HumanFemale_Group" (
+    variants = {
+        string geometricLOD = "full"
+    }
+    prepend variantSets = "geometricLOD"
+)
+{
+    variantSet "geometricLOD" = {
+        "full" (
+            prepend references = @./assets/HumanFemale.full.usd@
+        ) {
+
+        }
+        "low" (
+            prepend references = @./assets/HumanFemale.low.usd@
+        ) {
+
+        }
+        "medium" (
+            prepend references = @./assets/HumanFemale.medium.usd@
+        ) {
+
+        }
+    }
+}
+

@@ -42,6 +42,9 @@ class Light : public Xformable {
   // rel light:filters
 
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
   PrimMeta meta;
 
