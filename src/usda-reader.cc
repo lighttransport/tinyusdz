@@ -424,19 +424,7 @@ class USDAReader::Impl {
       const prim::ReferenceList &references,
       T *out);
 
-#if 0
-  ///
-  /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
-  /// here, not in Tydra
-  ///
-  template <typename T>
-  bool ReconstructShader(
-      const prim::PropertyMap &properties,
-      const ReferenceList &references,
-      T *out);
-#endif
 
-  // T = Prim class(e.g. Xform)
   template <typename T>
   bool RegisterReconstructCallback() {
     _parser.RegisterPrimConstructFunction(
@@ -444,7 +432,8 @@ class USDAReader::Impl {
         [&](const Path &full_path, const Specifier spec, const std::string &primTypeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const prim::PropertyMap &properties,
-            const ascii::AsciiParser::PrimMetaMap &in_meta)
+            const ascii::AsciiParser::PrimMetaMap &in_meta,
+            const ascii::AsciiParser::VariantSetList &in_variants)
             -> nonstd::expected<bool, std::string> {
           if (!prim_name.is_valid()) {
             return nonstd::make_unexpected("Invalid Prim name: " +
@@ -545,7 +534,8 @@ class USDAReader::Impl {
          [&](const Path &full_path, const Specifier spec, const std::string &typeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const prim::PropertyMap &properties,
-            const ascii::AsciiParser::PrimMetaMap &in_meta)
+            const ascii::AsciiParser::PrimMetaMap &in_meta,
+            const ascii::AsciiParser::VariantSetList &in_variants)
             -> nonstd::expected<bool, std::string> {
 
           if (!prim_name.is_valid()) {
@@ -610,15 +600,8 @@ class USDAReader::Impl {
 
   }
 
+#if 0 // TODO: Not used. Remove
   void ImportScene(tinyusdz::Stage &scene) { _imported_scene = scene; }
-
-#if 0
-  bool HasPath(const std::string &path) {
-    Path p(path, "");
-    TokenizedPath tokPath(p);
-    (void)tokPath;
-    PUSH_ERROR_AND_RETURN("TODO: HasPath()");
-  }
 #endif
 
   void StageMetaProcessor() {
@@ -1110,7 +1093,9 @@ class USDAReader::Impl {
 
   std::string _base_dir;  // Used for importing another USD file
 
+#if 0 // TODO: Remove since not used.
   nonstd::optional<tinyusdz::Stage> _imported_scene;  // Imported scene.
+#endif
 
   // "class" defs
   //std::map<std::string, Klass> _klasses;
@@ -1354,7 +1339,8 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           const int64_t parentPrimIdx,
           const prim::PropertyMap &properties,
           //const prim::ReferenceList &references,
-          const ascii::AsciiParser::PrimMetaMap &in_meta)
+          const ascii::AsciiParser::PrimMetaMap &in_meta,
+          const ascii::AsciiParser::VariantSetList &in_variantSetList)
           -> nonstd::expected<bool, std::string> {
         const Path &parent = full_path.get_parent_prim_path();
         if (!parent.is_valid()) {
@@ -1619,22 +1605,6 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
 
   return true;
 }
-
-#if 0
-template <>
-bool USDAReader::Impl::ReconstructPrim<Material>(
-    const prim::PropertyMap &properties,
-    const ReferenceList &references,
-    Material *material) {
-  (void)properties;
-  (void)references;
-  (void)material;
-
-  PUSH_WARN("TODO: Implement Material.");
-
-  return true;
-}
-#endif
 
 // Generic Prim handler. T = Xform, GeomMesh, ...
 template <typename T>

@@ -4551,10 +4551,13 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
 
 bool AsciiParser::ParseVariantSet(const int64_t primIdx,
                                   const int64_t parentPrimIdx,
-                                  const uint32_t depth) {
+                                  const uint32_t depth,
+                                  std::map<std::string, VariantContent> *variantSetOut) {
+  // variantSet =
   // {
   //   "variantName0" ( metas ) { ... }
   //   "variantName1" ( metas ) { ... }
+  //   "variantName1" spec name ( metas ) { ... }
   //   ...
   // }
   if (!Expect('{')) {
@@ -4617,7 +4620,6 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
       return false;
     }
 
-
     VariantContent variantContent;
 
     while (!Eof()) {
@@ -4662,6 +4664,8 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
         child_spec = Specifier::Class;
       }
 
+      // No specifier => Assume properties only.
+      // Has specifier => Prim
       if (child_spec != Specifier::Invalid) {
         // FIXME: Assign idx dedicated for variant.
         int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
@@ -4851,6 +4855,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
   std::map<std::string, Property> props;
   std::vector<value::token> propNames;
+  VariantSetList variantSetList;
 
   {
     std::string full_path = GetCurrentPath();
@@ -4923,9 +4928,12 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
           return false;
         }
 
-        if (!ParseVariantSet(primIdx, parentPrimIdx, depth)) {
+        std::map<std::string, VariantContent> vmap;
+        if (!ParseVariantSet(primIdx, parentPrimIdx, depth, &vmap)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
         }
+
+        variantSetList.emplace(variantName, vmap);
 
         continue;
       }
@@ -4992,7 +5000,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       Path fullpath(GetCurrentPath(), "");
       Path pname(prim_name, "");
       nonstd::expected<bool, std::string> ret = construct_fun(
-          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas);
+          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas, variantSetList);
 
       if (!ret) {
         // construction failed.
@@ -5013,7 +5021,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
       // pass prim_type as is(empty = empty string)
       nonstd::expected<bool, std::string> ret = _primspec_fun(
-          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas);
+          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas, variantSetList);
 
       if (!ret) {
         // construction failed.

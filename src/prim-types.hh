@@ -2214,7 +2214,6 @@ struct Variant  {
 
   std::map<std::string, Property> &properties() { return _props; }
 
-  
   const std::vector<PrimNode> &primChildren() const { return _primChildren; }
   std::vector<PrimNode> &primChildren() { return _primChildren; }
   
@@ -2661,6 +2660,7 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable);
 ///
 value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak, double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
 
+
 ///
 /// Contains concrete Prim object and composition elements.
 ///
@@ -2669,7 +2669,9 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak, double
 ///
 /// Similar to `PrimIndex` in pxrUSD
 ///
+
 class PrimNode {
+
   Path path;
   Path elementPath;
 
@@ -2697,25 +2699,33 @@ class PrimNode {
 
   ///
   /// List variants in this Prim
+  ///
   /// key = variant prim name
-  /// value = variats
+  /// value = variants
   ///
   const VariantSelectionMap &get_variant_selection_map() const { return vsmap; }
 
   ///
   /// Variants
   ///
-  /// variant element = Property or Prim
+  /// VariantSet = Prim metas + Properties and/or child Prims
+  ///            = repsetent as PrimNode for a while.
   ///
-  using PropertyMap = std::map<std::string, Property>;
-  using PrimNodeMap = std::map<std::string, PrimNode>;
+  /// 
+  /// key = variant name
+  using VariantSet = std::map<std::string, PrimNode>;  
+  std::map<std::string, VariantSet> varitnSetList; // key = variant
+
+  //using PropertyMap = std::map<std::string, Property>;
+  //using PropertyMap = std::map<std::string, Property>;
+  //using PrimNodeMap = std::map<std::string, PrimNode>;
 
   VariantSelectionMap vsmap;          // Original variant selections
   VariantSelectionMap current_vsmap;  // Currently selected variants
 
   // key = variant_name
-  std::map<std::string, PropertyMap> variantAttributeMap;
-  std::map<std::string, PrimNodeMap> variantPrimNodeMap;
+  //std::map<std::string, PropertyMap> variantAttributeMap;
+  //std::map<std::string, PrimNodeMap> variantPrimNodeMap;
 
   std::vector<value::token> primChildren; // List of child Prim nodes
   std::vector<value::token> properties; // List of property names
