@@ -348,10 +348,21 @@ struct GPrim : Xformable {
     return _propertyNames;
   }
 
+  const std::map<std::string, VariantSet> &variantSetList() const {
+    return _variantSetMap;
+  }
+
+  std::map<std::string, VariantSet> &variantSetList() {
+    return _variantSetMap;
+  }
+
  private:
 
   std::vector<value::token> _primChildrenNames;
   std::vector<value::token> _propertyNames; 
+
+  // For Variants
+  std::map<std::string, VariantSet> _variantSetMap;
 
 };
 

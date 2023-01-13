@@ -2201,32 +2201,33 @@ struct XformOp {
 
 // forward decl
 struct Model;
+class Prim;
 
 // Variant item in VariantSet.
 // Variant can contain Prim metas, Prim tree and properties.
 struct Variant  {
 
-  const std::string &name() const { return _name; }
-  std::string &name() { return _name; }
+  //const std::string &name() const { return _name; }
+  //std::string &name() { return _name; }
 
   const PrimMeta &metas() const { return _metas; }
   PrimMeta &metas() { return _metas; }
 
   std::map<std::string, Property> &properties() { return _props; }
 
-  const std::vector<PrimNode> &primChildren() const { return _primChildren; }
-  std::vector<PrimNode> &primChildren() { return _primChildren; }
+  const std::vector<Prim> &primChildren() const { return _primChildren; }
+  std::vector<Prim> &primChildren() { return _primChildren; }
   
  private:
   //std::vector<int64_t> primIndices;
   std::map<std::string, Property> _props;
 
-  std::string _name;
+  //std::string _name; // variant name
   PrimMeta _metas;
 
-  // We represent Prim children as `PrimNode` for a while.
-  // TODO: Use PrimSpec?
-  std::vector<PrimNode> _primChildren;
+  // We represent Prim children as `Prim` for a while.
+  // TODO: Use PrimNode or PrimSpec?
+  std::vector<Prim> _primChildren;
 };
 
 struct VariantSet {
