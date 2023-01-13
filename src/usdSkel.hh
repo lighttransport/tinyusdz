@@ -29,6 +29,9 @@ struct BlendShape {
       pointIndices;  // uniform int[]. optional. vertex indices to the original
                      // mesh for each values in `offsets` and `normalOffsets`.
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
   PrimMeta meta;
 
@@ -72,6 +75,9 @@ struct Skeleton : Xformable {
   TypedAttributeWithFallback<Purpose> purpose{
       Purpose::Default};  // "uniform token purpose"
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
   //std::vector<value::token> xformOpOrder;
 
@@ -131,6 +137,10 @@ struct SkelRoot : Xformable {
   // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
   // node?;
 
+  
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
   PrimMeta meta;
 
@@ -179,6 +189,9 @@ struct SkelAnimation {
                         const value::TimeSampleInterpolationType tinterp =
                             value::TimeSampleInterpolationType::Held);
 
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
   PrimMeta meta;
 
