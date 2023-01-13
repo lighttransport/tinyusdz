@@ -182,6 +182,19 @@ class AsciiParser {
     //}
   };
 
+  using PrimMetaMap =
+      std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
+
+  struct VariantContent {
+    PrimMetaMap metas;
+    std::vector<int64_t> primIndices;  // primIdx of Reconstrcuted Prim.
+    std::map<std::string, Property> props;
+    std::vector<value::token> properties;
+  };
+
+  // TODO: Use std::vector instead of std::map?
+  using VariantSetList = std::map<std::string, std::map<std::string, VariantContent>>;
+
   AsciiParser();
   AsciiParser(tinyusdz::StreamReader *sr);
 
@@ -218,15 +231,19 @@ class AsciiParser {
   // using PrimMetaProcessFunction = std::function<bool(const PrimMetas
   // &metas)>;
 
-  using PrimMetaMap =
-      std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
 
   ///
   /// Prim construction callback function
+  /// TODO: Refactor arguments
   ///
-  /// @param spec : Specifier(`def`, `over` or `class`)
-  /// @param primIdx : primitive index
-  /// @param parentPrimIdx : -1 for root
+  /// @param[in] full_path Absolute Prim Path(e.g. "/scope/gmesh0")
+  /// @param[in] spec Specifier(`def`, `over` or `class`)
+  /// @param[in] primTypeName typeName of this Prim(e.g. "Mesh", "SphereLight")
+  /// @param[in] primIdx primitive index
+  /// @param[in] parentPrimIdx parent Prim index. -1 for root
+  /// @param[in] properties Prim properties
+  /// @param[in] in_meta Input Prim metadataum
+  /// @param[in] in_variantSetList Input VariantSet contents.
   /// @return true upon success or error message.
   ///
   using PrimConstructFunction =
@@ -235,14 +252,9 @@ class AsciiParser {
           const std::string &primTypeName, const Path &prim_name,
           const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
-          const PrimMetaMap &in_meta)>;
+          const PrimMetaMap &in_meta,
+          const VariantSetList &in_variantSetList)>;
 
-  struct VariantContent {
-    PrimMetaMap metas;
-    std::vector<int64_t> primIndices;  // primIdx of Reconstrcuted Prim.
-    std::map<std::string, Property> props;
-    std::vector<value::token> properties;
-  };
 
   ///
   /// Register Prim construction callback function.
@@ -274,7 +286,8 @@ class AsciiParser {
       const std::string &primTypeName, const Path &prim_name,
       const int64_t primIdx, const int64_t parentPrimIdx,
       const std::map<std::string, Property> &properties,
-      const PrimMetaMap &in_meta)>;
+      const PrimMetaMap &in_meta,
+      const VariantSetList &in_variantSetLists)>;
 
   void RegisterPrimSpecFunction(PrimSpecFunction fun) { _primspec_fun = fun; }
 
@@ -722,7 +735,7 @@ class AsciiParser {
 
   // Parse `varianntSet` stmt
   bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx,
-                       const uint32_t depth = 0);
+                       const uint32_t depth, std::map<std::string, VariantContent> *variantSetMap);
 
   // --------------------------------------------
 
