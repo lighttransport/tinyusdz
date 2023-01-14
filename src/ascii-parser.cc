@@ -4705,6 +4705,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
 
     DCOUT(fmt::format("variantSet item {} parsed.", variantName));
 
+    variantContent.metas = metas;
     variantContentMap.emplace(variantName, variantContent);
   }
 

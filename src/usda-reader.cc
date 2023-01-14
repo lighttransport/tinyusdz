@@ -530,9 +530,11 @@ class USDAReader::Impl {
 
                 _prim_nodes[size_t(childPrimIdx)].parent_is_variant = true;
               }
+              DCOUT("Add variant: " << item.first);
               variantNodes.emplace(item.first, std::move(variant));
             }
 
+            DCOUT("Add variantSet: " << variant_name);
             variantSets.emplace(variant_name, std::move(variantNodes));
           }
 
@@ -1272,6 +1274,7 @@ bool USDAReader::Impl::GetAsLayer(Layer *layer) {
 
 namespace {
 
+#if 0
 void ReconstructNodeRec(const size_t idx,
                         const std::vector<PrimNode> &prim_nodes, Prim &parent) {
   const auto &node = prim_nodes[idx];
@@ -1300,7 +1303,7 @@ void ReconstructNodeRec(const size_t idx,
             variant.primChildren().emplace_back(std::move(prim_nodes[size_t(vidx)]));
           }
 
-          variantChildrenIndices.insert(idx);
+          variantChildrenIndices.insert(vidx);
         }
       }
       variant.metas() = std::move(item.second.metas);
@@ -1318,6 +1321,106 @@ void ReconstructNodeRec(const size_t idx,
 
   parent.children().emplace_back(std::move(prim));
 }
+#else
+
+//
+// Construct Prim from PrimNode with botom-up approach 
+// 
+bool ConstructPrimTreeRec(const size_t primIdx,
+                        const std::vector<PrimNode> &prim_nodes,
+                        Prim *destPrim,
+                        std::string *err) {
+
+  if (!destPrim) {
+    if (err) {
+      (*err) = "`destPrim` is nullptr.\n";
+    }
+    return false;
+  }
+
+  if (primIdx >= prim_nodes.size()) {
+    if (err) {
+      (*err) = "primIndex exceeds prim_nodes.size()\n";
+    }
+    return false;
+  }
+
+  const auto &node = prim_nodes[primIdx];
+
+  Prim prim(node.prim);
+  prim.prim_type_name() = node.typeName;
+
+  DCOUT("prim[" << primIdx << "].type = " << node.prim.type_name());
+  DCOUT("prim[" << primIdx << "].variantNodeMap.size = " << node.variantNodeMap.size());
+  //prim.prim_id() = int64_t(idx);
+
+  // Firstly process variants. 
+  std::set<int64_t> variantChildrenIndices; // record variantChildren indices
+
+  std::map<std::string, VariantSet> variantSets;
+  for (const auto &variantNodes : node.variantNodeMap) {
+    DCOUT("variantSet " << variantNodes.first);
+    VariantSet variantSet;
+    for (const auto &item : variantNodes.second) {
+      DCOUT("variant " << item.first);
+      Variant variant;
+      for (const int64_t vidx : item.second.primChildren) {
+        if (variantChildrenIndices.count(vidx)) {
+          // Duplicated variant childrenIndices
+          if (err) {
+            (*err) = fmt::format("variant primIdx {} is referenced multiple times.\n", vidx);
+          }
+          return false;
+        } else {
+          // Add prim to variants
+          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+
+            Prim variantChildPrim(value::Value(nullptr)); // dummy
+            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, &variantChildPrim, err)) {
+              return false;
+            }
+
+            DCOUT(fmt::format("Added prim {} to variantSet {} : variant {}", variantChildPrim.element_name(), variantNodes.first, item.first));
+            variant.primChildren().emplace_back(variantChildPrim);
+          } else {
+            if (err) {
+              (*err) = "primIndex exceeds prim_nodes.size()\n";
+            }
+            return false;
+          }
+
+          variantChildrenIndices.insert(vidx);
+        }
+      }
+      variant.metas() = std::move(item.second.metas);
+      variant.properties() = std::move(item.second.props);
+
+      variantSet.name = variantNodes.first;
+      variantSet.variantSet.emplace(item.first, std::move(variant));
+    }
+    variantSets.emplace(variantNodes.first, std::move(variantSet));
+  }
+  prim.variantSets() = std::move(variantSets);
+
+  for (const auto &cidx : node.children) {
+    if (variantChildrenIndices.count(int64_t(cidx))) {
+      // Prim is processed
+      continue;
+    }
+
+    Prim childPrim(value::Value(nullptr)); // dummy
+    if (!ConstructPrimTreeRec(cidx, prim_nodes, &childPrim, err)) {
+      return false;
+    }
+
+    prim.children().emplace_back(std::move(childPrim));
+  }
+
+  (*destPrim) = std::move(prim);
+  return true;
+}
+
+#endif
 
 }  // namespace
 
@@ -1329,6 +1432,7 @@ bool USDAReader::Impl::ReconstructStage() {
   for (const auto &idx : _toplevel_prims) {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
 
+#if 0
     const auto &node = _prim_nodes[idx];
 
     Prim prim(node.prim);
@@ -1342,12 +1446,25 @@ bool USDAReader::Impl::ReconstructStage() {
 
       prim.children.emplace_back(std::move(child_node.prim));
 #else
-      ReconstructNodeRec(cidx, _prim_nodes, prim);
+      //ReconstructNodeRec(cidx, _prim_nodes, prim);
+      Prim childPrim(value::Value(nullptr)); // dummy Prim
+      if (!ConstructPrimTreeRec(cidx, _prim_nodes, prim, &childPrim, &_err)) {
+        return false;
+      }
 #endif
     }
 
     DCOUT("root prim[" << idx << "].elementPath = " << dump_path(prim.element_path()));
     DCOUT("root prim[" << idx << "].num_children = " << prim.children().size());
+
+#else
+
+    Prim prim(value::Value(nullptr)); // init with dummy Prim
+    if (!ConstructPrimTreeRec(idx, _prim_nodes, &prim, &_err)) {
+      return false;
+    }
+
+#endif
 
     _stage.root_prims().emplace_back(std::move(prim));
 
