@@ -415,13 +415,79 @@ bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
 namespace {
 
 void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
-  ss << "\n";
+
   // Currently, Prim's elementName is read from name variable in concrete Prim class(e.g. Xform::name).
   // TODO: use prim.elementPath for elementName.
   ss << pprint_value(prim.data(), indent, /* closing_brace */ false);
 
+  //
+  // print variant
+  //
+  if (prim.variantSets().size()) {
+    for (const auto &variantSet : prim.variantSets()) {
+      ss << pprint::Indent(indent+1) << "variantSet " << quote(variantSet.first) << " = {\n";
+
+      for (const auto &variantItem : variantSet.second.variantSet) {
+        ss << pprint::Indent(indent+2) << quote(variantItem.first);
+
+        const Variant &variant = variantItem.second;
+
+        if (variant.metas().authored()) {
+          ss << " (\n";
+          ss << print_prim_metas(variant.metas(), indent+3);
+          ss << pprint::Indent(indent+2) << ")";
+        }
+
+        ss << " {\n";
+
+        ss << print_props(variant.properties(), indent+3);
+
+        if (variant.metas().variantChildren.has_value() && 
+            (variant.metas().variantChildren.value().size() == variant.primChildren().size())) {
+
+          std::map<std::string, const Prim *> primNameTable;
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            primNameTable.emplace(variant.primChildren()[i].element_name(), &variant.primChildren()[i]);
+          }
+
+          for (size_t i = 0; i < variant.metas().variantChildren.value().size(); i++) {
+            value::token nameTok = variant.metas().variantChildren.value()[i];
+            const auto it = primNameTable.find(nameTok.str());
+            if (it != primNameTable.end()) {
+              PrimPrintRec(ss, *(it->second), indent + 3);
+              if (i != (variant.primChildren().size() - 1)) {
+                ss << "\n";
+              }
+            } else {
+              // TODO: Report warning?
+            }
+          }
+
+        } else {
+
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            PrimPrintRec(ss, variant.primChildren()[i], indent + 3);
+            if (i != (variant.primChildren().size() - 1)) {
+              ss << "\n";
+            }
+          }
+        
+        }
+
+        ss << pprint::Indent(indent+2) << "}\n";
+
+      }
+    
+      ss << pprint::Indent(indent+1) << "}\n";
+    }
+    ss << "\n";
+  }
+
   DCOUT(prim.element_name() << " num_children = " << prim.children().size());
 
+  //
+  // primChildren
+  //
   if (prim.metas().primChildren.size() == prim.children().size()) {
     // Use primChildren info to determine the order of the traversal.
 
@@ -436,14 +502,20 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
       const auto it = primNameTable.find(nameTok.str());
       if (it != primNameTable.end()) {
         PrimPrintRec(ss, *(it->second), indent + 1);
+        if (i != (prim.children().size() - 1)) {
+          ss << "\n";
+        }
       } else {
         // TODO: Report warning?
       }
     }
 
   } else {
-    for (const auto &child : prim.children()) {
-      PrimPrintRec(ss, child, indent + 1);
+    for (size_t i = 0; i < prim.children().size(); i++) {
+      PrimPrintRec(ss, prim.children()[i], indent + 1);
+      if (i != (prim.children().size() - 1)) {
+        ss << "\n";
+      }
     }
   }
 
@@ -546,7 +618,7 @@ std::string Stage::ExportToString() const {
     ss << ")\n";
   }
 
-  //ss << "\n";
+  ss << "\n";
 
   if (stage_metas.primChildren.size() == root_nodes.size()) {
 
@@ -561,13 +633,20 @@ std::string Stage::ExportToString() const {
       const auto it = primNameTable.find(nameTok.str());
       if (it != primNameTable.end()) {
         PrimPrintRec(ss, *(it->second), 0);
+        if (i != (stage_metas.primChildren.size() - 1)) {
+          ss << "\n";
+        }
       } else {
         // TODO: Report warning?
       }
     }
   } else {
-    for (const auto &item : root_nodes) {
-      PrimPrintRec(ss, item, 0);
+    for (size_t i = 0; i < root_nodes.size(); i++) {
+      PrimPrintRec(ss, root_nodes[i], 0);
+
+      if (i != (root_nodes.size() - 1)) {
+        ss << "\n";
+      }
     }
   }
 
