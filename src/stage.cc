@@ -420,7 +420,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   // TODO: use prim.elementPath for elementName.
   ss << pprint_value(prim.data(), indent, /* closing_brace */ false);
 
-  DCOUT("num_children = " << prim.children().size());
+  DCOUT(prim.element_name() << " num_children = " << prim.children().size());
 
   if (prim.metas().primChildren.size() == prim.children().size()) {
     // Use primChildren info to determine the order of the traversal.

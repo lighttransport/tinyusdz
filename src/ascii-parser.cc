@@ -4554,7 +4554,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
                                   const uint32_t depth,
                                   std::map<std::string, VariantContent> *variantSetOut) {
 
-  if (variantSetOut) {
+  if (!variantSetOut) {
     PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] variantSetOut arg is nullptr.");
   }
   
