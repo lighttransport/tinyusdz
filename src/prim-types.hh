@@ -2214,6 +2214,7 @@ struct Variant  {
   PrimMeta &metas() { return _metas; }
 
   std::map<std::string, Property> &properties() { return _props; }
+  const std::map<std::string, Property> &properties() const { return _props; }
 
   const std::vector<Prim> &primChildren() const { return _primChildren; }
   std::vector<Prim> &primChildren() { return _primChildren; }
@@ -2231,6 +2232,12 @@ struct Variant  {
 };
 
 struct VariantSet {
+
+  // variantSet name = {
+  //   "variant1" ...
+  //   "variant2" ...
+  //   ...
+  // }
 
   std::string name;
   std::map<std::string, Variant> variantSet;
@@ -2252,7 +2259,7 @@ struct Model {
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
 
-  std::map<std::string, VariantSet> variantSetList;
+  //std::map<std::string, VariantSet> variantSets;
 
   std::map<std::string, Property> props;
 
@@ -2590,6 +2597,14 @@ class Prim {
     return _prim_id;
   }
 
+  const std::map<std::string, VariantSet> &variantSets() const {
+    return _variantSets;
+  }
+
+  std::map<std::string, VariantSet> &variantSets() {
+    return _variantSets;
+  }
+
   ///
   /// Get indices for children().
   ///
@@ -2637,6 +2652,8 @@ class Prim {
   mutable std::vector<int64_t> _primChildrenIndices; // Get corresponding array index in _children, based on `metas().primChildren` token[] info. -1 = invalid.
 
   int64_t _prim_id{-1}; // Unique Prim id when positive(starts with 1). Id is assigned by Stage::compute_absolute_prim_path_and_assign_prim_id. Usually [1, NumPrimsInStage)
+
+  std::map<std::string, VariantSet> _variantSets;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   mutable std::mutex _mutex;

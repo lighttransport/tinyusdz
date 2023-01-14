@@ -116,13 +116,23 @@ constexpr auto kTag = "[USDA]";
 
 namespace {
 
+// intermediate data structure for VariantSet
+struct VariantNode {
+  PrimMeta metas;
+  std::map<std::string, Property> props;
+  std::vector<int64_t> primChildren;
+};
+
 struct PrimNode {
   value::Value prim; // stores typed Prim value. Xform, GeomMesh, ...
   std::string elementName;
   std::string typeName; // Prim's typeName
 
   int64_t parent{-1};            // -1 = root node
-  std::vector<size_t> children;  // index to USDAReader._prims[]
+  bool parent_is_variant{false}; // True when this Prim is defined under variantSet stmt.
+  std::vector<size_t> children;  // index to USDAReader._prims[] of childPrims. it contains variant's primChildren also.
+
+  std::map<std::string, std::map<std::string, VariantNode>> variantNodeMap;
 };
 
 // For USD scene read for composition(read by references, subLayers, payloads)
@@ -489,6 +499,43 @@ class USDAReader::Impl {
           prim.spec = spec;
           prim.name = prim_name.prim_part();
 
+          //
+          // variants
+          // NOTE: variantChildren setup is delayed. It will be processed in ReconstructNodeRec()
+          //
+          std::map<std::string, std::map<std::string, VariantNode>> variantSets;
+          for (const auto &variantContext : in_variants) {
+            const std::string variant_name = variantContext.first;
+
+            // Convert VariantContent -> VariantNode
+            std::map<std::string, VariantNode> variantNodes;
+            for (const auto &item : variantContext.second) {
+              VariantNode variant;
+              if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
+                return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
+              }
+              variant.props = item.second.props;
+
+              // child Prim should be already reconstructed.
+              for (const auto &childPrimIdx : item.second.primIndices) {
+                if (childPrimIdx < 0) {
+                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
+                }
+
+                if (size_t(childPrimIdx) >= _prim_nodes.size()) {
+                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _prim_nodes.size()));
+                }
+
+                variant.primChildren.push_back(childPrimIdx);
+
+                _prim_nodes[size_t(childPrimIdx)].parent_is_variant = true;
+              }
+              variantNodes.emplace(item.first, std::move(variant));
+            }
+
+            variantSets.emplace(variant_name, std::move(variantNodes));
+          }
+
           // Add to scene graph.
           // NOTE: Scene graph is constructed from bottom up manner(Children
           // first), so add this primIdx to parent's children.
@@ -500,6 +547,8 @@ class USDAReader::Impl {
 
           _prim_nodes[size_t(primIdx)].prim = std::move(prim);
           _prim_nodes[size_t(primIdx)].typeName = primTypeName;
+          _prim_nodes[size_t(primIdx)].variantNodeMap = variantSets;
+
 
           // Store actual Prim typeName also for Model Prim type.
           // TODO: Find more better way.
@@ -520,7 +569,7 @@ class USDAReader::Impl {
             _toplevel_prims.push_back(size_t(primIdx));
           } else {
             _prim_nodes[size_t(parentPrimIdx)].children.push_back(
-                size_t(primIdx));
+                  size_t(primIdx));
           }
 
           return true;
@@ -530,6 +579,7 @@ class USDAReader::Impl {
   }
 
   void RegisterPrimSpecHandler() {
+    // W.I.P.
     _parser.RegisterPrimSpecFunction(
          [&](const Path &full_path, const Specifier spec, const std::string &typeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
@@ -569,6 +619,14 @@ class USDAReader::Impl {
           primspec.name() = prim_name.prim_part();
           primspec.specifier() = spec;
           primspec.typeName() = typeName;
+
+          // TODO: Prim metas
+          // if (!ReconstructPrimMeta(in_meta, &primspec.metas())) {
+          //   return nonstd::make_unexpected(
+          //       "Failed to process Prim metadataum.");
+          // }
+
+          // TODO: props, variants
 
           DCOUT("primspec name, primType = " << prim_name.prim_part() << ", " << typeName);
 
@@ -1113,7 +1171,7 @@ class USDAReader::Impl {
   // toplevel prims
   std::vector<size_t> _toplevel_prims;  // index to _prim_nodes
 
-  // Flattened array of prim nodes.
+  // 1D Linearized array of prim nodes.
   std::vector<PrimNode> _prim_nodes;
 
   // Path(prim part only) -> index to _prim_nodes[]
@@ -1223,6 +1281,36 @@ void ReconstructNodeRec(const size_t idx,
 
   DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
   //prim.prim_id() = int64_t(idx);
+
+  // First process variants. 
+  std::set<int64_t> variantChildrenIndices; // record variantChildren indices
+
+  std::map<std::string, VariantSet> variantSets;
+  for (const auto &variantNodes : node.variantNodeMap) {
+    VariantSet variantSet;
+    for (const auto &item : variantNodes.second) {
+      Variant variant;
+      for (const int64_t vidx : item.second.primChildren) {
+        if (variantChildrenIndices.count(vidx)) {
+          // Duplicated variant childrenIndices
+          // TODO: Report error.
+        } else {
+          // Add prim to variants
+          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+            variant.primChildren().emplace_back(std::move(prim_nodes[size_t(vidx)]));
+          }
+
+          variantChildrenIndices.insert(idx);
+        }
+      }
+      variant.metas() = std::move(item.second.metas);
+      variant.properties() = std::move(item.second.props);
+
+      variantSet.name = variantNodes.first;
+      variantSet.variantSet.emplace(item.first, std::move(variant));
+    }
+    variantSets.emplace(variantNodes.first, std::move(variantSet));
+  }
 
   for (const auto &cidx : node.children) {
     ReconstructNodeRec(cidx, prim_nodes, prim);

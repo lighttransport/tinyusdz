@@ -181,7 +181,7 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, const st
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_customData(const CustomDataType &customData, const std::string &name, const uint32_t indent);
 std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32_t indent);
-std::string print_variantSetList(const std::map<std::string, VariantSet> &vslist, const uint32_t indent);
+std::string print_variantSetStmt(const std::map<std::string, VariantSet> &vslist, const uint32_t indent);
 std::string print_payload(const prim::PayloadList &payload, const uint32_t indent);
 std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent);
 std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent);
