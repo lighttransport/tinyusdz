@@ -1,6 +1,7 @@
 project('fuzz_tinyusdz', 'c', 'cpp', default_options : ['cpp_std=c++14'])
 
 tinyusdz_sources=[
+  '../../src/asset-resolution.cc',
   '../../src/lz4/lz4.c',
   '../../src/tinyusdz.cc',
   '../../src/lz4-compression.cc',
