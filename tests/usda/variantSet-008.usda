@@ -5,9 +5,15 @@ def "bora" (
 )
 {
     variantSet "shapeVariant" = {
-        "Capsule" ( hidden = 0 ) {
+        "Capsule" {
+	    def Skeleketon "myskel" {
+            }
         }
-        "Cone" ( hidden = 1) {
+        "Cone" {
+	    def Xform "myxform" {
+               def Mesh "mymesh" {
+               }
+            }
         }
     }
 }
