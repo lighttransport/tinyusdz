@@ -312,5 +312,54 @@ std::string unescapeBackslash(const std::string &str) {
   return s;
 }
 
+bool tokenize_variantElement(const std::string &elementName, std::array<std::string, 2> *result) {
+
+  std::vector<std::string> toks;
+
+  // Ensure ElementPath is quoted with '{' and '}'
+  if (startsWith(elementName, "{") && endsWith(elementName, "}")) {
+    // ok
+  } else {
+    return false;
+  }
+
+  // Remove variant quotation
+  std::string name = unwrap(elementName, "{", "}");
+
+  toks = split(name, "=");
+  if (toks.size() == 1) {
+    if (result) {
+      // ensure '=' and newline does not exist.
+      if (counts(toks[0], '=') || hasNewline(toks[0])) {
+        return false;
+      }
+
+      (*result)[0] = toks[0];
+      (*result)[1] = std::string();
+    }
+    return true;
+  } else if (toks.size() == 2) {
+    if (result) {
+      // ensure '=' and newline does not exist.
+      if (counts(toks[0], '=') || hasNewline(toks[0])) {
+        return false;
+      }
+
+      if (counts(toks[1], '=') || hasNewline(toks[1])) {
+        return false;
+      }
+
+      (*result)[0] = toks[0];
+      (*result)[1] = toks[1];
+    }
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool is_variantElementName(const std::string &name) {
+  return tokenize_variantElement(name);
+}
 
 }  // namespace tinyusdz

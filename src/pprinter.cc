@@ -3236,6 +3236,7 @@ std::string dump_path(const Path &path) {
   std::stringstream ss;
   ss << "Path: Prim part = " << path.prim_part();
   ss << ", Prop part = " << path.prop_part();
+  ss << ", Variant part = " << path.variant_part();
   ss << ", elementName = " << path.element_name();
   ss << ", isValid = " << path.is_valid();
   ss << ", isAbsolute = " << path.is_absolute_path();

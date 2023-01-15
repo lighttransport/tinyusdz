@@ -4048,7 +4048,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       // Reconstruct full path
       _paths[idx] =
           isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
-                             : parentPath.AppendPrim(elemToken.str());
+                             : parentPath.AppendElement(elemToken.str()); // prim, variantSelection, etc.
 
       // also set leaf path for 'primChildren' check
       _elemPaths[idx] = Path(elemToken.str(), "");
