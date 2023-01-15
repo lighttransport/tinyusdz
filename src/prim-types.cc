@@ -254,7 +254,7 @@ Path Path::append_property(const std::string &elem) {
     return p;
   }
 
-  if (tokenize_variantElement(elem)) {
+  if (is_variantElementName(elem)) {
     // variant chars are not supported yet.
     p._valid = false;
     return p;
@@ -283,6 +283,14 @@ const Path Path::AppendPrim(const std::string &elem) const {
   Path p = (*this);  // copies
 
   p.append_prim(elem);
+
+  return p;
+}
+
+const Path Path::AppendElement(const std::string &elem) const {
+  Path p = (*this);  // copies
+
+  p.append_element(elem);
 
   return p;
 }
@@ -482,11 +490,17 @@ Path Path::append_element(const std::string &elem) {
     return p;
   }
 
-  std::array<std::string, 2> variant;
-  if (tokenize_variantElement(elem, &variant)) {
-    // variant is not supported yet.
-    p._valid = false;
-    return p;
+  if (is_variantElementName(elem)) {
+    std::array<std::string, 2> variant;
+    if (tokenize_variantElement(elem, &variant)) {
+      _variant_part = variant[0];
+      _variant_selection_part = variant[0];
+      _prim_part += elem; 
+      _element = elem;
+      return p;
+    } else {
+      p._valid = false;
+    }
   }
 
   if (elem[0] == '[') {

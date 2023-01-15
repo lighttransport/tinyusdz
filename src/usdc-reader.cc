@@ -745,6 +745,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
     {
       std::string prop_name = path.value().prop_part();
       if (prop_name.empty()) {
+        DCOUT("path = " << dump_path(path.value()));
         // ???
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
       }
@@ -2172,6 +2173,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       }
 
       {
+        DCOUT("elemPath.prim_name = " << elemPath.prim_part());
         std::string prim_name = elemPath.prim_part();
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
 
@@ -2262,7 +2264,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         return false;
       }
 
-      DCOUT("<== VariantSetFields endn === ");
+      DCOUT("<== VariantSetFields end === ");
 
       // Add variantChildren to prim node.
       // TODO: elemPath

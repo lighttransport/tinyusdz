@@ -185,8 +185,8 @@ enum class Variability {
 ///
 /// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
 /// supported.
-/// - Variant chars('{' '}') is not supported(yet0.
-/// - '../' is TODO
+/// - Variant chars('{' '}') is not supported(yet).
+/// - Relative path(e.g. '../') is not yet supported(TODO)
 ///
 /// and have more limitatons.
 ///
@@ -260,6 +260,7 @@ class Path {
 
   std::string prim_part() const { return _prim_part; }
   std::string prop_part() const { return _prop_part; }
+  std::string variant_part() const { return "{" + _variant_part + "=" + _variant_selection_part + "}"; }
 
   void set_path_type(const PathType ty) { _path_type = ty; }
 
@@ -318,20 +319,21 @@ class Path {
 
   bool is_valid() const { return _valid; }
 
-  bool is_empty() { return (_prim_part.empty() && _prop_part.empty()); }
+  bool is_empty() { return (_prim_part.empty() && _variant_part.empty() && _prop_part.empty()); }
 
   // static Path RelativePath() { return Path("."); }
 
   // Append property path(change internal state)
   Path append_property(const std::string &elem);
 
-  // Append prim path(change internal state)
-  Path append_element(const std::string &elem);  // for legacy
-  Path append_prim(const std::string &elem) { return append_element(elem); }
+  // Append prim or variantSelection path(change internal state)
+  Path append_element(const std::string &elem); 
+  Path append_prim(const std::string &elem) { return append_element(elem); } // for legacy
 
   // Const version. Does not change internal state.
   const Path AppendProperty(const std::string &elem) const;
   const Path AppendPrim(const std::string &elem) const;
+  const Path AppendElement(const std::string &elem) const;
 
   // Get element name(the last element of Path. i.e. Prim's name, Property's name)
   const std::string &element_name() const;
@@ -451,6 +453,18 @@ class Path {
     return true;  // prop part only
   }
 
+  bool is_variant_selection_path() const {
+    if (!is_valid()) {
+      return false;
+    }
+
+    if (_variant_part.size()) {
+      return true;
+    }
+
+    return false;
+  }
+
   // Strip '/'
   Path &make_relative() {
     if (is_absolute_path() && (_prim_part.size() > 1)) {
@@ -490,6 +504,8 @@ class Path {
  private:
   std::string _prim_part;  // e.g. /Model/MyMesh, MySphere
   std::string _prop_part;  // e.g. visibility (`.` is not included)
+  std::string _variant_part; // e.g. `variantColor` for {variantColor=green}
+  std::string _variant_selection_part; // e.g. `green` for {variantColor=green} . Could be empty({variantColor=}).
   mutable std::string _element;    // Element name
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
