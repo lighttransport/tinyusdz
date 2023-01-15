@@ -244,6 +244,7 @@ void CreateScene(tinyusdz::Stage *stage) {
 
     sphere.radius = 3.14;
 
+
   }
 
   //
@@ -261,7 +262,55 @@ void CreateScene(tinyusdz::Stage *stage) {
   // Prim's elementName is read from concrete Prim class(GeomMesh::name,
   // Xform::name, ...)
   tinyusdz::Prim meshPrim(mesh);
+
   tinyusdz::Prim spherePrim(sphere);
+  {
+    // variantSet is maniuplated in Prim.
+    // Currently we don't provide easy API for variantSet.
+    // Need to add variantSet information manually for a while.
+    tinyusdz::VariantSelectionMap vsmap;
+
+    // List of variantSet in the Prim.
+    std::vector<std::string> variantSetList;
+    variantSetList.push_back("colorVariant");
+
+    // key = variantSet name, value = default Variant selection
+    vsmap.emplace("colorVariant", "red");
+    
+    spherePrim.metas().variants = vsmap;
+    spherePrim.metas().variantSets = std::make_pair(tinyusdz::ListEditQual::Append, variantSetList);
+
+    // Variant is composed of metas + properties + childPrims
+    tinyusdz::VariantSet variantSet;
+
+    tinyusdz::Variant redVariant;
+    redVariant.metas().comment = "red color";
+    tinyusdz::value::color3f redColor({1.0f, 0.0f, 0.0f});
+    tinyusdz::Attribute redColorAttr;
+    redColorAttr.set_value(redColor);
+    redVariant.properties().emplace("mycolor", redColorAttr);
+    // TODO: Add example to add childPrims under Variant
+    // redVariant.primChildren().emplace(...)
+
+
+    tinyusdz::Variant greenVariant;
+    greenVariant.metas().comment = "green color";
+    tinyusdz::value::color3f greenColor({0.0f, 1.0f, 0.0f});
+    tinyusdz::Attribute greenColorAttr;
+    greenColorAttr.set_value(greenColor);
+    greenVariant.properties().emplace("mycolor", greenColorAttr);
+
+    variantSet.name = "red";
+    variantSet.variantSet.emplace("red", redVariant);
+
+    variantSet.name = "green";
+    variantSet.variantSet.emplace("green", redVariant);
+      
+    spherePrim.variantSets().emplace("colorVariant", variantSet);
+  }
+
+
+
   tinyusdz::Prim xformPrim(xform);
 
   xformPrim.children().emplace_back(std::move(meshPrim));
