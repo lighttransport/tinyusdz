@@ -9,16 +9,3 @@
     }
 
 )
-
-def Xform "teapot" (
-    kind = "component"
-)
-{
-    def Mesh "Teapot" (
-    )
-    {
-        color3f[] primvars:displayColor = [(1, 1, 1)] (
-        )
-
-    }
-}
