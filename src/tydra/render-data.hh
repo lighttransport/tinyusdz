@@ -466,6 +466,11 @@ nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
 std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
 #endif
 
+struct MeshConverterConfig
+{
+  bool triangulate{true};
+};
+
 struct MaterialConverterConfig
 {
   // DefaultTextureImageLoader will be used when nullptr;
@@ -481,6 +486,10 @@ class RenderSceneConverter
   RenderSceneConverter() = default;
   RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
   RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
+
+  void set_mesh_config(const MeshConverterConfig &config) {
+    _mesh_config = config;
+  }
 
   void set_material_config(const MaterialConverterConfig &config) {
     _material_config = config;
@@ -524,7 +533,7 @@ class RenderSceneConverter
   bool ConvertMesh(
     const tinyusdz::Path &abs_mat_path,
     const tinyusdz::GeomMesh &mesh,
-    const bool triangulate);
+    RenderMesh *dst);
 
   ///
   /// Convert USD Material/Shader to renderer-friendly Material
@@ -552,6 +561,8 @@ class RenderSceneConverter
 
   AssetResolutionResolver _asset_resolver;
 
+  MeshConverterConfig _mesh_config;
+
   MaterialConverterConfig _material_config;
   const Stage *_stage{nullptr};
 
@@ -562,6 +573,7 @@ class RenderSceneConverter
   void PushError(const std::string &msg) {
     _err += msg;
   }
+
   std::string _err;
   std::string _warn;
 };

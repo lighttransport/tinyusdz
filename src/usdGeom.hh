@@ -819,7 +819,8 @@ DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
 
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
   extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err); \
-  extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err);
+  extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err); \
+  extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err);
 
 APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)
 
