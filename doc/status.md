@@ -83,6 +83,11 @@ NOTE: USDC(Binary) = Read only
 
 ## Work in progress
 
+* [ ] Composition(VariantSet) syntax
+  * [x] VariantSet Ascii parse
+  * [x] VariantSet Ascii print
+  * [ ] VariantSet Crate parse
+  * [ ] VariantSet(SpecTypeVariant) Crate write
 * [ ] USDC serialization
 * [ ] Skinning evaluation/validation
 * [ ] Tydra(scene/render delegation)
