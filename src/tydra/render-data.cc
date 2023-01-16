@@ -41,9 +41,6 @@
 
 namespace tinyusdz {
 
-extern template bool GeomPrimvar::flatten_with_indices(
-    std::vector<value::texcoord2f> *dst, std::string *err);
-
 namespace tydra {
 
 namespace {
@@ -458,12 +455,38 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage,
 
 bool RenderSceneConverter::ConvertMesh(const Path &abs_path,
                                        const GeomMesh &mesh,
-                                       const bool triangulate) {
-  (void)abs_path;
+                                       RenderMesh *dstMesh) {
+  if (!dstMesh) {
+    PUSH_ERROR_AND_RETURN("`dst` mesh pointer is nullptr");
+  }
 
+  (void)abs_path;
   RenderMesh dst;
 
-  // TODO: timeSamples
+  bool triangulate = _mesh_config.triangulate;
+
+  // indices
+  // TODO: timeSamples, connections
+  if (const auto pv = mesh.faceVertexIndices.get_value()) {
+    std::vector<int32_t> indices;
+    if (pv.value().get_scalar(&indices)) {
+      // to uint32
+      std::transform(indices.cbegin(), indices.cend(), std::back_inserter(dst.faceVertexIndices), [](int32_t v) {
+        return uint32_t(v);
+      });
+    }
+  }
+
+  if (const auto pv = mesh.faceVertexCounts.get_value()) {
+    std::vector<int32_t> counts;
+    if (pv.value().get_scalar(&counts)) {
+      // to uint32
+      std::transform(counts.cbegin(), counts.cend(), std::back_inserter(dst.faceVertexCounts), [](int32_t v) {
+        return uint32_t(v);
+      });
+    }
+  }
+
 
   if (mesh.get_points().size()) {
     dst.points.resize(mesh.get_points().size());
@@ -553,11 +576,10 @@ bool RenderSceneConverter::ConvertMesh(const Path &abs_path,
   }
 
   if (triangulate) {
-    // TODO: Triangulate.
 
     std::string err;
 
-    std::vector<uint32_t> triangulatedFaceVertexCounts;
+    std::vector<uint32_t> triangulatedFaceVertexCounts; // should be all 3's
     std::vector<uint32_t> triangulatedFaceVertexIndices;
     std::vector<size_t> faceVertexIndexMap;
     if (!TriangulatePolygon<value::float3, float>(
@@ -567,9 +589,14 @@ bool RenderSceneConverter::ConvertMesh(const Path &abs_path,
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
 
+    // TODO: Triangulate primvars with faceVertexIndexMap
+
+    dst.faceVertexCounts = std::move(triangulatedFaceVertexCounts);
+    dst.faceVertexIndices = std::move(triangulatedFaceVertexIndices);
+
   }  // triangulate
 
-  meshes.emplace_back(std::move(dst));
+  (*dstMesh) = std::move(dst);
   return true;
 }
 
@@ -1214,6 +1241,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
     std::vector<RenderMaterial> &rmaterials = converter->materials;
 
+    int64_t rmaterial_id = -1;
+
     if (matIt != converter->materialMap.s_end()) {
       // Got material
       uint64_t mat_id = matIt->second;
@@ -1224,6 +1253,15 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+
+      if (mat_id >= std::numeric_limits<int64_t>::max()) {
+        if (err) {
+          (*err) += "Material index too large.\n";
+        }
+        return false;
+      }
+
+      rmaterial_id = int64_t(mat_id);
       prender_material = &(converter->materials[size_t(mat_id)]);
 
     } else {
@@ -1248,6 +1286,15 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
         // Assign new material ID
         uint64_t mat_id = rmaterials.size();
+
+        if (mat_id >= std::numeric_limits<int64_t>::max()) {
+          if (err) {
+            (*err) += "Material index too large.\n";
+          }
+          return false;
+        }
+        rmaterial_id = int64_t(mat_id);
+
         converter->materialMap.add(path_str, mat_id);
 
         DCOUT("Add material: " << mat_id << " " << rmat.abs_path << " ( " << rmat.name << " ) ");
@@ -1260,6 +1307,26 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     if (prender_material) {
       // TODO:
     }
+
+    RenderMesh rmesh;
+    
+    if (!converter->ConvertMesh(abs_path, *pmesh, &rmesh)) {
+      if (err) {
+        (*err) += fmt::format("Mesh conversion failed: {}",
+                              abs_path.full_path_name());
+      }
+      return false;
+    }
+
+    DCOUT("renderMaterialId = " << rmaterial_id);
+
+    // Do not assign materialIds when no material bound to this Mesh.
+    // TODO: per-face material.
+    if ((rmaterial_id > -1) && (rmaterial_id < std::numeric_limits<int32_t>::max())) {
+      rmesh.materialIds.resize(rmesh.faceVertexCounts.size(), int32_t(rmaterial_id));
+    }
+
+    converter->meshes.emplace_back(std::move(rmesh));
   }
 
   return true;  // continue traversal
@@ -1452,6 +1519,12 @@ std::string DumpMesh(const RenderMesh &mesh,
   ss << pprint::Indent(indent + 1) << "faceVertexCounts \"" << value::print_array_snipped(mesh.faceVertexCounts) << "\"\n";
   ss << pprint::Indent(indent + 1) << "faceVertexIndices \"" << value::print_array_snipped(mesh.faceVertexIndices) << "\"\n";
   ss << pprint::Indent(indent + 1) << "materialIds \"" << value::print_array_snipped(mesh.materialIds) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_facevaryingNormals \"" << mesh.facevaryingNormals.size() << "\"\n";
+  ss << pprint::Indent(indent + 1) << "facevaryingNormals \"" << mesh.facevaryingNormals << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_facevaryingTexcoords " << mesh.facevaryingTexcoords.size() << "\n";
+  for (const auto &uvs : mesh.facevaryingTexcoords) {
+    ss << pprint::Indent(indent + 2) << "[" << uvs.first << "] \"" << uvs.second << "\"\n";
+  }
 
   ss << "\n";
 
@@ -1609,7 +1682,7 @@ std::string DumpRenderScene(const RenderScene &scene, const std::string &format)
   }
   ss << "}\n";
 
-  ss << "TODO: Meshes, Animations, ...\n";
+  //ss << "TODO: Animations, ...\n";
 
   return ss.str();
 }
