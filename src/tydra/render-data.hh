@@ -68,16 +68,33 @@ struct StringAndIdMap {
     return _i_to_s.find(key);
   }
 
-  std::map<uint64_t, std::string>::const_iterator i_end() const {
-    return _i_to_s.end();
-  }
-
   std::map<std::string, uint64_t>::const_iterator find(const std::string &key) const {
     return _s_to_i.find(key);
   }
 
+  std::map<std::string, uint64_t>::const_iterator s_begin() const {
+    return _s_to_i.begin();
+  }
+
   std::map<std::string, uint64_t>::const_iterator s_end() const {
     return _s_to_i.end();
+  }
+
+  std::map<uint64_t, std::string>::const_iterator i_begin() const {
+    return _i_to_s.begin();
+  }
+
+  std::map<uint64_t, std::string>::const_iterator i_end() const {
+    return _i_to_s.end();
+  }
+
+  size_t size() const {
+    // size should be same, but just in case.
+    if (_i_to_s.size() == _s_to_i.size()) {
+      return _i_to_s.size();
+    }
+
+    return 0;
   }
 
   std::map<uint64_t, std::string> _i_to_s;  // index -> string
@@ -155,6 +172,7 @@ enum class VertexAttributeFormat {
   Dvec4, // double4
 };
 
+
 struct VertexAttribute {
   VertexAttributeFormat format{VertexAttributeFormat::Vec3};
   uint32_t stride{0}; //  We don't support packed(interleaved) vertex data, so stride is usually sizeof(VertexAttributeFormat type). 0 = tightly packed. Let app/gfx API decide actual stride bytes.
@@ -162,6 +180,35 @@ struct VertexAttribute {
   std::vector<uint32_t> indices; // Dedicated Index buffer. Set when variability == Indexed. empty = Use vertex index buffer
   VertexVariability variability{VertexVariability::FaceVarying};
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
+
+  size_t counts() const {
+
+    if (stride != 0) {
+      return data.size() / stride;
+    }
+
+    size_t elemsize = 0;
+
+    switch (format) {
+      case VertexAttributeFormat::Float: { elemsize = 4; break;  }
+      case VertexAttributeFormat::Vec2: { elemsize = sizeof(float) * 2; break; }
+      case VertexAttributeFormat::Vec3: { elemsize = sizeof(float) * 3; break; }
+      case VertexAttributeFormat::Vec4: { elemsize = sizeof(float) * 4; break; }
+      case VertexAttributeFormat::Ivec2: { elemsize = sizeof(int) * 2; break; }
+      case VertexAttributeFormat::Uvec4: { elemsize = sizeof(int) * 4; break; }
+      case VertexAttributeFormat::Double: { elemsize = sizeof(double) ; break; }
+      case VertexAttributeFormat::Dvec2: { elemsize = sizeof(double) * 2 ; break; }
+      case VertexAttributeFormat::Dvec3: { elemsize = sizeof(double) * 3; break; }
+      case VertexAttributeFormat::Dvec4: { elemsize = sizeof(double) * 4; break; }
+    }
+
+    if (elemsize == 0) { // this should not happen though.
+      return 0;
+    }
+
+    return data.size() / elemsize;
+  }
+     
 };
 
 enum class ColorSpace {
@@ -244,8 +291,7 @@ struct Node {
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
 
-// Currently normals and texcoords are converted all to facevarying.
-// TODO: Support `varying`(per-vertex)usually p`vertex`)
+// Currently normals and texcoords are converted as facevarying attribute.
 struct RenderMesh {
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
@@ -262,9 +308,9 @@ struct RenderMesh {
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
 
-  std::map<uint32_t, VertexAttribute> primvars;
+  std::map<uint32_t, VertexAttribute> primvars; // Excludes texcoords
 
-  // Index = key to `facevaryingPrimvars`
+  // Index value = key to `primvars`
   StringAndIdMap primvarsMap;
 
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
@@ -530,8 +576,17 @@ class RenderSceneConverter
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
 
+  ///
+  /// @param[in] rmaterial_id RenderMaterial index. -1 if no material assigned to this Mesh. If the mesh has bounded material, RenderMaterial index must be obrained using ConertMaterial method.
+  /// @param[in] mesh Input GeomMesh
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  /// TODO: per-face material(GeomSubset)
+  ///
   bool ConvertMesh(
-    const tinyusdz::Path &abs_mat_path,
+    const int64_t rmaterial_d,
     const tinyusdz::GeomMesh &mesh,
     RenderMesh *dst);
 
