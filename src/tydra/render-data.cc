@@ -99,101 +99,11 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         "Failed to retrieve texture coordinate primvar with concrete type.");
   }
 
-#if 0
-  // TODO: timeSamples, connect
-  {
-    const std::string primvar_name = kPrimvars + name;
-    if (mesh.props.count(primvar_name)) {
-      const Property &prop = mesh.props.at(primvar_name);
-
-      if (prop.is_relationship()) {
-        return nonstd::make_unexpected(
-            fmt::format("UV Primvar must not be Relation: {}", primvar_name));
-      }
-
-      if (prop.is_attribute()) {
-        // pxrUSD only allow int[] for ":indices"
-        // https://github.com/PixarAnimationStudios/USD/issues/859 TinyUSDZ
-        // allow uint[]
-        // TODO: Support timeSampled indices.
-        if (auto pv = prop.get_attribute().get_value<std::vector<T>>()) {
-          vattr.data = pv.value();
-        } else {
-          return nonstd::make_unexpected(
-              fmt::format("UV Primvar must be type `{}`, but got `{}` for {}",
-                          value::TypeTraits<T>::type_name(),
-                          prop.get_attribute().type_name(), primvar_name));
-        }
-      } else if (prop.is_connection()) {
-        return nonstd::make_unexpected(
-            fmt::format("FIXME: Support Connection for UV Primvar property: {}",
-                        primvar_name));
-      } else {
-        return nonstd::make_unexpected(
-            fmt::format("Invalid Index property: {}", primvar_name));
-      }
-
-      // variability
-      // In usdGeom, Default interpolation is "Constant"
-      // TinyUSDZ currently reports error when `interpolation` is missing.
-      auto interp = prop.get_attribute().metas().interpolation;
-      if (interp) {
-      } else {
-        return nonstd::make_unexpected(
-            fmt::format("`interpolation` Attribute metadataum is required for "
-                        "UV primvar. {}",
-                        primvar_name));
-      }
-    } else {
-      return nonstd::make_unexpected(
-          fmt::format("UV Primvar not found. name: {}", primvar_name));
-    }
-  }
-
-  //
-  // has custom indices?
-  //
-  {
-    const std::string index_name = kPrimvars + name + kIndices;
-    if (mesh.props.count(index_name)) {
-      const Property &prop = mesh.props.at(index_name);
-
-      if (prop.is_relationship()) {
-        return nonstd::make_unexpected(fmt::format(
-            "UV Primvar Indices must not be relation: {}", index_name));
-      }
-
-      if (prop.is_attribute()) {
-        // pxrUSD only allow int[] for ":indices"
-        // https://github.com/PixarAnimationStudios/USD/issues/859 TinyUSDZ
-        // allow uint[]
-        // TODO: Support timeSampled indices.
-        // TODO: Need to check variability meta
-        if (auto pv = prop.get_attribute().get_value<std::vector<int32_t>>()) {
-          // convert to uint.
-          vattr.indices.clear();
-          for (const auto &item : pv.value()) {
-            vattr.indices.push_back(uint32_t(item));
-          }
-        } else if (auto pvu =
-                       prop.get_attribute().get_value<std::vector<uint32_t>>()) {
-          vattr.indices = pvu.value();
-        } else {
-          return nonstd::make_unexpected(fmt::format(
-              "Index must be type `int[]` or `uint[]`, but got `{}` for {}",
-              prop.get_attribute().type_name(), index_name));
-        }
-      } else if (prop.is_connection()) {
-        return nonstd::make_unexpected(fmt::format(
-            "FIXME: Support Connection for Index property: {}", index_name));
-      } else {
-        return nonstd::make_unexpected(
-            fmt::format("Invalid Index property: {}", index_name));
-      }
-    }
-  }
-#endif
-
+  vattr.format = VertexAttributeFormat::Vec2;
+  vattr.data.resize(uvs.size() * sizeof(value::texcoord2f));
+  memcpy(vattr.data.data(), uvs.data(), vattr.data.size());
+  vattr.indices.clear(); // just in case.
+  
   return std::move(vattr);
 }
 
@@ -225,7 +135,7 @@ bool TriangulatePolygon(const std::vector<T> &points,
   size_t faceIndexOffset = 0;
 
   // For each polygon(face)
-  for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     uint32_t npolys = faceVertexCounts[i];
 
     if (npolys < 3) {
@@ -254,20 +164,20 @@ bool TriangulatePolygon(const std::vector<T> &points,
       triangulatedFaceVertexIndices.push_back(
           faceVertexIndices[faceIndexOffset + 2]);
       faceVertexIndexMap.push_back(i);
-#if 0
+#if 1
       } else if (npolys == 4) {
         // Use simple split
         // TODO: Split at shortest edge?
         triangulatedFaceVertexCounts.push_back(3);
         triangulatedFaceVertexCounts.push_back(3);
 
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 1]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 2]);
+        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 0]);
+        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 1]);
+        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 2]);
 
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 2]);
-        triangulatedFaceVertexIndices.push_back(dst.faceVertexIndices[faceIndexOffset + 3]);
+        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 0]);
+        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 2]);
+        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 3]);
 
         faceVertexIndexMap.push_back(i);
         faceVertexIndexMap.push_back(i);
@@ -453,14 +363,41 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage,
 }
 #endif
 
-bool RenderSceneConverter::ConvertMesh(const Path &abs_path,
+namespace {
+
+bool ListUVNames(const RenderMaterial &material,
+  const std::vector<UVTexture> &textures,
+  StringAndIdMap &si_map) {
+
+  if (material.surfaceShader.diffuseColor.is_texture()) {
+    int32_t texId = material.surfaceShader.diffuseColor.textureId;
+    if ((texId >= 0) && (size_t(texId) < textures.size())) {
+      const UVTexture &tex = textures[size_t(texId)];
+      if (tex.varname_uv.size()) {
+        if (!si_map.count(tex.varname_uv)) {
+          uint64_t slotId = si_map.size();
+          DCOUT("Add textureSlot: " << tex.varname_uv << ", " << slotId);
+          si_map.add(tex.varname_uv, slotId);
+        }
+      }
+    }
+  }
+
+  // TODO: Other shader params. 
+  
+  return true;
+}  
+
+
+} // namespace local
+
+bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                                        const GeomMesh &mesh,
                                        RenderMesh *dstMesh) {
   if (!dstMesh) {
     PUSH_ERROR_AND_RETURN("`dst` mesh pointer is nullptr");
   }
 
-  (void)abs_path;
   RenderMesh dst;
 
   bool triangulate = _mesh_config.triangulate;
@@ -513,66 +450,73 @@ bool RenderSceneConverter::ConvertMesh(const Path &abs_path,
     }
   }
 
-  // Material/Shader
-  if (mesh.materialBinding) {
-    const Relationship &materialBinding = mesh.materialBinding.value();
-    DCOUT("TODO: materialBinding.");
-    (void)materialBinding;
-  }
-
   // Compute total faceVarying elements;
   size_t num_fvs = 0;
-  for (size_t i = 0; i < dst.faceVertexIndices.size(); i++) {
-    if (dst.faceVertexIndices[i] > dst.faceVertexCounts.size()) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "faceVertexIndices[{}] is out-of-bounds(faceVertexCounts.size {})",
-          dst.faceVertexIndices[i], dst.faceVertexCounts.size()));
-
-      //
-    }
-    num_fvs += dst.faceVertexIndices[i];
+  for (size_t i = 0; i < dst.faceVertexCounts.size(); i++) {
+    num_fvs += dst.faceVertexCounts[i];
   }
 
   DCOUT("num_fvs = " << num_fvs);
 
-  // uvs
+  // uvs from primvars.
+  // uvname(varname) is grabbed from RenderMaterial.
+  // 
+  // TODO: list-up varname from PreviewSurfaceShader members.
+  //
   // Procedure:
   // - Find Shader
   // - Lookup PrimvarReader
   //
 
-  // TEST
-  // UsdPrimvarReader_float2 uv;
-  // if (value::TypeTrait<decltype(uv)>::type_id ==
-  // value::TypeTrait<UsdPrimarReader_float2>::type_id) {
-  //}
-  {
-    std::string uvname = "st";
-    auto ret = GetTextureCoordinate(*_stage, mesh, uvname);
-    if (ret) {
-      const VertexAttribute vattr = ret.value();
+  if ((rmaterial_id > -1) && (size_t(rmaterial_id) < materials.size())) {
 
-      if (vattr.variability != VertexVariability::FaceVarying) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("TODO: non-facevarying UV texcoord attribute is not "
-                        "support yet: {}.",
-                        uvname));
-      }
+    const RenderMaterial &material = materials[size_t(rmaterial_id)];
 
-      if (vattr.indices.size()) {
-        // TODO: Reorder
-      } else {
-        if (vattr.data.size() != num_fvs) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("The number of UV texcoord attribute {} does not "
-                          "match to the number of facevarying elements {}",
-                          vattr.data.size(), num_fvs));
-        }
-      }
-
-    } else {
-      PUSH_ERROR_AND_RETURN(ret.error());
+    StringAndIdMap uvname_map;
+    if (!ListUVNames(material, textures, uvname_map)) {
+      return false; 
     }
+
+    for (auto it = uvname_map.i_begin(); it != uvname_map.i_end(); it++) {
+
+      uint64_t slotId = it->first;
+      std::string uvname = it->second;
+
+      auto ret = GetTextureCoordinate(*_stage, mesh, uvname);
+      if (ret) {
+        const VertexAttribute vattr = ret.value();
+
+        if (vattr.format != VertexAttributeFormat::Vec2) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Texcoord VertexAttribute must be Vec2 type."));
+        }
+
+        if (vattr.variability != VertexVariability::FaceVarying) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("TODO: non-facevarying UV texcoord attribute is not "
+                          "support yet: {}.",
+                          uvname));
+        }
+
+        if (vattr.counts() != num_fvs) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("The number of UV texcoord attributes {} does not "
+                          "match to the number of facevarying elements {}",
+                          vattr.counts(), num_fvs));
+        }
+
+        DCOUT("Add texcoord attr `" << uvname << "` to slot Id " << slotId);
+        std::vector<vec2> uvs(vattr.counts());
+        memcpy(uvs.data(), vattr.data.data(), vattr.data.size());
+
+        dst.facevaryingTexcoords.emplace(slotId, uvs);
+
+      } else {
+        PUSH_ERROR_AND_RETURN(ret.error());
+      }
+
+    }
+
   }
 
   if (triangulate) {
@@ -1234,45 +1178,48 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
     DCOUT("Material: " << abs_path);
 
-    const std::string path_str = abs_path.full_path_name();
-    const auto matIt = converter->materialMap.find(path_str);
+    //
+    // First convert Material
+    //
 
-    const RenderMaterial *prender_material{nullptr};
+    const std::string mesh_path_str = abs_path.full_path_name();
 
     std::vector<RenderMaterial> &rmaterials = converter->materials;
 
+    tinyusdz::Path bound_material_path;
+    const tinyusdz::Material *bound_material{nullptr};
+    bool ret = tinyusdz::tydra::FindBoundMaterial(
+        *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
+        /* suffix */ "", &bound_material_path, &bound_material, err);
+
     int64_t rmaterial_id = -1;
 
-    if (matIt != converter->materialMap.s_end()) {
-      // Got material
-      uint64_t mat_id = matIt->second;
-      if (mat_id >=
-          converter->materials.size()) {  // this should not happen though
-        if (err) {
-          (*err) += "Material index out-of-range.\n";
+    if (ret && bound_material) {
+      DCOUT("Bound material path: " << bound_material_path);
+
+      const auto matIt = converter->materialMap.find(bound_material_path.full_path_name());
+
+      if (matIt != converter->materialMap.s_end()) {
+        // Got material in the cache.
+        uint64_t mat_id = matIt->second;
+        if (mat_id >=
+            converter->materials.size()) {  // this should not happen though
+          if (err) {
+            (*err) += "Material index out-of-range.\n";
+          }
+          return false;
         }
-        return false;
-      }
 
-      if (mat_id >= std::numeric_limits<int64_t>::max()) {
-        if (err) {
-          (*err) += "Material index too large.\n";
+        if (mat_id >= std::numeric_limits<int64_t>::max()) {
+          if (err) {
+            (*err) += "Material index too large.\n";
+          }
+          return false;
         }
-        return false;
-      }
 
-      rmaterial_id = int64_t(mat_id);
-      prender_material = &(converter->materials[size_t(mat_id)]);
+        rmaterial_id = int64_t(mat_id);
 
-    } else {
-      tinyusdz::Path bound_material_path;
-      const tinyusdz::Material *bound_material{nullptr};
-      bool ret = tinyusdz::tydra::FindBoundMaterial(
-          *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
-          /* suffix */ "", &bound_material_path, &bound_material, err);
-
-      if (ret && bound_material) {
-        DCOUT("Bound material path: " << bound_material_path);
+      } else {
 
         RenderMaterial rmat;
         if (!converter->ConvertMaterial(bound_material_path, *bound_material,
@@ -1295,22 +1242,17 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         rmaterial_id = int64_t(mat_id);
 
-        converter->materialMap.add(path_str, mat_id);
-
+        converter->materialMap.add(bound_material_path.full_path_name(), uint64_t(rmaterial_id));
         DCOUT("Add material: " << mat_id << " " << rmat.abs_path << " ( " << rmat.name << " ) ");
-        rmaterials.push_back(rmat);
 
-        prender_material = &(rmaterials.back());
+        rmaterials.push_back(rmat);
       }
     }
 
-    if (prender_material) {
-      // TODO:
-    }
 
     RenderMesh rmesh;
     
-    if (!converter->ConvertMesh(abs_path, *pmesh, &rmesh)) {
+    if (!converter->ConvertMesh(rmaterial_id, *pmesh, &rmesh)) {
       if (err) {
         (*err) += fmt::format("Mesh conversion failed: {}",
                               abs_path.full_path_name());
@@ -1515,16 +1457,23 @@ std::string DumpMesh(const RenderMesh &mesh,
 
   ss << "RenderMesh {\n";
 
+  ss << pprint::Indent(indent + 1) << "num_points " << std::to_string(mesh.points.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "points \"" << value::print_array_snipped(mesh.points) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_faceVertexCounts " << std::to_string(mesh.faceVertexCounts.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "faceVertexCounts \"" << value::print_array_snipped(mesh.faceVertexCounts) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_faceVertexIndices " << std::to_string(mesh.faceVertexIndices.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "faceVertexIndices \"" << value::print_array_snipped(mesh.faceVertexIndices) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_materialIds " << std::to_string(mesh.materialIds.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "materialIds \"" << value::print_array_snipped(mesh.materialIds) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_facevaryingNormals \"" << mesh.facevaryingNormals.size() << "\"\n";
-  ss << pprint::Indent(indent + 1) << "facevaryingNormals \"" << mesh.facevaryingNormals << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_facevaryingTexcoords " << mesh.facevaryingTexcoords.size() << "\n";
+  ss << pprint::Indent(indent + 1) << "num_facevaryingNormals " << mesh.facevaryingNormals.size() << "\n";
+  ss << pprint::Indent(indent + 1) << "facevaryingNormals \"" << value::print_array_snipped(mesh.facevaryingNormals) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_texcoordSlots " << std::to_string(mesh.facevaryingTexcoords.size()) << "\n";
   for (const auto &uvs : mesh.facevaryingTexcoords) {
-    ss << pprint::Indent(indent + 2) << "[" << uvs.first << "] \"" << uvs.second << "\"\n";
+    ss << pprint::Indent(indent + 1) << "num_texcoords_" << std::to_string(uvs.first) << " " << uvs.second.size() << "\n";
+    ss << pprint::Indent(indent + 2) << "texcoords_" << uvs.first << " \"" << value::print_array_snipped(uvs.second) << "\"\n";
   }
+
+  // TODO: primvars
 
   ss << "\n";
 
@@ -1655,6 +1604,7 @@ std::string DumpRenderScene(const RenderScene &scene, const std::string &format)
   }
   ss << "}\n";
 
+  ss << "\n";
   ss << "materials {\n";
   for (size_t i = 0; i < scene.materials.size(); i++) {
     ss << "[" << i << "] " << DumpMaterial(scene.materials[i], 1);
