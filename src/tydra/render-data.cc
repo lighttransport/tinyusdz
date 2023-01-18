@@ -108,6 +108,27 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
 }
 
 ///
+/// For GeomSubset. Build offset table to corresponding array index in mesh.faceVertexIndices.
+/// No need to use this function for triangulated mesh, since
+/// the index can be easily computed as `3 * subset.indices[i]`
+///
+bool BuildFaceVertexIndexOffsets(
+  const std::vector<uint32_t> &faceVertexCounts,
+  std::vector<size_t> &faceVertexIndexOffsets)
+{
+  size_t offset = 0; 
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    uint32_t npolys = faceVertexCounts[i];
+    
+    faceVertexIndexOffsets.push_back(offset);
+    offset += npolys;
+  }
+
+  return true;
+}
+
+
+///
 /// Input: points, faceVertexCounts, faceVertexIndices
 /// Output: triangulated faceVertexCounts(all filled with 3), triangulated
 /// faceVertexIndices, indexMap (length = triangulated faceVertexIndices.
@@ -539,6 +560,17 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     dst.faceVertexIndices = std::move(triangulatedFaceVertexIndices);
 
   }  // triangulate
+
+  // for GeomSubsets
+  if (mesh.geom_subset_children.size()) {
+    std::vector<size_t> faceVertexIndexOffsets;
+    
+    if (!BuildFaceVertexIndexOffsets(
+      dst.faceVertexCounts,
+      faceVertexIndexOffsets)) {
+      PUSH_ERROR_AND_RETURN("Build faceVertexIndexOffsets failed.");
+    }
+  }
 
   (*dstMesh) = std::move(dst);
   return true;
