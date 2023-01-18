@@ -22,12 +22,12 @@ set(SOURCES
     #render.cc
     #render-config.cc
 
-    # tinyusdz
-    ../../src/tinyusdz.cc
-    ../../src/integerCoding.cpp
-    ../../src/pxrLZ4/lz4.cpp
-    ../../src/lz4-compression.cc
 )
+
+
+# TinyUSDZ root
+add_subdirectory(../../ tinyusdz)
+
 
 set(GUI_SOURCES
     ../common/trackball.cc
@@ -71,6 +71,7 @@ target_link_libraries(
     ${BUILD_TARGET}
     ${OPENGL_LIBRARIES}
     glfw
+    tinyusdz::tinyusdz_static
     ${CMAKE_DL_LIBS}
 )
 
