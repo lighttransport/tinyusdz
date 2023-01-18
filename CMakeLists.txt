@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
 set(TINYUSDZ_TARGET "tinyusdz") # TODO: drop `z`
-set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # static lib is always built.
+set(TINYUSDZ_TARGET_NS "tinyusdz::tinyusdz") # dll lib. may not be built.
+set(TINYUSDZ_TARGET_STATIC_NS "tinyusdz::tinyusdz_static") # static lib is always built.
+set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # alias to ${TINYUSDZ_TARGET_STATIC_NS}
 set(BUILD_TARGET_C "c-tinyusd")
 set(BUILD_TARGET_PY "pytinyusd")
 set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
@@ -10,12 +12,30 @@ set(TINYUSDZ_BENCHMARK_TARGET "benchmark_tinyusdz")
 
 project(${TINYUSDZ_TARGET} C CXX)
 
+# PROJECT_IS_TOP_LEVEL is available from cmake 3.21
+if (CMAKE_VERSION VERSION_LESS 3.21)
+  if ("${CMAKE_PROJECT_NAME}" STREQUAL "${TINYUSDZ_TARGET}")
+    set(PROJECT_IS_TOP_LEVEL ON)
+  endif()
+endif ()
+
+
 if (EMSCRIPTEN)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
   set(TINYUSDZ_DEFAULT_EXAMPLES Off)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
   set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API Off)
+  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+elseif(NOT PROJECT_IS_TOP_LEVEL)
+  # assume tinyusdz is added from add_subdirectory()
+  # disable tools, tests and examples build by default.
+  set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
+  set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
+  set(TINYUSDZ_DEFAULT_EXAMPLES Off)
+  set(TINYUSDZ_DEFAULT_WITH_C_API Off)
+  set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
 else()
@@ -198,12 +218,6 @@ endif()
 # of toplevel(root) project.
 # TODO: Property inherit CXX compiler settings from toplevel(root) project.
 
-# PROJECT_IS_TOP_LEVEL is available from cmake 3.21
-if (CMAKE_VERSION VERSION_LESS 3.21)
-  if ("${CMAKE_PROJECT_NAME}" STREQUAL "${TINYUSDZ_TARGET}")
-    set(PROJECT_IS_TOP_LEVEL ON)
-  endif()
-endif ()
 
 if (PROJECT_IS_TOP_LEVEL)
   message(STATUS "TinyUSDZ is being built as toplevel project so set CXX standard here.")
@@ -567,6 +581,10 @@ endif()
 #
 add_library(${TINYUSDZ_TARGET_STATIC} STATIC
             ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+
+# Target with namespace
+add_library(${TINYUSDZ_TARGET_STATIC_NS} ALIAS ${TINYUSDZ_TARGET_STATIC})
+
 add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 
 if(TINYUSDZ_BUILD_SHARED_LIBS)
