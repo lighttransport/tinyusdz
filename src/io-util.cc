@@ -434,7 +434,7 @@ bool IsAbsPath(const std::string &filename) {
 
   // UNC path?
   if (filename.size() > 2) {
-    if ((filename[1] == '\\') && (filename[1] == '\\')) {
+    if ((filename[0] == '\\') && (filename[1] == '\\')) {
       return true;
     }
   }
