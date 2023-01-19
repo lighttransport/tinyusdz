@@ -1947,7 +1947,7 @@ struct TimeSamples {
   }
 
   nonstd::optional<double> get_time(size_t idx) const {
-    if (idx > _samples.size()) {
+    if (idx >= _samples.size()) {
       return nonstd::nullopt;
     }
 
@@ -1959,7 +1959,7 @@ struct TimeSamples {
   }
 
   nonstd::optional<value::Value> get_value(size_t idx) const {
-    if (idx > _samples.size()) {
+    if (idx >= _samples.size()) {
       return nonstd::nullopt;
     }
 

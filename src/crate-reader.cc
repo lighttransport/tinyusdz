@@ -267,7 +267,7 @@ bool CrateReader::ReadString(std::string *s) {
 
 nonstd::optional<std::string> CrateReader::GetSpecString(
     crate::Index index) const {
-  if (index.value <= _specs.size()) {
+  if (index.value < _specs.size()) {
     // ok
   } else {
     return nonstd::nullopt;
