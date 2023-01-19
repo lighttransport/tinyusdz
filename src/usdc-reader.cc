@@ -344,7 +344,7 @@ class USDCReader::Impl {
   size_t memory_used{0};  // in bytes.
 
   nonstd::optional<Path> GetPath(crate::Index index) const {
-    if (index.value <= _paths.size()) {
+    if (index.value < _paths.size()) {
       return _paths[index.value];
     }
 
@@ -352,7 +352,7 @@ class USDCReader::Impl {
   }
 
   nonstd::optional<Path> GetElemPath(crate::Index index) const {
-    if (index.value <= _elemPaths.size()) {
+    if (index.value < _elemPaths.size()) {
       return _elemPaths[index.value];
     }
 
