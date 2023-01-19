@@ -1,3 +1,15 @@
+// Support files
+// 
+// - OpenEXR(through TinyEXR). 16bit and 32bit
+// - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
+// - PNG, Jpeg, bmp, tga, ...(through SBI image). 8bit and 16bit(PNG)
+//
+// TODO:
+//
+// - [ ] Use fpng for 8bit PNG
+// - [ ] 10bit, 12bit and 14bit DNG image
+// - [ ] Support LoD tile, multi-channel for TIFF image
+//
 #if defined(TINYUSDZ_WITH_EXR)
 #include "external/tinyexr.h"
 #endif
@@ -228,10 +240,11 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
     return false;
   }
 
+  // TODO: Support 10, 12 and 14bit Image(e.g. Apple ProRAW 12bit)
   if ((bps == 8) || (bps == 16) || (bps == 32)) {
     // ok
   } else {
-    (*err) += "Invalid bits per sample " + std::to_string(bps) + " for image: " + uri + "\n";
+    (*err) += "Invalid or unsupported bits per sample " + std::to_string(bps) + " for image: " + uri + "\n";
     return false;
   }
 

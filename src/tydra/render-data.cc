@@ -826,24 +826,30 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     imageBuffer.componentType = ComponentType::UInt8;
     imageBuffer.count = 1;
 
-    std::string warn;
+    if (_scene_config.load_texture_assets) {
+      std::string warn;
 
-    TextureImageLoaderFunction tex_loader_fun = _material_config.texture_image_loader_function;
-    if (!tex_loader_fun) {
-      tex_loader_fun = DefaultTextureImageLoaderFunction;
-    }
+      TextureImageLoaderFunction tex_loader_fun = _material_config.texture_image_loader_function;
+      if (!tex_loader_fun) {
+        tex_loader_fun = DefaultTextureImageLoaderFunction;
+      }
 
-    bool tex_ok = tex_loader_fun(
-        assetPath, assetInfo, _asset_resolver, &texImage, &imageBuffer.data,
-        _material_config.texture_image_loader_function_userdata, &warn, &err);
+      bool tex_ok = tex_loader_fun(
+          assetPath, assetInfo, _asset_resolver, &texImage, &imageBuffer.data,
+          _material_config.texture_image_loader_function_userdata, &warn, &err);
 
-    if (!tex_ok) {
-      PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
-    }
+      if (!tex_ok) {
+        PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
+      }
 
-    if (warn.size()) {
-      DCOUT("WARN: " << warn);
-      // TODO: propagate warnining message
+      if (warn.size()) {
+        DCOUT("WARN: " << warn);
+        // TODO: propagate warnining message
+      }
+    } else {
+      // store resolved asset path.
+      texImage.asset_identifier = _asset_resolver.resolve(assetPath.GetAssetPath());
+
     }
 
     // Assign buffer id
@@ -1408,6 +1414,7 @@ bool DefaultTextureImageLoaderFunction(
 
   TextureImage texImage;
 
+  texImage.asset_identifier = resolvedPath;
   texImage.channels = result.value().image.channels;
 
   if (result.value().image.bpp == 8) {
@@ -1579,6 +1586,7 @@ std::string DumpImage(const TextureImage &image, uint32_t indent) {
   std::stringstream ss;
 
   ss << "TextureImage {\n";
+  ss << pprint::Indent(indent+1) << "asset_identifier \"" << image.asset_identifier << "\"\n";
   ss << pprint::Indent(indent+1) << "channels " << std::to_string(image.channels) << "\n";
   ss << pprint::Indent(indent+1) << "width " << std::to_string(image.width) << "\n";
   ss << pprint::Indent(indent+1) << "height " << std::to_string(image.height) << "\n";
