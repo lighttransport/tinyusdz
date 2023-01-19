@@ -137,13 +137,35 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
   * [x] llvm-mingw(clang) supported
   * [x] MinGW gcc supported, but not recommended(You may got compilation failure depending on your build configuration: https://github.com/syoyo/tinyusdz/issues/33 , and linking takes too much time if you use default bfd linker.). If you want to compile TinyUSDZ in MinGW environment, llvm-mingw(clang) is recommended to use.
 
+
 Compilation with C++17 is also supported.
 
 ## Build
 
 ### Integrate to your app
 
-If you are using CMake, just include tinyusdz repo with `add_subdirectory`. 
+If you are using CMake, just include tinyusdz repo with `add_subdirectory` and set include path to `<tinyusdz>/src`
+We recommend to use CMake 3.24 or later.
+(Mininum requirement is 3.16)
+
+```cmake
+
+...
+
+# TinyUSDZ examples, tests and tools builds are disabled by default when
+# tinyusdz is being built as a library with `add_subdirectory`
+add_subdirectory(/path/to/tinyusdz tinyusdz)
+
+target_include_directories(YOUR_APP PRIVATE "/path/to/tinyusdz/src")
+
+# Namespaced static library target `tinyusdz::tinyusdz_static` is provided.
+# At the moment we recommend to use static build of TinyUSDZ. 
+# You can use alias target `tinyusdz_static` also for legacy cmake version. 
+target_link_libraries(YOUR_APP PRIVATE tinyusdz::tinyusdz_static)
+
+# For TinyUSDZ DLL(shared) library target, you can use
+# `tinyusdz` library target  
+```
 
 Another way is simply copy `src` folder to your app, and add `*.cc` files to your app's build system.
 All include paths are set relative from `src` folder, so you can just add include directory to `src` folder.
