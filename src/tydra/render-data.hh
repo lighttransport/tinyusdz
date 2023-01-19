@@ -220,6 +220,8 @@ enum class ColorSpace {
 };
 
 struct TextureImage {
+  std::string asset_identifier; // (resolved) filename or asset identifier.
+
   ComponentType texelComponentType{ComponentType::UInt8};
   ColorSpace colorSpace{ColorSpace::sRGB};
 
@@ -526,12 +528,25 @@ struct MaterialConverterConfig
   // TODO: AssetResolver
 };
 
+struct RenderSceneConverterConfig
+{
+  // Load texture image data on convert.
+  // false: no actual texture file/asset access.
+  // App/User must setup TextureImage manually after the conversion.
+  bool load_texture_assets{true};
+
+};
+
 class RenderSceneConverter
 {
  public:
   RenderSceneConverter() = default;
   RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
   RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
+
+  void set_scene_config(const RenderSceneConverterConfig &config) {
+    _scene_config = config;
+  }
 
   void set_mesh_config(const MeshConverterConfig &config) {
     _mesh_config = config;
@@ -616,6 +631,7 @@ class RenderSceneConverter
 
   AssetResolutionResolver _asset_resolver;
 
+  RenderSceneConverterConfig _scene_config;
   MeshConverterConfig _mesh_config;
 
   MaterialConverterConfig _material_config;
