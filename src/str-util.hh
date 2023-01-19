@@ -163,7 +163,7 @@ inline std::vector<std::string> split(
   while ((s = str.find_first_not_of(sep, e)) != std::string::npos) {
     e = str.find(sep, s);
     result.push_back(str.substr(s, e - s));
-    if (count > kMaxItems) {
+    if (++count > kMaxItems) {
       break;
     }
   }
