@@ -25,5 +25,5 @@ jobs:
             make VERBOSE=1
       - name: Ctest
         run: |
+            cd build
             ctest --output-on-failure
-
