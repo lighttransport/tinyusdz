@@ -436,10 +436,8 @@ class Path {
   }
 
   bool is_absolute_path() const {
-    if (_prim_part.size()) {
-      if ((_prim_part.size() > 0) && (_prim_part[0] == '/')) {
-        return true;
-      }
+    if (_prim_part.size() && _prim_part[0] == '/') {
+      return true;
     }
 
     return false;

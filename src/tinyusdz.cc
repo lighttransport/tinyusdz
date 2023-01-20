@@ -194,7 +194,7 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
+  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     if (err) {
@@ -591,7 +591,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
+  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     return false;
@@ -682,7 +682,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
   std::string base_dir = io::GetBaseDir(_filename);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
+  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     if (err) {
@@ -703,7 +703,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
   std::string base_dir = io::GetBaseDir(_filename);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = size_t(1024 * 1024 * options.max_memory_limit_in_mb);
+  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     return false;
