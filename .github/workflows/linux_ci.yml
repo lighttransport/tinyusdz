@@ -77,6 +77,8 @@ jobs:
       run: ./scripts/bootstrap-cmake-linux-with-osd.sh
     - name: make
       run: cd build && make
+    - name: test
+      run: cd build && ctest --output-on-failure
 
   # 32bit build(Linux only)
   build-32bit:
@@ -94,7 +96,7 @@ jobs:
     - name: make
       run: cd build_m32 && make
     - name: test
-      run: ctest --output-on-failure
+      run: cd build_m32 && ctest --output-on-failure
 
   build:
 
@@ -107,4 +109,4 @@ jobs:
     - name: make
       run: cd build && make
     - name: tests
-      run: ctest --output-on-failure
+      run: cd build && ctest --output-on-failure
