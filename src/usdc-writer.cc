@@ -289,7 +289,7 @@ class Writer {
     warn_ += s;
   }
 
-  bool WriteHeader() {
+  bool WriteHeader(uint64_t toc_offset) {
     char magic[8];
     magic[0] = 'P';
     magic[1] = 'X';
@@ -304,10 +304,6 @@ class Writer {
     version[0] = 0;
     version[1] = 8;
     version[2] = 0;
-
-    // TOC offset(8bytes)
-    // Must be 89 or greater.
-    uint64_t toc_offset;
 
     std::array<uint8_t, 88> header;
     memset(&header, 0, 88);
@@ -434,14 +430,15 @@ class Writer {
     //  return false;
     //}
 
+    const uint64_t toc_offset = static_cast<uint64_t>(oss_.tellp());
     if (!WriteTOC()) {
       PUSH_ERROR("Failed to write TOC.");
       return false;
     }
 
-    // write heder
+    // write header
     oss_.seekp(0, std::ios::beg);
-    if (!WriteHeader()) {
+    if (!WriteHeader(toc_offset)) {
       PUSH_ERROR("Failed to write Header.");
       return false;
     }

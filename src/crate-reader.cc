@@ -87,7 +87,7 @@ class CrateReader::Impl
 //
 // --
 //
-CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr) {
+CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
 #if defined(__wasi__)
@@ -267,7 +267,7 @@ bool CrateReader::ReadString(std::string *s) {
 
 nonstd::optional<std::string> CrateReader::GetSpecString(
     crate::Index index) const {
-  if (index.value <= _specs.size()) {
+  if (index.value < _specs.size()) {
     // ok
   } else {
     return nonstd::nullopt;
