@@ -937,7 +937,19 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(
       NAME usda-parser-unit-test
       COMMAND python ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
-              "$<TARGET_FILE:usda_parser>" --basedir "${PROJECT_SOURCE_DIR}")
+              "$<TARGET_FILE:usda_parser>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
+  endif()
+
+  #
+  # USDA parser tester
+  #
+  if(TINYUSDZ_WITH_TOOL_USDC_PARSER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+    add_test(
+      NAME usdc-parser-unit-test
+      COMMAND python ${PROJECT_SOURCE_DIR}/tests/usdc/unit-runner.py --app
+              "$<TARGET_FILE:usdc_parser>" --basedir "${PROJECT_SOURCE_DIR}/tests/usdc"
+      )
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)

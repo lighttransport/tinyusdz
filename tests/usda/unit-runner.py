@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import subprocess
 
@@ -45,4 +46,10 @@ if __name__ == '__main__':
     if len(false_negatives) > 0:
         for fname in false_negatives:
             print("parse should fail but reported success : ", fname)
+
+    if len(failed) > 0:
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
 
