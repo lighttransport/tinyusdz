@@ -23,5 +23,7 @@ jobs:
             ./scripts/bootstrap-cmake-macos.sh
             cd build
             make VERBOSE=1
-
+      - name: Ctest
+        run: |
+            ctest --output-on-failure
 
