@@ -227,11 +227,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         ret.code = ParseResult::ResultCode::InternalError;
         ret.err = "Internal error. Invalid Property with Attribute connection.";
       }
-      if (auto pv = prop.get_relationTarget()) {
-        return ret;
-      } else {
-        return ret;
-      }
+      return ret;
     }
 
 
