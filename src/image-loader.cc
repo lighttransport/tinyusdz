@@ -114,7 +114,7 @@ bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
   image->channels = req_comp;
   image->bpp = bits;
   image->format = Image::PixelFormat::UInt;
-  image->data.resize(static_cast<size_t>(w * h * req_comp) * size_t(bits / 8));
+  image->data.resize(size_t(w) * size_t(h) * size_t(req_comp) * size_t(bits / 8));
   std::copy(data, data + w * h * req_comp * (bits / 8), image->data.begin());
   stbi_image_free(data);
 
@@ -175,7 +175,7 @@ bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
   image->channels = 4;  // RGBA
   image->bpp = 32;      // fp32
   image->format = Image::PixelFormat::Float;
-  image->data.resize(static_cast<size_t>(width * height * 4) * sizeof(float));
+  image->data.resize(size_t(width) * size_t(height) * 4 * sizeof(float));
   memcpy(image->data.data(), rgba, sizeof(float) * size_t(width) * size_t(height) * 4);
 
   free(rgba);
