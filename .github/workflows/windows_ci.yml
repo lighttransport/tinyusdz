@@ -26,6 +26,8 @@ jobs:
         run: .\vcsetup.bat
       - name: Build
         run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
 
   # Windows(32bit) + Visual Studio 2019 build
   build-windows-msvc-win32:
@@ -42,4 +44,6 @@ jobs:
         run: .\vcsetup-32bit.bat
       - name: Build
         run: cmake --build build_win32 --config Release
+      - name: Test
+        run: ctest --test-dir build_win32 -C Release --output-on-failure
 
