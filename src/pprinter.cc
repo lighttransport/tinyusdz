@@ -1700,8 +1700,6 @@ std::string to_string(tinyusdz::ListEditQual v) {
     return "append";
   } else if (v == tinyusdz::ListEditQual::Add) {
     return "add";
-  } else if (v == tinyusdz::ListEditQual::Append) {
-    return "append";
   } else if (v == tinyusdz::ListEditQual::Delete) {
     return "delete";
   } else if (v == tinyusdz::ListEditQual::Prepend) {
