@@ -1,5 +1,5 @@
 # Assume this project is a root project
-cmake_minimum_required(VERSION 3.5.1)
+cmake_minimum_required(VERSION 3.16)
 
 set(BUILD_TARGET "usdz_optixview")
 
@@ -7,9 +7,9 @@ project(${BUILD_TARGET} C CXX)
 
 
 if (WIN32)
-  set(DEFAULT_OPTIX_INSTALL_DIR "C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.2.0/")
+  set(DEFAULT_OPTIX_INSTALL_DIR "C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.6.0/")
 else()
-  set(DEFAULT_OPTIX_INSTALL_DIR "$HOME/NVIDIA-OptiX-SDK-7.2.0-linux64-x86_64/")
+  set(DEFAULT_OPTIX_INSTALL_DIR "$HOME/NVIDIA-OptiX-SDK-7.6.0-linux64-x86_64/")
 endif()
 
 set(OptiX_INSTALL_DIR ${DEFAULT_OPTIX_INSTALL_DIR} CACHE PATH "Path to OptiX installed location.")
@@ -37,12 +37,10 @@ set(SOURCES
     #render.cc
     #render-config.cc
 
-    # tinyusdz
-    ../../src/tinyusdz.cc
-    ../../src/integerCoding.cpp
-    ../../src/pxrLZ4/lz4.cpp
-    ../../src/lz4-compression.cc
 )
+
+# [tinyusdz]
+add_subdirectory(../../ tinyusdz)
 
 set(GUI_SOURCES
     ../common/trackball.cc
@@ -63,7 +61,7 @@ set(GLFW_BUILD_TESTS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_INSTALL OFF CACHE INTERNAL "" FORCE)
 #option(GLFW_VULKAN_STATIC "Assume the Vulkan loader is linked with the application" OFF)
-add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.2" glfw-3.3.2 EXCLUDE_FROM_ALL)
+add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.6" glfw-3.3.6 EXCLUDE_FROM_ALL)
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
 
@@ -89,6 +87,7 @@ target_link_libraries(
     ${BUILD_TARGET}
     ${OPENGL_LIBRARIES}
     glfw
+    tinyusdz::tinyusdz_static
     ${CMAKE_DL_LIBS}
 )
 

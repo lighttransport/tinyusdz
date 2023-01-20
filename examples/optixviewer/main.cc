@@ -198,6 +198,7 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 
 namespace {
 
+#if 0
 static void DrawGeomMesh(tinyusdz::GeomMesh& mesh) {}
 
 static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
@@ -227,22 +228,8 @@ static void Proc(const tinyusdz::Scene &scene)
   for (auto &mesh : scene.geom_meshes) {
   }
 }
+#endif
 
-static std::string GetFileExtension(const std::string &filename) {
-  if (filename.find_last_of(".") != std::string::npos)
-    return filename.substr(filename.find_last_of(".") + 1);
-  return "";
-}
-
-static std::string str_tolower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(),
-                 // static_cast<int(*)(int)>(std::tolower)         // wrong
-                 // [](int c){ return std::tolower(c); }           // wrong
-                 // [](char c){ return std::tolower(c); }          // wrong
-                 [](unsigned char c) { return std::tolower(c); }  // correct
-  );
-  return s;
-}
 
 } // namespace
 
@@ -324,46 +311,29 @@ int main(int argc, char** argv) {
   }
 
   std::cout << "Loading file " << filename << "\n";
-  std::string ext = str_tolower(GetFileExtension(filename));
 
   std::string warn;
   std::string err;
-  tinyusdz::Scene scene;
+  tinyusdz::Stage stage;
 
-  if (ext.compare("usdz") == 0) {
-    std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filename, &scene, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
-    }
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
 
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filename << "\n";
-      return EXIT_FAILURE;
-    }
-  } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filename, &scene, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-      return EXIT_FAILURE;
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filename << "\n";
-      return EXIT_FAILURE;
-    }
+  if (!warn.empty()) {
+    std::cerr << "WARN : " << warn << "\n";
+    return EXIT_FAILURE;
+  }
+  if (!err.empty()) {
+    std::cerr << "ERR : " << err << "\n";
+    return EXIT_FAILURE;
   }
 
-  Proc(scene);
+  if (!ret) {
+    std::cerr << "Failed to load USD file: " << filename << "\n";
+    return EXIT_FAILURE;
+  }
+
+
+  //Proc(scene);
 
 #ifdef _DEBUG_OPENGL
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
@@ -442,6 +412,7 @@ int main(int argc, char** argv) {
     glEnable(GL_DEPTH_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+#if 0
     // Draw scene
     if ((scene.default_root_node >= 0) && (scene.default_root_node < scene.nodes.size())) {
       DrawNode(scene, scene.nodes[scene.default_root_node]);
@@ -454,6 +425,7 @@ int main(int argc, char** argv) {
         printed = true;
       }
     }
+#endif
 
     // Imgui
 
