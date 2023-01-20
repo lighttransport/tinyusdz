@@ -261,10 +261,10 @@ std::string escapeBackslash(const std::string &str, const bool triple_quoted_str
     for (size_t i = 0; i < str.size(); i++) {
       if (str[i] == '\\') {
         if (i + 3 < str.size()) {
-          if ((str[i+1] == '\'') && (str[i+1] == '\'') && (str[i+2] == '\'')) {
+          if ((str[i+1] == '\'') && (str[i+2] == '\'') && (str[i+3] == '\'')) {
             s += "\\'''";
             i += 3;
-          } else if ((str[i+1] == '"') && (str[i+1] == '"') && (str[i+2] == '"')) {
+          } else if ((str[i+1] == '"') && (str[i+2] == '"') && (str[i+3] == '"')) {
             s += "\\\"\"\"";
             i += 3;
           } else {
