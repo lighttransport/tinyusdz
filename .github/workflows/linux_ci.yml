@@ -96,7 +96,7 @@ jobs:
     - name: make
       run: cd build_m32 && make
     - name: test
-      run: cd build_m32 && ctest -V
+      run: cd build_m32 && ctest --output-on-failure
 
   build:
 
@@ -109,4 +109,4 @@ jobs:
     - name: make
       run: cd build && make
     - name: tests
-      run: cd build && ctest -V
+      run: cd build && ctest --output-on-failure
