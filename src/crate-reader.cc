@@ -87,7 +87,7 @@ class CrateReader::Impl
 //
 // --
 //
-CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr) {
+CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
 #if defined(__wasi__)
