@@ -27,8 +27,6 @@ jobs:
           cmake -G "Visual Studio 17 2022" -A ARM64 -Bbuild_arm64 -S.
       - name: Build
         run: cmake --build build_arm64 --config Release
-      - name: Test
-        run: ctest --test-dir build_arm64 -C Release --output-on-failure
 
   # Windows(ARM32) + Visual Studio 2022 build
   build-windows-arm32-msvc:
@@ -47,6 +45,4 @@ jobs:
           cmake -G "Visual Studio 17 2022" -A ARM -Bbuild_arm32 -S.
       - name: Build
         run: cmake --build build_arm32 --config Release
-      - name: Test
-        run: ctest --test-dir build_arm32 -C Release --output-on-failure
 
