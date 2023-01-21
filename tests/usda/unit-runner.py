@@ -19,6 +19,7 @@ if __name__ == '__main__':
     print("Basedir: ", args.basedir)
     print("App: ", args.app)
 
+    cnt = 0
     # success expected
     for fname in glob.glob(os.path.join(args.basedir, "*.usda")):
         print(fname)
@@ -28,6 +29,8 @@ if __name__ == '__main__':
         if ret != 0:
             failed.append(fname)
 
+        cnt += 1
+
     # failure expected
     for fname in glob.glob(os.path.join(args.basedir, "fail-case/*.usda")):
         cmd = [app, fname]
@@ -35,6 +38,8 @@ if __name__ == '__main__':
         ret = subprocess.call(cmd)
         if ret == 0:
             false_negatives.append(fname)
+
+        cnt += 1
          
     print("=================================")
 
@@ -45,11 +50,15 @@ if __name__ == '__main__':
 
     if len(false_negatives) > 0:
         for fname in false_negatives:
-            print("parse should fail but reported success : ", fname)
+            print("WARN: parse should fail but reported success : ", fname)
+
+    print("Tested {} USDA files".format(cnt))
 
     if len(failed) > 0:
+        print("USDA parse test failed")
         sys.exit(1)
     else:
+        print("USDA parse test success")
         sys.exit(0)
 
 

@@ -2327,7 +2327,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       std::string pTyName; // TinyUSDZ' prim typename
       if (!typeName) {
-        PUSH_WARN("Treat this node as Model(where `typeName` is missing.");
+        PUSH_WARN("Treat this node as Model(where `typeName` is missing).");
         pTyName = "Model";
       } else {
         pTyName = typeName.value();
