@@ -3,6 +3,8 @@
 //
 // Render data structure suited for WebGL and Raytracing render
 
+#include <algorithm>
+#include <cmath>
 #include <unordered_map>
 
 #include "asset-resolution.hh"
@@ -208,7 +210,7 @@ struct VertexAttribute {
 
     return data.size() / elemsize;
   }
-     
+
 };
 
 enum class ColorSpace {
@@ -401,9 +403,18 @@ struct ShaderParam {
     return textureId >= 0;
   }
 
+  template<typename STy>
+  void set_value(const STy &val) {
+    // Currently we assume T == Sty.
+    // TODO: support more type variant
+    static_assert(value::TypeTraits<T>::underlying_type_id() == value::TypeTraits<STy>::underlying_type_id(), "");
+    memcpy(&value, &val, sizeof(T));
+  }
+
   T value;
   int32_t textureId{-1}; // negative = invalid
 };
+
 
 // UsdPreviewSurface
 struct PreviewSurfaceShader {
@@ -628,6 +639,13 @@ class RenderSceneConverter
   }
 
  private:
+
+  template<typename T, typename Dty>
+  bool ConvertPreviewSurfaceShaderParam(
+      const Path &shader_abs_path,
+      const TypedAttributeWithFallback<Animatable<T>> &param,
+      const std::string &param_name,
+      ShaderParam<Dty> &dst_param);
 
   AssetResolutionResolver _asset_resolver;
 

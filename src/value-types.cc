@@ -31,7 +31,7 @@ bool IsLerpSupportedType(uint32_t tyid) {
 
   // See underlying_type_id to simplify check for Role types(e.g. color3f)
 #define IS_SUPPORTED_TYPE(__tyid, __ty) \
-  if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) return true 
+  if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) return true
 
   IS_SUPPORTED_TYPE(tyid, value::half);
   IS_SUPPORTED_TYPE(tyid, value::half2);
@@ -70,7 +70,7 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value 
 
   if (!IsLerpSupportedType(tyid)) {
     return false;
-  } 
+  }
 
   bool ok{false};
   value::Value result;
@@ -840,7 +840,7 @@ size_t Value::array_size() const {
   __FUNC(matrix2d) \
   __FUNC(matrix3d) \
   __FUNC(matrix4d) \
-  __FUNC(frame4d) 
+  __FUNC(frame4d)
 
 #define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     if (auto pv = v_.cast<std::vector<__ty>>()) { \
@@ -851,7 +851,7 @@ size_t Value::array_size() const {
 
 
   switch (v_.type_id()) {
-    APPLY_FUNC_TO_TYPES(ARRAY_SIZE_GET) 
+    APPLY_FUNC_TO_TYPES(ARRAY_SIZE_GET)
     default:
       return 0;
   }
@@ -933,7 +933,7 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout) {
   return false;
 }
 
-// TODO: Use template 
+// TODO: Use template
 bool UpcastType(const std::string &reqType, value::Value &inout) {
   // `reqType` may be Role type. Get underlying type
   uint32_t tyid;
@@ -1042,6 +1042,20 @@ bool UpcastType(const std::string &reqType, value::Value &inout) {
   return false;
 }
 
+#if 0
+bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
+  uint32_t src_utype_id = src.type_id();
+  uint32_t dst_utype_id = src.type_id();
+
+  if (src_utype_id == value::TypeTraits<int32_t>::type_id()) {
+
+  }
+
+  // TODO
+
+  return false;
+}
+#endif
 
 }  // namespace value
 }  // namespace tinyusdz
