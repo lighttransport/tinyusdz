@@ -6,7 +6,11 @@ set(EXAMPLE_BUILD_TARGET "pxrusd")
 project(${EXAMPLE_BUILD_TARGET} C CXX)
 
 # options
-set(EXAMPLE_USD_DIR "dist" CACHE PATH "Path to built USD library")
+set(EXAMPLE_USD_INC_DIR "dist/include" CACHE PATH "Path to pxrUSD include dir")
+set(EXAMPLE_USD_LIB_DIR "dist/lib" CACHE PATH "Path to pxrUSD lib dir")
+set(EXAMPLE_USD_MONOLITHIC OFF CACHE PATH "Is pxrUSD monolithic build?")
+# USD is being built with Python(libboost_python) cannot be detected by pxrConfig.cmake or other settings file, so need to supply Python info manually. 
+set(EXAMPLE_LINK_BOOST_PYTHON OFF CACHE BOOL "Link libboost_python*")
 
 # cmake modules
 
@@ -23,6 +27,34 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # TODO(LTE): Only enable PIC when compiling python module(dll)?.
 set(CMAKE_POSITION_INDEPENDENT_CODE On)
 
+if (${EXAMPLE_LINK_BOOST_PYTHON})
+
+   if(EXAMPLE_PREFER_LOCAL_PYTHON_INSTALLATION)
+       #message(STATUS "Local Python")
+       set(Python3_FIND_FRAMEWORK NEVER) # Do not search framework python
+       set(Python3_FIND_STRATEGY LOCATION)
+       set(Python3_FIND_REGISTRY NEVER) # Windows only
+   else()
+       set(Python_FIND_FRAMEWORK LAST
+       )# Prefer Brew/Conda to Apple framework python
+  endif()
+
+  find_package(
+     Python3
+     COMPONENTS Development.Embed
+     REQUIRED)
+
+  message(STATUS ${Python3_INCLUDE_DIRS})
+  message(STATUS ${Python3_LIBRARIES})
+endif()
+
+
+list(APPEND CMAKE_MODULE_PATH ${EXAMPLE_USD_DIR})
+message(STATUS "USD_INCLUDE_DIRS" ${EXAMPLE_USD_INC_DIR})
+message(STATUS "USD_LIB_DIRS" ${EXAMPLE_USD_LIB_DIRS})
+message(STATUS "USD_MONOLITHIC" ${EXAMPLE_USD_MONOLITHIC})
+
+
 #
 # === core source files ===
 #
@@ -36,19 +68,28 @@ add_sanitizers(${EXAMPLE_BUILD_TARGET})
 
 target_include_directories(${EXAMPLE_BUILD_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-# [usd]
-target_compile_definitions(
-  ${EXAMPLE_BUILD_TARGET}
-  PUBLIC EXAMPLE_USE_USD)
-
-# TODO(LTE): Check if files are exists 
+# [pxrusd]
 target_include_directories(
   ${EXAMPLE_BUILD_TARGET}
-  PUBLIC ${EXAMPLE_USD_DIR}/include)
+  PUBLIC ${EXAMPLE_USD_INC_DIR})
 
-target_link_directories(${EXAMPLE_BUILD_TARGET} PRIVATE ${EXAMPLE_USD_DIR}/lib)
-target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd usdGeom usdUtils sdf tf vt)
+target_link_directories(${EXAMPLE_BUILD_TARGET} PRIVATE ${EXAMPLE_USD_LIB_DIR})
 
+if (EXAMPLE_USD_MONOLITHIC)
+  target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd usdGeom usdUtils sdf tf vt)
+else()
+  target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd_ms)
+endif()
+
+if (${EXAMPLE_LINK_BOOST_PYTHON})
+  # [python]
+  target_link_libraries(${EXAMPLE_BUILD_TARGET} PUBLIC boost_python3${Python3_VERSION_MINOR} Python3::Python)
+endif()
+
+if (UNIX AND EXAMPLE_LINK_X11)
+  # [python]
+  target_link_libraries(${EXAMPLE_BUILD_TARGET} PUBLIC ${X11_LIBRARIES})
+endif()
 
 target_link_libraries(${EXAMPLE_BUILD_TARGET} PUBLIC ${EXAMPLE_EXT_LIBRARIES} ${CMAKE_DL_LIBS} Threads::Threads)
 
