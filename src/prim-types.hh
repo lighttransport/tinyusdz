@@ -1129,6 +1129,15 @@ struct Animatable {
 template <typename T>
 class TypedAttribute {
  public:
+
+  static std::string type_name() {
+    return value::TypeTraits<T>::type_name();
+  }
+
+  static uint32_t type_id() {
+    return value::TypeTraits<T>::type_id();
+  }
+
   void set_value(const T &v) { _attrib = v; }
 
   const nonstd::optional<T> get_value() const {
@@ -1219,8 +1228,8 @@ class TypedTerminalAttribute {
   // value set?
   bool authored() const { return _authored; }
 
-  std::string type_name() const { return value::TypeTraits<T>::type_name(); }
-  uint32_t type_id() const { return value::TypeTraits<T>::type_id(); }
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
+  static uint32_t type_id() { return value::TypeTraits<T>::type_id(); }
 
   // Actual type is a typeName in USDA or USDC
   // for example, we accect float3 type for TypedTerminalAttribute<color3f> and print/serialize
@@ -1263,6 +1272,10 @@ class TypedAttributeWithFallback;
 template <typename T>
 class TypedAttributeWithFallback {
  public:
+
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
+  static uint32_t type_id() { return value::TypeTraits<T>::type_id(); }
+
   TypedAttributeWithFallback() = delete;
 
   ///
