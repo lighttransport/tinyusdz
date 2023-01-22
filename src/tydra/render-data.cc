@@ -103,7 +103,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   vattr.data.resize(uvs.size() * sizeof(value::texcoord2f));
   memcpy(vattr.data.data(), uvs.data(), vattr.data.size());
   vattr.indices.clear(); // just in case.
-  
+
   return std::move(vattr);
 }
 
@@ -116,10 +116,10 @@ bool BuildFaceVertexIndexOffsets(
   const std::vector<uint32_t> &faceVertexCounts,
   std::vector<size_t> &faceVertexIndexOffsets)
 {
-  size_t offset = 0; 
+  size_t offset = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     uint32_t npolys = faceVertexCounts[i];
-    
+
     faceVertexIndexOffsets.push_back(offset);
     offset += npolys;
   }
@@ -390,8 +390,9 @@ bool ListUVNames(const RenderMaterial &material,
   const std::vector<UVTexture> &textures,
   StringAndIdMap &si_map) {
 
-  if (material.surfaceShader.diffuseColor.is_texture()) {
-    int32_t texId = material.surfaceShader.diffuseColor.textureId;
+  // TODO: Use auto
+  auto fun_vec3 = [&](const ShaderParam<vec3> &param) {
+    int32_t texId = param.textureId;
     if ((texId >= 0) && (size_t(texId) < textures.size())) {
       const UVTexture &tex = textures[size_t(texId)];
       if (tex.varname_uv.size()) {
@@ -402,12 +403,36 @@ bool ListUVNames(const RenderMaterial &material,
         }
       }
     }
-  }
+  };
 
-  // TODO: Other shader params. 
-  
+  auto fun_float = [&](const ShaderParam<float> &param) {
+    int32_t texId = param.textureId;
+    if ((texId >= 0) && (size_t(texId) < textures.size())) {
+      const UVTexture &tex = textures[size_t(texId)];
+      if (tex.varname_uv.size()) {
+        if (!si_map.count(tex.varname_uv)) {
+          uint64_t slotId = si_map.size();
+          DCOUT("Add textureSlot: " << tex.varname_uv << ", " << slotId);
+          si_map.add(tex.varname_uv, slotId);
+        }
+      }
+    }
+  };
+
+  fun_vec3(material.surfaceShader.diffuseColor);
+  fun_vec3(material.surfaceShader.normal);
+  fun_float(material.surfaceShader.metallic);
+  fun_float(material.surfaceShader.roughness);
+  fun_float(material.surfaceShader.clearcoat);
+  fun_float(material.surfaceShader.clearcoatRoughness);
+  fun_float(material.surfaceShader.opacity);
+  fun_float(material.surfaceShader.opacityThreshold);
+  fun_float(material.surfaceShader.ior);
+  fun_float(material.surfaceShader.displacement);
+  fun_float(material.surfaceShader.occlusion);
+
   return true;
-}  
+}
 
 
 } // namespace local
@@ -481,7 +506,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
   // uvs from primvars.
   // uvname(varname) is grabbed from RenderMaterial.
-  // 
+  //
   // TODO: list-up varname from PreviewSurfaceShader members.
   //
   // Procedure:
@@ -495,7 +520,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
     StringAndIdMap uvname_map;
     if (!ListUVNames(material, textures, uvname_map)) {
-      return false; 
+      return false;
     }
 
     for (auto it = uvname_map.i_begin(); it != uvname_map.i_end(); it++) {
@@ -564,7 +589,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
   // for GeomSubsets
   if (mesh.geom_subset_children.size()) {
     std::vector<size_t> faceVertexIndexOffsets;
-    
+
     if (!BuildFaceVertexIndexOffsets(
       dst.faceVertexCounts,
       faceVertexIndexOffsets)) {
@@ -888,7 +913,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
   //
   // Convert other UVTexture parameters
-  // 
+  //
 
   if (texture.bias.authored()) {
     tex.bias = texture.bias.get_value();
@@ -1032,6 +1057,69 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   return true;
 }
 
+template<typename T, typename Dty>
+bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
+    const Path &shader_abs_path,
+    const TypedAttributeWithFallback<Animatable<T>> &param,
+    const std::string &param_name,
+    ShaderParam<Dty> &dst_param) {
+
+  if (!param.authored()) {
+    return true;
+  }
+
+  if (param.is_blocked()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("{} attribute is blocked.", param_name));
+  } else if (param.is_connection()) {
+    DCOUT(fmt::format("{] is attribute connection.", param_name));
+
+    const UsdUVTexture *ptex{nullptr};
+    Path texPath;
+    auto result =
+        GetConnectedUVTexture(*_stage, param, &texPath, &ptex);
+
+    if (!result) {
+      PUSH_ERROR_AND_RETURN(result.error());
+    }
+
+    if (!ptex) {
+      PUSH_ERROR_AND_RETURN("[InternalError] ptex is nullptr.");
+    }
+    DCOUT("ptex = " << ptex->name);
+
+    DCOUT("Get connected UsdUVTexture Prim: " << texPath);
+
+    UVTexture rtex;
+    if (!ConvertUVTexture(texPath, *ptex, &rtex)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert UVTexture connected to {}", param_name));
+    }
+
+    uint64_t texId = textures.size();
+    textures.push_back(rtex);
+
+    textureMap.add(texId,
+                   shader_abs_path.prim_part() + "." + param_name);
+
+    DCOUT(fmt::format("TexId {} = {}",
+                      shader_abs_path.prim_part() + ".diffuseColor",
+                      texId));
+
+    dst_param.textureId = int32_t(texId);
+
+    return true;
+  } else {
+    T val;
+    if (!param.get_value().get_scalar(&val)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to get {} at `default` timecode.", param_name));
+    }
+
+    dst_param.set_value(val);
+
+    return true;
+  }
+}
+
 // TODO: timeSamples
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     const Path &shader_abs_path, const UsdPreviewSurface &shader,
@@ -1042,6 +1130,51 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
   PreviewSurfaceShader rshader;
 
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.diffuseColor, "diffuseColor", rshader.diffuseColor)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.normal, "normal", rshader.normal)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.roughness, "roughness", rshader.roughness)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.metallic, "metallic", rshader.metallic)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoat, "clearcoat", rshader.clearcoat)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoatRoughness, "clearcoatRoughness", rshader.clearcoatRoughness)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity, "opacity", rshader.opacity)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacityThreshold, "opacityThreshold", rshader.opacityThreshold)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.ior, "ior", rshader.ior)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.occlusion, "occlusion", rshader.occlusion)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.displacement, "displacement", rshader.displacement)) {
+    return false;
+  }
+
+#if 0
   if (shader.diffuseColor.authored()) {
     if (shader.diffuseColor.is_blocked()) {
       PUSH_ERROR_AND_RETURN("diffuseColor attribute is blocked.\n");
@@ -1092,8 +1225,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
       rshader.diffuseColor.value[2] = col[2];
     }
   }
-
   PushWarn("TODO: Convert other shader params.\n");
+#endif
+
 
   (*rshader_out) = rshader;
   return true;
@@ -1289,7 +1423,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
 
     RenderMesh rmesh;
-    
+
     if (!converter->ConvertMesh(rmaterial_id, *pmesh, &rmesh)) {
       if (err) {
         (*err) += fmt::format("Mesh conversion failed: {}",

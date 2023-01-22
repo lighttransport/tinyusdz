@@ -2111,6 +2111,38 @@ struct TimeSamples {
   mutable bool _dirty{false};
 };
 
+
+
+///
+/// Try to cast the value with src type to dest type as much as possible.
+/// When src type is scalar type and dest type is vector, the value of src type is scattered to the value of dest type.
+///
+/// No lexical cast feature involved.
+/// TODO: overflow check
+///
+/// Considers role type.
+/// example:
+/// - float3 -> normal3 : OK
+/// - float3 -> normal3 : OK
+/// - normal3 -> float : OK
+/// - normal3 -> int : OK(use normal3[0])
+/// - float2 -> normal3 : OK
+/// - float3 -> texcoord2 : OK(use float3[0] and float3[1])
+/// - string -> float : NG
+/// - float -> string : NG
+/// - float -> string : NG
+///
+
+bool FlexibleValueConvert(const value::Value &src, value::Value &dst);
+
+template<typename SrcT, typename DestT>
+bool FlexibleTypeCast(const SrcT &src, DestT &dst) {
+  value::Value srcv(src);
+  value::Value dstv(dst);
+
+  return FlexibleValueConvert(srcv, dstv);
+}
+
 ///
 /// Cast input value's type to Role type
 /// Return true: cast success.
