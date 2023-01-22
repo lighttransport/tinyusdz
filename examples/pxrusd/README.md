@@ -2,19 +2,29 @@
 
 ## Build pxr USD
 
-Build USD in some way.
-I recommend to use USD-build-aarch64(it also supports the build on x86 linux)
-
-https://github.com/syoyo/USD-build-aarch64
+Build pxrUSD in some way.
+We recommend to use monolithic build of pxrUSD.
 
 ## Build
 
-Set path to prebult USD to `EXAMPLE_USD_DIR` cmake argument in `bootstrap-linux.sh`, then
+### Linux
+
+Edit pxrUSD and other settings in `bootstrap-linux.sh`, then
 
 ```
 $ ./bootstrap-linux.sh
 $ cd build
 $ cmake
 ```
+
+### Windows(Visual Studio)
+
+```
+> rmdir /s /q build
+> mkdir build
+> cmake.exe -G "Visual Studio 17 2022" -A x64 -B build [USD_FLAGS] -S .
+```
+
+See `bootstrap-linux.sh` for USD_FLAGS
 
 EoL.
