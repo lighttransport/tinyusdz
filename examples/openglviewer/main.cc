@@ -13,12 +13,15 @@
 #include <thread>  // C++11
 #include <algorithm>
 
-// common
+// GUI common
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl2.h"
-#include "tinyusdz.hh"
 #include "trackball.h"
+
+// TinyUSDZ
+#include "tinyusdz.hh"
+#include "tydra/render-data.hh"
 
 struct GUIContext {
   enum AOV {
@@ -82,7 +85,13 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action,
     param->ctrl_pressed = (action == GLFW_PRESS);
   }
 
-  if (key == GLFW_KEY_Q && action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL)) {
+  // ctrl-q
+  if ((key == GLFW_KEY_Q) && (action == GLFW_PRESS) && (mods & GLFW_MOD_CONTROL)) {
+    glfwSetWindowShouldClose(window, GLFW_TRUE);
+  }
+
+  // esc
+  if ((key == GLFW_KEY_ESCAPE) && (action == GLFW_PRESS)) {
     glfwSetWindowShouldClose(window, GLFW_TRUE);
   }
 }
@@ -185,29 +194,14 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
   }
 }
 
-static void Proc(const tinyusdz::Scene &scene)
-{
-  std::cout << "num geom_meshes = " << scene.geom_meshes.size();
-
-  for (auto &mesh : scene.geom_meshes) {
-  }
-}
 #endif
 
-static std::string GetFileExtension(const std::string &filename) {
-  if (filename.find_last_of(".") != std::string::npos)
-    return filename.substr(filename.find_last_of(".") + 1);
-  return "";
-}
+static void ProcScene(const tinyusdz::Stage &stage)
+{
+  //
+  // Stage to Renderable Scene
+  tinyusdz::tydra::RenderSceneConverter converter;
 
-static std::string str_tolower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(),
-                 // static_cast<int(*)(int)>(std::tolower)         // wrong
-                 // [](int c){ return std::tolower(c); }           // wrong
-                 // [](char c){ return std::tolower(c); }          // wrong
-                 [](unsigned char c) { return std::tolower(c); }  // correct
-  );
-  return s;
 }
 
 } // namespace
@@ -242,7 +236,7 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  //Proc(stage);
+  ProcScene(stage);
 
 #ifdef _DEBUG_OPENGL
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
@@ -311,8 +305,11 @@ int main(int argc, char** argv) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    ImGui::Begin("Bora");
-    ImGui::Button("muda");
+    ImGui::Begin("Info");
+    ImGui::Text("View control");
+    ImGui::Text("ctrl + left mouse");
+    ImGui::Text("shift + left mouse");
+    ImGui::Text("left mouse");
     ImGui::End();
 
     glfwGetFramebufferSize(window, &display_w, &display_h);
@@ -363,6 +360,8 @@ int main(int argc, char** argv) {
 
     done = glfwWindowShouldClose(window);
   };
+
+  std::cout << "Close window\n";
 
   ImGui_ImplOpenGL2_Shutdown();
   ImGui_ImplGlfw_Shutdown();
