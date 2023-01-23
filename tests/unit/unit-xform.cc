@@ -89,9 +89,9 @@ void xformOp_test(void) {
     TEST_CHECK(float_equals(c.m[2][2], 0.0));
     TEST_CHECK(float_equals(c.m[2][3], 0.0));
 
-    TEST_CHECK(float_equals(c.m[3][0], 0.442, 0.001));
-    TEST_CHECK(float_equals(c.m[3][1], -7.532, 0.001));
-    TEST_CHECK(float_equals(c.m[3][2], -11.389, 0.001));
+    TEST_CHECK(float_equals(c.m[3][0], 0.442, 0.00001));
+    TEST_CHECK(float_equals(c.m[3][1], -7.532, 0.00001));
+    TEST_CHECK(float_equals(c.m[3][2], -11.389, 0.00001));
     TEST_CHECK(float_equals(c.m[3][3], 1.0));
 
 
@@ -121,20 +121,22 @@ void xformOp_test(void) {
     
     std::cout << "rotXYZ = " << m << "\n";
 
-    // ret = ( (1, 0, 0, 0), (0, 6.12323e-17, 1, 0), (0, -1, 6.12323e-17, 0), (0, 0, 0, 1) )
+    //double eps = std::numeric_limits<double>::epsilon();
+
+    // NOTE: in pxrUSD ret = ( (1, 0, 0, 0), (0, 6.12323e-17, 1, 0), (0, -1, 6.12323e-17, 0), (0, 0, 0, 1) )
     TEST_CHECK(float_equals(m.m[0][0], 1.0));
     TEST_CHECK(float_equals(m.m[0][1], 0.0));
     TEST_CHECK(float_equals(m.m[0][2], 0.0));
     TEST_CHECK(float_equals(m.m[0][3], 0.0));
 
     TEST_CHECK(float_equals(m.m[1][0], 0.0));
-    TEST_CHECK(float_equals(m.m[1][1], 0.0, 0.000001));
+    TEST_CHECK(float_equals(m.m[1][1], 0.0));
     TEST_CHECK(float_equals(m.m[1][2], 1.0));
     TEST_CHECK(float_equals(m.m[1][3], 0.0));
 
     TEST_CHECK(float_equals(m.m[2][0], 0.0));
     TEST_CHECK(float_equals(m.m[2][1], -1.0));
-    TEST_CHECK(float_equals(m.m[2][2], 0.0, 0.000001));
+    TEST_CHECK(float_equals(m.m[2][2], 0.0));
     TEST_CHECK(float_equals(m.m[2][3], 0.0));
 
     TEST_CHECK(float_equals(m.m[3][0], 0.0));
@@ -174,13 +176,13 @@ void xformOp_test(void) {
     // 0.9111710468121587, 0.4120283041870241, 0, 0
     // 0, 0, 1, 0
     // 0, 0, 0, 1
-    TEST_CHECK(float_equals(m.m[0][0], 0.4120283041870241, 0.0001));
-    TEST_CHECK(float_equals(m.m[0][1], -0.9111710468121587, 0.0001));
+    TEST_CHECK(float_equals(m.m[0][0], 0.4120283041870241, 0.00001));
+    TEST_CHECK(float_equals(m.m[0][1], -0.9111710468121587, 0.00001));
     TEST_CHECK(float_equals(m.m[0][2], 0.0));
     TEST_CHECK(float_equals(m.m[0][3], 0.0));
 
-    TEST_CHECK(float_equals(m.m[1][0], 0.9111710468121587, 0.0001));
-    TEST_CHECK(float_equals(m.m[1][1], 0.4120283041870241, 0.0001));
+    TEST_CHECK(float_equals(m.m[1][0], 0.9111710468121587, 0.00001));
+    TEST_CHECK(float_equals(m.m[1][1], 0.4120283041870241, 0.00001));
     TEST_CHECK(float_equals(m.m[1][2], 0.0));
     TEST_CHECK(float_equals(m.m[1][3], 0.0));
 
@@ -224,12 +226,12 @@ void xformOp_test(void) {
     // numeric value is grabbed from pxrUSD.
     // There are slight eps error for [0][1], [1][0] and [1][1], so twice eps
     TEST_CHECK(float_equals(m.m[0][0], 0.6710191595559729, eps));
-    TEST_CHECK(float_equals(m.m[0][1], 0.6301289334241799, 2*eps));
+    TEST_CHECK(float_equals(m.m[0][1], 0.6301289334241799, eps));
     TEST_CHECK(float_equals(m.m[0][2], -0.39073112848927377, eps));
     TEST_CHECK(float_equals(m.m[0][3], 0.0));
 
-    TEST_CHECK(float_equals(m.m[1][0], -0.6246869592440953, 2*eps));
-    TEST_CHECK(float_equals(m.m[1][1], 0.7643403049061097, 2*eps));
+    TEST_CHECK(float_equals(m.m[1][0], -0.6246869592440953, eps));
+    TEST_CHECK(float_equals(m.m[1][1], 0.7643403049061097, eps));
     TEST_CHECK(float_equals(m.m[1][2], 0.15984399033558103, eps));
     TEST_CHECK(float_equals(m.m[1][3], 0.0));
 
@@ -276,8 +278,8 @@ void xformOp_test(void) {
     TEST_CHECK(float_equals(m.m[0][2], 0.0426206448347375, eps));
     TEST_CHECK(float_equals(m.m[0][3], 0.0));
 
-    TEST_CHECK(float_equals(m.m[1][0], 0.6670022079522818, 2*eps));
-    TEST_CHECK(float_equals(m.m[1][1], 0.6911539437437854, 2*eps));
+    TEST_CHECK(float_equals(m.m[1][0], 0.6670022079522818, eps));
+    TEST_CHECK(float_equals(m.m[1][1], 0.6911539437437854, eps));
     TEST_CHECK(float_equals(m.m[1][2], 0.2782342190209419, eps));
     TEST_CHECK(float_equals(m.m[1][3], 0.0));
 
@@ -330,19 +332,19 @@ void xformOp_test(void) {
     std::cout << "trans x scale = " << m << "\n";
 
     // 1.5 0 0 0, 0 1.5 0 0, 0 0 1.5 0, 1 0 0 1
-    TEST_CHECK(float_equals(m.m[0][0], 1.5, 0.0001));
+    TEST_CHECK(float_equals(m.m[0][0], 1.5));
     TEST_CHECK(float_equals(m.m[0][1], 0.0));
     TEST_CHECK(float_equals(m.m[0][2], 0.0));
     TEST_CHECK(float_equals(m.m[0][3], 0.0));
 
     TEST_CHECK(float_equals(m.m[1][0], 0.0));
-    TEST_CHECK(float_equals(m.m[1][1], 0.5, 0.0001));
+    TEST_CHECK(float_equals(m.m[1][1], 0.5));
     TEST_CHECK(float_equals(m.m[1][2], 0.0));
     TEST_CHECK(float_equals(m.m[1][3], 0.0));
 
     TEST_CHECK(float_equals(m.m[2][0], 0.0));
     TEST_CHECK(float_equals(m.m[2][1], 0.0));
-    TEST_CHECK(float_equals(m.m[2][2], 2.5, 0.0001));
+    TEST_CHECK(float_equals(m.m[2][2], 2.5));
     TEST_CHECK(float_equals(m.m[2][3], 0.0));
 
     TEST_CHECK(float_equals(m.m[3][0], 1.0));
