@@ -7,6 +7,9 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+// pxrusd
+#include <boost/math/special_functions/sin_pi.hpp>
+#include <boost/math/special_functions/cos_pi.hpp>
 #include <pxr/base/tf/weakBase.h>
 #include <pxr/base/tf/weakPtr.h>
 #include <pxr/base/gf/matrix4d.h>
@@ -18,6 +21,10 @@
 #include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
+
+// tinyusdz
+#include "tinyusdz.hh"
+#include "math-util.inc"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -105,20 +112,35 @@ static void pxrusd_test()
   GfMatrix4d m;
   double kPI = 3.141592653589793;
 
-
   
   double rot_angle = 360.0 - std::numeric_limits<double>::epsilon();
-  double s = std::sin(0.5 * rot_angle * kPI / 180.0);
-  double c = std::cos(0.5 * rot_angle * kPI / 180.0);
 
-  Dbl sv, cv;
-  sv.f = s;
-  cv.f = c;
-  
+  {
+    double s = std::sin(45 * kPI / 180.0);
+    double c = std::cos(45 * kPI / 180.0);
 
-  std::cout << "s == c" << (sv.u == cv.u) << "\n";
-  std::cout << "s = " << s << "\n";
-  std::cout << "c = " << c << "\n";
+    Dbl sv, cv;
+    sv.f = s;
+    cv.f = c;
+    
+
+    std::cout << "45\n";
+    std::cout << "s == c ? " << (sv.u == cv.u) << "\n";
+    std::cout << "s = " << s << "\n";
+    std::cout << "c = " << c << "\n";
+
+    s = std::sin(90 * kPI / 180.0);
+    c = std::cos(90 * kPI / 180.0);
+
+    sv.f = s;
+    cv.f = c;
+    
+
+    std::cout << "90\n";
+    std::cout << "s == c ? " << (sv.u == cv.u) << "\n";
+    std::cout << "s = " << s << "\n";
+    std::cout << "c = " << c << "\n";
+  }
 
   GfRotation rot;
   rot.SetAxisAngle(GfVec3d(0.0, 0.0, 1.0), rot_angle);
@@ -141,6 +163,70 @@ static void pxrusd_test()
   m.SetRotate(rot);
 
   std::cout << "m = " << m << "\n";
+
+
+  // ---------
+  {
+    double s = boost::math::sin_pi(double(45.0/180.0));
+    double c = boost::math::cos_pi(double(45.0/180.0));
+
+
+    Dbl sval, cval;
+    sval.f = s;
+    cval.f = c;
+
+    std::cout << "45\n";
+    std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
+    std::cout << "s = " << s << "\n"; printf("0x%016lx\n", sval.u);
+    std::cout << "c = " << c << "\n"; printf("0x%016lx\n", cval.u);
+
+    double st = tinyusdz::math::sin_pi(45.0/180.0);
+    double ct = tinyusdz::math::cos_pi(45.0/180.0);
+
+    sval.f = st;
+    cval.f = ct;
+    std::cout << "45(tusdz)\n";
+    std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
+    std::cout << "s = " << sval.f << "\n"; printf("0x%016lx\n", sval.u);
+    std::cout << "c = " << cval.f << "\n"; printf("0x%016lx\n", cval.u);
+
+
+
+    s = boost::math::sin_pi(90.0/180.0);
+    c = boost::math::cos_pi(90.0/180.0);
+
+    sval.f = s;
+    cval.f = c;
+
+    std::cout << "90\n";
+    std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
+    std::cout << "s = " << s << "\n";
+    std::cout << "c = " << c << "\n";
+
+    st = tinyusdz::math::sin_pi(90.0/180.0);
+    ct = tinyusdz::math::cos_pi(90.0/180.0);
+
+
+    sval.f = st;
+    cval.f = ct;
+    std::cout << "90(tusdz)\n";
+    std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
+    std::cout << "s = " << s << "\n";
+    std::cout << "c = " << c << "\n";
+
+    sval.f = boost::math::constants::pi<double>() * (45.0 / 180.0);
+    cval.f = tinyusdz::math::constants<double>::pi() * (45.0 / 180.0);
+
+    std::cout << "pi\n";
+    std::cout << "s == c ? " << (sval.u == cval.u) << "\n";
+    std::cout << "s = " << sval.f << "\n"; printf("0x%016lx\n", sval.u);
+    std::cout << "c = " << cval.f << "\n"; printf("0x%016lx\n", cval.u);
+
+    cval.f = 0.25;
+    std::cout << "0.25 = " << cval.f << "\n"; printf("0x%016lx\n", cval.u);
+
+  }
+  
 }
 
 int main(int argc, char **argv)

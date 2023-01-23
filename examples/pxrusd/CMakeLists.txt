@@ -66,7 +66,8 @@ add_executable(${EXAMPLE_BUILD_TARGET} ${EXAMPLE_SOURCES})
 add_sanitizers(${EXAMPLE_BUILD_TARGET})
 
 
-target_include_directories(${EXAMPLE_BUILD_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# <tinyusdz>/src
+target_include_directories(${EXAMPLE_BUILD_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 
 # [pxrusd]
 target_include_directories(
@@ -84,11 +85,6 @@ endif()
 if (${EXAMPLE_LINK_BOOST_PYTHON})
   # [python]
   target_link_libraries(${EXAMPLE_BUILD_TARGET} PUBLIC boost_python3${Python3_VERSION_MINOR} Python3::Python)
-endif()
-
-if (UNIX AND EXAMPLE_LINK_X11)
-  # [python]
-  target_link_libraries(${EXAMPLE_BUILD_TARGET} PUBLIC ${X11_LIBRARIES})
 endif()
 
 target_link_libraries(${EXAMPLE_BUILD_TARGET} PUBLIC ${EXAMPLE_EXT_LIBRARIES} ${CMAKE_DL_LIBS} Threads::Threads)
