@@ -10,6 +10,7 @@
 #include "unit-xform.h"
 #include "unit-customdata.h"
 #include "unit-handle-allocator.h"
+#include "unit-math.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -24,6 +25,9 @@ TEST_LIST = {
   { "xformOp_test", xformOp_test },
   { "customdata_test", customdata_test },
   { "handle_allocator_test", handle_allocator_test },
+  { "math_cos_pi_test", math_cos_pi_test },
+  { "math_sin_pi_test", math_sin_pi_test },
+  { "math_sin_cos_pi_test", math_sin_cos_pi_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
