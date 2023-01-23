@@ -113,8 +113,6 @@ static void pxrusd_test()
   double kPI = 3.141592653589793;
 
   
-  double rot_angle = 360.0 - std::numeric_limits<double>::epsilon();
-
   {
     double s = std::sin(45 * kPI / 180.0);
     double c = std::cos(45 * kPI / 180.0);
@@ -142,6 +140,7 @@ static void pxrusd_test()
     std::cout << "c = " << c << "\n";
   }
 
+  double rot_angle = 90;
   GfRotation rot;
   rot.SetAxisAngle(GfVec3d(0.0, 0.0, 1.0), rot_angle);
 

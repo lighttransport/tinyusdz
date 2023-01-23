@@ -8,7 +8,7 @@ project(${EXAMPLE_BUILD_TARGET} C CXX)
 # options
 set(EXAMPLE_USD_INC_DIR "dist/include" CACHE PATH "Path to pxrUSD include dir")
 set(EXAMPLE_USD_LIB_DIR "dist/lib" CACHE PATH "Path to pxrUSD lib dir")
-set(EXAMPLE_USD_MONOLITHIC OFF CACHE PATH "Is pxrUSD monolithic build?")
+set(EXAMPLE_USD_MONOLITHIC OFF CACHE BOOL "Is pxrUSD monolithic build?")
 # USD is being built with Python(libboost_python) cannot be detected by pxrConfig.cmake or other settings file, so need to supply Python info manually. 
 set(EXAMPLE_LINK_BOOST_PYTHON OFF CACHE BOOL "Link libboost_python*")
 
@@ -77,9 +77,9 @@ target_include_directories(
 target_link_directories(${EXAMPLE_BUILD_TARGET} PRIVATE ${EXAMPLE_USD_LIB_DIR})
 
 if (EXAMPLE_USD_MONOLITHIC)
-  target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd usdGeom usdUtils sdf tf vt)
-else()
   target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd_ms)
+else()
+  target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd_usd usd_usdGeom usd_usdUtils usd_sdf usd_tf usd_gf usd_vt)
 endif()
 
 if (${EXAMPLE_LINK_BOOST_PYTHON})
