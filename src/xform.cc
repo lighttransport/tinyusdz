@@ -35,6 +35,37 @@ using double3x3 = linalg::aliases::double3x3;
 using double3 = linalg::aliases::double3;
 using double4 = linalg::aliases::double4;
 
+value::quatf to_quaternion(const value::float3 &axis, const float angle) {
+
+  // Use sin_pi and cos_pi for better accuracy.
+  float s = float(math::sin_pi(double(angle)/2.0/180.0));
+  float c = float(math::cos_pi(double(angle)/2.0/180.0));
+
+  value::quatf q;
+  q.imag[0] = axis[0] * s;
+  q.imag[1] = axis[1] * s;
+  q.imag[2] = axis[2] * s;
+  q.real = c;
+
+  return q;
+}
+
+value::quatd to_quaternion(const value::double3 &axis, const double angle) {
+
+  // Use sin_pi and cos_pi for better accuracy.
+  double s = math::sin_pi(angle/2.0/180.0);
+  double c = math::cos_pi(angle/2.0/180.0);
+
+  value::quatd q;
+  q.imag[0] = axis[0] * s;
+  q.imag[1] = axis[1] * s;
+  q.imag[2] = axis[2] * s;
+  q.real = c;
+
+  return q;
+}
+
+
 // linalg quat memory layout: (x, y, z, w)
 // value::quat memory layout: (imag[0], imag[1], imag[2], real)
 
@@ -330,14 +361,16 @@ class XformEvaluator {
 
   XformEvaluator &RotateX(const double angle) {  // in degrees
 
-    double rad = math::radian(angle);
-
     value::matrix4d rm = value::matrix4d::identity();
 
-    rm.m[1][1] = std::cos(rad);
-    rm.m[1][2] = std::sin(rad);
-    rm.m[2][1] = -std::sin(rad);
-    rm.m[2][2] = std::cos(rad);
+    double k = angle / 180.0;
+    double c = math::cos_pi(k);
+    double s = math::sin_pi(k);
+
+    rm.m[1][1] = c;
+    rm.m[1][2] = s;
+    rm.m[2][1] = -s;
+    rm.m[2][2] = c; 
 
     m = m * rm;
 
@@ -346,14 +379,16 @@ class XformEvaluator {
 
   XformEvaluator &RotateY(const double angle) {  // in degrees
 
-    double rad = math::radian(angle);
-
     value::matrix4d rm = value::matrix4d::identity();
 
-    rm.m[0][0] = std::cos(rad);
-    rm.m[0][2] = -std::sin(rad);
-    rm.m[2][0] = std::sin(rad);
-    rm.m[2][2] = std::cos(rad);
+    double k = angle / 180.0;
+    double c = math::cos_pi(k);
+    double s = math::sin_pi(k);
+
+    rm.m[0][0] = c;
+    rm.m[0][2] = -s;
+    rm.m[2][0] = s; 
+    rm.m[2][2] = c; 
 
     m = m * rm;
 
@@ -362,14 +397,18 @@ class XformEvaluator {
 
   XformEvaluator &RotateZ(const double angle) {  // in degrees
 
-    double rad = math::radian(angle);
+    //double rad = math::radian(angle);
 
     value::matrix4d rm = value::matrix4d::identity();
 
-    rm.m[0][0] = std::cos(rad);
-    rm.m[0][1] = std::sin(rad);
-    rm.m[1][0] = -std::sin(rad);
-    rm.m[1][1] = std::cos(rad);
+    double k = angle / 180.0;
+    double c = math::cos_pi(k);
+    double s = math::sin_pi(k);
+
+    rm.m[0][0] = c; 
+    rm.m[0][1] = s; 
+    rm.m[1][0] = -s; 
+    rm.m[1][1] = c;
 
     m = m * rm;
 
@@ -379,10 +418,10 @@ class XformEvaluator {
   // From arbitrary rotation axis
   XformEvaluator &Rotation(const double3 &axis, const double angle) {  // in degrees
 
-    // to quaternion, then create rotation matrix.
-
     // linalg uses radians
-    double4 q = linalg::rotation_quat(axis, math::radian(angle));
+    //double4 q = linalg::rotation_quat(axis, math::radian(angle));
+
+    value::quatd q = to_quaternion(axis, angle);
 
     double3x3 m33 =
         linalg::qmat<double>({q[0], q[1], q[2], q[3]});
