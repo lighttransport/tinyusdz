@@ -7,6 +7,41 @@ namespace tinyusdz {
 
 namespace math {
 
+// TODO: Set TINYUSDZ_BIG_ENDIAN when compiling TinyUSDZ on Big Endian architecture(e.g. PowerPC, SPARC)
+union IEEE754Float {
+  float f;
+  uint32_t ui;
+  int32_t i;
+  struct {
+#if defined(TINYUSDZ_BIG_ENDIAN)
+    uint32_t sign : 1;
+    uint32_t exponent : 8;
+    uint32_t mantissa : 23;
+#else
+    uint32_t mantissa : 23;
+    uint32_t exponent : 8;
+    uint32_t sign : 1;
+#endif
+  } bits;
+};
+
+union IEEE754Double {
+  double f;
+  uint64_t ull;
+  int64_t ll;
+  struct {
+#if defined(TINYUSD_BIG_ENDIAN)
+    uint64_t sign : 1;
+    uint64_t exponent : 11;
+    uint64_t mantissa : 52;
+#else
+    uint64_t mantissa : 52;
+    uint64_t exponent : 11;
+    uint64_t sign : 1;
+#endif
+  } bits;
+};
+
 template <class T>
 struct constants;
 
@@ -59,6 +94,74 @@ inline bool is_close(value::float3 a, value::float3 b, const float eps) {
 inline bool is_close(value::double3 a, value::double3 b, const double eps) {
   return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) &&
          is_close(a[2], b[2], eps);
+}
+
+// Compare two floating point by ulps.
+// Based on this blog post: https://randomascii.wordpress.com/2012/02/25/comparing-floating-point-numbers-2012-edition/
+// Use this function if you want to compare fp value with relative diffs.
+//
+// TODO(LTE): Consider nan, inf case.
+//
+inline bool almost_equals_by_ulps(float x, float y, uint32_t max_ulp_diffs) {
+  IEEE754Float flt_x;
+  IEEE754Float flt_y;
+
+  flt_x.f = x;
+  flt_y.f = y;
+
+  if (flt_x.bits.sign != flt_y.bits.sign) {
+    // Check if +0/-0
+    if ((flt_x.bits.exponent == 0) &&
+        (flt_y.bits.exponent == 0) &&
+        (flt_x.bits.mantissa == 0) &&
+        (flt_y.bits.mantissa == 0)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  int32_t diff = int32_t(flt_x.ui) - int32_t(flt_y.ui);
+
+  // abs()
+  diff = (diff < 0) ? -diff : diff;
+
+  if (uint32_t(diff) <= max_ulp_diffs) {
+    return true;
+  }
+
+  return false;
+}
+
+inline bool almost_equals_by_ulps(double x, double y, uint64_t max_ulp_diffs) {
+  IEEE754Double flt_x;
+  IEEE754Double flt_y;
+
+  flt_x.f = x;
+  flt_y.f = y;
+
+  if (flt_x.bits.sign != flt_y.bits.sign) {
+    // Check if +0/-0
+    if ((flt_x.bits.exponent == 0) &&
+        (flt_y.bits.exponent == 0) &&
+        (flt_x.bits.mantissa == 0) &&
+        (flt_y.bits.mantissa == 0)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  int64_t diff = int64_t(flt_x.ull) - int64_t(flt_y.ull);
+
+  // abs()
+  diff = (diff < 0) ? -diff : diff;
+
+  if (uint64_t(diff) <= max_ulp_diffs) {
+    return true;
+  }
+
+  return false;
 }
 
 //
@@ -134,11 +237,11 @@ inline T cos_pi_imp(T x) {
      bool invert = false;
      if(std::fabs(x) < 0.25)
         return std::cos(constants<T>::pi() * x);
-     
+
      if(x < 0)
-     {  
+     {
         x = -x;
-     } 
+     }
      T rem = std::floor(x);
 
      //if(iconvert(rem, pol) & 1)
@@ -153,15 +256,15 @@ inline T cos_pi_imp(T x) {
 
      rem = x - rem;
      if(rem > T(0.5))
-     {  
+     {
         rem = 1 - rem;
         invert = !invert;
      }
      if(is_close(rem, T(0.5), T(0)))
         return T(0);
-     
+
      if(rem > T(0.25))
-     {  
+     {
         rem = T(0.5) - rem;
         rem = std::sin(constants<T>::pi() * rem);
      }

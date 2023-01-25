@@ -408,6 +408,7 @@ struct ShaderParam {
     // Currently we assume T == Sty.
     // TODO: support more type variant
     static_assert(value::TypeTraits<T>::underlying_type_id() == value::TypeTraits<STy>::underlying_type_id(), "");
+    static_assert(sizeof(T) >= sizeof(STy), "");
     memcpy(&value, &val, sizeof(T));
   }
 
@@ -536,7 +537,11 @@ struct MaterialConverterConfig
   TextureImageLoaderFunction texture_image_loader_function{nullptr};
   void *texture_image_loader_function_userdata{nullptr};
 
-  // TODO: AssetResolver
+  // Allow texture load failure?
+  bool allow_texture_load_failure{true};
+
+  // Allow asset(e.g. texture file/shader file) does not exit?
+  bool allow_missing_asset{true};
 };
 
 struct RenderSceneConverterConfig
