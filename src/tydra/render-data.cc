@@ -3,15 +3,15 @@
 //   - [ ] Support time-varying shader attribute(timeSamples)
 //
 #include "asset-resolution.hh"
+#include "image-loader.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
+#include "str-util.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
-#include "str-util.hh"
-#include "image-loader.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -102,20 +102,18 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   vattr.format = VertexAttributeFormat::Vec2;
   vattr.data.resize(uvs.size() * sizeof(value::texcoord2f));
   memcpy(vattr.data.data(), uvs.data(), vattr.data.size());
-  vattr.indices.clear(); // just in case.
+  vattr.indices.clear();  // just in case.
 
   return std::move(vattr);
 }
 
 ///
-/// For GeomSubset. Build offset table to corresponding array index in mesh.faceVertexIndices.
-/// No need to use this function for triangulated mesh, since
-/// the index can be easily computed as `3 * subset.indices[i]`
+/// For GeomSubset. Build offset table to corresponding array index in
+/// mesh.faceVertexIndices. No need to use this function for triangulated mesh,
+/// since the index can be easily computed as `3 * subset.indices[i]`
 ///
-bool BuildFaceVertexIndexOffsets(
-  const std::vector<uint32_t> &faceVertexCounts,
-  std::vector<size_t> &faceVertexIndexOffsets)
-{
+bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
+                                 std::vector<size_t> &faceVertexIndexOffsets) {
   size_t offset = 0;
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     uint32_t npolys = faceVertexCounts[i];
@@ -126,7 +124,6 @@ bool BuildFaceVertexIndexOffsets(
 
   return true;
 }
-
 
 ///
 /// Input: points, faceVertexCounts, faceVertexIndices
@@ -186,22 +183,28 @@ bool TriangulatePolygon(const std::vector<T> &points,
           faceVertexIndices[faceIndexOffset + 2]);
       faceVertexIndexMap.push_back(i);
 #if 1
-      } else if (npolys == 4) {
-        // Use simple split
-        // TODO: Split at shortest edge?
-        triangulatedFaceVertexCounts.push_back(3);
-        triangulatedFaceVertexCounts.push_back(3);
+    } else if (npolys == 4) {
+      // Use simple split
+      // TODO: Split at shortest edge?
+      triangulatedFaceVertexCounts.push_back(3);
+      triangulatedFaceVertexCounts.push_back(3);
 
-        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 1]);
-        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 2]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 0]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 1]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 2]);
 
-        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 0]);
-        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 2]);
-        triangulatedFaceVertexIndices.push_back(faceVertexIndices[faceIndexOffset + 3]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 0]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 2]);
+      triangulatedFaceVertexIndices.push_back(
+          faceVertexIndices[faceIndexOffset + 3]);
 
-        faceVertexIndexMap.push_back(i);
-        faceVertexIndexMap.push_back(i);
+      faceVertexIndexMap.push_back(i);
+      faceVertexIndexMap.push_back(i);
 #endif
     } else {
       // Find the normal axis of the polygon using Newell's method
@@ -387,9 +390,8 @@ nonstd::expected<Node, std::string> Convert(const Stage &stage,
 namespace {
 
 bool ListUVNames(const RenderMaterial &material,
-  const std::vector<UVTexture> &textures,
-  StringAndIdMap &si_map) {
-
+                 const std::vector<UVTexture> &textures,
+                 StringAndIdMap &si_map) {
   // TODO: Use auto
   auto fun_vec3 = [&](const ShaderParam<vec3> &param) {
     int32_t texId = param.textureId;
@@ -434,8 +436,7 @@ bool ListUVNames(const RenderMaterial &material,
   return true;
 }
 
-
-} // namespace local
+}  // namespace
 
 bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                                        const GeomMesh &mesh,
@@ -454,9 +455,9 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     std::vector<int32_t> indices;
     if (pv.value().get_scalar(&indices)) {
       // to uint32
-      std::transform(indices.cbegin(), indices.cend(), std::back_inserter(dst.faceVertexIndices), [](int32_t v) {
-        return uint32_t(v);
-      });
+      std::transform(indices.cbegin(), indices.cend(),
+                     std::back_inserter(dst.faceVertexIndices),
+                     [](int32_t v) { return uint32_t(v); });
     }
   }
 
@@ -464,12 +465,11 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     std::vector<int32_t> counts;
     if (pv.value().get_scalar(&counts)) {
       // to uint32
-      std::transform(counts.cbegin(), counts.cend(), std::back_inserter(dst.faceVertexCounts), [](int32_t v) {
-        return uint32_t(v);
-      });
+      std::transform(counts.cbegin(), counts.cend(),
+                     std::back_inserter(dst.faceVertexCounts),
+                     [](int32_t v) { return uint32_t(v); });
     }
   }
-
 
   if (mesh.get_points().size()) {
     dst.points.resize(mesh.get_points().size());
@@ -515,7 +515,6 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
   //
 
   if ((rmaterial_id > -1) && (size_t(rmaterial_id) < materials.size())) {
-
     const RenderMaterial &material = materials[size_t(rmaterial_id)];
 
     StringAndIdMap uvname_map;
@@ -524,7 +523,6 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     }
 
     for (auto it = uvname_map.i_begin(); it != uvname_map.i_end(); it++) {
-
       uint64_t slotId = it->first;
       std::string uvname = it->second;
 
@@ -560,16 +558,13 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       } else {
         PUSH_ERROR_AND_RETURN(ret.error());
       }
-
     }
-
   }
 
   if (triangulate) {
-
     std::string err;
 
-    std::vector<uint32_t> triangulatedFaceVertexCounts; // should be all 3's
+    std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
     std::vector<uint32_t> triangulatedFaceVertexIndices;
     std::vector<size_t> faceVertexIndexMap;
     if (!TriangulatePolygon<value::float3, float>(
@@ -590,9 +585,8 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
   if (mesh.geom_subset_children.size()) {
     std::vector<size_t> faceVertexIndexOffsets;
 
-    if (!BuildFaceVertexIndexOffsets(
-      dst.faceVertexCounts,
-      faceVertexIndexOffsets)) {
+    if (!BuildFaceVertexIndexOffsets(dst.faceVertexCounts,
+                                     faceVertexIndexOffsets)) {
       PUSH_ERROR_AND_RETURN("Build faceVertexIndexOffsets failed.");
     }
   }
@@ -649,7 +643,8 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   if (prop_part != "outputs:result") {
     return nonstd::make_unexpected(
-        "`inputs:in` connection Path's property part must be `outputs:result`\n");
+        "`inputs:in` connection Path's property part must be "
+        "`outputs:result`\n");
   }
 
   std::string err;
@@ -676,8 +671,8 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
       pshader->value.as<UsdPrimvarReader_float2>();
   if (preader) {
     return nonstd::make_unexpected(fmt::format(
-        "Shader {} must be UsdPrimvarReader_float2 type, but got {}\n", prim_part,
-        pshader->info_id));
+        "Shader {} must be UsdPrimvarReader_float2 type, but got {}\n",
+        prim_part, pshader->info_id));
   }
 
   // Get value producing attribute(i.e, follow .connection and return
@@ -694,12 +689,15 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 #else
   TerminalAttributeValue attr;
   if (!tydra::EvaluateAttribute(stage, *pprim, "inputs:varname", &attr, &err)) {
-    return nonstd::make_unexpected("`inputs:varname` evaluation failed: " + err + "\n");
+    return nonstd::make_unexpected(
+        "`inputs:varname` evaluation failed: " + err + "\n");
   }
   if (auto pv = attr.as<value::token>()) {
     varname = *pv;
   } else {
-    return nonstd::make_unexpected("`inputs:varname` must be `token` type, but got " + attr.type_name() + "\n");
+    return nonstd::make_unexpected(
+        "`inputs:varname` must be `token` type, but got " + attr.type_name() +
+        "\n");
   }
   if (varname.str().empty()) {
     return nonstd::make_unexpected("`inputs:varname` is empty token\n");
@@ -766,8 +764,10 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 
   if (prop_part != "outputs:rgb") {
     return nonstd::make_unexpected(
-        "connection Path's property part must be `outputs:rgb` at the moment for "
-        "UsdUVTexture, but got " + prop_part + " \n");
+        "connection Path's property part must be `outputs:rgb` at the moment "
+        "for "
+        "UsdUVTexture, but got " +
+        prop_part + " \n");
   }
 
   const Prim *prim{nullptr};
@@ -792,7 +792,6 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
       return true;
     }
   }
-
 
   return nonstd::make_unexpected(fmt::format(
       "Prim {} must be Shader, but got {}", prim_part, prim->prim_type_name()));
@@ -854,7 +853,8 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     if (_scene_config.load_texture_assets) {
       std::string warn;
 
-      TextureImageLoaderFunction tex_loader_fun = _material_config.texture_image_loader_function;
+      TextureImageLoaderFunction tex_loader_fun =
+          _material_config.texture_image_loader_function;
       if (!tex_loader_fun) {
         tex_loader_fun = DefaultTextureImageLoaderFunction;
       }
@@ -873,8 +873,8 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
       }
     } else {
       // store resolved asset path.
-      texImage.asset_identifier = _asset_resolver.resolve(assetPath.GetAssetPath());
-
+      texImage.asset_identifier =
+          _asset_resolver.resolve(assetPath.GetAssetPath());
     }
 
     // Assign buffer id
@@ -909,7 +909,6 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
     images.emplace_back(texImage);
   }
-
 
   //
   // Convert other UVTexture parameters
@@ -968,7 +967,8 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         // terminal Attribute value)
         value::token varname;
         TerminalAttributeValue attr;
-        if (!tydra::EvaluateAttribute(*_stage, *readerPrim, "inputs:varname", &attr, &err)) {
+        if (!tydra::EvaluateAttribute(*_stage, *readerPrim, "inputs:varname",
+                                      &attr, &err)) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
                           "inputs:varname: {}",
@@ -978,7 +978,9 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         if (auto pv = attr.as<value::token>()) {
           varname = *pv;
         } else {
-          PUSH_ERROR_AND_RETURN("`inputs:varname` must be `token` type, but got " + attr.type_name());
+          PUSH_ERROR_AND_RETURN(
+              "`inputs:varname` must be `token` type, but got " +
+              attr.type_name());
         }
         if (varname.str().empty()) {
           PUSH_ERROR_AND_RETURN("`inputs:varname` is empty token.");
@@ -1006,7 +1008,9 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         tex.fallback_uv[1] = uv[1];
       } else {
         // TODO: report warning.
-        PUSH_WARN("Failed to get fallback `st` texcoord attribute. Maybe `st` is timeSamples attribute?\n");
+        PUSH_WARN(
+            "Failed to get fallback `st` texcoord attribute. Maybe `st` is "
+            "timeSamples attribute?\n");
       }
     }
   }
@@ -1057,13 +1061,11 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   return true;
 }
 
-template<typename T, typename Dty>
+template <typename T, typename Dty>
 bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const Path &shader_abs_path,
     const TypedAttributeWithFallback<Animatable<T>> &param,
-    const std::string &param_name,
-    ShaderParam<Dty> &dst_param) {
-
+    const std::string &param_name, ShaderParam<Dty> &dst_param) {
   if (!param.authored()) {
     return true;
   }
@@ -1075,8 +1077,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 
     const UsdUVTexture *ptex{nullptr};
     Path texPath;
-    auto result =
-        GetConnectedUVTexture(*_stage, param, &texPath, &ptex);
+    auto result = GetConnectedUVTexture(*_stage, param, &texPath, &ptex);
 
     if (!result) {
       PUSH_ERROR_AND_RETURN(result.error());
@@ -1091,18 +1092,17 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 
     UVTexture rtex;
     if (!ConvertUVTexture(texPath, *ptex, &rtex)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert UVTexture connected to {}", param_name));
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Failed to convert UVTexture connected to {}", param_name));
     }
 
     uint64_t texId = textures.size();
     textures.push_back(rtex);
 
-    textureMap.add(texId,
-                   shader_abs_path.prim_part() + "." + param_name);
+    textureMap.add(texId, shader_abs_path.prim_part() + "." + param_name);
 
     DCOUT(fmt::format("TexId {} = {}",
-                      shader_abs_path.prim_part() + ".diffuseColor",
-                      texId));
+                      shader_abs_path.prim_part() + ".diffuseColor", texId));
 
     dst_param.textureId = int32_t(texId);
 
@@ -1130,104 +1130,62 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
   PreviewSurfaceShader rshader;
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.diffuseColor, "diffuseColor", rshader.diffuseColor)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.diffuseColor,
+                                        "diffuseColor", rshader.diffuseColor)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.normal, "normal", rshader.normal)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.normal,
+                                        "normal", rshader.normal)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.roughness, "roughness", rshader.roughness)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.roughness,
+                                        "roughness", rshader.roughness)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.metallic, "metallic", rshader.metallic)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.metallic,
+                                        "metallic", rshader.metallic)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoat, "clearcoat", rshader.clearcoat)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoat,
+                                        "clearcoat", rshader.clearcoat)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoatRoughness, "clearcoatRoughness", rshader.clearcoatRoughness)) {
+  if (!ConvertPreviewSurfaceShaderParam(
+          shader_abs_path, shader.clearcoatRoughness, "clearcoatRoughness",
+          rshader.clearcoatRoughness)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity, "opacity", rshader.opacity)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity,
+                                        "opacity", rshader.opacity)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacityThreshold, "opacityThreshold", rshader.opacityThreshold)) {
+  if (!ConvertPreviewSurfaceShaderParam(
+          shader_abs_path, shader.opacityThreshold, "opacityThreshold",
+          rshader.opacityThreshold)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.ior, "ior", rshader.ior)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.ior, "ior",
+                                        rshader.ior)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.occlusion, "occlusion", rshader.occlusion)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.occlusion,
+                                        "occlusion", rshader.occlusion)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.displacement, "displacement", rshader.displacement)) {
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.displacement,
+                                        "displacement", rshader.displacement)) {
     return false;
   }
-
-#if 0
-  if (shader.diffuseColor.authored()) {
-    if (shader.diffuseColor.is_blocked()) {
-      PUSH_ERROR_AND_RETURN("diffuseColor attribute is blocked.\n");
-    } else if (shader.diffuseColor.is_connection()) {
-      DCOUT("diffuseColor is attribute connection.");
-
-      const UsdUVTexture *ptex{nullptr};
-      Path texPath;
-      auto result =
-          GetConnectedUVTexture(*_stage, shader.diffuseColor, &texPath, &ptex);
-
-      if (!result) {
-        PUSH_ERROR_AND_RETURN(result.error());
-      }
-
-      if (!ptex) {
-        PUSH_ERROR_AND_RETURN("[InternalError] ptex is nullptr.");
-      }
-      DCOUT("ptex = " << ptex->name);
-
-      DCOUT("Get connected UsdUVTexture Prim: " << texPath);
-
-      UVTexture rtex;
-      if (!ConvertUVTexture(texPath, *ptex, &rtex)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert UVTexture connected to diffuseColor");
-      }
-
-      uint64_t texId = textures.size();
-      textures.push_back(rtex);
-
-      rshader.diffuseColor.textureId = int32_t(texId);
-
-      textureMap.add(uint64_t(rshader.diffuseColor.textureId),
-                     shader_abs_path.prim_part() + ".dffuseColor");
-
-      DCOUT(fmt::format("TexId {} = {}",
-                        shader_abs_path.prim_part() + ".diffuseColor",
-                        rshader.diffuseColor.textureId));
-    } else {
-      value::color3f col;
-      if (!shader.diffuseColor.get_value().get_scalar(&col)) {
-        PUSH_ERROR_AND_RETURN(
-            "Failed to get diffuseColor at `default` timecode.\n");
-      }
-
-      rshader.diffuseColor.value[0] = col[0];
-      rshader.diffuseColor.value[1] = col[1];
-      rshader.diffuseColor.value[2] = col[2];
-    }
-  }
-  PushWarn("TODO: Convert other shader params.\n");
-#endif
-
 
   (*rshader_out) = rshader;
   return true;
@@ -1369,7 +1327,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     if (ret && bound_material) {
       DCOUT("Bound material path: " << bound_material_path);
 
-      const auto matIt = converter->materialMap.find(bound_material_path.full_path_name());
+      const auto matIt =
+          converter->materialMap.find(bound_material_path.full_path_name());
 
       if (matIt != converter->materialMap.s_end()) {
         // Got material in the cache.
@@ -1392,7 +1351,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         rmaterial_id = int64_t(mat_id);
 
       } else {
-
         RenderMaterial rmat;
         if (!converter->ConvertMaterial(bound_material_path, *bound_material,
                                         &rmat)) {
@@ -1414,13 +1372,14 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         rmaterial_id = int64_t(mat_id);
 
-        converter->materialMap.add(bound_material_path.full_path_name(), uint64_t(rmaterial_id));
-        DCOUT("Add material: " << mat_id << " " << rmat.abs_path << " ( " << rmat.name << " ) ");
+        converter->materialMap.add(bound_material_path.full_path_name(),
+                                   uint64_t(rmaterial_id));
+        DCOUT("Add material: " << mat_id << " " << rmat.abs_path << " ( "
+                               << rmat.name << " ) ");
 
         rmaterials.push_back(rmat);
       }
     }
-
 
     RenderMesh rmesh;
 
@@ -1436,8 +1395,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
     // Do not assign materialIds when no material bound to this Mesh.
     // TODO: per-face material.
-    if ((rmaterial_id > -1) && (rmaterial_id < std::numeric_limits<int32_t>::max())) {
-      rmesh.materialIds.resize(rmesh.faceVertexCounts.size(), int32_t(rmaterial_id));
+    if ((rmaterial_id > -1) &&
+        (rmaterial_id < std::numeric_limits<int32_t>::max())) {
+      rmesh.materialIds.resize(rmesh.faceVertexCounts.size(),
+                               int32_t(rmaterial_id));
     }
 
     converter->meshes.emplace_back(std::move(rmesh));
@@ -1499,16 +1460,13 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
   return true;
 }
 
-bool DefaultTextureImageLoaderFunction(
-  const value::AssetPath &assetPath,
-  const AssetInfo &assetInfo,
-  AssetResolutionResolver &assetResolver,
-  TextureImage *texImageOut,
-  std::vector<uint8_t> *imageData,
-  void *userdata,
-  std::string *warn,
-  std::string *err) {
-
+bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
+                                       const AssetInfo &assetInfo,
+                                       AssetResolutionResolver &assetResolver,
+                                       TextureImage *texImageOut,
+                                       std::vector<uint8_t> *imageData,
+                                       void *userdata, std::string *warn,
+                                       std::string *err) {
   if (!texImageOut) {
     if (err) {
       (*err) = "`imageOut` argument is nullptr\n";
@@ -1532,7 +1490,8 @@ bool DefaultTextureImageLoaderFunction(
 
   if (resolvedPath.empty()) {
     if (err) {
-      (*err) += fmt::format("Failed to resolve asset path: {}", assetPath.GetAssetPath());
+      (*err) += fmt::format("Failed to resolve asset path: {}",
+                            assetPath.GetAssetPath());
     }
     return false;
   }
@@ -1557,7 +1516,8 @@ bool DefaultTextureImageLoaderFunction(
   } else {
     DCOUT("TODO: bpp = " << result.value().image.bpp);
     if (err) {
-      (*err) = "TODO or unsupported bpp: " + std::to_string(result.value().image.bpp) + "\n";
+      (*err) = "TODO or unsupported bpp: " +
+               std::to_string(result.value().image.bpp) + "\n";
     }
     return false;
   }
@@ -1574,7 +1534,6 @@ bool DefaultTextureImageLoaderFunction(
   return true;
 }
 
-
 //
 // --
 // TODO: Dump data in strict KDL format https://kdl.dev/
@@ -1585,11 +1544,26 @@ namespace {
 std::string to_string(ColorSpace cty) {
   std::string s;
   switch (cty) {
-  case ColorSpace::sRGB: { s = "srgb"; break; }
-  case ColorSpace::Linear: { s = "linear"; break; }
-  case ColorSpace::Rec709: { s = "rec709"; break; }
-  case ColorSpace::OCIO: { s = "ocio"; break; }
-  case ColorSpace::Custom: { s = "custom"; break; }
+    case ColorSpace::sRGB: {
+      s = "srgb";
+      break;
+    }
+    case ColorSpace::Linear: {
+      s = "linear";
+      break;
+    }
+    case ColorSpace::Rec709: {
+      s = "rec709";
+      break;
+    }
+    case ColorSpace::OCIO: {
+      s = "ocio";
+      break;
+    }
+    case ColorSpace::Custom: {
+      s = "custom";
+      break;
+    }
   }
 
   return s;
@@ -1598,15 +1572,42 @@ std::string to_string(ColorSpace cty) {
 std::string to_string(ComponentType cty) {
   std::string s;
   switch (cty) {
-  case ComponentType::UInt8: { s = "uint8"; break; }
-  case ComponentType::Int8: { s = "int8"; break;}
-  case ComponentType::UInt16: { s = "uint16"; break;}
-  case ComponentType::Int16: { s = "int16"; break;}
-  case ComponentType::UInt32: { s = "uint32"; break;}
-  case ComponentType::Int32: { s = "int32"; break;}
-  case ComponentType::Half: { s = "half"; break;}
-  case ComponentType::Float: { s = "float"; break;}
-  case ComponentType::Double: { s = "double"; break;}
+    case ComponentType::UInt8: {
+      s = "uint8";
+      break;
+    }
+    case ComponentType::Int8: {
+      s = "int8";
+      break;
+    }
+    case ComponentType::UInt16: {
+      s = "uint16";
+      break;
+    }
+    case ComponentType::Int16: {
+      s = "int16";
+      break;
+    }
+    case ComponentType::UInt32: {
+      s = "uint32";
+      break;
+    }
+    case ComponentType::Int32: {
+      s = "int32";
+      break;
+    }
+    case ComponentType::Half: {
+      s = "half";
+      break;
+    }
+    case ComponentType::Float: {
+      s = "float";
+      break;
+    }
+    case ComponentType::Double: {
+      s = "double";
+      break;
+    }
   }
 
   return s;
@@ -1615,35 +1616,59 @@ std::string to_string(ComponentType cty) {
 std::string to_string(UVTexture::WrapMode mode) {
   std::string s;
   switch (mode) {
-  case UVTexture::WrapMode::REPEAT: { s = "repeat"; break; }
-  case UVTexture::WrapMode::CLAMP_TO_BORDER: { s = "clamp_to_border"; break; }
-  case UVTexture::WrapMode::CLAMP_TO_EDGE: { s = "clamp_to_edge"; break; }
-  case UVTexture::WrapMode::MIRROR: { s = "mirror"; break; }
+    case UVTexture::WrapMode::REPEAT: {
+      s = "repeat";
+      break;
+    }
+    case UVTexture::WrapMode::CLAMP_TO_BORDER: {
+      s = "clamp_to_border";
+      break;
+    }
+    case UVTexture::WrapMode::CLAMP_TO_EDGE: {
+      s = "clamp_to_edge";
+      break;
+    }
+    case UVTexture::WrapMode::MIRROR: {
+      s = "mirror";
+      break;
+    }
   }
 
   return s;
 }
 
-std::string DumpMesh(const RenderMesh &mesh,
-                               uint32_t indent) {
+std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   std::stringstream ss;
 
   ss << "RenderMesh {\n";
 
-  ss << pprint::Indent(indent + 1) << "num_points " << std::to_string(mesh.points.size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "points \"" << value::print_array_snipped(mesh.points) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_faceVertexCounts " << std::to_string(mesh.faceVertexCounts.size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "faceVertexCounts \"" << value::print_array_snipped(mesh.faceVertexCounts) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_faceVertexIndices " << std::to_string(mesh.faceVertexIndices.size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "faceVertexIndices \"" << value::print_array_snipped(mesh.faceVertexIndices) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_materialIds " << std::to_string(mesh.materialIds.size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "materialIds \"" << value::print_array_snipped(mesh.materialIds) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_facevaryingNormals " << mesh.facevaryingNormals.size() << "\n";
-  ss << pprint::Indent(indent + 1) << "facevaryingNormals \"" << value::print_array_snipped(mesh.facevaryingNormals) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_texcoordSlots " << std::to_string(mesh.facevaryingTexcoords.size()) << "\n";
+  ss << pprint::Indent(indent + 1) << "num_points "
+     << std::to_string(mesh.points.size()) << "\n";
+  ss << pprint::Indent(indent + 1) << "points \""
+     << value::print_array_snipped(mesh.points) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_faceVertexCounts "
+     << std::to_string(mesh.faceVertexCounts.size()) << "\n";
+  ss << pprint::Indent(indent + 1) << "faceVertexCounts \""
+     << value::print_array_snipped(mesh.faceVertexCounts) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_faceVertexIndices "
+     << std::to_string(mesh.faceVertexIndices.size()) << "\n";
+  ss << pprint::Indent(indent + 1) << "faceVertexIndices \""
+     << value::print_array_snipped(mesh.faceVertexIndices) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_materialIds "
+     << std::to_string(mesh.materialIds.size()) << "\n";
+  ss << pprint::Indent(indent + 1) << "materialIds \""
+     << value::print_array_snipped(mesh.materialIds) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_facevaryingNormals "
+     << mesh.facevaryingNormals.size() << "\n";
+  ss << pprint::Indent(indent + 1) << "facevaryingNormals \""
+     << value::print_array_snipped(mesh.facevaryingNormals) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "num_texcoordSlots "
+     << std::to_string(mesh.facevaryingTexcoords.size()) << "\n";
   for (const auto &uvs : mesh.facevaryingTexcoords) {
-    ss << pprint::Indent(indent + 1) << "num_texcoords_" << std::to_string(uvs.first) << " " << uvs.second.size() << "\n";
-    ss << pprint::Indent(indent + 2) << "texcoords_" << uvs.first << " \"" << value::print_array_snipped(uvs.second) << "\"\n";
+    ss << pprint::Indent(indent + 1) << "num_texcoords_"
+       << std::to_string(uvs.first) << " " << uvs.second.size() << "\n";
+    ss << pprint::Indent(indent + 2) << "texcoords_" << uvs.first << " \""
+       << value::print_array_snipped(uvs.second) << "\"\n";
   }
 
   // TODO: primvars
@@ -1667,6 +1692,64 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.diffuseColor.value;
   }
+
+  ss << pprint::Indent(indent + 1) << "metallic = ";
+  if (shader.metallic.is_texture()) {
+    ss << "textureId[" << shader.metallic.textureId << "]";
+  } else {
+    ss << shader.metallic.value;
+  }
+
+  ss << pprint::Indent(indent + 1) << "roughness = ";
+  if (shader.roughness.is_texture()) {
+    ss << "textureId[" << shader.roughness.textureId << "]";
+  } else {
+    ss << shader.roughness.value;
+  }
+
+  ss << pprint::Indent(indent + 1) << "clearcoat = ";
+  if (shader.clearcoat.is_texture()) {
+    ss << "textureId[" << shader.clearcoat.textureId << "]";
+  } else {
+    ss << shader.clearcoat.value;
+  }
+
+  ss << pprint::Indent(indent + 1) << "clearcoatRoughness = ";
+  if (shader.clearcoatRoughness.is_texture()) {
+    ss << "textureId[" << shader.clearcoatRoughness.textureId << "]";
+  } else {
+    ss << shader.clearcoatRoughness.value;
+  }
+
+  ss << pprint::Indent(indent + 1) << "opacity = ";
+  if (shader.opacity.is_texture()) {
+    ss << "textureId[" << shader.opacity.textureId << "]";
+  } else {
+    ss << shader.opacity.value;
+  }
+
+  ss << pprint::Indent(indent + 1) << "opacityThreshold = ";
+  if (shader.opacityThreshold.is_texture()) {
+    ss << "textureId[" << shader.opacityThreshold.textureId << "]";
+  } else {
+    ss << shader.opacityThreshold.value;
+  }
+
+  ss << pprint::Indent(indent + 1) << "normal = ";
+  if (shader.normal.is_texture()) {
+    ss << "textureId[" << shader.normal.textureId << "]";
+  } else {
+    ss << shader.normal.value;
+  }
+
+  ss << pprint::Indent(indent + 1) << "displacement = ";
+  if (shader.displacement.is_texture()) {
+    ss << "textureId[" << shader.displacement.textureId << "]";
+  } else {
+    ss << shader.displacement.value;
+  }
+
+
   ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
@@ -1694,19 +1777,28 @@ std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
 
   // TODO
   ss << "UVTexture {\n";
-  ss << pprint::Indent(indent+1) << "primvar_name " << texture.varname_uv << "\n";
-  ss << pprint::Indent(indent+1) << "bias " << texture.bias << "\n";
-  ss << pprint::Indent(indent+1) << "scale " << texture.scale << "\n";
-  ss << pprint::Indent(indent+1) << "wrapS " << to_string(texture.wrapS) << "\n";
-  ss << pprint::Indent(indent+1) << "wrapT " << to_string(texture.wrapT) << "\n";
-  ss << pprint::Indent(indent+1) << "fallback_uv " << texture.fallback_uv << "\n";
-  ss << pprint::Indent(indent+1) << "textureImageID " << std::to_string(texture.texture_image_id) << "\n";
-  ss << pprint::Indent(indent+1) << "has UsdTransform2d " << std::to_string(texture.has_transform2d) << "\n";
+  ss << pprint::Indent(indent + 1) << "primvar_name " << texture.varname_uv
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "bias " << texture.bias << "\n";
+  ss << pprint::Indent(indent + 1) << "scale " << texture.scale << "\n";
+  ss << pprint::Indent(indent + 1) << "wrapS " << to_string(texture.wrapS)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "wrapT " << to_string(texture.wrapT)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "fallback_uv " << texture.fallback_uv
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "textureImageID "
+     << std::to_string(texture.texture_image_id) << "\n";
+  ss << pprint::Indent(indent + 1) << "has UsdTransform2d "
+     << std::to_string(texture.has_transform2d) << "\n";
   if (texture.has_transform2d) {
-    ss << pprint::Indent(indent+2) << "rotation " << texture.tx_rotation << "\n";
-    ss << pprint::Indent(indent+2) << "scale " << texture.tx_scale << "\n";
-    ss << pprint::Indent(indent+2) << "translation " << texture.tx_translation << "\n";
-    ss << pprint::Indent(indent+2) << "computed_transform " << texture.transform << "\n";
+    ss << pprint::Indent(indent + 2) << "rotation " << texture.tx_rotation
+       << "\n";
+    ss << pprint::Indent(indent + 2) << "scale " << texture.tx_scale << "\n";
+    ss << pprint::Indent(indent + 2) << "translation " << texture.tx_translation
+       << "\n";
+    ss << pprint::Indent(indent + 2) << "computed_transform "
+       << texture.transform << "\n";
   }
 
   ss << "\n";
@@ -1720,13 +1812,20 @@ std::string DumpImage(const TextureImage &image, uint32_t indent) {
   std::stringstream ss;
 
   ss << "TextureImage {\n";
-  ss << pprint::Indent(indent+1) << "asset_identifier \"" << image.asset_identifier << "\"\n";
-  ss << pprint::Indent(indent+1) << "channels " << std::to_string(image.channels) << "\n";
-  ss << pprint::Indent(indent+1) << "width " << std::to_string(image.width) << "\n";
-  ss << pprint::Indent(indent+1) << "height " << std::to_string(image.height) << "\n";
-  ss << pprint::Indent(indent+1) << "miplevel " << std::to_string(image.miplevel) << "\n";
-  ss << pprint::Indent(indent+1) << "colorSpace " << to_string(image.colorSpace) << "\n";
-  ss << pprint::Indent(indent+1) << "bufferID " << std::to_string(image.buffer_id) << "\n";
+  ss << pprint::Indent(indent + 1) << "asset_identifier \""
+     << image.asset_identifier << "\"\n";
+  ss << pprint::Indent(indent + 1) << "channels "
+     << std::to_string(image.channels) << "\n";
+  ss << pprint::Indent(indent + 1) << "width " << std::to_string(image.width)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "height " << std::to_string(image.height)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "miplevel "
+     << std::to_string(image.miplevel) << "\n";
+  ss << pprint::Indent(indent + 1) << "colorSpace "
+     << to_string(image.colorSpace) << "\n";
+  ss << pprint::Indent(indent + 1) << "bufferID "
+     << std::to_string(image.buffer_id) << "\n";
 
   ss << "\n";
 
@@ -1739,9 +1838,11 @@ std::string DumpBuffer(const BufferData &buffer, uint32_t indent) {
   std::stringstream ss;
 
   ss << "Buffer {\n";
-  ss << pprint::Indent(indent+1) << "bytes " << buffer.data.size() << "\n";
-  ss << pprint::Indent(indent+1) << "count " << std::to_string(buffer.count) << "\n";
-  ss << pprint::Indent(indent+1) << "componentType " << to_string(buffer.componentType) << "\n";
+  ss << pprint::Indent(indent + 1) << "bytes " << buffer.data.size() << "\n";
+  ss << pprint::Indent(indent + 1) << "count " << std::to_string(buffer.count)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "componentType "
+     << to_string(buffer.componentType) << "\n";
 
   ss << "\n";
 
@@ -1752,7 +1853,8 @@ std::string DumpBuffer(const BufferData &buffer, uint32_t indent) {
 
 }  // namespace
 
-std::string DumpRenderScene(const RenderScene &scene, const std::string &format) {
+std::string DumpRenderScene(const RenderScene &scene,
+                            const std::string &format) {
   std::stringstream ss;
 
   // Currently kdl only.
@@ -1806,7 +1908,7 @@ std::string DumpRenderScene(const RenderScene &scene, const std::string &format)
   }
   ss << "}\n";
 
-  //ss << "TODO: Animations, ...\n";
+  // ss << "TODO: Animations, ...\n";
 
   return ss.str();
 }

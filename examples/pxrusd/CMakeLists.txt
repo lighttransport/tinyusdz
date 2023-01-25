@@ -6,6 +6,7 @@ set(EXAMPLE_BUILD_TARGET "pxrusd")
 project(${EXAMPLE_BUILD_TARGET} C CXX)
 
 # options
+set(EXAMPLE_USD_LIB_PREFIX "" CACHE STRING "Prefix to pxrUSD lib name.For example, some(?) pxrUSD build configuration adds 'usd_' prefix")
 set(EXAMPLE_USD_INC_DIR "dist/include" CACHE PATH "Path to pxrUSD include dir")
 set(EXAMPLE_USD_LIB_DIR "dist/lib" CACHE PATH "Path to pxrUSD lib dir")
 set(EXAMPLE_USD_MONOLITHIC OFF CACHE BOOL "Is pxrUSD monolithic build?")
@@ -79,7 +80,14 @@ target_link_directories(${EXAMPLE_BUILD_TARGET} PRIVATE ${EXAMPLE_USD_LIB_DIR})
 if (EXAMPLE_USD_MONOLITHIC)
   target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd_ms)
 else()
-  target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE usd_usd usd_usdGeom usd_usdUtils usd_sdf usd_tf usd_gf usd_vt)
+  target_link_libraries(${EXAMPLE_BUILD_TARGET} PRIVATE
+	${EXAMPLE_USD_LIB_PREFIX}usd
+	${EXAMPLE_USD_LIB_PREFIX}usdGeom
+	${EXAMPLE_USD_LIB_PREFIX}usdUtils
+	${EXAMPLE_USD_LIB_PREFIX}sdf
+	${EXAMPLE_USD_LIB_PREFIX}tf
+	${EXAMPLE_USD_LIB_PREFIX}gf
+	${EXAMPLE_USD_LIB_PREFIX}vt)
 endif()
 
 if (${EXAMPLE_LINK_BOOST_PYTHON})
