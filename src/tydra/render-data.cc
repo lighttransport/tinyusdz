@@ -855,6 +855,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
       TextureImageLoaderFunction tex_loader_fun =
           _material_config.texture_image_loader_function;
+
       if (!tex_loader_fun) {
         tex_loader_fun = DefaultTextureImageLoaderFunction;
       }
@@ -863,14 +864,23 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
           assetPath, assetInfo, _asset_resolver, &texImage, &imageBuffer.data,
           _material_config.texture_image_loader_function_userdata, &warn, &err);
 
-      if (!tex_ok) {
+      if (!tex_ok && !_material_config.allow_texture_load_failure) {
         PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
       }
 
       if (warn.size()) {
         DCOUT("WARN: " << warn);
-        // TODO: propagate warnining message
+        PushWarn(warn);
       }
+
+      if (err.size()) {
+        // report as warning.
+        PushWarn(err);
+      }
+
+      // store unresolved asset path.
+      texImage.asset_identifier = assetPath.GetAssetPath();
+
     } else {
       // store resolved asset path.
       texImage.asset_identifier =
@@ -1129,6 +1139,24 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
   }
 
   PreviewSurfaceShader rshader;
+
+  if (shader.useSpecularWorkflow.authored()) {
+    if (shader.useSpecularWorkflow.is_blocked()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("useSpecularWorkflow attribute is blocked."));
+    } else if (shader.useSpecularWorkflow.is_connection()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("TODO: useSpecularWorkflow with connection."));
+    } else {
+      int val;
+      if (!shader.useSpecularWorkflow.get_value().get_scalar(&val)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to get useSpcularWorkFlow value at `default` timecode."));
+      }
+
+      rshader.useSpecularWorkFlow = val ? true : false;
+    }
+  }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.diffuseColor,
                                         "diffuseColor", rshader.diffuseColor)) {
@@ -1686,12 +1714,17 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << "PreviewSurfaceShader {\n";
 
+  ss << pprint::Indent(indent + 1)
+     << "useSpecularWorkFlow = " << std::to_string(shader.useSpecularWorkFlow)
+     << "\n";
+
   ss << pprint::Indent(indent + 1) << "diffuseColor = ";
   if (shader.diffuseColor.is_texture()) {
     ss << "textureId[" << shader.diffuseColor.textureId << "]";
   } else {
     ss << shader.diffuseColor.value;
   }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "metallic = ";
   if (shader.metallic.is_texture()) {
@@ -1699,6 +1732,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.metallic.value;
   }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "roughness = ";
   if (shader.roughness.is_texture()) {
@@ -1706,6 +1740,15 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.roughness.value;
   }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "ior = ";
+  if (shader.ior.is_texture()) {
+    ss << "textureId[" << shader.ior.textureId << "]";
+  } else {
+    ss << shader.ior.value;
+  }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "clearcoat = ";
   if (shader.clearcoat.is_texture()) {
@@ -1713,6 +1756,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.clearcoat.value;
   }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "clearcoatRoughness = ";
   if (shader.clearcoatRoughness.is_texture()) {
@@ -1720,6 +1764,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.clearcoatRoughness.value;
   }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "opacity = ";
   if (shader.opacity.is_texture()) {
@@ -1727,6 +1772,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.opacity.value;
   }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "opacityThreshold = ";
   if (shader.opacityThreshold.is_texture()) {
@@ -1734,6 +1780,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.opacityThreshold.value;
   }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "normal = ";
   if (shader.normal.is_texture()) {
@@ -1741,6 +1788,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.normal.value;
   }
+  ss << "\n";
 
   ss << pprint::Indent(indent + 1) << "displacement = ";
   if (shader.displacement.is_texture()) {
@@ -1748,8 +1796,14 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   } else {
     ss << shader.displacement.value;
   }
+  ss << "\n";
 
-
+  ss << pprint::Indent(indent + 1) << "occlusion = ";
+  if (shader.occlusion.is_texture()) {
+    ss << "textureId[" << shader.occlusion.textureId << "]";
+  } else {
+    ss << shader.occlusion.value;
+  }
   ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
