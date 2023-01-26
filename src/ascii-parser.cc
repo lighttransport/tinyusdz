@@ -4014,12 +4014,14 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     return false;
   }
 
+#if 0 // TODO: Remove
   // output node?
   if (type_name == "token" && hasOutputs(primattr_name) &&
       !hasConnect(primattr_name)) {
     // ok
     return true;
   }
+#endif
 
   bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
   bool isConnection = endsWith(primattr_name, kConnectSuffix);

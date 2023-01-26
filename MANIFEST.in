@@ -521,6 +521,7 @@ include src/osd/opensubdiv/vtr/stackBuffer.h
 include src/osd/opensubdiv/vtr/triRefinement.cpp
 include src/osd/opensubdiv/vtr/triRefinement.h
 include src/osd/opensubdiv/vtr/types.h
+include src/path-util.cc
 include src/path-util.hh
 include src/performance.cc
 include src/performance.hh

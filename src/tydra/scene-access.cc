@@ -1198,39 +1198,17 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (prop_name == "occlusion") {
     ToProperty(surface.occlusion, *out_prop);
   } else if (prop_name == "outputs:surface") {
-    if (surface.outputsSurface) {
-      const Relationship &rel = surface.outputsSurface.value();
-      if (!rel.has_value()) {
+    if (surface.outputsSurface.authored()) {
         // empty. type info only
         (*out_prop) = Property(value::kToken, /* custom */ false);
-      } else if (rel.is_path()) {
-        (*out_prop) =
-            Property(rel.targetPath, value::kToken, /* custom */ false);
-      } else if (rel.is_pathvector()) {
-        (*out_prop) =
-            Property(rel.targetPathVector, value::kToken, /* custom */ false);
-      } else {
-        return false;
-      }
     } else {
       // Not authored
       return false;
     }
   } else if (prop_name == "outputs:displacement") {
-    if (surface.outputsDisplacement) {
-      const Relationship &rel = surface.outputsDisplacement.value();
-      if (!rel.has_value()) {
-        // empty. type info only
-        (*out_prop) = Property(value::kToken, /* custom */ false);
-      } else if (rel.is_path()) {
-        (*out_prop) =
-            Property(rel.targetPath, value::kToken, /* custom */ false);
-      } else if (rel.is_pathvector()) {
-        (*out_prop) =
-            Property(rel.targetPathVector, value::kToken, /* custom */ false);
-      } else {
-        return false;
-      }
+    if (surface.outputsDisplacement.authored()) {
+      // empty. type info only
+      (*out_prop) = Property(value::kToken, /* custom */ false);
     } else {
       // Not authored
       return false;

@@ -18,6 +18,17 @@ namespace tinyusdz {
 constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
 
+constexpr auto kUsdPreviewSurface = "UsdPreviewSurface";
+constexpr auto kUsdUVTexture = "UsdUVTexture";
+constexpr auto kUsdTransform2d = "UsdTransform2d";
+constexpr auto kUsdPrimvarReader_int = "UsdPrimvarReader_int";
+constexpr auto kUsdPrimvarReader_float = "UsdPrimvarReader_float";
+constexpr auto kUsdPrimvarReader_float2 = "UsdPrimvarReader_float2";
+constexpr auto kUsdPrimvarReader_float3 = "UsdPrimvarReader_float3";
+constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
+constexpr auto kUsdPrimvarReader_string = "UsdPrimvarReader_string";
+constexpr auto kUsdPrimvarReader_matrix4d = "UsdPrimvarReader_matrix4d";
+
 // for bindMaterialAs
 constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
 constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
@@ -33,6 +44,10 @@ struct Material {
 
   PrimMeta meta;
 
+  ///
+  /// NOTE: Mateiral's outputs must be a connection.
+  /// (Whereas Shader's outputs is not)
+  ///
   TypedConnection<value::token> surface; // "token outputs:surface.connect"
   TypedConnection<value::token> displacement; // "token outputs:displacement.connect"
   TypedConnection<value::token> volume; // "token outputs:volume.connect"
@@ -95,6 +110,9 @@ struct UsdPrimvarReader {
   TypedAttribute<Animatable<value::token>> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
 
 
+  ///
+  /// Outputs
+  ///
   TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"
 
   std::pair<ListEditQual, std::vector<Reference>> references;
@@ -151,7 +169,7 @@ struct UsdUVTexture {
   ///
   /// Outputs
   ///
-  /// Terminal attribute. No value assign(e.g. `float outputs:r = 1.2`)
+  /// Terminal attribute.
   ///
   TypedTerminalAttribute<float> outputsR; // "float outputs:r"
   TypedTerminalAttribute<float> outputsG; // "float outputs:g"
@@ -207,10 +225,10 @@ struct UsdPreviewSurface {
   ///
   /// Outputs
   ///
-  /// Terminal attribute(No value assigned or `.connect` only)
+  /// No value assigned.
   ///
-  nonstd::optional<Relationship> outputsSurface; // "token outputs:surface", "outputs:surface.connect"
-  nonstd::optional<Relationship> outputsDisplacement; // "token outputs:displacement", "outputs:displacement.connect"
+  TypedTerminalAttribute<value::token> outputsSurface; // "token outputs:surface"
+  TypedTerminalAttribute<value::token> outputsDisplacement; // "token outputs:displacement"
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;

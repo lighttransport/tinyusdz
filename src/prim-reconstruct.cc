@@ -1049,10 +1049,16 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
 
       bool attr_is_role_type = value::IsRoleType(attr_type_name);
 
+      DCOUT("attrname = " << name);
+      DCOUT("value typename = " << value::TypeTraits<T>::type_name());
+      DCOUT("attr-type_name = " << attr_type_name);
+
+
       // First check if both types are same, then
       // Allow either type is role-types(e.g. allow color3f attribute for TypedTerminalAttribute<float3>)
       // TODO: Allow both role-types case?(e.g. point3f attribute for TypedTerminalAttribute<vector3f>)
       if (value::TypeTraits<T>::type_name() == attr_type_name) {
+        DCOUT("Author output terminal attribute: " << name);
         target.set_authored(true);
         target.metas() = prop.get_attribute().metas();
         table.insert(name);
@@ -1111,6 +1117,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
   return ret;
 }
 
+#if 0 // TODO: Remove since not used.
 // Allowed syntax:
 //   "token outputs:surface"
 //   "token outputs:surface.connect = </path/to/conn/>"
@@ -1206,6 +1213,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
+#endif
 
 // Allowed syntax:
 //   "token outputs:surface.connect = </path/to/conn/>"
@@ -1336,6 +1344,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
   } \
 }
 
+#if 0 // TODO: Remove since not used.
 #define PARSE_SHADER_OUTPUT_PROPERTY(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderOutputProperty(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
@@ -1347,6 +1356,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err)); \
   } \
 }
+#endif
 
 #define PARSE_SHADER_INPUT_CONNECTION_PROPERTY(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderInputConnectionProperty(__table, __prop.first, __prop.second, __name, __target); \
@@ -2967,9 +2977,9 @@ bool ReconstructShader<UsdPreviewSurface>(
                          surface->occlusion)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:useSpecularWorkflow",
                          UsdPreviewSurface, surface->useSpecularWorkflow)
-    PARSE_SHADER_OUTPUT_PROPERTY(table, prop, "outputs:surface", UsdPreviewSurface,
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:surface", UsdPreviewSurface,
                    surface->outputsSurface)
-    PARSE_SHADER_OUTPUT_PROPERTY(table, prop, "outputs:displacement", UsdPreviewSurface,
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:displacement", UsdPreviewSurface,
                    surface->outputsDisplacement)
     ADD_PROPERTY(table, prop, UsdPreviewSurface, surface->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -3215,15 +3225,6 @@ bool ReconstructPrim<Shader>(
     std::string *err)
 {
   (void)properties;
-
-  constexpr auto kUsdPreviewSurface = "UsdPreviewSurface";
-  constexpr auto kUsdUVTexture = "UsdUVTexture";
-  constexpr auto kUsdPrimvarReader_int = "UsdPrimvarReader_int";
-  constexpr auto kUsdPrimvarReader_float = "UsdPrimvarReader_float";
-  constexpr auto kUsdPrimvarReader_float2 = "UsdPrimvarReader_float2";
-  constexpr auto kUsdPrimvarReader_float3 = "UsdPrimvarReader_float3";
-  constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
-  constexpr auto kUsdTransform2d = "UsdTransform2d";
 
   auto info_id_prop = properties.find("info:id");
   if (info_id_prop == properties.end()) {

@@ -537,6 +537,10 @@ struct MaterialConverterConfig
   TextureImageLoaderFunction texture_image_loader_function{nullptr};
   void *texture_image_loader_function_userdata{nullptr};
 
+  // Allow asset(texture, shader, etc) path with Windows backslashes(e.g. ".\textures\cat.png")?
+  // When true, convert it to forward slash('/') on Posixish system.
+  bool allow_backslash_in_asset_path{true};
+
   // Allow texture load failure?
   bool allow_texture_load_failure{true};
 
