@@ -1369,7 +1369,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           return false;
         }
 
-        if (mat_id >= std::numeric_limits<int64_t>::max()) {
+        if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
           if (err) {
             (*err) += "Material index too large.\n";
           }
@@ -1392,7 +1392,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         // Assign new material ID
         uint64_t mat_id = rmaterials.size();
 
-        if (mat_id >= std::numeric_limits<int64_t>::max()) {
+        if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
           if (err) {
             (*err) += "Material index too large.\n";
           }
@@ -1424,7 +1424,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     // Do not assign materialIds when no material bound to this Mesh.
     // TODO: per-face material.
     if ((rmaterial_id > -1) &&
-        (rmaterial_id < std::numeric_limits<int32_t>::max())) {
+        (rmaterial_id < (std::numeric_limits<int32_t>::max)())) {
       rmesh.materialIds.resize(rmesh.faceVertexCounts.size(),
                                int32_t(rmaterial_id));
     }

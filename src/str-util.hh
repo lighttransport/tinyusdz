@@ -153,7 +153,7 @@ inline std::string join(const std::string &sep, const It &v) {
 // To avoid splitting toooo large input text(e.g. few GB).
 inline std::vector<std::string> split(
     const std::string &str, const std::string &sep,
-    const uint32_t kMaxItems = std::numeric_limits<int32_t>::max() / 100) {
+    const uint32_t kMaxItems = (std::numeric_limits<int32_t>::max)() / 100) {
   size_t s;
   size_t e = 0;
 
