@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present, Syoyo Fujita.
 //
-// Utility functions for Path 
+// Utility functions for Path
+
+#include "prim-types.hh"
 
 namespace tinyusdz {
 namespace pathutil {
@@ -15,6 +17,15 @@ bool ValidatePath(const Path &path, std::string *err);
 /// Concatinate two Paths.
 ///
 Path ConcatPath(const Path &parent, const Path &child);
+
+
+///
+/// Currently ToUnixishPath converts backslash character to forward slash character.
+///
+/// /home/tinyusdz => C:/Users/tinyusdz
+/// C:\\Users\\tinyusdz => C:/Users/tinyusdz
+///
+Path ToUnixishPath(const Path &path);
 
 } // namespace path
 } // namespace tinyusdz

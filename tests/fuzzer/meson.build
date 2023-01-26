@@ -18,6 +18,7 @@ tinyusdz_sources=[
   '../../src/usdLux.cc',
   '../../src/usdObj.cc',
   '../../src/primvar.cc',
+  '../../src/path-util.cc',
   '../../src/ascii-parser.cc',
   '../../src/ascii-parser-basetype.cc',
   '../../src/ascii-parser-timesamples.cc',
