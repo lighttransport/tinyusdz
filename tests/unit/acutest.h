@@ -1166,7 +1166,7 @@ acutest_run_(const struct acutest_test_* test, int index, int master_index)
                     case SIGSEGV: signame = "SIGSEGV"; break;
                     case SIGILL:  signame = "SIGILL"; break;
                     case SIGTERM: signame = "SIGTERM"; break;
-                    default:      sprintf(tmp, "signal %d", WTERMSIG(exit_code)); signame = tmp; break;
+                    default:      snprintf(tmp, 32, "signal %d", WTERMSIG(exit_code)); tmp[31] = '\n'; signame = tmp; break;
                 }
                 acutest_error_("Test interrupted by %s.", signame);
             } else {
@@ -1341,7 +1341,7 @@ acutest_cmdline_read_(const ACUTEST_CMDLINE_OPTION_* options, int argc, char** a
                             if(opt->flags & (ACUTEST_CMDLINE_OPTFLAG_OPTIONALARG_ | ACUTEST_CMDLINE_OPTFLAG_REQUIREDARG_)) {
                                 ret = callback(opt->id, argv[i]+2+len+1);
                             } else {
-                                sprintf(auxbuf, "--%s", opt->longname);
+                                snprintf(auxbuf, sizeof(auxbuf), "--%s", opt->longname); auxbuf[sizeof(auxbuf)-1] = '\n';
                                 ret = callback(ACUTEST_CMDLINE_OPTID_BOGUSARG_, auxbuf);
                             }
                             break;
