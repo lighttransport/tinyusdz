@@ -2765,28 +2765,10 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
   ss << print_typed_attr(shader.displacement, "inputs:displacement", indent);
   ss << print_typed_attr(shader.occlusion, "inputs:occlusion", indent);
 
-  // Outputs
-  if (shader.outputsSurface) {
-    ss << pprint::Indent(indent) << "token outputs:surface";
-    if (shader.outputsSurface.value().is_path()) {
-      ss << ".connect = " << pquote(shader.outputsSurface.value().targetPath);
-    }
-    if (shader.outputsSurface.value().metas().authored()) {
-      ss << "(\n" << print_attr_metas(shader.outputsSurface.value().metas(), indent+1) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
+  ss << print_typed_terminal_attr(shader.outputsSurface, "outputs:surface", indent);
+  ss << print_typed_terminal_attr(shader.outputsDisplacement, "outputs:displacement", indent);
 
-  if (shader.outputsDisplacement) {
-    ss << pprint::Indent(indent) << "token outputs:displacement";
-    if (shader.outputsDisplacement.value().is_path()) {
-      ss << ".connect = " << pquote(shader.outputsDisplacement.value().targetPath) << "\n";
-    }
-    if (shader.outputsDisplacement.value().metas().authored()) {
-      ss << "(\n" << print_attr_metas(shader.outputsDisplacement.value().metas(), indent+1) << pprint::Indent(indent+1) << ")";
-    }
-    ss << "\n";
-  }
+  ss << print_props(shader.props, indent);
 
   return ss.str();
 
@@ -2814,6 +2796,8 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   ss << print_typed_terminal_attr(shader.outputsB, "outputs:b", indent);
   ss << print_typed_terminal_attr(shader.outputsA, "outputs:a", indent);
   ss << print_typed_terminal_attr(shader.outputsRGB, "outputs:rgb", indent);
+
+  ss << print_props(shader.props, indent);
 
   return ss.str();
 }

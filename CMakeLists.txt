@@ -326,6 +326,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/path-util.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
