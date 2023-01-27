@@ -440,3 +440,4 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * OpenFBX: MIT License. https://github.com/nem0/OpenFBX
 * floaxie: Apache 2.0 License. https://github.com/aclex/floaxie
 * boost math sin_pi/cos_pi: BSL 1.0 License. https://www.boost.org/
+* Vulkan: MIT License. https://github.com/SaschaWillems/Vulkan
