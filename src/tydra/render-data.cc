@@ -67,18 +67,18 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
 
   GeomPrimvar primvar;
   if (!mesh.get_primvar(name, &primvar)) {
-    return nonstd::make_unexpected(fmt::format("No primvars:{}", name));
+    return nonstd::make_unexpected(fmt::format("No primvars:{}\n", name));
   }
 
   if (!primvar.has_value()) {
-    return nonstd::make_unexpected("No value exist for primvars:" + name);
+    return nonstd::make_unexpected("No value exist for primvars:" + name + "\n");
   }
 
   if (primvar.get_type_id() !=
       value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
     return nonstd::make_unexpected(
         "Texture coordinate primvar must be texCoord2f[] type, but got " +
-        primvar.get_type_name());
+        primvar.get_type_name() + "\n");
   }
 
   if (primvar.get_interpolation() == Interpolation::Varying) {
@@ -96,7 +96,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   std::vector<value::texcoord2f> uvs;
   if (!primvar.flatten_with_indices(&uvs)) {
     return nonstd::make_unexpected(
-        "Failed to retrieve texture coordinate primvar with concrete type.");
+        "Failed to retrieve texture coordinate primvar with concrete type.\n");
   }
 
   vattr.format = VertexAttributeFormat::Vec2;
@@ -159,7 +159,7 @@ bool TriangulatePolygon(const std::vector<T> &points,
     if (npolys < 3) {
       err = fmt::format(
           "faceVertex count must be 3(triangle) or "
-          "more(polygon), but got faceVertexCounts[{}] = {}",
+          "more(polygon), but got faceVertexCounts[{}] = {}\n",
           i, npolys);
       return false;
     }
@@ -167,7 +167,7 @@ bool TriangulatePolygon(const std::vector<T> &points,
     if (faceIndexOffset + npolys > faceVertexIndices.size()) {
       err = fmt::format(
           "Invalid faceVertexIndices or faceVertexCounts. faceVertex index "
-          "exceeds faceVertexIndices.size() at [{}]",
+          "exceeds faceVertexIndices.size() at [{}]\n",
           i);
       return false;
     }
@@ -220,12 +220,12 @@ bool TriangulatePolygon(const std::vector<T> &points,
         vi0_2 = faceVertexIndices[faceIndexOffset + j];
 
         if (vi0 >= points.size()) {
-          err = fmt::format("Invalid vertex index.");
+          err = fmt::format("Invalid vertex index.\n");
           return false;
         }
 
         if (vi0_2 >= points.size()) {
-          err = fmt::format("Invalid vertex index.");
+          err = fmt::format("Invalid vertex index.\n");
           return false;
         }
 
@@ -247,7 +247,7 @@ bool TriangulatePolygon(const std::vector<T> &points,
       BaseTy length_n = vlength(n);
       // Check if zero length normal
       if (std::fabs(length_n) < std::numeric_limits<BaseTy>::epsilon()) {
-        err = "Degenerated polygon found.";
+        err = "Degenerated polygon found.\n";
         return false;
       }
 
@@ -532,20 +532,20 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
         if (vattr.format != VertexAttributeFormat::Vec2) {
           PUSH_ERROR_AND_RETURN(
-              fmt::format("Texcoord VertexAttribute must be Vec2 type."));
+              fmt::format("Texcoord VertexAttribute must be Vec2 type.\n"));
         }
 
         if (vattr.variability != VertexVariability::FaceVarying) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("TODO: non-facevarying UV texcoord attribute is not "
-                          "support yet: {}.",
+                          "support yet: {}.\n",
                           uvname));
         }
 
         if (vattr.counts() != num_fvs) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("The number of UV texcoord attributes {} does not "
-                          "match to the number of facevarying elements {}",
+                          "match to the number of facevarying elements {}\n",
                           vattr.counts(), num_fvs));
         }
 
@@ -981,7 +981,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
                                       &attr, &err)) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
-                          "inputs:varname: {}",
+                          "inputs:varname.\n{}",
                           err));
         }
 
@@ -1518,7 +1518,7 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 
   if (resolvedPath.empty()) {
     if (err) {
-      (*err) += fmt::format("Failed to resolve asset path: {}",
+      (*err) += fmt::format("Failed to resolve asset path: {}\n",
                             assetPath.GetAssetPath());
     }
     return false;
