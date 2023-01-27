@@ -403,7 +403,7 @@ void ToProperty(
 // Scalar-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 template <typename T>
-void ToProperty(const TypedAttribute<T> &input, Property &output) {
+bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *err) {
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -419,7 +419,10 @@ void ToProperty(const TypedAttribute<T> &input, Property &output) {
     Relationship relTarget;
     std::vector<Path> paths = input.get_connections();
     if (paths.empty()) {
-      // ??? TODO: report internal error.
+      if (err) {
+        (*err) += fmt::format("[InternalError] Connection attribute but empty targetPaths.");
+      }
+      return false;
     } else if (paths.size() == 1) {
       output = Property(paths[0], /* type */ value::TypeTraits<T>::type_name(),
                         /* custom */ false);
@@ -439,9 +442,15 @@ void ToProperty(const TypedAttribute<T> &input, Property &output) {
       attr.variability() = Variability::Uniform;
       output = Property(attr, /* custom */ false);
     } else {
-      // TODO: Report error.
+      if (err) {
+        (*err) += fmt::format("[InternalError] Invalid TypedAttribute<{}> value.", value::TypeTraits<T>::type_name());
+      }
+
+      return false;
     }
   }
+
+  return true;
 }
 
 // Scalar or TimeSample-valued attribute.
@@ -449,18 +458,18 @@ void ToProperty(const TypedAttribute<T> &input, Property &output) {
 //
 // TODO: Support timeSampled attribute.
 template <typename T>
-void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
+bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, std::string *err) {
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
     attr.set_type_name(value::TypeTraits<T>::type_name());
     output = Property(std::move(attr), /*custom*/ false);
-    return;
+    return true;
   } else if (input.is_value_empty()) {
     // type info only
     output = Property(value::TypeTraits<T>::type_name(), /* custom */ false);
-    return;
+    return true;
   } else if (input.is_connection()) {
     DCOUT("IsConnection");
 
@@ -469,20 +478,29 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
     std::vector<Path> pv = input.get_connections();
     if (pv.empty()) {
       DCOUT("??? Empty connectionTarget.");
+
+      if (err) {
+        (*err) += fmt::format("[InternalError] Connection attribute but empty targetPaths.");
+      }
+      return false;
     }
     if (pv.size() == 1) {
       DCOUT("targetPath = " << pv[0]);
       output = Property(pv[0], /* type */ value::TypeTraits<T>::type_name(),
                         /* custom */ false);
     } else if (pv.size() > 1) {
+      DCOUT("targetPath = " << pv);
       output = Property(pv, /* type */ value::TypeTraits<T>::type_name(),
                         /* custom */ false);
     } else {
-      // ??? TODO: report internal error.
-      DCOUT("??? GetConnection faile.");
+      DCOUT("??? GetConnection failue.");
+      if (err) {
+        (*err) += fmt::format("[InternalError] get_connection() to TypedAttribute<Animatable<{}>> failed.", value::TypeTraits<T>::type_name());
+      }
+      return false;
     }
 
-    return;
+    return true;
 
   } else {
     // Includes !authored()
@@ -499,7 +517,7 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
           attr.set_var(std::move(pvar));
           attr.variability() = Variability::Uniform;
           output = Property(attr, /* custom */ false);
-          return;
+          return true;
         }
       } else if (aval.value().is_blocked()) {
         Attribute attr;
@@ -507,9 +525,13 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
         attr.set_blocked(true);
         attr.variability() = Variability::Uniform;
         output = Property(std::move(attr), /*custom*/ false);
-        return;
+        return true;
       } else if (aval.value().is_timesamples()) {
         DCOUT("TODO: Convert typed TimeSamples to value::TimeSamples");
+        if (err) {
+          (*err) += fmt::format("[TODO] TimeSamples value of TypedAttribute<Animatable<{}>> is not yet implemented.", value::TypeTraits<T>::type_name());
+        }
+        return false;
       }
     }
   }
@@ -517,6 +539,8 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
   // fallback to Property with invalid value
   output = Property(value::TypeTraits<std::nullptr_t>::type_name(),
                     /*custom*/ false);
+
+  return true;
 }
 
 // Scalar or TimeSample-valued attribute.
@@ -524,8 +548,8 @@ void ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output) {
 //
 // TODO: Support timeSampled attribute.
 template <typename T>
-void ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
-                Property &output) {
+bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
+                Property &output, std::string *err) {
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -542,6 +566,10 @@ void ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     std::vector<Path> pv = input.get_connections();
     if (pv.empty()) {
       DCOUT("??? Empty connectionTarget.");
+      if (err) {
+        (*err) += "[InternalError] Empty connectionTarget.";
+      }
+      return false;
     }
     if (pv.size() == 1) {
       DCOUT("targetPath = " << pv[0]);
@@ -551,8 +579,11 @@ void ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
       output = Property(pv, /* type */ value::TypeTraits<T>::type_name(),
                         /* custom */ false);
     } else {
-      // ??? TODO: report internal error.
       DCOUT("??? GetConnection faile.");
+      if (err) {
+        (*err) += "[InternalError] Invalid connectionTarget.";
+      }
+      return false;
     }
 
   } else {
@@ -572,9 +603,17 @@ void ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
         pvar.set_value(val);
       } else {
         DCOUT("??? Invalid Animatable value.");
+        if (err) {
+          (*err) += "[InternalError] Invalid Animatable value.";
+        }
+        return false;
       }
     } else {
       DCOUT("??? Invalid Animatable value.");
+      if (err) {
+        (*err) += "[InternalError] Invalid Animatable value.";
+      }
+      return false;
     }
 
     Attribute attr;
@@ -582,12 +621,14 @@ void ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     attr.variability() = Variability::Varying;
     output = Property(attr, /* custom */ false);
   }
+
+  return true;
 }
 
 // To Property with token type
 template <typename T>
-void ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
-                     Property &output) {
+bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
+                     Property &output, std::string *err) {
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -603,15 +644,20 @@ void ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     Relationship rel;
     std::vector<Path> pv = input.get_connections();
     if (pv.empty()) {
-      DCOUT("??? Empty connectionTarget.");
+      if (err) {
+        (*err) += "Empty targetPaths.";
+      }
+      return false;
     }
     if (pv.size() == 1) {
       output = Property(pv[0], /* type */ value::kToken, /* custom */ false);
     } else if (pv.size() > 1) {
       output = Property(pv, /* type */ value::kToken, /* custom */ false);
     } else {
-      // ??? TODO: report internal error.
-      DCOUT("??? GetConnection faile.");
+      if (err) {
+        (*err) += "[InternalError] Invalid targetPaths.";
+      }
+      return false;
     }
 
   } else {
@@ -633,10 +679,16 @@ void ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
         value::Value val(tok);
         pvar.set_value(val);
       } else {
-        DCOUT("??? Invalid Animatable value.");
+        if (err) {
+          (*err) += "[InternalError] Invalid Animatable value.";
+        }
+        return false;
       }
     } else {
-      DCOUT("??? Invalid Animatable value.");
+      if (err) {
+        (*err) += "[InternalError] Invalid Animatable value.";
+      }
+      return false;
     }
 
     Attribute attr;
@@ -644,12 +696,14 @@ void ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     attr.variability() = Variability::Varying;
     output = Property(attr, /* custom */ false);
   }
+
+  return true;
 }
 
 // To Property with token type
 template <typename T>
-void ToTokenProperty(const TypedAttributeWithFallback<T> &input,
-                     Property &output) {
+bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
+                     Property &output, std::string *err) {
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -666,14 +720,20 @@ void ToTokenProperty(const TypedAttributeWithFallback<T> &input,
     std::vector<Path> pv = input.get_connections();
     if (pv.empty()) {
       DCOUT("??? Empty connectionTarget.");
+      if (err) {
+        (*err) += "Empty connectionTarget.";
+      }
+      return false;
     }
     if (pv.size() == 1) {
       output = Property(pv[0], /* type */ value::kToken, /* custom */ false);
     } else if (pv.size() > 1) {
       output = Property(pv, /* type */ value::kToken, /* custom */ false);
     } else {
-      // ??? TODO: report internal error.
-      DCOUT("??? GetConnection faile.");
+      if (err) {
+        (*err) += "[InternalError] Get connectionTarget failed.";
+      }
+      return false;
     }
 
   } else {
@@ -691,10 +751,16 @@ void ToTokenProperty(const TypedAttributeWithFallback<T> &input,
         value::Value val(tok);
         pvar.set_value(val);
       } else {
-        DCOUT("??? Invalid value.");
+        if (err) {
+          (*err) += "[InternalError] Invalid value.";
+        }
+        return false;
       }
     } else {
-      DCOUT("??? Invalid value.");
+      if (err) {
+        (*err) += "[InternalError] Invalid value.";
+      }
+      return false;
     }
 
     Attribute attr;
@@ -702,6 +768,8 @@ void ToTokenProperty(const TypedAttributeWithFallback<T> &input,
     attr.variability() = Variability::Uniform;
     output = Property(attr, /* custom */ false);
   }
+
+  return true;
 }
 
 bool ToTerminalAttributeValue(
@@ -776,6 +844,21 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
 
   return true;
 }
+
+#define TO_PROPERTY(__prop_name, __v) \
+  if (prop_name == __prop_name) { \
+    if (!ToProperty(__v, *out_prop, &err)) { \
+      return nonstd::make_unexpected(fmt::format("Convert Property {} failed: {}\n", __prop_name, err)); \
+    } \
+  } else 
+
+#define TO_TOKEN_PROPERTY(__prop_name, __v) \
+  if (prop_name == __prop_name) { \
+    if (!ToTokenProperty(__v, *out_prop, &err)) { \
+      return nonstd::make_unexpected(fmt::format("Convert Property {} failed: {}\n", __prop_name, err)); \
+    } \
+  } else 
+
 
 // Return true: Property found(`out_prop` filled)
 // Return false: Property not found
@@ -879,33 +962,23 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "points") {
-    ToProperty(mesh.points, *out_prop);
-  } else if (prop_name == "faceVertexCounts") {
-    ToProperty(mesh.faceVertexCounts, *out_prop);
-  } else if (prop_name == "faceVertexIndices") {
-    ToProperty(mesh.faceVertexIndices, *out_prop);
-  } else if (prop_name == "normals") {
-    ToProperty(mesh.normals, *out_prop);
-  } else if (prop_name == "velocities") {
-    ToProperty(mesh.velocities, *out_prop);
-  } else if (prop_name == "cornerIndices") {
-    ToProperty(mesh.cornerIndices, *out_prop);
-  } else if (prop_name == "cornerSharpnesses") {
-    ToProperty(mesh.cornerSharpnesses, *out_prop);
-  } else if (prop_name == "creaseIndices") {
-    ToProperty(mesh.creaseIndices, *out_prop);
-  } else if (prop_name == "creaseSharpnesses") {
-    ToProperty(mesh.creaseSharpnesses, *out_prop);
-  } else if (prop_name == "holeIndices") {
-    ToProperty(mesh.holeIndices, *out_prop);
-  } else if (prop_name == "interpolateBoundary") {
-    ToTokenProperty(mesh.interpolateBoundary, *out_prop);
-  } else if (prop_name == "subdivisionScheme") {
-    ToTokenProperty(mesh.subdivisionScheme, *out_prop);
-  } else if (prop_name == "faceVaryingLinearInterpolation") {
-    ToTokenProperty(mesh.faceVaryingLinearInterpolation, *out_prop);
-  } else if (prop_name == "skeleton") {
+  std::string err;
+  
+  TO_PROPERTY("points", mesh.points)
+  TO_PROPERTY("faceVertexCounts", mesh.faceVertexCounts)
+  TO_PROPERTY("faceVertexIndices", mesh.faceVertexCounts)
+  TO_PROPERTY("normals", mesh.normals)
+  TO_PROPERTY("velocities", mesh.velocities)
+  TO_PROPERTY("cornerIndices", mesh.cornerIndices)
+  TO_PROPERTY("cornerSharpnesses", mesh.cornerSharpnesses)
+  TO_PROPERTY("creaseIndices", mesh.creaseIndices)
+  TO_PROPERTY("creaseSharpnesses", mesh.creaseSharpnesses)
+  TO_PROPERTY("holeIndices", mesh.holeIndices)
+  TO_TOKEN_PROPERTY("interpolateBoundary", mesh.interpolateBoundary)
+  TO_TOKEN_PROPERTY("subdivisionScheme", mesh.subdivisionScheme)
+  TO_TOKEN_PROPERTY("faceVaryingLinearInterpolation", mesh.faceVaryingLinearInterpolation)
+
+  if (prop_name == "skeleton") {
     if (mesh.skeleton) {
       const Relationship &rel = mesh.skeleton.value();
       (*out_prop) = Property(rel, /* custom */ false);
@@ -999,10 +1072,11 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "inputs:file") {
-    ToProperty(tex.file, (*out_prop));
+  std::string err;
 
-  } else {
+  TO_PROPERTY("inputs:file", tex.file)
+
+  {
     const auto it = tex.props.find(prop_name);
     if (it == tex.props.end()) {
       // Attribute not found.
@@ -1025,10 +1099,11 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "inputs:varname") {
-    ToProperty(preader.varname, (*out_prop));
+  std::string err;
 
-  } else {
+  TO_PROPERTY("inputs:varname", preader.varname)
+
+  {
     const auto it = preader.props.find(prop_name);
     if (it == preader.props.end()) {
       // Attribute not found.
@@ -1051,10 +1126,11 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "inputs:varname") {
-    ToProperty(preader.varname, (*out_prop));
+  std::string err;
 
-  } else {
+  TO_PROPERTY("inputs:varname", preader.varname)
+
+  {
     const auto it = preader.props.find(prop_name);
     if (it == preader.props.end()) {
       // Attribute not found.
@@ -1077,10 +1153,11 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "inputs:varname") {
-    ToProperty(preader.varname, (*out_prop));
+  std::string err;
 
-  } else {
+  TO_PROPERTY("inputs:varname", preader.varname)
+
+  {
     const auto it = preader.props.find(prop_name);
     if (it == preader.props.end()) {
       // Attribute not found.
@@ -1103,10 +1180,12 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "inputs:varname") {
-    ToProperty(preader.varname, (*out_prop));
 
-  } else {
+  std::string err;
+
+  TO_PROPERTY("inputs:varname", preader.varname)
+
+  {
     const auto it = preader.props.find(prop_name);
     if (it == preader.props.end()) {
       // Attribute not found.
@@ -1129,14 +1208,13 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "rotation") {
-    ToProperty(tx.rotation, (*out_prop));
+  std::string err;
 
-  } else if (prop_name == "scale") {
-    ToProperty(tx.scale, (*out_prop));
-  } else if (prop_name == "translation") {
-    ToProperty(tx.translation, (*out_prop));
-  } else if (prop_name == "outputs:result") {
+  TO_PROPERTY("rotation", tx.rotation)
+  TO_PROPERTY("scale", tx.scale)
+  TO_PROPERTY("translation", tx.translation)
+
+  if (prop_name == "outputs:result") {
     // Terminal attribute
     if (!tx.result.authored()) {
       // not authored
@@ -1169,35 +1247,24 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "diffuseColor") {
-    ToProperty(surface.diffuseColor, *out_prop);
-  } else if (prop_name == "emissiveColor") {
-    ToProperty(surface.emissiveColor, *out_prop);
-  } else if (prop_name == "specularColor") {
-    ToProperty(surface.specularColor, *out_prop);
-  } else if (prop_name == "useSpecularWorkflow") {
-    ToProperty(surface.useSpecularWorkflow, *out_prop);
-  } else if (prop_name == "metallic") {
-    ToProperty(surface.metallic, *out_prop);
-  } else if (prop_name == "clearcoat") {
-    ToProperty(surface.clearcoat, *out_prop);
-  } else if (prop_name == "clearcoatRoughness") {
-    ToProperty(surface.clearcoatRoughness, *out_prop);
-  } else if (prop_name == "roughness") {
-    ToProperty(surface.roughness, *out_prop);
-  } else if (prop_name == "opacity") {
-    ToProperty(surface.opacity, *out_prop);
-  } else if (prop_name == "opacityThreshold") {
-    ToProperty(surface.opacityThreshold, *out_prop);
-  } else if (prop_name == "ior") {
-    ToProperty(surface.ior, *out_prop);
-  } else if (prop_name == "normal") {
-    ToProperty(surface.normal, *out_prop);
-  } else if (prop_name == "displacement") {
-    ToProperty(surface.displacement, *out_prop);
-  } else if (prop_name == "occlusion") {
-    ToProperty(surface.occlusion, *out_prop);
-  } else if (prop_name == "outputs:surface") {
+  std::string err;
+
+  TO_PROPERTY("diffuseColor", surface.diffuseColor)
+  TO_PROPERTY("emissiveColor", surface.emissiveColor)
+  TO_PROPERTY("specularColor", surface.specularColor)
+  TO_PROPERTY("useSpecularWorkflow", surface.useSpecularWorkflow)
+  TO_PROPERTY("metallic", surface.metallic)
+  TO_PROPERTY("clearcoat", surface.clearcoat)
+  TO_PROPERTY("clearcoatRoughness", surface.clearcoatRoughness)
+  TO_PROPERTY("roughness", surface.roughness)
+  TO_PROPERTY("opacity", surface.opacity)
+  TO_PROPERTY("opacityThreshold", surface.opacityThreshold)
+  TO_PROPERTY("ior", surface.ior)
+  TO_PROPERTY("normal", surface.normal)
+  TO_PROPERTY("displacement", surface.displacement)
+  TO_PROPERTY("occlusion", surface.occlusion)
+
+  if (prop_name == "outputs:surface") {
     if (surface.outputsSurface.authored()) {
         // empty. type info only
         (*out_prop) = Property(value::kToken, /* custom */ false);
@@ -1217,6 +1284,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     const auto it = surface.props.find(prop_name);
     if (it == surface.props.end()) {
       // Attribute not found.
+      // TODO: report warn?
       return false;
     }
 
@@ -1327,13 +1395,13 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "offsets") {
-    ToProperty(blendshape.offsets, (*out_prop));
-  } else if (prop_name == "normalOffsets") {
-    ToProperty(blendshape.normalOffsets, (*out_prop));
-  } else if (prop_name == "pointIndices") {
-    ToProperty(blendshape.pointIndices, (*out_prop));
-  } else {
+  std::string err;
+
+  TO_PROPERTY("offsets", blendshape.offsets)
+  TO_PROPERTY("normalOffsets", blendshape.normalOffsets)
+  TO_PROPERTY("pointIndices", blendshape.pointIndices)
+
+  {
     const auto it = blendshape.props.find(prop_name);
     if (it == blendshape.props.end()) {
       // Attribute not found.
@@ -1356,15 +1424,14 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "bindTransforms") {
-    ToProperty(skel.bindTransforms, (*out_prop));
-  } else if (prop_name == "jointNames") {
-    ToProperty(skel.jointNames, (*out_prop));
-  } else if (prop_name == "joints") {
-    ToProperty(skel.joints, (*out_prop));
-  } else if (prop_name == "restTransforms") {
-    ToProperty(skel.restTransforms, (*out_prop));
-  } else if (prop_name == "animationSource") {
+  std::string err;
+
+  TO_PROPERTY("bindTransforms", skel.bindTransforms)
+  TO_PROPERTY("jointNames", skel.jointNames)
+  TO_PROPERTY("joints", skel.joints)
+  TO_PROPERTY("restTransforms", skel.restTransforms)
+
+  if (prop_name == "animationSource") {
     if (skel.animationSource) {
       const Relationship &rel = skel.animationSource.value();
       (*out_prop) = Property(rel, /* custom */ false);
@@ -1396,19 +1463,16 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "blendShapes") {
-    ToProperty(anim.blendShapes, (*out_prop));
-  } else if (prop_name == "blendShapeWeights") {
-    ToProperty(anim.blendShapeWeights, (*out_prop));
-  } else if (prop_name == "joints") {
-    ToProperty(anim.joints, (*out_prop));
-  } else if (prop_name == "rotations") {
-    ToProperty(anim.rotations, (*out_prop));
-  } else if (prop_name == "scales") {
-    ToProperty(anim.scales, (*out_prop));
-  } else if (prop_name == "translations") {
-    ToProperty(anim.translations, (*out_prop));
-  } else {
+  std::string err;
+
+  TO_PROPERTY("blendShapes", anim.blendShapes)
+  TO_PROPERTY("blendShapeWeights", anim.blendShapeWeights)
+  TO_PROPERTY("joints", anim.joints)
+  TO_PROPERTY("rotations", anim.rotations)
+  TO_PROPERTY("scales", anim.scales)
+  TO_PROPERTY("translations", anim.translations)
+
+  {
     const auto it = anim.props.find(prop_name);
     if (it == anim.props.end()) {
       // Attribute not found.
@@ -1539,6 +1603,10 @@ bool EvaluateAttributeImpl(
 
   return true;
 }
+
+#undef TO_PROPERTY
+#undef TO_TOKEN_PROPERTY
+
 
 }  // namespace
 
