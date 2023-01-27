@@ -1516,7 +1516,9 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 }
 
-// TODO: provide visit map to prevent circular referencing.
+//
+// visited_paths : To prevent circular referencing of attribute connection.
+//
 bool EvaluateAttributeImpl(
     const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
@@ -1535,9 +1537,9 @@ bool EvaluateAttributeImpl(
 
   if (prop.is_connection()) {
     // Follow connection target Path(singple targetPath only).
-    std::vector<Path> pv = prop.get_relationTargets();
+    std::vector<Path> pv = prop.get_attribute().connections();
     if (pv.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get connection target"));
+      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
     }
 
     if (pv.size() > 1) {

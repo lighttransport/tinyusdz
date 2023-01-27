@@ -304,9 +304,11 @@ struct RenderMesh {
   std::vector<uint32_t> faceVertexCounts;
 
   std::vector<vec3> facevaryingNormals;
+  Interpolation normalsInterpolation; // Optional info. USD interpolation for `facevaryingNormals`
 
   // key = slot ID.
   // vec2(texCoord2f) only
+  // TODO: Interpolation for UV
   std::unordered_map<uint32_t, std::vector<vec2>> facevaryingTexcoords;
 
   std::vector<int32_t>

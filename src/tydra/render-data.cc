@@ -56,6 +56,70 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 #endif
 
 //
+// Convert vertex attribute with Uniform interpolation to facevarying attribute,
+// by replicating uniform value per face over face vertices(per face).
+//
+template <typename T>
+nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
+  const std::vector<T> &inputs,
+  const std::vector<uint32_t> &faceVertexCounts,
+  const std::vector<uint32_t> &faceVertexIndices)
+{
+  (void)faceVertexIndices;
+
+  std::vector<T> dst;
+
+  if (inputs.size() == faceVertexCounts.size()) {
+    return nonstd::make_unexpected(fmt::format("The number of inputs {} must be the same with faceVertexCounts.size() {}", inputs.size(), faceVertexCounts.size()));
+  }
+
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    // repeat cnt times.
+    for (size_t k = 0; k < cnt; k++) {
+      dst.emplace_back(inputs[i]);
+    }
+  }
+
+  return dst;
+}
+
+template <typename T>
+nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
+  const std::vector<T> &inputs,
+  const std::vector<uint32_t> &faceVertexCounts,
+  const std::vector<uint32_t> &faceVertexIndices)
+{
+  std::vector<T> dst;
+
+  size_t face_offset{0};
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    for (size_t k = 0; k < cnt; k++) {
+      size_t idx = k + face_offset;
+
+      if (idx >= faceVertexIndices.size()) {
+        return nonstd::make_unexpected(fmt::format("faeVertexIndex out-of-range at faceVertexCount[{}]", i));
+      }
+
+      size_t v_idx = faceVertexIndices[idx];
+
+      if (v_idx >= inputs.size()) {
+        return nonstd::make_unexpected(fmt::format("faeVertexIndices[{}] {} exceeds input array size {}", idx, v_idx, inputs.size()));
+      }
+
+      dst.emplace_back(inputs[v_idx]);
+    }
+
+    face_offset += cnt;
+  }
+
+  return dst;
+}
+
+//
 // name does not include "primvars:" prefix.
 // TODO: timeSamples, connected attribute.
 //
@@ -482,17 +546,41 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     std::vector<value::normal3f> normals = mesh.get_normals();
     Interpolation interp = mesh.get_normalsInterpolation();
 
-    if (interp == Interpolation::Vertex) {
-      PUSH_ERROR_AND_RETURN(
-          "TODO: `vertex` interpolation for `normals` attribute.\n");
-    } else if (interp == Interpolation::FaceVarying) {
-      dst.facevaryingNormals.resize(normals.size());
-      memcpy(dst.facevaryingNormals.data(), normals.data(),
-             sizeof(value::normal3f) * normals.size());
+    if (normals.size()) {
+      if (interp == Interpolation::Uniform) {
+        auto result = UniformToFaceVarying(normals, dst.faceVertexCounts, dst.faceVertexIndices);
+        if (!result) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Convert uniform `normals` attribute to failed: {}", result.error()));
+        }
+
+        dst.facevaryingNormals.resize(result.value().size());
+        memcpy(dst.facevaryingNormals.data(), result.value().data(),
+               sizeof(value::normal3f) * result.value().size());
+
+      } else if ((interp == Interpolation::Vertex) || (interp == Interpolation::Varying)) {
+        auto result = VertexToFaceVarying(normals, dst.faceVertexCounts, dst.faceVertexIndices);
+        if (!result) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Convert vertex/varying `normals` attribute to failed: {}", result.error()));
+        }
+
+        dst.facevaryingNormals.resize(result.value().size());
+        memcpy(dst.facevaryingNormals.data(), result.value().data(),
+               sizeof(value::normal3f) * result.value().size());
+
+      } else if (interp == Interpolation::FaceVarying) {
+        dst.facevaryingNormals.resize(normals.size());
+        memcpy(dst.facevaryingNormals.data(), normals.data(),
+               sizeof(value::normal3f) * normals.size());
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "Unsupported/unimplemented interpolation for `normals` attribute: " +
+            to_string(interp) + ".\n");
+      }
     } else {
-      PUSH_ERROR_AND_RETURN(
-          "Unsupported/unimplemented interpolation for `normals` attribute: " +
-          to_string(interp) + ".\n");
+      dst.facevaryingNormals.clear();
+      dst.normalsInterpolation = interp;
     }
   }
 
