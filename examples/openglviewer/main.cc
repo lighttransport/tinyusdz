@@ -18,6 +18,7 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl2.h"
 #include "trackball.h"
+#include "viewport_camera.hh"
 
 // TinyUSDZ
 #include "tinyusdz.hh"
