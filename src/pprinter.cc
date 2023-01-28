@@ -2603,6 +2603,7 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   ss << pprint::Indent(indent) << "{\n";
 
   if (material.surface.authored()) {
+
     // TODO: list edit?.
     ss << pprint::Indent(indent+1) << "token outputs:surface ";
 
