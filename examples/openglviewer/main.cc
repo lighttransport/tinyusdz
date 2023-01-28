@@ -53,6 +53,8 @@ struct GUIContext {
   std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
   std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
   std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
+
+  example::Camera camera;
 };
 
 GUIContext gCtx;
