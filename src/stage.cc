@@ -418,13 +418,32 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 
   // Currently, Prim's elementName is read from name variable in concrete Prim class(e.g. Xform::name).
   // TODO: use prim.elementPath for elementName.
-  ss << pprint_value(prim.data(), indent, /* closing_brace */ false);
+  std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
 
+  bool require_newline = true;
+
+  // Check last 2 chars.
+  // if it ends with '{\n', no properties are authored so do not emit blank line before printing VariantSet or child Prims.  
+  if (s.size() > 2) {
+    if ((s[s.size() - 2] == '{') && (s[s.size()-1] == '\n')) {
+      require_newline = false;
+    }
+  }
+
+  ss << s;
+ 
   //
   // print variant
   //
   if (prim.variantSets().size()) {
-    ss << "\n";
+    if (require_newline) {
+      ss << "\n";
+    }
+
+    // need to add blank line after VariantSet stmt and before child Prims,
+    // so set require_newline true
+    require_newline = true;
+
     for (const auto &variantSet : prim.variantSets()) {
       ss << pprint::Indent(indent+1) << "variantSet " << quote(variantSet.first) << " = {\n";
 
@@ -489,6 +508,10 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   // primChildren
   //
   if (prim.children().size()) {
+    if (require_newline) {
+      ss << "\n";
+      require_newline = false;
+    }
     if (prim.metas().primChildren.size() == prim.children().size()) {
       // Use primChildren info to determine the order of the traversal.
 
@@ -498,7 +521,9 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
       }
 
       for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
-        ss << "\n";
+        if (i > 0) {
+          ss << "\n";
+        }
         value::token nameTok = prim.metas().primChildren[i];
         DCOUT(fmt::format("primChildren  {}/{} = {}", i, prim.metas().primChildren.size(), nameTok.str()));
         const auto it = primNameTable.find(nameTok.str());
@@ -511,7 +536,9 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 
     } else {
       for (size_t i = 0; i < prim.children().size(); i++) {
-        ss << "\n";
+        if (i > 0) {
+          ss << "\n";
+        }
         PrimPrintRec(ss, prim.children()[i], indent + 1);
       }
     }
