@@ -51,6 +51,9 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.6" glfw-3.3.6 EXCLUDE_F
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
 
+# Assume add_sanitizer() is imported in TinyUSDZ's CMakeList.txt
+add_sanitizers(${BUILD_TARGET})
+
 # local glad
 target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/glad/include")
 
