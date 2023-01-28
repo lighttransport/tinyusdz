@@ -424,6 +424,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   // print variant
   //
   if (prim.variantSets().size()) {
+    ss << "\n";
     for (const auto &variantSet : prim.variantSets()) {
       ss << pprint::Indent(indent+1) << "variantSet " << quote(variantSet.first) << " = {\n";
 
@@ -480,7 +481,6 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
     
       ss << pprint::Indent(indent+1) << "}\n";
     }
-    ss << "\n";
   }
 
   DCOUT(prim.element_name() << " num_children = " << prim.children().size());
@@ -488,33 +488,31 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   //
   // primChildren
   //
-  if (prim.metas().primChildren.size() == prim.children().size()) {
-    // Use primChildren info to determine the order of the traversal.
+  if (prim.children().size()) {
+    if (prim.metas().primChildren.size() == prim.children().size()) {
+      // Use primChildren info to determine the order of the traversal.
 
-    std::map<std::string, const Prim *> primNameTable;
-    for (size_t i = 0; i < prim.children().size(); i++) {
-      primNameTable.emplace(prim.children()[i].element_name(), &prim.children()[i]);
-    }
-
-    for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
-      value::token nameTok = prim.metas().primChildren[i];
-      DCOUT(fmt::format("primChildren  {}/{} = {}", i, prim.metas().primChildren.size(), nameTok.str()));
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        PrimPrintRec(ss, *(it->second), indent + 1);
-        if (i != (prim.children().size() - 1)) {
-          ss << "\n";
-        }
-      } else {
-        // TODO: Report warning?
+      std::map<std::string, const Prim *> primNameTable;
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        primNameTable.emplace(prim.children()[i].element_name(), &prim.children()[i]);
       }
-    }
 
-  } else {
-    for (size_t i = 0; i < prim.children().size(); i++) {
-      PrimPrintRec(ss, prim.children()[i], indent + 1);
-      if (i != (prim.children().size() - 1)) {
+      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
         ss << "\n";
+        value::token nameTok = prim.metas().primChildren[i];
+        DCOUT(fmt::format("primChildren  {}/{} = {}", i, prim.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          PrimPrintRec(ss, *(it->second), indent + 1);
+        } else {
+          // TODO: Report warning?
+        }
+      }
+
+    } else {
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        ss << "\n";
+        PrimPrintRec(ss, prim.children()[i], indent + 1);
       }
     }
   }
