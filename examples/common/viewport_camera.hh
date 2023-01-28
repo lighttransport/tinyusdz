@@ -13,7 +13,9 @@
 
 namespace example {
 
+using vec2 = linalg::vec<float, 2>; 
 using vec3 = linalg::vec<float, 3>; 
+using vec4 = linalg::vec<float, 4>; 
 using mat4 = linalg::mat<float, 4, 4>; 
 
 constexpr float pi = 3.141592f;
@@ -38,42 +40,42 @@ private:
 	float fov{45.0f}; // in degree
 	float znear{0.01f}, zfar{1000.0f};
 
-#if 0 // W.I.P.
 	void updateViewMatrix()
 	{
 		mat4 rotM = linalg::identity;
 		mat4 transM;
 
-		rotM = rotM * linalg::rotation_matrix(linalg::rotation_quat(vec3(1.0f, 0.0f, 0.0f), rotation.x * (flipY ? -1.0f : 1.0f)), glm::vec3(1.0f, 0.0f, 0.0f));
-		rotM = rotM * linalg::rot(rotM, linalg::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-		rotM = rotM * linalg::rot(rotM, linalg::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+		rotM = linalg::mul(rotM, linalg::rotation_matrix(linalg::rotation_quat(vec3(1.0f, 0.0f, 0.0f), radians(rotation.x * (flipY ? -1.0f : 1.0f)))));
+		rotM = linalg::mul(rotM, linalg::rotation_matrix(linalg::rotation_quat(vec3(0.0f, 1.0f, 0.0f), radians(rotation.y))));
+		rotM = linalg::mul(rotM, linalg::rotation_matrix(linalg::rotation_quat(vec3(0.0f, 0.0f, 1.0f), radians(rotation.z))));
 
-		glm::vec3 translation = position;
+		vec3 translation = position;
 		if (flipY) {
 			translation.y *= -1.0f;
 		}
-		transM = glm::translate(glm::mat4(1.0f), translation);
+		transM = linalg::translation_matrix(translation);
 
 		if (type == CameraType::firstperson)
 		{
-			matrices.view = rotM * transM;
+			matrices.view = linalg::mul(rotM, transM);
 		}
 		else
 		{
-			matrices.view = transM * rotM;
+			matrices.view = linalg::mul(transM, rotM);
 		}
 
-		viewPos = glm::vec4(position, 0.0f) * glm::vec4(-1.0f, 1.0f, -1.0f, 1.0f);
+		viewPos = vec4(position, 0.0f) * vec4(-1.0f, 1.0f, -1.0f, 1.0f);
 
 		updated = true;
 	};
+
 public:
 	enum CameraType { lookat, firstperson };
 	CameraType type = CameraType::lookat;
 
-	glm::vec3 rotation = glm::vec3(); // in degree
-	glm::vec3 position = glm::vec3();
-	glm::vec4 viewPos = glm::vec4();
+	vec3 rotation = vec3(); // in degree
+	vec3 position = vec3();
+	vec4 viewPos = vec4();
 
 	float rotationSpeed = 1.0f;
 	float movementSpeed = 1.0f;
@@ -83,8 +85,8 @@ public:
 
 	struct
 	{
-		glm::mat4 perspective;
-		glm::mat4 view;
+		mat4 perspective{linalg::identity};
+		mat4 view{linalg::identity};
 	} matrices;
 
 	struct
@@ -113,7 +115,7 @@ public:
 		this->fov = fov;
 		this->znear = znear;
 		this->zfar = zfar;
-		matrices.perspective = glm::perspective(radians(fov), aspect, znear, zfar);
+		matrices.perspective = linalg::perspective_matrix(radians(fov), aspect, znear, zfar);
 		if (flipY) {
 			matrices.perspective[1][1] *= -1.0f;
 		}
@@ -121,37 +123,37 @@ public:
 
 	void updateAspectRatio(float aspect)
 	{
-		matrices.perspective = glm::perspective(radians(fov), aspect, znear, zfar);
+		matrices.perspective = linalg::perspective_matrix(radians(fov), aspect, znear, zfar);
 		if (flipY) {
 			matrices.perspective[1][1] *= -1.0f;
 		}
 	}
 
-	void setPosition(glm::vec3 position)
+	void setPosition(vec3 position)
 	{
 		this->position = position;
 		updateViewMatrix();
 	}
 
-	void setRotation(glm::vec3 rotation)
+	void setRotation(vec3 rotation)
 	{
 		this->rotation = rotation;
 		updateViewMatrix();
 	}
 
-	void rotate(glm::vec3 delta)
+	void rotate(vec3 delta)
 	{
 		this->rotation += delta;
 		updateViewMatrix();
 	}
 
-	void setTranslation(glm::vec3 translation)
+	void setTranslation(vec3 translation)
 	{
 		this->position = translation;
 		updateViewMatrix();
 	};
 
-	void translate(glm::vec3 delta)
+	void translate(vec3 delta)
 	{
 		this->position += delta;
 		updateViewMatrix();
@@ -174,11 +176,11 @@ public:
 		{
 			if (moving())
 			{
-				glm::vec3 camFront;
+				vec3 camFront;
 				camFront.x = -cos(radians(rotation.x)) * sin(radians(rotation.y));
 				camFront.y = sin(radians(rotation.x));
 				camFront.z = cos(radians(rotation.x)) * cos(radians(rotation.y));
-				camFront = glm::normalize(camFront);
+				camFront = linalg::normalize(camFront);
 
 				float moveSpeed = deltaTime * movementSpeed;
 
@@ -187,9 +189,9 @@ public:
 				if (keys.down)
 					position -= camFront * moveSpeed;
 				if (keys.left)
-					position -= glm::normalize(glm::cross(camFront, glm::vec3(0.0f, 1.0f, 0.0f))) * moveSpeed;
+					position -= linalg::normalize(linalg::cross(camFront, vec3(0.0f, 1.0f, 0.0f))) * moveSpeed;
 				if (keys.right)
-					position += glm::normalize(glm::cross(camFront, glm::vec3(0.0f, 1.0f, 0.0f))) * moveSpeed;
+					position += linalg::normalize(linalg::cross(camFront, vec3(0.0f, 1.0f, 0.0f))) * moveSpeed;
 
 				updateViewMatrix();
 			}
@@ -198,7 +200,7 @@ public:
 
 	// Update camera passing separate axis data (gamepad)
 	// Returns true if view or position has been changed
-	bool updatePad(glm::vec2 axisLeft, glm::vec2 axisRight, float deltaTime)
+	bool updatePad(vec2 axisLeft, vec2 axisRight, float deltaTime)
 	{
 		bool retVal = false;
 
@@ -210,39 +212,39 @@ public:
 			const float deadZone = 0.0015f;
 			const float range = 1.0f - deadZone;
 
-			glm::vec3 camFront;
+			vec3 camFront;
 			camFront.x = -cos(radians(rotation.x)) * sin(radians(rotation.y));
 			camFront.y = sin(radians(rotation.x));
 			camFront.z = cos(radians(rotation.x)) * cos(radians(rotation.y));
-			camFront = glm::normalize(camFront);
+			camFront = linalg::normalize(camFront);
 
 			float moveSpeed = deltaTime * movementSpeed * 2.0f;
 			float rotSpeed = deltaTime * rotationSpeed * 50.0f;
 			 
 			// Move
-			if (std::fabsf(axisLeft.y) > deadZone)
+			if (std::fabs(axisLeft.y) > deadZone)
 			{
-				float pos = (std::fabsf(axisLeft.y) - deadZone) / range;
+				float pos = (std::fabs(axisLeft.y) - deadZone) / range;
 				position -= camFront * pos * ((axisLeft.y < 0.0f) ? -1.0f : 1.0f) * moveSpeed;
 				retVal = true;
 			}
-			if (std::fabsf(axisLeft.x) > deadZone)
+			if (std::fabs(axisLeft.x) > deadZone)
 			{
-				float pos = (std::fabsf(axisLeft.x) - deadZone) / range;
-				position += glm::normalize(glm::cross(camFront, glm::vec3(0.0f, 1.0f, 0.0f))) * pos * ((axisLeft.x < 0.0f) ? -1.0f : 1.0f) * moveSpeed;
+				float pos = (std::fabs(axisLeft.x) - deadZone) / range;
+				position += linalg::normalize(linalg::cross(camFront, vec3(0.0f, 1.0f, 0.0f))) * pos * ((axisLeft.x < 0.0f) ? -1.0f : 1.0f) * moveSpeed;
 				retVal = true;
 			}
 
 			// Rotate
-			if (std::fabsf(axisRight.x) > deadZone)
+			if (std::fabs(axisRight.x) > deadZone)
 			{
-				float pos = (std::fabsf(axisRight.x) - deadZone) / range;
+				float pos = (std::fabs(axisRight.x) - deadZone) / range;
 				rotation.y += pos * ((axisRight.x < 0.0f) ? -1.0f : 1.0f) * rotSpeed;
 				retVal = true;
 			}
-			if (std::fabsf(axisRight.y) > deadZone)
+			if (std::fabs(axisRight.y) > deadZone)
 			{
-				float pos = (std::fabsf(axisRight.y) - deadZone) / range;
+				float pos = (std::fabs(axisRight.y) - deadZone) / range;
 				rotation.x -= pos * ((axisRight.y < 0.0f) ? -1.0f : 1.0f) * rotSpeed;
 				retVal = true;
 			}
@@ -259,7 +261,6 @@ public:
 
 		return retVal;
 	}
-#endif
 
 };
 
