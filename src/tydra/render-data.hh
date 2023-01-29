@@ -121,6 +121,8 @@ enum class VertexVariability
   Indexed, // Need to supply index buffer
 };
 
+std::string to_string(VertexVariability variability);
+
 // Geometric, light and camera
 enum class NodeType {
   Xform,
@@ -142,6 +144,8 @@ enum class ComponentType {
   Float,
   Double,
 };
+
+std::string to_string(ComponentType ty);
 
 // glTF-like BufferData
 struct BufferData {
@@ -173,6 +177,8 @@ enum class VertexAttributeFormat {
   Dvec3, // double3
   Dvec4, // double4
 };
+
+std::string to_string(VertexAttributeFormat f);
 
 
 struct VertexAttribute {
@@ -220,6 +226,8 @@ enum class ColorSpace {
   OCIO,
   Custom,  // TODO: Custom colorspace
 };
+
+std::string to_string(ColorSpace cs);
 
 struct TextureImage {
   std::string asset_identifier; // (resolved) filename or asset identifier.
@@ -330,6 +338,8 @@ enum class UVReaderFloatComponentType
   COMPONENT_FLOAT4,
 };
 
+std::string to_string(UVReaderFloatComponentType ty);
+
 // float, float2, float3 or float4 only
 struct UVReaderFloat {
   UVReaderFloatComponentType componentType{UVReaderFloatComponentType::COMPONENT_FLOAT2};
@@ -382,6 +392,8 @@ struct UVTexture {
   int64_t texture_image_id{-1};  // Index to TextureImage
   uint64_t handle{0}; // Handle ID for Graphics API. 0 = invalid
 };
+
+std::string to_string(UVTexture::WrapMode ty);
 
 struct UDIMTexture {
   enum class Channel { R, G, B, RGB, RGBA };

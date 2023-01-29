@@ -1,14 +1,14 @@
-#include <map>
-#include <vector>
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <thread>
-#include <algorithm>
+#include <vector>
 
 // GL
 //
@@ -108,7 +108,8 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action,
   }
 
   // ctrl-q
-  if ((key == GLFW_KEY_Q) && (action == GLFW_PRESS) && (mods & GLFW_MOD_CONTROL)) {
+  if ((key == GLFW_KEY_Q) && (action == GLFW_PRESS) &&
+      (mods & GLFW_MOD_CONTROL)) {
     glfwSetWindowShouldClose(window, GLFW_TRUE);
   }
 
@@ -193,10 +194,9 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 
 namespace {
 
-void SetupTexture(tinyusdz::tydra::UVTexture &tex)
-{
-
-  auto glwrapmode  = [](const tinyusdz::tydra::UVTexture::WrapMode mode) {
+void SetupTexture(const tinyusdz::tydra::RenderScene& scene,
+                  tinyusdz::tydra::UVTexture& tex) {
+  auto glwrapmode = [](const tinyusdz::tydra::UVTexture::WrapMode mode) {
     if (mode == tinyusdz::tydra::UVTexture::WrapMode::CLAMP_TO_EDGE) {
       return GL_CLAMP_TO_EDGE;
     } else if (mode == tinyusdz::tydra::UVTexture::WrapMode::REPEAT) {
@@ -224,13 +224,57 @@ void SetupTexture(tinyusdz::tydra::UVTexture &tex)
   GLfloat black[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, black);
 
-  // TODO: Upload texture data.
+  int64_t image_id = tex.texture_image_id;
 
-  tex.handle = texid;
+  if (image_id >= 0) {
+    if (image_id < scene.images.size()) {
+      const tinyusdz::tydra::TextureImage& image =
+          scene.images[size_t(image_id)];
 
+      GLenum format{GL_LUMINANCE};
+      if (image.channels == 1) {
+        format = GL_LUMINANCE;
+      } else if (image.channels == 2) {
+        format = GL_LUMINANCE_ALPHA;
+      } else if (image.channels == 3) {
+        format = GL_RGB;
+      } else if (image.channels == 4) {
+        { format = GL_RGBA; }
+
+        GLenum type{GL_BYTE};
+        if (image.texelComponentType == tinyusdz::tydra::ComponentType::UInt8) {
+          type = GL_BYTE;
+        } else if (image.texelComponentType ==
+                   tinyusdz::tydra::ComponentType::Half) {
+          type = GL_SHORT;
+        } else if (image.texelComponentType ==
+                   tinyusdz::tydra::ComponentType::UInt32) {
+          type = GL_UNSIGNED_INT;
+        } else if (image.texelComponentType ==
+                   tinyusdz::tydra::ComponentType::Float) {
+          type = GL_FLOAT;
+        } else {
+          std::cout << "Unsupported texelComponentType: "
+                    << tinyusdz::tydra::to_string(image.texelComponentType)
+                    << "\n";
+        }
+
+        int64_t buffer_id = image.buffer_id;
+        if ((buffer_id >= 0) && (buffer_id < scene.buffers.size())) {
+          const tinyusdz::tydra::BufferData& buffer =
+              scene.buffers[size_t(buffer_id)];
+
+          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
+                       format, type, buffer.data.data());
+        }
+      }
+    }
+
+    tex.handle = texid;
+  }
 }
 
-#if 0 // TODO
+#if 0  // TODO
 static void DrawMesh(tinyusdz::tydra::RenderMesh& mesh,
   GLProgramState &program_state,
   BufferState ) {
@@ -279,18 +323,17 @@ static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
 
 #endif
 
-static void ProcScene(const tinyusdz::Stage &stage)
-{
+static void ProcScene(const tinyusdz::Stage& stage) {
   //
   // Stage to Renderable Scene
   tinyusdz::tydra::RenderSceneConverter converter;
 
+  // TODO
 }
 
-} // namespace
+}  // namespace
 
 int main(int argc, char** argv) {
-
   // Setup window
   glfwSetErrorCallback(error_callback);
   if (!glfwInit()) {
