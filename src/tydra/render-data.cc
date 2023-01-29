@@ -1650,12 +1650,6 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
   return true;
 }
 
-//
-// --
-// TODO: Dump data in strict KDL format https://kdl.dev/
-//
-
-namespace {
 
 std::string to_string(ColorSpace cty) {
   std::string s;
@@ -1752,6 +1746,8 @@ std::string to_string(UVTexture::WrapMode mode) {
 
   return s;
 }
+
+namespace {
 
 std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   std::stringstream ss;
