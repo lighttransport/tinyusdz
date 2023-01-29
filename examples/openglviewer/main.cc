@@ -1,28 +1,47 @@
-// glad must be included before glfw3.h
-#include <glad/glad.h>
-//
-#include <GLFW/glfw3.h>
-
-#include <atomic>  // C++11
+#include <map>
+#include <vector>
+#include <atomic>
 #include <cassert>
-#include <chrono>  // C++11
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
-#include <mutex>   // C++11
-#include <thread>  // C++11
+#include <mutex>
+#include <thread>
 #include <algorithm>
 
+// GL
+//
+// glad must be included before glfw3.h
+#include "glad/glad.h"
+//
+#include <GLFW/glfw3.h>
+
 // GUI common
-#include "imgui.h"
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_opengl2.h"
-#include "trackball.h"
-#include "viewport_camera.hh"
+#include "../common/imgui/imgui.h"
+#include "../common/imgui/imgui_impl_glfw.h"
+#include "../common/imgui/imgui_impl_opengl2.h"
+#include "../common/trackball.h"
+#include "../common/viewport_camera.hh"
 
 // TinyUSDZ
+// include relative to openglviewer example cmake top dir for clangd lsp.
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
+
+constexpr auto kAttribPoints = "points";
+constexpr auto kAttribNormals = "normals";
+constexpr auto kAttribTexCoord0 = "texcoord_0";
+
+// TODO: Use handle_id for key
+struct GLMeshState {
+  std::vector<GLuint> diffuseTexHandles;
+};
+
+struct GLProgramState {
+  std::map<std::string, GLint> attribs;
+  std::map<std::string, GLint> uniforms;
+};
 
 struct GUIContext {
   enum AOV {
@@ -174,9 +193,70 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 
 namespace {
 
-#if 0
-static void DrawGeomMesh(tinyusdz::GeomMesh& mesh) {}
+void SetupTexture(tinyusdz::tydra::UVTexture &tex)
+{
 
+  auto glwrapmode  = [](const tinyusdz::tydra::UVTexture::WrapMode mode) {
+    if (mode == tinyusdz::tydra::UVTexture::WrapMode::CLAMP_TO_EDGE) {
+      return GL_CLAMP_TO_EDGE;
+    } else if (mode == tinyusdz::tydra::UVTexture::WrapMode::REPEAT) {
+      return GL_REPEAT;
+    } else if (mode == tinyusdz::tydra::UVTexture::WrapMode::MIRROR) {
+      return GL_MIRRORED_REPEAT;
+    } else if (mode == tinyusdz::tydra::UVTexture::WrapMode::CLAMP_TO_BORDER) {
+      return GL_CLAMP_TO_BORDER;
+    }
+    return GL_REPEAT;
+  };
+
+  GLuint texid{0};
+  glGenTextures(1, &texid);
+
+  glBindTexture(GL_TEXTURE_2D, texid);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, glwrapmode(tex.wrapS));
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, glwrapmode(tex.wrapT));
+
+  // black only. not sure aplha color should be for USD's black wrap mode.
+  // use fully transparent(0.0) for a while.
+  GLfloat black[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, black);
+
+  // TODO: Upload texture data.
+
+  tex.handle = texid;
+
+}
+
+#if 0 // TODO
+static void DrawMesh(tinyusdz::tydra::RenderMesh& mesh,
+  GLProgramState &program_state,
+  BufferState ) {
+
+  if (mesh.points.empty()) {
+    return false;
+  }
+
+  glBindBuffer(GL_ARRAY_BUFFER, buffer_state
+
+  glVertexAttribPointer(program_state
+  glEnableVertexAttribArray
+
+
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
+
+  for (const auto &attrib : program_state.attribs) {
+    if (attrib.second >= 0) {
+      glDisableVertexAttribArray(attrib.second);
+    }
+  }
+
+}
+#endif
+
+#if 0
 static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
   if (node.type == tinyusdz::NODE_TYPE_XFORM) {
     const tinyusdz::Xform& xform = scene.xforms.at(node.index);

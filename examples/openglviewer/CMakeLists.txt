@@ -24,21 +24,25 @@ set(SOURCES
 
 )
 
+get_filename_component(TINYUSDZ_ABS_PATH "${PROJECT_SOURCE_DIR}/../../" ABSOLUTE)
+get_filename_component(EXAMPLE_COMMON_ABS_PATH "${PROJECT_SOURCE_DIR}/../common/" ABSOLUTE)
+
 
 # TinyUSDZ root
-add_subdirectory(../../ tinyusdz)
+add_subdirectory(${TINYUSDZ_ABS_PATH} tinyusdz)
 
 
 set(GUI_SOURCES
-    ../common/trackball.cc
-    ../common/matrix.cc
-    ../common/imgui/imgui.cpp
-    ../common/imgui/imgui_draw.cpp
-    ../common/imgui/imgui_tables.cpp
-    ../common/imgui/imgui_widgets.cpp
-    ../common/imgui/imgui_impl_glfw.cpp
-    ../common/imgui/imgui_impl_opengl2.cpp
-    ../common/glad/src/glad.c
+    ${PROJECT_SOURCE_DIR}/../common/trackball.cc
+    ${PROJECT_SOURCE_DIR}/../common/matrix.cc
+    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui.cpp
+    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_draw.cpp
+    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_tables.cpp
+    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_widgets.cpp
+    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_impl_glfw.cpp
+    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_impl_opengl2.cpp
+    ${PROJECT_SOURCE_DIR}/../common/glad/include/glad/glad.h
+    ${PROJECT_SOURCE_DIR}/../common/glad/src/glad.c
     )
 
 # local [glfw3]
@@ -47,7 +51,7 @@ set(GLFW_BUILD_TESTS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE INTERNAL "" FORCE)
 set(GLFW_INSTALL OFF CACHE INTERNAL "" FORCE)
 #option(GLFW_VULKAN_STATIC "Assume the Vulkan loader is linked with the application" OFF)
-add_subdirectory("${CMAKE_SOURCE_DIR}/../common/glfw-3.3.6" glfw-3.3.6 EXCLUDE_FROM_ALL)
+add_subdirectory("${EXAMPLE_COMMON_ABS_PATH}/glfw-3.3.6" glfw-3.3.6 EXCLUDE_FROM_ALL)
 
 add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
 
@@ -55,8 +59,7 @@ add_executable(${BUILD_TARGET} ${SOURCES} ${GUI_SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 # local glad
-target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/glad/include")
-
+target_include_directories(${BUILD_TARGET} PUBLIC "${EXAMPLE_COMMON_ABS_PATH}/glad/include")
 
 target_include_directories(${BUILD_TARGET} PUBLIC ${OPENGL_INCLUDE_DIR})
 
@@ -64,11 +67,11 @@ if (UNIX)
   target_include_directories(${BUILD_TARGET} PUBLIC ${X11_INCLUDE_DIR})
 endif()
 
-target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common")
-target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../common/imgui")
+target_include_directories(${BUILD_TARGET} PUBLIC "${EXAMPLE_COMMON_ABS_PATH}")
+target_include_directories(${BUILD_TARGET} PUBLIC "${EXAMPLE_COMMON_ABS_PATH}/imgui")
 
 # tinyusdz dir
-target_include_directories(${BUILD_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
+target_include_directories(${BUILD_TARGET} PUBLIC "${TINYUSDZ_ABS_PATH}/src/")
 
 target_link_libraries(
     ${BUILD_TARGET}
