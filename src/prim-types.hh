@@ -1699,6 +1699,77 @@ class Relationship {
 };
 
 //
+// Built-in  Relationship property.
+// Its a wrapper of optional<Relationship>
+// 
+// - authored() && has_value() => "rel material:binding"
+//
+class BuiltinRelationship {
+ public:
+
+  void set_listedit_qual(ListEditQual q) { _relationship.set_listedit_qual(q); }
+  ListEditQual get_listedit_qual() const { return _relationship.get_listedit_qual(); }
+
+  void set_authored() {
+    _authored = true;
+  }
+
+  bool authored() const {
+    return _authored;
+  }
+
+  // Define-only: e.g. `rel myrel`
+  void set_empty() {
+    _relationship.set_novalue();
+    _authored = true;
+  }
+
+  void set(const Path &p) {
+    _relationship.set(p);
+    _authored = true;
+  }
+
+  void set(const std::vector<Path> &pv) {
+    _relationship.set(pv);
+    _authored = true;
+  }
+
+  void set(const value::ValueBlock &v) {
+    (void)v;
+    _relationship.set_blocked();
+    _authored = true;
+  }
+
+  void set_blocked() {
+    _relationship.set_blocked();
+    _authored = true;
+  }
+
+  const std::vector<Path> get_targetPaths() const {
+    std::vector<Path> paths;
+    if (_relationship.is_path()) {
+      paths.push_back(_relationship.targetPath);
+    } else if (_relationship.is_pathvector()) {
+      paths = _relationship.targetPathVector;
+    }
+    return paths;
+  }
+
+  bool has_value() const {
+    return _relationship.has_value();
+  }
+
+  bool is_blocked() const { return _relationship.is_blocked(); }
+
+  const AttrMeta &metas() const { return _relationship.metas(); }
+  AttrMeta &metas() { return _relationship.metas(); }
+
+ private:
+  bool _authored{false};
+  Relationship _relationship;
+};
+
+//
 // TypedConnection is a typed version of Relationship
 // example:
 //
