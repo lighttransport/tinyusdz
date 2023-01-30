@@ -1139,9 +1139,21 @@ struct Animatable {
 template <typename T>
 class TypedAttribute {
  public:
+
   static std::string type_name() { return value::TypeTraits<T>::type_name(); }
 
   static uint32_t type_id() { return value::TypeTraits<T>::type_id(); }
+
+  TypedAttribute() = default;
+
+  TypedAttribute &operator=(const T &value) {
+    _attrib = value;
+
+    // fallback Value should be already set with `AttribWithFallback(const T&
+    // fallback)` constructor.
+
+    return (*this);
+  }
 
   void set_value(const T &v) { _attrib = v; }
 
