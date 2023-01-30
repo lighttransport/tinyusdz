@@ -206,6 +206,7 @@ void SetupTexture(const tinyusdz::tydra::RenderScene& scene,
     } else if (mode == tinyusdz::tydra::UVTexture::WrapMode::CLAMP_TO_BORDER) {
       return GL_CLAMP_TO_BORDER;
     }
+    // Just in case: Fallback to REPEAT
     return GL_REPEAT;
   };
 
@@ -219,8 +220,10 @@ void SetupTexture(const tinyusdz::tydra::RenderScene& scene,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, glwrapmode(tex.wrapS));
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, glwrapmode(tex.wrapT));
 
-  // black only. not sure aplha color should be for USD's black wrap mode.
-  // use fully transparent(0.0) for a while.
+  // For `black` wrap mode.
+  // Not sure what aplha color should be for USD's `black` wrap mode.
+  // There are two possibilities: opaque black or transparent black.
+  // We use fully transparent(0.0) for a while.
   GLfloat black[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, black);
 
@@ -231,47 +234,69 @@ void SetupTexture(const tinyusdz::tydra::RenderScene& scene,
       const tinyusdz::tydra::TextureImage& image =
           scene.images[size_t(image_id)];
 
+      uint32_t bytesperpixel = 1;
+
       GLenum format{GL_LUMINANCE};
       if (image.channels == 1) {
         format = GL_LUMINANCE;
+        bytesperpixel = 1;
       } else if (image.channels == 2) {
         format = GL_LUMINANCE_ALPHA;
+        bytesperpixel = 2;
       } else if (image.channels == 3) {
         format = GL_RGB;
+        bytesperpixel = 3;
       } else if (image.channels == 4) {
-        { format = GL_RGBA; }
+        format = GL_RGBA;
+        bytesperpixel = 4;
+      }
 
-        GLenum type{GL_BYTE};
-        if (image.texelComponentType == tinyusdz::tydra::ComponentType::UInt8) {
-          type = GL_BYTE;
-        } else if (image.texelComponentType ==
-                   tinyusdz::tydra::ComponentType::Half) {
-          type = GL_SHORT;
-        } else if (image.texelComponentType ==
-                   tinyusdz::tydra::ComponentType::UInt32) {
-          type = GL_UNSIGNED_INT;
-        } else if (image.texelComponentType ==
-                   tinyusdz::tydra::ComponentType::Float) {
-          type = GL_FLOAT;
-        } else {
-          std::cout << "Unsupported texelComponentType: "
-                    << tinyusdz::tydra::to_string(image.texelComponentType)
+      GLenum type{GL_BYTE};
+      if (image.texelComponentType == tinyusdz::tydra::ComponentType::UInt8) {
+        type = GL_BYTE;
+        bytesperpixel *= 1;
+      } else if (image.texelComponentType ==
+                 tinyusdz::tydra::ComponentType::Half) {
+        type = GL_SHORT;
+        bytesperpixel *= 2;
+      } else if (image.texelComponentType ==
+                 tinyusdz::tydra::ComponentType::UInt32) {
+        type = GL_UNSIGNED_INT;
+        bytesperpixel *= 4;
+      } else if (image.texelComponentType ==
+                 tinyusdz::tydra::ComponentType::Float) {
+        type = GL_FLOAT;
+        bytesperpixel *= 4;
+      } else {
+        std::cout << "Unsupported texelComponentType: "
+                  << tinyusdz::tydra::to_string(image.texelComponentType)
+                  << "\n";
+      }
+
+      int64_t buffer_id = image.buffer_id;
+      if ((buffer_id >= 0) && (buffer_id < scene.buffers.size())) {
+        const tinyusdz::tydra::BufferData& buffer =
+            scene.buffers[size_t(buffer_id)];
+
+        // byte length check.
+        if (size_t(image.width) * size_t(image.height) * size_t(bytesperpixel) >
+            buffer.data.size()) {
+          std::cerr << "Insufficient texel data. : "
+                    << "width: " << image.width << ", height " << image.height
+                    << ", bytesperpixel " << bytesperpixel
+                    << ", requested bytes: "
+                    << size_t(image.width) * size_t(image.height) *
+                           size_t(bytesperpixel)
+                    << ", buffer bytes: " << std::to_string(buffer.data.size())
                     << "\n";
         }
-
-        int64_t buffer_id = image.buffer_id;
-        if ((buffer_id >= 0) && (buffer_id < scene.buffers.size())) {
-          const tinyusdz::tydra::BufferData& buffer =
-              scene.buffers[size_t(buffer_id)];
-
-          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
-                       format, type, buffer.data.data());
-        }
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
+                     format, type, buffer.data.data());
       }
     }
-
-    tex.handle = texid;
   }
+
+  tex.handle = texid;
 }
 
 #if 0  // TODO
