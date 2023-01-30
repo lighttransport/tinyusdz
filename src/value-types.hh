@@ -535,6 +535,11 @@ using double4 = std::array<double, 4>;
 // memory layout is same both for column-major and row-major.
 // (e.g. m[3][0], m[3][1], m[3][2] or a[13], a[14], a[15] are translation components for 4x4 matrix)
 //
+
+struct matrix2d;
+struct matrix3d;
+struct matrix4d;
+
 struct matrix2f {
   matrix2f() {
     m[0][0] = 1.0f;
@@ -570,6 +575,8 @@ struct matrix2f {
 
     return m;
   }
+
+  matrix2f &operator=(const matrix2d &rhs);
   
   float m[2][2];
 };
@@ -635,6 +642,8 @@ struct matrix3f {
 
     return m;
   }
+
+  matrix3f &operator=(const matrix3d &rhs);
 
   float m[3][3];
 };
@@ -725,6 +734,10 @@ struct matrix4f {
     return m;
   }
 
+  matrix4f(const matrix4d &rhs);
+
+  matrix4f &operator=(const matrix4d &rhs);
+
   float m[4][4];
 };
 
@@ -763,6 +776,8 @@ struct matrix2d {
 
     return m;
   }
+
+  matrix2d &operator=(const matrix2f &rhs);
 
   double m[2][2];
 };
@@ -821,6 +836,8 @@ struct matrix3d {
 
     return m;
   }
+
+  matrix3d &operator=(const matrix3f &rhs);
 
   double m[3][3];
 };
@@ -904,6 +921,8 @@ struct matrix4d {
 
     return m;
   }
+
+  matrix4d &operator=(const matrix4f &rhs);
 
   double m[4][4];
 };

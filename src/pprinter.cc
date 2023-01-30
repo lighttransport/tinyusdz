@@ -2370,11 +2370,11 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
   ss << print_typed_attr(geom.radius, "radius", indent+1);
   ss << print_typed_attr(geom.height, "height", indent+1);
 
-  if (geom.axis) {
+  if (geom.axis.authored()) {
     std::string axis;
-    if (geom.axis.value() == Axis::X) {
+    if (geom.axis.get_value() == Axis::X) {
       axis = "\"X\"";
-    } else if (geom.axis.value() == Axis::Y) {
+    } else if (geom.axis.get_value() == Axis::Y) {
       axis = "\"Y\"";
     } else {
       axis = "\"Z\"";
