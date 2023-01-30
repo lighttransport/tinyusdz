@@ -780,6 +780,77 @@ half float_to_half_full(float _f) {
   return fp16;
 }
 
+matrix2f &matrix2f::operator=(const matrix2d &src) {
+
+  for (size_t j = 0; j < 2; j++) {
+    for (size_t i = 0; i < 2; i++) {
+      m[j][i] = float(src.m[j][i]);
+    }
+  }
+
+  return *this;
+}
+
+matrix3f &matrix3f::operator=(const matrix3d &src) {
+
+  for (size_t j = 0; j < 3; j++) {
+    for (size_t i = 0; i < 3; i++) {
+      m[j][i] = float(src.m[j][i]);
+    }
+  }
+
+  return *this;
+}
+
+matrix4f::matrix4f(const matrix4d &src) {
+  (*this) = src;
+}
+
+matrix4f &matrix4f::operator=(const matrix4d &src) {
+
+  for (size_t j = 0; j < 4; j++) {
+    for (size_t i = 0; i < 4; i++) {
+      m[j][i] = float(src.m[j][i]);
+    }
+  }
+
+  return *this;
+}
+
+matrix2d &matrix2d::operator=(const matrix2f &src) {
+
+  for (size_t j = 0; j < 2; j++) {
+    for (size_t i = 0; i < 2; i++) {
+      m[j][i] = double(src.m[j][i]);
+    }
+  }
+
+  return *this;
+}
+
+matrix3d &matrix3d::operator=(const matrix3f &src) {
+
+  for (size_t j = 0; j < 3; j++) {
+    for (size_t i = 0; i < 3; i++) {
+      m[j][i] = double(src.m[j][i]);
+    }
+  }
+
+  return *this;
+}
+
+matrix4d &matrix4d::operator=(const matrix4f &src) {
+
+  for (size_t j = 0; j < 4; j++) {
+    for (size_t i = 0; i < 4; i++) {
+      m[j][i] = double(src.m[j][i]);
+    }
+  }
+
+  return *this;
+}
+
+
 size_t Value::array_size() const {
   if (!is_array()) {
     return 0;

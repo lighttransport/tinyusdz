@@ -1,5 +1,5 @@
 # Assume this project is a root project
-cmake_minimum_required(VERSION 3.5.1)
+cmake_minimum_required(VERSION 3.16)
 
 project(${BUILD_TARGET} CXX)
 
@@ -7,6 +7,7 @@ set(BUILD_TARGET "usdz_glview")
 
 set(CMAKE_CXX_STANDARD 14)
 
+set(OpenGL_GL_PREFERENCE GLVND) # CMP0072
 find_package(OpenGL REQUIRED)
 
 if(WIN32)

@@ -115,7 +115,7 @@ struct DomeLight : public Light {
 // TODO:
 struct GeometryLight : public Light {
 
-  nonstd::optional<Relationship> geometry; // `rel geometry`
+  RelationshipProperty geometry; // `rel geometry`
 
 };
 

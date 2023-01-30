@@ -2,6 +2,11 @@
 // Copyright 2022 - Present, Syoyo Fujita.
 //
 // UsdGeom
+//
+// TODO
+//
+// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
+//
 #pragma once
 
 #include "prim-types.hh"
@@ -621,7 +626,7 @@ struct GeomCone : public GPrim {
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 
-  nonstd::optional<Axis> axis;  // uniform token axis
+  TypedAttribute<Axis> axis;
 };
 
 struct GeomCapsule : public GPrim {

@@ -28,10 +28,15 @@
 // include relative to openglviewer example cmake top dir for clangd lsp.
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
+#include "tydra/scene-access.hh"
 
 constexpr auto kAttribPoints = "points";
 constexpr auto kAttribNormals = "normals";
 constexpr auto kAttribTexCoord0 = "texcoord_0";
+
+constexpr auto kUniformModelviewMatrix = "modelviewMatrix";
+constexpr auto kUniformNormalMatrix = "normalMatrix";
+constexpr auto kUniformProjectionMatrix = "projectionMatrix";
 
 // TODO: Use handle_id for key
 struct GLMeshState {
@@ -41,6 +46,12 @@ struct GLMeshState {
 struct GLProgramState {
   std::map<std::string, GLint> attribs;
   std::map<std::string, GLint> uniforms;
+};
+
+struct GLVertexUniformState {
+  GLint u_modelview{-1};
+  GLint u_normal{-1}; // transpose(inverse(modelview))
+  GLint u_perspective{-1};
 };
 
 struct GUIContext {
@@ -194,7 +205,61 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 
 namespace {
 
-void SetupTexture(const tinyusdz::tydra::RenderScene& scene,
+void SetVertexUniforms(GLVertexUniformState &state,
+  tinyusdz::tydra::XformNode &xform_node) {
+
+
+  using namespace tinyusdz::value;
+
+  // implicitly cast matrix4d to matrix4f;
+  matrix4f worldmat = xform_node.get_world_matrix();
+  matrix4d invtransmatd = tinyusdz::inverse(tinyusdz::upper_left_3x3_only(xform_node.get_world_matrix()));
+  matrix4f invtransmat = invtransmatd;
+
+  // TODO: Camera perspective.
+  matrix4f perspective;
+
+  if (state.u_modelview > -1) {
+    glUniformMatrix4fv(state.u_modelview, 1, /* transpose */false, &worldmat.m[0][0]);
+  }
+
+  if (state.u_normal > -1) {
+    // TODO: transpose in GL-side?
+    glUniformMatrix4fv(state.u_normal, 1,  /* transpose */false, &invtransmat.m[0][0]);
+  }
+
+  if (state.u_perspective > -1) {
+    glUniformMatrix4fv(state.u_perspective, 1,  /* transpose */false, &perspective.m[0][0]);
+  }
+	
+}
+
+bool SetupShader() {
+
+  GLuint prog_id;
+
+  GLint modelv_loc = glGetUniformLocation(prog_id, kUniformModelviewMatrix);
+  if (modelv_loc < 0) {
+    std::cerr << kUniformModelviewMatrix << " not found in the vertex shader.\n";
+    return false;
+  }
+
+  GLint norm_loc = glGetUniformLocation(prog_id, kUniformNormalMatrix);
+  if (norm_loc < 0) {
+    std::cerr << kUniformNormalMatrix << " not found in the vertex shader.\n";
+    return false;
+  }
+
+  GLint proj_loc = glGetUniformLocation(prog_id, kUniformProjectionMatrix);
+  if (proj_loc < 0) {
+    std::cerr << kUniformProjectionMatrix << " not found in the vertex shader.\n";
+    return false;
+  }
+
+  return true;
+}
+
+bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
                   tinyusdz::tydra::UVTexture& tex) {
   auto glwrapmode = [](const tinyusdz::tydra::UVTexture::WrapMode mode) {
     if (mode == tinyusdz::tydra::UVTexture::WrapMode::CLAMP_TO_EDGE) {
@@ -227,12 +292,19 @@ void SetupTexture(const tinyusdz::tydra::RenderScene& scene,
   GLfloat black[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, black);
 
+
   int64_t image_id = tex.texture_image_id;
 
   if (image_id >= 0) {
     if (image_id < scene.images.size()) {
       const tinyusdz::tydra::TextureImage& image =
           scene.images[size_t(image_id)];
+
+      if ((image.width < 1) || (image.height < 1) || (image.channels < 1)) {
+        std::cerr << "Texture image is not loaded(texture file not found?).\n";
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return false;
+      }
 
       uint32_t bytesperpixel = 1;
 
@@ -289,14 +361,20 @@ void SetupTexture(const tinyusdz::tydra::RenderScene& scene,
                            size_t(bytesperpixel)
                     << ", buffer bytes: " << std::to_string(buffer.data.size())
                     << "\n";
+          // continue anyway
+        } else {
+          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
+                      format, type, buffer.data.data());
         }
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
-                     format, type, buffer.data.data());
       }
     }
   }
 
   tex.handle = texid;
+
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  return true;
 }
 
 #if 0  // TODO
