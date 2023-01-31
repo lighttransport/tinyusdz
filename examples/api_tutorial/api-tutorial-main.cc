@@ -25,6 +25,48 @@ void CreateScene(tinyusdz::Stage *stage) {
   // in the app layer.
 
   //
+  // Create simple material with UsdPrevieSurface.
+  //
+  tinyusdz::Material mat;
+  mat.name = "mat";
+
+  tinyusdz::Shader shader; // Shader container
+  shader.name = "defaultPBR";
+  {
+    tinyusdz::UsdPreviewSurface surfaceShader; // Concrete Shader node object
+
+    //
+    // Asssign actual shader object to Shader::value.
+    // Also do not forget set its shader node type name through Shader::info_id
+    //
+    shader.info_id = tinyusdz::kUsdPreviewSurface; // "UsdPreviewSurface" token
+
+    //
+    // Currently no shader network/connection API.
+    // Manually construct it.
+    //
+    surfaceShader.outputsSurface.set_authored(true); // Author `token outputs:surface`
+
+    surfaceShader.metallic = 0.3f;
+    // TODO: UsdUVTexture, UsdPrimvarReader***, UsdTransform2d
+    
+    // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
+    // 
+    // token outputs:surface = </mat/defaultPBR.outputs:surface>
+    mat.surface.set(tinyusdz::Path(/* prim path */"/mat/defaultPBR", /* prop path */"outputs:surface"));
+
+    //
+    // Shaer::value is `value::Value` type, so can use '=' to assign Shader object.
+    //
+    shader.value = std::move(surfaceShader); 
+  }
+
+  tinyusdz::Prim shaderPrim(shader);
+  tinyusdz::Prim matPrim(mat);
+  matPrim.children().emplace_back(std::move(shaderPrim));
+
+
+  //
   // To construct Prim, first create concrete Prim object(e.g. Xform, GeomMesh),
   // then add it to tinyusdz::Prim.
   //
@@ -235,6 +277,13 @@ void CreateScene(tinyusdz::Stage *stage) {
       }
     }
 
+    // Material binding(`rel material:binding` is done by manually setup targetPath.
+    tinyusdz::Relationship materialBinding;
+    materialBinding.set(tinyusdz::Path(/* prim path */"/mat/defaultPBR", /* prop path */""));
+
+    mesh.materialBinding = materialBinding;
+
+    // TODO: Explicitly author MaterialBindingAPI apiSchema in Mesh Prim.
 
   }
 
@@ -256,7 +305,10 @@ void CreateScene(tinyusdz::Stage *stage) {
   //  +- [Mesh]
   //  +- [Sphere]
   //
-
+  // [Material]
+  //  |
+  //  +- [Shader]
+  //
 
 
   // Prim's elementName is read from concrete Prim class(GeomMesh::name,
@@ -323,8 +375,12 @@ void CreateScene(tinyusdz::Stage *stage) {
   std::cout << "sphere.element_name = " << spherePrim.element_name() << "\n";
   std::cout << "mesh.element_name = " << meshPrim.element_name() << "\n";
 
+  stage->metas().defaultPrim = tinyusdz::value::token(xformPrim.element_name()); // token
+
   // Use Stage::root_prims() to retrieve Stage's root Prim array.
   stage->root_prims().emplace_back(std::move(xformPrim));
+
+  stage->root_prims().emplace_back(std::move(matPrim));
 
   // After finishing adding Prims to the Stage,
   // Invoke Stage::compute_absolute_prim_path_and_assign_prim_id() to compute absolute Prim path and assign unique Prim id to each Prims in the Stage.
