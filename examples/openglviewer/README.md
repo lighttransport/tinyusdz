@@ -4,6 +4,10 @@
 
 Not yet working.
 
+## Supported USD files
+
+USDC(binary), USDA(ascii) and USDZ(zip container)
+
 ## Requirements 
 
 * C++11 compiler
@@ -28,6 +32,14 @@ $ ./usdz_glview <input.usdz>
 ## TODO
 
 * [ ] Subdivision surface
+* [ ] Animation
+  * Timesamples animation
+    * [ ] Xform
+    * [ ] GeomMesh(Vertex animation) 
+    * [ ] Camera, Light, etc.
+  * usdSkel
+    * [ ] Vertex skinning
+    * [ ] Morphing(Blend shapes)
 
 ## Third party libraries
 
