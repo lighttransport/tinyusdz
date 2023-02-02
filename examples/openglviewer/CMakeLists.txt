@@ -20,6 +20,7 @@ endif()
 
 set(SOURCES
     main.cc
+    shader.cc
     #render.cc
     #render-config.cc
 
