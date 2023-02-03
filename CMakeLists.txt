@@ -806,15 +806,6 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
 endif()
 
-if(TINYUSDZ_WITH_JSON)
-  add_executable(
-    usdz_to_json
-    ${CMAKE_CURRENT_SOURCE_DIR}/examples/usdz_to_json/usdz_to_json-main.cc)
-  add_sanitizers(usdz_to_json)
-  target_include_directories(usdz_to_json PRIVATE ${PROJECT_SOURCE_DIR}/src/)
-  target_link_libraries(usdz_to_json PRIVATE ${TINYUSDZ_TARGET_STATIC})
-endif()
-
 if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
   add_executable(
     usda_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
@@ -856,6 +847,9 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/tydra_api)
   add_subdirectory(examples/tydra_to_renderscene)
   add_subdirectory(examples/api_tutorial)
+  if (TINYUSDZ_WITH_JSON)
+    add_subdirectory(examples/usd_to_json)
+  endif()
   if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()
