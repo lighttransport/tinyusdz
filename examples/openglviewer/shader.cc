@@ -30,6 +30,8 @@ SOFTWARE.
 //#include "glm/gtc/type_ptr.hpp"
 //#include "glm/matrix.hpp"
 
+namespace example {
+
 shader::shader(shader&& other) { *this = std::move(other); }
 
 shader& shader::operator=(shader&& other) {
@@ -227,3 +229,6 @@ void shader::set_uniform(const char* name, size_t number_of_matrices,
 }
 
 GLuint shader::get_program() const { return program_; }
+
+
+} // namespace example

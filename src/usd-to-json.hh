@@ -16,7 +16,11 @@
 
 namespace tinyusdz {
 
+///
+/// Convert USD Stage to JSON
+///
+/// @returns JSON string or error message(std::string) when failed to convert.
+///
 nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage);
-
 
 } // namespace tinyusd
