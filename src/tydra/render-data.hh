@@ -305,6 +305,10 @@ struct Node {
 
 // Currently normals and texcoords are converted as facevarying attribute.
 struct RenderMesh {
+
+  std::string element_name; // element(leaf) Prim name
+  std::string abs_name; // absolute Prim path in USD
+
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
   // For triangulated mesh, array elements are all 3.
