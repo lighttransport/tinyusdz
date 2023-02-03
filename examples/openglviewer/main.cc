@@ -13,6 +13,7 @@
 // GL
 //
 // glad must be included before glfw3.h
+// TODO: Use imgui's imgui_impl_opengl3_loader.h
 #include "glad/glad.h"
 //
 #include <GLFW/glfw3.h>
@@ -20,7 +21,7 @@
 // GUI common
 #include "../common/imgui/imgui.h"
 #include "../common/imgui/imgui_impl_glfw.h"
-#include "../common/imgui/imgui_impl_opengl2.h"
+#include "../common/imgui/imgui_impl_opengl3.h"
 #include "../common/trackball.h"
 #include "../common/viewport_camera.hh"
 
@@ -437,11 +438,39 @@ static void ProcScene(const tinyusdz::Stage& stage) {
 }  // namespace
 
 int main(int argc, char** argv) {
+
   // Setup window
   glfwSetErrorCallback(error_callback);
   if (!glfwInit()) {
     exit(EXIT_FAILURE);
   }
+
+  // Decide GL+GLSL versions
+  #if defined(IMGUI_IMPL_OPENGL_ES2)
+      // GL ES 2.0 + GLSL 100
+      const char* glsl_version = "#version 100";
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+      glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+  #elif defined(__APPLE__)
+      // GL 3.2 + GLSL 150
+      const char* glsl_version = "#version 150";
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+      glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
+      glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // Required on Mac
+  #else
+      // GL 3.0 + GLSL 130
+      const char* glsl_version = "#version 130";
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+      //glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
+      //glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // 3.0+ only
+  #endif
+
+#ifdef _DEBUG_OPENGL
+  glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+#endif
 
   std::string filename = "../../../models/suzanne.usdc";
 
@@ -467,26 +496,12 @@ int main(int argc, char** argv) {
 
   ProcScene(stage);
 
-#ifdef _DEBUG_OPENGL
-  glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
-#endif
-
-  //// Create a GLES 3.0 context
-  // glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-  // glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  // glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-  // glfwWindowHint(GLFW_SAMPLES, 16);
-  // glfwWindowHint(GLFW_DOUBLEBUFFER, GL_TRUE);
-
-#ifdef __APPLE__
-  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT,
-                 GL_TRUE);  // It looks this is important on macOS.
-#endif
 
   GLFWwindow* window{nullptr};
   window = glfwCreateWindow(gCtx.width, gCtx.height, "Simple USDZ GL viewer",
                             nullptr, nullptr);
   glfwMakeContextCurrent(window);
+  glfwSwapInterval(1); // vsync on
 
   if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
     std::cerr << "Failed to load OpenGL functions with gladLoadGL\n";
@@ -508,8 +523,6 @@ int main(int argc, char** argv) {
                         GL_TRUE);
 #endif
 
-  glfwSwapInterval(1);  // Enable vsync
-
   GUIContext gui_ctx;
 
   glfwSetWindowUserPointer(window, &gui_ctx);
@@ -522,15 +535,17 @@ int main(int argc, char** argv) {
 
   ImGui::CreateContext();
 
+  ImGui::StyleColorsDark();
+
   ImGui_ImplGlfw_InitForOpenGL(window, true);
-  ImGui_ImplOpenGL2_Init();
+  ImGui_ImplOpenGL3_Init(glsl_version);
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
 
   while (!done) {
     glfwPollEvents();
-    ImGui_ImplOpenGL2_NewFrame();
+    ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
@@ -565,7 +580,7 @@ int main(int argc, char** argv) {
     // Imgui
 
     ImGui::Render();
-    ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     glfwSwapBuffers(window);
     glFlush();
@@ -579,7 +594,7 @@ int main(int argc, char** argv) {
     currentTime = glfwGetTime();
     const auto deltaTime = currentTime - previousTime;
     if (deltaTime >= 1.0) {
-      sprintf(title, "Simple GL USDZ viewer [%dFPS]", frameCount);
+      sprintf(title, "Simple GL USDC/USDA/USDZ viewer [%dFPS]", frameCount);
       glfwSetWindowTitle(window, title);
       frameCount = 0;
       previousTime = currentTime;
@@ -592,7 +607,7 @@ int main(int argc, char** argv) {
 
   std::cout << "Close window\n";
 
-  ImGui_ImplOpenGL2_Shutdown();
+  ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
 
