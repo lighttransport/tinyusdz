@@ -45,16 +45,18 @@ constexpr auto kUniformProjectionMatrix = "projectionMatrix";
 // Embedded shaders
 #include "shaders/no_skinning.vert_inc.hh"
 
+#define CHECK_GL(tag) do { \
+  GLenum err = glGetError(); \
+  if (err != GL_NO_ERROR) { \
+    std::cerr << "[" << tag << "] " << __FILE__ << ":" << __LINE__ << ":" << __func__ << " code " << std::to_string(int(err)) << "\n"; \
+  } \
+} while(0)
+
 // TODO: Use handle_id for key
 struct GLMeshState {
-  std::vector<GLuint> diffuseTexHandles;
-};
-
-struct GLProgramState {
   std::map<std::string, GLint> attribs;
-  //std::map<std::string, GLint> uniforms;
-
-  std::map<std::string, example::shader> shaders;
+  std::vector<GLuint> diffuseTexHandles;
+  GLuint vao{0}; // vertex attrib object
 };
 
 struct GLVertexUniformState {
@@ -62,6 +64,13 @@ struct GLVertexUniformState {
   GLint u_normal{-1}; // transpose(inverse(modelview))
   GLint u_perspective{-1};
 };
+
+struct GLProgramState {
+  //std::map<std::string, GLint> uniforms;
+
+  std::map<std::string, example::shader> shaders;
+};
+
 
 struct GUIContext {
   enum AOV {
@@ -390,32 +399,147 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
   return true;
 }
 
-#if 0  // TODO
-static void DrawMesh(tinyusdz::tydra::RenderMesh& mesh,
-  GLProgramState &program_state,
-  BufferState ) {
+static bool SetupMesh(
+  tinyusdz::tydra::RenderMesh &mesh,
+  GLuint program_id)
+{
+  GLMeshState gl_state;
 
-  if (mesh.points.empty()) {
-    return false;
+  std::vector<uint32_t> indices;
+
+  if (mesh.faceVertexCounts.empty()) {
+    // assume all triangulaged faces.
+    if ((mesh.faceVertexIndices.size() % 3) != 0) {
+      std::cerr << "mesh <" << mesh.abs_name << ">  faceVertexIndices.size " << std::to_string(mesh.faceVertexIndices.size()) << " must be multiple of 3\n";
+    }
+
+    for (size_t f = 0; f < mesh.faceVertexIndices.size() / 3; f++) {
+      for (size_t c = 0; c < 3; c++ ) {
+        indices.push_back(mesh.faceVertexIndices[3 * f + c]);
+      }
+    }
+  } else {
+    size_t faceOffset = 0;
+
+    // Currently all faces must be triangle.
+    for (size_t f = 0; f < mesh.faceVertexCounts.size(); f++) {
+      if (mesh.faceVertexCounts[f] != 3) {
+        std::cerr << "mesh <" << mesh.abs_name << ">  Non triangle face found at faceVertexCounts[" << f << "] (" << mesh.faceVertexCounts[f] << ")\n";
+        return false;
+      }
+
+      for (size_t c = 0; c < mesh.faceVertexCounts[f]; c++ ) {
+        indices.push_back(mesh.faceVertexIndices[faceOffset + c]);
+      }
+
+    faceOffset += f;
+    }
   }
 
-  glBindBuffer(GL_ARRAY_BUFFER, buffer_state
+  glGenVertexArrays(1, &gl_state.vao);
+  CHECK_GL(mesh.abs_name);
 
-  glVertexAttribPointer(program_state
-  glEnableVertexAttribArray
+  glBindVertexArray(gl_state.vao);
+  CHECK_GL(mesh.abs_name << "Bind VAO");
 
+  { // position
+    GLuint vb;
+    glGenBuffers(1, &vb);
+    glBindBuffer(GL_ARRAY_BUFFER, vb);
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        mesh.points.size() * sizeof(float),
+        mesh.points.data(),
+        GL_STATIC_DRAW
+    );
 
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
+    GLint loc = glGetAttribLocation(program_id, kAttribPoints);
+    if (loc > -1) {
+      glEnableVertexAttribArray(loc);
+      glVertexAttribPointer(
+          loc,
+          3,
+          GL_FLOAT,
+          GL_FALSE,
+          sizeof(GLfloat) * 3,
+          0
+      );
+    }
+  }
+
+  // TODO: normals, uvs.
+
+  // Build index buffer.
+  GLuint elementbuffer;
+  glGenBuffers(1, &elementbuffer);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementbuffer);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+  CHECK_GL(mesh.abs_name << "ElementArrayBuffer");
+
+  glBindVertexArray(0);
+  CHECK_GL(mesh.abs_name << "UnBind VAO");
+
+  return true;
+}
+
+static void DrawMesh(tinyusdz::tydra::RenderMesh& mesh,
+  const GLMeshState &gl_state) {
+
+#if 0
+  // poisition
+  if (gl_state.attribs.count(kAttribPoints)) {
+    GLint idx = gl_state.attribs.at(kAttribPoints);
+    if (idx > -1) {
+      glBindBuffer(GL_ARRAY_BUFFER, idx);
+      glEnableVertexAttribArray(idx);
+      glVertexAttribPointer(idx, 3, GL_FLOAT, GL_FALSE, 0, 0); // vec3
+    }
+  }
+
+  if (gl_state.attribs[kAttribNormal] > -1) {
+    GLint idx = gl_state.attribs[kAttribNormal];
+    glBindBuffer(GL_ARRAY_BUFFER, idx);
+    glEnableVertexAttribArray(idx);
+    glVertexAttribPointer(idx, 3, GL_FLOAT, GL_FALSE, 0, 0); // vec3, assume normal vector is already normalzed.
+  }
+
+  if (gl_state.attribs[kAttrixTexCoord0] > -1) {
+    GLint idx = gl_state.attribs[kAttribTexCoord0];
+    glBindBuffer(GL_ARRAY_BUFFER, idx);
+    glEnableVertexAttribArray(idx);
+    glVertexAttribPointer(idx, 2, GL_FLOAT, GL_FALSE, 0, 0); // vec2
+  }
+
+  GLsizei ntriangles = 0; // TODO
+  glDrawArrays(GL_TRIANGLES, 0, ntriangles);
 
   for (const auto &attrib : program_state.attribs) {
     if (attrib.second >= 0) {
       glDisableVertexAttribArray(attrib.second);
     }
   }
-
-}
+#else
+  // TODO
+  //glBindVertexArray
 #endif
 
+}
+
+static void DrawScene(
+  const example::shader shader,
+  const tinyusdz::tydra::RenderScene &scene) {
+  //
+  // Use single shader for the scene
+  //
+
+  // bind program
+  shader.use();
+  CHECK_GL("shader.use");
+
+
+  glUseProgram(0);
+  CHECK_GL("glUseProgram(0)");
+}
 #if 0
 static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
   if (node.type == tinyusdz::NODE_TYPE_XFORM) {
