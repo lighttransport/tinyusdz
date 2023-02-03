@@ -11,7 +11,7 @@ USDC(binary), USDA(ascii) and USDZ(zip container)
 ## Requirements 
 
 * C++14 compiler
-* OpenGL/GLES 3.x
+* OpenGL/GLES 3.3 or higher
 * cmake
 
 ## Build
