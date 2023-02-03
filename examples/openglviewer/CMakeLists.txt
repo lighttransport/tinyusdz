@@ -20,6 +20,7 @@ endif()
 
 set(SOURCES
     main.cc
+    shader.hh
     shader.cc
     #render.cc
     #render-config.cc
@@ -42,7 +43,7 @@ set(GUI_SOURCES
     ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_tables.cpp
     ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_widgets.cpp
     ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_impl_glfw.cpp
-    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_impl_opengl2.cpp
+    ${PROJECT_SOURCE_DIR}/../common/imgui/imgui_impl_opengl3.cpp
     ${PROJECT_SOURCE_DIR}/../common/glad/include/glad/glad.h
     ${PROJECT_SOURCE_DIR}/../common/glad/src/glad.c
     )
