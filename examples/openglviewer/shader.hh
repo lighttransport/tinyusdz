@@ -45,6 +45,8 @@ SOFTWARE.
 #include <vector>
 #include <array>
 
+namespace example {
+
 class shader {
   GLuint program_;
   std::string shader_name_;
@@ -81,3 +83,5 @@ class shader {
   void set_uniform(const char* name, size_t number_of_matrices,
                    float* data) const;
 };
+
+} // namespace example

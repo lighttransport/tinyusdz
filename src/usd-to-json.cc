@@ -10,7 +10,7 @@
 #endif
 
 // nlohmann json
-#include "nlohmann/json.hpp"
+#include "external/jsonhpp/nlohmann/json.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -138,36 +138,41 @@ json ToJSON(tinyusdz::GeomBasisCurves& curves) {
 json ToJSON(const tinyusdz::value::Value &v) {
   if (auto pv = v.get_value<tinyusdz::Xform>()) {
     return ToJSON(pv.value());
-  } 
+  }
 
-  
+
   return json();
 
-  
+
 }
 
 nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
   json j;
 
   if (metas.upAxis.authored()) {
-    j["upAxis"] = to_string(metas.upAxis.get());
+    j["upAxis"] = to_string(metas.upAxis.get_value());
+  }
+
+  if (metas.comment.value.size()) {
+    // TODO: escape and quote
+    j["comment"] = metas.comment.value;
   }
 
   return j;
 }
 
 bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
-  json j = ToJSON(prim.data);
-
+  json j = ToJSON(prim.data());
 
   json jchildren = json::object();
 
-  for (const auto &child : prim.children) {
+  // TODO: Traverse Prim according to primChildren.
+  for (const auto &child : prim.children()) {
     json cj;
     if (!PrimToJSONRec(cj, child, depth+1)) {
       return false;
     }
-    std::string cname = child.path.full_path_name();
+    std::string cname = child.element_name();
     jchildren[cname] = cj;
   }
 
@@ -175,7 +180,7 @@ bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
     j["primChildren"] = jchildren;
   }
 
-  root[prim.path.full_path_name()] = j;
+  root[prim.element_name()] = j;
 
   return true;
 }
@@ -191,8 +196,10 @@ nonstd::expected<std::string, std::string> ToJSON(
   if (!jstageMetas) {
     return nonstd::make_unexpected(jstageMetas.error());
   }
+  
+  // Stage metadatum is represented as properties.
   if (!jstageMetas->is_null()) {
-    j["stageMeta"] = *jstageMetas;
+    j["properties"] = *jstageMetas;
   }
 
   j["version"] = 1.0;
