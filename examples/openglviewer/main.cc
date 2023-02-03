@@ -30,6 +30,9 @@
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
+// local
+#include "shader.hh"
+
 constexpr auto kAttribPoints = "points";
 constexpr auto kAttribNormals = "normals";
 constexpr auto kAttribTexCoord0 = "texcoord_0";
@@ -38,6 +41,9 @@ constexpr auto kUniformModelviewMatrix = "modelviewMatrix";
 constexpr auto kUniformNormalMatrix = "normalMatrix";
 constexpr auto kUniformProjectionMatrix = "projectionMatrix";
 
+// Embedded shaders
+#include "shaders/no_skinning.vert_inc.hh"
+
 // TODO: Use handle_id for key
 struct GLMeshState {
   std::vector<GLuint> diffuseTexHandles;
@@ -45,7 +51,9 @@ struct GLMeshState {
 
 struct GLProgramState {
   std::map<std::string, GLint> attribs;
-  std::map<std::string, GLint> uniforms;
+  //std::map<std::string, GLint> uniforms;
+
+  std::map<std::string, example::shader> shaders;
 };
 
 struct GLVertexUniformState {
@@ -206,18 +214,16 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 namespace {
 
 void SetVertexUniforms(GLVertexUniformState &state,
-  tinyusdz::tydra::XformNode &xform_node) {
+  tinyusdz::tydra::XformNode &xform_node,
+  tinyusdz::value::matrix4f &perspective) {
 
 
   using namespace tinyusdz::value;
 
-  // implicitly cast matrix4d to matrix4f;
+  // implicitly casts matrix4d to matrix4f;
   matrix4f worldmat = xform_node.get_world_matrix();
   matrix4d invtransmatd = tinyusdz::inverse(tinyusdz::upper_left_3x3_only(xform_node.get_world_matrix()));
   matrix4f invtransmat = invtransmatd;
-
-  // TODO: Camera perspective.
-  matrix4f perspective;
 
   if (state.u_modelview > -1) {
     glUniformMatrix4fv(state.u_modelview, 1, /* transpose */false, &worldmat.m[0][0]);
@@ -232,6 +238,12 @@ void SetVertexUniforms(GLVertexUniformState &state,
     glUniformMatrix4fv(state.u_perspective, 1,  /* transpose */false, &perspective.m[0][0]);
   }
 	
+}
+
+bool LoadShaders() {
+  std::string s(reinterpret_cast<char *>(shaders_no_skinning_vert), shaders_no_skinning_vert_len);
+
+  return true;
 }
 
 bool SetupShader() {
