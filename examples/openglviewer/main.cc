@@ -42,6 +42,18 @@ constexpr auto kUniformModelviewMatrix = "modelviewMatrix";
 constexpr auto kUniformNormalMatrix = "normalMatrix";
 constexpr auto kUniformProjectionMatrix = "projectionMatrix";
 
+constexpr auto kUniformDiffuseTex = "diffuseTex";
+constexpr auto kUniformDiffuseTexTransform = "diffuseTexTransform";
+constexpr auto kUniformDiffuseTexScaleAndBias = "diffuseTexScaleAndBias"; // (sx, sy, bx, by)
+
+constexpr auto kUniformNormaTex = "normalTex";
+constexpr auto kUniformNormaTexTransform = "normalTexTransform";
+constexpr auto kUniformNormalTexScaleAndBias = "normalTexScaleAndBias"; // (sx, sy, bx, by)
+
+constexpr auto kUniformOcclusionTex = "occlusionlTex";
+constexpr auto kUniformOcclusionTexTransform = "occlusionlTexTransform";
+constexpr auto kUniformOcclusionTexScaleAndBias = "occlusionTexScaleAndBias"; // (sx, sy, bx, by)
+
 // Embedded shaders
 #include "shaders/no_skinning.vert_inc.hh"
 
@@ -51,6 +63,17 @@ constexpr auto kUniformProjectionMatrix = "projectionMatrix";
     std::cerr << "[" << tag << "] " << __FILE__ << ":" << __LINE__ << ":" << __func__ << " code " << std::to_string(int(err)) << "\n"; \
   } \
 } while(0)
+
+struct GLTexParams {
+  std::map<std::string, GLint> uniforms;
+  GLenum wrapS{GL_REPEAT};
+  GLenum wrapT{GL_REPEAT};
+  std::array<float, 4> borderCol{0.0f, 0.0f, 0.0f, 0.0f}; // transparent black
+};
+
+struct GLTexState {
+  GLTexParams texParams;
+};
 
 // TODO: Use handle_id for key
 struct GLMeshState {
@@ -297,6 +320,12 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
     return GL_REPEAT;
   };
 
+  GLTexState texState;
+  GLTexParams texParams;
+
+  texParams.wrapS = glwrapmode(tex.wrapS);
+  texParams.wrapT = glwrapmode(tex.wrapT);
+
   GLuint texid{0};
   glGenTextures(1, &texid);
 
@@ -304,16 +333,18 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, glwrapmode(tex.wrapS));
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, glwrapmode(tex.wrapT));
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, texParams.wrapS);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, texParams.wrapT);
 
   // For `black` wrap mode.
   // Not sure what aplha color should be for USD's `black` wrap mode.
   // There are two possibilities: opaque black or transparent black.
   // We use fully transparent(0.0) for a while.
-  GLfloat black[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, black);
+  texParams.borderCol = {0.0f, 0.0f, 0.0f, 0.0f};
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, &texParams.borderCol[0]);
+  CHECK_GL("texture_id[" << std::to_string(tex.texture_image_id) << "] glTexParameters");
 
+  texState.texParams = std::move(texParams);
 
   int64_t image_id = tex.texture_image_id;
 
@@ -387,6 +418,7 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
         } else {
           glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
                       format, type, buffer.data.data());
+          CHECK_GL("texture_id[" << std::to_string(image_id) << "] glTexImage2D");
         }
       }
     }
