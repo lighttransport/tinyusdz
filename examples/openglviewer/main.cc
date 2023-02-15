@@ -36,7 +36,9 @@
 
 constexpr auto kAttribPoints = "points";
 constexpr auto kAttribNormals = "normals";
+constexpr auto kAttribTexCoordBase = "texcoord_";
 constexpr auto kAttribTexCoord0 = "texcoord_0";
+constexpr auto kMaxTexCoords = 1; // TODO: multi texcoords
 
 constexpr auto kUniformModelviewMatrix = "modelviewMatrix";
 constexpr auto kUniformNormalMatrix = "normalMatrix";
@@ -79,7 +81,8 @@ struct GLTexState {
 struct GLMeshState {
   std::map<std::string, GLint> attribs;
   std::vector<GLuint> diffuseTexHandles;
-  GLuint vao{0}; // vertex attrib object
+  GLuint vertex_array_object{0}; // vertex array object
+  GLuint num_triangles{0}; // up to 4GB triangles
 };
 
 struct GLVertexUniformState {
@@ -433,10 +436,9 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
 
 static bool SetupMesh(
   tinyusdz::tydra::RenderMesh &mesh,
-  GLuint program_id)
+  GLuint program_id,
+  GLMeshState &gl_state) // [out]
 {
-  GLMeshState gl_state;
-
   std::vector<uint32_t> indices;
 
   if (mesh.faceVertexCounts.empty()) {
@@ -468,24 +470,69 @@ static bool SetupMesh(
     }
   }
 
-  glGenVertexArrays(1, &gl_state.vao);
-  CHECK_GL(mesh.abs_name);
+  glGenVertexArrays(1, &gl_state.vertex_array_object);
+  CHECK_GL(mesh.abs_name << "GenVertexArrays");
 
-  glBindVertexArray(gl_state.vao);
-  CHECK_GL(mesh.abs_name << "Bind VAO");
+  glBindVertexArray(gl_state.vertex_array_object);
+  CHECK_GL(mesh.abs_name << "BindVertexArray");
+
+  //
+  // Current settings
+  // - position
+  // - normals
+  // - texcoords0
+  //
+  // all vertex attribs are represented as facevarying data.
+  //
+  // - Static mesh(STATIC_DRAW) only
 
   { // position
+
+    // expand position to facevarying data.
+    // assume faces are all triangle.
+    std::vector<tinyusdz::tydra::vec3> facevaryingVertices;
+    facevaryingVertices.resize(indices.size() / 3);
+    gl_state.num_triangles = indices.size() / 3;
+
+    for (size_t i = 0; i < indices.size() / 3; i++) {
+
+      size_t vi0 = indices[3 * i + 0];
+      size_t vi1 = indices[3 * i + 1];
+      size_t vi2 = indices[3 * i + 2];
+
+      if (vi0 >= mesh.points.size()) {
+        std::cerr << "indices[" << (3 * i + 0) << "(" << vi0 << ") exceeds mesh.points.size()(" << mesh.points.size() << ")\n";
+        return false;
+      }
+
+      if (vi1 >= mesh.points.size()) {
+        std::cerr << "indices[" << (3 * i + 1) << "(" << vi1 << ") exceeds mesh.points.size()(" << mesh.points.size() << ")\n";
+        return false;
+      }
+
+      if (vi2 >= mesh.points.size()) {
+        std::cerr << "indices[" << (3 * i + 2) << "(" << vi2 << ") exceeds mesh.points.size()(" << mesh.points.size() << ")\n";
+        return false;
+      }
+
+      facevaryingVertices.push_back(mesh.points[vi0]);
+      facevaryingVertices.push_back(mesh.points[vi1]);
+      facevaryingVertices.push_back(mesh.points[vi2]);
+    }
+ 
     GLuint vb;
     glGenBuffers(1, &vb);
     glBindBuffer(GL_ARRAY_BUFFER, vb);
     glBufferData(
         GL_ARRAY_BUFFER,
-        mesh.points.size() * sizeof(float),
-        mesh.points.data(),
+        facevaryingVertices.size() * sizeof(tinyusdz::tydra::vec3),
+        facevaryingVertices.data(),
         GL_STATIC_DRAW
     );
+    CHECK_GL("Set facevaryingVertices buffer data");
 
     GLint loc = glGetAttribLocation(program_id, kAttribPoints);
+
     if (loc > -1) {
       glEnableVertexAttribArray(loc);
       glVertexAttribPointer(
@@ -493,20 +540,97 @@ static bool SetupMesh(
           3,
           GL_FLOAT,
           GL_FALSE,
-          sizeof(GLfloat) * 3,
+          /* stride */sizeof(GLfloat) * 3,
           0
       );
+      CHECK_GL("VertexAttribPointer");
+    } else {
+      std::cerr << kAttribPoints << " attribute not found in vertex shader.\n";
+      return false;
     }
   }
 
-  // TODO: normals, uvs.
+  if (mesh.facevaryingNormals.size()) { // normals
+    GLuint vb;
+    glGenBuffers(1, &vb);
+    glBindBuffer(GL_ARRAY_BUFFER, vb);
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        mesh.facevaryingNormals.size() * sizeof(tinyusdz::tydra::vec3),
+        mesh.facevaryingNormals.data(),
+        GL_STATIC_DRAW
+    );
+    CHECK_GL("Set facevaryingNormals buffer data");
 
+    GLint loc = glGetAttribLocation(program_id, kAttribNormals);
+
+    if (loc > -1) {
+      glEnableVertexAttribArray(loc);
+      glVertexAttribPointer(
+          loc,
+          3,
+          GL_FLOAT,
+          GL_FALSE,
+          /* stride */sizeof(GLfloat) * 3,
+          0
+      );
+      CHECK_GL("VertexAttribPointer");
+    } else {
+      std::cerr << kAttribNormals << " attribute not found in vertex shader.\n";
+      exit(-1);
+    }
+  }
+
+  // texcoords0 only
+  // TODO: multi texcoords
+  if (mesh.facevaryingTexcoords.size() == 1) {
+    for (const auto it : mesh.facevaryingTexcoords) {
+      uint32_t slot_id = it.first;
+      if (slot_id >= kMaxTexCoords) {
+        std::cerr << "Texcoord slot id " << slot_id << " must be less than kMaxTexCoords " << kMaxTexCoords << "\n";
+        return false;
+      }
+
+      GLuint vb;
+      glGenBuffers(1, &vb);
+      glBindBuffer(GL_ARRAY_BUFFER, vb);
+      glBufferData(
+          GL_ARRAY_BUFFER,
+          it.second.size() * sizeof(tinyusdz::tydra::vec2),
+          it.second.data(),
+          GL_STATIC_DRAW
+      );
+      CHECK_GL("Set facevaryingTexcoord0 buffer data");
+
+      std::string texattr = kAttribTexCoordBase + std::to_string(slot_id);
+      GLint loc = glGetAttribLocation(program_id, texattr.c_str());
+
+      if (loc > -1) {
+        glEnableVertexAttribArray(loc);
+        glVertexAttribPointer(
+            loc,
+            2,
+            GL_FLOAT,
+            GL_FALSE,
+            /* stride */sizeof(GLfloat) * 2,
+            0
+        );
+        CHECK_GL("VertexAttribPointer");
+      } else {
+        std::cerr << texattr << " attribute not found in vertex shader.\n";
+        return false;
+      }
+    }
+  }
+
+#if 0 
   // Build index buffer.
   GLuint elementbuffer;
   glGenBuffers(1, &elementbuffer);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementbuffer);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
   CHECK_GL(mesh.abs_name << "ElementArrayBuffer");
+#endif
 
   glBindVertexArray(0);
   CHECK_GL(mesh.abs_name << "UnBind VAO");
@@ -516,6 +640,12 @@ static bool SetupMesh(
 
 static void DrawMesh(tinyusdz::tydra::RenderMesh& mesh,
   const GLMeshState &gl_state) {
+
+  glBindVertexArray(gl_state.vertex_array_object);
+  // vertices are facevarying + triangles, so simply to call glDrawArrays.
+  glDrawArrays(GL_TRIANGLES, 0, gl_state.num_triangles * 3);
+  CHECK_GL("DrawArrays");
+  glBindVertexArray(0);
 
 #if 0
   // poisition
