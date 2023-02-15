@@ -294,8 +294,11 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // Print Stage(Scene graph) 
-  std::cout << stage.ExportToString() << "\n";
+  // Print Stage(Scene graph)
+  std::cout << tinyusdz::to_string(stage) << "\n";
+  
+  // You can also use ExportToString() as done in pxrUSD 
+  // std::cout << stage.ExportToString() << "\n";
 
   // stage.metas() To get Scene metadatum, 
   for (const Prim &root_prim : stage.root_prims()) {
