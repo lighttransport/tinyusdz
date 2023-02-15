@@ -33,6 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fstream>
 #include <map>
 #include <sstream>
+
 #include "usdLux.hh"
 
 #ifndef __wasi__
@@ -51,11 +52,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
+#include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
 #include "value-pprint.hh"
-#include "tiny-format.hh"
 
 #if 0
 #if defined(TINYUSDZ_WITH_AUDIO)
@@ -89,12 +90,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace tinyusdz {
 
-//constexpr auto kTagUSDA = "[USDA]";
-//constexpr auto kTagUSDC = "[USDC]";
+// constexpr auto kTagUSDA = "[USDA]";
+// constexpr auto kTagUSDC = "[USDC]";
 constexpr auto kTagUSDZ = "[USDZ]";
 
 // For PUSH_ERROR_AND_RETURN
-#define PushError(s) if (err) { (*err) += s; }
+#define PushError(s) \
+  if (err) {         \
+    (*err) += s;     \
+  }
 //#define PushWarn(s) if (warn) { (*warn) += s; }
 
 bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
@@ -114,16 +118,17 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   // 32bit env
   if (sizeof(void *) == 4) {
-    if (options.max_memory_limit_in_mb > 4096) { // exceeds 4GB
+    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
       max_length = std::numeric_limits<uint32_t>::max();
     } else {
-      max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+      max_length =
+          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
     }
   } else {
     // TODO: Set hard limit?
-    max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    max_length =
+        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
   }
-
 
   DCOUT("Max length = " << max_length);
 
@@ -131,8 +136,8 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
     if (err) {
       (*err) += "USDC data [" + filename +
                 "] is too large(size = " + std::to_string(length) +
-                ", which exceeds memory limit " +
-                std::to_string(max_length) + ".\n";
+                ", which exceeds memory limit " + std::to_string(max_length) +
+                ".\n";
     }
 
     return false;
@@ -198,10 +203,9 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     if (err) {
-      (*err) += "File not found or failed to read : \"" +
-                filepath + "\"\n";
+      (*err) += "File not found or failed to read : \"" + filepath + "\"\n";
     }
-      
+
     return false;
   }
 
@@ -236,19 +240,17 @@ static std::string str_tolower(std::string s) {
 
 }  // namespace
 
-
 namespace {
 
 struct USDZAssetInfo {
-
   std::string filename;
   size_t byte_begin;
   size_t byte_end;
-
 };
 
-bool ParseUSDZHeader(const uint8_t *addr, const size_t length, std::vector<USDZAssetInfo> *assets, std::string *warn, std::string *err)
-{
+bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
+                     std::vector<USDZAssetInfo> *assets, std::string *warn,
+                     std::string *err) {
   (void)warn;
 
   if (!addr) {
@@ -346,14 +348,12 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length, std::vector<USDZA
   return true;
 }
 
-
-}
+}  // namespace
 
 bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &filename, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
-
   std::vector<USDZAssetInfo> assets;
   if (!ParseUSDZHeader(addr, length, &assets, warn, err)) {
     return false;
@@ -362,8 +362,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   for (size_t i = 0; i < assets.size(); i++) {
     DCOUT("[" << i << "] " << assets[i].filename << " : byte range ("
-              << assets[i].byte_begin << ", " << assets[i].byte_end
-              << ")");
+              << assets[i].byte_begin << ", " << assets[i].byte_end << ")");
   }
 #endif
 
@@ -378,7 +377,8 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
           if (warn) {
             (*warn) +=
                 "Multiple USDC files were found in USDZ. Use the first found "
-                "one: " + assets[size_t(usdc_index)].filename + "]\n";
+                "one: " +
+                assets[size_t(usdc_index)].filename + "]\n";
           }
           warned = true;
         }
@@ -412,9 +412,8 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
 
   if ((usdc_index >= 0) && (usda_index >= 0)) {
     if (warn) {
-      (*warn) +=
-          "Both USDA and USDC file found. Use USDC file [" +
-          assets[size_t(usdc_index)].filename + "]\n";
+      (*warn) += "Both USDA and USDC file found. Use USDC file [" +
+                 assets[size_t(usdc_index)].filename + "]\n";
     }
   }
 
@@ -423,7 +422,8 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
     const size_t end_addr_offset = assets[size_t(usdc_index)].byte_end;
     if (end_addr_offset < start_addr_offset) {
       if (err) {
-        (*err) += "Invalid start/end offset to USDC data: [" + filename + "].\n";
+        (*err) +=
+            "Invalid start/end offset to USDC data: [" + filename + "].\n";
       }
       return false;
     }
@@ -459,7 +459,8 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
     const size_t end_addr_offset = assets[size_t(usda_index)].byte_end;
     if (end_addr_offset < start_addr_offset) {
       if (err) {
-        (*err) += "Invalid start/end offset to USDA data: [" + filename + "].\n";
+        (*err) +=
+            "Invalid start/end offset to USDA data: [" + filename + "].\n";
       }
       return false;
     }
@@ -506,21 +507,24 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
 
       if (end_addr_offset < start_addr_offset) {
         if (err) {
-          (*err) += "Invalid start/end offset of asset #" + std::to_string(i) + " in USDZ data: [" + filename + "].\n";
+          (*err) += "Invalid start/end offset of asset #" + std::to_string(i) +
+                    " in USDZ data: [" + filename + "].\n";
         }
         return false;
       }
 
       if (start_addr_offset > length) {
         if (err) {
-          (*err) += "Invalid start offset of asset #" + std::to_string(i) + " in USDZ data: [" + filename + "].\n";
+          (*err) += "Invalid start offset of asset #" + std::to_string(i) +
+                    " in USDZ data: [" + filename + "].\n";
         }
         return false;
       }
 
       if (end_addr_offset > length) {
         if (err) {
-          (*err) += "Invalid end offset of asset #" + std::to_string(i) + " in USDZ data: [" + filename + "].\n";
+          (*err) += "Invalid end offset of asset #" + std::to_string(i) +
+                    " in USDZ data: [" + filename + "].\n";
         }
         return false;
       }
@@ -541,7 +545,8 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
           }
 
           if (info->width > options.max_image_width) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image width too large", i));
+            PUSH_ERROR_AND_RETURN_TAG(
+                kTagUSDZ, fmt::format("Asset no[{}] Image width too large", i));
           }
 
           if (info->height == 0) {
@@ -549,7 +554,9 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
           }
 
           if (info->height > options.max_image_height) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image height too large", i));
+            PUSH_ERROR_AND_RETURN_TAG(
+                kTagUSDZ,
+                fmt::format("Asset no[{}] Image height too large", i));
           }
 
           if (info->channels == 0) {
@@ -557,7 +564,9 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
           }
 
           if (info->channels > options.max_image_channels) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image channels too much", i));
+            PUSH_ERROR_AND_RETURN_TAG(
+                kTagUSDZ,
+                fmt::format("Asset no[{}] Image channels too much", i));
           }
         }
       }
@@ -686,8 +695,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     if (err) {
-      (*err) += "File not found or failed to read : \"" +
-                filepath + "\"\n";
+      (*err) += "File not found or failed to read : \"" + filepath + "\"\n";
     }
   }
 
@@ -696,9 +704,8 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
 }
 
 bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
-                      std::string *warn, std::string *err,
-                      const USDLoadOptions &options) {
-
+                     std::string *warn, std::string *err,
+                     const USDLoadOptions &options) {
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
   std::string base_dir = io::GetBaseDir(_filename);
 
@@ -709,26 +716,27 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
     return false;
   }
 
-  return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn,
-                            err, options);
-
+  return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn, err,
+                           options);
 }
 
 bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
-                        const std::string &base_dir, Stage *stage,
-                        std::string *warn, std::string *err,
-                        const USDLoadOptions &options) {
-
+                       const std::string &base_dir, Stage *stage,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options) {
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
-    return LoadUSDCFromMemory(addr, length, base_dir, stage, warn, err, options);
+    return LoadUSDCFromMemory(addr, length, base_dir, stage, warn, err,
+                              options);
   } else if (IsUSDA(addr, length)) {
     DCOUT("Detected as USDA.");
-    return LoadUSDAFromMemory(addr, length, base_dir, stage, warn, err, options);
+    return LoadUSDAFromMemory(addr, length, base_dir, stage, warn, err,
+                              options);
   } else {
     DCOUT("Detected as USDZ.");
     // Guess USDZ
-    return LoadUSDZFromMemory(addr, length, base_dir, stage, warn, err, options);
+    return LoadUSDZFromMemory(addr, length, base_dir, stage, warn, err,
+                              options);
   }
 }
 
@@ -743,7 +751,7 @@ bool IsUSDA(const std::string &filename) {
   std::string err;
   // 12 = enough storage for "#usda 1.0"
   if (!io::ReadFileHeader(&data, &err, filename, 12,
-                         /* userdata */ nullptr)) {
+                          /* userdata */ nullptr)) {
     // TODO: return `err`
     return false;
   }
@@ -755,7 +763,7 @@ bool IsUSDA(const uint8_t *addr, const size_t length) {
   if (length < 9) {
     return false;
   }
-  const char header[9+1] = "#usda 1.0";
+  const char header[9 + 1] = "#usda 1.0";
 
   if (memcmp(header, addr, 9) == 0) {
     return true;
@@ -769,9 +777,9 @@ bool IsUSDC(const std::string &filename) {
   //
   std::vector<uint8_t> data;
   std::string err;
-  // 88 bytes should enough  
-  if (!io::ReadFileHeader(&data, &err, filename, /* header bytes */88,
-                         /* userdata */ nullptr)) {
+  // 88 bytes should enough
+  if (!io::ReadFileHeader(&data, &err, filename, /* header bytes */ 88,
+                          /* userdata */ nullptr)) {
     return false;
   }
 
@@ -783,7 +791,7 @@ bool IsUSDC(const uint8_t *addr, const size_t length) {
   if (length < 88) {
     return false;
   }
-  const char header[8+1] = "PXR-USDC";
+  const char header[8 + 1] = "PXR-USDC";
 
   if (memcmp(header, addr, 8) == 0) {
     return true;
@@ -799,7 +807,7 @@ bool IsUSDZ(const std::string &filename) {
   std::string err;
   // 256 bytes may be enough.
   if (!io::ReadFileHeader(&data, &err, filename, 256,
-                         /* userdata */ nullptr)) {
+                          /* userdata */ nullptr)) {
     return false;
   }
 
@@ -807,11 +815,10 @@ bool IsUSDZ(const std::string &filename) {
 }
 
 bool IsUSDZ(const uint8_t *addr, const size_t length) {
-
   std::string warn;
   std::string err;
 
-  return ParseUSDZHeader(addr, length, /* [out] assets */nullptr, &warn, &err);
+  return ParseUSDZHeader(addr, length, /* [out] assets */ nullptr, &warn, &err);
 }
 
 }  // namespace tinyusdz

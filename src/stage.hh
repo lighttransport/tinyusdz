@@ -76,7 +76,7 @@ class Stage {
   ///
   std::string ExportToString() const;
 
-  // pxrUSD compat API ----------------------------------------
+  // pxrUSD compat API end -------------------------------------
 
   ///
   /// Get Prim from a children of given root Prim.
@@ -118,14 +118,29 @@ class Stage {
   /// @returns true if found a Prim.
   bool find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim, std::string *err = nullptr) const;
 
+  ///
+  /// @brief Get Root Prims
+  ///
+  /// @return Const array of Root Prims.
+  ///
   const std::vector<Prim> &root_prims() const {
     return root_nodes;
   }
 
+  ///
+  /// @brief Reference to Root Prims array
+  ///
+  /// @return Array of Root Prims.
+  ///
   std::vector<Prim> &root_prims() {
     return root_nodes;
   }
 
+  ///
+  /// @brief Get Stage metadatum
+  ///
+  /// @return Stage metadatum struct.
+  ///
   const StageMetas &metas() const {
     return stage_metas;
   }
@@ -135,15 +150,37 @@ class Stage {
   }
 
   ///
-  /// Assign unique Prim id inside this Stage.
+  /// @brief Assign unique Prim id inside this Stage.
+  ///
+  /// @param[out] prim_id Allocated Primitive ID.
+  ///
+  /// @return true upon success.
   ///
   bool allocate_prim_id(uint64_t *prim_id) const;
 
+  ///
+  /// @brief Release Prim id inside this Stage.
+  ///
+  /// @param[prim_id] prim_id Primitive ID to release(allocated by `allocate_prim_id`)
+  ///
+  /// @return true upon success. false when given `prim_id` is an invalid id.
+  ///
   bool release_prim_id(const uint64_t prim_id) const;
+
+  ///
+  /// @brief Check if given prim_id exists in this Stage.
+  ///
+  /// @param[prim_id] prim_id Primitive ID to check.
+  ///
+  /// @return true if `prim_id` exists in this Stage.
+  ///
   bool has_prim_id(const uint64_t prim_id) const;
   
   ///
-  /// Call this function after you finished adding Prims manually to Stage.
+  /// @brief Commit Stage state.
+  ///
+  /// Call this function after you finished adding Prims manually(through `root_prims()`) to Stage.
+  ///
   /// (No need to call this if you just use ether USDA/USDC/USDZ reader).
   ///
   /// - Compute absolute path and set it to Prim::abs_path for each Prim currently added to this Stage.
@@ -152,11 +189,19 @@ class Stage {
   /// @param[in] force_assign_prim_id true Overwrite `prim_id` of each Prim. false only assign Prim id when `prim_id` is -1(preserve user-assgiend prim_id). Setting `false` is not recommended since prim_id may not be unique over Prims in Stage.
   /// @return false when the Stage contains any invalid Prim 
   ///
-  /// TODO: Use simply `commit()` for API signature?
+  /// TODO: Deprecate this API an use `commit()`
   bool compute_absolute_prim_path_and_assign_prim_id(bool force_assign_prim_id=true);
 
   ///
-  /// Compute absolute Prim path only.
+  /// @brief Commit Stage state.
+  ///
+  bool commit() {
+    // Currently we always allocate Prim ID. 
+    return compute_absolute_prim_path_and_assign_prim_id(true);
+  }
+
+  ///
+  /// Compute absolute Prim path for Prims in this Stage.
   ///
   bool compute_absolute_prim_path();
 
@@ -218,5 +263,9 @@ class Stage {
   mutable HandleAllocator<uint64_t> _prim_id_allocator;
 
 };
+
+inline std::string to_string(const Stage& stage) {
+  return stage.ExportToString();
+}
 
 } // namespace tinyusdz
