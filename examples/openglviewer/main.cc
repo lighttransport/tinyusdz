@@ -77,6 +77,17 @@ struct GLTexState {
   GLTexParams texParams;
 };
 
+struct GLVertexUniformState {
+  GLint u_modelview{-1};
+  GLint u_normal{-1}; 
+  GLint u_perspective{-1};
+
+  std::array<float, 16> modelviewMatrix[16];
+  std::array<float, 16> normalMatrix[16]; // transpose(inverse(modelview))
+  std::array<float, 16> perspectiveMatrix[16];
+
+};
+
 // TODO: Use handle_id for key
 struct GLMeshState {
   std::map<std::string, GLint> attribs;
@@ -85,11 +96,11 @@ struct GLMeshState {
   GLuint num_triangles{0}; // up to 4GB triangles
 };
 
-struct GLVertexUniformState {
-  GLint u_modelview{-1};
-  GLint u_normal{-1}; // transpose(inverse(modelview))
-  GLint u_perspective{-1};
+struct GLNodeState {
+  GLVertexUniformState gl_v_uniform_state;
+  GLMeshState gl_mesh_state;  
 };
+
 
 struct GLProgramState {
   //std::map<std::string, GLint> uniforms;
@@ -249,11 +260,9 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 
 namespace {
 
-void SetVertexUniforms(GLVertexUniformState &state,
-  tinyusdz::tydra::XformNode &xform_node,
-  tinyusdz::value::matrix4f &perspective) {
-
-
+void SetupVertexUniforms(GLVertexUniformState &gl_state,
+  tinyusdz::tydra::XformNode &xform_node)
+{
   using namespace tinyusdz::value;
 
   // implicitly casts matrix4d to matrix4f;
@@ -261,19 +270,24 @@ void SetVertexUniforms(GLVertexUniformState &state,
   matrix4d invtransmatd = tinyusdz::inverse(tinyusdz::upper_left_3x3_only(xform_node.get_world_matrix()));
   matrix4f invtransmat = invtransmatd;
 
-  if (state.u_modelview > -1) {
-    glUniformMatrix4fv(state.u_modelview, 1, /* transpose */false, &worldmat.m[0][0]);
+  memcpy(gl_state.modelviewMatrix, &worldmat.m[0][0], sizeof(float) * 16);
+  memcpy(gl_state.normalMatrix, &invtransmat.m[0][0], sizeof(float) * 16);
+  //memcpy(gl_state.perspectiveMatrix, &perspective.m[0][0], sizeof(float) * 16);
+}
+
+void SetVertexUniforms(
+  const GLVertexUniformState &gl_state) {
+
+  if (gl_state.u_modelview > -1) {
+    glUniformMatrix4fv(gl_state.u_modelview, 1, GL_FALSE, gl_state.modelviewMatrix->data());
+    CHECK_GL("UniformMatrix u_modelview");
   }
 
-  if (state.u_normal > -1) {
-    // TODO: transpose in GL-side?
-    glUniformMatrix4fv(state.u_normal, 1,  /* transpose */false, &invtransmat.m[0][0]);
+  if (gl_state.u_modelview > -1) {
+    glUniformMatrix4fv(gl_state.u_normal, 1, GL_FALSE, gl_state.normalMatrix->data());
+    CHECK_GL("UniformMatrix u_normal");
   }
 
-  if (state.u_perspective > -1) {
-    glUniformMatrix4fv(state.u_perspective, 1,  /* transpose */false, &perspective.m[0][0]);
-  }
-	
 }
 
 bool LoadShaders() {
@@ -638,52 +652,13 @@ static bool SetupMesh(
   return true;
 }
 
-static void DrawMesh(tinyusdz::tydra::RenderMesh& mesh,
-  const GLMeshState &gl_state) {
+static void DrawMesh(const GLMeshState &gl_state) {
 
+  // Simply bind vertex array object and call glDrawArrays.
   glBindVertexArray(gl_state.vertex_array_object);
-  // vertices are facevarying + triangles, so simply to call glDrawArrays.
   glDrawArrays(GL_TRIANGLES, 0, gl_state.num_triangles * 3);
   CHECK_GL("DrawArrays");
   glBindVertexArray(0);
-
-#if 0
-  // poisition
-  if (gl_state.attribs.count(kAttribPoints)) {
-    GLint idx = gl_state.attribs.at(kAttribPoints);
-    if (idx > -1) {
-      glBindBuffer(GL_ARRAY_BUFFER, idx);
-      glEnableVertexAttribArray(idx);
-      glVertexAttribPointer(idx, 3, GL_FLOAT, GL_FALSE, 0, 0); // vec3
-    }
-  }
-
-  if (gl_state.attribs[kAttribNormal] > -1) {
-    GLint idx = gl_state.attribs[kAttribNormal];
-    glBindBuffer(GL_ARRAY_BUFFER, idx);
-    glEnableVertexAttribArray(idx);
-    glVertexAttribPointer(idx, 3, GL_FLOAT, GL_FALSE, 0, 0); // vec3, assume normal vector is already normalzed.
-  }
-
-  if (gl_state.attribs[kAttrixTexCoord0] > -1) {
-    GLint idx = gl_state.attribs[kAttribTexCoord0];
-    glBindBuffer(GL_ARRAY_BUFFER, idx);
-    glEnableVertexAttribArray(idx);
-    glVertexAttribPointer(idx, 2, GL_FLOAT, GL_FALSE, 0, 0); // vec2
-  }
-
-  GLsizei ntriangles = 0; // TODO
-  glDrawArrays(GL_TRIANGLES, 0, ntriangles);
-
-  for (const auto &attrib : program_state.attribs) {
-    if (attrib.second >= 0) {
-      glDisableVertexAttribArray(attrib.second);
-    }
-  }
-#else
-  // TODO
-  //glBindVertexArray
-#endif
 
 }
 
@@ -702,28 +677,14 @@ static void DrawScene(
   glUseProgram(0);
   CHECK_GL("glUseProgram(0)");
 }
-#if 0
-static void DrawNode(const tinyusdz::Scene& scene, const tinyusdz::Node& node) {
-  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
-    const tinyusdz::Xform& xform = scene.xforms.at(node.index);
-    glPushMatrix();
 
-    tinyusdz::Matrix4d matrix = xform.GetMatrix();
-    glMultMatrixd(reinterpret_cast<const double*>(&(matrix.m)));
-  }
+static void DrawNode(const GLNodeState &gl_node) {
+  SetVertexUniforms(gl_node.gl_v_uniform_state);
 
-  for (const auto& child : node.children) {
-    if ((child.index >= 0) && (child.index < scene.nodes.size())) {
-      DrawNode(scene, scene.nodes.at(size_t(child.index)));
-    }
-  }
-
-  if (node.type == tinyusdz::NODE_TYPE_XFORM) {
-    glPopMatrix();
-  }
+  // TODO
+  DrawMesh(gl_node.gl_mesh_state);
 }
 
-#endif
 
 static void ProcScene(const tinyusdz::Stage& stage) {
   //
