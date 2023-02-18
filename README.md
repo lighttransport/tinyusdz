@@ -445,3 +445,4 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * boost math sin_pi/cos_pi: BSL 1.0 License. https://www.boost.org/
 * Vulkan: MIT License. https://github.com/SaschaWillems/Vulkan
 * Metal.cpp: Apache 2.0 License. https://github.com/bkaradzic/metal-cpp https://developer.apple.com/metal/cpp/
+* sRGB transform: MIT license. https://www.nayuki.io/page/srgb-transform-library
