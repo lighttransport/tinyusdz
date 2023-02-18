@@ -338,6 +338,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
     ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
@@ -382,6 +383,7 @@ set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
                             PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
 
 if(TINYUSDZ_WITH_JSON)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
 endif()
 
