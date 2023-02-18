@@ -268,6 +268,15 @@ uint8_t linearToSrgb8bit(double x) {
 
 // ----------------------------------------------------------------------------
 
+} // SrgbTransform
+
+namespace tinyusdz {
+
+namespace detail {
+
+uint8_t linearToRec709_8bit(float L);
+float Rec709ToLinear(uint8_t v);
+
 // Naiive implementation of Rec.709
 //
 // https://en.wikipedia.org/wiki/Rec._709
@@ -299,5 +308,7 @@ float Rec709ToLinear(uint8_t v) {
   return L;
 
 }
-  
+
 }
+  
+} // namespace tinyusdz
