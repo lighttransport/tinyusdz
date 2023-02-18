@@ -6,7 +6,6 @@
 //
 // TODO
 // - [ ] Image resize
-// - [ ] Rec.709 <-> Linear conversion
 // - [ ] OIIO 3D LUT support through tinycolorio
 //
 #pragma once
@@ -53,6 +52,29 @@ bool linear_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
 /// equal to `channel_stride`
 /// @param[in] chanel_stride channel stride. For example, channels=3 and
 /// channel_stride=4 to apply inverse sRGB convertion to RGB channel but apply
+/// linear conversion to alpha channel for RGBA image.
+/// @param[out] out_image Image in linear color space. Image size is same with
+/// `in_image`
+///
+/// @return true upon success. false when any parameter is invalid.
+bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
+                         size_t width_byte_stride, size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img);
+
+///
+/// Convert 8bit image in Rec.709 to fp32 image in linear color space.
+///
+/// @param[in] in_image Input image in Rec.709 color space. Image size =
+/// [width_byte_stride, height, channel_stride]
+/// @param[in] width Width pixels
+/// @param[in] width_byte_stride Width byte stride. 0 = Use `width` *
+/// channel_stride
+/// @param[in] height Height pixels
+/// @param[in] chanels Pixel channels to apply conversion. must be less than or
+/// equal to `channel_stride`
+/// @param[in] chanel_stride channel stride. For example, channels=3 and
+/// channel_stride=4 to apply inverse Rec.709 convertion to RGB channel but apply
 /// linear conversion to alpha channel for RGBA image.
 /// @param[out] out_image Image in linear color space. Image size is same with
 /// `in_image`
