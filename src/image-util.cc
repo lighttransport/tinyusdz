@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2023-Present, Light Transport Entertainment Inc.
+// 
+// TODO
+// - [ ] Optimize Rec.709 conversion
+//
 #include <cmath>
 
 #include "image-util.hh"
@@ -260,6 +266,38 @@ uint8_t linearToSrgb8bit(double x) {
 		return static_cast<uint8_t>((std::max)(0, (std::min)(255, y + 1)));
 }
 
+// ----------------------------------------------------------------------------
+
+// Naiive implementation of Rec.709
+//
+// https://en.wikipedia.org/wiki/Rec._709
+
+uint8_t linearToRec709_8bit(float L) {
+  float V;
+  if (L > 1.0f) {
+    V = 1.0f;
+  } else if (L < 0.018f) {
+    V = 4.5f * L;
+  } else {
+    // 0.45 ~= 1/2.2
+    V = 1.099f * std::pow(L, 0.45f) - 0.099f;
+  }
+
+  return static_cast<uint8_t>((std::max)(0, (std::min)(255, int(V))));
 }
 
-// ----------------------------------------------------------------------------
+float Rec709ToLinear(uint8_t v) {
+  float V = v / 255.0f;
+
+  float L;
+  if (V > 0.081f) {
+    L = V / 4.5f;
+  } else {
+    L = std::pow((V + 0.099f)/1.099f, (1.0f/0.45f));
+  }
+
+  return L;
+
+}
+  
+}
