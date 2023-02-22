@@ -6,6 +6,21 @@
 //
 #include <cmath>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#if !defined(TINYUSDZ_NO_STB_IMAGE_RESIZE_IMPLEMENTATION)
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#endif
+
+#include "external/stb_image_resize.h"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 #include "image-util.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
@@ -274,8 +289,13 @@ namespace tinyusdz {
 
 namespace detail {
 
+uint8_t f32_to_u8(float x);
 uint8_t linearToRec709_8bit(float L);
 float Rec709ToLinear(uint8_t v);
+
+uint8_t f32_to_u8(float x) {
+  return static_cast<uint8_t>((std::max)(0, (std::min)(int(x * 255.0f), 255)));
+}
 
 // Naiive implementation of Rec.709
 //
@@ -309,6 +329,98 @@ float Rec709ToLinear(uint8_t v) {
 
 }
 
+} // namespace detail
+
+bool linear_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
+                         size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<uint8_t> *out_img) {
+
+  if ((width == 0) ||
+    (height == 0) ||
+    (channels == 0) ||
+    (out_img == nullptr)) {
+    return false;
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      return false;
+    }
+  }
+
+  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  if (dest_size > in_img.size()) {
+    return false;
+  }
+
+  out_img->resize(dest_size);
+
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      for (size_t c = 0; c < channels; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        (*out_img)[idx] = SrgbTransform::linearToSrgb8bit(in_img[idx]);
+      }
+
+      // remainder(usually alpha channel)
+      // Apply linear conversion.
+      for (size_t c = channels; c < channel_stride; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        (*out_img)[idx] = detail::f32_to_u8(in_img[idx]);
+      }
+    }
+  }
+
+  return true;
+}
+
+bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
+                         size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img) {
+
+  if ((width == 0) ||
+    (height == 0) ||
+    (channels == 0) ||
+    (out_img == nullptr)) {
+    return false;
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      return false;
+    }
+  }
+
+  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  if (dest_size > in_img.size()) {
+    return false;
+  }
+
+  out_img->resize(dest_size);
+
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      for (size_t c = 0; c < channels; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        (*out_img)[idx] = SrgbTransform::srgbToLinear(float(in_img[idx]) / 255.0f);
+      }
+
+      // remainder(usually alpha channel)
+      // Apply linear conversion.
+      for (size_t c = channels; c < channel_stride; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        (*out_img)[idx] = float(in_img[idx]) / 255.0f;
+      }
+    }
+  }
+
+  return true;
 }
   
 } // namespace tinyusdz
