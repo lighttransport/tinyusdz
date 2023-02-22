@@ -409,7 +409,7 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * tinyobjloader: MIT license.
 * tinygltf: MIT license.
 * tinycolorio: MIT license. https://github.com/syoyo/tinycolorio
-* stb_image: public domain. 
+* stb_image, stb_image_resize, stb_image_write, stb_truetype: public domain. 
 * dr_libs: public domain. https://github.com/mackron/dr_libs
 * miniaudio: public domain or MIT no attribution. https://github.com/dr-soft/miniaudio
 * SDL2 : zlib license. https://www.libsdl.org/index.php

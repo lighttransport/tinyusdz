@@ -237,7 +237,9 @@ include src/external/simple_match/include/simple_match/utility.hpp
 include src/external/staticstruct.cc
 include src/external/staticstruct.hh
 include src/external/stb_image.h
+include src/external/stb_image_resize.h
 include src/external/stb_image_write.h
+include src/external/stb_truetype.h
 include src/external/string_id/LICENSE
 include src/external/string_id/README.md
 include src/external/string_id/README.mod.txt
