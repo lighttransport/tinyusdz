@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023-Present, Light Transport Entertainment Inc.
-// 
+//
 // TODO
 // - [ ] Optimize Rec.709 conversion
 //
@@ -28,12 +28,12 @@
 #endif
 
 // From https://www.nayuki.io/page/srgb-transform-library --------------------
-/* 
+/*
  * sRGB transform (C++)
- * 
+ *
  * Copyright (c) 2017 Project Nayuki. (MIT License)
  * https://www.nayuki.io/page/srgb-transform-library
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
  * the Software without restriction, including without limitation the rights to
@@ -331,7 +331,7 @@ float Rec709ToLinear(uint8_t v) {
 
 } // namespace detail
 
-bool linear_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
+bool linear_f32_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
                          std::vector<uint8_t> *out_img) {
@@ -377,7 +377,7 @@ bool linear_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
   return true;
 }
 
-bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
+bool srgb_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
                          std::vector<float> *out_img) {
@@ -404,6 +404,8 @@ bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
 
   out_img->resize(dest_size);
 
+  // TODO: Use table approach for larger image size?
+
   for (size_t y = 0; y < height; y++) {
     for (size_t x = 0; x < width; x++) {
       for (size_t c = 0; c < channels; c++) {
@@ -422,5 +424,159 @@ bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
 
   return true;
 }
-  
+
+bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, float scale_factor, float bias) {
+
+  if ((width == 0) ||
+    (height == 0) ||
+    (channels == 0) ||
+    (out_img == nullptr)) {
+    return false;
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      return false;
+    }
+  }
+
+  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  if (dest_size > in_img.size()) {
+    return false;
+  }
+
+  out_img->resize(dest_size);
+
+  // assume input is in [0.0, 1.0]
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      for (size_t c = 0; c < channels; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        float f = in_img[idx] * scale_factor + bias;
+        (*out_img)[idx] = SrgbTransform::srgbToLinear(f);
+      }
+
+      // remainder(usually alpha channel)
+      // Apply linear conversion.
+      for (size_t c = channels; c < channel_stride; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        // TODO: Do we need to apply scale_factor and bias to linear-value(e.g. alpha) channel also?
+        float f = in_img[idx] * scale_factor + bias;
+        (*out_img)[idx] = f;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool srgb_8bit_to_linear_8bit(const std::vector<uint8_t> &in_img, size_t width,
+                         size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<uint8_t> *out_img) {
+
+  if ((width == 0) ||
+    (height == 0) ||
+    (channels == 0) ||
+    (out_img == nullptr)) {
+    return false;
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      return false;
+    }
+  }
+
+  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  if (dest_size > in_img.size()) {
+    return false;
+  }
+
+  out_img->resize(dest_size);
+
+  // TODO: Precompute table.
+  uint8_t linearlization_table[256];
+  for (size_t u = 0; u < 256; u++) {
+    float f = float(u) / 255.0f;
+    linearlization_table[u] = detail::f32_to_u8(SrgbTransform::srgbToLinear(f));
+  }
+
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      for (size_t c = 0; c < channels; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        (*out_img)[idx] = linearlization_table[in_img[idx]];
+      }
+
+      // remainder(usually alpha channel)
+      // no op.
+      for (size_t c = channels; c < channel_stride; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        (*out_img)[idx] = in_img[idx];
+      }
+    }
+  }
+
+  return true;
+}
+
+bool u8_to_f32_image(const std::vector<uint8_t> &in_img, size_t width,
+                         size_t height,
+                         size_t channels,
+                         std::vector<float> *out_img) {
+  if ((width == 0) ||
+    (height == 0) ||
+    (channels == 0) ||
+    (out_img == nullptr)) {
+    return false;
+  }
+
+  size_t num_pixels = size_t(width) * size_t(height) * channels;
+  if (num_pixels > in_img.size()) {
+    return false;
+  }
+
+  out_img->resize(num_pixels);
+
+  for (size_t i = 0; i < num_pixels; i++) {
+    (*out_img)[i] = float(in_img[i]) / 255.0f;
+  }
+
+  return true;
+}
+
+bool f32_to_u8_image(const std::vector<float> &in_img, size_t width,
+                         size_t height,
+                         size_t channels,
+                         std::vector<uint8_t> *out_img, float scale, float bias) {
+  if ((width == 0) ||
+    (height == 0) ||
+    (channels == 0) ||
+    (out_img == nullptr)) {
+    return false;
+  }
+
+  size_t num_pixels = size_t(width) * size_t(height) * channels;
+  if (num_pixels > in_img.size()) {
+    return false;
+  }
+
+  out_img->resize(num_pixels);
+
+  for (size_t i = 0; i < num_pixels; i++) {
+    float f = scale * in_img[i] + bias;
+    (*out_img)[i] = detail::f32_to_u8(f);
+  }
+
+  return true;
+}
+
 } // namespace tinyusdz
