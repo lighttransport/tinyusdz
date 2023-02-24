@@ -17,6 +17,21 @@
 namespace tinyusdz {
 
 ///
+/// [0, 255] => [0.0, 1.0]
+///
+bool u8_to_f32_image(const std::vector<uint8_t> &in_img,
+    size_t width, size_t height, size_t channels, std::vector<float> *out_img);
+
+///
+/// Apply x' =  `scale_factor * x + bias`
+/// Then u8 value is calculated as `255 * max(0.0, min(1.0, x'))`
+///
+bool f32_to_u8_image(const std::vector<float> &in_img,
+    size_t width, size_t height, size_t channels, std::vector<uint8_t> *out_img,
+    float scale_factor=1.0f,
+    float bias=0.0f);
+
+///
 /// Convert fp32 image in linear space to 8bit image in sRGB color space.
 ///
 /// @param[in] in_image Input image in linear color space. Image size =
@@ -32,7 +47,7 @@ namespace tinyusdz {
 /// `in_image`
 ///
 /// @return true upon success. false when any parameter is invalid.
-bool linear_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
+bool linear_f32_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
                          std::vector<uint8_t> *out_img);
 
@@ -52,9 +67,18 @@ bool linear_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
 /// `in_image`
 ///
 /// @return true upon success. false when any parameter is invalid.
-bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
+bool srgb_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
                          std::vector<float> *out_img);
+
+bool srgb_8bit_to_linear_8bit(const std::vector<uint8_t> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<uint8_t> *out_img);
+
+// Input texel value is transformed as: x' = in_img * scale_factor + bias
+bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, float scale_factor = 1.0f, float bias = 0.0f);
 
 ///
 /// Convert 8bit image in Rec.709 to fp32 image in linear color space.
@@ -74,7 +98,7 @@ bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
 /// `in_image`
 ///
 /// @return true upon success. false when any parameter is invalid.
-bool srgb_8bit_to_linear(const std::vector<uint8_t> &in_img, size_t width,
+bool rec709_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
                          size_t width_byte_stride, size_t height,
                          size_t channels, size_t channel_stride,
                          std::vector<float> *out_img);
