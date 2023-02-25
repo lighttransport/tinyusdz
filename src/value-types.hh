@@ -549,6 +549,13 @@ struct matrix2f {
     m[1][1] = 1.0f;
   }
 
+  matrix2f(const std::array<float, 4> &arr) {
+    m[0][0] = arr[0];
+    m[0][1] = arr[1];
+    m[1][0] = arr[2];
+    m[1][1] = arr[3];
+  }
+
   inline void set_row(uint32_t row, float x, float y) {
     if (row < 2) {
       m[row][0] = x;
@@ -594,6 +601,18 @@ struct matrix3f {
     m[2][0] = 0.0f;
     m[2][1] = 0.0f;
     m[2][2] = 1.0f;
+  }
+
+  matrix3f(const std::array<float, 9> &arr) {
+    m[0][0] = arr[0];
+    m[0][1] = arr[1];
+    m[0][2] = arr[2];
+    m[1][0] = arr[3];
+    m[1][1] = arr[4];
+    m[1][2] = arr[5];
+    m[2][0] = arr[6];
+    m[2][1] = arr[7];
+    m[2][2] = arr[8];
   }
 
   inline void set_row(uint32_t row, float x, float y, float z) {
@@ -669,6 +688,25 @@ struct matrix4f {
     m[3][1] = 0.0f;
     m[3][2] = 0.0f;
     m[3][3] = 1.0f;
+  }
+
+  matrix4f(const std::array<float, 16> &arr) {
+    m[0][0] = arr[0];
+    m[0][1] = arr[1];
+    m[0][2] = arr[2];
+    m[0][3] = arr[3];
+    m[1][0] = arr[4];
+    m[1][1] = arr[5];
+    m[1][2] = arr[6];
+    m[1][3] = arr[7];
+    m[2][0] = arr[8];
+    m[2][1] = arr[9];
+    m[2][2] = arr[10];
+    m[2][3] = arr[11];
+    m[3][0] = arr[12];
+    m[3][1] = arr[13];
+    m[3][2] = arr[14];
+    m[3][3] = arr[15];
   }
 
   inline void set_row(uint32_t row, float x, float y, float z, float w) {
@@ -750,6 +788,13 @@ struct matrix2d {
     m[1][1] = 1.0;
   }
 
+  matrix2d(const std::array<double, 4> &arr) {
+    m[0][0] = arr[0];
+    m[0][1] = arr[1];
+    m[1][0] = arr[2];
+    m[1][1] = arr[3];
+  }
+
   inline void set_row(uint32_t row, double x, double y) {
     if (row < 2) {
       m[row][0] = x;
@@ -795,6 +840,18 @@ struct matrix3d {
     m[2][0] = 0.0;
     m[2][1] = 0.0;
     m[2][2] = 1.0;
+  }
+
+  matrix3d(const std::array<double, 9> &arr) {
+    m[0][0] = arr[0];
+    m[0][1] = arr[1];
+    m[0][2] = arr[2];
+    m[1][0] = arr[3];
+    m[1][1] = arr[4];
+    m[1][2] = arr[5];
+    m[2][0] = arr[6];
+    m[2][1] = arr[7];
+    m[2][2] = arr[8];
   }
 
   inline void set_row(uint32_t row, double x, double y, double z) {
@@ -863,6 +920,25 @@ struct matrix4d {
     m[3][1] = 0.0;
     m[3][2] = 0.0;
     m[3][3] = 1.0;
+  }
+
+  matrix4d(const std::array<double, 16> &arr) {
+    m[0][0] = arr[0];
+    m[0][1] = arr[1];
+    m[0][2] = arr[2];
+    m[0][3] = arr[3];
+    m[1][0] = arr[4];
+    m[1][1] = arr[5];
+    m[1][2] = arr[6];
+    m[1][3] = arr[7];
+    m[2][0] = arr[8];
+    m[2][1] = arr[9];
+    m[2][2] = arr[10];
+    m[2][3] = arr[11];
+    m[3][0] = arr[12];
+    m[3][1] = arr[13];
+    m[3][2] = arr[14];
+    m[3][3] = arr[15];
   }
 
   inline void set_row(uint32_t row, double x, double y, double z, double w) {
