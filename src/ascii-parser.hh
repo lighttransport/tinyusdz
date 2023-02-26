@@ -107,13 +107,13 @@ class AsciiParser {
     int col{0};
   };
 
-  struct ErrorDiagnositc {
+  struct ErrorDiagnostic {
     std::string err;
     Cursor cursor;
   };
 
   void PushError(const std::string &msg) {
-    ErrorDiagnositc diag;
+    ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
@@ -128,7 +128,7 @@ class AsciiParser {
   }
 
   void PushWarn(const std::string &msg) {
-    ErrorDiagnositc diag;
+    ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
@@ -792,8 +792,8 @@ class AsciiParser {
   // Supported metadataum for Property(Attribute and Relation).
   std::map<std::string, VariableDef> _supported_prop_metas;
 
-  std::stack<ErrorDiagnositc> err_stack;
-  std::stack<ErrorDiagnositc> warn_stack;
+  std::stack<ErrorDiagnostic> err_stack;
+  std::stack<ErrorDiagnostic> warn_stack;
   std::stack<ParseState> parse_stack;
 
   float _version{1.0f};

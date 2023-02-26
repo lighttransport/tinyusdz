@@ -605,7 +605,7 @@ std::string AsciiParser::GetError() {
 
   std::stringstream ss;
   while (!err_stack.empty()) {
-    ErrorDiagnositc diag = err_stack.top();
+    ErrorDiagnostic diag = err_stack.top();
 
     ss << "err_stack[" << (err_stack.size() - 1) << "] USDA source near line " << (diag.cursor.row + 1) << ", col "
        << (diag.cursor.col + 1) << ": ";
@@ -624,7 +624,7 @@ std::string AsciiParser::GetWarning() {
 
   std::stringstream ss;
   while (!warn_stack.empty()) {
-    ErrorDiagnositc diag = warn_stack.top();
+    ErrorDiagnostic diag = warn_stack.top();
 
     ss << "USDA source near line " << (diag.cursor.row + 1) << ", col "
        << (diag.cursor.col + 1) << ": ";
