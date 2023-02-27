@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2021 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2022, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment, Inc.
 //
 // To reduce compilation time and sections generated in .obj(object file),
 // We split implementaion to multiple of .cc for ascii-parser.hh
 
-#include "usdGeom.hh"
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
