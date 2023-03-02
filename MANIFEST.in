@@ -297,6 +297,8 @@ include src/handle-allocator.hh
 include src/image-loader.cc
 include src/image-loader.hh
 include src/image-types.hh
+include src/image-util.cc
+include src/image-util.hh
 include src/image-writer.cc
 include src/image-writer.hh
 include src/integerCoding.cpp
