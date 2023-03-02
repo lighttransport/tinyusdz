@@ -158,7 +158,7 @@ int main(int argc, char **argv)
 
   std::string warn;
   std::string err;
-  bool ret = tinyusdz::usda::SaveAsUSDA("output.udsa", stage, &warn, &err);
+  bool ret = tinyusdz::usda::SaveAsUSDA("output.usda", stage, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";
