@@ -790,8 +790,8 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
   add_sanitizers(${BUILD_TARGET_PY})
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
-  # strip "py" prefix
-  set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "tinyusdz")
+  # Use 'c' prefix
+  set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "ctinyusdz")
 
   # copy python binding .so file to python/
   # For developer
