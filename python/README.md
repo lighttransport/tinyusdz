@@ -12,9 +12,17 @@ W.I.P.
   * tinyusdz python binding uses Python 3.8 features(e.g. Literal type)
   * Python 3.12+ recommended
 
+### Recommended
+
+* numpy
+  * For efficient Attribute data handling.
+* pandas
+  * To support TimeSamples data efficiently(e.g. read/write to CSV, Excel)
+
 ## Structure
 
 * `ctinyusdz`: Native C++ module of tinyusdz
+  * Python binding using pybind11. Binding source code is located at `<tinyusdz>/src/python-binding.cc`
 * `tinyusdz`: Python module. Wraps some functions of `ctinyusdz`
 
 TinyUSDZ's Python binding approach is like numpy: entry point is written in Python for better Python integration(type hints for lsp(Intellisense), debuggers, exceptions, ...), and calls native modules as necessary.
@@ -40,16 +48,20 @@ TinyUSDZ's Python binding approach is like numpy: entry point is written in Pyth
 $ python -m pip install tinyusdz
 ```
 
-## Build from source
+## For developers. Build from source
 
 Back to tinyusdz's root directory, then
 
 ```
 # Use `build` module(install it with `python -m pip install build`) 
 $ python -m build .
+```
 
-# Or use setuptools approach.
+If you are working on TinyUSDZ Python module, Using `setup.py` recommended. 
+
+```
 $ python setup.py build
+# Then copy `./_skbuild/<arch>-<version>/cmake-install/tinyusdz/ctinyusdz.*.so/dll to `<tinyusdz>/python` folder.
 ```
 
 
