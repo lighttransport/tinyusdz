@@ -63,7 +63,7 @@ struct PyStage
 
 };
 
-PYBIND11_MODULE(pytinyusd, m) {
+PYBIND11_MODULE(ctinyusdz, m) {
 
   m.def("test_api", &test_api, "Test API");
 
