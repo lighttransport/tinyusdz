@@ -12,6 +12,10 @@ W.I.P.
   * tinyusdz python binding uses Python 3.8 features(e.g. Literal type)
   * Python 3.12+ recommended
 
+### Recommended
+
+* numpy to use `from_numpy` and `to_numpy` method.
+
 ## Structure
 
 * `ctinyusdz`: Native C++ module of tinyusdz
