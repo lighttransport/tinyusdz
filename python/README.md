@@ -64,6 +64,15 @@ $ python setup.py build
 # Then copy `./_skbuild/<arch>-<version>/cmake-install/tinyusdz/ctinyusdz.*.so/dll to `<tinyusdz>/python` folder.
 ```
 
+### Asan support
+
+If you built ctinyusdz with ASAN enabled, use `LD_PRELOAD` to load asan modules.
+
+```
+LD_PRELOAD=/path/to/clang+llvm-14.0.0-x86_64-linux-gnu-ubuntu-18.04/lib/clang/14.0.0/lib/x86_64-unknown-linux-gnu/libclang_rt.asan.so  python tutorial.py
+```
+
+Please see https://tobywf.com/2021/02/python-ext-asan/ for more infos.
 
 ## License
 
