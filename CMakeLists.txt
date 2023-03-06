@@ -6,7 +6,7 @@ set(TINYUSDZ_TARGET_STATIC_NS "tinyusdz::tinyusdz_static") # static lib is alway
 set(TINYUSDZ_TARGET_STATIC "tinyusdz_static") # alias to ${TINYUSDZ_TARGET_STATIC_NS}
 set(BUILD_TARGET_C "c-tinyusd")
 set(BUILD_TARGET_PY "pytinyusd")
-set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
+#set(BUILD_TARGET_BLENDER_PY "tinyusd_blender")
 set(TINYUSDZ_TEST_TARGET "test_tinyusdz")
 set(TINYUSDZ_BENCHMARK_TARGET "benchmark_tinyusdz")
 
@@ -117,10 +117,11 @@ option(
 
 option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ${TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API})
 
-option(
-  TINYUSDZ_WITH_BLENDER_ADDON
-  "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON"
-  OFF)
+# deprecated. to be removed
+#option(
+#  TINYUSDZ_WITH_BLENDER_ADDON
+#  "Build with Python module for Blender(`TINYUSDZ_WITH_PYTHON` is force set to ON"
+#  OFF)
 
 option(TINYUSDZ_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
@@ -262,9 +263,9 @@ if(TINYUSDZ_USE_CCACHE)
   endif()
 endif()
 
-if(TINYUSDZ_WITH_BLENDER_ADDON)
-  set(TINYUSDZ_WITH_PYTHON ON)
-endif()
+#if(TINYUSDZ_WITH_BLENDER_ADDON)
+#  set(TINYUSDZ_WITH_PYTHON ON)
+#endif()
 
 if(TINYUSDZ_WITH_PYTHON)
 
@@ -404,8 +405,8 @@ endif()
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
     ${PROJECT_SOURCE_DIR}/src/python-bindings.cc)
 
-set(TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc)
+#set(TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES
+#    ${PROJECT_SOURCE_DIR}/src/blender/bindings.cc)
 
 if(TINYUSDZ_WITH_TIFF)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
@@ -778,7 +779,7 @@ if(TINYUSDZ_WITH_C_API)
   target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif()
 
-if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
+if(TINYUSDZ_WITH_PYTHON)
 
   # For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
   # We may switch to nanobind at some point(probably around 2024?)
@@ -795,6 +796,8 @@ if(TINYUSDZ_WITH_PYTHON AND (NOT TINYUSDZ_WITH_BLENDER_ADDON))
 
   # copy python binding .so file to python/
   # For developer
+  # NOTE: `POST_BUILD` command is not triggered when building python module using
+  # `python setup.py build`
   add_custom_command(
     TARGET ${BUILD_TARGET_PY}
     POST_BUILD
