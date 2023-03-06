@@ -1,18 +1,48 @@
 # import ctinyusdz
 
+# TODO
+# - [ ] Refactor components
+
 from pathlib import Path
 from typing import Union, List, Literal
 from enum import Enum, auto
+
+from . import version
+
+try:
+    import ctinyusdz
+except:
+    raise ImportError("ctinyusdz dll/so not found. Please check if ctinyusdz.*.dll/so exists in your python envrionemnt(Set PYTHONPATH if requred.), or Python version may differ.")
 
 try:
     import numpy as np
 except:
     pass
 
+try:
+    import pandas as pd
+except:
+    pass
+
+
 def is_numpy_available():
     import importlib
-    return importlib.util.find_spec("numpy")
 
+    if importlib.util.find_spec("numpy"):
+        return True
+
+    return False
+
+
+def is_pandas_available():
+    import importlib
+   
+    if importlib.util.find_spec("pandas"):
+        return True
+
+    return False
+
+__version__ = "0.8.0rc2"
 
 """
 USD types
@@ -196,6 +226,35 @@ class Stage:
     def __str__(self):
         return self.__repr__()
 
+def is_usd(filename: Union[Path, str]) -> bool:
+    """Test if input filename is a USD(USDC/USDA/UDSZ) file
+
+    Args:
+        filename (Path or str): Filename
+
+    Returns:
+        bool: True if USD file
+    """
+
+def is_usda(filename: Union[Path, str]) -> bool:
+    """Test if input filename is a USDA file
+
+    Args:
+        filename (Path or str): Filename
+
+    Returns:
+        bool: True if USDA file
+    """
+
+def is_usdc(filename: Union[Path, str]) -> bool:
+    """Test if input filename is a USDC file
+
+    Args:
+        filename (Path or str): Filename
+
+    Returns:
+        bool: True if USDC file
+    """
 
 def load_usd(filename: Union[Path, str]) -> Stage:
     """Loads USDC/USDA/UDSZ from a file
@@ -255,4 +314,4 @@ def load_usd_from_binary(input_binary: bytes) -> Stage:
     return stage
 
 
-__all__ = ['Stage']
+__all__ = ['Stage', 'version']
