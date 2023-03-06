@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Union, List, Literal
 from enum import Enum, auto
 
+from . import version
+
 try:
     import ctinyusdz
 except:
@@ -22,13 +24,25 @@ try:
 except:
     pass
 
+
 def is_numpy_available():
     import importlib
-    return importlib.util.find_spec("numpy")
+
+    if importlib.util.find_spec("numpy"):
+        return True
+
+    return False
+
 
 def is_pandas_available():
     import importlib
-    return importlib.util.find_spec("pandas")
+   
+    if importlib.util.find_spec("pandas"):
+        return True
+
+    return False
+
+__version__ = "0.8.0rc2"
 
 """
 USD types
@@ -300,4 +314,4 @@ def load_usd_from_binary(input_binary: bytes) -> Stage:
     return stage
 
 
-__all__ = ['Stage']
+__all__ = ['Stage', 'version']
