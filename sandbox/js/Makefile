@@ -1,2 +1,2 @@
 all:
-	bun run tinyusdz.ts
+	deno run src/TinyUSDZLoader.ts

@@ -16,6 +16,7 @@ W.I.P.
 
 * numpy
   * For efficient Attribute data handling.
+  * `from_numpy` and `to_numpy` method available when `numpy` is installed..
 * pandas
   * To support TimeSamples data efficiently(e.g. read/write to CSV, Excel)
 
