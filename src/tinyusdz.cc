@@ -821,4 +821,54 @@ bool IsUSDZ(const uint8_t *addr, const size_t length) {
   return ParseUSDZHeader(addr, length, /* [out] assets */ nullptr, &warn, &err);
 }
 
+bool IsUSD(const std::string &filename, std::string *detected_format) {
+  if (IsUSDA(filename)) {
+    if (detected_format) {
+      (*detected_format) = "usda";
+    }
+    return true;
+  }
+
+  if (IsUSDC(filename)) {
+    if (detected_format) {
+      (*detected_format) = "usdc";
+    }
+    return true;
+  }
+
+  if (IsUSDZ(filename)) {
+    if (detected_format) {
+      (*detected_format) = "usdz";
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool IsUSD(const uint8_t *addr, const size_t length, std::string *detected_format) {
+  if (IsUSDA(addr, length)) {
+    if (detected_format) {
+      (*detected_format) = "usda";
+    }
+    return true;
+  }
+
+  if (IsUSDC(addr, length)) {
+    if (detected_format) {
+      (*detected_format) = "usdc";
+    }
+    return true;
+  }
+
+  if (IsUSDZ(addr, length)) {
+    if (detected_format) {
+      (*detected_format) = "usdz";
+    }
+    return true;
+  }
+
+  return false;
+}
+
 }  // namespace tinyusdz
