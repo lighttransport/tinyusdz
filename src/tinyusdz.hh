@@ -283,6 +283,13 @@ bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDC
 
 #endif
 
+// Test if input is any of USDA/USDC/USDZ format.
+// Optionally returns detected format("usda", "usdc", or "usdz") to
+// `detected_format` when a given file/binary is a USD format.
+bool IsUSD(const std::string &filename, std::string *detected_format = nullptr);
+bool IsUSD(const uint8_t *addr, const size_t length,
+            std::string *detected_format = nullptr);
+
 // Test if input is USDA format.
 bool IsUSDA(const std::string &filename);
 bool IsUSDA(const uint8_t *addr, const size_t length);
