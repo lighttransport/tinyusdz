@@ -242,6 +242,27 @@ bool Stage::find_prim_at_path(const Path &path, const Prim *&prim,
   }
 }
 
+bool Stage::find_prim_at_path(const Path &path, int64_t *prim_id,
+                              std::string *err) const {
+  if (!prim_id) {
+    if (err) {
+      (*err) = "`prim_id` argument is nullptr.\n";
+    }
+    return false;
+  }
+
+  nonstd::expected<const Prim *, std::string> ret = GetPrimAtPath(path);
+  if (ret) {
+    (*prim_id) = ret.value()->prim_id();
+    return true;
+  } else {
+    if (err) {
+      (*err) = ret.error();
+    }
+    return false;
+  }
+}
+
 namespace {
 
 bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root, const Prim **primFound, int level, std::string *err) {
@@ -307,6 +328,19 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
 
   return false;
 
+}
+
+bool Stage::find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim,
+                              std::string *err) {
+  const Prim *c_prim{nullptr};
+  if (!find_prim_by_prim_id(prim_id, c_prim, err)) {
+    return false;
+  }
+
+  // remove const
+  prim = const_cast<Prim *>(c_prim);
+
+  return true;
 }
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
