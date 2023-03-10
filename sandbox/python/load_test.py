@@ -8,10 +8,13 @@ def emit_indent(i):
     return s
 
 def prim_traverse(prim, depth: int = 0):
-    print(emit_indent(depth) + "Prim", prim)
+    print(emit_indent(depth) + "<Prim>", prim)
 
     for child in prim.children():
         prim_traverse(child, depth+1)
+
+xform_prim = ctinyusdz.Prim("xform")
+print(xform_prim)
 
 stage = ctinyusdz.load_usd("../../models/texture-cat-plane.usda")
 
@@ -35,3 +38,4 @@ for prim in stage.root_prims():
     prim_traverse(prim)
 
 print(stage.ExportToString())
+
