@@ -6,6 +6,15 @@
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 
+//
+// NOTE:
+// - Memory management: TinyUSDZ does not use smart pointer, so use `return_value_policy::reference` or `return_value_policy::reference_internal` as much as posssible.
+//   - For methods returning a const pointer(doe not dynamically allocate memory)(e.g. `Stage::GetPrimAtPath`) 
+// - Use return_value_policy::reference_internal for a method which returns const/nonconst lvalue reference
+//   - e.g. `const StageMeta &Stage::metas() const`, `StageMeta &Stage::metas()`
+//   - Use py::def  or def_property with C++ lambdas(since def_readwrite cannot specity C++ method(there may be a solution, but could'nt find example code and hard to understand pybind11 templates))
+// -
+
 namespace py = pybind11;
 
 PYBIND11_MAKE_OPAQUE(std::vector<int>);
@@ -14,7 +23,6 @@ PYBIND11_MAKE_OPAQUE(std::vector<tinyusdz::Prim>);
 // using namespace py::literals;  // to bring in the `_a` literal
 
 static double test_api() {
-  // TODO: Implement
   return 4.14;
 }
 
@@ -22,60 +30,6 @@ class PyTest {
  public:
   std::vector<int> intv;
 };
-
-#if 0
-// stub classes
-struct PyStage
-{
-  std::string filepath;
-  tinyusdz::Stage _stage;
-  std::string warn;
-  std::string err;
-  bool status{false};
-
-  static PyStage Open(const std::string &_filepath) {
-    // TODO
-    PyStage stage;
-    stage.filepath = _filepath;
-
-    stage.status = tinyusdz::LoadUSDFromFile(stage.filepath, &stage._stage, &stage.warn, &stage.err);
-    
-    return stage;
-  }
-
-  bool Export(const std::string &_filepath) {
-    // TODO
-    return false;
-  }
-
-  nonstd::optional<tinyusdz::GPrim> GetPrimAtPath(const std::string &_path) const {
-    // TODO
-    tinyusdz::GPrim prim;
-
-    if (_path == "/bora") {
-      return nonstd::nullopt;
-    }
-
-    return prim;
-
-  }
-
-#if 0
-  static tinyusdz::GPrim DefinePrim(const std::string &_path, const std::string &type) {
-    tinyusdz::GPrim prim;
-
-    if (type == "Xform") {
-      // TODO:...
-      prim.prim_type = "Xform";
-      return prim;
-    }
-
-    return prim;
-  }
-#endif
-
-};
-#endif
 
 namespace internal {
 
@@ -196,15 +150,25 @@ PYBIND11_MODULE(ctinyusdz, m) {
     .def(py::init<>())
     .def_property("metersPerUnit", 
       [](const StageMetas &m) -> const double {
+        py::print("metersPerUnit get");
         return m.metersPerUnit.get_value();
       }, [](StageMetas &m, const double v) {
+        py::print("metersPerUnit set");
         m.metersPerUnit.set_value(v);
-      })
+        py::print("metersPerUnit ", m.metersPerUnit.get_value());
+      }, py::return_value_policy::reference_internal)
     ;
 
   py::class_<Stage>(m, "Stage")
       .def(py::init<>())
-      .def("metas", [](Stage &s) -> StageMetas & { return s.metas(); })
+      // Use rvp::reference for lvalue C++ reference.
+      .def("metas", [](Stage &s) -> StageMetas & {
+        py::print("metas method"); return s.metas(); }, py::return_value_policy::reference)
+      .def("commit", &Stage::commit)
+      .def(
+          "root_prims",
+          [](Stage &stage) -> std::vector<Prim> & { return stage.root_prims(); },
+          py::return_value_policy::reference)
       .def("GetPrimAtPath",
            [](const Stage &s, const std::string &path_str) -> py::object {
              Path path(path_str, "");
@@ -214,8 +178,20 @@ PYBIND11_MODULE(ctinyusdz, m) {
              }
 
              return py::none();
-           });
-  ;
+           })
+      .def("ExportToString", &Stage::ExportToString)
+      .def("dump_prim_tree", &Stage::dump_prim_tree)
+      .def("find_prim_by_prim_id",
+           [](Stage &s, uint64_t prim_id) -> py::object {
+
+             Prim *prim{nullptr};
+             if (auto p = s.find_prim_by_prim_id(prim_id, prim)) {
+               return py::cast(prim);
+             }
+
+             return py::none();
+           }, py::return_value_policy::reference);
+  
 
   m.def("LoadUSDFromFile", &LoadUSDAFromFile);
 
