@@ -5,6 +5,8 @@
 #include "nonstd/optional.hpp"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
+#include "prim-pprint.hh"
+#include "tydra/render-data.hh"
 
 //
 // NOTE:
@@ -123,6 +125,9 @@ PYBIND11_MODULE(ctinyusdz, m) {
   py::class_<Prim>(m, "Prim")
       // default ctor: Create Prim with Model type.
       .def(py::init([]() { return Prim(Model()); }))
+      .def(py::init([](const std::string &prim_name) {
+        return Prim(Model());
+       }))
       .def_property(
           "prim_id", [](const Prim &p) -> int64_t { return p.prim_id(); },
           [](Prim &p) -> int64_t & { return p.prim_id(); })
@@ -144,6 +149,9 @@ PYBIND11_MODULE(ctinyusdz, m) {
       //  py::print("setter");
       //  p.children() = v;
       //})
+      .def("__str__", [](const Prim &p) {
+        return to_string(p);       
+      })
       ;
 
   py::class_<StageMetas>(m, "StageMetas")
@@ -221,4 +229,18 @@ PYBIND11_MODULE(ctinyusdz, m) {
   //   .def
 
   py::bind_vector<std::vector<int>>(m, "VectorInt");
+
+  // Tydra
+  {
+    auto m_tydra = m.def_submodule("tydra");
+
+    py::class_<tydra::RenderSceneConverterConfig>(m_tydra, "RenderSceneConverterConfig")
+      .def(py::init<>())
+      .def_readwrite("load_texture_assets", &tydra::RenderSceneConverterConfig::load_texture_assets)
+    ;
+
+    m_tydra.def("to_render_scene", [](const Stage &stage) {
+      py::print("TODO");
+    }, py::arg("config") = tydra::RenderSceneConverterConfig());
+  }
 }

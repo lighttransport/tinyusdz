@@ -789,6 +789,8 @@ if(TINYUSDZ_WITH_PYTHON)
 
   pybind11_add_module(${BUILD_TARGET_PY} ${TINYUSDZ_PYTHON_BINDING_SOURCES})
   add_sanitizers(${BUILD_TARGET_PY})
+  target_include_directories(
+    ${BUILD_TARGET_PY} PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   # Use 'c' prefix

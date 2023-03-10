@@ -20,4 +20,9 @@ std::string print_layeroffset(const LayerOffset &layeroffset, const uint32_t ind
 std::string print_prim(const Prim &prim, const uint32_t indent=0);
 
 } // namespace prim
+
+inline std::string to_string(const Prim &prim) {
+  return prim::print_prim(prim);
+}
+
 } // namespace tinyusdz
