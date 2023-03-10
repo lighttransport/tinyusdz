@@ -60,7 +60,7 @@ class Stage {
   /// Get Prim at a Path.
   /// Path must be absolute Path.
   ///
-  /// @returns pointer to Prim(to avoid a copy). Never return nullptr upon success.
+  /// @returns Const pointer to Prim(to avoid a copy). Never returns nullptr upon success.
   ///
   nonstd::expected<const Prim *, std::string> GetPrimAtPath(const Path &path) const;
 
@@ -97,6 +97,16 @@ class Stage {
   /// @returns true if found a Prim.
   bool find_prim_at_path(const Path &path, const Prim *&prim, std::string *err = nullptr) const;
 
+  /// Find(Get) Prim at a Path and returns its Prim id.
+  /// Path must be absolute Path.
+  ///
+  /// @param[in] path Absolute path(e.g. `/bora/dora`)
+  /// @param[out] prim_id Prim's id(should be '1 or greater' upon success)
+  /// @param[out] err Error message(filled when false is returned)
+  ///
+  /// @returns true if found a Prim.
+  bool find_prim_at_path(const Path &path, int64_t *prim_id, std::string *err = nullptr) const;
+
   /// Find(Get) Prim from a relative Path.
   /// Path must be relative Path.
   ///
@@ -117,6 +127,9 @@ class Stage {
   ///
   /// @returns true if found a Prim.
   bool find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim, std::string *err = nullptr) const;
+
+  // non-const version
+  bool find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim, std::string *err = nullptr);
 
   ///
   /// @brief Get Root Prims
