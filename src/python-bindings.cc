@@ -31,6 +31,12 @@ static double test_api() {
 class PyTest {
  public:
   std::vector<int> intv;
+  const std::vector<int> &intvfun() const {
+    return intv;
+  }
+  std::vector<int> &intvfun() {
+    return intv;
+  }
 };
 
 namespace internal {
@@ -105,22 +111,29 @@ PYBIND11_MODULE(ctinyusdz, m) {
 
   py::class_<PyTest>(m, "PyTest")
       .def(py::init<>())
-#if 1
       .def_readwrite("intv", &PyTest::intv)
-#else
       .def_property(
-          "intv",
-          [](PyTest &self) -> const std::vector<int> & {
-            py::print("intv get");
-            return self.intv;
-          },
-          [](PyTest &self, const std::vector<int> &v) {
-            py::print("intv setter");
-            self.intv = v;
-          },
+          //"intv", static_cast<const std::vector<int> &(PyTest::*)(void) const>(&PyTest::intvfun)
+          // In C++14, We can use py::overload_cast to simplify type cast
+          "intv", py::overload_cast<>(&PyTest::intvfun, py::const_)
+          , nullptr,
           py::return_value_policy::reference_internal)
-#endif
       ;
+
+    // TODO: Use attr?
+#define SET_VALUE(__ty) \
+    .def("set", [](primvar::PrimVar &p, const __ty &v) { p.set_value(v); })
+
+  py::class_<primvar::PrimVar>(m, "PrimVar")
+    .def(py::init<>())
+    .def_property("dtype", &primvar::PrimVar::type_name, nullptr)
+    SET_VALUE(int32_t)
+    SET_VALUE(int64_t)
+    SET_VALUE(uint32_t)
+    SET_VALUE(uint64_t)
+    SET_VALUE(float)
+    SET_VALUE(double)
+    ;
 
   py::class_<Prim>(m, "Prim")
       // default ctor: Create Prim with Model type.
@@ -141,10 +154,7 @@ PYBIND11_MODULE(ctinyusdz, m) {
           "children",
           [](Prim &p) -> std::vector<Prim> & { return p.children(); },
           py::return_value_policy::reference)
-      //.def_property("primChildren", [](const Prim &p) -> const
-      //std::vector<Prim> {
-      //  py::print("getter");
-      //  return p.children();
+      //.def_property("primChildren", static_cast<const std::vector<Prim> &(Prim::*)(void)>Prim::children,
       //}, [](Prim &p, const std::vector<Prim> &v) {
       //  py::print("setter");
       //  p.children() = v;

@@ -1,5 +1,11 @@
 import ctinyusdz
 
+pvar = ctinyusdz.PrimVar()
+pvar.set(1.0)
+print(pvar.dtype)
+pvar.set(2)
+print(pvar.dtype)
+
 def emit_indent(i):
     s = ""
     for k in range(i):
