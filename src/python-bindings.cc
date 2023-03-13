@@ -203,8 +203,21 @@ PYBIND11_MODULE(ctinyusdz, m) {
     SET_VALUE(uint64_t)
     SET_VALUE(double)
     SET_VALUE(float)
+    .def("set_obj", [](primvar::PrimVar &p, const py::object &obj) {
+      py::print("set_obj", obj);
+      //py::buffer_info info = obj.request();
+      py::print("buf info", obj.get_type());
+
+      py::object c_float = py::module::import("ctypes").attr("c_float");
+      py::print("c_float", c_float.get_type());
+      py::print("isnstance(c_float)", py::isinstance(obj, c_float));
+      //py::print("val = ", obj.cast<float>());
+    
+    })
     .def("set_buf", [](primvar::PrimVar &p, const py::buffer &buf) {
       py::print("set_buf", buf);
+      py::buffer_info info = buf.request();
+      py::print("buf info", info.format);
     })
     .def("set_array", [](primvar::PrimVar &p, const py::array_t<int32_t> v) {
       py::print("set_arr int[]");
