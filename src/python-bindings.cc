@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
+#include <pybind11/numpy.h>
 
 #include "nonstd/optional.hpp"
 #include "tiny-format.hh"
@@ -21,6 +22,13 @@ namespace py = pybind11;
 
 PYBIND11_MAKE_OPAQUE(std::vector<int>);
 PYBIND11_MAKE_OPAQUE(std::vector<tinyusdz::Prim>);
+
+// define custom types
+struct float16 {
+  uint16_t h;
+};
+
+//PYBIND11_NUMPY_DTYPE(float16, h);
 
 // using namespace py::literals;  // to bring in the `_a` literal
 
@@ -131,8 +139,18 @@ PYBIND11_MODULE(ctinyusdz, m) {
     SET_VALUE(int64_t)
     SET_VALUE(uint32_t)
     SET_VALUE(uint64_t)
-    SET_VALUE(float)
     SET_VALUE(double)
+    SET_VALUE(float)
+    .def("set_array", [](primvar::PrimVar &p, const py::array_t<int32_t> v) {
+      py::print("set_arr int[]");
+    })
+    .def("get_array", [](primvar::PrimVar &p) -> py::array_t<float> {
+      std::vector<float> v;
+
+      auto result = py::array_t<float>(16);
+      
+      return result;
+    })
     ;
 
   py::class_<Prim>(m, "Prim")
