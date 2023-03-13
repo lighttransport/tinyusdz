@@ -4,52 +4,105 @@
   __FUNC(value::token)                 \
   __FUNC(std::string)                 \
   __FUNC(StringData)                 \
-  __FUNC(half)                 \
-  __FUNC(half2)                \
-  __FUNC(half3)                \
-  __FUNC(half4)                \
+  __FUNC(value::half)                 \
+  __FUNC(value::half2)                \
+  __FUNC(value::half3)                \
+  __FUNC(value::half4)                \
   __FUNC(int32_t)              \
   __FUNC(uint32_t)             \
-  __FUNC(int2)                 \
-  __FUNC(int3)                 \
-  __FUNC(int4)                 \
-  __FUNC(uint2)                \
-  __FUNC(uint3)                \
-  __FUNC(uint4)                \
+  __FUNC(value::int2)                 \
+  __FUNC(value::int3)                 \
+  __FUNC(value::int4)                 \
+  __FUNC(value::uint2)                \
+  __FUNC(value::uint3)                \
+  __FUNC(value::uint4)                \
   __FUNC(int64_t)              \
   __FUNC(uint64_t)             \
   __FUNC(float)                \
-  __FUNC(float2)               \
-  __FUNC(float3)               \
-  __FUNC(float4)               \
+  __FUNC(value::float2)               \
+  __FUNC(value::float3)               \
+  __FUNC(value::float4)               \
   __FUNC(double)               \
-  __FUNC(double2)              \
-  __FUNC(double3)              \
-  __FUNC(double4)              \
-  __FUNC(quath)                \
-  __FUNC(quatf)                \
-  __FUNC(quatd)                \
-  __FUNC(normal3h)             \
-  __FUNC(normal3f)             \
-  __FUNC(normal3d)             \
-  __FUNC(vector3h)             \
-  __FUNC(vector3f)             \
-  __FUNC(vector3d)             \
-  __FUNC(point3h)              \
-  __FUNC(point3f)              \
-  __FUNC(point3d)              \
-  __FUNC(color3f)              \
-  __FUNC(color3d)              \
-  __FUNC(color4h)              \
-  __FUNC(color4f)              \
-  __FUNC(color4d)              \
-  __FUNC(texcoord2h)           \
-  __FUNC(texcoord2f)           \
-  __FUNC(texcoord2d)           \
-  __FUNC(texcoord3h)           \
-  __FUNC(texcoord3f)           \
-  __FUNC(texcoord3d) \
-  __FUNC(matrix2d) \
-  __FUNC(matrix3d) \
-  __FUNC(matrix4d) \
-  __FUNC(frame4d) 
+  __FUNC(value::double2)              \
+  __FUNC(value::double3)              \
+  __FUNC(value::double4)              \
+  __FUNC(value::quath)                \
+  __FUNC(value::quatf)                \
+  __FUNC(value::quatd)                \
+  __FUNC(value::normal3h)             \
+  __FUNC(value::normal3f)             \
+  __FUNC(value::normal3d)             \
+  __FUNC(value::vector3h)             \
+  __FUNC(value::vector3f)             \
+  __FUNC(value::vector3d)             \
+  __FUNC(value::point3h)              \
+  __FUNC(value::point3f)              \
+  __FUNC(value::point3d)              \
+  __FUNC(value::color3f)              \
+  __FUNC(value::color3d)              \
+  __FUNC(value::color4h)              \
+  __FUNC(value::color4f)              \
+  __FUNC(value::color4d)              \
+  __FUNC(value::texcoord2h)           \
+  __FUNC(value::texcoord2f)           \
+  __FUNC(value::texcoord2d)           \
+  __FUNC(value::texcoord3h)           \
+  __FUNC(value::texcoord3f)           \
+  __FUNC(value::texcoord3d) \
+  __FUNC(value::matrix2d) \
+  __FUNC(value::matrix3d) \
+  __FUNC(value::matrix4d) \
+  __FUNC(value::frame4d) 
+
+// Apply __FUNC to numeric value types.
+#define APPLY_FUNC_TO_NUMERIC_VALUE_TYPES(__FUNC) \
+  __FUNC(bool)                 \
+  __FUNC(value::half)                 \
+  __FUNC(value::half2)                \
+  __FUNC(value::half3)                \
+  __FUNC(value::half4)                \
+  __FUNC(int32_t)              \
+  __FUNC(uint32_t)             \
+  __FUNC(value::int2)                 \
+  __FUNC(value::int3)                 \
+  __FUNC(value::int4)                 \
+  __FUNC(value::uint2)                \
+  __FUNC(value::uint3)                \
+  __FUNC(value::uint4)                \
+  __FUNC(int64_t)              \
+  __FUNC(uint64_t)             \
+  __FUNC(float)                \
+  __FUNC(value::float2)               \
+  __FUNC(value::float3)               \
+  __FUNC(value::float4)               \
+  __FUNC(double)               \
+  __FUNC(value::double2)              \
+  __FUNC(value::double3)              \
+  __FUNC(value::double4)              \
+  __FUNC(value::quath)                \
+  __FUNC(value::quatf)                \
+  __FUNC(value::quatd)                \
+  __FUNC(value::normal3h)             \
+  __FUNC(value::normal3f)             \
+  __FUNC(value::normal3d)             \
+  __FUNC(value::vector3h)             \
+  __FUNC(value::vector3f)             \
+  __FUNC(value::vector3d)             \
+  __FUNC(value::point3h)              \
+  __FUNC(value::point3f)              \
+  __FUNC(value::point3d)              \
+  __FUNC(value::color3f)              \
+  __FUNC(value::color3d)              \
+  __FUNC(value::color4h)              \
+  __FUNC(value::color4f)              \
+  __FUNC(value::color4d)              \
+  __FUNC(value::texcoord2h)           \
+  __FUNC(value::texcoord2f)           \
+  __FUNC(value::texcoord2d)           \
+  __FUNC(value::texcoord3h)           \
+  __FUNC(value::texcoord3f)           \
+  __FUNC(value::texcoord3d) \
+  __FUNC(value::matrix2d) \
+  __FUNC(value::matrix3d) \
+  __FUNC(value::matrix4d) \
+  __FUNC(value::frame4d) 
