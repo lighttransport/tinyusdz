@@ -763,6 +763,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set_source_files_properties(${TINYUSDZ_SOURCES}
                               PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
 
+  if (TINYUSDZ_WITH_C_API)
+    set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+                                PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+  endif()
+
 endif()
 
 if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
@@ -770,13 +775,22 @@ if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
     set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
     set_source_files_properties(${TINYUSDZ_SOURCES}
                               PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
+
+    if (TINYUSDZ_WITH_C_API)
+      set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+                                  PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
+    endif()
   #endif()
 endif()
 
 if(TINYUSDZ_WITH_C_API)
-  # TODO: dll version
-  add_library(${BUILD_TARGET_C} STATIC ${TINYUSDZ_C_API_SOURCES})
-  target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  if(TINYUSDZ_BUILD_SHARED_LIBS)
+    add_library(${BUILD_TARGET_C} SHARED ${TINYUSDZ_C_API_SOURCES})
+    target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET})
+  endif() 
+
+  add_library(${BUILD_TARGET_C}_static STATIC ${TINYUSDZ_C_API_SOURCES})
+  target_link_libraries(${BUILD_TARGET_C}_static PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif()
 
 if(TINYUSDZ_WITH_PYTHON)
