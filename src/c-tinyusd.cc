@@ -2,7 +2,102 @@
 
 #include "tinyusdz.hh"
 
-uint32_t c_tinyusd_type_components(CTinyUSDValueType value_type)
+const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
+{
+  // 32 should be enough length to support all C_TINYUSD_VALUE_* type name + '[]'
+  static thread_local char buf[32];
+
+  bool is_array = value_type & C_TINYUSD_VALUE_1D_BIT;
+
+  // drop array bit.
+  uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
+
+  const char *tyname = "[invalid]";
+
+  switch (static_cast<CTinyUSDValueType>(basety)) {
+    case C_TINYUSD_VALUE_BOOL: { tyname = "bool"; break; }
+    case C_TINYUSD_VALUE_TOKEN: { tyname = "token";break; } 
+    case C_TINYUSD_VALUE_STRING: { tyname = "string";break; } 
+    case C_TINYUSD_VALUE_HALF: {  tyname = "half";break; }
+    case C_TINYUSD_VALUE_HALF2: { tyname = "half2"; break;}
+    case C_TINYUSD_VALUE_HALF3: { tyname = "half3"; break;}
+    case C_TINYUSD_VALUE_HALF4: { tyname = "half4"; break;}
+    case C_TINYUSD_VALUE_INT: {   tyname = "int"; break;}
+    case C_TINYUSD_VALUE_INT2: {  tyname = "int2"; break;}
+    case C_TINYUSD_VALUE_INT3: {  tyname = "int3"; break;}
+    case C_TINYUSD_VALUE_INT4: {  tyname = "int4"; break;}
+    case C_TINYUSD_VALUE_UINT: {  tyname = "uint"; break;}
+    case C_TINYUSD_VALUE_UINT2: { tyname = "uint2"; break;}
+    case C_TINYUSD_VALUE_UINT3: { tyname = "uint3"; break;}
+    case C_TINYUSD_VALUE_UINT4: { tyname = "uint4"; break;}
+    case C_TINYUSD_VALUE_INT64: { tyname = "int64"; break;}
+    case C_TINYUSD_VALUE_UINT64: {tyname = "uint64"; break;}
+    case C_TINYUSD_VALUE_FLOAT: { tyname = "float"; break;}
+    case C_TINYUSD_VALUE_FLOAT2: { tyname = "float2"; break;}
+    case C_TINYUSD_VALUE_FLOAT3: { tyname = "float3"; break;}
+    case C_TINYUSD_VALUE_FLOAT4: { tyname = "float4"; break;}
+    case C_TINYUSD_VALUE_DOUBLE: { tyname = "double"; break;}
+    case C_TINYUSD_VALUE_DOUBLE2: {  tyname = "double2"; break;}
+    case C_TINYUSD_VALUE_DOUBLE3: {  tyname = "double3"; break;}
+    case C_TINYUSD_VALUE_DOUBLE4: {  tyname = "double4"; break;}
+    case C_TINYUSD_VALUE_QUATH: {    tyname = "quath"; break;}
+    case C_TINYUSD_VALUE_QUATF: {    tyname = "quatf"; break;}
+    case C_TINYUSD_VALUE_QUATD: {    tyname = "quatd"; break;}
+    case C_TINYUSD_VALUE_NORMAL3H: { tyname = "normal3h"; break;}
+    case C_TINYUSD_VALUE_NORMAL3F: { tyname = "normal3f"; break;}
+    case C_TINYUSD_VALUE_NORMAL3D: { tyname = "normal3d"; break;}
+    case C_TINYUSD_VALUE_VECTOR3H: { tyname = "vector3h"; break;}
+    case C_TINYUSD_VALUE_VECTOR3F: { tyname = "vector3f"; break;}
+    case C_TINYUSD_VALUE_VECTOR3D: { tyname = "vector3d"; break;}
+    case C_TINYUSD_VALUE_POINT3H: {  tyname = "point3h"; break;}
+    case C_TINYUSD_VALUE_POINT3F: {  tyname = "point3f"; break;}
+    case C_TINYUSD_VALUE_POINT3D: {  tyname = "point3d"; break;}
+    case C_TINYUSD_VALUE_TEXCOORD2H: { tyname = "texCoord2h"; break;}
+    case C_TINYUSD_VALUE_TEXCOORD2F: { tyname = "texCoord2f"; break;}
+    case C_TINYUSD_VALUE_TEXCOORD2D: { tyname = "texCoord2d"; break;}
+    case C_TINYUSD_VALUE_TEXCOORD3H: { tyname = "texCoord3h"; break;}
+    case C_TINYUSD_VALUE_TEXCOORD3F: { tyname = "texCoord3f"; break;}
+    case C_TINYUSD_VALUE_TEXCOORD3D: { tyname = "texCoord3d"; break;}
+    case C_TINYUSD_VALUE_COLOR3H: { tyname = "color3h"; break;}
+    case C_TINYUSD_VALUE_COLOR3F: { tyname = "color3f"; break;}
+    case C_TINYUSD_VALUE_COLOR3D: { tyname = "color3d"; break;}
+    case C_TINYUSD_VALUE_COLOR4H: { tyname = "color4h"; break;}
+    case C_TINYUSD_VALUE_COLOR4F: { tyname = "color4f"; break;}
+    case C_TINYUSD_VALUE_COLOR4D: { tyname = "color4d"; break;}
+    case C_TINYUSD_VALUE_MATRIX2D: { tyname = "matrix2d"; break;}
+    case C_TINYUSD_VALUE_MATRIX3D: { tyname = "matrix2d"; break;}
+    case C_TINYUSD_VALUE_MATRIX4D: { tyname = "matrix2d"; break;}
+    case C_TINYUSD_VALUE_FRAME4D: { tyname = "frame4d"; break;}
+    case C_TINYUSD_VALUE_END: { tyname = "[invalid]"; break;} // invalid
+    //default: { return 0; }
+  }
+
+  uint32_t sz = static_cast<uint32_t>(strlen(tyname));
+
+  if (sz > 31) {
+    // Just in case: this should not happen though.
+    sz = 31;
+  }
+
+  strncpy(buf, tyname, sz);
+
+  if (is_array) {
+    if (sz > 29) {
+      // Just in case: this should not happen though.
+      sz = 29;
+    }
+
+    buf[sz] = '[';
+    buf[sz+1] = ']';
+    buf[sz+2] = '\0';
+  } else {
+    buf[sz] = '\0';
+  }
+
+  return buf;
+}
+
+uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type)
 {
   // drop array bit.
   uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
@@ -61,14 +156,14 @@ uint32_t c_tinyusd_type_components(CTinyUSDValueType value_type)
     case C_TINYUSD_VALUE_MATRIX3D: { return 3*3; }
     case C_TINYUSD_VALUE_MATRIX4D: { return 4*4; }
     case C_TINYUSD_VALUE_FRAME4D: { return 4*4; }
-    case C_TINYUSD_VALUE_1D_BIT: { return 0; } // invalid
+    case C_TINYUSD_VALUE_END: { return 0; } // invalid
     //default: { return 0; }
   }
 
   return 0;
 }
 
-uint32_t c_tinyusd_type_sizeof(CTinyUSDValueType value_type)
+uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type)
 {
   // drop array bit.
   uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
@@ -127,7 +222,7 @@ uint32_t c_tinyusd_type_sizeof(CTinyUSDValueType value_type)
     case C_TINYUSD_VALUE_MATRIX3D: { return sizeof(double)*3*3; }
     case C_TINYUSD_VALUE_MATRIX4D: { return sizeof(double)*4*4; }
     case C_TINYUSD_VALUE_FRAME4D: { return sizeof(double)*4*4; }
-    case C_TINYUSD_VALUE_1D_BIT: { return 0; } // invalid
+    case C_TINYUSD_VALUE_END: { return 0; } // invalid
     //default: { return 0; }
   }
 
@@ -151,7 +246,7 @@ CTinyUSDFormat c_tinyusd_detect_format(const char *filename)
   return C_TINYUSD_FORMAT_UNKNOWN;
 }
 
-int c_tinyusd_token_init(c_tinyusd_token *tok, const char *str) {
+int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str) {
   if (!tok) {
     return 0;
   }
@@ -190,19 +285,23 @@ const char *c_tinyusd_token_str(c_tinyusd_token *tok) {
   return nullptr;
 }
 
-int c_tinyusd_string_init(c_tinyusd_string *s) {
+int c_tinyusd_string_new(c_tinyusd_string *s, const char *str) {
   if (!s) {
     return 0;
   }
 
-  auto *value = new std::string();
-
-  s->data = reinterpret_cast<void *>(value);
+  if (str) {
+    auto *value = new std::string(str);
+    s->data = reinterpret_cast<void *>(value);
+  } else {
+    auto *value = new std::string();
+    s->data = reinterpret_cast<void *>(value);
+  }
 
   return 1; // ok
 }
 
-int c_tinyusd_string_set(c_tinyusd_string *s, const char *str) {
+int c_tinyusd_string_replace(c_tinyusd_string *s, const char *str) {
   if (!s) {
     return 0;
   }
@@ -247,4 +346,58 @@ const char *c_tinyusd_string_str(c_tinyusd_string *s) {
   }
 
   return nullptr;
+}
+
+int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type,
+                         int ndim, uint64_t shape[C_TINYUSD_MAX_DIM]) {
+
+  if (!buf) {
+    return 0;
+  }
+
+  uint32_t sz = c_tinyusd_value_type_sizeof(value_type);
+  if (sz == 0) {
+    return 0;
+  }
+
+  if (ndim >= C_TINYUSD_MAX_DIM) {
+    return 0;
+  }
+
+  uint64_t n = 1;
+  for (int i = 0; i < ndim; i++) {
+    n *= shape[i];
+  }
+
+  if (n == 0) {
+    return 0;
+  }
+
+  buf->value_type = value_type;
+  buf->ndim = ndim;
+  for (int i = 0; i < ndim; i++) {
+    buf->shape[i] = shape[i];
+  }
+
+  uint8_t *m = new uint8_t[n];
+  buf->data = reinterpret_cast<void *>(m);
+
+  return 1; // ok
+}
+
+int c_tinyusd_buffer_free(CTinyUSDBuffer *buf) {
+  if (!buf) {
+    return 0;
+  }
+
+  if (!buf->data) {
+    return 0;
+  }
+
+  uint8_t *p = reinterpret_cast<uint8_t*>(buf->data);
+  delete [] p;
+
+  buf->data = nullptr;
+
+  return 1;
 }

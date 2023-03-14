@@ -20,36 +20,7 @@ extern "C" {
 // so set max_dim to 1.
 #define C_TINYUSD_MAX_DIM (1)
 
-// Use lower snake case for frequently used base type.
-struct c_tinyusd_token {
-  void *data;  // opaque pointer to `tinyusdz::value::token`.
-};
-
-// Init token and set a string to it.
-// returns 0 when failed to allocate memory.
-int c_tinyusd_token_init(c_tinyusd_token *tok, const char *str);
-
-// Get C char from a token.
-// Returned char pointer is valid until `c_tinyusd_token` instance is free'ed.
-const char *c_tinyusd_token_str(c_tinyusd_token *tok);
-
-// Free token
-// Return 0 when failed to free.
-int c_tinyusd_token_free(c_tinyusd_token *tok);
-
-struct c_tinyusd_string {
-  void *data;  // opaque pointer to `std::string`.
-};
-
-int c_tinyusd_string_init(c_tinyusd_string *tok);
-int c_tinyusd_string_set(c_tinyusd_string *tok, const char *str);
-
-// Get C char(`std::string::c_str()`)
-// Returned char pointer is valid until `c_tinyusd_string` instance is free'ed.
-const char *c_tinyusd_string_str(c_tinyusd_string *tok);
-
-int c_tinyusd_string_free(c_tinyusd_string *tok);
-
+// USD format
 enum CTinyUSDFormat {
   C_TINYUSD_FORMAT_UNKNOWN,
   C_TINYUSD_FORMAT_AUTO,  // auto detect based on file extension.
@@ -121,14 +92,14 @@ enum CTinyUSDValueType {
   C_TINYUSD_VALUE_MATRIX3D,
   C_TINYUSD_VALUE_MATRIX4D,
   C_TINYUSD_VALUE_FRAME4D,
-
-  // assume the number of value types is less than 1024.
-  C_TINYUSD_VALUE_1D_BIT = (1 << 10)
+  C_TINYUSD_VALUE_END,  // terminator
 };
 
+// assume the number of value types is less than 1024.
+#define C_TINYUSD_VALUE_1D_BIT (1 << 10)
+
 // NOTE: No `Geom` prefix to usdGeom prims in C API.
-enum CTinyUSDPrimType
-{
+enum CTinyUSDPrimType {
   C_TINYUSD_PRIM_UNKNOWN,
   C_TINYUSD_PRIM_MODEL,
   C_TINYUSD_PRIM_XFORM,
@@ -139,6 +110,43 @@ enum CTinyUSDPrimType
   // TODO: Add more prim types...
   C_TINYUSD_PRIM_END,
 };
+
+// Use lower snake case for frequently used base type.
+struct c_tinyusd_token {
+  void *data;  // opaque pointer to `tinyusdz::value::token`.
+};
+
+// Create token and set a string to it.
+// returns 0 when failed to allocate memory.
+int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str);
+
+// Get C char from a token.
+// Returned char pointer is valid until `c_tinyusd_token` instance is free'ed.
+const char *c_tinyusd_token_str(c_tinyusd_token *tok);
+
+// Free token
+// Return 0 when failed to free.
+int c_tinyusd_token_free(c_tinyusd_token *tok);
+
+struct c_tinyusd_string {
+  void *data;  // opaque pointer to `std::string`.
+};
+
+// Create string.
+// Pass NULL to create empty string.
+// Return 0 when failed to new
+int c_tinyusd_string_new(c_tinyusd_string *s, const char *str);
+
+// Replace existing string with given `str`.
+// `c_tinyusd_string` object must be created beforehand.
+// Return 0 when failed to set.
+int c_tinyusd_string_replace(c_tinyusd_string *s, const char *str);
+
+// Get C char(`std::string::c_str()`)
+// Returned char pointer is valid until `c_tinyusd_string` instance is free'ed.
+const char *c_tinyusd_string_str(c_tinyusd_string *s);
+
+int c_tinyusd_string_free(c_tinyusd_string *s);
 
 // Return the name of Prim type.
 // Return NULL for unsupported/unknown Prim type.
@@ -154,22 +162,27 @@ struct CTinyUSDBuffer {
   // TODO: stride
 };
 
-const char *c_tiyusd_type_name(CTinyUSDValueType value_type);
+// Returns name of ValueType.
+// The pointer points to static Thread-local storage(so thread-safe), thus no
+// need to free it.
+const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type);
 
 // Returns sizeof(value_type);
 // For non-numeric value type(e.g. STRING, TOKEN) and invalid enum value, it
 // returns 0. NOTE: Returns 1 for bool type.
-uint32_t c_tinyusd_type_sizeof(CTinyUSDValueType value_type);
+uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type);
 
 // Returns the number of components of given value_type;
 // For example, 3 for C_TINYUSD_VALUE_POINT3F.
 // For non-numeric value type(e.g. STRING, TOKEN), it returns 0.
 // For scalar type, it returns 1.
-uint32_t c_tinyusd_type_components(CTinyUSDValueType value_type);
+uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type);
 
+#if 0
 // Initialize buffer, but do not allocate memory.
 void c_tinyusd_buffer_init(CTinyUSDBuffer *buf, CTinyUSDValueType value_type,
                            int ndim);
+#endif
 
 // New buffer with given shape info.
 // Returns 1 upon success.
@@ -194,18 +207,17 @@ void c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
                                    const CTinyUSDValueType type,
                                    const void *data);
 
-
 struct CTinyUSDPath {
   c_tinyusd_string prim_part;
   c_tinyusd_string prop_part;
 };
 
 struct CTinyUSDProperty {
-  void *data; // opaque pointer to tinyusdz::Property
+  void *data;  // opaque pointer to tinyusdz::Property
 };
 
 struct CTinyUSDPropertyMap {
-  void *data; // opaque pointer to std::map<std::string, tinyusdz::Property>
+  void *data;  // opaque pointer to std::map<std::string, tinyusdz::Property>
 };
 
 struct CTinyUSDPrim {
@@ -225,7 +237,7 @@ struct CTinyUSDStage {
   CTinyUSDPrim *root_prims;
 };
 
-int c_tinyusd_stage_init(CTinyUSDStage *stage);
+int c_tinyusd_stage_new(CTinyUSDStage *stage);
 int c_tinyusd_stage_free(CTinyUSDStage *stage);
 
 ///
