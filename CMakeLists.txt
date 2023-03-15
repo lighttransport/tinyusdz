@@ -787,10 +787,14 @@ if(TINYUSDZ_WITH_C_API)
   if(TINYUSDZ_BUILD_SHARED_LIBS)
     add_library(${BUILD_TARGET_C} SHARED ${TINYUSDZ_C_API_SOURCES})
     target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET})
+    target_include_directories(
+      ${BUILD_TARGET_C} PRIVATE ${PROJECT_SOURCE_DIR}/src)
   endif() 
 
   add_library(${BUILD_TARGET_C}_static STATIC ${TINYUSDZ_C_API_SOURCES})
   target_link_libraries(${BUILD_TARGET_C}_static PRIVATE ${TINYUSDZ_TARGET_STATIC})
+  target_include_directories(
+    ${BUILD_TARGET_C}_static PRIVATE ${PROJECT_SOURCE_DIR}/src)
 endif()
 
 if(TINYUSDZ_WITH_PYTHON)
@@ -873,6 +877,9 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   endif()
   if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
+  endif()
+  if(TINYUSDZ_WITH_C_API)
+    add_subdirectory(examples/c_api_example)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
 

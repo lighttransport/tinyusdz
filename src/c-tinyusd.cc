@@ -1,6 +1,7 @@
 #include "c-tinyusd.h"
 
 #include "tinyusdz.hh"
+#include "tydra/scene-access.hh"
 
 const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
 {
@@ -16,8 +17,8 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
 
   switch (static_cast<CTinyUSDValueType>(basety)) {
     case C_TINYUSD_VALUE_BOOL: { tyname = "bool"; break; }
-    case C_TINYUSD_VALUE_TOKEN: { tyname = "token";break; } 
-    case C_TINYUSD_VALUE_STRING: { tyname = "string";break; } 
+    case C_TINYUSD_VALUE_TOKEN: { tyname = "token";break; }
+    case C_TINYUSD_VALUE_STRING: { tyname = "string";break; }
     case C_TINYUSD_VALUE_HALF: {  tyname = "half";break; }
     case C_TINYUSD_VALUE_HALF2: { tyname = "half2"; break;}
     case C_TINYUSD_VALUE_HALF3: { tyname = "half3"; break;}
@@ -285,6 +286,17 @@ const char *c_tinyusd_token_str(c_tinyusd_token *tok) {
   return nullptr;
 }
 
+int c_tinyusd_string_new_empty(c_tinyusd_string *s) {
+  if (!s) {
+    return 0;
+  }
+
+  auto *value = new std::string();
+  s->data = reinterpret_cast<void *>(value);
+
+  return 1; // ok
+}
+
 int c_tinyusd_string_new(c_tinyusd_string *s, const char *str) {
   if (!s) {
     return 0;
@@ -398,6 +410,158 @@ int c_tinyusd_buffer_free(CTinyUSDBuffer *buf) {
   delete [] p;
 
   buf->data = nullptr;
+
+  return 1;
+}
+
+int c_tinyusd_is_usda_file(const char *filename) {
+  if (tinyusdz::IsUSDA(filename)) {
+    return 1;
+  }
+  return 0;
+}
+
+int c_tinyusd_is_usdc_file(const char *filename) {
+  if (tinyusdz::IsUSDC(filename)) {
+    return 1;
+  }
+  return 0;
+}
+
+int c_tinyusd_is_usdz_file(const char *filename) {
+  if (tinyusdz::IsUSDZ(filename)) {
+    return 1;
+  }
+  return 0;
+}
+
+int c_tinyusd_is_usd_file(const char *filename) {
+  if (tinyusdz::IsUSD(filename)) {
+    return 1;
+  }
+  return 0;
+}
+
+int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage, c_tinyusd_string *warn, c_tinyusd_string *err) {
+
+  //tinyusdz::Stage *p = new tinyusdz::Stage();
+
+  if (!stage) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`stage` argument is null.\n");
+    }
+    return 0;
+  }
+
+  if (!stage->data) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`stage` object is not initialized or new'ed.\n");
+    }
+    return 0;
+  }
+
+  std::string _warn;
+  std::string _err;
+
+  bool ret = tinyusdz::LoadUSDFromFile(filename, reinterpret_cast<tinyusdz::Stage *>(stage->data), &_warn, &_err);
+
+  if (_warn.size() && warn) {
+    c_tinyusd_string_replace(warn, _warn.c_str());
+  }
+
+  if (!ret) {
+
+    if (err) {
+      c_tinyusd_string_replace(err, _err.c_str());
+    }
+
+    return 0;
+  }
+
+  return 1;
+}
+
+namespace {
+
+using namespace tinyusdz;
+
+bool CVisitPrimFunction(const Path &abs_path, const Prim &prim,
+                        const int32_t tree_depth, void *userdata,
+                        std::string *err) {
+
+  (void)tree_depth;
+
+  if (!userdata) {
+    if (err) {
+      (*err) += "`userdata` is nullptr.\n";
+    }
+    return false;
+  }
+
+  CTinyUSDPrim cprim;
+  cprim.data = reinterpret_cast<void *>(const_cast<Prim *>(&prim));
+
+  CTinyUSDPath cpath;
+  cpath.data = reinterpret_cast<void *>(const_cast<Path *>(&abs_path));
+
+  CTinyUSDTraversalFunction callback_fun = reinterpret_cast<CTinyUSDTraversalFunction>(userdata);
+
+  int ret = callback_fun(&cprim, &cpath);
+
+  if (ret) {
+    return true;
+  }
+
+  return false;
+}
+
+} // namespace local
+
+int c_tinyusd_stage_new(CTinyUSDStage *stage) {
+  if (!stage) {
+    return 0;
+  }
+
+  auto *buf = new tinyusdz::Stage();
+  stage->data = reinterpret_cast<void *>(buf);
+
+  return 1;
+}
+
+int c_tinyusd_stage_free(CTinyUSDStage *stage) {
+  if (!stage) {
+    return 0;
+  }
+
+  tinyusdz::Stage *ptr = reinterpret_cast<tinyusdz::Stage *>(stage->data);
+  delete ptr;
+
+  return 1;
+}
+
+int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage, CTinyUSDTraversalFunction callback_fun, c_tinyusd_string *_err) {
+  if (!_stage) {
+    if (_err) {
+      c_tinyusd_string_replace(_err, "`stage` argument is null.\n");
+    }
+    return 0;
+  }
+
+  if (!_stage->data) {
+    if (_err) {
+      c_tinyusd_string_replace(_err, "`stage.data` is null.\n");
+    }
+    return 0;
+  }
+
+  const tinyusdz::Stage *pstage = reinterpret_cast<const tinyusdz::Stage *>(_stage);
+
+  std::string err;
+  if (!tinyusdz::tydra::VisitPrims(*pstage, CVisitPrimFunction, reinterpret_cast<void *>(callback_fun), &err)) {
+    if (_err) {
+      c_tinyusd_string_replace(_err, err.c_str());
+    }
+  }
 
   return 1;
 }
