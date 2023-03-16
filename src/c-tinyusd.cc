@@ -558,6 +558,29 @@ int c_tinyusd_stage_new(CTinyUSDStage *stage) {
   return 1;
 }
 
+int c_tinyusd_stage_to_string(const CTinyUSDStage *stage, c_tinyusd_string *str) {
+  if (!stage) {
+    return 0;
+  }
+
+  if (!stage->data) {
+    return 0;
+  }
+
+  if (!str) {
+    return 0;
+  }
+
+  if (!str->data) {
+    return 0;
+  }
+
+  const auto *p = reinterpret_cast<const tinyusdz::Stage *>(stage->data);
+  std::string s = p->ExportToString();
+
+  return c_tinyusd_string_replace(str, s.c_str());
+}
+
 int c_tinyusd_stage_free(CTinyUSDStage *stage) {
   if (!stage) {
     return 0;
