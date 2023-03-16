@@ -6,6 +6,7 @@
 
 #include "unit-prim-types.h"
 #include "unit-primvar.h"
+#include "unit-pathutil.h"
 #include "unit-value-types.h"
 #include "unit-xform.h"
 #include "unit-customdata.h"
@@ -28,6 +29,7 @@ TEST_LIST = {
   { "math_cos_pi_test", math_cos_pi_test },
   { "math_sin_pi_test", math_sin_pi_test },
   { "math_sin_cos_pi_test", math_sin_cos_pi_test },
+  { "pathutil_test", pathutil_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
