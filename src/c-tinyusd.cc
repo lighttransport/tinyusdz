@@ -286,6 +286,21 @@ const char *c_tinyusd_token_str(c_tinyusd_token *tok) {
   return nullptr;
 }
 
+size_t c_tinyusd_token_size(c_tinyusd_token *tok) {
+
+  if (!tok) {
+    return 0;
+  }
+
+  if (!tok->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<tinyusdz::value::token *>(tok->data);
+
+  return p->str().size();
+}
+
 int c_tinyusd_string_new_empty(c_tinyusd_string *s) {
   if (!s) {
     return 0;
@@ -311,6 +326,21 @@ int c_tinyusd_string_new(c_tinyusd_string *s, const char *str) {
   }
 
   return 1; // ok
+}
+
+size_t c_tinyusd_string_size(c_tinyusd_string *s) {
+
+  if (!s) {
+    return 0;
+  }
+
+  if (!s->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<std::string *>(s->data);
+
+  return p->size();
 }
 
 int c_tinyusd_string_replace(c_tinyusd_string *s, const char *str) {
