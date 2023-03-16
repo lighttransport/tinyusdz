@@ -277,9 +277,27 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     std::vector<char> local_header(30);
     memcpy(local_header.data(), addr + offset, 30);
 
-    // if we've reached the global header, stop reading
-    if (local_header[2] != 0x03 || local_header[3] != 0x04) break;
+    // Check signagure(first 4 bytes)
+    // Must be \x50\x4b\x03\x04
+    if ((local_header[0] == 0x50) && (local_header[1] == 0x4b) &&
+        (local_header[2] == 0x03) && (local_header[3] == 0x04)) {
+      // ok
 
+      // TODO: Check other header info(version, flags, crc32)
+    } else {
+      if (offset == 0) {
+        // Invalid header found.
+        if (err) {
+          (*err) += "PKZIP header not found.\n";
+        }
+        return false;
+      } else {
+        // not a local(global?) header
+        // Maybe near to the end of file.
+        break;
+      }
+    }
+    
     offset += 30;
 
     // read in the variable name
@@ -732,11 +750,15 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
     DCOUT("Detected as USDA.");
     return LoadUSDAFromMemory(addr, length, base_dir, stage, warn, err,
                               options);
-  } else {
+  } else if (IsUSDZ(addr, length)) {
     DCOUT("Detected as USDZ.");
-    // Guess USDZ
     return LoadUSDZFromMemory(addr, length, base_dir, stage, warn, err,
                               options);
+  } else {
+    if (err) {
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+    }
+    return false;
   }
 }
 
