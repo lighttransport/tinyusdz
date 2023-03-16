@@ -7,6 +7,7 @@ set(TEST_SOURCES
 	unit-handle-allocator.cc
 	unit-prim-types.cc
 	unit-primvar.cc
+  unit-pathutil.cc
 	unit-value-types.cc
 	unit-xform.cc
 	unit-math.cc
