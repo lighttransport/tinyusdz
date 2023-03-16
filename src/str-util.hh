@@ -58,6 +58,10 @@ inline bool contains(const std::string &str, char c) {
   return str.find(c) != std::string::npos;
 }
 
+inline bool contains_str(const std::string &str, const std::string &substr) {
+  return str.find(substr) != std::string::npos;
+}
+
 inline size_t counts(const std::string &str, char c) {
   size_t cnt = 0;
   for (size_t i = 0; i < str.size(); i++) {

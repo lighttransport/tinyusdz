@@ -67,6 +67,14 @@ executable('fuzz_tinyusdz',
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
+executable('fuzz_pathutil',
+  'pathutil_fuzzmain.cc',
+  tinyusdz_sources, 
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
 executable('fuzz_intcoding_decompress',
   '../../src/lz4/lz4.c',
   'intCoding_decompress_fuzzmain.cc',
