@@ -121,6 +121,9 @@ typedef struct {
 // returns 0 when failed to allocate memory.
 int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str);
 
+// Length of token string. equivalent to std::string::size.
+size_t c_tinyusd_token_size(c_tinyusd_token *tok);
+
 // Get C char from a token.
 // Returned char pointer is valid until `c_tinyusd_token` instance is free'ed.
 const char *c_tinyusd_token_str(c_tinyusd_token *tok);
@@ -141,6 +144,9 @@ int c_tinyusd_string_new_empty(c_tinyusd_string *s);
 // Pass NULL is identical to `c_tinyusd_string_new_empty`.
 // Return 0 when failed to new
 int c_tinyusd_string_new(c_tinyusd_string *s, const char *str);
+
+// Length of string. equivalent to std::string::size.
+size_t c_tinyusd_string_size(c_tinyusd_string *s);
 
 // Replace existing string with given `str`.
 // `c_tinyusd_string` object must be created beforehand.
