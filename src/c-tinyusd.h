@@ -253,6 +253,7 @@ typedef struct {
 } CTinyUSDStage;
 
 int c_tinyusd_stage_new(CTinyUSDStage *stage);
+int c_tinyusd_stage_to_string(const CTinyUSDStage *stage, c_tinyusd_string *str);
 int c_tinyusd_stage_free(CTinyUSDStage *stage);
 
 // Callback function for Stage's root Prim traversal.
