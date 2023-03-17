@@ -298,7 +298,7 @@ struct GPrim : Xformable {
   bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
   // Prim metadataum.
-  PrimMeta meta;
+  PrimMeta meta; // TODO: Move to private
 
   // For GeomPrimvar.
 
@@ -359,6 +359,14 @@ struct GPrim : Xformable {
 
   std::map<std::string, VariantSet> &variantSetList() {
     return _variantSetMap;
+  }
+
+  const PrimMeta &metas() const {
+    return meta;
+  }
+
+  PrimMeta &metas() {
+    return meta;
   }
 
  private:

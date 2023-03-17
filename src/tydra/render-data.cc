@@ -832,7 +832,7 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 template <typename T>
 nonstd::expected<bool, std::string> GetConnectedUVTexture(
     const Stage &stage, const TypedAnimatableAttributeWithFallback<T> &src,
-    Path *tex_abs_path, const UsdUVTexture **dst) {
+    Path *tex_abs_path, const UsdUVTexture **dst, const Shader **shader_out) {
   if (!dst) {
     return nonstd::make_unexpected("[InternalError] dst is nullptr.\n");
   }
@@ -878,6 +878,11 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     if (const UsdUVTexture *ptex = pshader->value.as<UsdUVTexture>()) {
       DCOUT("ptex = " << ptex);
       (*dst) = ptex;
+
+      if (shader_out) {
+        (*shader_out) = pshader;
+      }
+
       return true;
     }
   }
@@ -898,6 +903,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 // - UsdUVTexture -> UsdPrimvarReader
 // - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
 bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
+                                            const AssetInfo &assetInfo,
                                             const UsdUVTexture &texture,
                                             UVTexture *tex_out) {
   DCOUT("ConvertUVTexture " << tex_abs_path);
@@ -908,8 +914,6 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   std::string err;
 
   UVTexture tex;
-
-  AssetInfo assetInfo = texture.meta.get_assetInfo();
 
   // First load texture file.
   if (!texture.file.authored()) {
@@ -1325,8 +1329,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     DCOUT(fmt::format("{] is attribute connection.", param_name));
 
     const UsdUVTexture *ptex{nullptr};
+    const Shader *pshader{nullptr};
     Path texPath;
-    auto result = GetConnectedUVTexture(*_stage, param, &texPath, &ptex);
+    auto result = GetConnectedUVTexture(*_stage, param, &texPath, &ptex, &pshader);
 
     if (!result) {
       PUSH_ERROR_AND_RETURN(result.error());
@@ -1337,10 +1342,15 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     }
     DCOUT("ptex = " << ptex->name);
 
+    if (!pshader) {
+      PUSH_ERROR_AND_RETURN("[InternalError] pshader is nullptr.");
+    }
+
     DCOUT("Get connected UsdUVTexture Prim: " << texPath);
 
     UVTexture rtex;
-    if (!ConvertUVTexture(texPath, *ptex, &rtex)) {
+    const AssetInfo &assetInfo = pshader->metas().get_assetInfo();
+    if (!ConvertUVTexture(texPath, assetInfo, *ptex, &rtex)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to convert UVTexture connected to {}", param_name));
     }

@@ -2937,6 +2937,34 @@ bool ReconstructPrim<GeomCamera>(
 }
 
 template <>
+bool ReconstructShader<ShaderNode>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    ShaderNode *node,
+    std::string *warn,
+    std::string *err)
+{
+  if (!node) {
+    return false;
+  }
+
+  // TODO: references
+  (void)references;
+
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  // Add everything to props.
+  for (auto &prop : properties) {
+    ADD_PROPERTY(table, prop, ShaderNode, node->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  DCOUT("ShaderNode reconstructed.");
+  return true;
+}
+
+template <>
 bool ReconstructShader<UsdPreviewSurface>(
     const PropertyMap &properties,
     const ReferenceList &references,
@@ -3328,9 +3356,15 @@ bool ReconstructPrim<Shader>(
     shader->info_id = kUsdTransform2d;
     shader->value = transform;
   } else {
-    // TODO: string, point, vector, matrix
-    PUSH_ERROR_AND_RETURN(
-        "Invalid or Unsupported Shader type. info:id = \"" + shader_type);
+    // Reconstruct as generic ShaderNode
+    ShaderNode surface;
+    if (!ReconstructShader<ShaderNode>(properties, references,
+                                              &surface, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << shader_type);
+    }
+    shader->info_id = shader_type;
+    shader->value = surface;
+    DCOUT("info_id = " << shader->info_id);
   }
 
   DCOUT("Shader reconstructed.");

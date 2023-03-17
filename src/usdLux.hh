@@ -46,7 +46,10 @@ class Light : public Xformable {
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
-  PrimMeta meta;
+  PrimMeta meta; // TODO: move to private
+
+  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() { return meta; }
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }

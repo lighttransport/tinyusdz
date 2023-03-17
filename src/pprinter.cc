@@ -2685,6 +2685,14 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   return ss.str();
 }
 
+static std::string print_common_shader_params(const ShaderNode &shader, const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << print_props(shader.props, indent);
+
+  return ss.str();
+}
+
 static std::string print_shader_params(const UsdPrimvarReader_float &shader, const uint32_t indent) {
   std::stringstream ss;
 
@@ -2692,7 +2700,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float &shader, con
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
-  ss << print_props(shader.props, indent);
+  ss << print_common_shader_params(shader, indent);
 
   return ss.str();
 
@@ -2705,7 +2713,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
-  ss << print_props(shader.props, indent);
+  ss << print_common_shader_params(shader, indent);
 
   return ss.str();
 }
@@ -2717,7 +2725,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, co
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
-  ss << print_props(shader.props, indent);
+  ss << print_common_shader_params(shader, indent);
 
   return ss.str();
 }
@@ -2729,7 +2737,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, co
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
-  ss << print_props(shader.props, indent);
+  ss << print_common_shader_params(shader, indent);
 
   return ss.str();
 }
@@ -2743,7 +2751,7 @@ static std::string print_shader_params(const UsdTransform2d &shader, const uint3
   ss << print_typed_attr(shader.translation, "inputs:translation", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
-  ss << print_props(shader.props, indent);
+  ss << print_common_shader_params(shader, indent);
 
   return ss.str();
 }
@@ -2769,7 +2777,7 @@ static std::string print_shader_params(const UsdPreviewSurface &shader, const ui
   ss << print_typed_terminal_attr(shader.outputsSurface, "outputs:surface", indent);
   ss << print_typed_terminal_attr(shader.outputsDisplacement, "outputs:displacement", indent);
 
-  ss << print_props(shader.props, indent);
+  ss << print_common_shader_params(shader, indent);
 
   return ss.str();
 
@@ -2798,7 +2806,7 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   ss << print_typed_terminal_attr(shader.outputsA, "outputs:a", indent);
   ss << print_typed_terminal_attr(shader.outputsRGB, "outputs:rgb", indent);
 
-  ss << print_props(shader.props, indent);
+  ss << print_common_shader_params(shader, indent);
 
   return ss.str();
 }
@@ -2811,7 +2819,7 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << to_string(shader.spec) << " Shader \"" << shader.name << "\"\n";
   if (shader.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(shader.meta, indent+1);
+    ss << print_prim_metas(shader.metas(), indent+1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
@@ -2833,8 +2841,10 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
     ss << print_shader_params(pvtx2d.value(), indent+1);
   } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
     ss << print_shader_params(pvs.value(), indent+1);
+  } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
+    ss << print_common_shader_params(pvsn.value(), indent+1);
   } else {
-    ss << pprint::Indent(indent+1) << "[TODO] Generic Shader\n";
+    ss << pprint::Indent(indent+1) << "[???] Invalid ShaderNode in Shader Prim\n";
   }
 
 

@@ -419,6 +419,7 @@ enum TypeId {
   // Types for usdImaging
   // See <pxrUSD>/pxr/usdImaging/usdImaging/tokens.h
   TYPE_ID_IMAGING_BEGIN = (1 << 11) + (1 << 10),
+  TYPE_ID_IMAGING_SHADER_NODE,
   TYPE_ID_IMAGING_PREVIEWSURFACE,
   TYPE_ID_IMAGING_UVTEXTURE,
   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT,
