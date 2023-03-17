@@ -701,7 +701,7 @@ class RenderSceneConverter {
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
 
-  bool ConvertUVTexture(const Path &tex_abs_path, const UsdUVTexture &texture,
+  bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo, const UsdUVTexture &texture,
                         UVTexture *tex_out);
 
   const Stage *GetStagePtr() const { return _stage; }

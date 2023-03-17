@@ -495,7 +495,7 @@ Path Path::append_element(const std::string &elem) {
     if (tokenize_variantElement(elem, &variant)) {
       _variant_part = variant[0];
       _variant_selection_part = variant[0];
-      _prim_part += elem; 
+      _prim_part += elem;
       _element = elem;
       return p;
     } else {
@@ -679,13 +679,13 @@ const PrimMeta *GetPrimMeta(const value::Value &v) {
   GET_PRIM_META(RectLight)
   GET_PRIM_META(Material)
   GET_PRIM_META(Shader)
-  GET_PRIM_META(UsdPreviewSurface)
-  GET_PRIM_META(UsdUVTexture)
-  GET_PRIM_META(UsdPrimvarReader_int)
-  GET_PRIM_META(UsdPrimvarReader_float)
-  GET_PRIM_META(UsdPrimvarReader_float2)
-  GET_PRIM_META(UsdPrimvarReader_float3)
-  GET_PRIM_META(UsdPrimvarReader_float4)
+  //GET_PRIM_META(UsdPreviewSurface)
+  //GET_PRIM_META(UsdUVTexture)
+  //GET_PRIM_META(UsdPrimvarReader_int)
+  //GET_PRIM_META(UsdPrimvarReader_float)
+  //GET_PRIM_META(UsdPrimvarReader_float2)
+  //GET_PRIM_META(UsdPrimvarReader_float3)
+  //GET_PRIM_META(UsdPrimvarReader_float4)
   GET_PRIM_META(SkelRoot)
   GET_PRIM_META(Skeleton)
   GET_PRIM_META(SkelAnimation)
@@ -725,13 +725,13 @@ PrimMeta *GetPrimMeta(value::Value &v) {
   GET_PRIM_META(RectLight)
   GET_PRIM_META(Material)
   GET_PRIM_META(Shader)
-  GET_PRIM_META(UsdPreviewSurface)
-  GET_PRIM_META(UsdUVTexture)
-  GET_PRIM_META(UsdPrimvarReader_int)
-  GET_PRIM_META(UsdPrimvarReader_float)
-  GET_PRIM_META(UsdPrimvarReader_float2)
-  GET_PRIM_META(UsdPrimvarReader_float3)
-  GET_PRIM_META(UsdPrimvarReader_float4)
+  //GET_PRIM_META(UsdPreviewSurface)
+  //GET_PRIM_META(UsdUVTexture)
+  //GET_PRIM_META(UsdPrimvarReader_int)
+  //GET_PRIM_META(UsdPrimvarReader_float)
+  //GET_PRIM_META(UsdPrimvarReader_float2)
+  //GET_PRIM_META(UsdPrimvarReader_float3)
+  //GET_PRIM_META(UsdPrimvarReader_float4)
   GET_PRIM_META(SkelRoot)
   GET_PRIM_META(Skeleton)
   GET_PRIM_META(SkelAnimation)
