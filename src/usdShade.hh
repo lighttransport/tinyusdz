@@ -42,7 +42,10 @@ struct Material {
 
   int64_t parent_id{-1};
 
-  PrimMeta meta;
+  PrimMeta meta; // TODO: move to private
+  
+  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() { return meta; }
 
   ///
   /// NOTE: Mateiral's outputs must be a connection.
@@ -89,6 +92,9 @@ struct NodeGraph {
 
   PrimMeta meta;
 
+  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() { return meta; }
+
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
@@ -99,11 +105,23 @@ struct NodeGraph {
   std::vector<value::token> _properties;
 };
 
-template <typename T>
-struct UsdPrimvarReader {
+//
+// Base class of ShaderNode. Maybe similar to SdrShaderNode in pxrUSD
+//
+struct ShaderNode {
+
   std::string name;
 
-  PrimMeta meta;
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
+  // Custom properties
+  std::map<std::string, Property> props;
+
+};
+
+template <typename T>
+struct UsdPrimvarReader : ShaderNode {
 
   TypedAttribute<Animatable<T>> fallback;  // "inputs:fallback"
 
@@ -115,11 +133,6 @@ struct UsdPrimvarReader {
   ///
   TypedTerminalAttribute<T> result; // Terminal attr. "T outputs:result"
 
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-  std::map<std::string, VariantSet> variantSet;
-  // Custom properties
-  std::map<std::string, Property> props;
 };
 
 using UsdPrimvarReader_float = UsdPrimvarReader<float>;
@@ -134,7 +147,7 @@ using UsdPrimvarReaderType =
                       UsdPrimvarReader_int>;
 
 
-struct UsdUVTexture {
+struct UsdUVTexture : ShaderNode {
 
   enum class Wrap {
     UseMetadata, // "useMetadata" (default)
@@ -149,8 +162,6 @@ struct UsdUVTexture {
     Raw, // "raw"
     SRGB, // "sRGB
   };
-
-  std::string name;
 
   TypedAttribute<Animatable<value::AssetPath>> file; // "asset inputs:file" interfaceOnly
 
@@ -177,14 +188,6 @@ struct UsdUVTexture {
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
   TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
 
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-  std::map<std::string, VariantSet> variantSet;
-  // Custom properties
-  std::map<std::string, Property> props;
-
-  PrimMeta meta;
-
   // TODO: orientation?
   // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
 };
@@ -194,9 +197,7 @@ struct UsdUVTexture {
 // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html
 // $USD/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
 
-struct UsdPreviewSurface {
-
-  std::string name;
+struct UsdPreviewSurface : ShaderNode {
 
   TypedAttributeWithFallback<Animatable<value::color3f>> diffuseColor{value::color3f{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
   TypedAttributeWithFallback<Animatable<value::color3f>> emissiveColor{value::color3f{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
@@ -230,19 +231,10 @@ struct UsdPreviewSurface {
   TypedTerminalAttribute<value::token> outputsSurface; // "token outputs:surface"
   TypedTerminalAttribute<value::token> outputsDisplacement; // "token outputs:displacement"
 
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-  std::map<std::string, VariantSet> variantSet;
-  // Custom properties
-  std::map<std::string, Property> props;
-
-  PrimMeta meta;
 };
 
 // Transform texture coordinates.
-struct UsdTransform2d {
-
-  std::string name;
+struct UsdTransform2d : ShaderNode {
 
   TypedAttributeWithFallback<Animatable<value::float2>> in{value::float2{0.0f, 0.0f}};  // "inputs:in" Usually connected to UsdPrimvarReader_float2
 
@@ -261,22 +253,17 @@ struct UsdTransform2d {
   ///
   TypedTerminalAttribute<value::float2> result; // "float2 outputs:result"
 
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-  std::map<std::string, VariantSet> variantSet;
-  // Custom properties
-  std::map<std::string, Property> props;
-
-  PrimMeta meta;
 };
 
+// Shader Prim
 struct Shader {
   std::string name;
   Specifier spec{Specifier::Def};
 
-  std::string info_id;  // Shader type.
+  std::string info_id;  // ShaderNode type.
 
-  // UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader_float2, ...
+  // ShaderNode, UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader_float2, ...
+  // TODO: Use ShaderNode *?
   value::Value value;
 #if 0
   // Currently we only support PreviewSurface, UVTexture and
@@ -286,7 +273,15 @@ struct Shader {
       value;
 #endif
 
-  PrimMeta meta;
+  PrimMeta meta; // TODO: use ShaderNode::meta
+
+  const PrimMeta &metas() const {
+    return meta;
+  }
+
+  PrimMeta &metas() {
+    return meta;
+  }
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
@@ -304,18 +299,20 @@ struct Shader {
 
 namespace value {
 
-// Mateiral
+// Mateiral Prim
 DEFINE_TYPE_TRAIT(Material, "Material",
                   TYPE_ID_MATERIAL, 1);
 
-// Shader
+// Shader Prim
 DEFINE_TYPE_TRAIT(Shader, "Shader",
                   TYPE_ID_SHADER, 1);
 
+// ShaderNodes
+DEFINE_TYPE_TRAIT(ShaderNode, "ShaderNode",
+                  TYPE_ID_IMAGING_SHADER_NODE, 1);
 DEFINE_TYPE_TRAIT(UsdPreviewSurface, "UsdPreviewSurface",
                   TYPE_ID_IMAGING_PREVIEWSURFACE, 1);
 DEFINE_TYPE_TRAIT(UsdUVTexture, "UsdUVTexture", TYPE_ID_IMAGING_UVTEXTURE, 1);
-
 DEFINE_TYPE_TRAIT(UsdPrimvarReader_float, "UsdPrimvarReader_float",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT, 1);
 DEFINE_TYPE_TRAIT(UsdPrimvarReader_float2, "UsdPrimvarReader_float2",
