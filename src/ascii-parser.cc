@@ -3707,9 +3707,9 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     }
 
   } else if (hasConnect(primattr_name)) {
-    std::string value;  // TODO: Path
+    std::string value;  // TODO: Use Path
     if (!ReadPathIdentifier(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse path identifier for `token`.");
+      PUSH_ERROR_AND_RETURN("Failed to parse path identifier.");
     }
 
     var.set_value(value);
@@ -4514,7 +4514,7 @@ bool AsciiParser::ParseProperties(std::map<std::string, Property> *props, std::v
   return ParsePrimProps(props, propNames);
 }
 
-std::string AsciiParser::GetCurrentPath() {
+std::string AsciiParser::GetCurrentPrimPath() {
   if (_path_stack.empty()) {
     return "/";
   }
@@ -4867,13 +4867,13 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   VariantSetList variantSetList;
 
   {
-    std::string full_path = GetCurrentPath();
+    std::string full_path = GetCurrentPrimPath();
     if (full_path == "/") {
       full_path += prim_name;
     } else {
       full_path += "/" + prim_name;
     }
-    PushPath(full_path);
+    PushPrimPath(full_path);
   }
 
   // expect = '}'
@@ -5006,7 +5006,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     if (_prim_construct_fun_map.count(pTy)) {
       auto construct_fun = _prim_construct_fun_map[pTy];
 
-      Path fullpath(GetCurrentPath(), "");
+      Path fullpath(GetCurrentPrimPath(), "");
       Path pname(prim_name, "");
       nonstd::expected<bool, std::string> ret = construct_fun(
           fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas, variantSetList);
@@ -5025,7 +5025,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   } else {
     // Load scene as PrimSpec tree
     if (_primspec_fun) {
-      Path fullpath(GetCurrentPath(), "");
+      Path fullpath(GetCurrentPrimPath(), "");
       Path pname(prim_name, "");
 
       // pass prim_type as is(empty = empty string)
@@ -5041,7 +5041,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     }
   }
 
-  PopPath();
+  PopPrimPath();
 
   return true;
 }
@@ -5091,7 +5091,7 @@ bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option)
     }
   }
 
-  PushPath("/");
+  PushPrimPath("/");
 
   // parse blocks
   while (!Eof()) {

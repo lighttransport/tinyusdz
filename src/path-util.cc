@@ -32,6 +32,43 @@ std::string RemoveRelativePrefix(const std::string &in_str, size_t &num) {
 
 } // namespace
 
+Path FromString(const std::string &_path_str) {
+
+  std::string path_str = _path_str;
+
+  if (path_str.empty()) {
+    return Path();
+  }
+
+  if (path_str == ".") {
+    // invalid
+    return Path();
+  }
+
+  size_t loc = path_str.find_last_of(".");
+  if (loc != std::string::npos) {
+    if (loc == (path_str.size() - 1)) {
+      // ends with "."
+      return Path();
+    } else if ((path_str.size() > 1) && (loc < (path_str.size() - 1))) {
+      if (path_str[loc+1] == '/') {
+        // guess relative prim path only.
+        return Path(path_str, "");
+      }
+    }
+  }
+
+  if (loc == std::string::npos) {
+    // prim_part only
+    return Path(path_str, "");
+  }
+
+  std::string prim_part = path_str.substr(0, loc-1);
+  std::string prop_part = path_str.substr(loc+1);
+
+  return Path(prim_part, prop_part);
+}
+
 bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, Path *abs_path) {
 
   if (!abs_path) {

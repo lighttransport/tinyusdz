@@ -14,6 +14,15 @@ namespace pathutil {
 bool ValidatePath(const Path &path, std::string *err);
 
 ///
+///
+/// Construct Path from a string.
+/// It splits string into prim_part and prop_part(e.g. "/bora.dora" => "/dora", "bora") if required and constrcut Path object.
+///
+/// Use Path::valid() to check if input `path_str` is a valid path string.
+///
+Path FromString(const std::string &path_str);
+
+///
 /// Concatinate two Paths.
 ///
 Path ConcatPath(const Path &parent, const Path &child);

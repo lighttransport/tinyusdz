@@ -759,10 +759,13 @@ class AsciiParser {
   nonstd::optional<VariableDef> GetPrimMetaDefinition(const std::string &arg);
   nonstd::optional<VariableDef> GetPropMetaDefinition(const std::string &arg);
 
-  std::string GetCurrentPath();
-  bool PathStackDepth() { return _path_stack.size(); }
-  void PushPath(const std::string &p) { _path_stack.push(p); }
-  void PopPath() {
+  std::string GetCurrentPrimPath();
+  bool PrimPathStackDepth() { return _path_stack.size(); }
+  void PushPrimPath(const std::string &abs_path) {
+    // TODO: validate `abs_path` is really absolute full path.
+    _path_stack.push(abs_path);
+  }
+  void PopPrimPath() {
     if (!_path_stack.empty()) {
       _path_stack.pop();
     }
