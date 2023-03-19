@@ -16,7 +16,11 @@ void pathutil_test(void) {
     Path basepath("/", "");
     Path relpath("../bora", "");
     Path abspath("", "");
-    bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    std::string err;
+    bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath, &err);
+    if (err.size()) {
+      std::cout << err;
+    }
     std::cout << "abs_path = " << abspath.full_path_name() << "\n";
     TEST_CHECK(ret == true);
     TEST_CHECK(abspath.prim_part() == "/bora");
@@ -26,7 +30,11 @@ void pathutil_test(void) {
     Path basepath("/root", "");
     Path relpath("../bora", "");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     std::cout << "abs_path = " << abspath.full_path_name() << "\n";
     TEST_CHECK(ret == true);
     TEST_CHECK(abspath.prim_part() == "/bora");
@@ -36,7 +44,11 @@ void pathutil_test(void) {
     Path basepath("/root/muda", "");
     Path relpath("../bora", "");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     std::cout << "abs_path = " << abspath.full_path_name() << "\n";
     TEST_CHECK(ret == true);
     TEST_CHECK(abspath.prim_part() == "/root/bora");
@@ -46,28 +58,39 @@ void pathutil_test(void) {
     Path basepath("/root", "");
     Path relpath("../../boraa", "");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     std::cout << "abs_path = " << abspath.full_path_name() << "\n";
     TEST_CHECK(ret == true);
     TEST_CHECK(abspath.prim_part() == "/boraa");
   }
 
   {
-    // unixish behavior
+    // Too deep
     Path basepath("/root", "");
     Path relpath("../../../boraaa", "");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     std::cout << "abs_path = " << abspath.full_path_name() << "\n";
-    TEST_CHECK(ret == true);
-    TEST_CHECK(abspath.prim_part() == "/boraaa");
+    TEST_CHECK(ret == false);
   }
 
   {
     Path basepath("/root", "");
     Path relpath("../bora1", "myprop");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     std::cout << "abs_path = " << abspath.full_path_name() << "\n";
     TEST_CHECK(ret == true);
     TEST_CHECK(abspath.full_path_name() == "/bora1.myprop");
@@ -77,26 +100,51 @@ void pathutil_test(void) {
     Path basepath("/root", "");
     Path relpath("../bora2.myprop", "");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
+    TEST_CHECK(ret == false);
+  }
+
+  {
+    // `./` is invalid
+    Path basepath("/root", "");
+    Path relpath("./bora3", "");
+    Path abspath("", "");
+    std::string err;
+    bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     TEST_CHECK(ret == false);
   }
 
   {
     Path basepath("/root", "");
-    Path relpath("./bora3", "");
+    Path relpath("bora3", "");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     TEST_CHECK(ret == true);
-    TEST_CHECK(abspath.prim_part() == "/root/bora3");
+    TEST_CHECK(abspath.full_path_name() == "/root/bora3");
   }
 
 
   {
-    // .. in the middle of relative path is not support yet
+    // .. in the middle of relative path is invalid
     Path basepath("/root", "");
     Path relpath("../bora4/../dora", "");
     Path abspath("", "");
+    std::string err;
     bool ret = pathutil::ResolveRelativePath(basepath, relpath, &abspath);
+    if (err.size()) {
+      std::cout << err;
+    }
     TEST_CHECK(ret == false);
   }
 

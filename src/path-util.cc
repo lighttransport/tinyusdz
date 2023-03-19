@@ -69,7 +69,7 @@ Path FromString(const std::string &_path_str) {
   return Path(prim_part, prop_part);
 }
 
-bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, Path *abs_path) {
+bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, Path *abs_path, std::string *err) {
 
   if (!abs_path) {
     return false;
@@ -78,25 +78,36 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, 
   std::string relative_str = relative_path.prim_part();
   std::string base_str = base_prim_path.prim_part();
 
+  // base_prim_path must be absolute.
   if (startsWith(base_str, "/")) {
     // ok
   } else {
+    if (err) {
+      (*err) += "Base Prim path is not absolute path.\n";
+    }
     return false;
   }
 
   std::string abs_dir;
 
   if (startsWith(relative_str, "./")) {
-
+    // pxrUSD doesn't allow "./", so do same in tinyusdz.
+#if 1
+    if (err) {
+      (*err) += "Path starting with `./` is not allowed.\n";
+    }
+    return false;
+#else
     std::string remainder = removePrefix(relative_str, "./");
 
     // "./../", "././", etc is not allowed at the moment.
     if (contains_str(remainder, ".")) {
       return false;
-    } 
+    }
 
     abs_dir = base_str + "/" + remainder;
-    
+#endif
+
   } else if (startsWith(relative_str, "../")) {
     // ok
     size_t ndepth{0};
@@ -105,8 +116,11 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, 
 
     // "../" in subsequent position(e.g. `../bora/../dora`) is not allowed at the moment.
     if (contains_str(remainder, ".")) {
+      if (err) {
+        (*err) += "`../` in the middle of Path is not allowed.\n";
+      }
       return false;
-    } 
+    }
 
     std::vector<std::string> base_dirs = split(base_str, "/");
     DCOUT("base_dirs.len = " << base_dirs.size());
@@ -119,6 +133,17 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, 
     } else {
       int64_t n = int64_t(base_dirs.size()) - int64_t(ndepth);
 
+#if 1
+      // pxrUSD behavior
+      if (n < -1) {
+        if (err) {
+          (*err) += "The number of `../` exceeds Prim path depth.\n";
+        }
+        return false;
+      }
+#else
+      // Unixish path behavior
+#endif
       if (n <= 0) {
         abs_dir += "/" + remainder;
       } else {
@@ -126,16 +151,25 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, 
           abs_dir += "/" + base_dirs[i];
         }
         abs_dir += "/" + remainder;
-    
       }
     }
-  } else {
+  } else if (startsWith(relative_str, ".")) {
+    // Property path?
+    if (err) {
+      (*err) += "A path starting with `.` is not allowed for Prim path.\n";
+    }
     return false;
+  } else if (startsWith(relative_str, "/")) {
+    // Input path is already absolute.
+    abs_dir = relative_str;
+  } else {
+    // Guess relative path(e.g. "muda", "bora/dora")
+    // TODO: Check Path contains valid characters.
+    abs_dir = base_str + "/" + relative_str;
   }
-  
+
   (*abs_path) = Path(abs_dir, relative_path.prop_part());
 
-  // TODO
   return true;
 }
 

@@ -277,6 +277,22 @@ bool AsciiParser::ReadBasicType(Path *value) {
   }
 }
 
+bool AsciiParser::ReadBasicType(nonstd::optional<Path> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  Path v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(value::matrix2d *value) {
   if (value) {
     return ParseMatrix(value);
