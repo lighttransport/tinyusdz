@@ -32,6 +32,7 @@
 
 #include "ascii-parser.hh"
 #include "str-util.hh"
+#include "path-util.hh"
 #include "tiny-format.hh"
 
 //
@@ -3655,21 +3656,50 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
     if (!ReadBasicType(&value)) {
       PUSH_ERROR_AND_RETURN("Failed to parse Path.");
     }
-    result->set(value);
+
+    // Resolve relative path here.
+    // NOTE: Internally, USD(Crate) does not allow relative path.
+    Path base_prim_path(GetCurrentPrimPath(), "");
+    Path abs_path;
+    if (!pathutil::ResolveRelativePath(base_prim_path, value, &abs_path)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", value));
+    }
+
+    result->set(abs_path);
   } else if (c == '[') {
     // PathVector
-    std::vector<Path> value;
-    if (!ParseBasicTypeArray(&value)) {
+    std::vector<Path> values;
+    if (!ParseBasicTypeArray(&values)) {
       PUSH_ERROR_AND_RETURN("Failed to parse PathVector.");
     }
-    result->set(value);
+
+    // Resolve relative path here.
+    // NOTE: Internally, USD(Crate) does not allow relative path.
+    for (size_t i = 0; i < values.size(); i++) {
+      Path base_prim_path(GetCurrentPrimPath(), "");
+      Path abs_path;
+      if (!pathutil::ResolveRelativePath(base_prim_path, values[i], &abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", values[i].full_path_name()));
+      }
+
+      // replace
+      values[i] = abs_path;
+    }
+
+    result->set(values);
   } else if (c == 'N') {
     // None
-    Path value;
+    nonstd::optional<Path> value;
     if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse Path.");
+      PUSH_ERROR_AND_RETURN("Failed to parse None.");
     }
-    result->set(value);
+
+    // Should be empty.
+    if (value.has_value()) {
+      PUSH_ERROR_AND_RETURN("Failed to parse None.");
+    }
+
+    result->set_blocked();
   } else {
     PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
                           "\" found. Expects Path or PathVector.");
@@ -3712,7 +3742,22 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       PUSH_ERROR_AND_RETURN("Failed to parse path identifier.");
     }
 
-    var.set_value(value);
+    // validate.
+    Path connectionPath = pathutil::FromString(value);
+    if (!connectionPath.is_valid()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid connectionPath: {}.", value));
+    }
+
+    // Resolve relative path here.
+    // NOTE: Internally, USD(Crate) does not allow relative path.
+    Path base_prim_path(GetCurrentPrimPath(), "");
+    Path abs_path;
+    if (!pathutil::ResolveRelativePath(base_prim_path, connectionPath, &abs_path)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", value));
+    }
+
+    // TODO: Use Path
+    var.set_value(abs_path.full_path_name());
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
