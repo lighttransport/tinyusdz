@@ -968,7 +968,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
 
     ss << print_rel_prop(prop, prop_name, indent);
 
-  } else if (prop.is_attribute()) {
+  // Attribute or AttributeConnection
+  } else if (prop.is_attribute() || prop.is_connection()) {
     const Attribute &attr = prop.get_attribute();
 
     ss << pprint::Indent(indent);
@@ -992,10 +993,14 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     if (attr.is_connection()) {
 
       ss << ".connect = ";
-      if (prop.get_relationship().is_path()) {
-        ss << prop.get_relationship().targetPath;
-      } else if (prop.get_relationship().is_pathvector()) {
-        ss << prop.get_relationship().targetPathVector;
+
+      const std::vector<Path> &paths = attr.connections();
+      if (paths.size() == 1) {
+        ss << paths[0];
+      } else if (paths.size() == 0) {
+        ss << "[InternalError]";
+      } else {
+        ss << paths;
       }
     } else if (prop.is_empty()) {
       // Nothing to do

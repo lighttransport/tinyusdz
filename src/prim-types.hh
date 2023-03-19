@@ -2046,7 +2046,7 @@ class Property {
     Attrib,             // Attrib which contains actual data
     Relation,           // `rel` with targetPath(s).
     NoTargetsRelation,  // `rel` with no targets.
-    Connection,         // Connection attribute(`.connect` suffix)
+    Connection,         // Connection attribute(`.connect` suffix). TODO: Deprecate this and use Attrib.
   };
 
   Property() = default;
@@ -2108,7 +2108,18 @@ class Property {
   bool is_relationship() const {
     return (_type == Type::Relation) || (_type == Type::NoTargetsRelation);
   }
+  
+  // TODO: Deprecate this and use is_attribute_connection
   bool is_connection() const { return _type == Type::Connection; }
+
+  bool is_attribute_connection() const {
+    if (is_attribute()) {
+      return _attrib.is_connection();
+    }
+
+    return false;
+  }
+
 
   std::string value_type_name() const {
     if (is_connection()) {
