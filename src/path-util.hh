@@ -38,9 +38,13 @@ Path ConcatPath(const Path &parent, const Path &child);
 ///
 /// ../bora => /root/bora
 /// ../../bora => /bora
-/// ../../../bora => NG(return false)
+/// bora => /root/xform/bora
 ///
-/// TODO: `../` in the middle of relative path(e.g. `/root/../bora`
+/// NG
+///
+/// - ../../../bora => nest size mismatch
+/// - `../` in the middle of relative path(e.g. `/root/../bora`)
+/// - `./` (e.g. `./bora`)
 ///
 /// @return true upon success to resolve relative path.
 /// @return false when `base_prim_path` is a relative path or invalid,
@@ -48,7 +52,7 @@ Path ConcatPath(const Path &parent, const Path &child);
 /// path.
 ///
 bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path,
-                         Path *abs_path);
+                         Path *abs_path, std::string *err = nullptr);
 
 ///
 /// Currently ToUnixishPath converts backslash character to forward slash
