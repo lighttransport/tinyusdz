@@ -63,7 +63,7 @@ Path FromString(const std::string &_path_str) {
     return Path(path_str, "");
   }
 
-  std::string prim_part = path_str.substr(0, loc-1);
+  std::string prim_part = path_str.substr(0, loc);
   std::string prop_part = path_str.substr(loc+1);
 
   return Path(prim_part, prop_part);

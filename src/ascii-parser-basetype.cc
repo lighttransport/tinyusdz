@@ -31,6 +31,7 @@
 
 #include "ascii-parser.hh"
 #include "str-util.hh"
+#include "path-util.hh"
 #include "tiny-format.hh"
 
 //
@@ -269,7 +270,7 @@ bool AsciiParser::ReadBasicType(Path *value) {
       return false;
     }
 
-    (*value) = Path(str, "");
+    (*value) = pathutil::FromString(str);
 
     return true;
   } else {
