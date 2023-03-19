@@ -3642,7 +3642,7 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
 //
 
 ///
-/// Parse rel string
+/// Parse `rel`
 ///
 bool AsciiParser::ParseRelationship(Relationship *result) {
   char c;
@@ -3661,8 +3661,9 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
     // NOTE: Internally, USD(Crate) does not allow relative path.
     Path base_prim_path(GetCurrentPrimPath(), "");
     Path abs_path;
-    if (!pathutil::ResolveRelativePath(base_prim_path, value, &abs_path)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", value));
+    std::string err;
+    if (!pathutil::ResolveRelativePath(base_prim_path, value, &abs_path, &err)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}", value, err));
     }
 
     result->set(abs_path);
@@ -3970,7 +3971,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       return false;
     }
 
-    // TODO: Parse Meta.
     if (c == '(') {
 
       if (metap) {
@@ -4059,15 +4059,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     return false;
   }
 
-#if 0 // TODO: Remove
-  // output node?
-  if (type_name == "token" && hasOutputs(primattr_name) &&
-      !hasConnect(primattr_name)) {
-    // ok
-    return true;
-  }
-#endif
-
   bool isTimeSample = endsWith(primattr_name, kTimeSamplesSuffix);
   bool isConnection = endsWith(primattr_name, kConnectSuffix);
 
@@ -4150,7 +4141,15 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       }
     }
 
-    Property p(path, /* value typename */ type_name, custom_qual);
+    // Resolve relative path.
+    Path base_abs_path(GetCurrentPrimPath(), "");
+    Path abs_path;
+    std::string err;
+    if (!pathutil::ResolveRelativePath(base_abs_path, path, &abs_path, &err)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}", path.full_path_name(), err));
+    }
+
+    Property p(abs_path, /* value typename */ type_name, custom_qual);
     if (value_blocked) {
       p.attribute().set_blocked(true);
     }
