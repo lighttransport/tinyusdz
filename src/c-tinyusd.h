@@ -11,7 +11,7 @@
 #define C_TINYUSD_H
 
 #include <stdint.h>
-#include <uchar.h> // size_t
+#include <uchar.h>  // size_t
 
 #ifdef __cplusplus
 extern "C" {
@@ -108,6 +108,10 @@ typedef enum {
   C_TINYUSD_PRIM_GEOMSUBSET,
   C_TINYUSD_PRIM_MATERIAL,
   C_TINYUSD_PRIM_SHADER,
+  C_TINYUSD_PRIM_CAMERA,
+  C_TINYUSD_PRIM_SPHERE_LIGHT,
+  C_TINYUSD_PRIM_DISTANT_LIGHT,
+  C_TINYUSD_PRIM_RECT_LIGHT,
   // TODO: Add more prim types...
   C_TINYUSD_PRIM_END,
 } CTinyUSDPrimType;
@@ -161,7 +165,11 @@ int c_tinyusd_string_free(c_tinyusd_string *s);
 
 // Return the name of Prim type.
 // Return NULL for unsupported/unknown Prim type.
-const char *c_tinyusd_prim_name(CTinyUSDPrimType prim_type);
+const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type);
+
+// Return Builtin PrimType from a string.
+// Returns C_TINYUSD_PRIM_UNKNOWN for invalid or unknown/unsupported Prim type
+CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *prim_type);
 
 // Generic Buffer data with type info
 typedef struct {
@@ -211,7 +219,7 @@ void c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
                                    const CTinyUSDValueType type,
                                    const CTinyUSDBuffer *buffer);
 
-typedef struct  {
+typedef struct {
   // c_tinyusd_string prim_part;
   // c_tinyusd_string prop_part;
   void *data;  // opaque pointer to tinyusdz::Path
@@ -235,7 +243,7 @@ void c_tinyusd_relationsip_delete(CTinyUSDRelationship *rel);
 
 typedef struct {
   void *data;  // opaque pointer to tinyusdz::Attribute
-} CTinyUSDAttribute ;
+} CTinyUSDAttribute;
 
 typedef struct {
   // c_tinyusd_string prim_element_name;
@@ -245,15 +253,49 @@ typedef struct {
   void *data;  // opaque pointer to tinyusdz::Prim
 } CTinyUSDPrim;
 
-int c_tinyusd_prim_new(CTinyUSDPrim *prim, CTinyUSDPrimType prim_type);
+// Create Prim
+int c_tinyusd_prim_new(const char *prim_type, CTinyUSDPrim *prim /* out */);
+
+// Create Prim with builtin Prim type.
+int c_tinyusd_prim_builtin_new(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim/* out */);
+
 int c_tinyusd_prim_free(CTinyUSDPrim *prim);
+
+//
+// Append Prim to `prim`'s children.
+//
+int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child);
+
+// Delete child[child_index].
+// Return 0 when `child_index` is out-of-range.
+int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, int child_index);
+
+//
+// Return the number of child Prims in this Prim.
+//
+// Return 0 when `prim` is invalid or nullptr.
+//
+uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim);
+
+//
+// Get a child Prim of specified child_index.
+//
+// Child's conent is just a pointer, so please do not call Prim deleter(`c_tinyusd_prim_free`) to it.
+// (Please use `c_tinyusd_prim_del_child` if you want to remove a child Prim)
+//
+// Also the content(pointer) is valid unless the `prim`'s children is preserved(i.e., child is not deleted/added)
+//
+// Return 0 when `child_index` is out-of-range.
+int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_index,
+                             CTinyUSDPrim **child_prim);
 
 typedef struct {
   void *data;  // opaque pointer to tinyusd::Stage
 } CTinyUSDStage;
 
 int c_tinyusd_stage_new(CTinyUSDStage *stage);
-int c_tinyusd_stage_to_string(const CTinyUSDStage *stage, c_tinyusd_string *str);
+int c_tinyusd_stage_to_string(const CTinyUSDStage *stage,
+                              c_tinyusd_string *str);
 int c_tinyusd_stage_free(CTinyUSDStage *stage);
 
 // Callback function for Stage's root Prim traversal.
@@ -270,7 +312,9 @@ typedef int (*CTinyUSDTraversalFunction)(const CTinyUSDPrim *prim,
 ///
 /// @return 1 upon success. 0 when failed(and `err` will be set).
 ///
-/// When providing `err`, it must be created with `c_tinyusd_string_new` before calling this `c_tinyusd_stage_traverse` function, and an App must free it by calling `c_tinyusd_string_free` after using it.
+/// When providing `err`, it must be created with `c_tinyusd_string_new` before
+/// calling this `c_tinyusd_stage_traverse` function, and an App must free it by
+/// calling `c_tinyusd_string_free` after using it.
 ///
 int c_tinyusd_stage_traverse(const CTinyUSDStage *stage,
                              CTinyUSDTraversalFunction callback_fun,
@@ -292,15 +336,30 @@ int c_tinyusd_is_usda_memory(const uint8_t *addr, const size_t nbytes);
 int c_tinyusd_is_usdc_memory(const uint8_t *addr, const size_t nbytes);
 int c_tinyusd_is_usdz_memory(const uint8_t *addr, const size_t nbytes);
 
-int c_tinyusd_load_usd_from_file(const char *filename,  CTinyUSDStage *stage, c_tinyusd_string *warn, c_tinyusd_string *err);
-int c_tinyusd_load_usda_from_file(const char *filename, CTinyUSDStage *stage, c_tinyusd_string *warn, c_tinyusd_string *err);
-int c_tinyusd_load_usdc_from_file(const char *filename, CTinyUSDStage *stage, c_tinyusd_string *warn, c_tinyusd_string *err);
-int c_tinyusd_load_usdz_from_file(const char *filename, CTinyUSDStage *stage, c_tinyusd_string *warn, c_tinyusd_string *err);
+int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage,
+                                 c_tinyusd_string *warn, c_tinyusd_string *err);
+int c_tinyusd_load_usda_from_file(const char *filename, CTinyUSDStage *stage,
+                                  c_tinyusd_string *warn,
+                                  c_tinyusd_string *err);
+int c_tinyusd_load_usdc_from_file(const char *filename, CTinyUSDStage *stage,
+                                  c_tinyusd_string *warn,
+                                  c_tinyusd_string *err);
+int c_tinyusd_load_usdz_from_file(const char *filename, CTinyUSDStage *stage,
+                                  c_tinyusd_string *warn,
+                                  c_tinyusd_string *err);
 
-int c_tinyusd_load_usd_from_memory(const  uint8_t *addr, const size_t nbytes, c_tinyusd_string *warn, c_tinyusd_string *err);
-int c_tinyusd_load_usda_from_memory(const uint8_t *addr, const size_t nbytes, c_tinyusd_string *warn, c_tinyusd_string *err);
-int c_tinyusd_load_usdc_from_memory(const uint8_t *addr, const size_t nbytes, c_tinyusd_string *warn, c_tinyusd_string *err);
-int c_tinyusd_load_usdz_from_memory(const uint8_t *addr, const size_t nbytes, c_tinyusd_string *warn, c_tinyusd_string *err);
+int c_tinyusd_load_usd_from_memory(const uint8_t *addr, const size_t nbytes,
+                                   c_tinyusd_string *warn,
+                                   c_tinyusd_string *err);
+int c_tinyusd_load_usda_from_memory(const uint8_t *addr, const size_t nbytes,
+                                    c_tinyusd_string *warn,
+                                    c_tinyusd_string *err);
+int c_tinyusd_load_usdc_from_memory(const uint8_t *addr, const size_t nbytes,
+                                    c_tinyusd_string *warn,
+                                    c_tinyusd_string *err);
+int c_tinyusd_load_usdz_from_memory(const uint8_t *addr, const size_t nbytes,
+                                    c_tinyusd_string *warn,
+                                    c_tinyusd_string *err);
 
 #ifdef __cplusplus
 }
