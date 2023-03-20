@@ -1,6 +1,7 @@
 #include "c-tinyusd.h"
 
 #include "tinyusdz.hh"
+#include "usdLux.hh"
 #include "tydra/scene-access.hh"
 
 const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
@@ -245,6 +246,66 @@ CTinyUSDFormat c_tinyusd_detect_format(const char *filename)
   }
 
   return C_TINYUSD_FORMAT_UNKNOWN;
+}
+
+const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type) {
+  // 32 should be enough length to support all C_TINYUSD_PRIM_*** type
+  static thread_local char buf[32];
+
+  const char *tyname = "";
+
+  switch (prim_type) {
+    case C_TINYUSD_PRIM_UNKNOWN: { return nullptr; }
+    case C_TINYUSD_PRIM_MODEL: { tyname = ""; break; } // empty string for Model
+    case C_TINYUSD_PRIM_XFORM: { tyname = tinyusdz::kGeomXform; break; }
+    case C_TINYUSD_PRIM_MESH: { tyname = tinyusdz::kGeomMesh; break; }
+    case C_TINYUSD_PRIM_GEOMSUBSET: {tyname = tinyusdz::kGeomSubset; break; }
+    case C_TINYUSD_PRIM_MATERIAL: { tyname = tinyusdz::kMaterial; break; }
+    case C_TINYUSD_PRIM_SHADER: { tyname = tinyusdz::kShader; break; }
+    case C_TINYUSD_PRIM_CAMERA: { tyname = tinyusdz::kGeomCamera; break; }
+    case C_TINYUSD_PRIM_SPHERE_LIGHT: { tyname = tinyusdz::kSphereLight; break; }
+    case C_TINYUSD_PRIM_DISTANT_LIGHT: { tyname = tinyusdz::kDistantLight; break; }
+    case C_TINYUSD_PRIM_RECT_LIGHT: { tyname = tinyusdz::kRectLight; break; }
+    case C_TINYUSD_PRIM_END: { return nullptr; }
+  }
+
+  size_t sz = strlen(tyname);
+  if (sz > 31) {
+    // Just in case: this should not happen though.
+    sz = 31;
+  }
+  strncpy(buf, tyname, sz);
+  buf[sz] = '\0';
+
+  return buf;
+}
+
+CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *c_type_name) {
+  std::string type_name(c_type_name);
+
+  if (type_name == "Model") {
+    return C_TINYUSD_PRIM_MODEL;
+  } else if (type_name == tinyusdz::kGeomXform) {
+    return C_TINYUSD_PRIM_XFORM;
+  } else if (type_name == tinyusdz::kGeomMesh) {
+    return C_TINYUSD_PRIM_MESH;
+  } else if (type_name == tinyusdz::kGeomSubset) {
+    return C_TINYUSD_PRIM_GEOMSUBSET;
+  } else if (type_name == tinyusdz::kGeomCamera) {
+    return C_TINYUSD_PRIM_CAMERA;
+  } else if (type_name == tinyusdz::kMaterial) {
+    return C_TINYUSD_PRIM_MATERIAL;
+  } else if (type_name == tinyusdz::kShader) {
+    return C_TINYUSD_PRIM_SHADER;
+  } else if (type_name == tinyusdz::kSphereLight) {
+    return C_TINYUSD_PRIM_SPHERE_LIGHT;
+  } else if (type_name == tinyusdz::kDistantLight) {
+    return C_TINYUSD_PRIM_DISTANT_LIGHT;
+  } else if (type_name == tinyusdz::kRectLight) {
+    return C_TINYUSD_PRIM_RECT_LIGHT;
+  } else {
+    return C_TINYUSD_PRIM_UNKNOWN;
+  }
 }
 
 int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str) {
@@ -546,6 +607,133 @@ bool CVisitPrimFunction(const Path &abs_path, const Prim &prim,
 }
 
 } // namespace local
+
+int c_tinyusd_prim_new(const char *_prim_type, CTinyUSDPrim *prim) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!_prim_type) {
+    return 0;
+  }
+
+  bool non_builtin_prim_type{false};
+
+  CTinyUSDPrimType prim_type = c_tinyusd_prim_type_from_string(_prim_type);
+  if (prim_type == C_TINYUSD_PRIM_UNKNOWN) {
+    // Use `Model`
+    prim_type = C_TINYUSD_PRIM_MODEL;
+    non_builtin_prim_type = true;
+  }
+
+  Prim *p{nullptr};
+
+#define NEW_PRIM(__cty, __ty) \
+  if (prim_type == __cty) { \
+    __ty content; \
+    p = new Prim(content); \
+  } else
+
+  if (non_builtin_prim_type) {
+    p->prim_type_name() = _prim_type;
+  }
+
+  NEW_PRIM(C_TINYUSD_PRIM_XFORM, Xform)
+  NEW_PRIM(C_TINYUSD_PRIM_MESH, GeomMesh)
+  NEW_PRIM(C_TINYUSD_PRIM_GEOMSUBSET, GeomSubset)
+  NEW_PRIM(C_TINYUSD_PRIM_MATERIAL, Material)
+  NEW_PRIM(C_TINYUSD_PRIM_SHADER, Shader)
+  // TODO: More types.
+  {
+    // ???
+    return 0;
+  }
+
+#undef NEW_PRIM
+
+  prim->data = reinterpret_cast<void *>(p);
+
+  return 1;
+}
+
+#if 0
+int c_tinyusd_prim_builtin_new(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!prim_type) {
+    return 0;
+  }
+
+  const char *prim_type_name = c_tinyusd_prim_type_name(prim_type);
+  if (!prim_type_name) {
+    return 0;
+  }
+
+  Prim *p = new Prim(prim_type_name);
+
+  prim->data = reinterpret_cast<void *>(p);
+
+  return 1;
+}
+#endif
+
+int c_tinyusd_prim_free(CTinyUSDPrim *prim) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!prim->data) {
+    return 0;
+  }
+
+  Prim *p = reinterpret_cast<Prim *>(prim->data);
+  delete p;
+  prim->data = nullptr;
+
+  return 1;
+}
+
+uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!prim->data) {
+    return 0;
+  }
+
+  const Prim *p = reinterpret_cast<const Prim *>(prim->data);
+  return uint64_t(p->children().size());
+}
+
+int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_idx, CTinyUSDPrim **child) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!prim->data) {
+    return 0;
+  }
+
+  if (!child) {
+    return 0;
+  }
+
+  const Prim *p = reinterpret_cast<const Prim *>(prim->data);
+  if (child_idx >= p->children().size()) {
+    return 0;
+  }
+
+  // Use pointer address.
+  const Prim *child_ptr = &(p->children()[child_idx]);
+
+  (*child)->data = reinterpret_cast<void *>(const_cast<Prim *>(child_ptr));
+
+
+  return 0;
+}
 
 int c_tinyusd_stage_new(CTinyUSDStage *stage) {
   if (!stage) {
