@@ -615,7 +615,7 @@ nonstd::optional<Kind> KindFromString(const std::string &str) {
   return nonstd::nullopt;
 }
 
-bool ValidatePrimName(const std::string &name) {
+bool ValidatePrimElementName(const std::string &name) {
   if (name.empty()) {
     return false;
   }
