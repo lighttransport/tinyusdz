@@ -11,6 +11,7 @@
 #define C_TINYUSD_H
 
 #include <stdint.h>
+#include <assert.h>
 #include <uchar.h>  // size_t
 
 #ifdef __cplusplus
@@ -116,7 +117,170 @@ typedef enum {
   C_TINYUSD_PRIM_END,
 } CTinyUSDPrimType;
 
+//
 // Use lower snake case for frequently used base type.
+// 
+
+typedef uint16_t c_tinyusd_half;
+
+// Assume struct elements will be tightly packed in C11.
+// TODO: Ensure struct elements are tightly packed.
+typedef struct {
+  int x;
+  int y;
+} c_tinyusd_int2;
+static_assert(sizeof(c_tinyusd_int2) == sizeof(float) * 2, "");
+
+typedef struct {
+  int x;
+  int y;
+  int z;
+} c_tinyusd_int3;
+static_assert(sizeof(c_tinyusd_int3) == sizeof(float) * 3, "");
+
+typedef struct {
+  int x;
+  int y;
+  int z;
+  int w;
+} c_tinyusd_int4;
+static_assert(sizeof(c_tinyusd_int4) == sizeof(float) * 4, "");
+
+typedef struct {
+  uint32_t x;
+  uint32_t y;
+} c_tinyusd_uint2;
+
+typedef struct {
+  uint32_t x;
+  uint32_t y;
+  uint32_t z;
+} c_tinyusd_uint3;
+
+typedef struct {
+  uint32_t x;
+  uint32_t y;
+  uint32_t z;
+  uint32_t w;
+} c_tinyusd_uint4;
+
+typedef struct {
+  c_tinyusd_half x;
+  c_tinyusd_half y;
+} c_tinyusd_half2;
+static_assert(sizeof(c_tinyusd_half2) == sizeof(uint16_t) * 2, "");
+
+typedef struct {
+  c_tinyusd_half x;
+  c_tinyusd_half y;
+  c_tinyusd_half z;
+} c_tinyusd_half3;
+static_assert(sizeof(c_tinyusd_half3) == sizeof(uint16_t) * 3, "");
+
+typedef struct {
+  c_tinyusd_half x;
+  c_tinyusd_half y;
+  c_tinyusd_half z;
+  c_tinyusd_half w;
+} c_tinyusd_half4;
+static_assert(sizeof(c_tinyusd_half4) == sizeof(uint16_t) * 4, "");
+
+typedef struct {
+  float x;
+  float y;
+} c_tinyusd_float2;
+
+typedef struct {
+  float x;
+  float y;
+  float z;
+} c_tinyusd_float3;
+
+typedef struct {
+  float x;
+  float y;
+  float z;
+  float w;
+} c_tinyusd_float4;
+
+typedef struct {
+  double x;
+  double y;
+} c_tinyusd_double2;
+
+typedef struct {
+  double x;
+  double y;
+  double z;
+} c_tinyusd_double3;
+
+typedef struct {
+  double x;
+  double y;
+  double z;
+  double w;
+} c_tinyusd_double4;
+
+typedef struct {
+  double m[4];
+} c_tinyusd_matrix2d;
+
+typedef struct {
+  double m[9];
+} c_tinyusd_matrix3d;
+
+typedef struct {
+  double m[16];
+} c_tinyusd_matrix4d;
+
+typedef struct {
+  c_tinyusd_half imag[3];
+  c_tinyusd_half real;
+} c_tinyusd_quath; 
+static_assert(sizeof(c_tinyusd_quath) == sizeof(uint16_t) * 4, "");
+
+typedef struct {
+  float imag[3];
+  float real;
+} c_tinyusd_quatf; 
+static_assert(sizeof(c_tinyusd_quatf) == sizeof(float) * 4, "");
+
+typedef struct {
+  double imag[3];
+  double real;
+} c_tinyusd_quatd; 
+static_assert(sizeof(c_tinyusd_quatd) == sizeof(double) * 4, "");
+
+typedef c_tinyusd_half3 c_tinyusd_color3h;
+typedef c_tinyusd_float3 c_tinyusd_color3f;
+typedef c_tinyusd_double3 c_tinyusd_color3d;
+
+typedef c_tinyusd_half4 c_tinyusd_color4h;
+typedef c_tinyusd_float4 c_tinyusd_color4f;
+typedef c_tinyusd_double4 c_tinyusd_color4d;
+
+typedef c_tinyusd_half3 c_tinyusd_point3h;
+typedef c_tinyusd_float3 c_tinyusd_point3f;
+typedef c_tinyusd_double3 c_tinyusd_point3d;
+
+typedef c_tinyusd_half3 c_tinyusd_normal3h;
+typedef c_tinyusd_float3 c_tinyusd_normal3f;
+typedef c_tinyusd_double3 c_tinyusd_normal3d;
+
+typedef c_tinyusd_half3 c_tinyusd_vector3h;
+typedef c_tinyusd_float3 c_tinyusd_vector3f;
+typedef c_tinyusd_double3 c_tinyusd_vector3d;
+
+typedef c_tinyusd_matrix4d c_tinyusd_frame4d;
+
+typedef c_tinyusd_half2 c_tinyusd_texcoord2h;
+typedef c_tinyusd_float2 c_tinyusd_texcoord2f;
+typedef c_tinyusd_double2 c_tinyusd_texcoord2d;
+
+typedef c_tinyusd_half3 c_tinyusd_texcoord3h;
+typedef c_tinyusd_float3 c_tinyusd_texcoord3f;
+typedef c_tinyusd_double3 c_tinyusd_texcoord3d;
+
 typedef struct {
   void *data;  // opaque pointer to `tinyusdz::value::token`.
 } c_tinyusd_token;
@@ -126,11 +290,11 @@ typedef struct {
 int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str);
 
 // Length of token string. equivalent to std::string::size.
-size_t c_tinyusd_token_size(c_tinyusd_token *tok);
+size_t c_tinyusd_token_size(const c_tinyusd_token *tok);
 
 // Get C char from a token.
 // Returned char pointer is valid until `c_tinyusd_token` instance is free'ed.
-const char *c_tinyusd_token_str(c_tinyusd_token *tok);
+const char *c_tinyusd_token_str(const c_tinyusd_token *tok);
 
 // Free token
 // Return 0 when failed to free.
@@ -150,7 +314,7 @@ int c_tinyusd_string_new_empty(c_tinyusd_string *s);
 int c_tinyusd_string_new(c_tinyusd_string *s, const char *str);
 
 // Length of string. equivalent to std::string::size.
-size_t c_tinyusd_string_size(c_tinyusd_string *s);
+size_t c_tinyusd_string_size(const c_tinyusd_string *s);
 
 // Replace existing string with given `str`.
 // `c_tinyusd_string` object must be created beforehand.
@@ -159,7 +323,7 @@ int c_tinyusd_string_replace(c_tinyusd_string *s, const char *str);
 
 // Get C char(`std::string::c_str()`)
 // Returned char pointer is valid until `c_tinyusd_string` instance is free'ed.
-const char *c_tinyusd_string_str(c_tinyusd_string *s);
+const char *c_tinyusd_string_str(const c_tinyusd_string *s);
 
 int c_tinyusd_string_free(c_tinyusd_string *s);
 
@@ -174,7 +338,7 @@ CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *prim_type);
 // Generic Buffer data with type info
 typedef struct {
   CTinyUSDValueType value_type;
-  int ndim;
+  uint32_t ndim; // 0 = scalar value
   uint64_t shape[C_TINYUSD_MAX_DIM];
   void *data;  // opaque pointer
 
@@ -203,10 +367,23 @@ void c_tinyusd_buffer_init(CTinyUSDBuffer *buf, CTinyUSDValueType value_type,
                            int ndim);
 #endif
 
-// New buffer with given shape info.
+// New buffer with scalar value.
 // Returns 1 upon success.
-int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type,
-                         int ndim, uint64_t shape[C_TINYUSD_MAX_DIM]);
+int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type);
+
+// New buffer with token value.
+// token string is copied into buffer.
+// Buffer size = strlen(token)
+int c_tinyusd_buffer_new_and_copy_token(CTinyUSDBuffer *buf, const c_tinyusd_token *tok);
+
+// New buffer with string value.
+// string is copied into buffer.
+// Buffer size = strlen(str)
+int c_tinyusd_buffer_new_and_copy_string(CTinyUSDBuffer *buf, const c_tinyusd_string *str);
+
+// New buffer with 1D array of `n` elements.
+// Returns 1 upon success.
+int c_tinyusd_buffer_new_array(CTinyUSDBuffer *buf, CTinyUSDValueType value_type, uint64_t n);
 
 // Free Buffer's memory. Returns 1 upon success.
 int c_tinyusd_buffer_free(CTinyUSDBuffer *buf);
@@ -215,9 +392,57 @@ typedef struct {
   CTinyUSDBuffer buffer;
 } CTinyUSDAttributeValue;
 
-void c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
-                                   const CTinyUSDValueType type,
+//
+// New AttributeValue with buffer.
+// Type of AttributeValue is obtained from buffer->value_type;
+//
+int c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
                                    const CTinyUSDBuffer *buffer);
+
+// Free AttributeValue.
+// Internally calls `c_tinyusd_buffer_free` to free buffer associated with this AttributeValue. 
+int c_tinyusd_attribute_value_free(CTinyUSDAttributeValue *val);
+
+//
+// New AttributeValue with token type.
+// NOTE: token data are copied. So it is safe to free token after calling this function.
+//
+int c_tinyusd_attribute_value_new_token(CTinyUSDAttributeValue *aval, const c_tinyusd_token *val);
+
+//
+// New AttributeValue with string type.
+// NOTE: string data are copied. So it is safe to free string after calling this function.
+//
+int c_tinyusd_attribute_value_new_string(CTinyUSDAttributeValue *aval, const c_tinyusd_string *val);
+
+//
+// New AttributeValue with specific type.
+// NOTE: Datas are copied.
+// Returns 1 upon success, 0 failed.
+//
+int c_tinyusd_attribute_value_new_int(CTinyUSDAttributeValue *aval, int val);
+int c_tinyusd_attribute_value_new_int2(CTinyUSDAttributeValue *aval, c_tinyusd_int2 val);
+int c_tinyusd_attribute_value_new_int3(CTinyUSDAttributeValue *aval, c_tinyusd_int3 val);
+int c_tinyusd_attribute_value_new_int4(CTinyUSDAttributeValue *aval, c_tinyusd_int4 val);
+int c_tinyusd_attribute_value_new_float(CTinyUSDAttributeValue *aval, float val);
+int c_tinyusd_attribute_value_new_float2(CTinyUSDAttributeValue *aval, c_tinyusd_float2 val);
+int c_tinyusd_attribute_value_new_float3(CTinyUSDAttributeValue *aval, c_tinyusd_float3 val);
+int c_tinyusd_attribute_value_new_float4(CTinyUSDAttributeValue *aval, c_tinyusd_float4 val);
+// TODO: List up other types...
+
+//
+// New AttributeValue with 1D array ofspecific type.
+// NOTE: Array data is copied.
+//
+int c_tinyusd_attribute_value_new_int_array(CTinyUSDAttributeValue *aval, uint64_t n, int *vals);
+int c_tinyusd_attribute_value_new_int2_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int2 *vals);
+int c_tinyusd_attribute_value_new_int3_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int3 *vals);
+int c_tinyusd_attribute_value_new_int4_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int4 *vals);
+int c_tinyusd_attribute_value_new_float_array(CTinyUSDAttributeValue *aval, uint64_t n, float *vals);
+int c_tinyusd_attribute_value_new_float2_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float2 *vals);
+int c_tinyusd_attribute_value_new_float3_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float3 *vals);
+int c_tinyusd_attribute_value_new_float4_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float4 *vals);
+// TODO: List up other types...
 
 typedef struct {
   // c_tinyusd_string prim_part;
@@ -229,9 +454,9 @@ typedef struct {
   void *data;  // opaque pointer to tinyusdz::Property
 } CTinyUSDProperty;
 
-typedef struct {
-  void *data;  // opaque pointer to std::map<std::string, tinyusdz::Property>
-} CTinyUSDPropertyMap;
+//typedef struct {
+//  void *data;  // opaque pointer to std::map<std::string, tinyusdz::Property>
+//} CTinyUSDPropertyMap;
 
 typedef struct {
   void *data;  // opaque pointer to tinyusdz::Relationship
@@ -260,6 +485,19 @@ int c_tinyusd_prim_new(const char *prim_type, CTinyUSDPrim *prim /* out */);
 int c_tinyusd_prim_builtin_new(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim/* out */);
 
 int c_tinyusd_prim_free(CTinyUSDPrim *prim);
+
+// Get Prim's property. Returns 0 when property `prop_name` does not exist in the Prim.
+// `prop` just holds pointer to corresponding C++ Property instance, so no free operation required.
+int c_tinyusd_prim_property_get(const CTinyUSDPrim *prim, const char *prop_name, CTinyUSDProperty *prop);
+
+// Add property to the Prim.
+// It copies the content of `prop`, so please free `prop` after this add operation.
+// Returns 0 when the operation failed(`err` will be returned. Please free `err` after using it)
+int c_tinyusd_prim_property_add(CTinyUSDPrim *prim, const char *prop_name, CTinyUSDProperty *prop, c_tinyusd_string *err);
+
+// Delete a property in the Prim.
+// Returns 0 when `prop_name` does not exist in the prim.
+int c_tinyusd_prim_property_del(CTinyUSDPrim *prim, const char *prop_name);
 
 //
 // Append Prim to `prim`'s children.

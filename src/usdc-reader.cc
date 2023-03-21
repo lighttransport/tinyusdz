@@ -2179,7 +2179,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         // Validation check should be already done in crate-reader, so no
         // further validation required.
-        if (!ValidatePrimName(prim_name)) {
+        if (!ValidatePrimElementName(prim_name)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Prim name.");
         }
 
@@ -2352,7 +2352,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         std::string variantSetName = variantPair[0];
         std::string variantPrimName = variantPair[1];
 
-        if (!ValidatePrimName(variantPrimName)) {
+        if (!ValidatePrimElementName(variantPrimName)) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, fmt::format("Invalid Prim name in Variant: `{}`",
                                 variantPrimName));
