@@ -2631,7 +2631,7 @@ class Prim {
     _child_dirty = true;
   }
 
-  // TODO: Deprecate this API to disallow modification of children.
+  // TODO: Deprecate this API to disallow modification of children?.
   std::vector<Prim> &children() { return _children; }
 
   const std::vector<Prim> &children() const { return _children; }
@@ -2781,6 +2781,7 @@ class Prim {
   mutable std::mutex _mutex;
 #endif
 };
+
 
 bool IsXformablePrim(const Prim &prim);
 
@@ -3059,8 +3060,11 @@ nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 nonstd::optional<Kind> KindFromString(const std::string &v);
 
-// Return false when invalid character(e.g. '%') exists.
-bool ValidatePrimName(const std::string &tok);
+// Return false when invalid character(e.g. '%') exists in a given string.
+// This function only validates `elementName` of a Prim(e.g. "dora", "xform1").
+// If you want to validate a Prim path(e.g. "/root/xform1"), 
+// Use ValidatePrimPath() in path-util.hh
+bool ValidatePrimElementName(const std::string &tok);
 
 namespace value {
 

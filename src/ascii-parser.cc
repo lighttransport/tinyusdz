@@ -4864,7 +4864,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   }
 
   DCOUT("prim name = " << prim_name);
-  if (!ValidatePrimName(prim_name)) {
+  if (!ValidatePrimElementName(prim_name)) {
     PUSH_ERROR_AND_RETURN_TAG(kAscii, "Prim name contains invalid chacracter.");
   }
 

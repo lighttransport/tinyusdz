@@ -1,12 +1,18 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022-Present Light Transport Entertainment Inc.
+
 #include "c-tinyusd.h"
 
 #include "tinyusdz.hh"
-#include "usdLux.hh"
 #include "tydra/scene-access.hh"
+#include "usdLux.hh"
 
-const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
-{
-  // 32 should be enough length to support all C_TINYUSD_VALUE_* type name + '[]'
+// TODO:
+// - [ ] Implement our own `strlen`
+
+const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
+  // 32 should be enough length to support all C_TINYUSD_VALUE_* type name +
+  // '[]'
   static thread_local char buf[32];
 
   bool is_array = value_type & C_TINYUSD_VALUE_1D_BIT;
@@ -17,61 +23,223 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
   const char *tyname = "[invalid]";
 
   switch (static_cast<CTinyUSDValueType>(basety)) {
-    case C_TINYUSD_VALUE_BOOL: { tyname = "bool"; break; }
-    case C_TINYUSD_VALUE_TOKEN: { tyname = "token";break; }
-    case C_TINYUSD_VALUE_STRING: { tyname = "string";break; }
-    case C_TINYUSD_VALUE_HALF: {  tyname = "half";break; }
-    case C_TINYUSD_VALUE_HALF2: { tyname = "half2"; break;}
-    case C_TINYUSD_VALUE_HALF3: { tyname = "half3"; break;}
-    case C_TINYUSD_VALUE_HALF4: { tyname = "half4"; break;}
-    case C_TINYUSD_VALUE_INT: {   tyname = "int"; break;}
-    case C_TINYUSD_VALUE_INT2: {  tyname = "int2"; break;}
-    case C_TINYUSD_VALUE_INT3: {  tyname = "int3"; break;}
-    case C_TINYUSD_VALUE_INT4: {  tyname = "int4"; break;}
-    case C_TINYUSD_VALUE_UINT: {  tyname = "uint"; break;}
-    case C_TINYUSD_VALUE_UINT2: { tyname = "uint2"; break;}
-    case C_TINYUSD_VALUE_UINT3: { tyname = "uint3"; break;}
-    case C_TINYUSD_VALUE_UINT4: { tyname = "uint4"; break;}
-    case C_TINYUSD_VALUE_INT64: { tyname = "int64"; break;}
-    case C_TINYUSD_VALUE_UINT64: {tyname = "uint64"; break;}
-    case C_TINYUSD_VALUE_FLOAT: { tyname = "float"; break;}
-    case C_TINYUSD_VALUE_FLOAT2: { tyname = "float2"; break;}
-    case C_TINYUSD_VALUE_FLOAT3: { tyname = "float3"; break;}
-    case C_TINYUSD_VALUE_FLOAT4: { tyname = "float4"; break;}
-    case C_TINYUSD_VALUE_DOUBLE: { tyname = "double"; break;}
-    case C_TINYUSD_VALUE_DOUBLE2: {  tyname = "double2"; break;}
-    case C_TINYUSD_VALUE_DOUBLE3: {  tyname = "double3"; break;}
-    case C_TINYUSD_VALUE_DOUBLE4: {  tyname = "double4"; break;}
-    case C_TINYUSD_VALUE_QUATH: {    tyname = "quath"; break;}
-    case C_TINYUSD_VALUE_QUATF: {    tyname = "quatf"; break;}
-    case C_TINYUSD_VALUE_QUATD: {    tyname = "quatd"; break;}
-    case C_TINYUSD_VALUE_NORMAL3H: { tyname = "normal3h"; break;}
-    case C_TINYUSD_VALUE_NORMAL3F: { tyname = "normal3f"; break;}
-    case C_TINYUSD_VALUE_NORMAL3D: { tyname = "normal3d"; break;}
-    case C_TINYUSD_VALUE_VECTOR3H: { tyname = "vector3h"; break;}
-    case C_TINYUSD_VALUE_VECTOR3F: { tyname = "vector3f"; break;}
-    case C_TINYUSD_VALUE_VECTOR3D: { tyname = "vector3d"; break;}
-    case C_TINYUSD_VALUE_POINT3H: {  tyname = "point3h"; break;}
-    case C_TINYUSD_VALUE_POINT3F: {  tyname = "point3f"; break;}
-    case C_TINYUSD_VALUE_POINT3D: {  tyname = "point3d"; break;}
-    case C_TINYUSD_VALUE_TEXCOORD2H: { tyname = "texCoord2h"; break;}
-    case C_TINYUSD_VALUE_TEXCOORD2F: { tyname = "texCoord2f"; break;}
-    case C_TINYUSD_VALUE_TEXCOORD2D: { tyname = "texCoord2d"; break;}
-    case C_TINYUSD_VALUE_TEXCOORD3H: { tyname = "texCoord3h"; break;}
-    case C_TINYUSD_VALUE_TEXCOORD3F: { tyname = "texCoord3f"; break;}
-    case C_TINYUSD_VALUE_TEXCOORD3D: { tyname = "texCoord3d"; break;}
-    case C_TINYUSD_VALUE_COLOR3H: { tyname = "color3h"; break;}
-    case C_TINYUSD_VALUE_COLOR3F: { tyname = "color3f"; break;}
-    case C_TINYUSD_VALUE_COLOR3D: { tyname = "color3d"; break;}
-    case C_TINYUSD_VALUE_COLOR4H: { tyname = "color4h"; break;}
-    case C_TINYUSD_VALUE_COLOR4F: { tyname = "color4f"; break;}
-    case C_TINYUSD_VALUE_COLOR4D: { tyname = "color4d"; break;}
-    case C_TINYUSD_VALUE_MATRIX2D: { tyname = "matrix2d"; break;}
-    case C_TINYUSD_VALUE_MATRIX3D: { tyname = "matrix2d"; break;}
-    case C_TINYUSD_VALUE_MATRIX4D: { tyname = "matrix2d"; break;}
-    case C_TINYUSD_VALUE_FRAME4D: { tyname = "frame4d"; break;}
-    case C_TINYUSD_VALUE_END: { tyname = "[invalid]"; break;} // invalid
-    //default: { return 0; }
+    case C_TINYUSD_VALUE_BOOL: {
+      tyname = "bool";
+      break;
+    }
+    case C_TINYUSD_VALUE_TOKEN: {
+      tyname = "token";
+      break;
+    }
+    case C_TINYUSD_VALUE_STRING: {
+      tyname = "string";
+      break;
+    }
+    case C_TINYUSD_VALUE_HALF: {
+      tyname = "half";
+      break;
+    }
+    case C_TINYUSD_VALUE_HALF2: {
+      tyname = "half2";
+      break;
+    }
+    case C_TINYUSD_VALUE_HALF3: {
+      tyname = "half3";
+      break;
+    }
+    case C_TINYUSD_VALUE_HALF4: {
+      tyname = "half4";
+      break;
+    }
+    case C_TINYUSD_VALUE_INT: {
+      tyname = "int";
+      break;
+    }
+    case C_TINYUSD_VALUE_INT2: {
+      tyname = "int2";
+      break;
+    }
+    case C_TINYUSD_VALUE_INT3: {
+      tyname = "int3";
+      break;
+    }
+    case C_TINYUSD_VALUE_INT4: {
+      tyname = "int4";
+      break;
+    }
+    case C_TINYUSD_VALUE_UINT: {
+      tyname = "uint";
+      break;
+    }
+    case C_TINYUSD_VALUE_UINT2: {
+      tyname = "uint2";
+      break;
+    }
+    case C_TINYUSD_VALUE_UINT3: {
+      tyname = "uint3";
+      break;
+    }
+    case C_TINYUSD_VALUE_UINT4: {
+      tyname = "uint4";
+      break;
+    }
+    case C_TINYUSD_VALUE_INT64: {
+      tyname = "int64";
+      break;
+    }
+    case C_TINYUSD_VALUE_UINT64: {
+      tyname = "uint64";
+      break;
+    }
+    case C_TINYUSD_VALUE_FLOAT: {
+      tyname = "float";
+      break;
+    }
+    case C_TINYUSD_VALUE_FLOAT2: {
+      tyname = "float2";
+      break;
+    }
+    case C_TINYUSD_VALUE_FLOAT3: {
+      tyname = "float3";
+      break;
+    }
+    case C_TINYUSD_VALUE_FLOAT4: {
+      tyname = "float4";
+      break;
+    }
+    case C_TINYUSD_VALUE_DOUBLE: {
+      tyname = "double";
+      break;
+    }
+    case C_TINYUSD_VALUE_DOUBLE2: {
+      tyname = "double2";
+      break;
+    }
+    case C_TINYUSD_VALUE_DOUBLE3: {
+      tyname = "double3";
+      break;
+    }
+    case C_TINYUSD_VALUE_DOUBLE4: {
+      tyname = "double4";
+      break;
+    }
+    case C_TINYUSD_VALUE_QUATH: {
+      tyname = "quath";
+      break;
+    }
+    case C_TINYUSD_VALUE_QUATF: {
+      tyname = "quatf";
+      break;
+    }
+    case C_TINYUSD_VALUE_QUATD: {
+      tyname = "quatd";
+      break;
+    }
+    case C_TINYUSD_VALUE_NORMAL3H: {
+      tyname = "normal3h";
+      break;
+    }
+    case C_TINYUSD_VALUE_NORMAL3F: {
+      tyname = "normal3f";
+      break;
+    }
+    case C_TINYUSD_VALUE_NORMAL3D: {
+      tyname = "normal3d";
+      break;
+    }
+    case C_TINYUSD_VALUE_VECTOR3H: {
+      tyname = "vector3h";
+      break;
+    }
+    case C_TINYUSD_VALUE_VECTOR3F: {
+      tyname = "vector3f";
+      break;
+    }
+    case C_TINYUSD_VALUE_VECTOR3D: {
+      tyname = "vector3d";
+      break;
+    }
+    case C_TINYUSD_VALUE_POINT3H: {
+      tyname = "point3h";
+      break;
+    }
+    case C_TINYUSD_VALUE_POINT3F: {
+      tyname = "point3f";
+      break;
+    }
+    case C_TINYUSD_VALUE_POINT3D: {
+      tyname = "point3d";
+      break;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2H: {
+      tyname = "texCoord2h";
+      break;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2F: {
+      tyname = "texCoord2f";
+      break;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2D: {
+      tyname = "texCoord2d";
+      break;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3H: {
+      tyname = "texCoord3h";
+      break;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3F: {
+      tyname = "texCoord3f";
+      break;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3D: {
+      tyname = "texCoord3d";
+      break;
+    }
+    case C_TINYUSD_VALUE_COLOR3H: {
+      tyname = "color3h";
+      break;
+    }
+    case C_TINYUSD_VALUE_COLOR3F: {
+      tyname = "color3f";
+      break;
+    }
+    case C_TINYUSD_VALUE_COLOR3D: {
+      tyname = "color3d";
+      break;
+    }
+    case C_TINYUSD_VALUE_COLOR4H: {
+      tyname = "color4h";
+      break;
+    }
+    case C_TINYUSD_VALUE_COLOR4F: {
+      tyname = "color4f";
+      break;
+    }
+    case C_TINYUSD_VALUE_COLOR4D: {
+      tyname = "color4d";
+      break;
+    }
+    case C_TINYUSD_VALUE_MATRIX2D: {
+      tyname = "matrix2d";
+      break;
+    }
+    case C_TINYUSD_VALUE_MATRIX3D: {
+      tyname = "matrix2d";
+      break;
+    }
+    case C_TINYUSD_VALUE_MATRIX4D: {
+      tyname = "matrix2d";
+      break;
+    }
+    case C_TINYUSD_VALUE_FRAME4D: {
+      tyname = "frame4d";
+      break;
+    }
+    case C_TINYUSD_VALUE_END: {
+      tyname = "[invalid]";
+      break;
+    }  // invalid
+       // default: { return 0; }
   }
 
   uint32_t sz = static_cast<uint32_t>(strlen(tyname));
@@ -90,8 +258,8 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
     }
 
     buf[sz] = '[';
-    buf[sz+1] = ']';
-    buf[sz+2] = '\0';
+    buf[sz + 1] = ']';
+    buf[sz + 2] = '\0';
   } else {
     buf[sz] = '\0';
   }
@@ -99,140 +267,353 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type)
   return buf;
 }
 
-uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type)
-{
+uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type) {
   // drop array bit.
   uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
 
   switch (static_cast<CTinyUSDValueType>(basety)) {
-    case C_TINYUSD_VALUE_BOOL: { return 1; }
-    case C_TINYUSD_VALUE_TOKEN: { return 0; } // invalid
-    case C_TINYUSD_VALUE_STRING: { return 0; } // invalid
-    case C_TINYUSD_VALUE_HALF: { return 1; }
-    case C_TINYUSD_VALUE_HALF2: { return 2; }
-    case C_TINYUSD_VALUE_HALF3: { return 3; }
-    case C_TINYUSD_VALUE_HALF4: { return 4; }
-    case C_TINYUSD_VALUE_INT: { return 1; }
-    case C_TINYUSD_VALUE_INT2: { return 2; }
-    case C_TINYUSD_VALUE_INT3: { return 3; }
-    case C_TINYUSD_VALUE_INT4: { return 4; }
-    case C_TINYUSD_VALUE_UINT: { return  1; }
-    case C_TINYUSD_VALUE_UINT2: { return 2; }
-    case C_TINYUSD_VALUE_UINT3: { return 3; }
-    case C_TINYUSD_VALUE_UINT4: { return 4; }
-    case C_TINYUSD_VALUE_INT64: { return 1; }
-    case C_TINYUSD_VALUE_UINT64: { return 1; }
-    case C_TINYUSD_VALUE_FLOAT: { return 1; }
-    case C_TINYUSD_VALUE_FLOAT2: { return 2; }
-    case C_TINYUSD_VALUE_FLOAT3: { return 3; }
-    case C_TINYUSD_VALUE_FLOAT4: { return 4; }
-    case C_TINYUSD_VALUE_DOUBLE: { return 1; }
-    case C_TINYUSD_VALUE_DOUBLE2: { return 2; }
-    case C_TINYUSD_VALUE_DOUBLE3: { return 3; }
-    case C_TINYUSD_VALUE_DOUBLE4: { return 4; }
-    case C_TINYUSD_VALUE_QUATH: { return 4; }
-    case C_TINYUSD_VALUE_QUATF: { return 4; }
-    case C_TINYUSD_VALUE_QUATD: { return 4; }
-    case C_TINYUSD_VALUE_NORMAL3H: { return 3; }
-    case C_TINYUSD_VALUE_NORMAL3F: { return 3; }
-    case C_TINYUSD_VALUE_NORMAL3D: { return 3; }
-    case C_TINYUSD_VALUE_VECTOR3H: { return 3; }
-    case C_TINYUSD_VALUE_VECTOR3F: { return 3; }
-    case C_TINYUSD_VALUE_VECTOR3D: { return 3; }
-    case C_TINYUSD_VALUE_POINT3H: { return  3; }
-    case C_TINYUSD_VALUE_POINT3F: { return  3; }
-    case C_TINYUSD_VALUE_POINT3D: { return  3; }
-    case C_TINYUSD_VALUE_TEXCOORD2H: { return 2; }
-    case C_TINYUSD_VALUE_TEXCOORD2F: { return 2; }
-    case C_TINYUSD_VALUE_TEXCOORD2D: { return 2; }
-    case C_TINYUSD_VALUE_TEXCOORD3H: { return 3; }
-    case C_TINYUSD_VALUE_TEXCOORD3F: { return 3; }
-    case C_TINYUSD_VALUE_TEXCOORD3D: { return 3; }
-    case C_TINYUSD_VALUE_COLOR3H: { return 3; }
-    case C_TINYUSD_VALUE_COLOR3F: { return 3; }
-    case C_TINYUSD_VALUE_COLOR3D: { return 3; }
-    case C_TINYUSD_VALUE_COLOR4H: { return 4; }
-    case C_TINYUSD_VALUE_COLOR4F: { return 4; }
-    case C_TINYUSD_VALUE_COLOR4D: { return 4; }
-    case C_TINYUSD_VALUE_MATRIX2D: { return 2*2; }
-    case C_TINYUSD_VALUE_MATRIX3D: { return 3*3; }
-    case C_TINYUSD_VALUE_MATRIX4D: { return 4*4; }
-    case C_TINYUSD_VALUE_FRAME4D: { return 4*4; }
-    case C_TINYUSD_VALUE_END: { return 0; } // invalid
-    //default: { return 0; }
+    case C_TINYUSD_VALUE_BOOL: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TOKEN: {
+      return 0;
+    }  // invalid
+    case C_TINYUSD_VALUE_STRING: {
+      return 0;
+    }  // invalid
+    case C_TINYUSD_VALUE_HALF: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_HALF2: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_HALF3: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_HALF4: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_INT: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_INT2: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_INT3: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_INT4: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_UINT: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_UINT2: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_UINT3: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_UINT4: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_INT64: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_UINT64: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_FLOAT: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_FLOAT2: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_FLOAT3: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_FLOAT4: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_DOUBLE: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_DOUBLE2: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_DOUBLE3: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_DOUBLE4: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_QUATH: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_QUATF: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_QUATD: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_NORMAL3H: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_NORMAL3F: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_NORMAL3D: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_VECTOR3H: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_VECTOR3F: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_VECTOR3D: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_POINT3H: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_POINT3F: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_POINT3D: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2H: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2F: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2D: {
+      return 2;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3H: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3F: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3D: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_COLOR3H: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_COLOR3F: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_COLOR3D: {
+      return 3;
+    }
+    case C_TINYUSD_VALUE_COLOR4H: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_COLOR4F: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_COLOR4D: {
+      return 4;
+    }
+    case C_TINYUSD_VALUE_MATRIX2D: {
+      return 2 * 2;
+    }
+    case C_TINYUSD_VALUE_MATRIX3D: {
+      return 3 * 3;
+    }
+    case C_TINYUSD_VALUE_MATRIX4D: {
+      return 4 * 4;
+    }
+    case C_TINYUSD_VALUE_FRAME4D: {
+      return 4 * 4;
+    }
+    case C_TINYUSD_VALUE_END: {
+      return 0;
+    }  // invalid
+       // default: { return 0; }
   }
 
   return 0;
 }
 
-uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type)
-{
+uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type) {
   // drop array bit.
   uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
 
   switch (static_cast<CTinyUSDValueType>(basety)) {
-    case C_TINYUSD_VALUE_BOOL: { return 1; }
-    case C_TINYUSD_VALUE_TOKEN: { return 0; } // invalid
-    case C_TINYUSD_VALUE_STRING: { return 0; } // invalid
-    case C_TINYUSD_VALUE_HALF: { return sizeof(uint16_t); }
-    case C_TINYUSD_VALUE_HALF2: { return sizeof(uint16_t)*2; }
-    case C_TINYUSD_VALUE_HALF3: { return sizeof(uint16_t)*3; }
-    case C_TINYUSD_VALUE_HALF4: { return sizeof(uint16_t)*4; }
-    case C_TINYUSD_VALUE_INT: { return sizeof(int); }
-    case C_TINYUSD_VALUE_INT2: { return sizeof(int)*2; }
-    case C_TINYUSD_VALUE_INT3: { return sizeof(int)*3; }
-    case C_TINYUSD_VALUE_INT4: { return sizeof(int)*4; }
-    case C_TINYUSD_VALUE_UINT: { return sizeof(uint32_t); }
-    case C_TINYUSD_VALUE_UINT2: { return sizeof(uint32_t)*2; }
-    case C_TINYUSD_VALUE_UINT3: { return sizeof(uint32_t)*3; }
-    case C_TINYUSD_VALUE_UINT4: { return sizeof(uint32_t)*4; }
-    case C_TINYUSD_VALUE_INT64: { return sizeof(int64_t); }
-    case C_TINYUSD_VALUE_UINT64: { return sizeof(uint64_t); }
-    case C_TINYUSD_VALUE_FLOAT: { return sizeof(float); }
-    case C_TINYUSD_VALUE_FLOAT2: { return sizeof(float)*2; }
-    case C_TINYUSD_VALUE_FLOAT3: { return sizeof(float)*3; }
-    case C_TINYUSD_VALUE_FLOAT4: { return sizeof(float)*4; }
-    case C_TINYUSD_VALUE_DOUBLE: { return sizeof(double); }
-    case C_TINYUSD_VALUE_DOUBLE2: { return sizeof(double)*2; }
-    case C_TINYUSD_VALUE_DOUBLE3: { return sizeof(double)*3; }
-    case C_TINYUSD_VALUE_DOUBLE4: { return sizeof(double)*4; }
-    case C_TINYUSD_VALUE_QUATH: { return sizeof(uint16_t)*4; }
-    case C_TINYUSD_VALUE_QUATF: { return sizeof(float)*4; }
-    case C_TINYUSD_VALUE_QUATD: { return sizeof(double)*4; }
-    case C_TINYUSD_VALUE_NORMAL3H: { return sizeof(uint16_t)*3; }
-    case C_TINYUSD_VALUE_NORMAL3F: { return sizeof(float)*3; }
-    case C_TINYUSD_VALUE_NORMAL3D: { return sizeof(double)*3; }
-    case C_TINYUSD_VALUE_VECTOR3H: { return sizeof(uint16_t)*3; }
-    case C_TINYUSD_VALUE_VECTOR3F: { return sizeof(float)*3; }
-    case C_TINYUSD_VALUE_VECTOR3D: { return sizeof(double)*3; }
-    case C_TINYUSD_VALUE_POINT3H: { return sizeof(uint16_t)*3; }
-    case C_TINYUSD_VALUE_POINT3F: { return sizeof(float)*3; }
-    case C_TINYUSD_VALUE_POINT3D: { return sizeof(double)*3; }
-    case C_TINYUSD_VALUE_TEXCOORD2H: { return sizeof(uint16_t)*2; }
-    case C_TINYUSD_VALUE_TEXCOORD2F: { return sizeof(float)*2; }
-    case C_TINYUSD_VALUE_TEXCOORD2D: { return sizeof(double)*2; }
-    case C_TINYUSD_VALUE_TEXCOORD3H: { return sizeof(uint16_t)*3; }
-    case C_TINYUSD_VALUE_TEXCOORD3F: { return sizeof(float)*3; }
-    case C_TINYUSD_VALUE_TEXCOORD3D: { return sizeof(double)*3; }
-    case C_TINYUSD_VALUE_COLOR3H: { return sizeof(uint16_t)*3; }
-    case C_TINYUSD_VALUE_COLOR3F: { return sizeof(float)*3; }
-    case C_TINYUSD_VALUE_COLOR3D: { return sizeof(double)*3; }
-    case C_TINYUSD_VALUE_COLOR4H: { return sizeof(uint16_t)*4; }
-    case C_TINYUSD_VALUE_COLOR4F: { return sizeof(float)*4; }
-    case C_TINYUSD_VALUE_COLOR4D: { return sizeof(double)*4; }
-    case C_TINYUSD_VALUE_MATRIX2D: { return sizeof(double)*2*2; }
-    case C_TINYUSD_VALUE_MATRIX3D: { return sizeof(double)*3*3; }
-    case C_TINYUSD_VALUE_MATRIX4D: { return sizeof(double)*4*4; }
-    case C_TINYUSD_VALUE_FRAME4D: { return sizeof(double)*4*4; }
-    case C_TINYUSD_VALUE_END: { return 0; } // invalid
-    //default: { return 0; }
+    case C_TINYUSD_VALUE_BOOL: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TOKEN: {
+      return 0;
+    }  // invalid
+    case C_TINYUSD_VALUE_STRING: {
+      return 0;
+    }  // invalid
+    case C_TINYUSD_VALUE_HALF: {
+      return sizeof(uint16_t);
+    }
+    case C_TINYUSD_VALUE_HALF2: {
+      return sizeof(uint16_t) * 2;
+    }
+    case C_TINYUSD_VALUE_HALF3: {
+      return sizeof(uint16_t) * 3;
+    }
+    case C_TINYUSD_VALUE_HALF4: {
+      return sizeof(uint16_t) * 4;
+    }
+    case C_TINYUSD_VALUE_INT: {
+      return sizeof(int);
+    }
+    case C_TINYUSD_VALUE_INT2: {
+      return sizeof(int) * 2;
+    }
+    case C_TINYUSD_VALUE_INT3: {
+      return sizeof(int) * 3;
+    }
+    case C_TINYUSD_VALUE_INT4: {
+      return sizeof(int) * 4;
+    }
+    case C_TINYUSD_VALUE_UINT: {
+      return sizeof(uint32_t);
+    }
+    case C_TINYUSD_VALUE_UINT2: {
+      return sizeof(uint32_t) * 2;
+    }
+    case C_TINYUSD_VALUE_UINT3: {
+      return sizeof(uint32_t) * 3;
+    }
+    case C_TINYUSD_VALUE_UINT4: {
+      return sizeof(uint32_t) * 4;
+    }
+    case C_TINYUSD_VALUE_INT64: {
+      return sizeof(int64_t);
+    }
+    case C_TINYUSD_VALUE_UINT64: {
+      return sizeof(uint64_t);
+    }
+    case C_TINYUSD_VALUE_FLOAT: {
+      return sizeof(float);
+    }
+    case C_TINYUSD_VALUE_FLOAT2: {
+      return sizeof(float) * 2;
+    }
+    case C_TINYUSD_VALUE_FLOAT3: {
+      return sizeof(float) * 3;
+    }
+    case C_TINYUSD_VALUE_FLOAT4: {
+      return sizeof(float) * 4;
+    }
+    case C_TINYUSD_VALUE_DOUBLE: {
+      return sizeof(double);
+    }
+    case C_TINYUSD_VALUE_DOUBLE2: {
+      return sizeof(double) * 2;
+    }
+    case C_TINYUSD_VALUE_DOUBLE3: {
+      return sizeof(double) * 3;
+    }
+    case C_TINYUSD_VALUE_DOUBLE4: {
+      return sizeof(double) * 4;
+    }
+    case C_TINYUSD_VALUE_QUATH: {
+      return sizeof(uint16_t) * 4;
+    }
+    case C_TINYUSD_VALUE_QUATF: {
+      return sizeof(float) * 4;
+    }
+    case C_TINYUSD_VALUE_QUATD: {
+      return sizeof(double) * 4;
+    }
+    case C_TINYUSD_VALUE_NORMAL3H: {
+      return sizeof(uint16_t) * 3;
+    }
+    case C_TINYUSD_VALUE_NORMAL3F: {
+      return sizeof(float) * 3;
+    }
+    case C_TINYUSD_VALUE_NORMAL3D: {
+      return sizeof(double) * 3;
+    }
+    case C_TINYUSD_VALUE_VECTOR3H: {
+      return sizeof(uint16_t) * 3;
+    }
+    case C_TINYUSD_VALUE_VECTOR3F: {
+      return sizeof(float) * 3;
+    }
+    case C_TINYUSD_VALUE_VECTOR3D: {
+      return sizeof(double) * 3;
+    }
+    case C_TINYUSD_VALUE_POINT3H: {
+      return sizeof(uint16_t) * 3;
+    }
+    case C_TINYUSD_VALUE_POINT3F: {
+      return sizeof(float) * 3;
+    }
+    case C_TINYUSD_VALUE_POINT3D: {
+      return sizeof(double) * 3;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2H: {
+      return sizeof(uint16_t) * 2;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2F: {
+      return sizeof(float) * 2;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2D: {
+      return sizeof(double) * 2;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3H: {
+      return sizeof(uint16_t) * 3;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3F: {
+      return sizeof(float) * 3;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3D: {
+      return sizeof(double) * 3;
+    }
+    case C_TINYUSD_VALUE_COLOR3H: {
+      return sizeof(uint16_t) * 3;
+    }
+    case C_TINYUSD_VALUE_COLOR3F: {
+      return sizeof(float) * 3;
+    }
+    case C_TINYUSD_VALUE_COLOR3D: {
+      return sizeof(double) * 3;
+    }
+    case C_TINYUSD_VALUE_COLOR4H: {
+      return sizeof(uint16_t) * 4;
+    }
+    case C_TINYUSD_VALUE_COLOR4F: {
+      return sizeof(float) * 4;
+    }
+    case C_TINYUSD_VALUE_COLOR4D: {
+      return sizeof(double) * 4;
+    }
+    case C_TINYUSD_VALUE_MATRIX2D: {
+      return sizeof(double) * 2 * 2;
+    }
+    case C_TINYUSD_VALUE_MATRIX3D: {
+      return sizeof(double) * 3 * 3;
+    }
+    case C_TINYUSD_VALUE_MATRIX4D: {
+      return sizeof(double) * 4 * 4;
+    }
+    case C_TINYUSD_VALUE_FRAME4D: {
+      return sizeof(double) * 4 * 4;
+    }
+    case C_TINYUSD_VALUE_END: {
+      return 0;
+    }  // invalid
+       // default: { return 0; }
   }
 
   return 0;
 }
 
-CTinyUSDFormat c_tinyusd_detect_format(const char *filename)
-{
+CTinyUSDFormat c_tinyusd_detect_format(const char *filename) {
   if (tinyusdz::IsUSDA(filename)) {
     return C_TINYUSD_FORMAT_USDA;
   }
@@ -255,18 +636,52 @@ const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type) {
   const char *tyname = "";
 
   switch (prim_type) {
-    case C_TINYUSD_PRIM_UNKNOWN: { return nullptr; }
-    case C_TINYUSD_PRIM_MODEL: { tyname = ""; break; } // empty string for Model
-    case C_TINYUSD_PRIM_XFORM: { tyname = tinyusdz::kGeomXform; break; }
-    case C_TINYUSD_PRIM_MESH: { tyname = tinyusdz::kGeomMesh; break; }
-    case C_TINYUSD_PRIM_GEOMSUBSET: {tyname = tinyusdz::kGeomSubset; break; }
-    case C_TINYUSD_PRIM_MATERIAL: { tyname = tinyusdz::kMaterial; break; }
-    case C_TINYUSD_PRIM_SHADER: { tyname = tinyusdz::kShader; break; }
-    case C_TINYUSD_PRIM_CAMERA: { tyname = tinyusdz::kGeomCamera; break; }
-    case C_TINYUSD_PRIM_SPHERE_LIGHT: { tyname = tinyusdz::kSphereLight; break; }
-    case C_TINYUSD_PRIM_DISTANT_LIGHT: { tyname = tinyusdz::kDistantLight; break; }
-    case C_TINYUSD_PRIM_RECT_LIGHT: { tyname = tinyusdz::kRectLight; break; }
-    case C_TINYUSD_PRIM_END: { return nullptr; }
+    case C_TINYUSD_PRIM_UNKNOWN: {
+      return nullptr;
+    }
+    case C_TINYUSD_PRIM_MODEL: {
+      tyname = "";
+      break;
+    }  // empty string for Model
+    case C_TINYUSD_PRIM_XFORM: {
+      tyname = tinyusdz::kGeomXform;
+      break;
+    }
+    case C_TINYUSD_PRIM_MESH: {
+      tyname = tinyusdz::kGeomMesh;
+      break;
+    }
+    case C_TINYUSD_PRIM_GEOMSUBSET: {
+      tyname = tinyusdz::kGeomSubset;
+      break;
+    }
+    case C_TINYUSD_PRIM_MATERIAL: {
+      tyname = tinyusdz::kMaterial;
+      break;
+    }
+    case C_TINYUSD_PRIM_SHADER: {
+      tyname = tinyusdz::kShader;
+      break;
+    }
+    case C_TINYUSD_PRIM_CAMERA: {
+      tyname = tinyusdz::kGeomCamera;
+      break;
+    }
+    case C_TINYUSD_PRIM_SPHERE_LIGHT: {
+      tyname = tinyusdz::kSphereLight;
+      break;
+    }
+    case C_TINYUSD_PRIM_DISTANT_LIGHT: {
+      tyname = tinyusdz::kDistantLight;
+      break;
+    }
+    case C_TINYUSD_PRIM_RECT_LIGHT: {
+      tyname = tinyusdz::kRectLight;
+      break;
+    }
+    case C_TINYUSD_PRIM_END: {
+      return nullptr;
+    }
   }
 
   size_t sz = strlen(tyname);
@@ -317,7 +732,7 @@ int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str) {
 
   tok->data = reinterpret_cast<void *>(value);
 
-  return 1; // ok
+  return 1;  // ok
 }
 
 int c_tinyusd_token_free(c_tinyusd_token *tok) {
@@ -331,10 +746,10 @@ int c_tinyusd_token_free(c_tinyusd_token *tok) {
     tok->data = nullptr;
   }
 
-  return 1; // ok
+  return 1;  // ok
 }
 
-const char *c_tinyusd_token_str(c_tinyusd_token *tok) {
+const char *c_tinyusd_token_str(const c_tinyusd_token *tok) {
   if (!tok) {
     return nullptr;
   }
@@ -347,8 +762,7 @@ const char *c_tinyusd_token_str(c_tinyusd_token *tok) {
   return nullptr;
 }
 
-size_t c_tinyusd_token_size(c_tinyusd_token *tok) {
-
+size_t c_tinyusd_token_size(const c_tinyusd_token *tok) {
   if (!tok) {
     return 0;
   }
@@ -370,7 +784,7 @@ int c_tinyusd_string_new_empty(c_tinyusd_string *s) {
   auto *value = new std::string();
   s->data = reinterpret_cast<void *>(value);
 
-  return 1; // ok
+  return 1;  // ok
 }
 
 int c_tinyusd_string_new(c_tinyusd_string *s, const char *str) {
@@ -386,11 +800,10 @@ int c_tinyusd_string_new(c_tinyusd_string *s, const char *str) {
     s->data = reinterpret_cast<void *>(value);
   }
 
-  return 1; // ok
+  return 1;  // ok
 }
 
-size_t c_tinyusd_string_size(c_tinyusd_string *s) {
-
+size_t c_tinyusd_string_size(const c_tinyusd_string *s) {
   if (!s) {
     return 0;
   }
@@ -399,7 +812,7 @@ size_t c_tinyusd_string_size(c_tinyusd_string *s) {
     return 0;
   }
 
-  auto *p = reinterpret_cast<std::string *>(s->data);
+  auto *p = reinterpret_cast<const std::string *>(s->data);
 
   return p->size();
 }
@@ -420,9 +833,8 @@ int c_tinyusd_string_replace(c_tinyusd_string *s, const char *str) {
   std::string *p = reinterpret_cast<std::string *>(s->data);
   (*p) = std::string(str);
 
-  return 1; // ok
+  return 1;  // ok
 }
-
 
 int c_tinyusd_string_free(c_tinyusd_string *s) {
   if (!s) {
@@ -435,25 +847,23 @@ int c_tinyusd_string_free(c_tinyusd_string *s) {
     s->data = nullptr;
   }
 
-  return 1; // ok
+  return 1;  // ok
 }
 
-const char *c_tinyusd_string_str(c_tinyusd_string *s) {
+const char *c_tinyusd_string_str(const c_tinyusd_string *s) {
   if (!s) {
     return nullptr;
   }
 
   if (s->data) {
-    auto *p = reinterpret_cast<std::string *>(s->data);
+    auto *p = reinterpret_cast<const std::string *>(s->data);
     return p->c_str();
   }
 
   return nullptr;
 }
 
-int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type,
-                         int ndim, uint64_t shape[C_TINYUSD_MAX_DIM]) {
-
+int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type) {
   if (!buf) {
     return 0;
   }
@@ -463,29 +873,117 @@ int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type,
     return 0;
   }
 
-  if (ndim >= C_TINYUSD_MAX_DIM) {
+  buf->value_type = value_type;
+  buf->ndim = 0;
+
+  uint8_t *m = new uint8_t[sz];
+  buf->data = reinterpret_cast<void *>(m);
+
+  return 1;  // ok
+}
+
+int c_tinyusd_buffer_new_and_copy_token(CTinyUSDBuffer *buf, const c_tinyusd_token *tok) {
+  if (!buf) {
     return 0;
   }
 
-  uint64_t n = 1;
-  for (int i = 0; i < ndim; i++) {
-    n *= shape[i];
+  if (!tok) {
+    return 0;
   }
 
-  if (n == 0) {
+  size_t sz = c_tinyusd_token_size(tok);
+
+  buf->value_type = C_TINYUSD_VALUE_TOKEN;
+  buf->ndim = 0;
+
+  if (sz == 0) {
+    // Allow null string 
+    buf->data = nullptr;
+  } else {
+
+    const char *str = c_tinyusd_token_str(tok);
+    if (strlen(str) != sz) {
+      // ???
+      return false;
+    }
+
+    if (str) {
+      uint8_t *m = new uint8_t[sz];
+
+      memcpy(m, str, sz);
+      buf->data = reinterpret_cast<void *>(m);
+    } else {
+      // ???
+      return 0;
+    }
+  }
+
+  return 1;  // ok
+}
+
+int c_tinyusd_buffer_new_and_copy_string(CTinyUSDBuffer *buf, const c_tinyusd_string *str) {
+  if (!buf) {
+    return 0;
+  }
+
+  if (!str) {
+    return 0;
+  }
+
+  size_t sz = c_tinyusd_string_size(str);
+
+  buf->value_type = C_TINYUSD_VALUE_STRING;
+  buf->ndim = 0;
+
+  if (sz == 0) {
+    // Allow null string 
+    buf->data = nullptr;
+  } else {
+
+    const char *s = c_tinyusd_string_str(str);
+    if (strlen(s) != sz) {
+      // ???
+      return false;
+    }
+
+    if (s) {
+      uint8_t *m = new uint8_t[sz];
+
+      memcpy(m, s, sz);
+      buf->data = reinterpret_cast<void *>(m);
+    } else {
+      // ???
+      return 0;
+    }
+  }
+
+  return 1;  // ok
+}
+
+int c_tinyusd_buffer_new_array(CTinyUSDBuffer *buf,
+                               CTinyUSDValueType value_type, uint64_t n) {
+  if (!buf) {
+    return 0;
+  }
+
+  uint32_t sz = c_tinyusd_value_type_sizeof(value_type);
+  if (sz == 0) {
     return 0;
   }
 
   buf->value_type = value_type;
-  buf->ndim = ndim;
-  for (int i = 0; i < ndim; i++) {
-    buf->shape[i] = shape[i];
+  buf->ndim = 1;
+  buf->shape[0] = n;
+
+  if (n == 0) {
+    // empty array
+    buf->data = nullptr;
+  } else {
+    uint8_t *m = new uint8_t[n * sz];
+    buf->data = reinterpret_cast<void *>(m);
   }
 
-  uint8_t *m = new uint8_t[n];
-  buf->data = reinterpret_cast<void *>(m);
-
-  return 1; // ok
+  return 1;  // ok
 }
 
 int c_tinyusd_buffer_free(CTinyUSDBuffer *buf) {
@@ -497,8 +995,8 @@ int c_tinyusd_buffer_free(CTinyUSDBuffer *buf) {
     return 0;
   }
 
-  uint8_t *p = reinterpret_cast<uint8_t*>(buf->data);
-  delete [] p;
+  uint8_t *p = reinterpret_cast<uint8_t *>(buf->data);
+  delete[] p;
 
   buf->data = nullptr;
 
@@ -533,9 +1031,10 @@ int c_tinyusd_is_usd_file(const char *filename) {
   return 0;
 }
 
-int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage, c_tinyusd_string *warn, c_tinyusd_string *err) {
-
-  //tinyusdz::Stage *p = new tinyusdz::Stage();
+int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage,
+                                 c_tinyusd_string *warn,
+                                 c_tinyusd_string *err) {
+  // tinyusdz::Stage *p = new tinyusdz::Stage();
 
   if (!stage) {
     if (err) {
@@ -546,7 +1045,8 @@ int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage, c_t
 
   if (!stage->data) {
     if (err) {
-      c_tinyusd_string_replace(err, "`stage` object is not initialized or new'ed.\n");
+      c_tinyusd_string_replace(
+          err, "`stage` object is not initialized or new'ed.\n");
     }
     return 0;
   }
@@ -554,14 +1054,15 @@ int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage, c_t
   std::string _warn;
   std::string _err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(filename, reinterpret_cast<tinyusdz::Stage *>(stage->data), &_warn, &_err);
+  bool ret = tinyusdz::LoadUSDFromFile(
+      filename, reinterpret_cast<tinyusdz::Stage *>(stage->data), &_warn,
+      &_err);
 
   if (_warn.size() && warn) {
     c_tinyusd_string_replace(warn, _warn.c_str());
   }
 
   if (!ret) {
-
     if (err) {
       c_tinyusd_string_replace(err, _err.c_str());
     }
@@ -579,7 +1080,6 @@ using namespace tinyusdz;
 bool CVisitPrimFunction(const Path &abs_path, const Prim &prim,
                         const int32_t tree_depth, void *userdata,
                         std::string *err) {
-
   (void)tree_depth;
 
   if (!userdata) {
@@ -595,7 +1095,8 @@ bool CVisitPrimFunction(const Path &abs_path, const Prim &prim,
   CTinyUSDPath cpath;
   cpath.data = reinterpret_cast<void *>(const_cast<Path *>(&abs_path));
 
-  CTinyUSDTraversalFunction callback_fun = reinterpret_cast<CTinyUSDTraversalFunction>(userdata);
+  CTinyUSDTraversalFunction callback_fun =
+      reinterpret_cast<CTinyUSDTraversalFunction>(userdata);
 
   int ret = callback_fun(&cprim, &cpath);
 
@@ -606,7 +1107,7 @@ bool CVisitPrimFunction(const Path &abs_path, const Prim &prim,
   return false;
 }
 
-} // namespace local
+}  // namespace
 
 int c_tinyusd_prim_new(const char *_prim_type, CTinyUSDPrim *prim) {
   if (!prim) {
@@ -629,9 +1130,9 @@ int c_tinyusd_prim_new(const char *_prim_type, CTinyUSDPrim *prim) {
   Prim *p{nullptr};
 
 #define NEW_PRIM(__cty, __ty) \
-  if (prim_type == __cty) { \
-    __ty content; \
-    p = new Prim(content); \
+  if (prim_type == __cty) {   \
+    __ty content;             \
+    p = new Prim(content);    \
   } else
 
   if (non_builtin_prim_type) {
@@ -708,7 +1209,8 @@ uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim) {
   return uint64_t(p->children().size());
 }
 
-int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_idx, CTinyUSDPrim **child) {
+int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_idx,
+                             CTinyUSDPrim **child) {
   if (!prim) {
     return 0;
   }
@@ -731,7 +1233,6 @@ int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_idx, CTiny
 
   (*child)->data = reinterpret_cast<void *>(const_cast<Prim *>(child_ptr));
 
-
   return 0;
 }
 
@@ -746,7 +1247,8 @@ int c_tinyusd_stage_new(CTinyUSDStage *stage) {
   return 1;
 }
 
-int c_tinyusd_stage_to_string(const CTinyUSDStage *stage, c_tinyusd_string *str) {
+int c_tinyusd_stage_to_string(const CTinyUSDStage *stage,
+                              c_tinyusd_string *str) {
   if (!stage) {
     return 0;
   }
@@ -780,7 +1282,9 @@ int c_tinyusd_stage_free(CTinyUSDStage *stage) {
   return 1;
 }
 
-int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage, CTinyUSDTraversalFunction callback_fun, c_tinyusd_string *_err) {
+int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage,
+                             CTinyUSDTraversalFunction callback_fun,
+                             c_tinyusd_string *_err) {
   if (!_stage) {
     if (_err) {
       c_tinyusd_string_replace(_err, "`stage` argument is null.\n");
@@ -795,10 +1299,13 @@ int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage, CTinyUSDTraversalFunct
     return 0;
   }
 
-  const tinyusdz::Stage *pstage = reinterpret_cast<const tinyusdz::Stage *>(_stage);
+  const tinyusdz::Stage *pstage =
+      reinterpret_cast<const tinyusdz::Stage *>(_stage);
 
   std::string err;
-  if (!tinyusdz::tydra::VisitPrims(*pstage, CVisitPrimFunction, reinterpret_cast<void *>(callback_fun), &err)) {
+  if (!tinyusdz::tydra::VisitPrims(*pstage, CVisitPrimFunction,
+                                   reinterpret_cast<void *>(callback_fun),
+                                   &err)) {
     if (_err) {
       c_tinyusd_string_replace(_err, err.c_str());
     }
@@ -806,3 +1313,55 @@ int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage, CTinyUSDTraversalFunct
 
   return 1;
 }
+
+int c_tinyusd_attribute_value_new_token(CTinyUSDAttributeValue *aval, const c_tinyusd_token *tok) {
+  if (!aval) { 
+    return 0;
+  }
+
+  CTinyUSDBuffer buf;
+  if (!c_tinyusd_buffer_new_and_copy_token(&buf, tok)) {
+    return 0;
+  }
+
+  return 1;
+}
+
+int c_tinyusd_attribute_value_new_string(CTinyUSDAttributeValue *aval, const c_tinyusd_string *str) {
+  if (!aval) { 
+    return 0;
+  }
+
+  CTinyUSDBuffer buf;
+  if (!c_tinyusd_buffer_new_and_copy_string(&buf, str)) {
+    return 0;
+  }
+
+  return 1;
+}
+
+#define ATTRIB_VALUE_IMPL(__tyname, __ty, __tyenum) \
+int c_tinyusd_attribute_value_new_##__tyname(CTinyUSDAttributeValue *aval, __ty val) { \
+  if (!aval) { \
+    return 0; \
+  } \
+  CTinyUSDBuffer buf; \
+  if (!c_tinyusd_buffer_new(&buf, __tyenum)) { \
+    return 0; \
+  } \
+  memcpy(buf.data, &val, sizeof(__ty)); \
+  return 1; \
+}
+
+ATTRIB_VALUE_IMPL(int, int, C_TINYUSD_VALUE_INT)
+ATTRIB_VALUE_IMPL(int2, c_tinyusd_int2, C_TINYUSD_VALUE_INT2)
+ATTRIB_VALUE_IMPL(int3, c_tinyusd_int3, C_TINYUSD_VALUE_INT3)
+ATTRIB_VALUE_IMPL(int4, c_tinyusd_int4, C_TINYUSD_VALUE_INT4)
+
+ATTRIB_VALUE_IMPL(float, float, C_TINYUSD_VALUE_FLOAT)
+ATTRIB_VALUE_IMPL(float2, c_tinyusd_float2, C_TINYUSD_VALUE_FLOAT2)
+ATTRIB_VALUE_IMPL(float3, c_tinyusd_float3, C_TINYUSD_VALUE_FLOAT3)
+ATTRIB_VALUE_IMPL(float4, c_tinyusd_float4, C_TINYUSD_VALUE_FLOAT4)
+
+#undef ATTRIB_VALUE_IMPL
+

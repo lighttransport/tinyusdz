@@ -14,6 +14,16 @@ namespace pathutil {
 bool ValidatePath(const Path &path, std::string *err);
 
 ///
+/// Validate Prim path(`Path::prim_part()`). `err` will be filled when Prim path is invalid(e.g. contains invalid character: "/dora%bora|muda").
+///
+bool ValidatePrimPath(const Path &path, std::string *err);
+
+///
+/// Validate Prim property path(`Path::prop_part()`). `err` will be filled when Prim property path is invalid(e.g. contains invalid character: "/dora%bora|muda").
+///
+bool ValidatePropPath(const Path &path, std::string *err);
+
+///
 ///
 /// Construct Path from a string.
 /// It splits string into prim_part and prop_part(e.g. "/bora.dora" => "/dora", "bora") if required and constrcut Path object.
