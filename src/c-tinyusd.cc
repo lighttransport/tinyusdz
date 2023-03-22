@@ -6,6 +6,8 @@
 #include "tinyusdz.hh"
 #include "tydra/scene-access.hh"
 #include "usdLux.hh"
+#include "prim-pprint.hh"
+#include "value-pprint.hh"
 
 // TODO:
 // - [ ] Implement our own `strlen`
@@ -876,8 +878,10 @@ int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type) {
   buf->value_type = value_type;
   buf->ndim = 0;
 
-  uint8_t *m = new uint8_t[sz];
-  buf->data = reinterpret_cast<void *>(m);
+  //uint8_t *m = new uint8_t[sz];
+  //buf->data = reinterpret_cast<void *>(m);
+  tinyusdz::value::Value *vp = new tinyusdz::value::Value(); // new `null` Value at the moment 
+  buf->data = reinterpret_cast<void *>(vp);
 
   return 1;  // ok
 }
@@ -1236,6 +1240,34 @@ int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_idx,
   return 0;
 }
 
+int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim, c_tinyusd_string *str) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!prim->data) {
+    return 0;
+  }
+
+  if (!str) {
+    return 0;
+  }
+
+  if (!str->data) {
+    return 0;
+  }
+
+  const Prim *p = reinterpret_cast<const Prim *>(prim->data);
+
+  std::string s = tinyusdz::to_string(*p);
+
+  if (!c_tinyusd_string_replace(str, s.c_str())) {
+    return 0;
+  }
+
+  return 1;
+}
+
 int c_tinyusd_stage_new(CTinyUSDStage *stage) {
   if (!stage) {
     return 0;
@@ -1340,8 +1372,10 @@ int c_tinyusd_attribute_value_new_string(CTinyUSDAttributeValue *aval, const c_t
   return 1;
 }
 
-#define ATTRIB_VALUE_IMPL(__tyname, __ty, __tyenum) \
-int c_tinyusd_attribute_value_new_##__tyname(CTinyUSDAttributeValue *aval, __ty val) { \
+#define ATTRIB_VALUE_IMPL(__tyname, __cppty, __cty, __tyenum) \
+int c_tinyusd_attribute_value_new_##__tyname(CTinyUSDAttributeValue *aval, __cty val) { \
+  /* ensure C++ and C types has same size. */ \
+  static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
   if (!aval) { \
     return 0; \
   } \
@@ -1349,19 +1383,54 @@ int c_tinyusd_attribute_value_new_##__tyname(CTinyUSDAttributeValue *aval, __ty 
   if (!c_tinyusd_buffer_new(&buf, __tyenum)) { \
     return 0; \
   } \
-  memcpy(buf.data, &val, sizeof(__ty)); \
+  tinyusdz::value::Value *vp = reinterpret_cast<tinyusdz::value::Value *>(buf.data); \
+  __cppty cppval; \
+  memcpy(&cppval, &val, sizeof(__cty)); \
+  (*vp) = cppval; \
+  aval->buffer = buf; \
   return 1; \
 }
 
-ATTRIB_VALUE_IMPL(int, int, C_TINYUSD_VALUE_INT)
-ATTRIB_VALUE_IMPL(int2, c_tinyusd_int2, C_TINYUSD_VALUE_INT2)
-ATTRIB_VALUE_IMPL(int3, c_tinyusd_int3, C_TINYUSD_VALUE_INT3)
-ATTRIB_VALUE_IMPL(int4, c_tinyusd_int4, C_TINYUSD_VALUE_INT4)
+ATTRIB_VALUE_IMPL(int, int, int, C_TINYUSD_VALUE_INT)
+ATTRIB_VALUE_IMPL(int2, value::int2, c_tinyusd_int2, C_TINYUSD_VALUE_INT2)
+ATTRIB_VALUE_IMPL(int3, value::int3, c_tinyusd_int3, C_TINYUSD_VALUE_INT3)
+ATTRIB_VALUE_IMPL(int4, value::int4, c_tinyusd_int4, C_TINYUSD_VALUE_INT4)
 
-ATTRIB_VALUE_IMPL(float, float, C_TINYUSD_VALUE_FLOAT)
-ATTRIB_VALUE_IMPL(float2, c_tinyusd_float2, C_TINYUSD_VALUE_FLOAT2)
-ATTRIB_VALUE_IMPL(float3, c_tinyusd_float3, C_TINYUSD_VALUE_FLOAT3)
-ATTRIB_VALUE_IMPL(float4, c_tinyusd_float4, C_TINYUSD_VALUE_FLOAT4)
+ATTRIB_VALUE_IMPL(float, float, float, C_TINYUSD_VALUE_FLOAT)
+ATTRIB_VALUE_IMPL(float2, value::float2, c_tinyusd_float2, C_TINYUSD_VALUE_FLOAT2)
+ATTRIB_VALUE_IMPL(float3, value::float3, c_tinyusd_float3, C_TINYUSD_VALUE_FLOAT3)
+ATTRIB_VALUE_IMPL(float4, value::float4, c_tinyusd_float4, C_TINYUSD_VALUE_FLOAT4)
 
 #undef ATTRIB_VALUE_IMPL
+
+int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *aval, c_tinyusd_string *str) {
+  if (!aval) {
+    return 0;
+  }
+
+  if (!aval->buffer.data) {
+    return 0;
+  }
+
+  if (!str) {
+    return 0;
+  }
+
+  if (!str->data) {
+    return 0;
+  }
+
+  // TODO: Check if Value's type == buffer.value_type 
+  const tinyusdz::value::Value *cp = reinterpret_cast<const tinyusdz::value::Value *>(aval->buffer.data);
+  
+  std::string s = tinyusdz::value::pprint_value(*cp, /* indent */0, /* closing_brace */false);
+
+  if (!c_tinyusd_string_replace(str, s.c_str())) {
+    return 0;
+  }
+  
+  return 1;
+}
+
+
 
