@@ -48,11 +48,34 @@ int main(int argc, char **argv) {
 
   printf("%s\n", c_tinyusd_string_str(&str));
 
+  //
+  // Create new Prim
+  //
+  {
+    CTinyUSDAttributeValue attr_value;
+    if (!c_tinyusd_attribute_value_new_int(&attr_value, 7)) {
+      printf("Failed to new `int` attribute value.\n");
+      return EXIT_SUCCESS;
+    }
+
+  
+    if (!c_tinyusd_attribute_value_to_string(&attr_value, &str)) {
+      printf("Failed to print `int` attribute value.\n");
+      return EXIT_SUCCESS;
+    }
+
+    printf("Int attribute value: %s\n", c_tinyusd_string_str(&str));
+  }
+
   c_tinyusd_string_free(&str);
 
+  //
+  // Release resources.
+  //
   c_tinyusd_stage_free(&stage);
   c_tinyusd_string_free(&warn);
   c_tinyusd_string_free(&err);
+
 
   return EXIT_SUCCESS;
 }
