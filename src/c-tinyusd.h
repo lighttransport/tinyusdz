@@ -399,6 +399,10 @@ typedef struct {
 int c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
                                    const CTinyUSDBuffer *buffer);
 
+// Print AttributeValue.
+// Return 0 upon error.
+int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *val, c_tinyusd_string *str);
+
 // Free AttributeValue.
 // Internally calls `c_tinyusd_buffer_free` to free buffer associated with this AttributeValue. 
 int c_tinyusd_attribute_value_free(CTinyUSDAttributeValue *val);
@@ -483,6 +487,8 @@ int c_tinyusd_prim_new(const char *prim_type, CTinyUSDPrim *prim /* out */);
 
 // Create Prim with builtin Prim type.
 int c_tinyusd_prim_builtin_new(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim/* out */);
+
+int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim, c_tinyusd_string *str);
 
 int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 
