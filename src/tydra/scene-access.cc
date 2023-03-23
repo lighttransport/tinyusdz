@@ -860,9 +860,11 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
   } else 
 
 // Return false: something went wrong
+// `attr_prop` true: Include Attribute property.
+// `rel_prop` true: Include Relationship property.
 template <typename T>
-bool GetPrimPropertyNames(
-    const T &prim, std::vector<std::string> *prop_names);
+bool GetPrimPropertyNamesImpl(
+    const T &prim, std::vector<std::string> *prop_names, bool attr_prop=true, bool rel_prop=true);
 
 
 // Return true: Property found(`out_prop` filled)
@@ -1522,23 +1524,54 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 }
 
 template <>
-bool GetPrimPropertyNames(
-    const Model &model, std::vector<std::string> *prop_names) {
+bool GetPrimPropertyNamesImpl(
+    const Model &model, std::vector<std::string> *prop_names, bool attr_prop, bool rel_prop) {
+
   if (!prop_names) {
     return false;
   }
 
-  prop_names->clear();
   // TODO: Use propertyNames()
   for (const auto &prop : model.props) {
-    prop_names->push_back(prop.first);
+    if (prop.second.is_relationship()) {
+      if (rel_prop) {
+        prop_names->push_back(prop.first);
+      }
+    } else { // assume attribute
+      if (attr_prop) {
+        prop_names->push_back(prop.first);
+      }
+    }
   } 
 
   return true;
 }
 
-bool GetGPrimPropertyNames(
-    const GPrim *gprim, std::vector<std::string> *prop_names) {
+template <>
+bool GetPrimPropertyNamesImpl(
+    const Scope &scope, std::vector<std::string> *prop_names, bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  // TODO: Use propertyNames()
+  for (const auto &prop : scope.props) {
+    if (prop.second.is_relationship()) {
+      if (rel_prop) {
+        prop_names->push_back(prop.first);
+      }
+    } else { // assume attribute
+      if (attr_prop) {
+        prop_names->push_back(prop.first);
+      }
+    }
+  } 
+
+  return true;
+}
+
+bool GetGPrimPropertyNamesImpl(
+    const GPrim *gprim, std::vector<std::string> *prop_names, bool attr_prop, bool rel_prop) {
   if (!gprim) {
     return false;
   }
@@ -1547,89 +1580,109 @@ bool GetGPrimPropertyNames(
     return false;
   }
 
+  if (attr_prop) {
 
-  if (gprim->doubleSided.authored()) {
-    prop_names->push_back("doubleSided");
-  }
-
-  if (gprim->orientation.authored()) {
-    prop_names->push_back("orientation");
-  }
-
-  if (gprim->purpose.authored()) {
-    prop_names->push_back("purpose");
-  }
-
-  if (gprim->extent.authored()) {
-    prop_names->push_back("extent");
-  }
-
-  if (gprim->visibility.authored()) {
-    prop_names->push_back("visibility");
-  }
-
-  if (gprim->materialBinding) {
-    prop_names->push_back("material:binding");
-  }
-
-  if (gprim->materialBindingCollection) {
-    prop_names->push_back("material:binding:collection");
-  }
-
-  if (gprim->materialBindingPreview) {
-    prop_names->push_back("material:binding:preview");
-  }
-
-  // xformOps.
-  for (const auto &xop : gprim->xformOps) {
-    if (xop.op_type == XformOp::OpType::ResetXformStack) {
-      // skip
-      continue;
+    if (gprim->doubleSided.authored()) {
+      prop_names->push_back("doubleSided");
     }
-    std::string varname = to_string(xop.op_type);
-    if (!xop.suffix.empty()) {
-      varname += ":" + xop.suffix;
+
+    if (gprim->orientation.authored()) {
+      prop_names->push_back("orientation");
     }
-    prop_names->push_back(varname);
-  } 
+
+    if (gprim->purpose.authored()) {
+      prop_names->push_back("purpose");
+    }
+
+    if (gprim->extent.authored()) {
+      prop_names->push_back("extent");
+    }
+
+    if (gprim->visibility.authored()) {
+      prop_names->push_back("visibility");
+    }
+
+    // xformOps.
+    for (const auto &xop : gprim->xformOps) {
+      if (xop.op_type == XformOp::OpType::ResetXformStack) {
+        // skip
+        continue;
+      }
+      std::string varname = to_string(xop.op_type);
+      if (!xop.suffix.empty()) {
+        varname += ":" + xop.suffix;
+      }
+      prop_names->push_back(varname);
+    } 
+  }
+
+  if (rel_prop) {
+
+    if (gprim->materialBinding) {
+      prop_names->push_back("material:binding");
+    }
+
+    if (gprim->materialBindingCollection) {
+      prop_names->push_back("material:binding:collection");
+    }
+
+    if (gprim->materialBindingPreview) {
+      prop_names->push_back("material:binding:preview");
+    }
+
+    if (gprim->proxyPrim.authored()) {
+      prop_names->push_back("proxyPrim");
+    }
+  }
 
   // other props
   for (const auto &prop : gprim->props) {
-    prop_names->push_back(prop.first);
+    if (prop.second.is_relationship()) {
+      if (rel_prop) {
+        prop_names->push_back(prop.first);
+      }
+    } else { // assume attribute
+      if (attr_prop) {
+        prop_names->push_back(prop.first);
+      }
+    }
   } 
 
   return true;
 }
 
 template <>
-bool GetPrimPropertyNames(
-    const Xform &xform, std::vector<std::string> *prop_names) {
+bool GetPrimPropertyNamesImpl(
+    const Xform &xform, std::vector<std::string> *prop_names, bool attr_prop, bool rel_prop) {
   if (!prop_names) {
     return false;
   }
 
-  return GetGPrimPropertyNames(&xform, prop_names);
+  return GetGPrimPropertyNamesImpl(&xform, prop_names, attr_prop, rel_prop);
 }
 
 template <>
-bool GetPrimPropertyNames(
-    const GeomMesh &mesh, std::vector<std::string> *prop_names) {
+bool GetPrimPropertyNamesImpl(
+    const GeomMesh &mesh, std::vector<std::string> *prop_names, bool attr_prop, bool rel_prop) {
   if (!prop_names) {
     return false;
   }
 
-  if (!GetGPrimPropertyNames(&mesh, prop_names)) {
+  if (!GetGPrimPropertyNamesImpl(&mesh, prop_names, attr_prop, rel_prop)) {
     return false;
   }
 
-  if (mesh.points.authored()) {
-    prop_names->push_back("points");
-  }
+  if (attr_prop) {
+    if (mesh.points.authored()) {
+      prop_names->push_back("points");
+    }
 
-  if (mesh.normals.authored()) {
-    prop_names->push_back("normals");
-  }
+    if (mesh.normals.authored()) {
+      prop_names->push_back("normals");
+    }
 
+    DCOUT("TODO: more attrs...");
+  }
 
   return true;
 }
@@ -1807,7 +1860,7 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
 bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *out_prop_names, std::string *err) {
 #define GET_PRIM_PROPERTY_NAMES(__ty)                                         \
   if (prim.is<__ty>()) {                                                \
-    auto ret = GetPrimPropertyNames(*prim.as<__ty>(), out_prop_names);  \
+    auto ret = GetPrimPropertyNamesImpl(*prim.as<__ty>(), out_prop_names, true, true);  \
     if (!ret) {                                                          \
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to list up Property names of Prim type {}", value::TypeTraits<__ty>::type_name()));                               \
     }                                                                   \
@@ -1815,8 +1868,8 @@ bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *out_
 
   GET_PRIM_PROPERTY_NAMES(Model)
   GET_PRIM_PROPERTY_NAMES(Xform)
-  //GET_PRIM_PROPERTY_NAMES(Scope)
-  //GET_PRIM_PROPERTY_NAMES(GeomMesh)
+  GET_PRIM_PROPERTY_NAMES(Scope)
+  GET_PRIM_PROPERTY_NAMES(GeomMesh)
   //GET_PRIM_PROPERTY_NAMES(GeomSubset)
   //GET_PRIM_PROPERTY_NAMES(Shader)
   //GET_PRIM_PROPERTY_NAMES(Material)
@@ -1824,6 +1877,35 @@ bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *out_
   //GET_PRIM_PROPERTY_NAMES(BlendShape)
   //GET_PRIM_PROPERTY_NAMES(Skeleton)
   //GET_PRIM_PROPERTY_NAMES(SkelAnimation)
+  {
+    PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
+  }
+
+#undef GET_PRIM_PROPERTY_NAMES
+
+  return true;
+}
+
+bool GetRelationshipNames(const tinyusdz::Prim &prim, std::vector<std::string> *out_rel_names, std::string *err) {
+#define GET_PRIM_RELATIONSHIP_NAMES(__ty)                                         \
+  if (prim.is<__ty>()) {                                                \
+    auto ret = GetPrimPropertyNamesImpl(*prim.as<__ty>(), out_rel_names, false, true);  \
+    if (!ret) {                                                          \
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to list up Property names of Prim type {}", value::TypeTraits<__ty>::type_name()));                               \
+    }                                                                   \
+  } else
+
+  GET_PRIM_RELATIONSHIP_NAMES(Model)
+  GET_PRIM_RELATIONSHIP_NAMES(Xform)
+  GET_PRIM_RELATIONSHIP_NAMES(Scope)
+  GET_PRIM_RELATIONSHIP_NAMES(GeomMesh)
+  //GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
+  //GET_PRIM_RELATIONSHIP_NAMES(Shader)
+  //GET_PRIM_RELATIONSHIP_NAMES(Material)
+  //GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
+  //GET_PRIM_RELATIONSHIP_NAMES(BlendShape)
+  //GET_PRIM_RELATIONSHIP_NAMES(Skeleton)
+  //GET_PRIM_RELATIONSHIP_NAMES(SkelAnimation)
   {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
