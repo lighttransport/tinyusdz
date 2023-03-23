@@ -537,10 +537,10 @@ int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 //
 // @param[in] prim Prim
 // @param[out] n The number of property names(`toks`)
-// @param[out] prop_names Array of property name. Memory is newly allocated, so please call `free` for each `prop_names` pointers after using it.
+// @param[out] prop_names Array of property name. Memory is newly allocated, so please call `free` for each `prop_names` pointers, then `free` `prop_names` after using it.
 //
-// @return 1 upon success. 0 failure.
-int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n, char **prop_names);
+// @return 1 upon success(even when len(property names) == 0). 0 failure.
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n, char ***prop_names);
 
 // Get Prim's property. Returns 0 when property `prop_name` does not exist in the Prim.
 // `prop` just holds pointer to corresponding C++ Property instance, so no free operation required.

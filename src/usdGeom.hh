@@ -282,7 +282,7 @@ struct GPrim : Xformable {
 
   bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
 
-  nonstd::optional<Relationship> proxyPrim;
+  RelationshipProperty proxyPrim;
 
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // material:binding
