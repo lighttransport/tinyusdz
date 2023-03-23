@@ -8,6 +8,7 @@
 #include "usdLux.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
+#include "common-macros.inc"
 
 // TODO:
 // - [ ] Implement our own `strlen`
@@ -1161,13 +1162,8 @@ int c_tinyusd_prim_new(const char *_prim_type, CTinyUSDPrim *prim) {
   return 1;
 }
 
-#if 0
-int c_tinyusd_prim_builtin_new(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim) {
+int c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim) {
   if (!prim) {
-    return 0;
-  }
-
-  if (!prim_type) {
     return 0;
   }
 
@@ -1176,13 +1172,8 @@ int c_tinyusd_prim_builtin_new(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim) {
     return 0;
   }
 
-  Prim *p = new Prim(prim_type_name);
-
-  prim->data = reinterpret_cast<void *>(p);
-
-  return 1;
+  return c_tinyusd_prim_new(prim_type_name, prim);
 }
-#endif
 
 int c_tinyusd_prim_free(CTinyUSDPrim *prim) {
   if (!prim) {
@@ -1432,5 +1423,33 @@ int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *aval, c_ti
   return 1;
 }
 
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n, char **prop_names) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!prim->data) {
+    return 0;
+  }
+
+  if (!n) {
+    return 0;
+  }
+
+  if (!prop_names) {
+    return 0;
+  }
+
+  const Prim *p = reinterpret_cast<const Prim *>(prim->data);
+  std::vector<std::string> prop_names;
+  if (!tydra::GetPropertyNames(*p, &prop_names)) {
+    return 0;
+  }
+
+  // TODO
+  DCOUT("TODO");
+  
+  return 0;
+}
 
 

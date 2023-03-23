@@ -31,7 +31,7 @@ constexpr auto kGeomCamera = "Camera";
 constexpr auto kPointInstancer = "PointInstancer";
 
 constexpr auto kMaterialBinding = "material:binding";
-constexpr auto kMaterialBindingCorrection = "material:binding:correction";
+constexpr auto kMaterialBindingCollection = "material:binding:collection";
 constexpr auto kMaterialBindingPreview = "material:binding:preview";
 
 struct GPrim;
@@ -286,7 +286,7 @@ struct GPrim : Xformable {
 
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // material:binding
-  nonstd::optional<Relationship> materialBindingCorrection; // material:binding:correction
+  nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection
   nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
 
   std::map<std::string, Property> props;

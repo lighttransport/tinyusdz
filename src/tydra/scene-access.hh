@@ -104,8 +104,34 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
 /// @return true if Property found in given Prim.
 /// @return false if Property is not found in given Prim.
 ///
-bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
+bool GetProperty(const tinyusdz::Prim &prim, const std::string &prop_name,
                  Property *prop, std::string *err);
+
+///
+/// Get List of Property(Attribute and Relationship) names of given Prim by name.
+/// It includes authored builtin Property names.
+///
+/// @param[in] prim Prim
+/// @param[out] prop_names Property names
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true upon success.
+/// @return false when something go wrong.
+///
+bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> &prop_names, std::string *err);
+
+///
+/// Get List of Attribute or Relationship) names of given Prim by name.
+/// It includes authored builtin Property names(e.g. "points" for `GeomMesh`).
+///
+/// @param[in] prim Prim
+/// @param[out] prop_names Property names
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true upon success.
+/// @return false when something go wrong.
+///
+bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> &prop_names, std::string *err);
 
 ///
 /// Get Attribute of given Prim by name.
@@ -124,6 +150,16 @@ bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
                   Attribute *attr, std::string *err);
 
 ///
+/// Check if Prim has Attribute.
+///
+/// @param[in] prim Prim
+/// @param[in] attr_name Attribute name to query.
+///
+/// @return true if `attr_name` Attribute exists in the Prim.
+///
+bool HasAttribute(const tinyusdz::Prim &prim, const std::string &attr_name);
+
+///
 /// Get Relationship of given Prim by name.
 /// Similar to UsdPrim::GetRelationship() in pxrUSD.
 ///
@@ -139,6 +175,14 @@ bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
 bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
                      Relationship *rel, std::string *err);
 
+///
+/// Check if Prim has Relationship.
+///
+/// @param[in] prim Prim
+/// @param[in] rel_name Relationship name to query.
+///
+/// @return true if `rel_name` Relationship exists in the Prim.
+///
 bool HasRelationship(const tinyusdz::Prim &prim, const std::string &rel_name);
 
 ///

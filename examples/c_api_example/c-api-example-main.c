@@ -51,6 +51,15 @@ int main(int argc, char **argv) {
   //
   // Create new Prim
   //
+  CTinyUSDPrim prim;
+
+  // You can also create a Prim with name
+  // if (!c_tinyusd_prim_new("Xform", &prim)) {
+  if (!c_tinyusd_prim_new_builtin(C_TINYUSD_PRIM_XFORM, &prim)) {
+    printf("Failed to new Xform Prim.\n");
+    return EXIT_SUCCESS;
+  }
+
   {
     CTinyUSDAttributeValue attr_value;
     if (!c_tinyusd_attribute_value_new_int(&attr_value, 7)) {
@@ -58,13 +67,14 @@ int main(int argc, char **argv) {
       return EXIT_SUCCESS;
     }
 
-  
     if (!c_tinyusd_attribute_value_to_string(&attr_value, &str)) {
       printf("Failed to print `int` attribute value.\n");
       return EXIT_SUCCESS;
     }
 
     printf("Int attribute value: %s\n", c_tinyusd_string_str(&str));
+
+    
   }
 
   c_tinyusd_string_free(&str);

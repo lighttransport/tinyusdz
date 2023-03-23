@@ -448,6 +448,7 @@ int c_tinyusd_attribute_value_new_float3_array(CTinyUSDAttributeValue *aval, uin
 int c_tinyusd_attribute_value_new_float4_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float4 *vals);
 // TODO: List up other types...
 
+
 typedef struct {
   // c_tinyusd_string prim_part;
   // c_tinyusd_string prop_part;
@@ -466,13 +467,47 @@ typedef struct {
   void *data;  // opaque pointer to tinyusdz::Relationship
 } CTinyUSDRelationship;
 
-CTinyUSDRelationship *c_tinyusd_relationsip_new(int n,
+CTinyUSDRelationship *c_tinyusd_relationsip_new(uint32_t n,
                                                 const char **targetPaths);
-void c_tinyusd_relationsip_delete(CTinyUSDRelationship *rel);
+
+// Returns 0 when failed.
+int c_tinyusd_relationsip_free(CTinyUSDRelationship *rel);
+
+int c_tinyusd_relationsip_is_blocked(const CTinyUSDRelationship *rel);
+
+// 0 = declaration only(e.g. `rel myrel`)
+uint32_t c_tinyusd_relationsip_num_targetPaths(const CTinyUSDRelationship *rel);
+
+// Get i'th targetPath
+// Returned `targetPath` is just a reference, so no need to free it.
+int c_tinyusd_relationsip_get_targetPath(const CTinyUSDRelationship *rel, uint32_t i, CTinyUSDPath *targetPath);
 
 typedef struct {
   void *data;  // opaque pointer to tinyusdz::Attribute
 } CTinyUSDAttribute;
+
+// Set single targetPath
+int c_tinyusd_attribute_connection_set(CTinyUSDAttribute *attr, const CTinyUSDPath *connectionPath);
+
+// Set multiple targetPaths
+int c_tinyusd_attribute_connections_set(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
+
+#if 0
+// Get i'th targetPaths
+int c_tinyusd_attribute_connection_get(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
+#endif
+
+int c_tinyusd_property_new(CTinyUSDProperty *prop);
+int c_tinyusd_property_new_attribute(CTinyUSDProperty *prop, const CTinyUSDAttribute *attr);
+int c_tinyusd_property_new_relationship(CTinyUSDProperty *prop, const CTinyUSDRelationship *rel);
+int c_tinyusd_property_free(CTinyUSDProperty *prop);
+
+int c_tinyusd_property_set_attribute(CTinyUSDProperty *prop, const CTinyUSDAttribute *attr);
+int c_tinyusd_property_set_relationship(CTinyUSDProperty *prop, const CTinyUSDRelationship *rel);
+
+int c_tinyusd_property_is_attribute(CTinyUSDProperty *prop);
+int c_tinyusd_property_is_attribute_connection(CTinyUSDProperty *prop);
+int c_tinyusd_property_is_relationship(CTinyUSDProperty *prop);
 
 typedef struct {
   // c_tinyusd_string prim_element_name;
@@ -482,15 +517,30 @@ typedef struct {
   void *data;  // opaque pointer to tinyusdz::Prim
 } CTinyUSDPrim;
 
-// Create Prim
+//
+// Create Prim with name.
+// Will create a builtin Prim when `prim_type` is a builtin Prim name(e.g. "Xform"(appeared in USDA))
+//
 int c_tinyusd_prim_new(const char *prim_type, CTinyUSDPrim *prim /* out */);
 
+//
 // Create Prim with builtin Prim type.
-int c_tinyusd_prim_builtin_new(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim/* out */);
+//
+int c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim/* out */);
 
 int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim, c_tinyusd_string *str);
 
 int c_tinyusd_prim_free(CTinyUSDPrim *prim);
+
+//
+// Get list of property names as token array.
+//
+// @param[in] prim Prim
+// @param[out] n The number of property names(`toks`)
+// @param[out] prop_names Array of property name. Memory is newly allocated, so please call `free` for each `prop_names` pointers after using it.
+//
+// @return 1 upon success. 0 failure.
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n, char **prop_names);
 
 // Get Prim's property. Returns 0 when property `prop_name` does not exist in the Prim.
 // `prop` just holds pointer to corresponding C++ Property instance, so no free operation required.
@@ -499,11 +549,14 @@ int c_tinyusd_prim_property_get(const CTinyUSDPrim *prim, const char *prop_name,
 // Add property to the Prim.
 // It copies the content of `prop`, so please free `prop` after this add operation.
 // Returns 0 when the operation failed(`err` will be returned. Please free `err` after using it)
-int c_tinyusd_prim_property_add(CTinyUSDPrim *prim, const char *prop_name, CTinyUSDProperty *prop, c_tinyusd_string *err);
+int c_tinyusd_prim_property_add(CTinyUSDPrim *prim, const char *prop_name, const CTinyUSDProperty *prop, c_tinyusd_string *err);
 
 // Delete a property in the Prim.
 // Returns 0 when `prop_name` does not exist in the prim.
 int c_tinyusd_prim_property_del(CTinyUSDPrim *prim, const char *prop_name);
+
+// TODO: Add `set` op?(replace property in Prim)
+// ----
 
 //
 // Append Prim to `prim`'s children.
