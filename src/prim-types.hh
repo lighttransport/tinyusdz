@@ -2396,7 +2396,7 @@ struct Klass {
 #if 0
 struct MaterialBindingAPI {
   Path binding;            // rel material:binding
-  Path bindingCorrection;  // rel material:binding:correction
+  Path bindingCollection;  // rel material:binding:collection
   Path bindingPreview;     // rel material:binding:preview
 
   // TODO: allPurpose, preview, ...

@@ -859,6 +859,11 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
     } \
   } else 
 
+// Return false: something went wrong
+template <typename T>
+bool GetPrimPropertyNames(
+    const T &prim, std::vector<std::string> *prop_names);
+
 
 // Return true: Property found(`out_prop` filled)
 // Return false: Property not found
@@ -1516,6 +1521,119 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 }
 
+template <>
+bool GetPrimPropertyNames(
+    const Model &model, std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return false;
+  }
+
+  prop_names->clear();
+  // TODO: Use propertyNames()
+  for (const auto &prop : model.props) {
+    prop_names->push_back(prop.first);
+  } 
+
+  return true;
+}
+
+bool GetGPrimPropertyNames(
+    const GPrim *gprim, std::vector<std::string> *prop_names) {
+  if (!gprim) {
+    return false;
+  }
+
+  if (!prop_names) {
+    return false;
+  }
+
+
+  if (gprim->doubleSided.authored()) {
+    prop_names->push_back("doubleSided");
+  }
+
+  if (gprim->orientation.authored()) {
+    prop_names->push_back("orientation");
+  }
+
+  if (gprim->purpose.authored()) {
+    prop_names->push_back("purpose");
+  }
+
+  if (gprim->extent.authored()) {
+    prop_names->push_back("extent");
+  }
+
+  if (gprim->visibility.authored()) {
+    prop_names->push_back("visibility");
+  }
+
+  if (gprim->materialBinding) {
+    prop_names->push_back("material:binding");
+  }
+
+  if (gprim->materialBindingCollection) {
+    prop_names->push_back("material:binding:collection");
+  }
+
+  if (gprim->materialBindingPreview) {
+    prop_names->push_back("material:binding:preview");
+  }
+
+  // xformOps.
+  for (const auto &xop : gprim->xformOps) {
+    if (xop.op_type == XformOp::OpType::ResetXformStack) {
+      // skip
+      continue;
+    }
+    std::string varname = to_string(xop.op_type);
+    if (!xop.suffix.empty()) {
+      varname += ":" + xop.suffix;
+    }
+    prop_names->push_back(varname);
+  } 
+
+  // other props
+  for (const auto &prop : gprim->props) {
+    prop_names->push_back(prop.first);
+  } 
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNames(
+    const Xform &xform, std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return false;
+  }
+
+  return GetGPrimPropertyNames(&xform, prop_names);
+}
+
+template <>
+bool GetPrimPropertyNames(
+    const GeomMesh &mesh, std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (!GetGPrimPropertyNames(&mesh, prop_names)) {
+    return false;
+  }
+
+  if (mesh.points.authored()) {
+    prop_names->push_back("points");
+  }
+
+  if (mesh.normals.authored()) {
+    prop_names->push_back("normals");
+  }
+
+
+  return true;
+}
+
 //
 // visited_paths : To prevent circular referencing of attribute connection.
 //
@@ -1681,8 +1799,40 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
 
+#undef GET_PRIM_PROPERTY
+
   return true;
 }
+
+bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *out_prop_names, std::string *err) {
+#define GET_PRIM_PROPERTY_NAMES(__ty)                                         \
+  if (prim.is<__ty>()) {                                                \
+    auto ret = GetPrimPropertyNames(*prim.as<__ty>(), out_prop_names);  \
+    if (!ret) {                                                          \
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to list up Property names of Prim type {}", value::TypeTraits<__ty>::type_name()));                               \
+    }                                                                   \
+  } else
+
+  GET_PRIM_PROPERTY_NAMES(Model)
+  GET_PRIM_PROPERTY_NAMES(Xform)
+  //GET_PRIM_PROPERTY_NAMES(Scope)
+  //GET_PRIM_PROPERTY_NAMES(GeomMesh)
+  //GET_PRIM_PROPERTY_NAMES(GeomSubset)
+  //GET_PRIM_PROPERTY_NAMES(Shader)
+  //GET_PRIM_PROPERTY_NAMES(Material)
+  //GET_PRIM_PROPERTY_NAMES(SkelRoot)
+  //GET_PRIM_PROPERTY_NAMES(BlendShape)
+  //GET_PRIM_PROPERTY_NAMES(Skeleton)
+  //GET_PRIM_PROPERTY_NAMES(SkelAnimation)
+  {
+    PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
+  }
+
+#undef GET_PRIM_PROPERTY_NAMES
+
+  return true;
+}
+
 
 bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
                   Attribute *out_attr, std::string *err) {

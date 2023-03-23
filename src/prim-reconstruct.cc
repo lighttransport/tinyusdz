@@ -35,7 +35,7 @@ constexpr auto kTag = "[PrimReconstruct]";
 
 constexpr auto kProxyPrim = "proxyPrim";
 constexpr auto kMaterialBinding = "material:binding";
-constexpr auto kMaterialBindingCorrection = "material:binding:correction";
+constexpr auto kMaterialBindingCollection = "material:binding:collection";
 constexpr auto kMaterialBindingPreview = "material:binding:preview";
 constexpr auto kSkelSkeleton = "skel:skeleton";
 constexpr auto kSkelAnimationSource = "skel:animationSource";
@@ -1996,7 +1996,7 @@ bool ReconstructGPrimProperties(
 
   for (const auto &prop : properties) {
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, gprim->materialBinding)
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCorrection, gprim->materialBindingCorrection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, gprim->materialBindingCollection)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, gprim->materialBindingPreview)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, gprim->proxyPrim)
     PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GPrim, gprim->doubleSided)

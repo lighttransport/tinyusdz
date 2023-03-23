@@ -190,9 +190,9 @@ bool GetBoundMaterial(
           return true;
         }
       }
-    } else if (suffix == "correction") {
-      if (gprim->materialBindingCorrection.has_value()) {
-        if (GetSinglePath(gprim->materialBindingCorrection.value(), materialPath)) {
+    } else if (suffix == "collection") {
+      if (gprim->materialBindingCollection.has_value()) {
+        if (GetSinglePath(gprim->materialBindingCollection.value(), materialPath)) {
 
           const Prim *p;
           if (stage.find_prim_at_path(*materialPath, p, err)) {
@@ -274,9 +274,9 @@ bool FindBoundMaterial(
       } else {
           DCOUT("GPrim has no materialBinding.");
       }
-    } else if (suffix == "correction") {
-      if (gprim->materialBindingCorrection.has_value()) {
-        if (GetSinglePath(gprim->materialBindingCorrection.value(), materialPath)) {
+    } else if (suffix == "collection") {
+      if (gprim->materialBindingCollection.has_value()) {
+        if (GetSinglePath(gprim->materialBindingCollection.value(), materialPath)) {
 
           const Prim *p;
           if (stage.find_prim_at_path(*materialPath, p, err)) {

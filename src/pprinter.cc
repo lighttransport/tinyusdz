@@ -1248,8 +1248,8 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
     ss << print_relationship(gprim.materialBinding.value(), gprim.materialBinding.value().get_listedit_qual(), /* custom */false, "material:binding", indent);
   }
 
-  if (gprim.materialBindingCorrection) {
-    ss << print_relationship(gprim.materialBindingCorrection.value(), gprim.materialBindingCorrection.value().get_listedit_qual(), /* custom */false, "material:binding:correction", indent);
+  if (gprim.materialBindingCollection) {
+    ss << print_relationship(gprim.materialBindingCollection.value(), gprim.materialBindingCollection.value().get_listedit_qual(), /* custom */false, "material:binding:collection", indent);
   }
 
   if (gprim.materialBindingPreview) {
@@ -1283,10 +1283,10 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim, con
       ss << print_relationship(gprim->materialBinding.value(), gprim->materialBinding.value().get_listedit_qual(), /* custom */false, "material:binding", indent);
       table.insert("material:binding");
     }
-  } else if (prop_name == "material:binding:correction") {
-    if (gprim->materialBindingCorrection) {
-      ss << print_relationship(gprim->materialBindingCorrection.value(), gprim->materialBindingCorrection.value().get_listedit_qual(), /* custom */false, "material:binding:correction", indent);
-      table.insert("material:binding:correction");
+  } else if (prop_name == "material:binding:collection") {
+    if (gprim->materialBindingCollection) {
+      ss << print_relationship(gprim->materialBindingCollection.value(), gprim->materialBindingCollection.value().get_listedit_qual(), /* custom */false, "material:binding:collection", indent);
+      table.insert("material:binding:collection");
     }
   } else if (prop_name == "material:binding:preview") {
     if (gprim->materialBindingPreview) {
