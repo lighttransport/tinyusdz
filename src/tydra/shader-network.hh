@@ -74,7 +74,7 @@ extern template bool EvaluateShaderAttribute(const Stage &stage, const Shader &s
 ///
 /// @param[in] stage Prim
 /// @param[in] prim Prim
-/// @param[in] suffix extra suffix(e.g. empty string is given, look into `material:binding`. `correction` is given, look into `material:binding:correction`.)
+/// @param[in] suffix extra suffix(e.g. empty string is given, look into `material:binding`. `collection` is given, look into `material:binding:collection`.)
 /// @param[out] materialPath Found target Path.
 /// @param[out] material THe pointer to found Material object in Stage(if no Material object found in Stage, returns nullptr)
 /// @return true when bound Material Path is found.
@@ -96,7 +96,7 @@ bool GetBoundMaterial(
 ///
 /// @param[in] stage Prim
 /// @param[in] prim Prim
-/// @param[in] suffix extra suffix(e.g. empty string is given, look into `material:binding`. `correction` is given, look into `material:binding:correction`.)
+/// @param[in] suffix extra suffix(e.g. empty string is given, look into `material:binding`. `collection` is given, look into `material:binding:collection`.)
 /// @param[out] materialPath Found target Path.
 /// @param[out] material THe pointer to found Material object in Stage(if no Material object found in Stage, returns nullptr)
 /// @return true when bound Material Path is found.
