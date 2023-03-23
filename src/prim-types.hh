@@ -1716,6 +1716,24 @@ class Relationship {
 //
 class RelationshipProperty {
  public:
+
+  RelationshipProperty() = default;
+
+  RelationshipProperty(const Relationship &rel) : _authored(true), _relationship(rel) {
+  }
+
+  RelationshipProperty(const Path &p) {
+    set(p);
+  }
+
+  RelationshipProperty(const std::vector<Path> &pv) {
+    set(pv);
+  }
+
+  RelationshipProperty(const value::ValueBlock &v) {
+    set(v);
+  }
+
   void set_listedit_qual(ListEditQual q) { _relationship.set_listedit_qual(q); }
   ListEditQual get_listedit_qual() const {
     return _relationship.get_listedit_qual();
@@ -1725,7 +1743,7 @@ class RelationshipProperty {
 
   bool authored() const { return _authored; }
 
-  // Define-only: e.g. `rel myrel`
+  // Declare-only: e.g. `rel myrel`
   void set_empty() {
     _relationship.set_novalue();
     _authored = true;
@@ -1760,6 +1778,15 @@ class RelationshipProperty {
       paths = _relationship.targetPathVector;
     }
     return paths;
+  }
+
+  // TODO: Deprecate this direct access API to Relationship value?
+  const Relationship &relationship() const {
+    return _relationship;
+  }
+
+  Relationship &relationship() {
+    return _relationship;
   }
 
   bool has_value() const { return _relationship.has_value(); }

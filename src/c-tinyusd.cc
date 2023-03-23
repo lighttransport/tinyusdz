@@ -1423,7 +1423,7 @@ int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *aval, c_ti
   return 1;
 }
 
-int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n, char **prop_names) {
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n_out, char ***prop_names_out) {
   if (!prim) {
     return 0;
   }
@@ -1432,24 +1432,47 @@ int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n, cha
     return 0;
   }
 
-  if (!n) {
+  if (!n_out) {
     return 0;
   }
 
-  if (!prop_names) {
+  if (!prop_names_out) {
     return 0;
   }
 
   const Prim *p = reinterpret_cast<const Prim *>(prim->data);
-  std::vector<std::string> prop_names;
-  if (!tydra::GetPropertyNames(*p, &prop_names)) {
+  std::vector<std::string> ps;
+  std::string err;
+  if (!tydra::GetPropertyNames(*p, &ps, &err)) {
+    // err is suppressed.
     return 0;
   }
 
-  // TODO
-  DCOUT("TODO");
-  
-  return 0;
+  char **cp = reinterpret_cast<char **>(malloc(sizeof(char *) * ps.size()));
+  if (!cp) {
+    return 0;
+  }
+
+  if (ps.size() == 0) {
+    (*n_out) = 0;
+    (*prop_names_out) = nullptr;
+    return 1;
+  } 
+
+  (*n_out) = uint32_t(ps.size());
+
+  for (size_t i = 0; i < ps.size(); i++) {
+    const std::string &s = ps[i];
+
+    cp[i] = reinterpret_cast<char *>(malloc(s.size() + 1));
+    // TODO: malloc null check.
+    strncpy(cp[i], s.c_str(), s.size());
+    cp[i][s.size()] = '\0';
+  }
+
+  (*prop_names_out) = cp;
+
+  return 1;
 }
 
 

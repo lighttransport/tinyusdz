@@ -118,20 +118,33 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &prop_name,
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> &prop_names, std::string *err);
+bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *prop_names, std::string *err);
 
 ///
-/// Get List of Attribute or Relationship) names of given Prim by name.
-/// It includes authored builtin Property names(e.g. "points" for `GeomMesh`).
+/// Get List of Attribute names of given Prim.
+/// It includes authored builtin Attribute names(e.g. "points" for `GeomMesh`).
 ///
 /// @param[in] prim Prim
-/// @param[out] prop_names Property names
+/// @param[out] attr_names Attribute names
 /// @param[out] err Error message(filled when returning false)
 ///
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> &prop_names, std::string *err);
+bool GetAttributeNames(const tinyusdz::Prim &prim, std::vector<std::string> *attr_names, std::string *err);
+
+///
+/// Get List of Relationship names of given Prim.
+/// It includes authored builtin Relationship names(e.g. "proxyPrim" for `GeomMesh`).
+///
+/// @param[in] prim Prim
+/// @param[out] rel_names Relationship names
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true upon success.
+/// @return false when something go wrong.
+///
+bool GetRelationshipNames(const tinyusdz::Prim &prim, std::vector<std::string> *rel_names, std::string *err);
 
 ///
 /// Get Attribute of given Prim by name.

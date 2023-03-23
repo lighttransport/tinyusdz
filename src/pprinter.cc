@@ -1256,6 +1256,11 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
     ss << print_relationship(gprim.materialBindingPreview.value(), gprim.materialBindingPreview.value().get_listedit_qual(), /* custom */false, "material:binding:preview", indent);
   }
 
+  if (gprim.proxyPrim.authored()) {
+    const Relationship &rel = gprim.proxyPrim.relationship();
+    ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */false, "proxyPrim", indent);
+  }
+
   ss << print_xformOps(gprim.xformOps, indent);
 
   return ss.str();
@@ -1292,6 +1297,12 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim, con
     if (gprim->materialBindingPreview) {
       ss << print_relationship(gprim->materialBindingPreview.value(), gprim->materialBindingPreview.value().get_listedit_qual(), /* custom */false, "material:binding:preview", indent);
       table.insert("material:binding:preview");
+    }
+  } else if (prop_name == "proxyPrim") {
+    if (gprim->proxyPrim.authored()) {
+      const Relationship &rel = gprim->proxyPrim.relationship();
+      ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */false, "proxyPrim", indent);
+      table.insert("proxyPrim");
     }
   } else if (prop_name == "xformOpOrder") {
     ss << print_xformOpOrder(gprim->xformOps, indent);
@@ -2016,9 +2027,6 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   ss << pprint::Indent(indent) << "{\n";
 
   ss << print_gprim_predefined(gprim, indent+1);
-
-  // TODO:
-  // props
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
