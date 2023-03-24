@@ -66,9 +66,17 @@ typedef enum {
   C_TINYUSD_AXIS_Z,
 } CTinyUSDAxis;
 
+//
+// NOTE: Use dedicated enum value for token[] and string[] 
+// (therse use C struct `c_tinyusd_token_vector` and `c_tinyusd_string_vector` respectively)
+//
+// Use C_TINYUSD_VALUE_1D_BIT for other numerical value type to represent 1D array.
+// 
 typedef enum {
   C_TINYUSD_VALUE_TOKEN,
+  C_TINYUSD_VALUE_TOKEN_VECTOR, // token[]
   C_TINYUSD_VALUE_STRING,
+  C_TINYUSD_VALUE_STRING_VECTOR, // string[]
   C_TINYUSD_VALUE_BOOL,
   // C_TINYUSD_VALUE_SHORT,
   // C_TINYUSD_VALUE_USHORT,
@@ -327,6 +335,40 @@ const char *c_tinyusd_token_str(const c_tinyusd_token *tok);
 // Free token
 // Return 0 when failed to free.
 int c_tinyusd_token_free(c_tinyusd_token *tok);
+
+typedef struct {
+  void *data;  // opaque pointer to `std::vector<tinyusd::value::token>`.
+} c_tinyusd_token_vector;
+
+//
+// New token vector(array) with given size `n`
+//
+int c_tinyusd_token_vector_new(c_tinyusd_token_vector *sv, const size_t n, const char **toks);
+int c_tinyusd_token_vector_free(c_tinyusd_token_vector *sv);
+
+//
+// Returns number of elements.
+// 0 when empty or `tv` is invalid.
+//
+size_t c_tinyusd_token_vector_size(const c_tinyusd_token_vector *sv);
+
+int c_tinyusd_token_vector_clear(c_tinyusd_token_vector *sv);
+int c_tinyusd_token_vector_resize(c_tinyusd_token_vector *sv, const size_t n);
+
+//
+// Return const string pointer for given index.
+// Returns nullptr when index is out-of-range.
+//
+const char *c_tinyusd_token_vector_str(const c_tinyusd_token_vector *sv, const size_t idx);
+
+//
+// Replace `index`th token.
+// Returns 0 when `sv` is invalid or `index` is out-of-range.
+//
+int c_tinyusd_string_token_vector_replace(c_tinyusd_token_vector *sv, const size_t idx, const char *str);
+
+int c_tinyusd_string_token_vector_free(c_tinyusd_token_vector *sv);
+
 
 typedef struct {
   void *data;  // opaque pointer to `std::string`.
