@@ -34,8 +34,18 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
       tyname = "token";
       break;
     }
+    case C_TINYUSD_VALUE_TOKEN_VECTOR: {
+      tyname = "token[]";
+      is_array = false;
+      break;
+    }
     case C_TINYUSD_VALUE_STRING: {
       tyname = "string";
+      break;
+    }
+    case C_TINYUSD_VALUE_STRING_VECTOR: {
+      tyname = "string[]";
+      is_array = false;
       break;
     }
     case C_TINYUSD_VALUE_HALF: {
@@ -281,7 +291,13 @@ uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type) {
     case C_TINYUSD_VALUE_TOKEN: {
       return 0;
     }  // invalid
+    case C_TINYUSD_VALUE_TOKEN_VECTOR: {
+      return 0;
+    }  // invalid
     case C_TINYUSD_VALUE_STRING: {
+      return 0;
+    }  // invalid
+    case C_TINYUSD_VALUE_STRING_VECTOR: {
       return 0;
     }  // invalid
     case C_TINYUSD_VALUE_HALF: {
@@ -454,7 +470,13 @@ uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type) {
     case C_TINYUSD_VALUE_TOKEN: {
       return 0;
     }  // invalid
+    case C_TINYUSD_VALUE_TOKEN_VECTOR: {
+      return 0;
+    }  // invalid
     case C_TINYUSD_VALUE_STRING: {
+      return 0;
+    }  // invalid
+    case C_TINYUSD_VALUE_STRING_VECTOR: {
       return 0;
     }  // invalid
     case C_TINYUSD_VALUE_HALF: {
@@ -777,6 +799,139 @@ size_t c_tinyusd_token_size(const c_tinyusd_token *tok) {
   auto *p = reinterpret_cast<tinyusdz::value::token *>(tok->data);
 
   return p->str().size();
+}
+
+#if 0
+int c_tinyusd_token_vector_new_empty(c_tinyusd_token_vector *sv, const size_t n) {
+  if (!sv) {
+    return 0;
+  }
+
+  auto *value = new std::vector<tinyusdz::value::token>(n);
+  sv->data = reinterpret_cast<void *>(value);
+
+  return 1;  // ok
+}
+#endif
+
+int c_tinyusd_token_vector_new(c_tinyusd_token_vector *sv, const size_t n, const char **strs) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (strs) {
+    auto *value = new std::vector<tinyusdz::value::token>(n);
+    for (size_t i = 0; i < n; i++) {
+      value->at(i) = tinyusdz::value::token(strs[i]);
+    }
+    sv->data = reinterpret_cast<void *>(value);
+  } else {
+    auto *value = new std::vector<tinyusdz::value::token>(n);
+    sv->data = reinterpret_cast<void *>(value);
+  }
+
+  return 1;  // ok
+}
+
+size_t c_tinyusd_token_vector_size(const c_tinyusd_token_vector *sv) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<const std::vector<tinyusdz::value::token> *>(sv->data);
+
+  return p->size();
+}
+
+int c_tinyusd_token_vector_clear(c_tinyusd_token_vector *sv) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<std::vector<tinyusdz::value::token> *>(sv->data);
+  p->clear();
+
+  return 1;
+}
+
+int c_tinyusd_token_vector_resize(c_tinyusd_token_vector *sv, const size_t n) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<std::vector<tinyusdz::value::token> *>(sv->data);
+
+  p->resize(n);
+
+  return 1;
+}
+
+#if 0
+int c_tinyusd_token_vector_replace(c_tinyusd_token_vector *sv, const size_t idx, const char *str) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  if (!str) {
+    return 0;
+  }
+
+  std::vector<tinyusdz::value::token> *pv = reinterpret_cast<std::vector<tinyusdz::value::token> *>(sv->data);
+  if (idx >= pv->size()) {
+    return 0;
+  }
+
+  pv->at(idx) = tinyusdz::value::token(str);
+
+  return 1;  // ok
+}
+#endif
+
+int c_tinyusd_token_vector_free(c_tinyusd_token_vector *sv) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (sv->data) {
+    auto *p = reinterpret_cast<std::vector<tinyusdz::value::token> *>(sv->data);
+    delete p;
+    sv->data = nullptr;
+  }
+
+  return 1;  // ok
+}
+
+const char *c_tinyusd_token_vector_str(const c_tinyusd_token_vector *sv, const size_t idx) {
+  if (!sv) {
+    return nullptr;
+  }
+
+  if (sv->data) {
+    auto *p = reinterpret_cast<const std::vector<tinyusdz::value::token> *>(sv->data);
+    if (idx >= p->size()) {
+      return nullptr;
+    }
+
+    return p->at(idx).str().c_str();
+  }
+
+  return nullptr;
 }
 
 int c_tinyusd_string_new_empty(c_tinyusd_string *s) {
