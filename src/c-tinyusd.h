@@ -18,6 +18,34 @@
 extern "C" {
 #endif
 
+//
+// Common API design direction
+//
+// 
+// - Frequently used type uses lower snake case(e.g. `c_tinyusd_string`)
+// - For most of API, Return type is int(bool). 0 = failre, 1 = success.
+// - Object(struct) is constructed by first create its instance, then call `***_new` to initialize it.
+// - Argument order: object(in or inout), ins, inouts, then outs
+//
+// ```
+// c_tinyusd_string s;
+// if (!c_tinyusd_string_new_empty(&s)) {
+//   // err...
+// }
+// ...
+// c_tinyusd_string_free(&s);
+// ```
+//
+
+//
+// Wrapper function for malloc and free.
+//
+
+void *c_tinyusd_malloc(size_t nbytes);
+
+// Returns 0 when failed.
+int c_tinyusd_free(void *ptr);
+
 // NOTE: Current(2023.03) USD spec does not support 2D or multi-dim array,
 // so set max_dim to 1.
 #define C_TINYUSD_MAX_DIM (1)
@@ -327,6 +355,42 @@ const char *c_tinyusd_string_str(const c_tinyusd_string *s);
 
 int c_tinyusd_string_free(c_tinyusd_string *s);
 
+typedef struct {
+  void *data;  // opaque pointer to `std::vector<std::string>`.
+} c_tinyusd_string_vector;
+
+//
+// New string vector(array) with given size `n`
+//
+int c_tinyusd_string_vector_new_empty(c_tinyusd_string_vector *sv, const size_t n);
+
+int c_tinyusd_string_vector_new(c_tinyusd_string_vector *sv, const size_t n, const char **strs);
+
+//
+// Returns number of elements.
+// 0 when empty or `sv` is invalid.
+//
+size_t c_tinyusd_string_vector_size(const c_tinyusd_string_vector *sv);
+
+int c_tinyusd_string_vector_clear(c_tinyusd_string_vector *sv);
+int c_tinyusd_string_vector_resize(c_tinyusd_string_vector *sv, const size_t n);
+
+//
+// Return const string pointer for given index.
+// Returns nullptr when index is out-of-range.
+//
+const char *c_tinyusd_string_vector_str(const c_tinyusd_string_vector *sv, const size_t idx);
+
+//
+// Replace `index`th string.
+// Returns 0 when `sv` is invalid or `index` is out-of-range.
+//
+int c_tinyusd_string_vector_replace(c_tinyusd_string_vector *sv, const size_t idx, const char *str);
+
+int c_tinyusd_string_vector_free(c_tinyusd_string_vector *sv);
+
+
+
 // Return the name of Prim type.
 // Return NULL for unsupported/unknown Prim type.
 const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type);
@@ -537,10 +601,10 @@ int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 //
 // @param[in] prim Prim
 // @param[out] n The number of property names(`toks`)
-// @param[out] prop_names Array of property name. Memory is newly allocated, so please call `free` for each `prop_names` pointers, then `free` `prop_names` after using it.
+// @param[out] prop_names property names. Please initialize this instance using `c_tinyusd_string_vector_new` beforehand.
 //
 // @return 1 upon success(even when len(property names) == 0). 0 failure.
-int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n, char ***prop_names);
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_string_vector *prop_names_out);
 
 // Get Prim's property. Returns 0 when property `prop_name` does not exist in the Prim.
 // `prop` just holds pointer to corresponding C++ Property instance, so no free operation required.
