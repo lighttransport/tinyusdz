@@ -866,6 +866,136 @@ const char *c_tinyusd_string_str(const c_tinyusd_string *s) {
   return nullptr;
 }
 
+int c_tinyusd_string_vector_new_empty(c_tinyusd_string_vector *sv, const size_t n) {
+  if (!sv) {
+    return 0;
+  }
+
+  auto *value = new std::vector<std::string>(n);
+  sv->data = reinterpret_cast<void *>(value);
+
+  return 1;  // ok
+}
+
+int c_tinyusd_string_vector_new(c_tinyusd_string_vector *sv, const size_t n, const char **strs) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (strs) {
+    auto *value = new std::vector<std::string>(n);
+    for (size_t i = 0; i < n; i++) {
+      value->at(i) = std::string(strs[i]);
+    }
+    sv->data = reinterpret_cast<void *>(value);
+  } else {
+    auto *value = new std::vector<std::string>(n);
+    sv->data = reinterpret_cast<void *>(value);
+  }
+
+  return 1;  // ok
+}
+
+size_t c_tinyusd_string_vector_size(const c_tinyusd_string_vector *sv) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<const std::vector<std::string> *>(sv->data);
+
+  return p->size();
+}
+
+int c_tinyusd_string_vector_clear(c_tinyusd_string_vector *sv) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<std::vector<std::string> *>(sv->data);
+  p->clear();
+
+  return 1;
+}
+
+int c_tinyusd_string_vector_resize(c_tinyusd_string_vector *sv, const size_t n) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  auto *p = reinterpret_cast<std::vector<std::string> *>(sv->data);
+
+  p->resize(n);
+
+  return 1;
+}
+
+int c_tinyusd_string_vector_replace(c_tinyusd_string_vector *sv, const size_t idx, const char *str) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (!sv->data) {
+    return 0;
+  }
+
+  if (!str) {
+    return 0;
+  }
+
+  std::vector<std::string> *pv = reinterpret_cast<std::vector<std::string> *>(sv->data);
+  if (idx >= pv->size()) {
+    return 0;
+  }
+
+  pv->at(idx) = std::string(str);
+
+  return 1;  // ok
+}
+
+int c_tinyusd_string_vector_free(c_tinyusd_string_vector *sv) {
+  if (!sv) {
+    return 0;
+  }
+
+  if (sv->data) {
+    auto *p = reinterpret_cast<std::vector<std::string> *>(sv->data);
+    delete p;
+    sv->data = nullptr;
+  }
+
+  return 1;  // ok
+}
+
+const char *c_tinyusd_string_vector_str(const c_tinyusd_string_vector *sv, const size_t idx) {
+  if (!sv) {
+    return nullptr;
+  }
+
+  if (sv->data) {
+    auto *p = reinterpret_cast<const std::vector<std::string> *>(sv->data);
+    if (idx >= p->size()) {
+      return nullptr;
+    }
+
+    return p->at(idx).c_str();
+  }
+
+  return nullptr;
+}
+
+
 int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type) {
   if (!buf) {
     return 0;
@@ -881,7 +1011,7 @@ int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type) {
 
   //uint8_t *m = new uint8_t[sz];
   //buf->data = reinterpret_cast<void *>(m);
-  tinyusdz::value::Value *vp = new tinyusdz::value::Value(); // new `null` Value at the moment 
+  tinyusdz::value::Value *vp = new tinyusdz::value::Value(); // new `null` Value at the moment
   buf->data = reinterpret_cast<void *>(vp);
 
   return 1;  // ok
@@ -902,7 +1032,7 @@ int c_tinyusd_buffer_new_and_copy_token(CTinyUSDBuffer *buf, const c_tinyusd_tok
   buf->ndim = 0;
 
   if (sz == 0) {
-    // Allow null string 
+    // Allow null string
     buf->data = nullptr;
   } else {
 
@@ -941,7 +1071,7 @@ int c_tinyusd_buffer_new_and_copy_string(CTinyUSDBuffer *buf, const c_tinyusd_st
   buf->ndim = 0;
 
   if (sz == 0) {
-    // Allow null string 
+    // Allow null string
     buf->data = nullptr;
   } else {
 
@@ -1338,7 +1468,7 @@ int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage,
 }
 
 int c_tinyusd_attribute_value_new_token(CTinyUSDAttributeValue *aval, const c_tinyusd_token *tok) {
-  if (!aval) { 
+  if (!aval) {
     return 0;
   }
 
@@ -1351,7 +1481,7 @@ int c_tinyusd_attribute_value_new_token(CTinyUSDAttributeValue *aval, const c_ti
 }
 
 int c_tinyusd_attribute_value_new_string(CTinyUSDAttributeValue *aval, const c_tinyusd_string *str) {
-  if (!aval) { 
+  if (!aval) {
     return 0;
   }
 
@@ -1411,19 +1541,19 @@ int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *aval, c_ti
     return 0;
   }
 
-  // TODO: Check if Value's type == buffer.value_type 
+  // TODO: Check if Value's type == buffer.value_type
   const tinyusdz::value::Value *cp = reinterpret_cast<const tinyusdz::value::Value *>(aval->buffer.data);
-  
+
   std::string s = tinyusdz::value::pprint_value(*cp, /* indent */0, /* closing_brace */false);
 
   if (!c_tinyusd_string_replace(str, s.c_str())) {
     return 0;
   }
-  
+
   return 1;
 }
 
-int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n_out, char ***prop_names_out) {
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_string_vector *prop_names_out) {
   if (!prim) {
     return 0;
   }
@@ -1432,11 +1562,11 @@ int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n_out,
     return 0;
   }
 
-  if (!n_out) {
+  if (!prop_names_out) {
     return 0;
   }
 
-  if (!prop_names_out) {
+  if (!prop_names_out->data) {
     return 0;
   }
 
@@ -1448,29 +1578,17 @@ int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, uint32_t *n_out,
     return 0;
   }
 
-  char **cp = reinterpret_cast<char **>(malloc(sizeof(char *) * ps.size()));
-  if (!cp) {
+  if (!c_tinyusd_string_vector_resize(prop_names_out, ps.size())) {
     return 0;
   }
-
-  if (ps.size() == 0) {
-    (*n_out) = 0;
-    (*prop_names_out) = nullptr;
-    return 1;
-  } 
-
-  (*n_out) = uint32_t(ps.size());
 
   for (size_t i = 0; i < ps.size(); i++) {
     const std::string &s = ps[i];
 
-    cp[i] = reinterpret_cast<char *>(malloc(s.size() + 1));
-    // TODO: malloc null check.
-    strncpy(cp[i], s.c_str(), s.size());
-    cp[i][s.size()] = '\0';
+    if (!c_tinyusd_string_vector_replace(prop_names_out, i, s.c_str())) {
+      return 0;
+    }
   }
-
-  (*prop_names_out) = cp;
 
   return 1;
 }
