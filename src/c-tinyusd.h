@@ -341,6 +341,11 @@ typedef struct {
 } c_tinyusd_token_vector;
 
 //
+// New token vector(array) with empty
+//
+int c_tinyusd_token_vector_new_empty(c_tinyusd_token_vector *sv);
+
+//
 // New token vector(array) with given size `n`
 //
 int c_tinyusd_token_vector_new(c_tinyusd_token_vector *sv, const size_t n, const char **toks);
@@ -365,9 +370,7 @@ const char *c_tinyusd_token_vector_str(const c_tinyusd_token_vector *sv, const s
 // Replace `index`th token.
 // Returns 0 when `sv` is invalid or `index` is out-of-range.
 //
-int c_tinyusd_string_token_vector_replace(c_tinyusd_token_vector *sv, const size_t idx, const char *str);
-
-int c_tinyusd_string_token_vector_free(c_tinyusd_token_vector *sv);
+int c_tinyusd_token_vector_replace(c_tinyusd_token_vector *sv, const size_t idx, const char *str);
 
 
 typedef struct {
@@ -498,14 +501,18 @@ typedef struct {
   CTinyUSDBuffer buffer;
 } CTinyUSDAttributeValue;
 
+#if 0
 //
 // New AttributeValue with buffer.
 // Type of AttributeValue is obtained from buffer->value_type;
 //
 int c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
                                    const CTinyUSDBuffer *buffer);
+#endif
 
-// Print AttributeValue.
+//
+// Get string representation of AttributeValue content(pprint).
+// 
 // Return 0 upon error.
 int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *val, c_tinyusd_string *str);
 
@@ -642,11 +649,10 @@ int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 // Get list of property names as token array.
 //
 // @param[in] prim Prim
-// @param[out] n The number of property names(`toks`)
-// @param[out] prop_names property names. Please initialize this instance using `c_tinyusd_string_vector_new` beforehand.
+// @param[out] prop_names Property names. Please initialize this instance using `c_tinyusd_token_vector_new` beforehand.
 //
 // @return 1 upon success(even when len(property names) == 0). 0 failure.
-int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_string_vector *prop_names_out);
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_token_vector *prop_names_out);
 
 // Get Prim's property. Returns 0 when property `prop_name` does not exist in the Prim.
 // `prop` just holds pointer to corresponding C++ Property instance, so no free operation required.
