@@ -801,18 +801,16 @@ size_t c_tinyusd_token_size(const c_tinyusd_token *tok) {
   return p->str().size();
 }
 
-#if 0
-int c_tinyusd_token_vector_new_empty(c_tinyusd_token_vector *sv, const size_t n) {
+int c_tinyusd_token_vector_new_empty(c_tinyusd_token_vector *sv) {
   if (!sv) {
     return 0;
   }
 
-  auto *value = new std::vector<tinyusdz::value::token>(n);
+  auto *value = new std::vector<tinyusdz::value::token>();
   sv->data = reinterpret_cast<void *>(value);
 
   return 1;  // ok
 }
-#endif
 
 int c_tinyusd_token_vector_new(c_tinyusd_token_vector *sv, const size_t n, const char **strs) {
   if (!sv) {
@@ -878,7 +876,6 @@ int c_tinyusd_token_vector_resize(c_tinyusd_token_vector *sv, const size_t n) {
   return 1;
 }
 
-#if 0
 int c_tinyusd_token_vector_replace(c_tinyusd_token_vector *sv, const size_t idx, const char *str) {
   if (!sv) {
     return 0;
@@ -901,7 +898,6 @@ int c_tinyusd_token_vector_replace(c_tinyusd_token_vector *sv, const size_t idx,
 
   return 1;  // ok
 }
-#endif
 
 int c_tinyusd_token_vector_free(c_tinyusd_token_vector *sv) {
   if (!sv) {
@@ -1708,7 +1704,7 @@ int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *aval, c_ti
   return 1;
 }
 
-int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_string_vector *prop_names_out) {
+int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_token_vector *prop_names_out) {
   if (!prim) {
     return 0;
   }
@@ -1733,14 +1729,14 @@ int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_string
     return 0;
   }
 
-  if (!c_tinyusd_string_vector_resize(prop_names_out, ps.size())) {
+  if (!c_tinyusd_token_vector_resize(prop_names_out, ps.size())) {
     return 0;
   }
 
   for (size_t i = 0; i < ps.size(); i++) {
     const std::string &s = ps[i];
 
-    if (!c_tinyusd_string_vector_replace(prop_names_out, i, s.c_str())) {
+    if (!c_tinyusd_token_vector_replace(prop_names_out, i, s.c_str())) {
       return 0;
     }
   }
