@@ -29,13 +29,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace tinyusdz {
 
 // Simple image class.
-// No colorspace conversion will be applied when decoding image data(e.g. from
-// .jpg, .png).
+// No colorspace conversion will be applied when decoding image data
+// (e.g. from .jpg, .png).
 struct Image {
   enum class PixelFormat {
-    UInt, // LDR image
-    Int, // For LDR normal/displacement map
+    UInt, // LDR and HDR image
+    Int, // For normal/displacement map
     Float // HDR image
+    // TODO
+    // Half
   };
    
   std::string uri;  // filename or uri;

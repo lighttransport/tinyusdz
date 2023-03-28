@@ -1,6 +1,6 @@
 // Simple image writer
 // supported file format: PNG(use fpng), JPEG(use stb_image), OpenEXR(use
-// tinyexr), TIFF(use tinydng)
+// tinyexr), TIFF/DNG(use tinydng)
 #pragma once
 
 #include <cstddef>
@@ -13,11 +13,20 @@
 namespace tinyusdz {
 namespace image {
 
-enum class WriteImageFormat { Autodetect, PNG, JPEG, EXR, TIFF };
+//
+// Autodetect = determine file format using filename or Image's pixelformat +
+// bpp.
+//
+enum class WriteImageFormat { Autodetect, BMP, PNG, JPEG, EXR, TIFF, DNG };
 
 struct WriteOption {
   WriteImageFormat format{WriteImageFormat::Autodetect};
   bool half{false};  // Use half float for EXR
+
+  // When non-zero value is set, prefer this bitdepth than Image's bpp.
+  // Can specify 10, 12 and 14 for DNG when writing 16bit input image as 10, 12 and 14bit respectively.
+  int bitdepth{
+      0};  
 };
 
 ///
