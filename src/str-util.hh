@@ -18,6 +18,14 @@ enum class CharEncoding
   UTF16LE  // UTF16 LE(Windows Unicode)
 };
 
+inline const std::string to_lower(const std::string &str) {
+  std::string result = str;
+  std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) {
+    return std::tolower(c);
+  });
+  return result;
+}
+
 inline bool hasNewline(const std::string &str) {
   for (size_t i = 0; i < str.size(); i++) {
     if ((str[i] == '\r') || (str[i] == '\n')) {

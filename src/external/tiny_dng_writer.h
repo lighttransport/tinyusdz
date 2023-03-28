@@ -33,17 +33,328 @@ THE SOFTWARE.
 #include <vector>
 #include <cstring>
 
-#ifndef ROL32
-#define ROL32(v,a) ((v) << (a) | (v) >> (32-(a)))
+namespace tinydngwriter {
+
+typedef enum {
+  TIFFTAG_SUB_FILETYPE = 254,
+  TIFFTAG_IMAGE_WIDTH = 256,
+  TIFFTAG_IMAGE_LENGTH = 257,
+  TIFFTAG_BITS_PER_SAMPLE = 258,
+  TIFFTAG_COMPRESSION = 259,
+  TIFFTAG_PHOTOMETRIC = 262,
+  TIFFTAG_IMAGEDESCRIPTION = 270,
+  TIFFTAG_STRIP_OFFSET = 273,
+  TIFFTAG_SAMPLES_PER_PIXEL = 277,
+  TIFFTAG_ROWS_PER_STRIP = 278,
+  TIFFTAG_STRIP_BYTE_COUNTS = 279,
+  TIFFTAG_PLANAR_CONFIG = 284,
+  TIFFTAG_ORIENTATION = 274,
+
+  TIFFTAG_XRESOLUTION = 282,  // rational
+  TIFFTAG_YRESOLUTION = 283,  // rational
+  TIFFTAG_RESOLUTION_UNIT = 296,
+
+  TIFFTAG_SOFTWARE = 305,
+
+  TIFFTAG_SAMPLEFORMAT = 339,
+
+  // DNG extension
+  TIFFTAG_CFA_REPEAT_PATTERN_DIM = 33421,
+  TIFFTAG_CFA_PATTERN = 33422,
+
+  TIFFTAG_DNG_VERSION = 50706,
+  TIFFTAG_DNG_BACKWARD_VERSION = 50707,
+  TIFFTAG_UNIQUE_CAMERA_MODEL = 50708,
+  TIFFTAG_CHRROMA_BLUR_RADIUS = 50703,
+  TIFFTAG_BLACK_LEVEL_REPEAT_DIM = 50713,
+  TIFFTAG_BLACK_LEVEL = 50714,
+  TIFFTAG_WHITE_LEVEL = 50717,
+  TIFFTAG_COLOR_MATRIX1 = 50721,
+  TIFFTAG_COLOR_MATRIX2 = 50722,
+  TIFFTAG_CAMERA_CALIBRATION1 = 50723,
+  TIFFTAG_CAMERA_CALIBRATION2 = 50724,
+  TIFFTAG_ANALOG_BALANCE = 50727,
+  TIFFTAG_AS_SHOT_NEUTRAL = 50728,
+  TIFFTAG_AS_SHOT_WHITE_XY = 50729,
+  TIFFTAG_CALIBRATION_ILLUMINANT1 = 50778,
+  TIFFTAG_CALIBRATION_ILLUMINANT2 = 50779,
+  TIFFTAG_EXTRA_CAMERA_PROFILES = 50933,
+  TIFFTAG_PROFILE_NAME = 50936,
+  TIFFTAG_AS_SHOT_PROFILE_NAME = 50934,
+  TIFFTAG_DEFAULT_BLACK_RENDER = 51110,
+  TIFFTAG_ACTIVE_AREA = 50829,
+  TIFFTAG_FORWARD_MATRIX1 = 50964,
+  TIFFTAG_FORWARD_MATRIX2 = 50965
+} Tag;
+
+// SUBFILETYPE(bit field)
+static const int FILETYPE_REDUCEDIMAGE = 1;
+static const int FILETYPE_PAGE = 2;
+static const int FILETYPE_MASK = 4;
+
+// PLANARCONFIG
+static const int PLANARCONFIG_CONTIG = 1;
+static const int PLANARCONFIG_SEPARATE = 2;
+
+// COMPRESSION
+// TODO(syoyo) more compressin types.
+static const int COMPRESSION_NONE = 1;
+static const int COMPRESSION_NEW_JPEG = 7;
+
+// ORIENTATION
+static const int ORIENTATION_TOPLEFT = 1;
+static const int ORIENTATION_TOPRIGHT = 2;
+static const int ORIENTATION_BOTRIGHT = 3;
+static const int ORIENTATION_BOTLEFT = 4;
+static const int ORIENTATION_LEFTTOP = 5;
+static const int ORIENTATION_RIGHTTOP = 6;
+static const int ORIENTATION_RIGHTBOT = 7;
+static const int ORIENTATION_LEFTBOT = 8;
+
+// RESOLUTIONUNIT
+static const int RESUNIT_NONE = 1;
+static const int RESUNIT_INCH = 2;
+static const int RESUNIT_CENTIMETER = 2;
+
+// PHOTOMETRIC
+// TODO(syoyo): more photometric types.
+static const int PHOTOMETRIC_WHITE_IS_ZERO = 0;  // For bilevel and grayscale
+static const int PHOTOMETRIC_BLACK_IS_ZERO = 1;  // For bilevel and grayscale
+static const int PHOTOMETRIC_RGB = 2;            // Default
+static const int PHOTOMETRIC_CFA = 32803;        // DNG ext
+static const int PHOTOMETRIC_LINEARRAW = 34892;  // DNG ext
+
+// Sample format
+static const int SAMPLEFORMAT_UINT = 1;  // Default
+static const int SAMPLEFORMAT_INT = 2;
+static const int SAMPLEFORMAT_IEEEFP = 3;  // floating point
+
+struct IFDTag {
+  unsigned short tag;
+  unsigned short type;
+  unsigned int count;
+  unsigned int offset_or_value;
+};
+// 12 bytes.
+
+class DNGImage {
+ public:
+  DNGImage();
+  ~DNGImage() {}
+
+  ///
+  /// Optional: Explicitly specify endian.
+  /// Must be called before calling other Set methods.
+  ///
+  void SetBigEndian(bool big_endian);
+
+  ///
+  /// Default = 0
+  ///
+  bool SetSubfileType(bool reduced_image = false, bool page = false,
+                      bool mask = false);
+
+  bool SetImageWidth(unsigned int value);
+  bool SetImageLength(unsigned int value);
+  bool SetRowsPerStrip(unsigned int value);
+  bool SetSamplesPerPixel(unsigned short value);
+  // Set bits for each samples
+  bool SetBitsPerSample(const unsigned int num_samples,
+                        const unsigned short *values);
+  bool SetPhotometric(unsigned short value);
+  bool SetPlanarConfig(unsigned short value);
+  bool SetOrientation(unsigned short value);
+  bool SetCompression(unsigned short value);
+  bool SetSampleFormat(const unsigned int num_samples,
+                       const unsigned short *values);
+  bool SetXResolution(double value);
+  bool SetYResolution(double value);
+  bool SetResolutionUnit(const unsigned short value);
+
+  ///
+  /// Set arbitrary string for image description.
+  /// Currently we limit to 1024*1024 chars at max.
+  ///
+  bool SetImageDescription(const std::string &ascii);
+
+  ///
+  /// Set arbitrary string for unique camera model name (not localized!).
+  /// Currently we limit to 1024*1024 chars at max.
+  ///
+  bool SetUniqueCameraModel(const std::string &ascii);
+
+  ///
+  /// Set software description(string).
+  /// Currently we limit to 4095 chars at max.
+  ///
+  bool SetSoftware(const std::string &ascii);
+
+  bool SetActiveArea(const unsigned int values[4]);
+
+  bool SetChromaBlurRadius(double value);
+
+  /// Specify black level per sample.
+  bool SetBlackLevel(const unsigned int num_samples, const unsigned short *values);
+
+  /// Specify black level per sample (as rational values).
+  bool SetBlackLevelRational(unsigned int num_samples, const double *values);
+
+  /// Specify white level per sample.
+  bool SetWhiteLevelRational(unsigned int num_samples, const double *values);
+
+  /// Specify analog white balance from camera for raw values.
+  bool SetAnalogBalance(const unsigned int plane_count, const double *matrix_values);
+
+  /// Specify CFA repeating pattern dimensions.
+  bool SetCFARepeatPatternDim(const unsigned short width, const unsigned short height);
+
+  /// Specify black level repeating pattern dimensions.
+  bool SetBlackLevelRepeatDim(const unsigned short width, const unsigned short height);
+
+  bool SetCalibrationIlluminant1(const unsigned short value);
+  bool SetCalibrationIlluminant2(const unsigned short value);
+
+  /// Specify DNG version.
+  bool SetDNGVersion(const unsigned char a, const unsigned char b, const unsigned char c, const unsigned char d);
+
+  /// Specify transformation matrix (XYZ to reference camera native color space values, under the first calibration illuminant).
+  bool SetColorMatrix1(const unsigned int plane_count, const double *matrix_values);
+
+  /// Specify transformation matrix (XYZ to reference camera native color space values, under the second calibration illuminant).
+  bool SetColorMatrix2(const unsigned int plane_count, const double *matrix_values);
+
+  bool SetForwardMatrix1(const unsigned int plane_count, const double *matrix_values);
+  bool SetForwardMatrix2(const unsigned int plane_count, const double *matrix_values);
+
+  bool SetCameraCalibration1(const unsigned int plane_count, const double *matrix_values);
+  bool SetCameraCalibration2(const unsigned int plane_count, const double *matrix_values);
+
+  /// Specify CFA geometric pattern (left-to-right, top-to-bottom).
+  bool SetCFAPattern(const unsigned int num_components, const unsigned char *values);
+
+  /// Specify the selected white balance at time of capture, encoded as the coordinates of a perfectly neutral color in linear reference space values.
+  bool SetAsShotNeutral(const unsigned int plane_count, const double *matrix_values);
+
+  /// Specify the the selected white balance at time of capture, encoded as x-y chromaticity coordinates.
+  bool SetAsShotWhiteXY(const double x, const double y);
+
+  /// Set image data with packing (take 16-bit values and pack them to input_bpp values).
+  bool SetImageDataPacked(const unsigned short *input_buffer, const int input_count, const unsigned int input_bpp, bool big_endian);
+
+  /// Set image data.
+  bool SetImageData(const unsigned char *data, const size_t data_len);
+
+  /// Set image data.
+  bool SetImageDataJpeg(const unsigned short *data, unsigned int width, unsigned int height, unsigned int bpp);
+
+  /// Set custom field.
+  bool SetCustomFieldLong(const unsigned short tag, const int value);
+  bool SetCustomFieldULong(const unsigned short tag, const unsigned int value);
+
+  size_t GetDataSize() const { return data_os_.str().length(); }
+
+  size_t GetStripOffset() const { return data_strip_offset_; }
+  size_t GetStripBytes() const { return data_strip_bytes_; }
+
+  /// Write aux IFD data and strip image data to stream.
+  bool WriteDataToStream(std::ostream *ofs) const;
+
+  ///
+  /// Write IFD to stream.
+  ///
+  /// @param[in] data_base_offset : Byte offset to data
+  /// @param[in] strip_offset : Byte offset to image strip data
+  ///
+  /// TODO(syoyo): Support multiple strips
+  ///
+  bool WriteIFDToStream(const unsigned int data_base_offset,
+                        const unsigned int strip_offset, std::ostream *ofs) const;
+
+  std::string Error() const { return err_; }
+
+ private:
+  std::ostringstream data_os_;
+  bool swap_endian_;
+  bool dng_big_endian_;
+  unsigned short num_fields_;
+  unsigned int samples_per_pixels_;
+  std::vector<unsigned short> bits_per_samples_;
+
+  // TODO(syoyo): Support multiple strips
+  size_t data_strip_offset_{0};
+  size_t data_strip_bytes_{0};
+
+  mutable std::string err_;  // Error message
+
+  std::vector<IFDTag> ifd_tags_;
+};
+
+class DNGWriter {
+ public:
+  // TODO(syoyo): Use same endian setting with DNGImage.
+  DNGWriter(bool big_endian);
+  ~DNGWriter() {}
+
+  ///
+  /// Add DNGImage.
+  /// It just retains the pointer of the image, thus
+  /// application must not free resources until `WriteToFile` has been called.
+  ///
+  bool AddImage(const DNGImage *image) {
+    images_.push_back(image);
+
+    return true;
+  }
+
+  /// Write DNG to a file.
+  /// Return error string to `err` when Write() returns false.
+  /// Returns true upon success.
+  bool WriteToFile(const char *filename, std::string *err) const;
+
+ private:
+  bool swap_endian_;
+  bool dng_big_endian_;  // Endianness of DNG file.
+
+  std::vector<const DNGImage *> images_;
+};
+
+}  // namespace tinydngwriter
+
+#endif  // TINY_DNG_WRITER_H_
+
+#ifdef TINY_DNG_WRITER_IMPLEMENTATION
+
+//
+// TIFF format resources.
+//
+// http://c0de517e.blogspot.jp/2013/07/tiny-hdr-writer.html
+// http://paulbourke.net/dataformats/tiff/ and
+// http://partners.adobe.com/public/developer/en/tiff/TIFF6.pdf
+//
+
+#include <algorithm>
+#include <cassert>
+#include <cfloat>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <limits>
+
+// Undef if you want to use builtin function for clz
+#if 0
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 #endif
 
-#ifndef ROL16
-#define ROL16(v,a) ((v) << (a) | (v) >> (16-(a)))
-#endif
 
 namespace tinydngwriter {
 
-namespace {
+namespace detail {
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -103,9 +414,7 @@ typedef uint32_t u32;
 
 /* Encoder implementation */
 
-#ifdef _MSC_VER
-#include <intrin.h>
-
+#if 0
 uint32_t __inline clz32(uint32_t value) {
   unsigned long leading_zero = 0;
 
@@ -116,8 +425,7 @@ uint32_t __inline clz32(uint32_t value) {
     return 32;
   }
 }
-
-#else
+#endif
 
 // Very simple count leading zero implementation.
 static int clz32(unsigned int x) {
@@ -127,8 +435,6 @@ static int clz32(unsigned int x) {
     ;
   return n;
 }
-
-#endif
 
 typedef struct _lje {
   uint16_t *image;
@@ -605,319 +911,7 @@ int lj92_encode(uint16_t *image, int width, int height, int bitdepth,
 #pragma clang diagnostic pop
 #endif
 
-}  // namespace
-
-typedef enum {
-  TIFFTAG_SUB_FILETYPE = 254,
-  TIFFTAG_IMAGE_WIDTH = 256,
-  TIFFTAG_IMAGE_LENGTH = 257,
-  TIFFTAG_BITS_PER_SAMPLE = 258,
-  TIFFTAG_COMPRESSION = 259,
-  TIFFTAG_PHOTOMETRIC = 262,
-  TIFFTAG_IMAGEDESCRIPTION = 270,
-  TIFFTAG_STRIP_OFFSET = 273,
-  TIFFTAG_SAMPLES_PER_PIXEL = 277,
-  TIFFTAG_ROWS_PER_STRIP = 278,
-  TIFFTAG_STRIP_BYTE_COUNTS = 279,
-  TIFFTAG_PLANAR_CONFIG = 284,
-  TIFFTAG_ORIENTATION = 274,
-
-  TIFFTAG_XRESOLUTION = 282,  // rational
-  TIFFTAG_YRESOLUTION = 283,  // rational
-  TIFFTAG_RESOLUTION_UNIT = 296,
-
-  TIFFTAG_SOFTWARE = 305,
-
-  TIFFTAG_SAMPLEFORMAT = 339,
-
-  // DNG extension
-  TIFFTAG_CFA_REPEAT_PATTERN_DIM = 33421,
-  TIFFTAG_CFA_PATTERN = 33422,
-
-  TIFFTAG_DNG_VERSION = 50706,
-  TIFFTAG_DNG_BACKWARD_VERSION = 50707,
-  TIFFTAG_UNIQUE_CAMERA_MODEL = 50708,
-  TIFFTAG_CHRROMA_BLUR_RADIUS = 50703,
-  TIFFTAG_BLACK_LEVEL_REPEAT_DIM = 50713,
-  TIFFTAG_BLACK_LEVEL = 50714,
-  TIFFTAG_WHITE_LEVEL = 50717,
-  TIFFTAG_COLOR_MATRIX1 = 50721,
-  TIFFTAG_COLOR_MATRIX2 = 50722,
-  TIFFTAG_CAMERA_CALIBRATION1 = 50723,
-  TIFFTAG_CAMERA_CALIBRATION2 = 50724,
-  TIFFTAG_ANALOG_BALANCE = 50727,
-  TIFFTAG_AS_SHOT_NEUTRAL = 50728,
-  TIFFTAG_AS_SHOT_WHITE_XY = 50729,
-  TIFFTAG_CALIBRATION_ILLUMINANT1 = 50778,
-  TIFFTAG_CALIBRATION_ILLUMINANT2 = 50779,
-  TIFFTAG_EXTRA_CAMERA_PROFILES = 50933,
-  TIFFTAG_PROFILE_NAME = 50936,
-  TIFFTAG_AS_SHOT_PROFILE_NAME = 50934,
-  TIFFTAG_DEFAULT_BLACK_RENDER = 51110,
-  TIFFTAG_ACTIVE_AREA = 50829,
-  TIFFTAG_FORWARD_MATRIX1 = 50964,
-  TIFFTAG_FORWARD_MATRIX2 = 50965
-} Tag;
-
-// SUBFILETYPE(bit field)
-static const int FILETYPE_REDUCEDIMAGE = 1;
-static const int FILETYPE_PAGE = 2;
-static const int FILETYPE_MASK = 4;
-
-// PLANARCONFIG
-static const int PLANARCONFIG_CONTIG = 1;
-static const int PLANARCONFIG_SEPARATE = 2;
-
-// COMPRESSION
-// TODO(syoyo) more compressin types.
-static const int COMPRESSION_NONE = 1;
-static const int COMPRESSION_NEW_JPEG = 7;
-
-// ORIENTATION
-static const int ORIENTATION_TOPLEFT = 1;
-static const int ORIENTATION_TOPRIGHT = 2;
-static const int ORIENTATION_BOTRIGHT = 3;
-static const int ORIENTATION_BOTLEFT = 4;
-static const int ORIENTATION_LEFTTOP = 5;
-static const int ORIENTATION_RIGHTTOP = 6;
-static const int ORIENTATION_RIGHTBOT = 7;
-static const int ORIENTATION_LEFTBOT = 8;
-
-// RESOLUTIONUNIT
-static const int RESUNIT_NONE = 1;
-static const int RESUNIT_INCH = 2;
-static const int RESUNIT_CENTIMETER = 2;
-
-// PHOTOMETRIC
-// TODO(syoyo): more photometric types.
-static const int PHOTOMETRIC_WHITE_IS_ZERO = 0;  // For bilevel and grayscale
-static const int PHOTOMETRIC_BLACK_IS_ZERO = 1;  // For bilevel and grayscale
-static const int PHOTOMETRIC_RGB = 2;            // Default
-static const int PHOTOMETRIC_CFA = 32803;        // DNG ext
-static const int PHOTOMETRIC_LINEARRAW = 34892;  // DNG ext
-
-// Sample format
-static const int SAMPLEFORMAT_UINT = 1;  // Default
-static const int SAMPLEFORMAT_INT = 2;
-static const int SAMPLEFORMAT_IEEEFP = 3;  // floating point
-
-struct IFDTag {
-  unsigned short tag;
-  unsigned short type;
-  unsigned int count;
-  unsigned int offset_or_value;
-};
-// 12 bytes.
-
-class DNGImage {
- public:
-  DNGImage();
-  ~DNGImage() {}
-
-  ///
-  /// Optional: Explicitly specify endian.
-  /// Must be called before calling other Set methods.
-  ///
-  void SetBigEndian(bool big_endian);
-
-  ///
-  /// Default = 0
-  ///
-  bool SetSubfileType(bool reduced_image = false, bool page = false,
-                      bool mask = false);
-
-  bool SetImageWidth(unsigned int value);
-  bool SetImageLength(unsigned int value);
-  bool SetRowsPerStrip(unsigned int value);
-  bool SetSamplesPerPixel(unsigned short value);
-  // Set bits for each samples
-  bool SetBitsPerSample(const unsigned int num_samples,
-                        const unsigned short *values);
-  bool SetPhotometric(unsigned short value);
-  bool SetPlanarConfig(unsigned short value);
-  bool SetOrientation(unsigned short value);
-  bool SetCompression(unsigned short value);
-  bool SetSampleFormat(const unsigned int num_samples,
-                       const unsigned short *values);
-  bool SetXResolution(double value);
-  bool SetYResolution(double value);
-  bool SetResolutionUnit(const unsigned short value);
-
-  ///
-  /// Set arbitrary string for image description.
-  /// Currently we limit to 1024*1024 chars at max.
-  ///
-  bool SetImageDescription(const std::string &ascii);
-
-  ///
-  /// Set arbitrary string for unique camera model name (not localized!).
-  /// Currently we limit to 1024*1024 chars at max.
-  ///
-  bool SetUniqueCameraModel(const std::string &ascii);
-
-  ///
-  /// Set software description(string).
-  /// Currently we limit to 4095 chars at max.
-  ///
-  bool SetSoftware(const std::string &ascii);
-
-  bool SetActiveArea(const unsigned int values[4]);
-
-  bool SetChromaBlurRadius(double value);
-
-  /// Specify black level per sample.
-  bool SetBlackLevel(const unsigned int num_samples, const unsigned short *values);
-
-  /// Specify black level per sample (as rational values).
-  bool SetBlackLevelRational(unsigned int num_samples, const double *values);
-
-  /// Specify white level per sample.
-  bool SetWhiteLevelRational(unsigned int num_samples, const double *values);
-
-  /// Specify analog white balance from camera for raw values.
-  bool SetAnalogBalance(const unsigned int plane_count, const double *matrix_values);
-
-  /// Specify CFA repeating pattern dimensions.
-  bool SetCFARepeatPatternDim(const unsigned short width, const unsigned short height);
-
-  /// Specify black level repeating pattern dimensions.
-  bool SetBlackLevelRepeatDim(const unsigned short width, const unsigned short height);
-
-  bool SetCalibrationIlluminant1(const unsigned short value);
-  bool SetCalibrationIlluminant2(const unsigned short value);
-
-  /// Specify DNG version.
-  bool SetDNGVersion(const unsigned char a, const unsigned char b, const unsigned char c, const unsigned char d);
-
-  /// Specify transformation matrix (XYZ to reference camera native color space values, under the first calibration illuminant).
-  bool SetColorMatrix1(const unsigned int plane_count, const double *matrix_values);
-
-  /// Specify transformation matrix (XYZ to reference camera native color space values, under the second calibration illuminant).
-  bool SetColorMatrix2(const unsigned int plane_count, const double *matrix_values);
-
-  bool SetForwardMatrix1(const unsigned int plane_count, const double *matrix_values);
-  bool SetForwardMatrix2(const unsigned int plane_count, const double *matrix_values);
-
-  bool SetCameraCalibration1(const unsigned int plane_count, const double *matrix_values);
-  bool SetCameraCalibration2(const unsigned int plane_count, const double *matrix_values);
-
-  /// Specify CFA geometric pattern (left-to-right, top-to-bottom).
-  bool SetCFAPattern(const unsigned int num_components, const unsigned char *values);
-
-  /// Specify the selected white balance at time of capture, encoded as the coordinates of a perfectly neutral color in linear reference space values.
-  bool SetAsShotNeutral(const unsigned int plane_count, const double *matrix_values);
-
-  /// Specify the the selected white balance at time of capture, encoded as x-y chromaticity coordinates.
-  bool SetAsShotWhiteXY(const double x, const double y);
-
-  /// Set image data with packing (take 16-bit values and pack them to input_bpp values).
-  bool SetImageDataPacked(const unsigned short *input_buffer, const int input_count, const unsigned int input_bpp, bool big_endian);
-
-  /// Set image data.
-  bool SetImageData(const unsigned char *data, const size_t data_len);
-
-  /// Compress image data with LosslessJPEG and set it to the image data.
-  /// width and height must be multiple of 2.
-  /// Must set COMPRESSION to COMPRESSION_NEW_JPEG by calling SetCompression() separetely
-  bool SetImageDataWithLosslessJpegCompression(const unsigned short *data, unsigned int width, unsigned int height, unsigned int bpp);
-
-  /// Set custom field.
-  bool SetCustomFieldLong(const unsigned short tag, const int value);
-  bool SetCustomFieldULong(const unsigned short tag, const unsigned int value);
-
-  size_t GetDataSize() const { return data_os_.str().length(); }
-
-  size_t GetStripOffset() const { return data_strip_offset_; }
-  size_t GetStripBytes() const { return data_strip_bytes_; }
-
-  /// Write aux IFD data and strip image data to stream.
-  bool WriteDataToStream(std::ostream *ofs) const;
-
-  ///
-  /// Write IFD to stream.
-  ///
-  /// @param[in] data_base_offset : Byte offset to data
-  /// @param[in] strip_offset : Byte offset to image strip data
-  ///
-  /// TODO(syoyo): Support multiple strips
-  ///
-  bool WriteIFDToStream(const unsigned int data_base_offset,
-                        const unsigned int strip_offset, std::ostream *ofs) const;
-
-  std::string Error() const { return err_; }
-
- private:
-  std::ostringstream data_os_;
-  bool swap_endian_;
-  bool dng_big_endian_;
-  unsigned short num_fields_;
-  unsigned int samples_per_pixels_;
-  std::vector<unsigned short> bits_per_samples_;
-
-  // TODO(syoyo): Support multiple strips
-  size_t data_strip_offset_{0};
-  size_t data_strip_bytes_{0};
-
-  mutable std::string err_;  // Error message
-
-  std::vector<IFDTag> ifd_tags_;
-};
-
-class DNGWriter {
- public:
-  // TODO(syoyo): Use same endian setting with DNGImage.
-  DNGWriter(bool big_endian);
-  ~DNGWriter() {}
-
-  ///
-  /// Add DNGImage.
-  /// It just retains the pointer of the image, thus
-  /// application must not free resources until `WriteToFile` has been called.
-  ///
-  bool AddImage(const DNGImage *image) {
-    images_.push_back(image);
-
-    return true;
-  }
-
-  /// Write DNG to a file.
-  /// Return error string to `err` when Write() returns false.
-  /// Returns true upon success.
-  bool WriteToFile(const char *filename, std::string *err) const;
-
- private:
-  bool swap_endian_;
-  bool dng_big_endian_;  // Endianness of DNG file.
-
-  std::vector<const DNGImage *> images_;
-};
-
-}  // namespace tinydngwriter
-
-#endif  // TINY_DNG_WRITER_H_
-
-#ifdef TINY_DNG_WRITER_IMPLEMENTATION
-
-//
-// TIFF format resources.
-//
-// http://c0de517e.blogspot.jp/2013/07/tiny-hdr-writer.html
-// http://paulbourke.net/dataformats/tiff/ and
-// http://partners.adobe.com/public/developer/en/tiff/TIFF6.pdf
-//
-
-#include <algorithm>
-#include <cassert>
-#include <cfloat>
-#include <cmath>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
-#include <iostream>
-#include <sstream>
-
-namespace tinydngwriter {
+}  // namespace detail
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -2159,6 +2153,15 @@ bool DNGImage::SetAsShotWhiteXY(const double x, const double y) {
 
 bool DNGImage::SetImageDataPacked(const unsigned short *input_buffer, const int input_count, const unsigned int input_bpp, bool big_endian)
 {
+
+#ifndef ROL32
+#define ROL32(v,a) ((v) << (a) | (v) >> (32-(a)))
+#endif
+
+#ifndef ROL16
+#define ROL16(v,a) ((v) << (a) | (v) >> (16-(a)))
+#endif
+
   if (input_count <= 0) {
     return false;
   }
@@ -2191,6 +2194,9 @@ bool DNGImage::SetImageDataPacked(const unsigned short *input_buffer, const int 
   }
 
   return SetImageData(reinterpret_cast<unsigned char*>(output.data()), output.size() * sizeof(unsigned short));
+
+#undef ROL32
+#undef ROL16
 }
 
 bool DNGImage::SetImageData(const unsigned char *data, const size_t data_len) {
@@ -2225,7 +2231,7 @@ bool DNGImage::SetImageData(const unsigned char *data, const size_t data_len) {
   return true;
 }
 
-bool DNGImage::SetImageDataWithLosslessJpegCompression(const unsigned short *data, unsigned int width,
+bool DNGImage::SetImageDataJpeg(const unsigned short *data, unsigned int width,
                                 unsigned int height, unsigned int bpp) {
   if ((data == NULL) || (height % 2 == 1) || (width % 2 == 1)) {
     return false;
@@ -2252,11 +2258,11 @@ bool DNGImage::SetImageDataWithLosslessJpegCompression(const unsigned short *dat
   int new_height = int(height / 2);
 
   // Encode image
-  int ret = lj92_encode(const_cast<unsigned short *>(data), new_width, new_height, int(bpp),
+  int ret = detail::lj92_encode(const_cast<unsigned short *>(data), new_width, new_height, int(bpp),
                         new_width * new_height, 0, NULL, 0, &compressed,
                         &output_buffer_size);
 
-  if (ret != LJ92_ERROR_NONE)
+  if (ret != detail::LJ92_ERROR_NONE)
 	  return false;
 
   bool sid_res = SetImageData(compressed, size_t(output_buffer_size));
