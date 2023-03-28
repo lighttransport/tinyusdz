@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: Apache 2.0
+
 // Simple image loader
-// supported file format: PNG(use fpng), JPEG(use stb_image), OpenEXR(use tinyexr), TIFF(use tinydng)  
+// supported file format: PNG(use fpng), BMP/JPEG(use stb_image), OpenEXR(use tinyexr), TIFF(use tinydng)  
 #pragma once
 
 #include <cstddef>

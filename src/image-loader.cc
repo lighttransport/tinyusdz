@@ -1,5 +1,5 @@
 // Support files
-// 
+//
 // - OpenEXR(through TinyEXR). 16bit and 32bit
 // - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
 // - PNG, Jpeg, bmp, tga, ...(through SBI image). 8bit and 16bit(PNG)
@@ -329,10 +329,10 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 #endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
-  {
-    if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &msg)) {
+  if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &err)) {
 
       return nonstd::make_unexpected("TODO: TIFF/DNG format");
+
   }
 #endif
 
