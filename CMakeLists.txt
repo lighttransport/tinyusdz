@@ -110,6 +110,13 @@ option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
 
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
+if (TINYUSDZ_WITH_PYTHON)
+  # force enable C API + DLL build
+  set(TINYUSDZ_WITH_C_API ON CACHE INTERNAL "" FORCE)
+  set(TINYUSDZ_BUILD_SHARED_LIBS ON CACHE INTERNAL "" FORCE)
+endif()
+
+
 option(
   TINYUSDZ_PREFER_LOCAL_PYTHON_INSTALLATION
   "Prefer locally-installed Python interpreter than system or conda/brew installed Python. Please specify your Python interpreter with `Python3_EXECUTABLE` cmake option"
@@ -809,9 +816,11 @@ if(TINYUSDZ_WITH_PYTHON)
   add_sanitizers(${BUILD_TARGET_PY})
   target_include_directories(
     ${BUILD_TARGET_PY} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
   target_link_libraries(${BUILD_TARGET_PY} PRIVATE ${TINYUSDZ_TARGET_STATIC})
 
   # Use 'c' prefix
+  # TODO: Use `cpp` prefix?
   set_target_properties(${BUILD_TARGET_PY} PROPERTIES OUTPUT_NAME "ctinyusdz")
 
   # copy python binding .so file to python/
@@ -855,17 +864,17 @@ if(TINYUSDZ_WITH_TOOL_USDC_PARSER AND TINYUSDZ_WITH_MODULE_USDC_READER)
   target_link_libraries(usdc_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif()
 
-if(TINYUSDZ_WITH_BLENDER_ADDON)
-  pybind11_add_module(${BUILD_TARGET_BLENDER_PY}
-                      ${TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES})
-  add_sanitizers(${BUILD_TARGET_BLENDER_PY})
-
-  # For Python.h header files. Assume Blender 2.93 LTS(Python 3.9)
-  target_include_directories(
-    ${BUILD_TARGET_BLENDER_PY}
-    PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
-
-endif()
+#if(TINYUSDZ_WITH_BLENDER_ADDON)
+#  pybind11_add_module(${BUILD_TARGET_BLENDER_PY}
+#                      ${TINYUSDZ_BLENDER_PYTHON_BINDING_SOURCES})
+#  add_sanitizers(${BUILD_TARGET_BLENDER_PY})
+#
+#  # For Python.h header files. Assume Blender 2.93 LTS(Python 3.9)
+#  target_include_directories(
+#    ${BUILD_TARGET_BLENDER_PY}
+#    PRIVATE ${PROJECT_SOURCE_DIR}/src/blender/python3.9/Include)
+#
+#endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/simple_usdz_dump)
