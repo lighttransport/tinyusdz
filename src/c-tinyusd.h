@@ -321,9 +321,18 @@ typedef struct {
   void *data;  // opaque pointer to `tinyusdz::value::token`.
 } c_tinyusd_token;
 
+// Returns zero initialized token object.
+// Please call `c_tinyusd_token_new` to actually create token instance.
+c_tinyusd_token c_tinyusd_token_init();
+
 // Create token and set a string to it.
 // returns 0 when failed to allocate memory.
 int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str);
+
+//
+// Duplicate token object. Return null when failed.
+//
+c_tinyusd_token c_tinyusd_token_dup(const c_tinyusd_token *tok);
 
 // Length of token string. equivalent to std::string::size.
 size_t c_tinyusd_token_size(const c_tinyusd_token *tok);
