@@ -62,7 +62,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y build-essential
             sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            ./scripts/bootstrap-gcc-aarch64-cross.sh
+            ./scripts/bootstrap-gcc-aarch64-cross-ci.sh
             cd build-cross
             make VERBOSE=1
 
