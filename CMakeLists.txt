@@ -604,6 +604,10 @@ if(TINYUSDZ_BUILD_SHARED_LIBS)
                               ${TINYUSDZ_EXT_SOURCES})
   add_sanitizers(${TINYUSDZ_TARGET})
 
+  # for dllexport
+  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
+  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_SHARED_LIBRARY")
+
   set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC} ${TINYUSDZ_TARGET})
 else()
   # static only
@@ -794,6 +798,8 @@ if(TINYUSDZ_WITH_C_API)
   if(TINYUSDZ_BUILD_SHARED_LIBS)
     add_library(${BUILD_TARGET_C} SHARED ${TINYUSDZ_C_API_SOURCES})
     target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET})
+    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
+    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "TINYUSDZ_SHARED_LIBRARY")
     target_include_directories(
       ${BUILD_TARGET_C} PRIVATE ${PROJECT_SOURCE_DIR}/src)
   endif() 

@@ -1,12 +1,12 @@
-// SPDX-License-Identifier: Apache 2.0
-//
-// C API(C11) for TinyUSDZ
-// This C API is primarily for bindings for other languages.
-// Various features/manipulations are missing and not intended to use C API
-// solely(at the moment).
-//
-// NOTE: Use `c_tinyusd` or `CTinyUSD` prefix(`z` is missing) in C API.
-//
+/* SPDX-License-Identifier: Apache 2.0
+
+ C API(C11) for TinyUSDZ
+ This C API is primarily for bindings for other languages.
+ Various features/manipulations are missing and not intended to use C API
+ solely(at the moment).
+
+ NOTE: Use `c_tinyusd` or `CTinyUSD` prefix(`z` is missing) in C API.
+*/
 #ifndef C_TINYUSD_H
 #define C_TINYUSD_H
 
@@ -18,33 +18,73 @@
 extern "C" {
 #endif
 
+/*
 //
-// Common API design direction
+// Common API design direction.
 //
-// 
-// - Frequently used type uses lower snake case(e.g. `c_tinyusd_string`)
+//
+// - Frequently used type uses lower snake case(e.g. `c_tinyusd_string_t`)
 // - For most of API, Return type is int(bool). 0 = failre, 1 = success.
-// - Object(struct) is constructed by first create its instance, then call `***_new` to initialize it.
+// - Object(struct) is constructed by `***_new`.
 // - Argument order: object(in or inout), ins, inouts, then outs
 //
 // ```
-// c_tinyusd_string s;
-// if (!c_tinyusd_string_new_empty(&s)) {
+// c_tinyusd_string_t *s = c_tinyusd_string_new_empty();
+// if (!s) {
 //   // err...
 // }
 // ...
 // c_tinyusd_string_free(&s);
 // ```
 //
+*/
+
+/*
+ * TODO:
+ *  - Provide dedicated string type for UTF-8 string?
+ */
+
+/*
+ *  TODO: Use same export macro logic with C++ API?
+ */
+#if !defined(TINYUSDZ_EXPORT)
+
+#if defined(TINYUSDZ_SHARED_LIBRARY)
+
+#if defined(_MSC_VER)
+
+#if defined(TINYUSDZ_COMPILE_LIBRARY)
+#define C_TINYUSD_EXPORT __declspec(dllexport)
+#else
+#define C_TINYUSD_EXPORT __declspec(dllimport)
+#endif
+
+#else // !_MSC_VER
+
+#if defined(TINYUSDZ_COMPILE_LIBRARY)
+// Assume non-msvc
+#define C_TINYUSD_EXPORT __attribute__((visibility("default")))
+#else
+#define C_TINYUSD_EXPORT __declspec(dllimport)
+#endif
+
+#endif // _MSC_VER
+
+#else // !TINYUSDZ_SHARED_LIBRARY
+
+#define C_TINYUSD_EXPORT
+
+#endif // TINYUSDZ_SHARED_LIBRARY
+#endif // TINYUSDZ_EXPORT
 
 //
 // Wrapper function for malloc and free.
 //
 
-void *c_tinyusd_malloc(size_t nbytes);
+C_TINYUSD_EXPORT void *c_tinyusd_malloc(size_t nbytes);
 
 // Returns 0 when failed.
-int c_tinyusd_free(void *ptr);
+C_TINYUSD_EXPORT int c_tinyusd_free(void *ptr);
 
 // NOTE: Current(2023.03) USD spec does not support 2D or multi-dim array,
 // so set max_dim to 1.
@@ -67,11 +107,11 @@ typedef enum {
 } CTinyUSDAxis;
 
 //
-// NOTE: Use dedicated enum value for token[] and string[] 
+// NOTE: Use dedicated enum value for token[] and string[]
 // (therse use C struct `c_tinyusd_token_vector` and `c_tinyusd_string_vector` respectively)
 //
 // Use C_TINYUSD_VALUE_1D_BIT for other numerical value type to represent 1D array.
-// 
+//
 typedef enum {
   C_TINYUSD_VALUE_TOKEN,
   C_TINYUSD_VALUE_TOKEN_VECTOR, // token[]
@@ -155,250 +195,250 @@ typedef enum {
 
 //
 // Use lower snake case for frequently used base type.
-// 
+//
 
-typedef uint16_t c_tinyusd_half;
+typedef uint16_t c_tinyusd_half_t;
 
 // Assume struct elements will be tightly packed in C11.
 // TODO: Ensure struct elements are tightly packed.
 typedef struct {
   int x;
   int y;
-} c_tinyusd_int2;
+} c_tinyusd_int2_t;
 
 typedef struct {
   int x;
   int y;
   int z;
-} c_tinyusd_int3;
+} c_tinyusd_int3_t;
 
 typedef struct {
   int x;
   int y;
   int z;
   int w;
-} c_tinyusd_int4;
+} c_tinyusd_int4_t;
 
 typedef struct {
   uint32_t x;
   uint32_t y;
-} c_tinyusd_uint2;
+} c_tinyusd_uint2_t;
 
 typedef struct {
   uint32_t x;
   uint32_t y;
   uint32_t z;
-} c_tinyusd_uint3;
+} c_tinyusd_uint3_t;
 
 typedef struct {
   uint32_t x;
   uint32_t y;
   uint32_t z;
   uint32_t w;
-} c_tinyusd_uint4;
+} c_tinyusd_uint4_t;
 
 typedef struct {
-  c_tinyusd_half x;
-  c_tinyusd_half y;
-} c_tinyusd_half2;
+  c_tinyusd_half_t x;
+  c_tinyusd_half_t y;
+} c_tinyusd_half2_t;
 
 typedef struct {
-  c_tinyusd_half x;
-  c_tinyusd_half y;
-  c_tinyusd_half z;
-} c_tinyusd_half3;
+  c_tinyusd_half_t x;
+  c_tinyusd_half_t y;
+  c_tinyusd_half_t z;
+} c_tinyusd_half3_t;
 
 typedef struct {
-  c_tinyusd_half x;
-  c_tinyusd_half y;
-  c_tinyusd_half z;
-  c_tinyusd_half w;
-} c_tinyusd_half4;
+  c_tinyusd_half_t x;
+  c_tinyusd_half_t y;
+  c_tinyusd_half_t z;
+  c_tinyusd_half_t w;
+} c_tinyusd_half4_t;
 
 typedef struct {
   float x;
   float y;
-} c_tinyusd_float2;
+} c_tinyusd_float2_t;
 
 typedef struct {
   float x;
   float y;
   float z;
-} c_tinyusd_float3;
+} c_tinyusd_float3_t;
 
 typedef struct {
   float x;
   float y;
   float z;
   float w;
-} c_tinyusd_float4;
+} c_tinyusd_float4_t;
 
 typedef struct {
   double x;
   double y;
-} c_tinyusd_double2;
+} c_tinyusd_double2_t;
 
 typedef struct {
   double x;
   double y;
   double z;
-} c_tinyusd_double3;
+} c_tinyusd_double3_t;
 
 typedef struct {
   double x;
   double y;
   double z;
   double w;
-} c_tinyusd_double4;
+} c_tinyusd_double4_t;
 
 typedef struct {
   double m[4];
-} c_tinyusd_matrix2d;
+} c_tinyusd_matrix2d_t;
 
 typedef struct {
   double m[9];
-} c_tinyusd_matrix3d;
+} c_tinyusd_matrix3d_t;
 
 typedef struct {
   double m[16];
-} c_tinyusd_matrix4d;
+} c_tinyusd_matrix4d_t;
 
 typedef struct {
-  c_tinyusd_half imag[3];
-  c_tinyusd_half real;
-} c_tinyusd_quath; 
+  c_tinyusd_half_t imag[3];
+  c_tinyusd_half_t real;
+} c_tinyusd_quath_t;
 
 typedef struct {
   float imag[3];
   float real;
-} c_tinyusd_quatf; 
+} c_tinyusd_quatf_t;
 
 typedef struct {
   double imag[3];
   double real;
-} c_tinyusd_quatd; 
+} c_tinyusd_quatd_t;
 
-typedef c_tinyusd_half3 c_tinyusd_color3h;
-typedef c_tinyusd_float3 c_tinyusd_color3f;
-typedef c_tinyusd_double3 c_tinyusd_color3d;
+typedef c_tinyusd_half3_t c_tinyusd_color3h_t;
+typedef c_tinyusd_float3_t c_tinyusd_color3f_t;
+typedef c_tinyusd_double3_t c_tinyusd_color3d_t;
 
-typedef c_tinyusd_half4 c_tinyusd_color4h;
-typedef c_tinyusd_float4 c_tinyusd_color4f;
-typedef c_tinyusd_double4 c_tinyusd_color4d;
+typedef c_tinyusd_half4_t c_tinyusd_color4h_t;
+typedef c_tinyusd_float4_t c_tinyusd_color4f_t;
+typedef c_tinyusd_double4_t c_tinyusd_color4d_t;
 
-typedef c_tinyusd_half3 c_tinyusd_point3h;
-typedef c_tinyusd_float3 c_tinyusd_point3f;
-typedef c_tinyusd_double3 c_tinyusd_point3d;
+typedef c_tinyusd_half3_t c_tinyusd_point3h_t;
+typedef c_tinyusd_float3_t c_tinyusd_point3f_t;
+typedef c_tinyusd_double3_t c_tinyusd_point3d_t;
 
-typedef c_tinyusd_half3 c_tinyusd_normal3h;
-typedef c_tinyusd_float3 c_tinyusd_normal3f;
-typedef c_tinyusd_double3 c_tinyusd_normal3d;
+typedef c_tinyusd_half3_t c_tinyusd_normal3h_t;
+typedef c_tinyusd_float3_t c_tinyusd_normal3f_t;
+typedef c_tinyusd_double3_t c_tinyusd_normal3d_t;
 
-typedef c_tinyusd_half3 c_tinyusd_vector3h;
-typedef c_tinyusd_float3 c_tinyusd_vector3f;
-typedef c_tinyusd_double3 c_tinyusd_vector3d;
+typedef c_tinyusd_half3_t c_tinyusd_vector3h_t;
+typedef c_tinyusd_float3_t c_tinyusd_vector3f_t;
+typedef c_tinyusd_double3_t c_tinyusd_vector3d_t;
 
-typedef c_tinyusd_matrix4d c_tinyusd_frame4d;
+typedef c_tinyusd_matrix4d_t c_tinyusd_frame4d_t;
 
-typedef c_tinyusd_half2 c_tinyusd_texcoord2h;
-typedef c_tinyusd_float2 c_tinyusd_texcoord2f;
-typedef c_tinyusd_double2 c_tinyusd_texcoord2d;
+typedef c_tinyusd_half2_t c_tinyusd_texcoord2h_t;
+typedef c_tinyusd_float2_t c_tinyusd_texcoord2f_t;
+typedef c_tinyusd_double2_t c_tinyusd_texcoord2d_t;
 
-typedef c_tinyusd_half3 c_tinyusd_texcoord3h;
-typedef c_tinyusd_float3 c_tinyusd_texcoord3f;
-typedef c_tinyusd_double3 c_tinyusd_texcoord3d;
+typedef c_tinyusd_half3_t c_tinyusd_texcoord3h_t;
+typedef c_tinyusd_float3_t c_tinyusd_texcoord3f_t;
+typedef c_tinyusd_double3_t c_tinyusd_texcoord3d_t;
 
-typedef struct {
-  void *data;  // opaque pointer to `tinyusdz::value::token`.
-} c_tinyusd_token;
+typedef struct c_tinyusd_token_t c_tinyusd_token_t;
+
+//typedef struct {
+//  void *data;  // opaque pointer to `tinyusdz::value::token`.
+//} c_tinyusd_token;
 
 // Returns zero initialized token object.
 // Please call `c_tinyusd_token_new` to actually create token instance.
-c_tinyusd_token c_tinyusd_token_init();
+//c_tinyusd_token c_tinyusd_token_init();
 
 // Create token and set a string to it.
 // returns 0 when failed to allocate memory.
-int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str);
+C_TINYUSD_EXPORT c_tinyusd_token_t *c_tinyusd_token_new(const char *str);
 
 //
 // Duplicate token object. Return null when failed.
 //
-c_tinyusd_token c_tinyusd_token_dup(const c_tinyusd_token *tok);
+C_TINYUSD_EXPORT c_tinyusd_token_t *c_tinyusd_token_dup(const c_tinyusd_token_t *tok);
 
 // Length of token string. equivalent to std::string::size.
-size_t c_tinyusd_token_size(const c_tinyusd_token *tok);
+C_TINYUSD_EXPORT size_t c_tinyusd_token_size(const c_tinyusd_token_t *tok);
 
 // Get C char from a token.
 // Returned char pointer is valid until `c_tinyusd_token` instance is free'ed.
-const char *c_tinyusd_token_str(const c_tinyusd_token *tok);
+C_TINYUSD_EXPORT const char *c_tinyusd_token_str(const c_tinyusd_token_t *tok);
 
 // Free token
 // Return 0 when failed to free.
-int c_tinyusd_token_free(c_tinyusd_token *tok);
+C_TINYUSD_EXPORT int c_tinyusd_token_free(c_tinyusd_token_t *tok);
 
-typedef struct {
-  void *data;  // opaque pointer to `std::vector<tinyusd::value::token>`.
-} c_tinyusd_token_vector;
+// opaque pointer to `std::vector<tinyusd::value::token>`.
+typedef struct c_tinyusd_token_vector_t c_tinyusd_token_vector_t;
 
 //
 // New token vector(array) with empty
 //
-int c_tinyusd_token_vector_new_empty(c_tinyusd_token_vector *sv);
+C_TINYUSD_EXPORT c_tinyusd_token_vector_t *c_tinyusd_token_vector_new_empty();
 
 //
 // New token vector(array) with given size `n`
 //
-int c_tinyusd_token_vector_new(c_tinyusd_token_vector *sv, const size_t n, const char **toks);
-int c_tinyusd_token_vector_free(c_tinyusd_token_vector *sv);
+C_TINYUSD_EXPORT c_tinyusd_token_vector_t *c_tinyusd_token_vector_new(const size_t n, const char **toks);
+C_TINYUSD_EXPORT int c_tinyusd_token_vector_free(c_tinyusd_token_vector_t *sv);
 
 //
 // Returns number of elements.
 // 0 when empty or `tv` is invalid.
 //
-size_t c_tinyusd_token_vector_size(const c_tinyusd_token_vector *sv);
+C_TINYUSD_EXPORT size_t c_tinyusd_token_vector_size(const c_tinyusd_token_vector_t *sv);
 
-int c_tinyusd_token_vector_clear(c_tinyusd_token_vector *sv);
-int c_tinyusd_token_vector_resize(c_tinyusd_token_vector *sv, const size_t n);
+C_TINYUSD_EXPORT int c_tinyusd_token_vector_clear(c_tinyusd_token_vector_t *sv);
+C_TINYUSD_EXPORT int c_tinyusd_token_vector_resize(c_tinyusd_token_vector_t *sv, const size_t n);
 
 //
 // Return const string pointer for given index.
 // Returns nullptr when index is out-of-range.
 //
-const char *c_tinyusd_token_vector_str(const c_tinyusd_token_vector *sv, const size_t idx);
+C_TINYUSD_EXPORT const char *c_tinyusd_token_vector_str(const c_tinyusd_token_vector_t *sv, const size_t idx);
 
 //
 // Replace `index`th token.
 // Returns 0 when `sv` is invalid or `index` is out-of-range.
 //
-int c_tinyusd_token_vector_replace(c_tinyusd_token_vector *sv, const size_t idx, const char *str);
+C_TINYUSD_EXPORT int c_tinyusd_token_vector_replace(c_tinyusd_token_vector_t *sv, const size_t idx, const char *str);
 
 
-typedef struct {
-  void *data;  // opaque pointer to `std::string`.
-} c_tinyusd_string;
+// opaque pointer to `std::string`.
+typedef struct c_tinyusd_string_t c_tinyusd_string_t;
 
 // Create empty string.
 // Return 0 when failed to new
-int c_tinyusd_string_new_empty(c_tinyusd_string *s);
+C_TINYUSD_EXPORT c_tinyusd_string_t *c_tinyusd_string_new_empty();
 
 // Create string.
 // Pass NULL is identical to `c_tinyusd_string_new_empty`.
-// Return 0 when failed to new
-int c_tinyusd_string_new(c_tinyusd_string *s, const char *str);
+// Return null when failed to new
+C_TINYUSD_EXPORT c_tinyusd_string_t *c_tinyusd_string_new(const char *str);
 
 // Length of string. equivalent to std::string::size.
-size_t c_tinyusd_string_size(const c_tinyusd_string *s);
+C_TINYUSD_EXPORT size_t c_tinyusd_string_size(const c_tinyusd_string_t *s);
 
 // Replace existing string with given `str`.
 // `c_tinyusd_string` object must be created beforehand.
 // Return 0 when failed to set.
-int c_tinyusd_string_replace(c_tinyusd_string *s, const char *str);
+C_TINYUSD_EXPORT int c_tinyusd_string_replace(c_tinyusd_string_t *s, const char *str);
 
 // Get C char(`std::string::c_str()`)
 // Returned char pointer is valid until `c_tinyusd_string` instance is free'ed.
-const char *c_tinyusd_string_str(const c_tinyusd_string *s);
+C_TINYUSD_EXPORT const char *c_tinyusd_string_str(const c_tinyusd_string_t *s);
 
-int c_tinyusd_string_free(c_tinyusd_string *s);
+C_TINYUSD_EXPORT int c_tinyusd_string_free(c_tinyusd_string_t *s);
 
 typedef struct {
   void *data;  // opaque pointer to `std::vector<std::string>`.
@@ -407,38 +447,38 @@ typedef struct {
 //
 // New string vector(array) with given size `n`
 //
-int c_tinyusd_string_vector_new_empty(c_tinyusd_string_vector *sv, const size_t n);
+C_TINYUSD_EXPORT int c_tinyusd_string_vector_new_empty(c_tinyusd_string_vector *sv, const size_t n);
 
-int c_tinyusd_string_vector_new(c_tinyusd_string_vector *sv, const size_t n, const char **strs);
+C_TINYUSD_EXPORT int c_tinyusd_string_vector_new(c_tinyusd_string_vector *sv, const size_t n, const char **strs);
 
 //
 // Returns number of elements.
 // 0 when empty or `sv` is invalid.
 //
-size_t c_tinyusd_string_vector_size(const c_tinyusd_string_vector *sv);
+C_TINYUSD_EXPORT size_t c_tinyusd_string_vector_size(const c_tinyusd_string_vector *sv);
 
-int c_tinyusd_string_vector_clear(c_tinyusd_string_vector *sv);
-int c_tinyusd_string_vector_resize(c_tinyusd_string_vector *sv, const size_t n);
+C_TINYUSD_EXPORT int c_tinyusd_string_vector_clear(c_tinyusd_string_vector *sv);
+C_TINYUSD_EXPORT int c_tinyusd_string_vector_resize(c_tinyusd_string_vector *sv, const size_t n);
 
 //
 // Return const string pointer for given index.
 // Returns nullptr when index is out-of-range.
 //
-const char *c_tinyusd_string_vector_str(const c_tinyusd_string_vector *sv, const size_t idx);
+C_TINYUSD_EXPORT const char *c_tinyusd_string_vector_str(const c_tinyusd_string_vector *sv, const size_t idx);
 
 //
 // Replace `index`th string.
 // Returns 0 when `sv` is invalid or `index` is out-of-range.
 //
-int c_tinyusd_string_vector_replace(c_tinyusd_string_vector *sv, const size_t idx, const char *str);
+C_TINYUSD_EXPORT int c_tinyusd_string_vector_replace(c_tinyusd_string_vector *sv, const size_t idx, const char *str);
 
-int c_tinyusd_string_vector_free(c_tinyusd_string_vector *sv);
+C_TINYUSD_EXPORT int c_tinyusd_string_vector_free(c_tinyusd_string_vector *sv);
 
 
 
 // Return the name of Prim type.
 // Return NULL for unsupported/unknown Prim type.
-const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type);
+C_TINYUSD_EXPORT const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type);
 
 // Return Builtin PrimType from a string.
 // Returns C_TINYUSD_PRIM_UNKNOWN for invalid or unknown/unsupported Prim type
@@ -457,18 +497,18 @@ typedef struct {
 // Returns name of ValueType.
 // The pointer points to static Thread-local storage(so thread-safe), thus no
 // need to free it.
-const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type);
+C_TINYUSD_EXPORT const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type);
 
 // Returns sizeof(value_type);
 // For non-numeric value type(e.g. STRING, TOKEN) and invalid enum value, it
 // returns 0. NOTE: Returns 1 for bool type.
-uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type);
+C_TINYUSD_EXPORT uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type);
 
 // Returns the number of components of given value_type;
 // For example, 3 for C_TINYUSD_VALUE_POINT3F.
 // For non-numeric value type(e.g. STRING, TOKEN), it returns 0.
 // For scalar type, it returns 1.
-uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type);
+C_TINYUSD_EXPORT uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type);
 
 #if 0
 // Initialize buffer, but do not allocate memory.
@@ -478,24 +518,24 @@ void c_tinyusd_buffer_init(CTinyUSDBuffer *buf, CTinyUSDValueType value_type,
 
 // New buffer with scalar value.
 // Returns 1 upon success.
-int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type);
+C_TINYUSD_EXPORT int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type);
 
 // New buffer with token value.
 // token string is copied into buffer.
 // Buffer size = strlen(token)
-int c_tinyusd_buffer_new_and_copy_token(CTinyUSDBuffer *buf, const c_tinyusd_token *tok);
+C_TINYUSD_EXPORT int c_tinyusd_buffer_new_and_copy_token(CTinyUSDBuffer *buf, const c_tinyusd_token_t *tok);
 
 // New buffer with string value.
 // string is copied into buffer.
 // Buffer size = strlen(str)
-int c_tinyusd_buffer_new_and_copy_string(CTinyUSDBuffer *buf, const c_tinyusd_string *str);
+C_TINYUSD_EXPORT int c_tinyusd_buffer_new_and_copy_string(CTinyUSDBuffer *buf, const c_tinyusd_string_t *str);
 
 // New buffer with 1D array of `n` elements.
 // Returns 1 upon success.
-int c_tinyusd_buffer_new_array(CTinyUSDBuffer *buf, CTinyUSDValueType value_type, uint64_t n);
+C_TINYUSD_EXPORT int c_tinyusd_buffer_new_array(CTinyUSDBuffer *buf, CTinyUSDValueType value_type, uint64_t n);
 
 // Free Buffer's memory. Returns 1 upon success.
-int c_tinyusd_buffer_free(CTinyUSDBuffer *buf);
+C_TINYUSD_EXPORT int c_tinyusd_buffer_free(CTinyUSDBuffer *buf);
 
 typedef struct {
   CTinyUSDBuffer buffer;
@@ -506,65 +546,67 @@ typedef struct {
 // New AttributeValue with buffer.
 // Type of AttributeValue is obtained from buffer->value_type;
 //
-int c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new(CTinyUSDAttributeValue *val,
                                    const CTinyUSDBuffer *buffer);
 #endif
 
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_free(CTinyUSDAttributeValue *val);
+
 //
 // Get string representation of AttributeValue content(pprint).
-// 
+//
 // Return 0 upon error.
-int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *val, c_tinyusd_string *str);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *val, c_tinyusd_string_t *str);
 
 // Free AttributeValue.
-// Internally calls `c_tinyusd_buffer_free` to free buffer associated with this AttributeValue. 
-int c_tinyusd_attribute_value_free(CTinyUSDAttributeValue *val);
+// Internally calls `c_tinyusd_buffer_free` to free buffer associated with this AttributeValue.
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_free(CTinyUSDAttributeValue *val);
 
 //
 // New AttributeValue with token type.
 // NOTE: token data are copied. So it is safe to free token after calling this function.
 //
-int c_tinyusd_attribute_value_new_token(CTinyUSDAttributeValue *aval, const c_tinyusd_token *val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_token(CTinyUSDAttributeValue *aval, const c_tinyusd_token_t *val);
 
 //
 // New AttributeValue with string type.
 // NOTE: string data are copied. So it is safe to free string after calling this function.
 //
-int c_tinyusd_attribute_value_new_string(CTinyUSDAttributeValue *aval, const c_tinyusd_string *val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_string(CTinyUSDAttributeValue *aval, const c_tinyusd_string_t *val);
 
 //
 // New AttributeValue with specific type.
 // NOTE: Datas are copied.
 // Returns 1 upon success, 0 failed.
 //
-int c_tinyusd_attribute_value_new_int(CTinyUSDAttributeValue *aval, int val);
-int c_tinyusd_attribute_value_new_int2(CTinyUSDAttributeValue *aval, c_tinyusd_int2 val);
-int c_tinyusd_attribute_value_new_int3(CTinyUSDAttributeValue *aval, c_tinyusd_int3 val);
-int c_tinyusd_attribute_value_new_int4(CTinyUSDAttributeValue *aval, c_tinyusd_int4 val);
-int c_tinyusd_attribute_value_new_float(CTinyUSDAttributeValue *aval, float val);
-int c_tinyusd_attribute_value_new_float2(CTinyUSDAttributeValue *aval, c_tinyusd_float2 val);
-int c_tinyusd_attribute_value_new_float3(CTinyUSDAttributeValue *aval, c_tinyusd_float3 val);
-int c_tinyusd_attribute_value_new_float4(CTinyUSDAttributeValue *aval, c_tinyusd_float4 val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int(CTinyUSDAttributeValue *aval, int val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int2(CTinyUSDAttributeValue *aval, c_tinyusd_int2_t val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int3(CTinyUSDAttributeValue *aval, c_tinyusd_int3_t val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int4(CTinyUSDAttributeValue *aval, c_tinyusd_int4_t val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float(CTinyUSDAttributeValue *aval, float val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float2(CTinyUSDAttributeValue *aval, c_tinyusd_float2_t val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float3(CTinyUSDAttributeValue *aval, c_tinyusd_float3_t val);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float4(CTinyUSDAttributeValue *aval, c_tinyusd_float4_t val);
 // TODO: List up other types...
 
 //
 // New AttributeValue with 1D array ofspecific type.
 // NOTE: Array data is copied.
 //
-int c_tinyusd_attribute_value_new_int_array(CTinyUSDAttributeValue *aval, uint64_t n, int *vals);
-int c_tinyusd_attribute_value_new_int2_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int2 *vals);
-int c_tinyusd_attribute_value_new_int3_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int3 *vals);
-int c_tinyusd_attribute_value_new_int4_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int4 *vals);
-int c_tinyusd_attribute_value_new_float_array(CTinyUSDAttributeValue *aval, uint64_t n, float *vals);
-int c_tinyusd_attribute_value_new_float2_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float2 *vals);
-int c_tinyusd_attribute_value_new_float3_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float3 *vals);
-int c_tinyusd_attribute_value_new_float4_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float4 *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int_array(CTinyUSDAttributeValue *aval, uint64_t n, int *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int2_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int2_t *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int3_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int3_t *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_int4_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_int4_t *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float_array(CTinyUSDAttributeValue *aval, uint64_t n, float *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float2_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float2_t *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float3_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float3_t *vals);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_value_new_float4_array(CTinyUSDAttributeValue *aval, uint64_t n, c_tinyusd_float4_t *vals);
 // TODO: List up other types...
 
 
 typedef struct {
-  // c_tinyusd_string prim_part;
-  // c_tinyusd_string prop_part;
+  // c_tinyusd_string_t prim_part;
+  // c_tinyusd_string_t prop_part;
   void *data;  // opaque pointer to tinyusdz::Path
 } CTinyUSDPath;
 
@@ -584,66 +626,70 @@ CTinyUSDRelationship *c_tinyusd_relationsip_new(uint32_t n,
                                                 const char **targetPaths);
 
 // Returns 0 when failed.
-int c_tinyusd_relationsip_free(CTinyUSDRelationship *rel);
+C_TINYUSD_EXPORT int c_tinyusd_relationsip_free(CTinyUSDRelationship *rel);
 
-int c_tinyusd_relationsip_is_blocked(const CTinyUSDRelationship *rel);
+C_TINYUSD_EXPORT int c_tinyusd_relationsip_is_blocked(const CTinyUSDRelationship *rel);
 
 // 0 = declaration only(e.g. `rel myrel`)
-uint32_t c_tinyusd_relationsip_num_targetPaths(const CTinyUSDRelationship *rel);
+C_TINYUSD_EXPORT uint32_t c_tinyusd_relationsip_num_targetPaths(const CTinyUSDRelationship *rel);
 
 // Get i'th targetPath
 // Returned `targetPath` is just a reference, so no need to free it.
-int c_tinyusd_relationsip_get_targetPath(const CTinyUSDRelationship *rel, uint32_t i, CTinyUSDPath *targetPath);
+C_TINYUSD_EXPORT int c_tinyusd_relationsip_get_targetPath(const CTinyUSDRelationship *rel, uint32_t i, CTinyUSDPath *targetPath);
 
 typedef struct {
   void *data;  // opaque pointer to tinyusdz::Attribute
 } CTinyUSDAttribute;
 
 // Set single targetPath
-int c_tinyusd_attribute_connection_set(CTinyUSDAttribute *attr, const CTinyUSDPath *connectionPath);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_connection_set(CTinyUSDAttribute *attr, const CTinyUSDPath *connectionPath);
 
 // Set multiple targetPaths
-int c_tinyusd_attribute_connections_set(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_connections_set(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
 
 #if 0
 // Get i'th targetPaths
-int c_tinyusd_attribute_connection_get(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
+C_TINYUSD_EXPORT int c_tinyusd_attribute_connection_get(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
 #endif
 
-int c_tinyusd_property_new(CTinyUSDProperty *prop);
-int c_tinyusd_property_new_attribute(CTinyUSDProperty *prop, const CTinyUSDAttribute *attr);
-int c_tinyusd_property_new_relationship(CTinyUSDProperty *prop, const CTinyUSDRelationship *rel);
-int c_tinyusd_property_free(CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_new(CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_new_attribute(CTinyUSDProperty *prop, const CTinyUSDAttribute *attr);
+C_TINYUSD_EXPORT int c_tinyusd_property_new_relationship(CTinyUSDProperty *prop, const CTinyUSDRelationship *rel);
+C_TINYUSD_EXPORT int c_tinyusd_property_free(CTinyUSDProperty *prop);
 
-int c_tinyusd_property_set_attribute(CTinyUSDProperty *prop, const CTinyUSDAttribute *attr);
-int c_tinyusd_property_set_relationship(CTinyUSDProperty *prop, const CTinyUSDRelationship *rel);
+C_TINYUSD_EXPORT int c_tinyusd_property_set_attribute(CTinyUSDProperty *prop, const CTinyUSDAttribute *attr);
+C_TINYUSD_EXPORT int c_tinyusd_property_set_relationship(CTinyUSDProperty *prop, const CTinyUSDRelationship *rel);
 
-int c_tinyusd_property_is_attribute(CTinyUSDProperty *prop);
-int c_tinyusd_property_is_attribute_connection(CTinyUSDProperty *prop);
-int c_tinyusd_property_is_relationship(CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_is_attribute(CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_is_attribute_connection(CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_is_relationship(CTinyUSDProperty *prop);
 
+#if 0
 typedef struct {
-  // c_tinyusd_string prim_element_name;
+  // c_tinyusd_string_t prim_element_name;
   // CTinyUSDPrimType prim_type;
 
   // CTinyUSDPropertyMap props;
   void *data;  // opaque pointer to tinyusdz::Prim
 } CTinyUSDPrim;
+#else
+typedef struct CTinyUSDPrim CTinyUSDPrim;
+#endif
 
 //
 // Create Prim with name.
 // Will create a builtin Prim when `prim_type` is a builtin Prim name(e.g. "Xform"(appeared in USDA))
 //
-int c_tinyusd_prim_new(const char *prim_type, CTinyUSDPrim *prim /* out */);
+CTinyUSDPrim *c_tinyusd_prim_new(const char *prim_type);
 
 //
 // Create Prim with builtin Prim type.
 //
-int c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type, CTinyUSDPrim *prim/* out */);
+CTinyUSDPrim *c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type);
 
-int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim, c_tinyusd_string *str);
+C_TINYUSD_EXPORT int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim, c_tinyusd_string_t *str);
 
-int c_tinyusd_prim_free(CTinyUSDPrim *prim);
+C_TINYUSD_EXPORT int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 
 //
 // Get list of property names as token array.
@@ -652,20 +698,20 @@ int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 // @param[out] prop_names Property names. Please initialize this instance using `c_tinyusd_token_vector_new` beforehand.
 //
 // @return 1 upon success(even when len(property names) == 0). 0 failure.
-int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_token_vector *prop_names_out);
+C_TINYUSD_EXPORT int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_token_vector_t *prop_names_out);
 
 // Get Prim's property. Returns 0 when property `prop_name` does not exist in the Prim.
 // `prop` just holds pointer to corresponding C++ Property instance, so no free operation required.
-int c_tinyusd_prim_property_get(const CTinyUSDPrim *prim, const char *prop_name, CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_prim_property_get(const CTinyUSDPrim *prim, const char *prop_name, CTinyUSDProperty *prop);
 
 // Add property to the Prim.
 // It copies the content of `prop`, so please free `prop` after this add operation.
 // Returns 0 when the operation failed(`err` will be returned. Please free `err` after using it)
-int c_tinyusd_prim_property_add(CTinyUSDPrim *prim, const char *prop_name, const CTinyUSDProperty *prop, c_tinyusd_string *err);
+C_TINYUSD_EXPORT int c_tinyusd_prim_property_add(CTinyUSDPrim *prim, const char *prop_name, const CTinyUSDProperty *prop, c_tinyusd_string_t *err);
 
 // Delete a property in the Prim.
 // Returns 0 when `prop_name` does not exist in the prim.
-int c_tinyusd_prim_property_del(CTinyUSDPrim *prim, const char *prop_name);
+C_TINYUSD_EXPORT int c_tinyusd_prim_property_del(CTinyUSDPrim *prim, const char *prop_name);
 
 // TODO: Add `set` op?(replace property in Prim)
 // ----
@@ -673,11 +719,11 @@ int c_tinyusd_prim_property_del(CTinyUSDPrim *prim, const char *prop_name);
 //
 // Append Prim to `prim`'s children.
 //
-int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child);
+C_TINYUSD_EXPORT int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child);
 
 // Delete child[child_index].
 // Return 0 when `child_index` is out-of-range.
-int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, int child_index);
+C_TINYUSD_EXPORT int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, int child_index);
 
 //
 // Return the number of child Prims in this Prim.
@@ -695,17 +741,16 @@ uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim);
 // Also the content(pointer) is valid unless the `prim`'s children is preserved(i.e., child is not deleted/added)
 //
 // Return 0 when `child_index` is out-of-range.
-int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_index,
+C_TINYUSD_EXPORT int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_index,
                              CTinyUSDPrim **child_prim);
 
-typedef struct {
-  void *data;  // opaque pointer to tinyusd::Stage
-} CTinyUSDStage;
+// opaque pointer to tinyusd::Stage
+typedef struct CTinyUSDStage CTinyUSDStage;
 
-int c_tinyusd_stage_new(CTinyUSDStage *stage);
-int c_tinyusd_stage_to_string(const CTinyUSDStage *stage,
-                              c_tinyusd_string *str);
-int c_tinyusd_stage_free(CTinyUSDStage *stage);
+C_TINYUSD_EXPORT CTinyUSDStage *c_tinyusd_stage_new();
+C_TINYUSD_EXPORT int c_tinyusd_stage_to_string(const CTinyUSDStage *stage,
+                              c_tinyusd_string_t *str);
+C_TINYUSD_EXPORT int c_tinyusd_stage_free(CTinyUSDStage *stage);
 
 // Callback function for Stage's root Prim traversal.
 // Return 1 for success, Return 0 to stop traversal futher.
@@ -725,9 +770,9 @@ typedef int (*CTinyUSDTraversalFunction)(const CTinyUSDPrim *prim,
 /// calling this `c_tinyusd_stage_traverse` function, and an App must free it by
 /// calling `c_tinyusd_string_free` after using it.
 ///
-int c_tinyusd_stage_traverse(const CTinyUSDStage *stage,
+C_TINYUSD_EXPORT int c_tinyusd_stage_traverse(const CTinyUSDStage *stage,
                              CTinyUSDTraversalFunction callback_fun,
-                             c_tinyusd_string *err);
+                             c_tinyusd_string_t *err);
 
 ///
 /// Detect file format of input file.
@@ -735,40 +780,40 @@ int c_tinyusd_stage_traverse(const CTinyUSDStage *stage,
 ///
 CTinyUSDFormat c_tinyusd_detect_format(const char *filename);
 
-int c_tinyusd_is_usd_file(const char *filename);
-int c_tinyusd_is_usda_file(const char *filename);
-int c_tinyusd_is_usdc_file(const char *filename);
-int c_tinyusd_is_usdz_file(const char *filename);
+C_TINYUSD_EXPORT int c_tinyusd_is_usd_file(const char *filename);
+C_TINYUSD_EXPORT int c_tinyusd_is_usda_file(const char *filename);
+C_TINYUSD_EXPORT int c_tinyusd_is_usdc_file(const char *filename);
+C_TINYUSD_EXPORT int c_tinyusd_is_usdz_file(const char *filename);
 
-int c_tinyusd_is_usd_memory(const uint8_t *addr, const size_t nbytes);
-int c_tinyusd_is_usda_memory(const uint8_t *addr, const size_t nbytes);
-int c_tinyusd_is_usdc_memory(const uint8_t *addr, const size_t nbytes);
-int c_tinyusd_is_usdz_memory(const uint8_t *addr, const size_t nbytes);
+C_TINYUSD_EXPORT int c_tinyusd_is_usd_memory(const uint8_t *addr, const size_t nbytes);
+C_TINYUSD_EXPORT int c_tinyusd_is_usda_memory(const uint8_t *addr, const size_t nbytes);
+C_TINYUSD_EXPORT int c_tinyusd_is_usdc_memory(const uint8_t *addr, const size_t nbytes);
+C_TINYUSD_EXPORT int c_tinyusd_is_usdz_memory(const uint8_t *addr, const size_t nbytes);
 
-int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage,
-                                 c_tinyusd_string *warn, c_tinyusd_string *err);
-int c_tinyusd_load_usda_from_file(const char *filename, CTinyUSDStage *stage,
-                                  c_tinyusd_string *warn,
-                                  c_tinyusd_string *err);
-int c_tinyusd_load_usdc_from_file(const char *filename, CTinyUSDStage *stage,
-                                  c_tinyusd_string *warn,
-                                  c_tinyusd_string *err);
-int c_tinyusd_load_usdz_from_file(const char *filename, CTinyUSDStage *stage,
-                                  c_tinyusd_string *warn,
-                                  c_tinyusd_string *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage,
+                                 c_tinyusd_string_t *warn, c_tinyusd_string_t *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usda_from_file(const char *filename, CTinyUSDStage *stage,
+                                  c_tinyusd_string_t *warn,
+                                  c_tinyusd_string_t *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usdc_from_file(const char *filename, CTinyUSDStage *stage,
+                                  c_tinyusd_string_t *warn,
+                                  c_tinyusd_string_t *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usdz_from_file(const char *filename, CTinyUSDStage *stage,
+                                  c_tinyusd_string_t *warn,
+                                  c_tinyusd_string_t *err);
 
-int c_tinyusd_load_usd_from_memory(const uint8_t *addr, const size_t nbytes,
-                                   c_tinyusd_string *warn,
-                                   c_tinyusd_string *err);
-int c_tinyusd_load_usda_from_memory(const uint8_t *addr, const size_t nbytes,
-                                    c_tinyusd_string *warn,
-                                    c_tinyusd_string *err);
-int c_tinyusd_load_usdc_from_memory(const uint8_t *addr, const size_t nbytes,
-                                    c_tinyusd_string *warn,
-                                    c_tinyusd_string *err);
-int c_tinyusd_load_usdz_from_memory(const uint8_t *addr, const size_t nbytes,
-                                    c_tinyusd_string *warn,
-                                    c_tinyusd_string *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usd_from_memory(const uint8_t *addr, const size_t nbytes,
+                                   c_tinyusd_string_t *warn,
+                                   c_tinyusd_string_t *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usda_from_memory(const uint8_t *addr, const size_t nbytes,
+                                    c_tinyusd_string_t *warn,
+                                    c_tinyusd_string_t *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usdc_from_memory(const uint8_t *addr, const size_t nbytes,
+                                    c_tinyusd_string_t *warn,
+                                    c_tinyusd_string_t *err);
+C_TINYUSD_EXPORT int c_tinyusd_load_usdz_from_memory(const uint8_t *addr, const size_t nbytes,
+                                    c_tinyusd_string_t *warn,
+                                    c_tinyusd_string_t *err);
 
 #ifdef __cplusplus
 }
