@@ -748,6 +748,13 @@ CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *c_type_name) {
   }
 }
 
+c_tinyusd_token c_tinyusd_token_init() {
+
+  c_tinyusd_token new_tok = { nullptr };
+
+  return new_tok;
+}
+
 int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str) {
   if (!tok) {
     return 0;
@@ -758,6 +765,27 @@ int c_tinyusd_token_new(c_tinyusd_token *tok, const char *str) {
   tok->data = reinterpret_cast<void *>(value);
 
   return 1;  // ok
+}
+
+c_tinyusd_token c_tinyusd_token_dup(const c_tinyusd_token *_tok) {
+  c_tinyusd_token new_tok = { nullptr };
+
+  if (!_tok) {
+    return new_tok;
+  }
+
+  if (!_tok->data) {
+    return new_tok;
+  }
+
+  auto *tok = reinterpret_cast<tinyusdz::value::token *>(_tok->data);
+
+  auto *value = new tinyusdz::value::token(tok->str());
+
+  new_tok.data = reinterpret_cast<void *>(value);
+
+  return new_tok;
+
 }
 
 int c_tinyusd_token_free(c_tinyusd_token *tok) {
