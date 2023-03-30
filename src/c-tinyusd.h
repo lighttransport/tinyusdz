@@ -165,14 +165,12 @@ typedef struct {
   int x;
   int y;
 } c_tinyusd_int2;
-static_assert(sizeof(c_tinyusd_int2) == sizeof(float) * 2, "");
 
 typedef struct {
   int x;
   int y;
   int z;
 } c_tinyusd_int3;
-static_assert(sizeof(c_tinyusd_int3) == sizeof(float) * 3, "");
 
 typedef struct {
   int x;
@@ -180,7 +178,6 @@ typedef struct {
   int z;
   int w;
 } c_tinyusd_int4;
-static_assert(sizeof(c_tinyusd_int4) == sizeof(float) * 4, "");
 
 typedef struct {
   uint32_t x;
@@ -204,14 +201,12 @@ typedef struct {
   c_tinyusd_half x;
   c_tinyusd_half y;
 } c_tinyusd_half2;
-static_assert(sizeof(c_tinyusd_half2) == sizeof(uint16_t) * 2, "");
 
 typedef struct {
   c_tinyusd_half x;
   c_tinyusd_half y;
   c_tinyusd_half z;
 } c_tinyusd_half3;
-static_assert(sizeof(c_tinyusd_half3) == sizeof(uint16_t) * 3, "");
 
 typedef struct {
   c_tinyusd_half x;
@@ -219,7 +214,6 @@ typedef struct {
   c_tinyusd_half z;
   c_tinyusd_half w;
 } c_tinyusd_half4;
-static_assert(sizeof(c_tinyusd_half4) == sizeof(uint16_t) * 4, "");
 
 typedef struct {
   float x;
@@ -273,19 +267,16 @@ typedef struct {
   c_tinyusd_half imag[3];
   c_tinyusd_half real;
 } c_tinyusd_quath; 
-static_assert(sizeof(c_tinyusd_quath) == sizeof(uint16_t) * 4, "");
 
 typedef struct {
   float imag[3];
   float real;
 } c_tinyusd_quatf; 
-static_assert(sizeof(c_tinyusd_quatf) == sizeof(float) * 4, "");
 
 typedef struct {
   double imag[3];
   double real;
 } c_tinyusd_quatd; 
-static_assert(sizeof(c_tinyusd_quatd) == sizeof(double) * 4, "");
 
 typedef c_tinyusd_half3 c_tinyusd_color3h;
 typedef c_tinyusd_float3 c_tinyusd_color3f;

@@ -1744,4 +1744,13 @@ int c_tinyusd_prim_get_property_names(const CTinyUSDPrim *prim, c_tinyusd_token_
   return 1;
 }
 
+static_assert(sizeof(c_tinyusd_int2) == sizeof(float) * 2, "");
+static_assert(sizeof(c_tinyusd_int3) == sizeof(float) * 3, "");
+static_assert(sizeof(c_tinyusd_int4) == sizeof(float) * 4, "");
+static_assert(sizeof(c_tinyusd_half2) == sizeof(uint16_t) * 2, "");
+static_assert(sizeof(c_tinyusd_half3) == sizeof(uint16_t) * 3, "");
+static_assert(sizeof(c_tinyusd_half4) == sizeof(uint16_t) * 4, "");
+static_assert(sizeof(c_tinyusd_quath) == sizeof(uint16_t) * 4, "");
+static_assert(sizeof(c_tinyusd_quatf) == sizeof(float) * 4, "");
+static_assert(sizeof(c_tinyusd_quatd) == sizeof(double) * 4, "");
 
