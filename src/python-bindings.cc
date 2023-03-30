@@ -3,7 +3,6 @@
 #include <pybind11/stl_bind.h>
 #include <pybind11/numpy.h>
 
-#include "nonstd/optional.hpp"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "prim-pprint.hh"
