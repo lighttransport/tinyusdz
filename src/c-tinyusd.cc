@@ -1105,6 +1105,7 @@ const char *c_tinyusd_string_vector_str(const c_tinyusd_string_vector *sv, const
 }
 
 
+#if 0
 int c_tinyusd_buffer_new(CTinyUSDBuffer *buf, CTinyUSDValueType value_type) {
   if (!buf) {
     return 0;
@@ -1246,6 +1247,7 @@ int c_tinyusd_buffer_free(CTinyUSDBuffer *buf) {
 
   return 1;
 }
+#endif
 
 int c_tinyusd_is_usda_file(const char *filename) {
   if (tinyusdz::IsUSDA(filename)) {
@@ -1327,13 +1329,12 @@ bool CVisitPrimFunction(const Path &abs_path, const Prim &prim,
 
   CTinyUSDPrim *pprim = reinterpret_cast<CTinyUSDPrim *>(const_cast<Prim *>(&prim));
 
-  CTinyUSDPath cpath;
-  cpath.data = reinterpret_cast<void *>(const_cast<Path *>(&abs_path));
+  CTinyUSDPath *ppath = reinterpret_cast<CTinyUSDPath *>(const_cast<Path *>(&abs_path));
 
   CTinyUSDTraversalFunction callback_fun =
       reinterpret_cast<CTinyUSDTraversalFunction>(userdata);
 
-  int ret = callback_fun(pprim, &cpath);
+  int ret = callback_fun(pprim, ppath);
 
   if (ret) {
     return true;
@@ -1520,78 +1521,75 @@ int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage,
   return 1;
 }
 
-int c_tinyusd_attribute_value_free(CTinyUSDAttributeValue *aval) {
-  if (!aval) {
-    return 0;
-  }
+CTinyUSDValue *c_tinyusd_value_new_null() {
 
-  // TODO
-  return 0;
+  auto *pv = new tinyusdz::value::Value(nullptr);
+
+  return reinterpret_cast<CTinyUSDValue *>(pv);
 }
 
-int c_tinyusd_attribute_value_new_token(CTinyUSDAttributeValue *aval, const c_tinyusd_token_t *tok) {
+int c_tinyusd_value_free(CTinyUSDValue *aval) {
   if (!aval) {
     return 0;
   }
 
-  CTinyUSDBuffer buf;
-  if (!c_tinyusd_buffer_new_and_copy_token(&buf, tok)) {
-    return 0;
-  }
+  tinyusdz::value::Value *vp = reinterpret_cast<tinyusdz::value::Value *>(aval);
+  delete vp;
 
   return 1;
 }
 
-int c_tinyusd_attribute_value_new_string(CTinyUSDAttributeValue *aval, const c_tinyusd_string_t *str) {
-  if (!aval) {
-    return 0;
+CTinyUSDValue *c_tinyusd_value_new_token(const c_tinyusd_token_t *tok) {
+  if (!tok) {
+    return nullptr;
   }
 
-  CTinyUSDBuffer buf;
-  if (!c_tinyusd_buffer_new_and_copy_string(&buf, str)) {
-    return 0;
-  }
+  auto *pv = reinterpret_cast<const tinyusdz::value::token *>(tok);
 
-  return 1;
+  // copies.
+  tinyusdz::value::Value *vp = new tinyusdz::value::Value(*pv);
+
+  return reinterpret_cast<CTinyUSDValue *>(vp);
 }
 
-#define ATTRIB_VALUE_IMPL(__tyname, __cppty, __cty, __tyenum) \
-int c_tinyusd_attribute_value_new_##__tyname(CTinyUSDAttributeValue *aval, __cty val) { \
+CTinyUSDValue *c_tinyusd_value_new_string(const c_tinyusd_string_t *str) {
+  if (!str) {
+    return nullptr;
+  }
+
+  auto *pv = reinterpret_cast<const std::string *>(str);
+
+  // copies.
+  tinyusdz::value::Value *vp = new tinyusdz::value::Value(*pv);
+
+  return reinterpret_cast<CTinyUSDValue *>(vp);
+}
+
+#define ATTRIB_VALUE_NEW_IMPL(__tyname, __cppty, __cty, __tyenum) \
+CTinyUSDValue *c_tinyusd_value_new_##__tyname(__cty val) { \
+  (void)__tyenum; \
   /* ensure C++ and C types has same size. */ \
   static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
-  if (!aval) { \
-    return 0; \
-  } \
-  CTinyUSDBuffer buf; \
-  if (!c_tinyusd_buffer_new(&buf, __tyenum)) { \
-    return 0; \
-  } \
-  tinyusdz::value::Value *vp = reinterpret_cast<tinyusdz::value::Value *>(buf.data); \
   __cppty cppval; \
-  memcpy(&cppval, &val, sizeof(__cty)); \
-  (*vp) = cppval; \
-  aval->buffer = buf; \
-  return 1; \
+  memcpy(&cppval, &val, sizeof(__cppty)); \
+  tinyusdz::value::Value *vp = new tinyusdz::value::Value(cppval); \
+  return reinterpret_cast<CTinyUSDValue *>(vp); \
 }
 
-ATTRIB_VALUE_IMPL(int, int, int, C_TINYUSD_VALUE_INT)
-ATTRIB_VALUE_IMPL(int2, value::int2, c_tinyusd_int2_t, C_TINYUSD_VALUE_INT2)
-ATTRIB_VALUE_IMPL(int3, value::int3, c_tinyusd_int3_t, C_TINYUSD_VALUE_INT3)
-ATTRIB_VALUE_IMPL(int4, value::int4, c_tinyusd_int4_t, C_TINYUSD_VALUE_INT4)
+ATTRIB_VALUE_NEW_IMPL(int, int, int, C_TINYUSD_VALUE_INT)
+ATTRIB_VALUE_NEW_IMPL(int2, value::int2, c_tinyusd_int2_t, C_TINYUSD_VALUE_INT2)
+ATTRIB_VALUE_NEW_IMPL(int3, value::int3, c_tinyusd_int3_t, C_TINYUSD_VALUE_INT3)
+ATTRIB_VALUE_NEW_IMPL(int4, value::int4, c_tinyusd_int4_t, C_TINYUSD_VALUE_INT4)
 
-ATTRIB_VALUE_IMPL(float, float, float, C_TINYUSD_VALUE_FLOAT)
-ATTRIB_VALUE_IMPL(float2, value::float2, c_tinyusd_float2_t, C_TINYUSD_VALUE_FLOAT2)
-ATTRIB_VALUE_IMPL(float3, value::float3, c_tinyusd_float3_t, C_TINYUSD_VALUE_FLOAT3)
-ATTRIB_VALUE_IMPL(float4, value::float4, c_tinyusd_float4_t, C_TINYUSD_VALUE_FLOAT4)
+ATTRIB_VALUE_NEW_IMPL(float, float, float, C_TINYUSD_VALUE_FLOAT)
+ATTRIB_VALUE_NEW_IMPL(float2, value::float2, c_tinyusd_float2_t, C_TINYUSD_VALUE_FLOAT2)
+ATTRIB_VALUE_NEW_IMPL(float3, value::float3, c_tinyusd_float3_t, C_TINYUSD_VALUE_FLOAT3)
+ATTRIB_VALUE_NEW_IMPL(float4, value::float4, c_tinyusd_float4_t, C_TINYUSD_VALUE_FLOAT4)
 
-#undef ATTRIB_VALUE_IMPL
+#undef ATTRIB_VALUE_NEW_IMPL
 
-int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *aval, c_tinyusd_string_t *str) {
+int c_tinyusd_value_to_string(const CTinyUSDValue *aval, c_tinyusd_string_t *str) {
   if (!aval) {
-    return 0;
-  }
-
-  if (!aval->buffer.data) {
     return 0;
   }
 
@@ -1599,8 +1597,7 @@ int c_tinyusd_attribute_value_to_string(const CTinyUSDAttributeValue *aval, c_ti
     return 0;
   }
 
-  // TODO: Check if Value's type == buffer.value_type
-  const tinyusdz::value::Value *cp = reinterpret_cast<const tinyusdz::value::Value *>(aval->buffer.data);
+  const tinyusdz::value::Value *cp = reinterpret_cast<const tinyusdz::value::Value *>(aval);
 
   std::string s = tinyusdz::value::pprint_value(*cp, /* indent */0, /* closing_brace */false);
 
