@@ -736,17 +736,28 @@ C_TINYUSD_EXPORT int c_tinyusd_prim_property_del(CTinyUSDPrim *prim,
  */
 
   
-/*  Append Prim to `prim`'s children. */
+/* 
+   Append Prim to `prim`'s children. child Prim object is *COPIED*.
+   So need to free child Prim after the append_child operation.
+ */
   
 C_TINYUSD_EXPORT int c_tinyusd_prim_append_child(CTinyUSDPrim *prim,
                                                  CTinyUSDPrim *child);
 
+/* 
+   Append Prim to `prim`'s children. child Prim object is moved(in C++ meaning).
+   So no need to free child Prim(and `child` pointer is invalid after calling this function.
+   Usefull if a Prim is a large object(e.g. GeomMesh with 100M vertices)
+ */
+C_TINYUSD_EXPORT int c_tinyusd_prim_append_child_move(CTinyUSDPrim *prim,
+                                                 CTinyUSDPrim *child);
+
 /*
-   Delete child[child_index].
+   Delete child at `child_index` position from a Prim.
    Return 0 when `child_index` is out-of-range.
  */
 C_TINYUSD_EXPORT int c_tinyusd_prim_del_child(CTinyUSDPrim *prim,
-                                              int child_index);
+                                              uint64_t child_index);
 
 /*
    Return the number of child Prims in this Prim.
@@ -768,8 +779,8 @@ uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim);
    Return 0 when `child_index` is out-of-range.
 */
 C_TINYUSD_EXPORT int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim,
-                                              uint32_t child_index,
-                                              CTinyUSDPrim **child_prim);
+                                              uint64_t child_index,
+                                              const CTinyUSDPrim **child_prim);
 
 /* opaque pointer to tinyusd::Stage */
 typedef struct CTinyUSDStage CTinyUSDStage;

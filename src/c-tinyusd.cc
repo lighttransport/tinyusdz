@@ -748,14 +748,82 @@ CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *c_type_name) {
   }
 }
 
-#if 0
-c_tinyusd_token_ c_tinyusd_token_init() {
+int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child_prim) {
+  if (!prim) {
+    return 0;
+  }
 
-  c_tinyusd_token new_tok = { nullptr };
+  if (!child_prim) {
+    return 0;
+  }
 
-  return new_tok;
+  tinyusdz::Prim *pprim = reinterpret_cast<tinyusdz::Prim *>(prim);
+  tinyusdz::Prim *pchild = reinterpret_cast<tinyusdz::Prim *>(child_prim);
+  
+  pprim->children().emplace_back(*pchild);
+
+  return 1;
 }
-#endif
+
+int c_tinyusd_prim_append_child_move(CTinyUSDPrim *prim, CTinyUSDPrim *child_prim) {
+  if (!prim) {
+    return 0;
+  }
+
+  if (!child_prim) {
+    return 0;
+  }
+
+  tinyusdz::Prim *pprim = reinterpret_cast<tinyusdz::Prim *>(prim);
+  tinyusdz::Prim *pchild = reinterpret_cast<tinyusdz::Prim *>(child_prim);
+  
+  pprim->children().emplace_back(std::move(*pchild));
+
+  return 1;
+}
+
+uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim) {
+  if (!prim) {
+    return 0;
+  }
+
+  const tinyusdz::Prim *pprim = reinterpret_cast<const tinyusdz::Prim *>(prim);
+  return pprim->children().size();
+}
+
+int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim,
+                                              uint64_t child_index,
+                                              const CTinyUSDPrim ** child_prim) {
+  if (!prim) {
+    return 0;
+  }
+
+  const tinyusdz::Prim *pprim = reinterpret_cast<const tinyusdz::Prim *>(prim);
+  if (child_index >= pprim->children().size()) {
+    return 0;
+  }
+
+  const tinyusdz::Prim *pchild = &pprim->children()[child_index];
+
+  (*child_prim) = reinterpret_cast<const CTinyUSDPrim *>(pchild);
+
+  return 1;
+}
+
+int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, uint64_t child_idx) {
+  if (!prim) {
+    return 0;
+  }
+
+  tinyusdz::Prim *pprim = reinterpret_cast<tinyusdz::Prim *>(prim);
+  if (child_idx >= pprim->children().size()) {
+    return 0;
+  }
+  
+  pprim->children().erase(pprim->children().begin() + ssize_t(child_idx));
+
+  return 1;
+}
 
 c_tinyusd_token_t *c_tinyusd_token_new(const char *str) {
   if (!str) {
@@ -1407,38 +1475,6 @@ int c_tinyusd_prim_free(CTinyUSDPrim *prim) {
   delete p;
 
   return 1;
-}
-
-uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim) {
-  if (!prim) {
-    return 0;
-  }
-
-  const Prim *p = reinterpret_cast<const Prim *>(prim);
-  return uint64_t(p->children().size());
-}
-
-int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim, uint32_t child_idx,
-                             CTinyUSDPrim **child) {
-  if (!prim) {
-    return 0;
-  }
-
-  if (!child) {
-    return 0;
-  }
-
-  const Prim *p = reinterpret_cast<const Prim *>(prim);
-  if (child_idx >= p->children().size()) {
-    return 0;
-  }
-
-  // Use pointer address.
-  const Prim *child_ptr = &(p->children()[child_idx]);
-
-  (*child) = reinterpret_cast<CTinyUSDPrim *>(const_cast<Prim *>(child_ptr));
-
-  return 0;
 }
 
 int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim, c_tinyusd_string_t *str) {

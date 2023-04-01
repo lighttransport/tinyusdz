@@ -98,9 +98,26 @@ int main(int argc, char **argv) {
     // You can also create a Prim with string
     // CTinyUSDPrim *prim = c_tinyusd_prim_new("Xform");
     CTinyUSDPrim *prim = c_tinyusd_prim_new_builtin(C_TINYUSD_PRIM_XFORM);
-
     if (!prim) {
       printf("Failed to new Xform Prim.\n");
+      return EXIT_FAILURE;
+    }
+
+    CTinyUSDPrim *child_prim = c_tinyusd_prim_new_builtin(C_TINYUSD_PRIM_MESH);
+    if (!child_prim) {
+      printf("Failed to new Mesh Prim.\n");
+      return EXIT_FAILURE;
+    }
+
+    // You can also use c_tinyusd_prim_append_child_move() (eqivalent to emplace_back(std::move(child_prim)))
+    // In this case, you don't need to call prim free API.
+    if (!c_tinyusd_prim_append_child(prim, child_prim)) {
+      printf("Prim: Append child failed.\n");
+      return EXIT_FAILURE;
+    }
+
+    if (!c_tinyusd_prim_free(child_prim)) {
+      printf("Prim: Child Prim free failed.\n");
       return EXIT_FAILURE;
     }
 
