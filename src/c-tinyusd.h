@@ -494,6 +494,7 @@ C_TINYUSD_EXPORT int c_tinyusd_string_vector_free(c_tinyusd_string_vector *sv);
 /*
    Return the name of Prim type.
    Return NULL for unsupported/unknown Prim type.
+   Returned pointer is valid until Prim is modified or deleted.
  */
 C_TINYUSD_EXPORT const char *c_tinyusd_prim_type_name(
     CTinyUSDPrimType prim_type);
@@ -688,8 +689,12 @@ CTinyUSDPrim *c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type);
 C_TINYUSD_EXPORT int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim,
                                               c_tinyusd_string_t *str);
 
+
 C_TINYUSD_EXPORT int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 
+/* Prim type as a const char pointer.
+   Returns nullptr when `prim` is invalid */
+C_TINYUSD_EXPORT const char *c_tinyusd_prim_type(const CTinyUSDPrim *prim);
   
 /*
    Get list of property names as token array.

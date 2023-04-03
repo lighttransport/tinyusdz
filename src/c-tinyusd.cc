@@ -791,6 +791,17 @@ uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim) {
   return pprim->children().size();
 }
 
+const char *c_tinyusd_prim_type(const CTinyUSDPrim *prim) {
+  if (!prim) {
+    return nullptr;
+  }
+
+  const tinyusdz::Prim *pprim = reinterpret_cast<const tinyusdz::Prim *>(prim);
+
+  return pprim->prim_type_name().c_str();
+}
+
+
 int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim,
                                               uint64_t child_index,
                                               const CTinyUSDPrim ** child_prim) {
