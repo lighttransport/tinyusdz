@@ -9,6 +9,7 @@
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 #include "common-macros.inc"
+#include "str-util.hh"
 
 // TODO:
 // - [ ] Implement our own `strlen`
@@ -665,7 +666,12 @@ const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type) {
       return nullptr;
     }
     case C_TINYUSD_PRIM_MODEL: {
+      // empty string for Model
       tyname = "";
+      break;
+    }  
+    case C_TINYUSD_PRIM_SCOPE: {
+      tyname = "Scope";
       break;
     }  // empty string for Model
     case C_TINYUSD_PRIM_XFORM: {
@@ -725,6 +731,8 @@ CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *c_type_name) {
 
   if (type_name == "Model") {
     return C_TINYUSD_PRIM_MODEL;
+  } else if (type_name == "Scope") {
+    return C_TINYUSD_PRIM_SCOPE;
   } else if (type_name == tinyusdz::kGeomXform) {
     return C_TINYUSD_PRIM_XFORM;
   } else if (type_name == tinyusdz::kGeomMesh) {
@@ -749,11 +757,16 @@ CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *c_type_name) {
 }
 
 int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child_prim) {
+  std::cout << "C: Append child: " << prim << "," << child_prim << "\n";
+  DCOUT("DCOUT: Append child: " << prim << ", " << child_prim);
+
   if (!prim) {
+    DCOUT("`prim` is nullptr.");
     return 0;
   }
 
   if (!child_prim) {
+    DCOUT("`child_prim` is nullptr.");
     return 0;
   }
 
@@ -1424,9 +1437,20 @@ bool CVisitPrimFunction(const Path &abs_path, const Prim &prim,
 
 }  // namespace
 
-CTinyUSDPrim *c_tinyusd_prim_new(const char *_prim_type) {
+CTinyUSDPrim *c_tinyusd_prim_new(const char *_prim_type, c_tinyusd_string_t *err) {
 
   if (!_prim_type) {
+    if (err) {
+      c_tinyusd_string_replace(err, "prim_type is nullptr.");
+    }
+    return nullptr;
+  }
+
+  std::string prim_type_name = std::string(_prim_type);
+  if (!tinyusdz::isValidIdentifier(prim_type_name)) {
+    if (err) {
+      c_tinyusd_string_replace(err, "prim_type contains invalid character.");
+    }
     return nullptr;
   }
 
@@ -1441,25 +1465,35 @@ CTinyUSDPrim *c_tinyusd_prim_new(const char *_prim_type) {
 
   Prim *p{nullptr};
 
-#define NEW_PRIM(__cty, __ty) \
-  if (prim_type == __cty) {   \
-    __ty content;             \
-    p = new Prim(content);    \
-  } else
-
   if (non_builtin_prim_type) {
-    p->prim_type_name() = _prim_type;
-  }
+    Model model;
+    model.prim_type_name = std::string(_prim_type);
+    p = new Prim(model);
+  } else {
 
-  NEW_PRIM(C_TINYUSD_PRIM_XFORM, Xform)
-  NEW_PRIM(C_TINYUSD_PRIM_MESH, GeomMesh)
-  NEW_PRIM(C_TINYUSD_PRIM_GEOMSUBSET, GeomSubset)
-  NEW_PRIM(C_TINYUSD_PRIM_MATERIAL, Material)
-  NEW_PRIM(C_TINYUSD_PRIM_SHADER, Shader)
-  // TODO: More types.
-  {
-    // Unknown or unsupported type.
-    return nullptr;
+#define NEW_PRIM(__cty, __ty) \
+    if (prim_type == __cty) {   \
+      __ty content;             \
+      p = new Prim(content);    \
+    } else
+
+    NEW_PRIM(C_TINYUSD_PRIM_XFORM, Xform)
+    NEW_PRIM(C_TINYUSD_PRIM_SCOPE, Scope)
+    NEW_PRIM(C_TINYUSD_PRIM_MESH, GeomMesh)
+    NEW_PRIM(C_TINYUSD_PRIM_GEOMSUBSET, GeomSubset)
+    NEW_PRIM(C_TINYUSD_PRIM_MATERIAL, Material)
+    NEW_PRIM(C_TINYUSD_PRIM_SHADER, Shader)
+    // TODO: More types.
+    {
+      if (err) {
+        std::string msg = "Unknown or unsupported type: " + std::string(_prim_type) + "\n";
+        c_tinyusd_string_replace(err, msg.c_str());
+      }
+
+      // Unknown or unsupported type.
+      DCOUT("Unknown or unsupported type: " << _prim_type);
+      return nullptr;
+    }
   }
 
 #undef NEW_PRIM
@@ -1474,7 +1508,7 @@ CTinyUSDPrim *c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type) {
     return nullptr;
   }
 
-  return c_tinyusd_prim_new(prim_type_name);
+  return c_tinyusd_prim_new(prim_type_name, nullptr);
 }
 
 int c_tinyusd_prim_free(CTinyUSDPrim *prim) {

@@ -12,7 +12,7 @@
 
 #include <assert.h>
 #include <stdint.h>
-#include <uchar.h>  /* size_t */
+#include <uchar.h> /* size_t */
 #include <wchar.h>
 
 #ifdef __cplusplus
@@ -20,18 +20,18 @@ extern "C" {
 #endif
 
 /*
-  
+
    Common API design direction.
-  
-  
+
+
    - Frequently used type uses lower snake case(e.g. `c_tinyusd_string_t`)
    - For most of API, Return type is int(bool). 0 = failre, 1 = success.
    - For `***_new` API, return type is a pointer of new'ed object.
      - Use corresponding `***_free` to free a object.
    - Argument order: object(in or inout), ins, inouts, then outs
-  
+
    Example
-  
+
    ```
    c_tinyusd_string_t *s = c_tinyusd_string_new_empty();
    if (!s) {
@@ -40,19 +40,19 @@ extern "C" {
    ...
    c_tinyusd_string_free(&s);
    ```
-  
+
    ```
    CTinyUSDStage *pstage = c_tinyusd_stage_new();
    c_tinyusd_string_t *pwarn = c_tinyusd_string_new_empty();
    c_tinyusd_string_t *perr = c_tinyusd_string_new_empty();
-  
+
    For losd API, pass memory allocated Stage object and string objects to args.
-  
+
    int ret = c_tinyusd_load_usd_from_file("input.usd", pstage, pwarn, perr);
-  
+
    c_tinyusd_stage_free(pstage);
    ```
-  
+
 */
 
 /*
@@ -75,7 +75,7 @@ extern "C" {
 #define C_TINYUSD_EXPORT __declspec(dllimport)
 #endif
 
-#else  /* !_MSC_VER */
+#else /* !_MSC_VER */
 
 #if defined(TINYUSDZ_COMPILE_LIBRARY)
 /* Assume non-msvc */
@@ -84,14 +84,14 @@ extern "C" {
 #define C_TINYUSD_EXPORT __declspec(dllimport)
 #endif
 
-#endif  /* _MSC_VER */
+#endif /* _MSC_VER */
 
-#else  /* !TINYUSDZ_SHARED_LIBRARY */
+#else /* !TINYUSDZ_SHARED_LIBRARY */
 
 #define C_TINYUSD_EXPORT
 
-#endif  /* TINYUSDZ_SHARED_LIBRARY */
-#endif  /* TINYUSDZ_EXPORT */
+#endif /* TINYUSDZ_SHARED_LIBRARY */
+#endif /* TINYUSDZ_EXPORT */
 
 C_TINYUSD_EXPORT void *c_tinyusd_malloc(size_t nbytes);
 
@@ -123,15 +123,15 @@ typedef enum {
    NOTE: Use dedicated enum value for token[] and string[]
    (therse use C struct `c_tinyusd_token_vector` and `c_tinyusd_string_vector`
    respectively)
-  
+
    Use C_TINYUSD_VALUE_1D_BIT for other numerical value type to represent 1D
    array.
-*/  
+*/
 typedef enum {
   C_TINYUSD_VALUE_TOKEN,
-  C_TINYUSD_VALUE_TOKEN_VECTOR,  /* token[] */
+  C_TINYUSD_VALUE_TOKEN_VECTOR, /* token[] */
   C_TINYUSD_VALUE_STRING,
-  C_TINYUSD_VALUE_STRING_VECTOR,  /* string[] */
+  C_TINYUSD_VALUE_STRING_VECTOR, /* string[] */
   C_TINYUSD_VALUE_BOOL,
   C_TINYUSD_VALUE_HALF,
   C_TINYUSD_VALUE_HALF2,
@@ -183,7 +183,7 @@ typedef enum {
   C_TINYUSD_VALUE_MATRIX3D,
   C_TINYUSD_VALUE_MATRIX4D,
   C_TINYUSD_VALUE_FRAME4D,
-  C_TINYUSD_VALUE_END,  /* terminator */
+  C_TINYUSD_VALUE_END, /* terminator */
 } CTinyUSDValueType;
 
 /* assume the number of value types is less than 1024. */
@@ -193,6 +193,7 @@ typedef enum {
 typedef enum {
   C_TINYUSD_PRIM_UNKNOWN,
   C_TINYUSD_PRIM_MODEL,
+  C_TINYUSD_PRIM_SCOPE,
   C_TINYUSD_PRIM_XFORM,
   C_TINYUSD_PRIM_MESH,
   C_TINYUSD_PRIM_GEOMSUBSET,
@@ -389,14 +390,12 @@ C_TINYUSD_EXPORT int c_tinyusd_token_free(c_tinyusd_token_t *tok);
 /*   opaque pointer to `std::vector<tinyusd::value::token>`. */
 typedef struct c_tinyusd_token_vector_t c_tinyusd_token_vector_t;
 
-  
 /*  New token vector(array) with size zero(empty) */
-  
+
 C_TINYUSD_EXPORT c_tinyusd_token_vector_t *c_tinyusd_token_vector_new_empty();
 
-  
 /*  New token vector(array) with given size `n` */
-  
+
 C_TINYUSD_EXPORT c_tinyusd_token_vector_t *c_tinyusd_token_vector_new(
     const size_t n, const char **toks);
 C_TINYUSD_EXPORT int c_tinyusd_token_vector_free(c_tinyusd_token_vector_t *sv);
@@ -404,7 +403,7 @@ C_TINYUSD_EXPORT int c_tinyusd_token_vector_free(c_tinyusd_token_vector_t *sv);
 /*
    Returns number of elements.
    0 when empty or `tv` is invalid.
- */  
+ */
 C_TINYUSD_EXPORT size_t
 c_tinyusd_token_vector_size(const c_tinyusd_token_vector_t *sv);
 
@@ -422,7 +421,7 @@ C_TINYUSD_EXPORT const char *c_tinyusd_token_vector_str(
 /*
    Replace `index`th token.
    Returns 0 when `sv` is invalid or `index` is out-of-range.
- */  
+ */
 C_TINYUSD_EXPORT int c_tinyusd_token_vector_replace(
     c_tinyusd_token_vector_t *sv, const size_t idx, const char *str);
 
@@ -454,7 +453,6 @@ typedef struct {
   void *data;  // opaque pointer to `std::vector<std::string>`.
 } c_tinyusd_string_vector;
 
-  
 /*   New string vector(array) with given size `n` */
 C_TINYUSD_EXPORT int c_tinyusd_string_vector_new_empty(
     c_tinyusd_string_vector *sv, const size_t n);
@@ -463,11 +461,10 @@ C_TINYUSD_EXPORT int c_tinyusd_string_vector_new(c_tinyusd_string_vector *sv,
                                                  const size_t n,
                                                  const char **strs);
 
-  
 /*
    Returns number of elements.
    0 when empty or `sv` is invalid.
- */ 
+ */
 C_TINYUSD_EXPORT size_t
 c_tinyusd_string_vector_size(const c_tinyusd_string_vector *sv);
 
@@ -475,17 +472,17 @@ C_TINYUSD_EXPORT int c_tinyusd_string_vector_clear(c_tinyusd_string_vector *sv);
 C_TINYUSD_EXPORT int c_tinyusd_string_vector_resize(c_tinyusd_string_vector *sv,
                                                     const size_t n);
 
-/*  
+/*
    Return const string pointer for given index.
    Returns nullptr when index is out-of-range.
- */ 
+ */
 C_TINYUSD_EXPORT const char *c_tinyusd_string_vector_str(
     const c_tinyusd_string_vector *sv, const size_t idx);
 
-/*  
+/*
    Replace `index`th string.
    Returns 0 when `sv` is invalid or `index` is out-of-range.
- */ 
+ */
 C_TINYUSD_EXPORT int c_tinyusd_string_vector_replace(
     c_tinyusd_string_vector *sv, const size_t idx, const char *str);
 
@@ -542,7 +539,7 @@ C_TINYUSD_EXPORT int c_tinyusd_value_free(CTinyUSDValue *val);
 
 /*
    Get string representation of Value content(pprint).
-  
+
    Return 0 upon error.
 */
 C_TINYUSD_EXPORT int c_tinyusd_value_to_string(const CTinyUSDValue *val,
@@ -562,20 +559,19 @@ C_TINYUSD_EXPORT int c_tinyusd_value_free(CTinyUSDValue *val);
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_token(
     const c_tinyusd_token_t *val);
 
-  
 /*
    New Value with string type.
    NOTE: string data are copied. So it is safe to free string after calling this
    function.
- */ 
+ */
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_string(
     const c_tinyusd_string_t *val);
 
-/*  
+/*
    New Value with specific type.
    NOTE: Datas are copied.
    Returns 1 upon success, 0 failed.
- */ 
+ */
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int(int val);
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int2(c_tinyusd_int2_t val);
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int3(c_tinyusd_int3_t val);
@@ -589,11 +585,10 @@ C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float4(
     c_tinyusd_float4_t val);
 /*   TODO: List up other types... */
 
-  
 /*
    New Value with 1D array ofspecific type.
    NOTE: Array data is copied.
- */ 
+ */
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int_array(uint64_t n,
                                                               int *vals);
 C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int2_array(
@@ -673,36 +668,41 @@ C_TINYUSD_EXPORT int c_tinyusd_property_is_relationship(CTinyUSDProperty *prop);
 
 typedef struct CTinyUSDPrim CTinyUSDPrim;
 
-  
 /*
    Create Prim with name.
    Will create a builtin Prim when `prim_type` is a builtin Prim name(e.g.
-   "Xform"(appeared in USDA))
- */ 
-CTinyUSDPrim *c_tinyusd_prim_new(const char *prim_type);
+   "Xform")
+   Otherwise create a Model Prim(Generic Prim).
+   Return nullptr when `prim_type` is null or `prim_type` contains invalid
+   character (A character which cannot be used for Prim type name(e.g. '%') and
+   fills `err` with error message.
+   (App need to free `err` after using it.)
+ */
+CTinyUSDPrim *c_tinyusd_prim_new(const char *prim_type,
+                                 c_tinyusd_string_t *err);
 
-  
-/*   Create Prim with builtin Prim type. */
-  
+/* Create Prim with builtin Prim type.
+   Returns nullptr when invalid `prim_type` enum value is provided. 
+ */
+
 CTinyUSDPrim *c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type);
 
 C_TINYUSD_EXPORT int c_tinyusd_prim_to_string(const CTinyUSDPrim *prim,
                                               c_tinyusd_string_t *str);
-
 
 C_TINYUSD_EXPORT int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 
 /* Prim type as a const char pointer.
    Returns nullptr when `prim` is invalid */
 C_TINYUSD_EXPORT const char *c_tinyusd_prim_type(const CTinyUSDPrim *prim);
-  
+
 /*
    Get list of property names as token array.
-  
+
    @param[in] prim Prim
    @param[out] prop_names Property names. Please initialize this instance using
    `c_tinyusd_token_vector_new` beforehand.
-  
+
    @return 1 upon success(even when len(property names) == 0). 0 failure.
  */
 C_TINYUSD_EXPORT int c_tinyusd_prim_get_property_names(
@@ -740,22 +740,22 @@ C_TINYUSD_EXPORT int c_tinyusd_prim_property_del(CTinyUSDPrim *prim,
    ----
  */
 
-  
-/* 
+/*
    Append Prim to `prim`'s children. child Prim object is *COPIED*.
    So need to free child Prim after the append_child operation.
  */
-  
+
 C_TINYUSD_EXPORT int c_tinyusd_prim_append_child(CTinyUSDPrim *prim,
                                                  CTinyUSDPrim *child);
 
-/* 
+/*
    Append Prim to `prim`'s children. child Prim object is moved(in C++ meaning).
-   So no need to free child Prim(and `child` pointer is invalid after calling this function.
-   Usefull if a Prim is a large object(e.g. GeomMesh with 100M vertices)
+   So no need to free child Prim(and `child` pointer is invalid after calling
+   this function. Usefull if a Prim is a large object(e.g. GeomMesh with 100M
+   vertices)
  */
 C_TINYUSD_EXPORT int c_tinyusd_prim_append_child_move(CTinyUSDPrim *prim,
-                                                 CTinyUSDPrim *child);
+                                                      CTinyUSDPrim *child);
 
 /*
    Delete child at `child_index` position from a Prim.
@@ -766,12 +766,12 @@ C_TINYUSD_EXPORT int c_tinyusd_prim_del_child(CTinyUSDPrim *prim,
 
 /*
    Return the number of child Prims in this Prim.
-  
+
    Return 0 when `prim` is invalid or nullptr.
-*/  
+*/
 uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim);
 
-/* 
+/*
    Get a child Prim of specified child_index.
 
    Child's conent is just a pointer, so please do not call Prim
@@ -802,26 +802,26 @@ C_TINYUSD_EXPORT int c_tinyusd_stage_free(CTinyUSDStage *stage);
 typedef int (*CTinyUSDTraversalFunction)(const CTinyUSDPrim *prim,
                                          const CTinyUSDPath *path);
 
-/*  
+/*
    Traverse root Prims in the Stage and invoke callback function for each Prim.
-  
+
    @param[in] stage Stage.
    @param[in] callbacl_fun Callback function.
    @param[out] err Optional. error message.
-  
+
    @return 1 upon success. 0 when failed(and `err` will be set).
-  
+
    When providing `err`, it must be created with `c_tinyusd_string_new` before
    calling this `c_tinyusd_stage_traverse` function, and an App must free it by
    calling `c_tinyusd_string_free` after using it.
- */ 
+ */
 C_TINYUSD_EXPORT int c_tinyusd_stage_traverse(
     const CTinyUSDStage *stage, CTinyUSDTraversalFunction callback_fun,
     c_tinyusd_string_t *err);
 
 /*
    Detect file format of input file.
- */  
+ */
 CTinyUSDFormat c_tinyusd_detect_format(const char *filename);
 
 C_TINYUSD_EXPORT int c_tinyusd_is_usd_file(const char *filename);
