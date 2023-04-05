@@ -10,9 +10,83 @@
 #include "value-pprint.hh"
 #include "common-macros.inc"
 #include "str-util.hh"
+#include "value-types.hh"
 
 // TODO:
 // - [ ] Implement our own `strlen`
+
+CTinyUSDValueType c_tinyusd_value_type(const CTinyUSDValue *value) {
+  if (!value) {
+    return C_TINYUSD_VALUE_UNKNOWN;
+  }
+
+  const tinyusdz::value::Value *pv = reinterpret_cast<const tinyusdz::value::Value *>(value);
+  uint32_t tyid = pv->type_id();
+
+  bool is_array = false;
+  if (tyid & tinyusdz::value::TYPE_ID_1D_ARRAY_BIT) {
+    is_array = true;
+    // turn of array bit
+    tyid = tyid & (~tinyusdz::value::TYPE_ID_1D_ARRAY_BIT);
+  }
+
+  using namespace tinyusdz::value;
+
+  uint32_t basety = C_TINYUSD_VALUE_UNKNOWN;
+
+  switch (tyid) {
+    case TYPE_ID_BOOL: {
+      basety = C_TINYUSD_VALUE_BOOL;
+      break;
+    }
+    case TYPE_ID_INT32: {
+      basety = C_TINYUSD_VALUE_INT;
+      break;
+    }
+    case TYPE_ID_INT2: {
+      basety = C_TINYUSD_VALUE_INT2;
+      break;
+    }
+    case TYPE_ID_INT3: {
+      basety = C_TINYUSD_VALUE_INT3;
+      break;
+    }
+    case TYPE_ID_INT4: {
+      basety = C_TINYUSD_VALUE_INT4;
+      break;
+    }
+    case TYPE_ID_UINT32: {
+      basety = C_TINYUSD_VALUE_UINT;
+      break;
+    }
+    case TYPE_ID_UINT2: {
+      basety = C_TINYUSD_VALUE_UINT2;
+      break;
+    }
+    case TYPE_ID_UINT3: {
+      basety = C_TINYUSD_VALUE_UINT3;
+      break;
+    }
+    case TYPE_ID_UINT4: {
+      basety = C_TINYUSD_VALUE_UINT4;
+      break;
+    }
+    case TYPE_ID_CUSTOMDATA: {
+      basety = C_TINYUSD_VALUE_DICTIONARY;
+      break;
+    }
+    // TODO
+    default: {
+      break;
+    }
+  }
+
+  if (is_array) {
+    return static_cast<CTinyUSDValueType>(basety | C_TINYUSD_VALUE_1D_BIT);
+  } else {
+    return static_cast<CTinyUSDValueType>(basety);
+  }
+}
 
 const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
   // 32 should be enough length to support all C_TINYUSD_VALUE_* type name +
@@ -27,6 +101,9 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
   const char *tyname = "[invalid]";
 
   switch (static_cast<CTinyUSDValueType>(basety)) {
+    case C_TINYUSD_VALUE_UNKNOWN: {
+      break;
+    }
     case C_TINYUSD_VALUE_BOOL: {
       tyname = "bool";
       break;
@@ -249,6 +326,10 @@ const char *c_tinyusd_value_type_name(CTinyUSDValueType value_type) {
       tyname = "frame4d";
       break;
     }
+    case C_TINYUSD_VALUE_DICTIONARY: {
+      tyname = "dictionary";
+      break;
+    }
     case C_TINYUSD_VALUE_END: {
       tyname = "[invalid]";
       break;
@@ -286,6 +367,9 @@ uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type) {
   uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
 
   switch (static_cast<CTinyUSDValueType>(basety)) {
+    case C_TINYUSD_VALUE_UNKNOWN: {
+      return 0; // invalid
+    }
     case C_TINYUSD_VALUE_BOOL: {
       return 1;
     }
@@ -451,6 +535,9 @@ uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type) {
     case C_TINYUSD_VALUE_FRAME4D: {
       return 4 * 4;
     }
+    case C_TINYUSD_VALUE_DICTIONARY: {
+      return 0;
+    }
     case C_TINYUSD_VALUE_END: {
       return 0;
     }  // invalid
@@ -460,11 +547,197 @@ uint32_t c_tinyusd_value_type_components(CTinyUSDValueType value_type) {
   return 0;
 }
 
+uint32_t c_tinyusd_value_type_is_numeric(CTinyUSDValueType value_type) {
+  // drop array bit.
+  uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
+
+  switch (static_cast<CTinyUSDValueType>(basety)) {
+    case C_TINYUSD_VALUE_UNKNOWN: {
+      return 0;
+    }
+    case C_TINYUSD_VALUE_BOOL: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TOKEN: {
+      return 0;
+    }
+    case C_TINYUSD_VALUE_TOKEN_VECTOR: {
+      return 0;
+    }
+    case C_TINYUSD_VALUE_STRING: {
+      return 0;
+    }
+    case C_TINYUSD_VALUE_STRING_VECTOR: {
+      return 0;
+    }
+    case C_TINYUSD_VALUE_HALF: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_HALF2: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_HALF3: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_HALF4: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_INT: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_INT2: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_INT3: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_INT4: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_UINT: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_UINT2: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_UINT3: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_UINT4: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_INT64: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_UINT64: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_FLOAT: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_FLOAT2: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_FLOAT3: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_FLOAT4: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_DOUBLE: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_DOUBLE2: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_DOUBLE3: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_DOUBLE4: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_QUATH: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_QUATF: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_QUATD: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_NORMAL3H: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_NORMAL3F: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_NORMAL3D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_VECTOR3H: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_VECTOR3F: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_VECTOR3D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_POINT3H: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_POINT3F: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_POINT3D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2H: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2F: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD2D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3H: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3F: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_TEXCOORD3D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_COLOR3H: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_COLOR3F: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_COLOR3D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_COLOR4H: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_COLOR4F: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_COLOR4D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_MATRIX2D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_MATRIX3D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_MATRIX4D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_FRAME4D: {
+      return 1;
+    }
+    case C_TINYUSD_VALUE_DICTIONARY: {
+      return 0;
+    }
+    case C_TINYUSD_VALUE_END: {
+      return 0;
+    }  // invalid
+       // default: { return 0; }
+  }
+}
+
 uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type) {
   // drop array bit.
   uint32_t basety = value_type & (~C_TINYUSD_VALUE_1D_BIT);
 
   switch (static_cast<CTinyUSDValueType>(basety)) {
+    case C_TINYUSD_VALUE_UNKNOWN: {
+      return 0;
+    }
     case C_TINYUSD_VALUE_BOOL: {
       return 1;
     }
@@ -630,6 +903,9 @@ uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type) {
     case C_TINYUSD_VALUE_FRAME4D: {
       return sizeof(double) * 4 * 4;
     }
+    case C_TINYUSD_VALUE_DICTIONARY: {
+      return 0;
+    }
     case C_TINYUSD_VALUE_END: {
       return 0;
     }  // invalid
@@ -669,7 +945,7 @@ const char *c_tinyusd_prim_type_name(CTinyUSDPrimType prim_type) {
       // empty string for Model
       tyname = "";
       break;
-    }  
+    }
     case C_TINYUSD_PRIM_SCOPE: {
       tyname = "Scope";
       break;
@@ -772,7 +1048,7 @@ int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child_prim) {
 
   tinyusdz::Prim *pprim = reinterpret_cast<tinyusdz::Prim *>(prim);
   tinyusdz::Prim *pchild = reinterpret_cast<tinyusdz::Prim *>(child_prim);
-  
+
   pprim->children().emplace_back(*pchild);
 
   return 1;
@@ -789,7 +1065,7 @@ int c_tinyusd_prim_append_child_move(CTinyUSDPrim *prim, CTinyUSDPrim *child_pri
 
   tinyusdz::Prim *pprim = reinterpret_cast<tinyusdz::Prim *>(prim);
   tinyusdz::Prim *pchild = reinterpret_cast<tinyusdz::Prim *>(child_prim);
-  
+
   pprim->children().emplace_back(std::move(*pchild));
 
   return 1;
@@ -843,7 +1119,7 @@ int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, uint64_t child_idx) {
   if (child_idx >= pprim->children().size()) {
     return 0;
   }
-  
+
   pprim->children().erase(pprim->children().begin() + ssize_t(child_idx));
 
   return 1;
