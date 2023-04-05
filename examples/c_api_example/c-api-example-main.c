@@ -91,15 +91,20 @@ int main(int argc, char **argv) {
   } else {
 
     c_tinyusd_string_t *str = c_tinyusd_string_new_empty();
+    c_tinyusd_string_t *err = c_tinyusd_string_new_empty();
 
     //
     // Create new Prim
     //
-    // You can also create a Prim with string
-    // CTinyUSDPrim *prim = c_tinyusd_prim_new("Xform");
-    CTinyUSDPrim *prim = c_tinyusd_prim_new_builtin(C_TINYUSD_PRIM_XFORM);
+    CTinyUSDPrim *prim = c_tinyusd_prim_new("Xform", err);
+    // You can also create a builtin Prim with enum
+    //CTinyUSDPrim *prim = c_tinyusd_prim_new_builtin(C_TINYUSD_PRIM_XFORM);
     if (!prim) {
-      printf("Failed to new Xform Prim.\n");
+      if (err) {
+        printf("Failed to new Prim: error = %s\n", c_tinyusd_string_str(err));
+      } else {
+        printf("Failed to new Prim.\n");
+      }
       return EXIT_FAILURE;
     }
 
@@ -199,6 +204,11 @@ int main(int argc, char **argv) {
 
     if (!c_tinyusd_string_free(str)) {
       printf("str string free failed.\n");
+      return EXIT_FAILURE;
+    }
+
+    if (!c_tinyusd_string_free(err)) {
+      printf("err string free failed.\n");
       return EXIT_FAILURE;
     }
 
