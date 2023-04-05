@@ -128,6 +128,7 @@ typedef enum {
    array.
 */
 typedef enum {
+  C_TINYUSD_VALUE_UNKNOWN,
   C_TINYUSD_VALUE_TOKEN,
   C_TINYUSD_VALUE_TOKEN_VECTOR, /* token[] */
   C_TINYUSD_VALUE_STRING,
@@ -183,6 +184,7 @@ typedef enum {
   C_TINYUSD_VALUE_MATRIX3D,
   C_TINYUSD_VALUE_MATRIX4D,
   C_TINYUSD_VALUE_FRAME4D,
+  C_TINYUSD_VALUE_DICTIONARY, /* tinyusdz::value::CustomData. VtDictionary equivalent in pxrUSD */
   C_TINYUSD_VALUE_END, /* terminator */
 } CTinyUSDValueType;
 
@@ -489,9 +491,9 @@ C_TINYUSD_EXPORT int c_tinyusd_string_vector_replace(
 C_TINYUSD_EXPORT int c_tinyusd_string_vector_free(c_tinyusd_string_vector *sv);
 
 /*
-   Return the name of Prim type.
+   Return the name of Prim type(e.g. "Xform", "Mesh", ...).
    Return NULL for unsupported/unknown Prim type.
-   Returned pointer is valid until Prim is modified or deleted.
+   Returned char pointer is valid until Prim is modified or deleted.
  */
 C_TINYUSD_EXPORT const char *c_tinyusd_prim_type_name(
     CTinyUSDPrimType prim_type);
@@ -511,12 +513,16 @@ C_TINYUSD_EXPORT const char *c_tinyusd_value_type_name(
     CTinyUSDValueType value_type);
 
 /*
+   Return 1: Value type is numeric type(float3, int, ...). 0 otherwise(e.g. token, dictionary, ...)
+ */
+C_TINYUSD_EXPORT uint32_t c_tinyusd_value_type_is_numeric(CTinyUSDValueType value_type);
+
+/*
    Returns sizeof(value_type);
    For non-numeric value type(e.g. STRING, TOKEN) and invalid enum value, it
    returns 0. NOTE: Returns 1 for bool type.
  */
-C_TINYUSD_EXPORT uint32_t
-c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type);
+C_TINYUSD_EXPORT uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type);
 
 /*
    Returns the number of components of given value_type;
@@ -529,6 +535,11 @@ c_tinyusd_value_type_components(CTinyUSDValueType value_type);
 
 /*  opaque pointer to tinyusdz::value::Value */
 typedef struct CTinyUSDValue CTinyUSDValue;
+
+/* Return value type enum.
+   Returns C_TINYUSD_VALUE_UNKNOWN when `value` is nullptr or invalid.
+ */
+C_TINYUSD_EXPORT CTinyUSDValueType c_tinyusd_value_type(const CTinyUSDValue *value);
 
 /*
   New Value with null(empty) value.
@@ -644,6 +655,19 @@ C_TINYUSD_EXPORT int c_tinyusd_attribute_connection_set(
 C_TINYUSD_EXPORT int c_tinyusd_attribute_connections_set(
     CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
 
+C_TINYUSD_EXPORT int c_tinyusd_attribute_meta_set(
+    CTinyUSDAttribute *attr, const char *meta_name, const CTinyUSDValue *value);
+
+/*
+   Get metadata value.
+   Returns 0 when `attr` is nullptr.
+   Returns -1 when requested metadata is not authored.
+   `value` is just a pointer so no need to free it(the pointer is valid until `attr` is modified/deleted)
+ */
+C_TINYUSD_EXPORT int c_tinyusd_attribute_meta_get(
+    CTinyUSDAttribute *attr, const char *meta_name, const CTinyUSDValue **value);
+
+
 #if 0
    Get i'th targetPaths
 C_TINYUSD_EXPORT int c_tinyusd_attribute_connection_get(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
@@ -661,10 +685,13 @@ C_TINYUSD_EXPORT int c_tinyusd_property_set_attribute(
 C_TINYUSD_EXPORT int c_tinyusd_property_set_relationship(
     CTinyUSDProperty *prop, const CTinyUSDRelationship *rel);
 
-C_TINYUSD_EXPORT int c_tinyusd_property_is_attribute(CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_is_attribute(const CTinyUSDProperty *prop);
 C_TINYUSD_EXPORT int c_tinyusd_property_is_attribute_connection(
-    CTinyUSDProperty *prop);
-C_TINYUSD_EXPORT int c_tinyusd_property_is_relationship(CTinyUSDProperty *prop);
+    const CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_is_relationship(const CTinyUSDProperty *prop);
+
+C_TINYUSD_EXPORT int c_tinyusd_property_is_custom(const CTinyUSDProperty *prop);
+C_TINYUSD_EXPORT int c_tinyusd_property_is_varying(const CTinyUSDProperty *prop);
 
 typedef struct CTinyUSDPrim CTinyUSDPrim;
 
@@ -682,7 +709,7 @@ CTinyUSDPrim *c_tinyusd_prim_new(const char *prim_type,
                                  c_tinyusd_string_t *err);
 
 /* Create Prim with builtin Prim type.
-   Returns nullptr when invalid `prim_type` enum value is provided. 
+   Returns nullptr when invalid `prim_type` enum value is provided.
  */
 
 CTinyUSDPrim *c_tinyusd_prim_new_builtin(CTinyUSDPrimType prim_type);
@@ -695,6 +722,15 @@ C_TINYUSD_EXPORT int c_tinyusd_prim_free(CTinyUSDPrim *prim);
 /* Prim type as a const char pointer.
    Returns nullptr when `prim` is invalid */
 C_TINYUSD_EXPORT const char *c_tinyusd_prim_type(const CTinyUSDPrim *prim);
+
+/*
+   Return the element name of Prim(e.g. "root", "pbr", "xform0").
+   Return NULL when input `prim` is invalid.
+   Returned char pointer is valid until Prim is modified or deleted.
+ */
+C_TINYUSD_EXPORT const char *c_tinyusd_prim_element_name(
+    const CTinyUSDPrim *prim);
+
 
 /*
    Get list of property names as token array.
@@ -736,9 +772,28 @@ C_TINYUSD_EXPORT int c_tinyusd_prim_property_del(CTinyUSDPrim *prim,
                                                  const char *prop_name);
 
 /*
-   TODO: Add `set` op?(replace property in Prim)
-   ----
+   Set Prim metadatum.
+   Return 0 when Value type mismatch for builtin metadata.
  */
+C_TINYUSD_EXPORT int c_tinyusd_prim_meta_set(CTinyUSDPrim *prim,
+                                             const char *meta_name,
+                                             const CTinyUSDValue *value);
+
+/*
+   Get Prim metadatum.
+   Return 0 when requested metadatum is not authord or invalid.
+   Returned `value` is just a pointer, so no need to free it(and the pointer is valid unless `prim` is modified/deleted.
+ */
+C_TINYUSD_EXPORT int c_tinyusd_prim_meta_get(CTinyUSDPrim *prim,
+                                             const char *meta_name,
+                                             const CTinyUSDValue **value);
+
+/*
+   Check if requested metadatum is authored.
+   Return 1: authored. 0 not authored.
+ */
+C_TINYUSD_EXPORT int c_tinyusd_prim_meta_authored(CTinyUSDPrim *prim,
+                                             const char *meta_name);
 
 /*
    Append Prim to `prim`'s children. child Prim object is *COPIED*.
@@ -769,7 +824,7 @@ C_TINYUSD_EXPORT int c_tinyusd_prim_del_child(CTinyUSDPrim *prim,
 
    Return 0 when `prim` is invalid or nullptr.
 */
-uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim);
+C_TINYUSD_EXPORT uint64_t c_tinyusd_prim_num_children(const CTinyUSDPrim *prim);
 
 /*
    Get a child Prim of specified child_index.
