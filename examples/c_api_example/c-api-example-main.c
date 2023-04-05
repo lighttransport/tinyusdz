@@ -153,6 +153,8 @@ int main(int argc, char **argv) {
 
       printf("Int attribute value: %s\n", c_tinyusd_string_str(str));
 
+      printf("Is value numeric?: %d\n", c_tinyusd_value_type_is_numeric(c_tinyusd_value_type(attr_value)));
+
       if (!c_tinyusd_value_free(attr_value)) {
         printf("Value free failed.\n");
         return EXIT_FAILURE;
